@@ -53,9 +53,11 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
       "target": [
         {
-          "target": "zip",
+          "target": "dmg",
           "arch": ["arm64", "x64"]
         }
       ]

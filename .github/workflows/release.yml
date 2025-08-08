@@ -59,13 +59,14 @@ jobs:
           pnpm run dist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEBUG: electron-builder
       
       - name: List build files (debug)
         shell: bash
         run: |
           echo "Listing release directory:"
           ls -la release/ || echo "No release directory found"
-          find . -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" || echo "No build files found"
+          find . -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.zip" || echo "No build files found"
       
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
@@ -73,7 +74,7 @@ jobs:
         with:
           files: |
             release/*.exe
-            release/*.zip
+            release/*.dmg
             release/*.AppImage
           name: "CC Switch ${{ github.ref_name }}"
           body: |
@@ -88,8 +89,9 @@ jobs:
             - **便携版**: `CC.Switch.${{ github.ref_name }}.exe`
             
             #### macOS 用户  
-            - **ARM64 (M1/M2/M3)**: `CC.Switch-${{ github.ref_name }}-arm64-mac.zip`
-            - **Intel x64**: `CC.Switch-${{ github.ref_name }}-mac.zip`
+            - **DMG 镜像 (推荐)**: 
+              - ARM64 (M1/M2/M3): `CC.Switch-${{ github.ref_name }}-arm64.dmg`
+              - Intel x64: `CC.Switch-${{ github.ref_name }}.dmg`
             
             #### Linux 用户
             - **AppImage**: `CC.Switch-${{ github.ref_name }}.AppImage`
@@ -97,7 +99,12 @@ jobs:
             ### 使用说明
             1. 下载对应平台的文件
             2. Windows 推荐使用安装版获得最佳体验
-            3. macOS 下载 ZIP 后解压即可使用
+            3. macOS 下载 DMG 后双击打开，拖拽应用到 Applications 文件夹
             4. Linux 下载后添加执行权限: `chmod +x CC.Switch-*.AppImage`
+            
+            ### macOS 安装提示
+            如果提示"无法打开，因为无法验证开发者"：
+            1. 右键点击应用，选择"打开"
+            2. 在弹出窗口中再次点击"打开"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
