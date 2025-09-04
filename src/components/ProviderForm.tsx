@@ -4,7 +4,6 @@ import { AppType } from "../lib/tauri-api";
 import {
   updateCoAuthoredSetting,
   checkCoAuthoredSetting,
-  extractWebsiteUrl,
   getApiKeyFromConfig,
   hasApiKeyField,
   setApiKeyInConfig,
@@ -12,6 +11,7 @@ import {
 import { providerPresets } from "../config/providerPresets";
 import { codexProviderPresets } from "../config/codexProviderPresets";
 import "./AddProviderModal.css";
+import JsonEditor from "./JsonEditor";
 
 interface ProviderFormProps {
   appType?: AppType;
@@ -160,9 +160,6 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     const { name, value } = e.target;
 
     if (name === "settingsConfig") {
-      // 当用户修改配置时，尝试自动提取官网地址
-      const extractedWebsiteUrl = extractWebsiteUrl(value);
-
       // 同时检查并同步选择框状态
       const hasCoAuthoredDisabled = checkCoAuthoredSetting(value);
       setDisableCoAuthored(hasCoAuthoredDisabled);
@@ -171,12 +168,11 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       const parsedKey = getApiKeyFromConfig(value);
       setApiKey(parsedKey);
 
-      setFormData({
-        ...formData,
+      // 不再从 JSON 自动提取或覆盖官网地址，只更新配置内容
+      setFormData((prev) => ({
+        ...prev,
         [name]: value,
-        // 只有在官网地址为空时才自动填入
-        websiteUrl: formData.websiteUrl || extractedWebsiteUrl,
-      });
+      }));
     } else {
       setFormData({
         ...formData,
@@ -609,7 +605,6 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                     onChange={(e) => setCodexConfig(e.target.value)}
                     placeholder={``}
                     rows={8}
-                    style={{ fontFamily: "monospace", fontSize: "14px" }}
                   />
                   <small className="field-hint">
                     Codex config.toml 配置内容
@@ -632,11 +627,11 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                     禁止 Claude Code 签名
                   </label>
                 </div>
-                <textarea
-                  id="settingsConfig"
-                  name="settingsConfig"
+                <JsonEditor
                   value={formData.settingsConfig}
-                  onChange={handleChange}
+                   onChange={(value) => handleChange({
+                  target: { name: "settingsConfig", value }
+                } as React.ChangeEvent<HTMLTextAreaElement>)}
                   placeholder={`{
   "env": {
     "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
@@ -644,8 +639,6 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   }
 }`}
                   rows={12}
-                  style={{ fontFamily: "monospace", fontSize: "14px" }}
-                  required
                 />
                 <small className="field-hint">
                   完整的 Claude Code settings.json 配置内容
