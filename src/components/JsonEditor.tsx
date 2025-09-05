@@ -27,10 +27,22 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     if (!editorRef.current) return;
 
     // 创建编辑器扩展
+    const minHeightPx = Math.max(1, rows) * 18; // 降低最小高度以减少抖动
+    const sizingTheme = EditorView.theme({
+      "&": { minHeight: `${minHeightPx}px` },
+      ".cm-scroller": { overflow: "auto" },
+      ".cm-content": {
+        fontFamily:
+          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+        fontSize: "14px",
+      },
+    });
+
     const extensions = [
       basicSetup,
       json(),
       placeholder(placeholderText || ""),
+      sizingTheme,
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           const newValue = update.state.doc.toString();

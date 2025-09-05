@@ -269,7 +269,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     const configString = setApiKeyInConfig(
       formData.settingsConfig,
       key.trim(),
-      { createIfMissing: showApiKey },
+      { createIfMissing: selectedPreset !== null && selectedPreset !== -1 },
     );
 
     // 更新表单配置
