@@ -26,17 +26,6 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
     setShowKey(!showKey);
   };
 
-  const getDisplayValue = () => {
-    if (showKey) {
-      return value;
-    }
-    // 隐藏时只显示前4位，其余用*代替
-    if (value.length > 4) {
-      return value.slice(0, 4) + "*".repeat(value.length - 4);
-    }
-    return value;
-  };
-
   const inputClass = `w-full px-3 py-2 pr-10 border rounded-lg text-sm transition-colors ${
     disabled
       ? "bg-[var(--color-bg-tertiary)] border-[var(--color-border)] text-[var(--color-text-tertiary)] cursor-not-allowed"
@@ -55,7 +44,7 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
         <input
           type={showKey ? "text" : "password"}
           id={id}
-          value={getDisplayValue()}
+          value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           disabled={disabled}
