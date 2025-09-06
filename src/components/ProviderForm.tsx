@@ -10,8 +10,11 @@ import {
 } from "../utils/providerConfigUtils";
 import { providerPresets } from "../config/providerPresets";
 import { codexProviderPresets } from "../config/codexProviderPresets";
-import JsonEditor from "./JsonEditor";
-import { X, AlertCircle, Save, Zap } from "lucide-react";
+import PresetSelector from "./ProviderForm/PresetSelector";
+import ApiKeyInput from "./ProviderForm/ApiKeyInput";
+import ClaudeConfigEditor from "./ProviderForm/ClaudeConfigEditor";
+import CodexConfigEditor from "./ProviderForm/CodexConfigEditor";
+import { X, AlertCircle, Save } from "lucide-react";
 
 interface ProviderFormProps {
   appType?: AppType;
@@ -70,6 +73,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       }
     }
   }, [isCodex, initialData]);
+
   const [error, setError] = useState("");
   const [disableCoAuthored, setDisableCoAuthored] = useState(false);
   // -1 表示自定义，null 表示未选择，>= 0 表示预设索引
@@ -237,11 +241,11 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     setCodexAuth(authString);
     setCodexConfig(preset.config || "");
 
-    setFormData({
+    setFormData(prev => ({
+      ...prev,
       name: preset.name,
       websiteUrl: preset.websiteUrl,
-      settingsConfig: formData.settingsConfig,
-    });
+    }));
 
     setSelectedCodexPreset(index);
 
@@ -316,10 +320,12 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       return "";
     }
   };
+  
   // 自定义模式(-1)不显示独立的 API Key 输入框
   const showCodexApiKey =
     (selectedCodexPreset !== null && selectedCodexPreset !== -1) ||
     (!showPresets && getCodexAuthApiKey(codexAuth) !== "");
+    
   const isCodexOfficialPreset =
     selectedCodexPreset !== null &&
     selectedCodexPreset >= 0 &&
@@ -390,107 +396,21 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             )}
 
             {showPresets && !isCodex && (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-3">
-                    选择配置类型
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        selectedPreset === -1
-                          ? "bg-[var(--color-primary)] text-white"
-                          : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]"
-                      }`}
-                      onClick={handleCustomClick}
-                    >
-                      自定义
-                    </button>
-                    {providerPresets.map((preset, index) => (
-                      <button
-                        key={index}
-                        type="button"
-                        className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                          selectedPreset === index
-                            ? preset.isOfficial
-                              ? "bg-[var(--color-warning)] text-white"
-                              : "bg-[var(--color-primary)] text-white"
-                            : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]"
-                        }`}
-                        onClick={() => applyPreset(preset, index)}
-                      >
-                        {preset.isOfficial && <Zap size={14} />}
-                        {preset.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {selectedPreset === -1 && (
-                  <p className="text-sm text-[var(--color-text-secondary)]">
-                    手动配置供应商，需要填写完整的配置信息
-                  </p>
-                )}
-                {selectedPreset !== -1 && selectedPreset !== null && (
-                  <p className="text-sm text-[var(--color-text-secondary)]">
-                    {isOfficialPreset
-                      ? "Claude 官方登录，不需要填写 API Key"
-                      : "使用预设配置，只需填写 API Key"}
-                  </p>
-                )}
-              </div>
+              <PresetSelector
+                presets={providerPresets}
+                selectedIndex={selectedPreset}
+                onSelectPreset={(index) => applyPreset(providerPresets[index], index)}
+                onCustomClick={handleCustomClick}
+              />
             )}
 
             {showPresets && isCodex && (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-3">
-                    选择配置类型
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        selectedCodexPreset === -1
-                          ? "bg-[var(--color-primary)] text-white"
-                          : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]"
-                      }`}
-                      onClick={handleCodexCustomClick}
-                    >
-                      自定义
-                    </button>
-                    {codexProviderPresets.map((preset, index) => (
-                      <button
-                        key={index}
-                        type="button"
-                        className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                          selectedCodexPreset === index
-                            ? preset.isOfficial
-                              ? "bg-[var(--color-warning)] text-white"
-                              : "bg-[var(--color-primary)] text-white"
-                            : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]"
-                        }`}
-                        onClick={() => applyCodexPreset(preset, index)}
-                      >
-                        {preset.isOfficial && <Zap size={14} />}
-                        {preset.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {selectedCodexPreset === -1 && (
-                  <p className="text-sm text-[var(--color-text-secondary)]">
-                    手动配置供应商，需要填写完整的配置信息
-                  </p>
-                )}
-                {selectedCodexPreset !== -1 && selectedCodexPreset !== null && (
-                  <p className="text-sm text-[var(--color-text-secondary)]">
-                    {isCodexOfficialPreset
-                      ? "Codex 官方登录，不需要填写 API Key"
-                      : "使用预设配置，只需填写 API Key"}
-                  </p>
-                )}
-              </div>
+              <PresetSelector
+                presets={codexProviderPresets}
+                selectedIndex={selectedCodexPreset}
+                onSelectPreset={(index) => applyCodexPreset(codexProviderPresets[index], index)}
+                onCustomClick={handleCodexCustomClick}
+              />
             )}
 
             <div className="space-y-2">
@@ -514,66 +434,36 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             </div>
 
             {!isCodex && showApiKey && (
-              <div className="space-y-2">
-                <label
-                  htmlFor="apiKey"
-                  className="block text-sm font-medium text-[var(--color-text-primary)]"
-                >
-                  API Key *
-                </label>
-                <input
-                  type="text"
-                  id="apiKey"
-                  value={apiKey}
-                  onChange={(e) => handleApiKeyChange(e.target.value)}
-                  placeholder={
-                    isOfficialPreset
-                      ? "官方登录无需填写 API Key，直接保存即可"
-                      : "只需要填这里，下方配置会自动填充"
-                  }
-                  disabled={isOfficialPreset}
-                  autoComplete="off"
-                  className={`w-full px-3 py-2 border rounded-lg text-sm transition-colors ${
-                    isOfficialPreset
-                      ? "bg-[var(--color-bg-tertiary)] border-[var(--color-border)] text-[var(--color-text-tertiary)] cursor-not-allowed"
-                      : "border-[var(--color-border)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                  }`}
-                />
-              </div>
+              <ApiKeyInput
+                value={apiKey}
+                onChange={handleApiKeyChange}
+                placeholder={
+                  isOfficialPreset
+                    ? "官方登录无需填写 API Key，直接保存即可"
+                    : "只需要填这里，下方配置会自动填充"
+                }
+                disabled={isOfficialPreset}
+              />
             )}
 
             {isCodex && showCodexApiKey && (
-              <div className="space-y-2">
-                <label
-                  htmlFor="codexApiKey"
-                  className="block text-sm font-medium text-[var(--color-text-primary)]"
-                >
-                  API Key *
-                </label>
-                <input
-                  type="text"
-                  id="codexApiKey"
-                  value={codexApiKey}
-                  onChange={(e) => handleCodexApiKeyChange(e.target.value)}
-                  placeholder={
-                    isCodexOfficialPreset
-                      ? "官方无需填写 API Key，直接保存即可"
-                      : "只需要填这里，下方 auth.json 会自动填充"
-                  }
-                  disabled={isCodexOfficialPreset}
-                  required={
-                    selectedCodexPreset !== null &&
-                    selectedCodexPreset >= 0 &&
-                    !isCodexOfficialPreset
-                  }
-                  autoComplete="off"
-                  className={`w-full px-3 py-2 border rounded-lg text-sm transition-colors ${
-                    isCodexOfficialPreset
-                      ? "bg-[var(--color-bg-tertiary)] border-[var(--color-border)] text-[var(--color-text-tertiary)] cursor-not-allowed"
-                      : "border-[var(--color-border)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
-                  }`}
-                />
-              </div>
+              <ApiKeyInput
+                id="codexApiKey"
+                label="API Key"
+                value={codexApiKey}
+                onChange={handleCodexApiKeyChange}
+                placeholder={
+                  isCodexOfficialPreset
+                    ? "官方无需填写 API Key，直接保存即可"
+                    : "只需要填这里，下方 auth.json 会自动填充"
+                }
+                disabled={isCodexOfficialPreset}
+                required={
+                  selectedCodexPreset !== null &&
+                  selectedCodexPreset >= 0 &&
+                  !isCodexOfficialPreset
+                }
+              />
             )}
 
             <div className="space-y-2">
@@ -597,103 +487,35 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
             {/* Claude 或 Codex 的配置部分 */}
             {isCodex ? (
-              // Codex: 双编辑器
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label
-                    htmlFor="codexAuth"
-                    className="block text-sm font-medium text-[var(--color-text-primary)]"
-                  >
-                    auth.json (JSON) *
-                  </label>
-                  <textarea
-                    id="codexAuth"
-                    value={codexAuth}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setCodexAuth(value);
-                      try {
-                        const auth = JSON.parse(value || "{}");
-                        const key =
-                          typeof auth.OPENAI_API_KEY === "string"
-                            ? auth.OPENAI_API_KEY
-                            : "";
-                        setCodexApiKey(key);
-                      } catch {
-                        // ignore
-                      }
-                    }}
-                    placeholder={`{
-  "OPENAI_API_KEY": "sk-your-api-key-here"
-}`}
-                    rows={6}
-                    required
-                    className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-colors resize-y min-h-[8rem]"
-                  />
-                  <p className="text-xs text-[var(--color-text-secondary)]">
-                    Codex auth.json 配置内容
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <label
-                    htmlFor="codexConfig"
-                    className="block text-sm font-medium text-[var(--color-text-primary)]"
-                  >
-                    config.toml (TOML)
-                  </label>
-                  <textarea
-                    id="codexConfig"
-                    value={codexConfig}
-                    onChange={(e) => setCodexConfig(e.target.value)}
-                    placeholder=""
-                    rows={8}
-                    className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-colors resize-y min-h-[10rem]"
-                  />
-                  <p className="text-xs text-[var(--color-text-secondary)]">
-                    Codex config.toml 配置内容
-                  </p>
-                </div>
-              </div>
-            ) : (
-              // Claude: 原有的单编辑器
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label
-                    htmlFor="settingsConfig"
-                    className="block text-sm font-medium text-[var(--color-text-primary)]"
-                  >
-                    Claude Code 配置 (JSON) *
-                  </label>
-                  <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={disableCoAuthored}
-                      onChange={(e) => handleCoAuthoredToggle(e.target.checked)}
-                      className="w-4 h-4 text-[var(--color-primary)] bg-white border-[var(--color-border)] rounded focus:ring-[var(--color-primary)] focus:ring-2"
-                    />
-                    禁止 Claude Code 签名
-                  </label>
-                </div>
-                <JsonEditor
-                  value={formData.settingsConfig}
-                  onChange={(value) =>
-                    handleChange({
-                      target: { name: "settingsConfig", value },
-                    } as React.ChangeEvent<HTMLTextAreaElement>)
+              <CodexConfigEditor
+                authValue={codexAuth}
+                configValue={codexConfig}
+                onAuthChange={setCodexAuth}
+                onConfigChange={setCodexConfig}
+                onAuthBlur={() => {
+                  try {
+                    const auth = JSON.parse(codexAuth || "{}");
+                    const key =
+                      typeof auth.OPENAI_API_KEY === "string"
+                        ? auth.OPENAI_API_KEY
+                        : "";
+                    setCodexApiKey(key);
+                  } catch {
+                    // ignore
                   }
-                  placeholder={`{
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
-    "ANTHROPIC_AUTH_TOKEN": "sk-your-api-key-here"
-  }
-}`}
-                  rows={12}
-                />
-                <p className="text-xs text-[var(--color-text-secondary)]">
-                  完整的 Claude Code settings.json 配置内容
-                </p>
-              </div>
+                }}
+              />
+            ) : (
+              <ClaudeConfigEditor
+                value={formData.settingsConfig}
+                onChange={(value) =>
+                  handleChange({
+                    target: { name: "settingsConfig", value },
+                  } as React.ChangeEvent<HTMLTextAreaElement>)
+                }
+                disableCoAuthored={disableCoAuthored}
+                onCoAuthoredToggle={handleCoAuthoredToggle}
+              />
             )}
           </div>
 
