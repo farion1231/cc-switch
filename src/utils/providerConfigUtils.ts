@@ -33,21 +33,6 @@ export const checkCoAuthoredSetting = (jsonString: string): boolean => {
   }
 };
 
-// 从JSON配置中提取并处理官网地址
-export const extractWebsiteUrl = (jsonString: string): string => {
-  try {
-    const config = JSON.parse(jsonString);
-    const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
-
-    if (baseUrl && typeof baseUrl === "string") {
-      // 去掉 "api." 前缀
-      return baseUrl.replace(/^https?:\/\/api\./, "https://");
-    }
-  } catch (err) {
-    // 忽略JSON解析错误
-  }
-  return "";
-};
 
 // 读取配置中的 API Key（env.ANTHROPIC_AUTH_TOKEN）
 export const getApiKeyFromConfig = (jsonString: string): string => {
