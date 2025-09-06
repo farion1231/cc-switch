@@ -2,6 +2,7 @@
 
 import { Provider } from "./types";
 import { AppType } from "./lib/tauri-api";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 
 interface ImportResult {
   success: boolean;
@@ -30,7 +31,7 @@ declare global {
       selectConfigFile: () => Promise<string | null>;
       openConfigFolder: (app?: AppType) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
-      updateTrayMenu: () => Promise<void>;
+      updateTrayMenu: () => Promise<boolean>;
       onProviderSwitched: (
         callback: (data: { appType: string; providerId: string }) => void
       ) => Promise<UnlistenFn>;

@@ -97,12 +97,10 @@ fn create_tray_menu(
     }
 
     // 分隔符和退出菜单
-    let separator = MenuItem::with_id(app, "separator", "───────────", false, None::<&str>)
-        .map_err(|e| format!("创建分隔符失败: {}", e))?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)
         .map_err(|e| format!("创建退出菜单失败: {}", e))?;
 
-    menu_builder = menu_builder.item(&separator).item(&quit_item);
+    menu_builder = menu_builder.separator().item(&quit_item);
 
     menu_builder
         .build()
