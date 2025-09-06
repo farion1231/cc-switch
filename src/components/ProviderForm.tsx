@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from "react";
-import { Provider } from "../../types";
-import { AppType } from "../../lib/tauri-api";
+import { Provider } from "../types";
+import { AppType } from "../lib/tauri-api";
 import {
   updateCoAuthoredSetting,
   checkCoAuthoredSetting,
   getApiKeyFromConfig,
   hasApiKeyField,
   setApiKeyInConfig,
-} from "../../utils/providerConfigUtils";
-import { providerPresets } from "../../config/providerPresets";
-import { codexProviderPresets } from "../../config/codexProviderPresets";
-import "../AddProviderModal/index.css";
-import JsonEditor from "../JsonEditor";
+} from "../utils/providerConfigUtils";
+import { providerPresets } from "../config/providerPresets";
+import { codexProviderPresets } from "../config/codexProviderPresets";
+import JsonEditor from "./JsonEditor";
+import { X, AlertCircle, Save, Zap } from "lucide-react";
 
 interface ProviderFormProps {
   appType?: AppType;
@@ -350,130 +350,156 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
   return (
     <div
-      className="modal-overlay"
+      className="fixed inset-0 z-50 flex items-center justify-center"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal-content">
-        <div className="modal-titlebar">
-          <div className="modal-spacer" />
-          <div className="modal-title" title={title}>
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+
+      {/* Modal */}
+      <div className="relative bg-white rounded-xl shadow-lg max-w-3xl w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-[var(--color-border)]">
+          <h2 className="text-xl font-semibold text-[var(--color-text-primary)]">
             {title}
-          </div>
+          </h2>
           <button
             type="button"
-            className="modal-close-btn"
-            aria-label="关闭"
             onClick={onClose}
-            title="关闭"
+            className="p-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] rounded-md transition-colors"
+            aria-label="关闭"
           >
-            ×
+            <X size={18} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="modal-form">
-          <div className="modal-body">
-            {error && <div className="error-message">{error}</div>}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="flex-1 overflow-auto p-6 space-y-6">
+            {error && (
+              <div className="flex items-center gap-3 p-4 bg-[var(--color-error-light)] border border-[var(--color-error)]/20 rounded-lg">
+                <AlertCircle
+                  size={20}
+                  className="text-[var(--color-error)] flex-shrink-0"
+                />
+                <p className="text-[var(--color-error)] text-sm font-medium">
+                  {error}
+                </p>
+              </div>
+            )}
 
             {showPresets && !isCodex && (
-              <div className="presets">
-                <label>选择配置类型</label>
-                <div className="preset-buttons">
-                  <button
-                    type="button"
-                    className={`preset-btn ${
-                      selectedPreset === -1 ? "selected" : ""
-                    }`}
-                    onClick={handleCustomClick}
-                  >
-                    自定义
-                  </button>
-                  {providerPresets.map((preset, index) => {
-                    return (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-3">
+                    选择配置类型
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        selectedPreset === -1
+                          ? "bg-[var(--color-primary)] text-white"
+                          : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]"
+                      }`}
+                      onClick={handleCustomClick}
+                    >
+                      自定义
+                    </button>
+                    {providerPresets.map((preset, index) => (
                       <button
                         key={index}
                         type="button"
-                        className={`preset-btn ${
-                          selectedPreset === index ? "selected" : ""
-                        } ${preset.isOfficial ? "official" : ""}`}
+                        className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          selectedPreset === index
+                            ? preset.isOfficial
+                              ? "bg-[var(--color-warning)] text-white"
+                              : "bg-[var(--color-primary)] text-white"
+                            : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]"
+                        }`}
                         onClick={() => applyPreset(preset, index)}
                       >
+                        {preset.isOfficial && <Zap size={14} />}
                         {preset.name}
                       </button>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
                 {selectedPreset === -1 && (
-                  <small
-                    className="field-hint"
-                    style={{ marginTop: "8px", display: "block" }}
-                  >
+                  <p className="text-sm text-[var(--color-text-secondary)]">
                     手动配置供应商，需要填写完整的配置信息
-                  </small>
+                  </p>
                 )}
                 {selectedPreset !== -1 && selectedPreset !== null && (
-                  <small
-                    className="field-hint"
-                    style={{ marginTop: "8px", display: "block" }}
-                  >
+                  <p className="text-sm text-[var(--color-text-secondary)]">
                     {isOfficialPreset
                       ? "Claude 官方登录，不需要填写 API Key"
                       : "使用预设配置，只需填写 API Key"}
-                  </small>
+                  </p>
                 )}
               </div>
             )}
 
             {showPresets && isCodex && (
-              <div className="presets">
-                <label>选择配置类型</label>
-                <div className="preset-buttons">
-                  <button
-                    type="button"
-                    className={`preset-btn ${
-                      selectedCodexPreset === -1 ? "selected" : ""
-                    }`}
-                    onClick={handleCodexCustomClick}
-                  >
-                    自定义
-                  </button>
-                  {codexProviderPresets.map((preset, index) => (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-3">
+                    选择配置类型
+                  </label>
+                  <div className="flex flex-wrap gap-2">
                     <button
-                      key={index}
                       type="button"
-                      className={`preset-btn ${
-                        selectedCodexPreset === index ? "selected" : ""
-                      } ${preset.isOfficial ? "official" : ""}`}
-                      onClick={() => applyCodexPreset(preset, index)}
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        selectedCodexPreset === -1
+                          ? "bg-[var(--color-primary)] text-white"
+                          : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]"
+                      }`}
+                      onClick={handleCodexCustomClick}
                     >
-                      {preset.name}
+                      自定义
                     </button>
-                  ))}
+                    {codexProviderPresets.map((preset, index) => (
+                      <button
+                        key={index}
+                        type="button"
+                        className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          selectedCodexPreset === index
+                            ? preset.isOfficial
+                              ? "bg-[var(--color-warning)] text-white"
+                              : "bg-[var(--color-primary)] text-white"
+                            : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]"
+                        }`}
+                        onClick={() => applyCodexPreset(preset, index)}
+                      >
+                        {preset.isOfficial && <Zap size={14} />}
+                        {preset.name}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 {selectedCodexPreset === -1 && (
-                  <small
-                    className="field-hint"
-                    style={{ marginTop: "8px", display: "block" }}
-                  >
+                  <p className="text-sm text-[var(--color-text-secondary)]">
                     手动配置供应商，需要填写完整的配置信息
-                  </small>
+                  </p>
                 )}
                 {selectedCodexPreset !== -1 && selectedCodexPreset !== null && (
-                  <small
-                    className="field-hint"
-                    style={{ marginTop: "8px", display: "block" }}
-                  >
+                  <p className="text-sm text-[var(--color-text-secondary)]">
                     {isCodexOfficialPreset
                       ? "Codex 官方登录，不需要填写 API Key"
                       : "使用预设配置，只需填写 API Key"}
-                  </small>
+                  </p>
                 )}
               </div>
             )}
 
-            <div className="form-group">
-              <label htmlFor="name">供应商名称 *</label>
+            <div className="space-y-2">
+              <label
+                htmlFor="name"
+                className="block text-sm font-medium text-[var(--color-text-primary)]"
+              >
+                供应商名称 *
+              </label>
               <input
                 type="text"
                 id="name"
@@ -483,14 +509,18 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                 placeholder="例如：Anthropic 官方"
                 required
                 autoComplete="off"
+                className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-colors"
               />
             </div>
 
-            {!isCodex && (
-              <div
-                className={`form-group api-key-group ${!showApiKey ? "hidden" : ""}`}
-              >
-                <label htmlFor="apiKey">API Key *</label>
+            {!isCodex && showApiKey && (
+              <div className="space-y-2">
+                <label
+                  htmlFor="apiKey"
+                  className="block text-sm font-medium text-[var(--color-text-primary)]"
+                >
+                  API Key *
+                </label>
                 <input
                   type="text"
                   id="apiKey"
@@ -503,24 +533,23 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   }
                   disabled={isOfficialPreset}
                   autoComplete="off"
-                  style={
+                  className={`w-full px-3 py-2 border rounded-lg text-sm transition-colors ${
                     isOfficialPreset
-                      ? {
-                          backgroundColor: "#f5f5f5",
-                          cursor: "not-allowed",
-                          color: "#999",
-                        }
-                      : {}
-                  }
+                      ? "bg-[var(--color-bg-tertiary)] border-[var(--color-border)] text-[var(--color-text-tertiary)] cursor-not-allowed"
+                      : "border-[var(--color-border)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                  }`}
                 />
               </div>
             )}
 
-            {isCodex && (
-              <div
-                className={`form-group api-key-group ${!showCodexApiKey ? "hidden" : ""}`}
-              >
-                <label htmlFor="codexApiKey">API Key *</label>
+            {isCodex && showCodexApiKey && (
+              <div className="space-y-2">
+                <label
+                  htmlFor="codexApiKey"
+                  className="block text-sm font-medium text-[var(--color-text-primary)]"
+                >
+                  API Key *
+                </label>
                 <input
                   type="text"
                   id="codexApiKey"
@@ -538,21 +567,22 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                     !isCodexOfficialPreset
                   }
                   autoComplete="off"
-                  style={
+                  className={`w-full px-3 py-2 border rounded-lg text-sm transition-colors ${
                     isCodexOfficialPreset
-                      ? {
-                          backgroundColor: "#f5f5f5",
-                          cursor: "not-allowed",
-                          color: "#999",
-                        }
-                      : {}
-                  }
+                      ? "bg-[var(--color-bg-tertiary)] border-[var(--color-border)] text-[var(--color-text-tertiary)] cursor-not-allowed"
+                      : "border-[var(--color-border)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]"
+                  }`}
                 />
               </div>
             )}
 
-            <div className="form-group">
-              <label htmlFor="websiteUrl">官网地址</label>
+            <div className="space-y-2">
+              <label
+                htmlFor="websiteUrl"
+                className="block text-sm font-medium text-[var(--color-text-primary)]"
+              >
+                官网地址
+              </label>
               <input
                 type="url"
                 id="websiteUrl"
@@ -561,15 +591,21 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                 onChange={handleChange}
                 placeholder="https://example.com（可选）"
                 autoComplete="off"
+                className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-colors"
               />
             </div>
 
             {/* Claude 或 Codex 的配置部分 */}
             {isCodex ? (
               // Codex: 双编辑器
-              <>
-                <div className="form-group">
-                  <label htmlFor="codexAuth">auth.json (JSON) *</label>
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label
+                    htmlFor="codexAuth"
+                    className="block text-sm font-medium text-[var(--color-text-primary)]"
+                  >
+                    auth.json (JSON) *
+                  </label>
                   <textarea
                     id="codexAuth"
                     value={codexAuth}
@@ -591,38 +627,50 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   "OPENAI_API_KEY": "sk-your-api-key-here"
 }`}
                     rows={6}
-                    style={{ fontFamily: "monospace", fontSize: "14px" }}
                     required
+                    className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-colors resize-y min-h-[8rem]"
                   />
-                  <small className="field-hint">Codex auth.json 配置内容</small>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    Codex auth.json 配置内容
+                  </p>
                 </div>
 
-                <div className="form-group">
-                  <label htmlFor="codexConfig">config.toml (TOML)</label>
+                <div className="space-y-2">
+                  <label
+                    htmlFor="codexConfig"
+                    className="block text-sm font-medium text-[var(--color-text-primary)]"
+                  >
+                    config.toml (TOML)
+                  </label>
                   <textarea
                     id="codexConfig"
                     value={codexConfig}
                     onChange={(e) => setCodexConfig(e.target.value)}
-                    placeholder={``}
+                    placeholder=""
                     rows={8}
+                    className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-colors resize-y min-h-[10rem]"
                   />
-                  <small className="field-hint">
+                  <p className="text-xs text-[var(--color-text-secondary)]">
                     Codex config.toml 配置内容
-                  </small>
+                  </p>
                 </div>
-              </>
+              </div>
             ) : (
               // Claude: 原有的单编辑器
-              <div className="form-group">
-                <div className="label-with-checkbox">
-                  <label htmlFor="settingsConfig">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label
+                    htmlFor="settingsConfig"
+                    className="block text-sm font-medium text-[var(--color-text-primary)]"
+                  >
                     Claude Code 配置 (JSON) *
                   </label>
-                  <label className="checkbox-label">
+                  <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
                     <input
                       type="checkbox"
                       checked={disableCoAuthored}
                       onChange={(e) => handleCoAuthoredToggle(e.target.checked)}
+                      className="w-4 h-4 text-[var(--color-primary)] bg-white border-[var(--color-border)] rounded focus:ring-[var(--color-primary)] focus:ring-2"
                     />
                     禁止 Claude Code 签名
                   </label>
@@ -642,18 +690,27 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 }`}
                   rows={12}
                 />
-                <small className="field-hint">
+                <p className="text-xs text-[var(--color-text-secondary)]">
                   完整的 Claude Code settings.json 配置内容
-                </small>
+                </p>
               </div>
             )}
           </div>
 
-          <div className="modal-footer">
-            <button type="button" className="cancel-btn" onClick={onClose}>
+          {/* Footer */}
+          <div className="flex items-center justify-end gap-3 p-6 border-t border-[var(--color-border)] bg-[var(--color-bg-tertiary)]">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-white rounded-lg transition-colors"
+            >
               取消
             </button>
-            <button type="submit" className="submit-btn">
+            <button
+              type="submit"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-hover)] transition-colors text-sm font-medium"
+            >
+              <Save size={16} />
               {submitText}
             </button>
           </div>

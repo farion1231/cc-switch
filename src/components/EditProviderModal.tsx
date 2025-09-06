@@ -1,7 +1,7 @@
 import React from "react";
 import { Provider } from "../types";
 import { AppType } from "../lib/tauri-api";
-import ProviderForm from "./ProviderForm/ProviderForm";
+import ProviderForm from "./ProviderForm";
 
 interface EditProviderModalProps {
   appType: AppType;

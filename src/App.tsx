@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { Provider } from "./types";
 import { AppType } from "./lib/tauri-api";
-import ProviderList from "./components/ProviderList/ProviderList";
+import ProviderList from "./components/ProviderList";
 import AddProviderModal from "./components/AddProviderModal";
 import EditProviderModal from "./components/EditProviderModal";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { AppSwitcher } from "./components/AppSwitcher";
-import "./App.css";
+import { Plus } from "lucide-react";
 
 function App() {
   const [activeApp, setActiveApp] = useState<AppType>("claude");
@@ -214,29 +214,39 @@ function App() {
   };
 
   return (
-    <div className="app">
-      <header className="app-header">
-        <h1>CC Switch</h1>
-        <div className="app-tabs">
-          <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
-        </div>
-        <div className="header-actions">
-          <button className="add-btn" onClick={() => setIsAddModalOpen(true)}>
-            添加供应商
-          </button>
+    <div className="min-h-screen flex flex-col bg-[var(--color-bg-primary)]">
+      {/* Linear 风格的顶部导航 */}
+      <header className="bg-white border-b border-[var(--color-border)] px-6 py-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">
+            CC Switch
+          </h1>
+
+          <div className="flex items-center gap-4">
+            <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
+
+            <button
+              onClick={() => setIsAddModalOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg hover:bg-[var(--color-primary-hover)] transition-colors text-sm font-medium"
+            >
+              <Plus size={16} />
+              添加供应商
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="app-main">
-        <div className="provider-section">
-          {/* 浮动通知组件 */}
+      {/* 主内容区域 */}
+      <main className="flex-1 p-6">
+        <div className="max-w-4xl mx-auto">
+          {/* 通知组件 */}
           {notification && (
             <div
-              className={`notification-floating ${
+              className={`fixed top-6 left-1/2 transform -translate-x-1/2 z-50 px-4 py-3 rounded-lg shadow-lg transition-all duration-300 ${
                 notification.type === "error"
-                  ? "notification-error"
-                  : "notification-success"
-              } ${isNotificationVisible ? "fade-in" : "fade-out"}`}
+                  ? "bg-[var(--color-error)] text-white"
+                  : "bg-[var(--color-success)] text-white"
+              } ${isNotificationVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"}`}
             >
               {notification.message}
             </div>
@@ -249,24 +259,36 @@ function App() {
             onDelete={handleDeleteProvider}
             onEdit={setEditingProviderId}
           />
-        </div>
 
-        {configStatus && (
-          <div className="config-path">
-            <span>
-              {activeApp === "claude" ? "Claude Code" : "Codex"} 配置文件位置:{" "}
-              {configStatus.path}
-              {!configStatus.exists ? "（未创建，切换或保存时会自动创建）" : ""}
-            </span>
-            <button
-              className="browse-btn"
-              onClick={handleOpenConfigFolder}
-              title="打开配置文件夹"
-            >
-              打开
-            </button>
-          </div>
-        )}
+          {/* 配置文件路径信息 */}
+          {configStatus && (
+            <div className="mt-8 p-4 bg-white rounded-lg border border-[var(--color-border)]">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-[var(--color-text-secondary)]">
+                  <span className="font-medium">
+                    {activeApp === "claude" ? "Claude Code" : "Codex"}{" "}
+                    配置文件位置:
+                  </span>
+                  <span className="ml-2 font-mono text-xs">
+                    {configStatus.path}
+                  </span>
+                  {!configStatus.exists && (
+                    <span className="ml-2 text-[var(--color-warning)]">
+                      （未创建，切换或保存时会自动创建）
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={handleOpenConfigFolder}
+                  className="px-3 py-1.5 text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-bg-tertiary)] rounded-md transition-colors"
+                  title="打开配置文件夹"
+                >
+                  打开文件夹
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </main>
 
       {isAddModalOpen && (
