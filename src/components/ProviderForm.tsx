@@ -14,6 +14,7 @@ import PresetSelector from "./ProviderForm/PresetSelector";
 import ApiKeyInput from "./ProviderForm/ApiKeyInput";
 import ClaudeConfigEditor from "./ProviderForm/ClaudeConfigEditor";
 import CodexConfigEditor from "./ProviderForm/CodexConfigEditor";
+import KimiModelSelector from "./ProviderForm/KimiModelSelector";
 import { X, AlertCircle, Save } from "lucide-react";
 
 interface ProviderFormProps {
@@ -82,12 +83,33 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   );
   const [apiKey, setApiKey] = useState("");
 
+  // Kimi 模型选择状态
+  const [kimiAnthropicModel, setKimiAnthropicModel] = useState("");
+  const [kimiAnthropicSmallFastModel, setKimiAnthropicSmallFastModel] =
+    useState("");
+
   // 初始化时检查禁用签名状态
   useEffect(() => {
     if (initialData) {
       const configString = JSON.stringify(initialData.settingsConfig, null, 2);
       const hasCoAuthoredDisabled = checkCoAuthoredSetting(configString);
       setDisableCoAuthored(hasCoAuthoredDisabled);
+
+      // 初始化 Kimi 模型选择（编辑模式）
+      if (
+        initialData.settingsConfig &&
+        typeof initialData.settingsConfig === "object"
+      ) {
+        const config = initialData.settingsConfig as {
+          env?: Record<string, any>;
+        };
+        if (config.env) {
+          setKimiAnthropicModel(config.env.ANTHROPIC_MODEL || "");
+          setKimiAnthropicSmallFastModel(
+            config.env.ANTHROPIC_SMALL_FAST_MODEL || ""
+          );
+        }
+      }
     }
   }, [initialData]);
 
@@ -218,6 +240,24 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     // 同步选择框状态
     const hasCoAuthoredDisabled = checkCoAuthoredSetting(configString);
     setDisableCoAuthored(hasCoAuthoredDisabled);
+
+    // 如果是 Kimi 预设，初始化模型选择
+    if (
+      preset.name?.includes("Kimi") &&
+      preset.settingsConfig &&
+      typeof preset.settingsConfig === "object"
+    ) {
+      const config = preset.settingsConfig as { env?: Record<string, any> };
+      if (config.env) {
+        setKimiAnthropicModel(config.env.ANTHROPIC_MODEL || "");
+        setKimiAnthropicSmallFastModel(
+          config.env.ANTHROPIC_SMALL_FAST_MODEL || ""
+        );
+      }
+    } else {
+      setKimiAnthropicModel("");
+      setKimiAnthropicSmallFastModel("");
+    }
   };
 
   // 处理点击自定义按钮
@@ -230,6 +270,8 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     });
     setApiKey("");
     setDisableCoAuthored(false);
+    setKimiAnthropicModel("");
+    setKimiAnthropicSmallFastModel("");
   };
 
   // Codex: 应用预设
@@ -241,7 +283,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     setCodexAuth(authString);
     setCodexConfig(preset.config || "");
 
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       name: preset.name,
       websiteUrl: preset.websiteUrl,
@@ -311,6 +353,23 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     selectedPreset >= 0 &&
     providerPresets[selectedPreset]?.isOfficial === true;
 
+  // 判断当前选中的预设是否是 Kimi
+  const isKimiPreset =
+    selectedPreset !== null &&
+    selectedPreset >= 0 &&
+    providerPresets[selectedPreset]?.name?.includes("Kimi");
+
+  // 判断当前编辑的是否是 Kimi 提供商（通过名称或配置判断）
+  const isEditingKimi =
+    initialData &&
+    (formData.name.includes("Kimi") ||
+      formData.name.includes("kimi") ||
+      (formData.settingsConfig.includes("api.moonshot.cn") &&
+        formData.settingsConfig.includes("ANTHROPIC_MODEL")));
+
+  // 综合判断是否应该显示 Kimi 模型选择器
+  const shouldShowKimiSelector = isKimiPreset || isEditingKimi;
+
   // Codex: 控制显示 API Key 与官方标记
   const getCodexAuthApiKey = (authString: string): string => {
     try {
@@ -320,16 +379,43 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       return "";
     }
   };
-  
+
   // 自定义模式(-1)不显示独立的 API Key 输入框
   const showCodexApiKey =
     (selectedCodexPreset !== null && selectedCodexPreset !== -1) ||
     (!showPresets && getCodexAuthApiKey(codexAuth) !== "");
-    
+
   const isCodexOfficialPreset =
     selectedCodexPreset !== null &&
     selectedCodexPreset >= 0 &&
     codexProviderPresets[selectedCodexPreset]?.isOfficial === true;
+
+  // Kimi 模型选择处理函数
+  const handleKimiModelChange = (
+    field: "ANTHROPIC_MODEL" | "ANTHROPIC_SMALL_FAST_MODEL",
+    value: string
+  ) => {
+    if (field === "ANTHROPIC_MODEL") {
+      setKimiAnthropicModel(value);
+    } else {
+      setKimiAnthropicSmallFastModel(value);
+    }
+
+    // 更新配置 JSON
+    try {
+      const currentConfig = JSON.parse(formData.settingsConfig || "{}");
+      if (!currentConfig.env) currentConfig.env = {};
+      currentConfig.env[field] = value;
+
+      const updatedConfigString = JSON.stringify(currentConfig, null, 2);
+      setFormData((prev) => ({
+        ...prev,
+        settingsConfig: updatedConfigString,
+      }));
+    } catch (err) {
+      console.error("更新 Kimi 模型配置失败:", err);
+    }
+  };
 
   // 初始时从配置中同步 API Key（编辑模式）
   useEffect(() => {
@@ -399,7 +485,9 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
               <PresetSelector
                 presets={providerPresets}
                 selectedIndex={selectedPreset}
-                onSelectPreset={(index) => applyPreset(providerPresets[index], index)}
+                onSelectPreset={(index) =>
+                  applyPreset(providerPresets[index], index)
+                }
                 onCustomClick={handleCustomClick}
               />
             )}
@@ -408,7 +496,9 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
               <PresetSelector
                 presets={codexProviderPresets}
                 selectedIndex={selectedCodexPreset}
-                onSelectPreset={(index) => applyCodexPreset(codexProviderPresets[index], index)}
+                onSelectPreset={(index) =>
+                  applyCodexPreset(codexProviderPresets[index], index)
+                }
                 onCustomClick={handleCodexCustomClick}
               />
             )}
@@ -442,6 +532,16 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                     ? "官方登录无需填写 API Key，直接保存即可"
                     : "只需要填这里，下方配置会自动填充"
                 }
+                disabled={isOfficialPreset}
+              />
+            )}
+
+            {!isCodex && shouldShowKimiSelector && apiKey.trim() && (
+              <KimiModelSelector
+                apiKey={apiKey}
+                anthropicModel={kimiAnthropicModel}
+                anthropicSmallFastModel={kimiAnthropicSmallFastModel}
+                onModelChange={handleKimiModelChange}
                 disabled={isOfficialPreset}
               />
             )}
