@@ -530,7 +530,9 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                 placeholder={
                   isOfficialPreset
                     ? "官方登录无需填写 API Key，直接保存即可"
-                    : "只需要填这里，下方配置会自动填充"
+                    : shouldShowKimiSelector
+                      ? "sk-xxx-api-key-here (填写后可获取模型列表)"
+                      : "只需要填这里，下方配置会自动填充"
                 }
                 disabled={isOfficialPreset}
               />

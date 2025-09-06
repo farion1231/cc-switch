@@ -87,8 +87,7 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
     label: string;
     value: string;
     onChange: (value: string) => void;
-    fieldName: "ANTHROPIC_MODEL" | "ANTHROPIC_SMALL_FAST_MODEL";
-  }> = ({ label, value, onChange, fieldName }) => (
+  }> = ({ label, value, onChange }) => (
     <div className="space-y-2">
       <label className="block text-sm font-medium text-[var(--color-text-primary)]">
         {label}
@@ -153,7 +152,6 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
           label="主模型 (ANTHROPIC_MODEL)"
           value={anthropicModel}
           onChange={(value) => onModelChange("ANTHROPIC_MODEL", value)}
-          fieldName="ANTHROPIC_MODEL"
         />
         <ModelSelect
           label="快速模型 (ANTHROPIC_SMALL_FAST_MODEL)"
@@ -161,14 +159,15 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
           onChange={(value) =>
             onModelChange("ANTHROPIC_SMALL_FAST_MODEL", value)
           }
-          fieldName="ANTHROPIC_SMALL_FAST_MODEL"
         />
       </div>
 
       {!apiKey.trim() && (
-        <p className="text-xs text-[var(--color-text-secondary)]">
-          请先填写 API Key 以获取可用模型列表
-        </p>
+        <div className="p-3 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg">
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            📝 请先填写 API Key（格式：sk-xxx-api-key-here）以获取可用模型列表
+          </p>
+        </div>
       )}
     </div>
   );

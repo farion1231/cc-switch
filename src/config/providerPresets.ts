@@ -23,7 +23,7 @@ export const providerPresets: ProviderPreset[] = [
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
-        ANTHROPIC_AUTH_TOKEN: "sk-your-api-key-here",
+        ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "deepseek-chat",
         ANTHROPIC_SMALL_FAST_MODEL: "deepseek-chat",
       },
@@ -35,7 +35,7 @@ export const providerPresets: ProviderPreset[] = [
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic",
-        ANTHROPIC_AUTH_TOKEN: "sk-your-api-key-here",
+        ANTHROPIC_AUTH_TOKEN: "",
       },
     },
   },
@@ -46,7 +46,7 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL:
           "https://dashscope.aliyuncs.com/api/v2/apps/claude-code-proxy",
-        ANTHROPIC_AUTH_TOKEN: "sk-your-api-key-here",
+        ANTHROPIC_AUTH_TOKEN: "",
       },
     },
   },
@@ -56,7 +56,7 @@ export const providerPresets: ProviderPreset[] = [
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.moonshot.cn/anthropic",
-        ANTHROPIC_AUTH_TOKEN: "sk-your-api-key-here",
+        ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "kimi-k2-turbo-preview",
         ANTHROPIC_SMALL_FAST_MODEL: "kimi-k2-turbo-preview",
       },
@@ -66,12 +66,12 @@ export const providerPresets: ProviderPreset[] = [
     name: "魔搭",
     websiteUrl: "https://modelscope.cn",
     settingsConfig: {
-      "env": {
-        ANTHROPIC_AUTH_TOKEN: "ms-your-api-key-here",
+      env: {
+        ANTHROPIC_AUTH_TOKEN: "ms-your-api-key",
         ANTHROPIC_BASE_URL: "https://api-inference.modelscope.cn",
         ANTHROPIC_MODEL: "ZhipuAI/GLM-4.5",
-        ANTHROPIC_SMALL_FAST_MODEL: "ZhipuAI/GLM-4.5"
-  },
+        ANTHROPIC_SMALL_FAST_MODEL: "ZhipuAI/GLM-4.5",
+      },
     },
   },
   {
@@ -80,7 +80,7 @@ export const providerPresets: ProviderPreset[] = [
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.packycode.com",
-        ANTHROPIC_AUTH_TOKEN: "sk-your-api-key-here",
+        ANTHROPIC_AUTH_TOKEN: "",
       },
     },
   },
