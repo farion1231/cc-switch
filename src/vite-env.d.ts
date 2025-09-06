@@ -30,6 +30,10 @@ declare global {
       selectConfigFile: () => Promise<string | null>;
       openConfigFolder: (app?: AppType) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
+      updateTrayMenu: () => Promise<void>;
+      onProviderSwitched: (
+        callback: (data: { appType: string; providerId: string }) => void
+      ) => Promise<UnlistenFn>;
     };
     platform: {
       isMac: boolean;

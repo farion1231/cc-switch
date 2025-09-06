@@ -1,5 +1,5 @@
 import React from "react";
-import { Provider } from "../types";
+import { Provider } from "../../types";
 import "./ProviderList.css";
 
 interface ProviderListProps {

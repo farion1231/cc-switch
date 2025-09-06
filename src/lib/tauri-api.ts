@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { Provider } from "../types";
 
 // 应用类型
@@ -52,7 +53,7 @@ export const tauriAPI = {
   // 更新供应商
   updateProvider: async (
     provider: Provider,
-    app?: AppType,
+    app?: AppType
   ): Promise<boolean> => {
     try {
       return await invoke("update_provider", { provider, app_type: app, app });
@@ -75,7 +76,7 @@ export const tauriAPI = {
   // 切换供应商
   switchProvider: async (
     providerId: string,
-    app?: AppType,
+    app?: AppType
   ): Promise<boolean> => {
     try {
       return await invoke("switch_provider", {
@@ -91,7 +92,7 @@ export const tauriAPI = {
 
   // 导入当前配置为默认供应商
   importCurrentConfigAsDefault: async (
-    app?: AppType,
+    app?: AppType
   ): Promise<ImportResult> => {
     try {
       const success = await invoke<boolean>("import_default_config", {
@@ -165,6 +166,25 @@ export const tauriAPI = {
     } catch (error) {
       console.error("打开外部链接失败:", error);
     }
+  },
+
+  // 更新托盘菜单
+  updateTrayMenu: async (): Promise<boolean> => {
+    try {
+      return await invoke("update_tray_menu");
+    } catch (error) {
+      console.error("更新托盘菜单失败:", error);
+      return false;
+    }
+  },
+
+  // 监听供应商切换事件
+  onProviderSwitched: async (
+    callback: (data: { appType: string; providerId: string }) => void
+  ): Promise<UnlistenFn> => {
+    return await listen("provider-switched", (event) => {
+      callback(event.payload as { appType: string; providerId: string });
+    });
   },
 
   // （保留空位，取消迁移提示）

@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from "react";
-import { Provider } from "../types";
-import { AppType } from "../lib/tauri-api";
+import { Provider } from "../../types";
+import { AppType } from "../../lib/tauri-api";
 import {
   updateCoAuthoredSetting,
   checkCoAuthoredSetting,
   getApiKeyFromConfig,
   hasApiKeyField,
   setApiKeyInConfig,
-} from "../utils/providerConfigUtils";
-import { providerPresets } from "../config/providerPresets";
-import { codexProviderPresets } from "../config/codexProviderPresets";
-import "./AddProviderModal.css";
-import JsonEditor from "./JsonEditor";
+} from "../../utils/providerConfigUtils";
+import { providerPresets } from "../../config/providerPresets";
+import { codexProviderPresets } from "../../config/codexProviderPresets";
+import "../AddProviderModal/index.css";
+import JsonEditor from "../JsonEditor";
 
 interface ProviderFormProps {
   appType?: AppType;
@@ -49,7 +49,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [codexApiKey, setCodexApiKey] = useState("");
   // -1 表示自定义，null 表示未选择，>= 0 表示预设索引
   const [selectedCodexPreset, setSelectedCodexPreset] = useState<number | null>(
-    showPresets && isCodex ? -1 : null,
+    showPresets && isCodex ? -1 : null
   );
 
   // 初始化 Codex 配置
@@ -74,7 +74,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [disableCoAuthored, setDisableCoAuthored] = useState(false);
   // -1 表示自定义，null 表示未选择，>= 0 表示预设索引
   const [selectedPreset, setSelectedPreset] = useState<number | null>(
-    showPresets ? -1 : null,
+    showPresets ? -1 : null
   );
   const [apiKey, setApiKey] = useState("");
 
@@ -155,7 +155,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   };
 
   const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target;
 
@@ -188,7 +188,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     // 更新JSON配置
     const updatedConfig = updateCoAuthoredSetting(
       formData.settingsConfig,
-      checked,
+      checked
     );
     setFormData({
       ...formData,
@@ -231,7 +231,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   // Codex: 应用预设
   const applyCodexPreset = (
     preset: (typeof codexProviderPresets)[0],
-    index: number,
+    index: number
   ) => {
     const authString = JSON.stringify(preset.auth || {}, null, 2);
     setCodexAuth(authString);
@@ -269,7 +269,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     const configString = setApiKeyInConfig(
       formData.settingsConfig,
       key.trim(),
-      { createIfMissing: selectedPreset !== null && selectedPreset !== -1 },
+      { createIfMissing: selectedPreset !== null && selectedPreset !== -1 }
     );
 
     // 更新表单配置
@@ -329,7 +329,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   useEffect(() => {
     if (initialData) {
       const parsedKey = getApiKeyFromConfig(
-        JSON.stringify(initialData.settingsConfig),
+        JSON.stringify(initialData.settingsConfig)
       );
       if (parsedKey) setApiKey(parsedKey);
     }
@@ -629,9 +629,11 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                 </div>
                 <JsonEditor
                   value={formData.settingsConfig}
-                   onChange={(value) => handleChange({
-                  target: { name: "settingsConfig", value }
-                } as React.ChangeEvent<HTMLTextAreaElement>)}
+                  onChange={(value) =>
+                    handleChange({
+                      target: { name: "settingsConfig", value },
+                    } as React.ChangeEvent<HTMLTextAreaElement>)
+                  }
                   placeholder={`{
   "env": {
     "ANTHROPIC_BASE_URL": "https://api.anthropic.com",

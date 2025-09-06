@@ -1,5 +1,5 @@
-import { AppType } from "../lib/tauri-api";
-import "./AppSwitcher.css";
+import { AppType } from "../../lib/tauri-api";
+import "./index.css";
 
 interface AppSwitcherProps {
   activeApp: AppType;

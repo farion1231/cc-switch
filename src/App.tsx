@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Provider } from "./types";
 import { AppType } from "./lib/tauri-api";
-import ProviderList from "./components/ProviderList";
+import ProviderList from "./components/ProviderList/ProviderList";
 import AddProviderModal from "./components/AddProviderModal";
 import EditProviderModal from "./components/EditProviderModal";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -18,7 +18,7 @@ function App() {
     path: string;
   } | null>(null);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(
-    null,
+    null
   );
   const [notification, setNotification] = useState<{
     message: string;
@@ -37,7 +37,7 @@ function App() {
   const showNotification = (
     message: string,
     type: "success" | "error",
-    duration = 3000,
+    duration = 3000
   ) => {
     // 清除之前的定时器
     if (timeoutRef.current) {
@@ -74,6 +74,35 @@ function App() {
     };
   }, []);
 
+  // 监听托盘切换事件
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    const setupListener = async () => {
+      try {
+        unlisten = await window.api.onProviderSwitched(async (data) => {
+          console.log("收到供应商切换事件:", data);
+
+          // 如果当前应用类型匹配，则重新加载数据
+          if (data.appType === activeApp) {
+            await loadProviders();
+          }
+        });
+      } catch (error) {
+        console.error("设置供应商切换监听器失败:", error);
+      }
+    };
+
+    setupListener();
+
+    // 清理监听器
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [activeApp]); // 依赖activeApp，切换应用时重新设置监听器
+
   const loadProviders = async () => {
     const loadedProviders = await window.api.getProviders(activeApp);
     const currentId = await window.api.getCurrentProvider(activeApp);
@@ -107,6 +136,8 @@ function App() {
     await window.api.addProvider(newProvider, activeApp);
     await loadProviders();
     setIsAddModalOpen(false);
+    // 更新托盘菜单
+    await window.api.updateTrayMenu();
   };
 
   const handleEditProvider = async (provider: Provider) => {
@@ -116,6 +147,8 @@ function App() {
       setEditingProviderId(null);
       // 显示编辑成功提示
       showNotification("供应商配置已保存", "success", 2000);
+      // 更新托盘菜单
+      await window.api.updateTrayMenu();
     } catch (error) {
       console.error("更新供应商失败:", error);
       setEditingProviderId(null);
@@ -134,6 +167,8 @@ function App() {
         await loadProviders();
         setConfirmDialog(null);
         showNotification("供应商删除成功", "success");
+        // 更新托盘菜单
+        await window.api.updateTrayMenu();
       },
     });
   };
@@ -147,8 +182,10 @@ function App() {
       showNotification(
         `切换成功！请重启 ${appName} 终端以生效`,
         "success",
-        2000,
+        2000
       );
+      // 更新托盘菜单
+      await window.api.updateTrayMenu();
     } else {
       showNotification("切换失败，请检查配置", "error");
     }
@@ -162,6 +199,8 @@ function App() {
       if (result.success) {
         await loadProviders();
         showNotification("已从现有配置创建默认供应商", "success", 3000);
+        // 更新托盘菜单
+        await window.api.updateTrayMenu();
       }
       // 如果导入失败（比如没有现有配置），静默处理，不显示错误
     } catch (error) {
@@ -215,7 +254,8 @@ function App() {
         {configStatus && (
           <div className="config-path">
             <span>
-              配置文件位置: {configStatus.path}
+              {activeApp === "claude" ? "Claude Code" : "Codex"} 配置文件位置:{" "}
+              {configStatus.path}
               {!configStatus.exists ? "（未创建，切换或保存时会自动创建）" : ""}
             </span>
             <button
