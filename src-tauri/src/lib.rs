@@ -8,7 +8,7 @@ mod store;
 
 use store::AppState;
 use tauri::{
-    menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem, Submenu},
+    menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri::{Emitter, Manager};
@@ -25,11 +25,15 @@ fn create_tray_menu(
 
     let mut menu_builder = MenuBuilder::new(app);
 
-    // Claude 子菜单
+    // 直接添加所有供应商到主菜单（扁平化结构，更简单可靠）
     if let Some(claude_manager) = config.get_manager(&crate::app_config::AppType::Claude) {
-        if !claude_manager.providers.is_empty() {
-            let mut claude_submenu_builder = MenuBuilder::new(app);
+        // 添加Claude标题（禁用状态，仅作为分组标识）
+        let claude_header =
+            MenuItem::with_id(app, "claude_header", "─── Claude ───", false, None::<&str>)
+                .map_err(|e| format!("创建Claude标题失败: {}", e))?;
+        menu_builder = menu_builder.item(&claude_header);
 
+        if !claude_manager.providers.is_empty() {
             for (id, provider) in &claude_manager.providers {
                 let is_current = claude_manager.current == *id;
                 let item = CheckMenuItem::with_id(
@@ -41,24 +45,30 @@ fn create_tray_menu(
                     None::<&str>,
                 )
                 .map_err(|e| format!("创建菜单项失败: {}", e))?;
-                claude_submenu_builder = claude_submenu_builder.item(&item);
+                menu_builder = menu_builder.item(&item);
             }
-
-            let claude_submenu_menu = claude_submenu_builder
-                .build()
-                .map_err(|e| format!("构建Claude子菜单失败: {}", e))?;
-            let claude_submenu = Submenu::new(app, "Claude", true)
-                .map_err(|e| format!("创建Claude子菜单失败: {}", e))?;
-            // Note: 在Tauri中，需要使用其他方式来设置子菜单项，这里先使用简化版本
-            menu_builder = menu_builder.item(&claude_submenu);
+        } else {
+            // 没有供应商时显示提示
+            let empty_hint = MenuItem::with_id(
+                app,
+                "claude_empty",
+                "  (无供应商，请在主界面添加)",
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| format!("创建Claude空提示失败: {}", e))?;
+            menu_builder = menu_builder.item(&empty_hint);
         }
     }
 
-    // Codex 子菜单
     if let Some(codex_manager) = config.get_manager(&crate::app_config::AppType::Codex) {
-        if !codex_manager.providers.is_empty() {
-            let mut codex_submenu_builder = MenuBuilder::new(app);
+        // 添加Codex标题（禁用状态，仅作为分组标识）
+        let codex_header =
+            MenuItem::with_id(app, "codex_header", "─── Codex ───", false, None::<&str>)
+                .map_err(|e| format!("创建Codex标题失败: {}", e))?;
+        menu_builder = menu_builder.item(&codex_header);
 
+        if !codex_manager.providers.is_empty() {
             for (id, provider) in &codex_manager.providers {
                 let is_current = codex_manager.current == *id;
                 let item = CheckMenuItem::with_id(
@@ -70,54 +80,24 @@ fn create_tray_menu(
                     None::<&str>,
                 )
                 .map_err(|e| format!("创建菜单项失败: {}", e))?;
-                codex_submenu_builder = codex_submenu_builder.item(&item);
+                menu_builder = menu_builder.item(&item);
             }
-
-            let codex_submenu_menu = codex_submenu_builder
-                .build()
-                .map_err(|e| format!("构建Codex子菜单失败: {}", e))?;
-            let codex_submenu = Submenu::new(app, "Codex", true)
-                .map_err(|e| format!("创建Codex子菜单失败: {}", e))?;
-            // Note: 在Tauri中，需要使用其他方式来设置子菜单项，这里先使用简化版本
-            menu_builder = menu_builder.item(&codex_submenu);
-        }
-    }
-
-    // 如果没有子菜单，直接添加所有供应商到主菜单
-    if let Some(claude_manager) = config.get_manager(&crate::app_config::AppType::Claude) {
-        for (id, provider) in &claude_manager.providers {
-            let is_current = claude_manager.current == *id;
-            let item = CheckMenuItem::with_id(
+        } else {
+            // 没有供应商时显示提示
+            let empty_hint = MenuItem::with_id(
                 app,
-                format!("claude_{}", id),
-                &format!("Claude: {}", provider.name),
-                true,
-                is_current,
+                "codex_empty",
+                "  (无供应商，请在主界面添加)",
+                false,
                 None::<&str>,
             )
-            .map_err(|e| format!("创建菜单项失败: {}", e))?;
-            menu_builder = menu_builder.item(&item);
-        }
-    }
-
-    if let Some(codex_manager) = config.get_manager(&crate::app_config::AppType::Codex) {
-        for (id, provider) in &codex_manager.providers {
-            let is_current = codex_manager.current == *id;
-            let item = CheckMenuItem::with_id(
-                app,
-                format!("codex_{}", id),
-                &format!("Codex: {}", provider.name),
-                true,
-                is_current,
-                None::<&str>,
-            )
-            .map_err(|e| format!("创建菜单项失败: {}", e))?;
-            menu_builder = menu_builder.item(&item);
+            .map_err(|e| format!("创建Codex空提示失败: {}", e))?;
+            menu_builder = menu_builder.item(&empty_hint);
         }
     }
 
     // 分隔符和退出菜单
-    let separator = MenuItem::with_id(app, "separator", "---", false, None::<&str>)
+    let separator = MenuItem::with_id(app, "separator", "───────────", false, None::<&str>)
         .map_err(|e| format!("创建分隔符失败: {}", e))?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)
         .map_err(|e| format!("创建退出菜单失败: {}", e))?;
