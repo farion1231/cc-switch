@@ -29,10 +29,11 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
   const [models, setModels] = useState<KimiModel[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [debouncedKey, setDebouncedKey] = useState("");
 
   // 获取模型列表
-  const fetchModels = async () => {
-    if (!apiKey.trim()) {
+  const fetchModelsWithKey = async (key: string) => {
+    if (!key) {
       setError("请先填写 API Key");
       return;
     }
@@ -43,7 +44,7 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
     try {
       const response = await fetch("https://api.moonshot.cn/v1/models", {
         headers: {
-          Authorization: `Bearer ${apiKey.trim()}`,
+          Authorization: `Bearer ${key}`,
           "Content-Type": "application/json",
         },
       });
@@ -67,15 +68,23 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
     }
   };
 
-  // 当 API Key 改变时自动获取模型列表
+  // 500ms 防抖 API Key
   useEffect(() => {
-    if (apiKey.trim()) {
-      fetchModels();
+    const timer = setTimeout(() => {
+      setDebouncedKey(apiKey.trim());
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [apiKey]);
+
+  // 当防抖后的 Key 改变时自动获取模型列表
+  useEffect(() => {
+    if (debouncedKey) {
+      fetchModelsWithKey(debouncedKey);
     } else {
       setModels([]);
       setError("");
     }
-  }, [apiKey]);
+  }, [debouncedKey]);
 
   const selectClass = `w-full px-3 py-2 border rounded-lg text-sm transition-colors appearance-none bg-white ${
     disabled
@@ -128,8 +137,8 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
         </h3>
         <button
           type="button"
-          onClick={fetchModels}
-          disabled={disabled || loading || !apiKey.trim()}
+          onClick={() => debouncedKey && fetchModelsWithKey(debouncedKey)}
+          disabled={disabled || loading || !debouncedKey}
           className="inline-flex items-center gap-1 px-2 py-1 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
