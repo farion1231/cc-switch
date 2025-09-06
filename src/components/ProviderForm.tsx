@@ -53,7 +53,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [codexApiKey, setCodexApiKey] = useState("");
   // -1 表示自定义，null 表示未选择，>= 0 表示预设索引
   const [selectedCodexPreset, setSelectedCodexPreset] = useState<number | null>(
-    showPresets && isCodex ? -1 : null
+    showPresets && isCodex ? -1 : null,
   );
 
   // 初始化 Codex 配置
@@ -79,7 +79,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [disableCoAuthored, setDisableCoAuthored] = useState(false);
   // -1 表示自定义，null 表示未选择，>= 0 表示预设索引
   const [selectedPreset, setSelectedPreset] = useState<number | null>(
-    showPresets ? -1 : null
+    showPresets ? -1 : null,
   );
   const [apiKey, setApiKey] = useState("");
 
@@ -106,7 +106,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
         if (config.env) {
           setKimiAnthropicModel(config.env.ANTHROPIC_MODEL || "");
           setKimiAnthropicSmallFastModel(
-            config.env.ANTHROPIC_SMALL_FAST_MODEL || ""
+            config.env.ANTHROPIC_SMALL_FAST_MODEL || "",
           );
         }
       }
@@ -181,7 +181,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   };
 
   const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
     const { name, value } = e.target;
 
@@ -214,7 +214,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     // 更新JSON配置
     const updatedConfig = updateCoAuthoredSetting(
       formData.settingsConfig,
-      checked
+      checked,
     );
     setFormData({
       ...formData,
@@ -251,7 +251,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       if (config.env) {
         setKimiAnthropicModel(config.env.ANTHROPIC_MODEL || "");
         setKimiAnthropicSmallFastModel(
-          config.env.ANTHROPIC_SMALL_FAST_MODEL || ""
+          config.env.ANTHROPIC_SMALL_FAST_MODEL || "",
         );
       }
     } else {
@@ -277,7 +277,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   // Codex: 应用预设
   const applyCodexPreset = (
     preset: (typeof codexProviderPresets)[0],
-    index: number
+    index: number,
   ) => {
     const authString = JSON.stringify(preset.auth || {}, null, 2);
     setCodexAuth(authString);
@@ -315,7 +315,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     const configString = setApiKeyInConfig(
       formData.settingsConfig,
       key.trim(),
-      { createIfMissing: selectedPreset !== null && selectedPreset !== -1 }
+      { createIfMissing: selectedPreset !== null && selectedPreset !== -1 },
     );
 
     // 更新表单配置
@@ -393,7 +393,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   // Kimi 模型选择处理函数
   const handleKimiModelChange = (
     field: "ANTHROPIC_MODEL" | "ANTHROPIC_SMALL_FAST_MODEL",
-    value: string
+    value: string,
   ) => {
     if (field === "ANTHROPIC_MODEL") {
       setKimiAnthropicModel(value);
@@ -421,7 +421,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   useEffect(() => {
     if (initialData) {
       const parsedKey = getApiKeyFromConfig(
-        JSON.stringify(initialData.settingsConfig)
+        JSON.stringify(initialData.settingsConfig),
       );
       if (parsedKey) setApiKey(parsedKey);
     }

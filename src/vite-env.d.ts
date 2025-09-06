@@ -33,7 +33,7 @@ declare global {
       openExternal: (url: string) => Promise<void>;
       updateTrayMenu: () => Promise<boolean>;
       onProviderSwitched: (
-        callback: (data: { appType: string; providerId: string }) => void
+        callback: (data: { appType: string; providerId: string }) => void,
       ) => Promise<UnlistenFn>;
     };
     platform: {

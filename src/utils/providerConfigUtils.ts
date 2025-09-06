@@ -33,7 +33,6 @@ export const checkCoAuthoredSetting = (jsonString: string): boolean => {
   }
 };
 
-
 // 读取配置中的 API Key（env.ANTHROPIC_AUTH_TOKEN）
 export const getApiKeyFromConfig = (jsonString: string): string => {
   try {

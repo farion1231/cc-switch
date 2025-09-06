@@ -14,7 +14,7 @@ interface KimiModelSelectorProps {
   anthropicSmallFastModel: string;
   onModelChange: (
     field: "ANTHROPIC_MODEL" | "ANTHROPIC_SMALL_FAST_MODEL",
-    value: string
+    value: string,
   ) => void;
   disabled?: boolean;
 }

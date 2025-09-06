@@ -18,7 +18,7 @@ function App() {
     path: string;
   } | null>(null);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(
-    null
+    null,
   );
   const [notification, setNotification] = useState<{
     message: string;
@@ -37,7 +37,7 @@ function App() {
   const showNotification = (
     message: string,
     type: "success" | "error",
-    duration = 3000
+    duration = 3000,
   ) => {
     // 清除之前的定时器
     if (timeoutRef.current) {
@@ -182,7 +182,7 @@ function App() {
       showNotification(
         `切换成功！请重启 ${appName} 终端以生效`,
         "success",
-        2000
+        2000,
       );
       // 更新托盘菜单
       await window.api.updateTrayMenu();

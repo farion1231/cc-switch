@@ -25,14 +25,15 @@ const PresetSelector: React.FC<PresetSelectorProps> = ({
 }) => {
   const getButtonClass = (index: number, isOfficial?: boolean) => {
     const isSelected = selectedIndex === index;
-    const baseClass = "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors";
-    
+    const baseClass =
+      "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors";
+
     if (isSelected) {
-      return isOfficial 
+      return isOfficial
         ? `${baseClass} bg-[var(--color-warning)] text-white`
         : `${baseClass} bg-[var(--color-primary)] text-white`;
     }
-    
+
     return `${baseClass} bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]`;
   };
 
@@ -40,14 +41,14 @@ const PresetSelector: React.FC<PresetSelectorProps> = ({
     if (selectedIndex === -1) {
       return "手动配置供应商，需要填写完整的配置信息";
     }
-    
+
     if (selectedIndex !== null && selectedIndex >= 0) {
       const preset = presets[selectedIndex];
-      return preset?.isOfficial 
-        ? "Claude 官方登录，不需要填写 API Key" 
+      return preset?.isOfficial
+        ? "Claude 官方登录，不需要填写 API Key"
         : "使用预设配置，只需填写 API Key";
     }
-    
+
     return null;
   };
 
