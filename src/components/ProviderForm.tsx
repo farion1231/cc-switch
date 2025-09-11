@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Provider } from "../types";
-import { AppType } from "../lib/tauri-api";
+import { AppType, tauriAPI } from "../lib/tauri-api";
 import {
   updateCoAuthoredSetting,
   checkCoAuthoredSetting,
@@ -15,6 +15,7 @@ import ApiKeyInput from "./ProviderForm/ApiKeyInput";
 import ClaudeConfigEditor from "./ProviderForm/ClaudeConfigEditor";
 import CodexConfigEditor from "./ProviderForm/CodexConfigEditor";
 import KimiModelSelector from "./ProviderForm/KimiModelSelector";
+import SubOptionSelector from "./ProviderForm/SubOptionSelector";
 import { X, AlertCircle, Save } from "lucide-react";
 
 interface ProviderFormProps {
@@ -87,6 +88,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [kimiAnthropicModel, setKimiAnthropicModel] = useState("");
   const [kimiAnthropicSmallFastModel, setKimiAnthropicSmallFastModel] =
     useState("");
+
+  // 二级选项状态
+  const [selectedSubOption, setSelectedSubOption] = useState("");
+  const [selectedEndpoint, setSelectedEndpoint] = useState("");
 
   // 初始化时检查禁用签名状态
   useEffect(() => {
@@ -258,6 +263,15 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       setKimiAnthropicModel("");
       setKimiAnthropicSmallFastModel("");
     }
+
+    // 处理二级选项
+    if (preset.subOptions && preset.subOptions.length > 0) {
+      setSelectedSubOption(preset.subOptions[0].name);
+      setSelectedEndpoint(preset.subOptions[0].endpoints[0] || "");
+    } else {
+      setSelectedSubOption("");
+      setSelectedEndpoint("");
+    }
   };
 
   // 处理点击自定义按钮
@@ -272,6 +286,8 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     setDisableCoAuthored(false);
     setKimiAnthropicModel("");
     setKimiAnthropicSmallFastModel("");
+    setSelectedSubOption("");
+    setSelectedEndpoint("");
   };
 
   // Codex: 应用预设
@@ -293,6 +309,19 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
     // 清空 API Key，让用户重新输入
     setCodexApiKey("");
+
+    // 处理 Codex 端点
+    if (preset.endpoints && preset.endpoints.length > 0) {
+      setSelectedEndpoint(preset.endpoints[0]);
+      // 更新 config.toml 中的 base_url
+      if (preset.config) {
+        const updatedConfig = preset.config.replace(
+          /base_url = "[^"]*"/,
+          `base_url = "${preset.endpoints[0]}/v1"`
+        );
+        setCodexConfig(updatedConfig);
+      }
+    }
   };
 
   // Codex: 处理点击自定义按钮
@@ -306,6 +335,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     setCodexAuth("");
     setCodexConfig("");
     setCodexApiKey("");
+    setSelectedEndpoint("");
   };
 
   // 处理 API Key 输入并自动更新配置
@@ -329,6 +359,26 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     setDisableCoAuthored(hasCoAuthoredDisabled);
   };
 
+  // 处理端点变化
+  const handleEndpointChange = (endpoint: string) => {
+    setSelectedEndpoint(endpoint);
+    
+    // 更新配置中的 BASE_URL
+    try {
+      const config = JSON.parse(formData.settingsConfig || "{}");
+      if (!config.env) config.env = {};
+      config.env.ANTHROPIC_BASE_URL = endpoint;
+      
+      const configString = JSON.stringify(config, null, 2);
+      setFormData((prev) => ({
+        ...prev,
+        settingsConfig: configString,
+      }));
+    } catch (error) {
+      console.error("更新端点失败:", error);
+    }
+  };
+
   // Codex: 处理 API Key 输入并写回 auth.json
   const handleCodexApiKeyChange = (key: string) => {
     setCodexApiKey(key);
@@ -338,6 +388,20 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       setCodexAuth(JSON.stringify(auth, null, 2));
     } catch {
       // ignore
+    }
+  };
+
+  // 处理 Codex 端点变化
+  const handleCodexEndpointChange = (endpoint: string) => {
+    setSelectedEndpoint(endpoint);
+    
+    // 更新 config.toml 中的 base_url
+    if (codexConfig) {
+      const updatedConfig = codexConfig.replace(
+        /base_url = "[^"]*"/,
+        `base_url = "${endpoint}/v1"`
+      );
+      setCodexConfig(updatedConfig);
     }
   };
 
@@ -536,6 +600,25 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
               />
             )}
 
+            {/* 二级选项选择器 */}
+            {!isCodex && selectedPreset !== null && selectedPreset >= 0 && (
+              (() => {
+                const preset = providerPresets[selectedPreset];
+                if (preset.subOptions && preset.subOptions.length > 0) {
+                  return (
+                    <SubOptionSelector
+                      subOptions={preset.subOptions}
+                      selectedOption={selectedSubOption}
+                      selectedEndpoint={selectedEndpoint}
+                      onOptionChange={setSelectedSubOption}
+                      onEndpointChange={handleEndpointChange}
+                    />
+                  );
+                }
+                return null;
+              })()
+            )}
+
             {!isCodex && shouldShowKimiSelector && apiKey.trim() && (
               <KimiModelSelector
                 apiKey={apiKey}
@@ -564,6 +647,29 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   !isCodexOfficialPreset
                 }
               />
+            )}
+
+            {/* Codex 端点选择器 */}
+            {isCodex && selectedCodexPreset !== null && selectedCodexPreset >= 0 && (
+              (() => {
+                const preset = codexProviderPresets[selectedCodexPreset];
+                if (preset.endpoints && preset.endpoints.length > 0) {
+                  return (
+                    <SubOptionSelector
+                      subOptions={[{
+                        name: "PackyCode 节点",
+                        endpoints: preset.endpoints,
+                        enableAutoSpeed: preset.enableAutoSpeed || false,
+                      }]}
+                      selectedOption="PackyCode 节点"
+                      selectedEndpoint={selectedEndpoint}
+                      onOptionChange={() => {}} // 只有一个选项，无需处理
+                      onEndpointChange={handleCodexEndpointChange}
+                    />
+                  );
+                }
+                return null;
+              })()
             )}
 
             <div className="space-y-2">

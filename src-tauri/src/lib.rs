@@ -343,6 +343,8 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::check_for_updates,
+            commands::test_endpoint_latency,
+            commands::test_multiple_endpoints,
             update_tray_menu,
         ])
         .run(tauri::generate_context!())

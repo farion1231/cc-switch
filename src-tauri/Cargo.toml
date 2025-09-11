@@ -28,10 +28,16 @@ tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
 dirs = "5.0"
 toml = "0.8"
+reqwest = { version = "0.12", features = ["json", "native-tls"] }
+futures = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows 特定的网络和系统依赖
+winapi = { version = "0.3", features = ["wininet", "winsock2"] }
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]
