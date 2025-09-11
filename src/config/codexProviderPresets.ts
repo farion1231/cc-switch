@@ -7,6 +7,9 @@ export interface CodexProviderPreset {
   auth: Record<string, any>; // 将写入 ~/.codex/auth.json
   config: string; // 将写入 ~/.codex/config.toml（TOML 字符串）
   isOfficial?: boolean; // 标识是否为官方预设
+  // 二级选项配置
+  endpoints?: string[];
+  enableAutoSpeed?: boolean; // 是否启用自动测速
 }
 
 export const codexProviderPresets: CodexProviderPreset[] = [
@@ -37,5 +40,10 @@ name = "packycode"
 base_url = "https://codex-api.packycode.com/v1"
 wire_api = "responses"
 env_key = "packycode"`,
+    endpoints: [
+      "https://codex-api.packycode.com",
+      "https://codex-api-hk-cn2.packycode.com",
+    ],
+    enableAutoSpeed: true,
   },
 ];

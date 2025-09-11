@@ -224,6 +224,30 @@ export const tauriAPI = {
     }
   },
 
+  // 测试单个节点延迟
+  testEndpointLatency: async (endpoint: string): Promise<number> => {
+    try {
+      return await invoke("test_endpoint_latency", { endpoint });
+    } catch (error) {
+      console.error("测试节点延迟失败:", error);
+      throw error;
+    }
+  },
+
+  // 批量测试多个节点
+  testMultipleEndpoints: async (endpoints: string[]): Promise<Array<{
+    endpoint: string;
+    latency: number;
+    success: boolean;
+  }>> => {
+    try {
+      return await invoke("test_multiple_endpoints", { endpoints });
+    } catch (error) {
+      console.error("批量测试节点失败:", error);
+      throw error;
+    }
+  },
+
   // 获取应用配置文件路径
   getAppConfigPath: async (): Promise<string> => {
     try {

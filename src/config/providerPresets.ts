@@ -6,6 +6,12 @@ export interface ProviderPreset {
   websiteUrl: string;
   settingsConfig: object;
   isOfficial?: boolean; // 标识是否为官方预设
+  // 二级选项配置
+  subOptions?: {
+    name: string;
+    endpoints: string[];
+    enableAutoSpeed?: boolean; // 是否启用自动测速
+  }[];
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -83,5 +89,31 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
+    subOptions: [
+      {
+        name: "公交车",
+        endpoints: [
+          "https://api.packycode.com",
+          "https://api-us-cn2.packycode.com",
+          "https://api-hk-cn2.packycode.com",
+          "https://api-us-4837.packycode.com",
+          "https://api-test-custom.packycode.com",
+          "https://api-us-cmin2.packycode.com",
+          "https://api-cf-pro.packycode.com",
+          "https://api-tmp-test.dzz.ai",
+          "https://api-test.packyme.com",
+        ],
+        enableAutoSpeed: true,
+      },
+      {
+        name: "滴滴车",
+        endpoints: [
+          "https://share-api.packycode.com",
+          "https://share-api-cf-pro.packycode.com",
+          "https://share-api-hk-cn2.packycode.com",
+        ],
+        enableAutoSpeed: true,
+      },
+    ],
   },
 ];

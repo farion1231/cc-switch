@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use std::collections::HashMap;
+use std::time::Duration;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
@@ -597,4 +598,120 @@ pub async fn check_for_updates(handle: tauri::AppHandle) -> Result<bool, String>
         .map_err(|e| format!("打开更新页面失败: {}", e))?;
 
     Ok(true)
+}
+
+/// 测试节点延迟
+#[tauri::command]
+pub async fn test_endpoint_latency(endpoint: String) -> Result<u64, String> {
+    use std::time::Instant;
+    
+    let start = Instant::now();
+    
+    // 构建跨平台兼容的 HTTP 客户端
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .user_agent("CC-Switch/1.0") // 添加 User-Agent
+        .danger_accept_invalid_certs(false) // 确保证书验证
+        .tcp_keepalive(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    
+    // 优先尝试 HEAD 请求，失败则尝试 GET 请求
+    let result = async {
+        // 首先尝试 HEAD 请求
+        match client.head(&endpoint).send().await {
+            Ok(response) => Ok(response),
+            Err(_) => {
+                // HEAD 失败则尝试 GET 请求（某些服务器不支持 HEAD）
+                client.get(&endpoint).send().await
+            }
+        }
+    }.await;
+    
+    let latency = start.elapsed().as_millis() as u64;
+    
+    match result {
+        Ok(response) => {
+            if response.status().is_success() || response.status().is_redirection() {
+                Ok(latency)
+            } else {
+                log::warn!("测试节点 {} 返回状态码: {}", endpoint, response.status());
+                Ok(latency) // 仍然返回延迟，由前端判断成功失败
+            }
+        }
+        Err(e) => {
+            // 即使失败也返回延迟，前端会标记为失败
+            log::warn!("测试节点 {} 失败: {}", endpoint, e);
+            Ok(latency)
+        }
+    }
+}
+
+/// 批量测试多个节点并返回最快的
+#[tauri::command]
+pub async fn test_multiple_endpoints(endpoints: Vec<String>) -> Result<Vec<serde_json::Value>, String> {
+    use futures::future::join_all;
+    
+    if endpoints.is_empty() {
+        return Ok(vec![]);
+    }
+    
+    log::info!("开始测试 {} 个节点", endpoints.len());
+    
+    let futures: Vec<_> = endpoints
+        .iter()
+        .enumerate()
+        .map(|(index, endpoint)| {
+            let endpoint = endpoint.clone();
+            async move {
+                log::debug!("测试节点 {}: {}", index + 1, endpoint);
+                
+                let result = test_endpoint_latency(endpoint.clone()).await;
+                match result {
+                    Ok(latency) => {
+                        // 判断成功失败的逻辑：延迟合理且小于 10 秒
+                        let success = latency < 10000;
+                        log::debug!("节点 {} 测试完成: {}ms, 成功: {}", endpoint, latency, success);
+                        
+                        serde_json::json!({
+                            "endpoint": endpoint,
+                            "latency": latency,
+                            "success": success
+                        })
+                    }
+                    Err(e) => {
+                        log::warn!("节点 {} 测试失败: {}", endpoint, e);
+                        serde_json::json!({
+                            "endpoint": endpoint,
+                            "latency": 999999,
+                            "success": false,
+                            "error": e
+                        })
+                    }
+                }
+            }
+        })
+        .collect();
+    
+    let results = join_all(futures).await;
+    
+    // 按成功状态和延迟排序
+    let mut sorted_results = results;
+    sorted_results.sort_by(|a, b| {
+        let a_success = a["success"].as_bool().unwrap_or(false);
+        let b_success = b["success"].as_bool().unwrap_or(false);
+        let a_latency = a["latency"].as_u64().unwrap_or(999999);
+        let b_latency = b["latency"].as_u64().unwrap_or(999999);
+        
+        match (a_success, b_success) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a_latency.cmp(&b_latency),
+        }
+    });
+    
+    log::info!("节点测试完成，成功节点数: {}", 
+        sorted_results.iter().filter(|r| r["success"].as_bool().unwrap_or(false)).count());
+    
+    Ok(sorted_results)
 }
