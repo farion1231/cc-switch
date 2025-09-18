@@ -5,6 +5,33 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2025-09-13
+
+### ✨ New Features
+- System tray provider switching with dynamic menu for Claude/Codex
+- Frontend receives `provider-switched` events and refreshes active app
+- Built-in update flow via Tauri Updater plugin with dismissible UpdateBadge
+
+### 🔧 Improvements
+- Single source of truth for provider configs; no duplicate copy files
+- One-time migration imports existing copies into `config.json` and archives originals
+- Duplicate provider de-duplication by name + API key at startup
+- Atomic writes for Codex `auth.json` + `config.toml` with rollback on failure
+- Logging standardized (Rust): use `log::{info,warn,error}` instead of stdout prints
+- Tailwind v4 integration and refined dark mode handling
+
+### 🐛 Fixes
+- Remove/minimize debug console logs in production builds
+- Fix CSS minifier warnings for scrollbar pseudo-elements
+- Prettier formatting across codebase for consistent style
+
+### 📦 Dependencies
+- Tauri: 2.8.x (core, updater, process, opener, log plugins)
+- React: 18.2.x · TypeScript: 5.3.x · Vite: 5.x
+
+### 🔄 Notes
+- `connect-src` CSP remains permissive for compatibility; can be tightened later as needed
+
 ## [3.1.1] - 2025-09-03
 
 ### 🐛 Bug Fixes

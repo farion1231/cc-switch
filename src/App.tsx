@@ -11,6 +11,7 @@ import { UpdateBadge } from "./components/UpdateBadge";
 import { Plus, Settings, Moon, Sun } from "lucide-react";
 import { buttonStyles } from "./lib/styles";
 import { useDarkMode } from "./hooks/useDarkMode";
+import { extractErrorMessage } from "./utils/errorUtils";
 
 function App() {
   const { isDarkMode, toggleDarkMode } = useDarkMode();
@@ -82,7 +83,9 @@ function App() {
     const setupListener = async () => {
       try {
         unlisten = await window.api.onProviderSwitched(async (data) => {
-          console.log("收到供应商切换事件:", data);
+          if (import.meta.env.DEV) {
+            console.log("收到供应商切换事件:", data);
+          }
 
           // 如果当前应用类型匹配，则重新加载数据
           if (data.appType === activeApp) {
@@ -116,7 +119,6 @@ function App() {
     }
   };
 
-
   // 生成唯一ID
   const generateId = () => {
     return crypto.randomUUID();
@@ -147,7 +149,11 @@ function App() {
     } catch (error) {
       console.error("更新供应商失败:", error);
       setEditingProviderId(null);
-      showNotification("保存失败，请重试", "error");
+      const errorMessage = extractErrorMessage(error);
+      const message = errorMessage
+        ? `保存失败：${errorMessage}`
+        : "保存失败，请重试";
+      showNotification(message, "error", errorMessage ? 6000 : 3000);
     }
   };
 
@@ -204,16 +210,21 @@ function App() {
     }
   };
 
-
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-950">
-      {/* Linear 风格的顶部导航 */}
-      <header className="bg-white border-b border-gray-200 dark:bg-gray-900 dark:border-gray-800 px-6 py-4">
+    <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-950">
+      {/* 顶部导航区域 - 固定高度 */}
+      <header className="flex-shrink-0 bg-white border-b border-gray-200 dark:bg-gray-900 dark:border-gray-800 px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-blue-500 dark:text-blue-400">
+            <a
+              href="https://github.com/farion1231/cc-switch"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xl font-semibold text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
+              title="在 GitHub 上查看"
+            >
               CC Switch
-            </h1>
+            </a>
             <button
               onClick={toggleDarkMode}
               className={buttonStyles.icon}
@@ -247,30 +258,31 @@ function App() {
         </div>
       </header>
 
-      {/* 主内容区域 */}
-      <main className="flex-1 p-6">
-        <div className="max-w-4xl mx-auto">
-          {/* 通知组件 */}
-          {notification && (
-            <div
-              className={`fixed top-6 left-1/2 transform -translate-x-1/2 z-50 px-4 py-3 rounded-lg shadow-lg transition-all duration-300 ${
-                notification.type === "error"
-                  ? "bg-red-500 text-white"
-                  : "bg-green-500 text-white"
-              } ${isNotificationVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"}`}
-            >
-              {notification.message}
-            </div>
-          )}
+      {/* 主内容区域 - 独立滚动 */}
+      <main className="flex-1 overflow-y-scroll">
+        <div className="pt-3 px-6 pb-6">
+          <div className="max-w-4xl mx-auto">
+            {/* 通知组件 - 相对于视窗定位 */}
+            {notification && (
+              <div
+                className={`fixed top-20 left-1/2 transform -translate-x-1/2 z-50 px-4 py-3 rounded-lg shadow-lg transition-all duration-300 ${
+                  notification.type === "error"
+                    ? "bg-red-500 text-white"
+                    : "bg-green-500 text-white"
+                } ${isNotificationVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"}`}
+              >
+                {notification.message}
+              </div>
+            )}
 
-          <ProviderList
-            providers={providers}
-            currentProviderId={currentProviderId}
-            onSwitch={handleSwitchProvider}
-            onDelete={handleDeleteProvider}
-            onEdit={setEditingProviderId}
-          />
-
+            <ProviderList
+              providers={providers}
+              currentProviderId={currentProviderId}
+              onSwitch={handleSwitchProvider}
+              onDelete={handleDeleteProvider}
+              onEdit={setEditingProviderId}
+            />
+          </div>
         </div>
       </main>
 

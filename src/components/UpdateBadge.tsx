@@ -8,12 +8,12 @@ interface UpdateBadgeProps {
 
 export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
   const { hasUpdate, updateInfo, isDismissed, dismissUpdate } = useUpdate();
-  
+
   // 如果没有更新或已关闭，不显示
   if (!hasUpdate || isDismissed || !updateInfo) {
     return null;
   }
-  
+
   return (
     <div
       className={`

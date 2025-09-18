@@ -568,9 +568,9 @@ pub async fn open_app_config_folder(handle: tauri::AppHandle) -> Result<bool, St
 /// 获取设置
 #[tauri::command]
 pub async fn get_settings(_state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    // 暂时返回默认设置
+    // 暂时返回默认设置：系统托盘（菜单栏）显示开关
     Ok(serde_json::json!({
-        "showInDock": true
+        "showInTray": true
     }))
 }
 
@@ -580,7 +580,7 @@ pub async fn save_settings(
     _state: State<'_, AppState>,
     settings: serde_json::Value,
 ) -> Result<bool, String> {
-    // TODO: 实现设置保存逻辑
+    // TODO: 实现系统托盘显示开关的保存与应用（显示/隐藏菜单栏托盘图标）
     log::info!("保存设置: {:?}", settings);
     Ok(true)
 }

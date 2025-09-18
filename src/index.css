@@ -21,23 +21,33 @@ body {
 }
 
 /* 暗色模式下启用暗色原生控件/滚动条配色 */
-html.dark { color-scheme: dark; }
+html.dark {
+  color-scheme: dark;
+}
 
-/* 滚动条样式 */
+/* 滚动条样式（避免在伪元素中使用自定义 dark 变体，消除构建警告） */
 ::-webkit-scrollbar {
-  @apply w-1.5 h-1.5;
+  width: 0.375rem;
+  height: 0.375rem;
 }
-
 ::-webkit-scrollbar-track {
-  @apply bg-gray-100 dark:bg-gray-800;
+  background-color: #f4f4f5;
 }
-
+html.dark ::-webkit-scrollbar-track {
+  background-color: #27272a;
+}
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 rounded dark:bg-gray-600;
+  background-color: #d4d4d8;
+  border-radius: 0.25rem;
 }
-
+html.dark ::-webkit-scrollbar-thumb {
+  background-color: #52525b;
+}
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-400 dark:bg-gray-500;
+  background-color: #a1a1aa;
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background-color: #71717a;
 }
 
 /* 焦点样式 */

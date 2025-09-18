@@ -9,9 +9,11 @@ mod store;
 use store::AppState;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::{TrayIconBuilder, TrayIconEvent},
 };
 use tauri::{Emitter, Manager};
+#[cfg(target_os = "macos")]
+use tauri::RunEvent;
 
 /// 创建动态托盘菜单
 fn create_tray_menu(
@@ -24,6 +26,11 @@ fn create_tray_menu(
         .map_err(|e| format!("获取锁失败: {}", e))?;
 
     let mut menu_builder = MenuBuilder::new(app);
+
+    // 顶部：打开主界面
+    let show_main_item = MenuItem::with_id(app, "show_main", "打开主界面", true, None::<&str>)
+        .map_err(|e| format!("创建打开主界面菜单失败: {}", e))?;
+    menu_builder = menu_builder.item(&show_main_item).separator();
 
     // 直接添加所有供应商到主菜单（扁平化结构，更简单可靠）
     if let Some(claude_manager) = config.get_manager(&crate::app_config::AppType::Claude) {
@@ -109,16 +116,23 @@ fn create_tray_menu(
 
 /// 处理托盘菜单事件
 fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
-    println!("处理托盘菜单事件: {}", event_id);
+    log::info!("处理托盘菜单事件: {}", event_id);
 
     match event_id {
+        "show_main" => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
         "quit" => {
-            println!("退出应用");
+            log::info!("退出应用");
             app.exit(0);
         }
         id if id.starts_with("claude_") => {
             let provider_id = id.strip_prefix("claude_").unwrap();
-            println!("切换到Claude供应商: {}", provider_id);
+            log::info!("切换到Claude供应商: {}", provider_id);
 
             // 执行切换
             let app_handle = app.clone();
@@ -130,14 +144,12 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                     provider_id,
                 )
                 .await
-                {
-                    eprintln!("切换Claude供应商失败: {}", e);
-                }
+                { log::error!("切换Claude供应商失败: {}", e); }
             });
         }
         id if id.starts_with("codex_") => {
             let provider_id = id.strip_prefix("codex_").unwrap();
-            println!("切换到Codex供应商: {}", provider_id);
+            log::info!("切换到Codex供应商: {}", provider_id);
 
             // 执行切换
             let app_handle = app.clone();
@@ -149,16 +161,16 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                     provider_id,
                 )
                 .await
-                {
-                    eprintln!("切换Codex供应商失败: {}", e);
-                }
+                { log::error!("切换Codex供应商失败: {}", e); }
             });
         }
         _ => {
-            println!("未处理的菜单事件: {}", event_id);
+            log::warn!("未处理的菜单事件: {}", event_id);
         }
     }
 }
+
+//
 
 /// 内部切换供应商函数
 async fn switch_provider_internal(
@@ -184,7 +196,7 @@ async fn switch_provider_internal(
         if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
             if let Some(tray) = app.tray_by_id("main") {
                 if let Err(e) = tray.set_menu(Some(new_menu)) {
-                    eprintln!("更新托盘菜单失败: {}", e);
+                    log::error!("更新托盘菜单失败: {}", e);
                 }
             }
         }
@@ -195,7 +207,7 @@ async fn switch_provider_internal(
             "providerId": provider_id_clone
         });
         if let Err(e) = app.emit("provider-switched", event_data) {
-            eprintln!("发射供应商切换事件失败: {}", e);
+            log::error!("发射供应商切换事件失败: {}", e);
         }
     }
     Ok(())
@@ -219,7 +231,15 @@ async fn update_tray_menu(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
+        // 拦截窗口关闭：仅隐藏窗口，保持进程与托盘常驻
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+            _ => {}
+        })
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -294,33 +314,23 @@ pub fn run() {
             // 创建动态托盘菜单
             let menu = create_tray_menu(&app.handle(), &app_state)?;
 
-            let _tray = TrayIconBuilder::with_id("main")
-                .on_tray_icon_event(|tray, event| match event {
-                    TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } => {
-                        println!("left click pressed and released");
-                        // 在这个例子中，当点击托盘图标时，将展示并聚焦于主窗口
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.unminimize();
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    _ => {
-                        println!("unhandled event {event:?}");
-                    }
+            // 构建托盘
+            let mut tray_builder = TrayIconBuilder::with_id("main")
+                .on_tray_icon_event(|_tray, event| match event {
+                    // 左键点击已通过 show_menu_on_left_click(true) 打开菜单，这里不再额外处理
+                    TrayIconEvent::Click { .. } => {}
+                    _ => log::debug!("unhandled event {event:?}"),
                 })
                 .menu(&menu)
                 .on_menu_event(|app, event| {
                     handle_tray_menu_event(app, &event.id.0);
                 })
-                .icon(app.default_window_icon().unwrap().clone())
-                .show_menu_on_left_click(true)
-                .build(app)?;
+                .show_menu_on_left_click(true);
+
+            // 统一使用应用默认图标；待托盘模板图标就绪后再启用
+            tray_builder = tray_builder.icon(app.default_window_icon().unwrap().clone());
+
+            let _tray = tray_builder.build(app)?;
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
             Ok(())
@@ -346,7 +356,29 @@ pub fn run() {
             commands::test_endpoint_latency,
             commands::test_multiple_endpoints,
             update_tray_menu,
-        ])
-        .run(tauri::generate_context!())
+        ]);
+
+    let app = builder
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    app.run(|app_handle, event| {
+        #[cfg(target_os = "macos")]
+        // macOS 在 Dock 图标被点击并重新激活应用时会触发 Reopen 事件，这里手动恢复主窗口
+        match event {
+            RunEvent::Reopen { .. } => {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            _ => {}
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (app_handle, event);
+        }
+    });
 }

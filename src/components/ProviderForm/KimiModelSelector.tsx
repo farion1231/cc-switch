@@ -86,10 +86,10 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
     }
   }, [debouncedKey]);
 
-  const selectClass = `w-full px-3 py-2 border rounded-lg text-sm transition-colors appearance-none bg-white ${
+  const selectClass = `w-full px-3 py-2 border rounded-lg text-sm transition-colors appearance-none bg-white dark:bg-gray-800 ${
     disabled
-      ? "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed"
-      : "border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+      ? "bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+      : "border-gray-200 dark:border-gray-700 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 focus:border-blue-500 dark:focus:border-blue-400"
   }`;
 
   const ModelSelect: React.FC<{
@@ -98,7 +98,7 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
     onChange: (value: string) => void;
   }> = ({ label, value, onChange }) => (
     <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-900">
+      <label className="block text-sm font-medium text-gray-900 dark:text-gray-100">
         {label}
       </label>
       <div className="relative">
@@ -123,7 +123,7 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
         </select>
         <ChevronDown
           size={16}
-          className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 pointer-events-none"
+          className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 dark:text-gray-400 pointer-events-none"
         />
       </div>
     </div>
@@ -132,14 +132,14 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-gray-900">
+        <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
           模型配置
         </h3>
         <button
           type="button"
           onClick={() => debouncedKey && fetchModelsWithKey(debouncedKey)}
           disabled={disabled || loading || !debouncedKey}
-          className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-500 hover:text-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
           刷新模型列表
@@ -147,23 +147,23 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 p-3 bg-red-100 border border-red-500/20 rounded-lg">
+        <div className="flex items-center gap-2 p-3 bg-red-100 dark:bg-red-900/20 border border-red-500/20 dark:border-red-500/30 rounded-lg">
           <AlertCircle
             size={16}
-            className="text-red-500 flex-shrink-0"
+            className="text-red-500 dark:text-red-400 flex-shrink-0"
           />
-          <p className="text-red-500 text-xs">{error}</p>
+          <p className="text-red-500 dark:text-red-400 text-xs">{error}</p>
         </div>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <ModelSelect
-          label="主模型 (ANTHROPIC_MODEL)"
+          label="主模型"
           value={anthropicModel}
           onChange={(value) => onModelChange("ANTHROPIC_MODEL", value)}
         />
         <ModelSelect
-          label="快速模型 (ANTHROPIC_SMALL_FAST_MODEL)"
+          label="快速模型"
           value={anthropicSmallFastModel}
           onChange={(value) =>
             onModelChange("ANTHROPIC_SMALL_FAST_MODEL", value)
@@ -172,9 +172,9 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
       </div>
 
       {!apiKey.trim() && (
-        <div className="p-3 bg-gray-100 border border-gray-200 rounded-lg">
-          <p className="text-xs text-gray-500">
-            📝 请先填写 API Key（格式：sk-xxx-api-key-here）以获取可用模型列表
+        <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            💡 填写 API Key 后将自动获取可用模型列表
           </p>
         </div>
       )}

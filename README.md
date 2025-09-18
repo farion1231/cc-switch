@@ -1,26 +1,28 @@
 # Claude Code & Codex 供应商切换器
 
-[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.2.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
-[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202.0-orange.svg)](https://tauri.app/)
+[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 
 一个用于管理和切换 Claude Code 与 Codex 不同供应商配置的桌面应用。
 
-> v3.1.0 ：新增 Codex 供应商管理与一键切换，支持导入当前 Codex 配置为默认供应商，并在内部配置从 v1 → v2 迁移前自动备份（详见下文““迁移与备份”）。
+> v3.2.0 重点：全新 UI、macOS系统托盘、内置更新器、原子写入与回滚、改进暗色样式、单一事实源（SSOT）与一次性迁移/归档（详见下文“迁移与归档 v3.2.0”）。
 
-> v3.0.0 重大更新：从 Electron 完全迁移到 Tauri 2.0，应用体积减少 85%（从 ~80MB 降至 ~12MB），启动速度提升 10 倍！
+> v3.1.0 ：新增 Codex 供应商管理与一键切换，支持导入当前 Codex 配置为默认供应商，并在内部配置从 v1 → v2 迁移前自动备份（详见下文“迁移与归档”）。
 
-## 功能特性
+> v3.0.0 重大更新：从 Electron 完全迁移到 Tauri 2.0，应用体积显著降低、启动性能大幅提升。
 
-- **极速启动** - 基于 Tauri 2.0，原生性能，秒开应用
-- 一键切换不同供应商
-- 同时支持 Claude Code 与 Codex 的供应商切换与导入
-- Qwen coder、kimi k2、智谱 GLM、DeepSeek v3.1、packycode 等预设供应商只需要填写 key 即可一键配置
-- 支持添加自定义供应商
-- 随时切换官方登录
-- 简洁美观的图形界面
-- 信息存储在本地 ~/.cc-switch/config.json，无隐私风险
-- 超小体积 - 仅 ~5MB 安装包
+## 功能特性（v3.2.0）
+
+- **全新 UI**：感谢 [TinsFox](https://github.com/TinsFox) 大佬设计的全新 UI
+- **系统托盘（菜单栏）快速切换**：按应用分组（Claude / Codex），勾选态展示当前供应商
+- **内置更新器**：集成 Tauri Updater，支持检测/下载/安装与一键重启
+- **单一事实源（SSOT）**：不再写每个供应商的“副本文件”，统一存于 `~/.cc-switch/config.json`
+- **一次性迁移/归档**：首次升级自动导入旧副本并归档原文件，之后不再持续归档
+- **原子写入与回滚**：写入 `auth.json`/`config.toml`/`settings.json` 时避免半写状态
+- **深色模式优化**：Tailwind v4 适配与选择器修正
+- **丰富预设与自定义**：Qwen coder、Kimi、GLM、DeepSeek、PackyCode 等；可自定义 Base URL
+- **本地优先与隐私**：全部信息存储在本地 `~/.cc-switch/config.json`
 
 ## 界面预览
 
@@ -57,35 +59,52 @@
 ## 使用说明
 
 1. 点击"添加供应商"添加你的 API 配置
-2. 选择要使用的供应商，点击单选按钮切换
-3. 配置会自动保存到对应应用的配置文件中
-4. 重启或者新打开终端以生效
-5. 如果需要切回 Claude 官方登录，可以添加预设供应商里的“Claude 官方登录”并切换，重启终端后即可进行正常的 /login 登录
+2. 切换方式：
+   - 在主界面选择供应商后点击切换
+   - 或通过“系统托盘（菜单栏）”直接选择目标供应商，立即生效
+3. 切换会写入对应应用的“live 配置文件”（Claude：`settings.json`；Codex：`auth.json` + `config.toml`）
+4. 重启或新开终端以确保生效
+5. 若需切回官方登录，在预设中选择“官方登录”并切换即可；重启终端后按官方流程登录
 
-### Codex 说明
+### 检查更新
+
+- 在“设置”中点击“检查更新”，若内置 Updater 配置可用将直接检测与下载；否则会回退打开 Releases 页面
+
+### Codex 说明（v3.2.0 SSOT）
 
 - 配置目录：`~/.codex/`
-  - 主配置文件：`auth.json`（必需）、`config.toml`（可为空）
-  - 供应商副本：`auth-<name>.json`、`config-<name>.toml`
+  - live 主配置：`auth.json`（必需）、`config.toml`（可为空）
 - API Key 字段：`auth.json` 中使用 `OPENAI_API_KEY`
-- 切换策略：将选中供应商的副本覆盖到主配置（`auth.json`、`config.toml`）。若供应商没有 `config-*.toml`，会创建空的 `config.toml`。
-- 导入默认：仅当该应用无任何供应商时，从现有主配置创建一条默认项并设为当前；`config.toml` 不存在时按空处理。
-- 官方登录：可切换到预设“Codex 官方登录”，重启终端后可选择使用 ChatGPT 账号完成登录。
+- 切换行为（不再写“副本文件”）：
+  - 供应商配置统一保存在 `~/.cc-switch/config.json`
+  - 切换时将目标供应商写回 live 文件（`auth.json` + `config.toml`）
+  - 采用“原子写入 + 失败回滚”，避免半写状态；`config.toml` 可为空
+- 导入默认：当该应用无任何供应商时，从现有 live 主配置创建一条默认项并设为当前
+- 官方登录：可切换到预设“Codex 官方登录”，重启终端后按官方流程登录
 
-### Claude Code 说明
+### Claude Code 说明（v3.2.0 SSOT）
 
 - 配置目录：`~/.claude/`
-  - 主配置文件：`settings.json`（推荐）或 `claude.json`（旧版兼容，若存在则继续使用）
-  - 供应商副本：`settings-<name>.json`
+  - live 主配置：`settings.json`（优先）或历史兼容 `claude.json`
 - API Key 字段：`env.ANTHROPIC_AUTH_TOKEN`
-- 切换策略：将选中供应商的副本覆盖到主配置（`settings.json`/`claude.json`）。如当前有配置且存在“当前供应商”，会先将主配置备份回该供应商的副本文件。
-- 导入默认：仅当该应用无任何供应商时，从现有主配置创建一条默认项并设为当前。
-- 官方登录：可切换到预设“Claude 官方登录”，重启终端后可使用 `/login` 完成登录。
+- 切换行为（不再写“副本文件”）：
+  - 供应商配置统一保存在 `~/.cc-switch/config.json`
+  - 切换时将目标供应商 JSON 直接写入 live 文件（优先 `settings.json`）
+  - 编辑当前供应商时，先写 live 成功，再更新应用主配置，保证一致性
+- 导入默认：当该应用无任何供应商时，从现有 live 主配置创建一条默认项并设为当前
+- 官方登录：可切换到预设“Claude 官方登录”，重启终端后可使用 `/login` 完成登录
 
-### 迁移与备份
+### 迁移与归档（v3.2.0）
 
-- cc-switch 自身配置从 v1 → v2 迁移时，将在 `~/.cc-switch/` 目录自动创建时间戳备份：`config.v1.backup.<timestamp>.json`。
-- 实际生效的应用配置文件（如 `~/.claude/settings.json`、`~/.codex/auth.json`/`config.toml`）不会被修改，切换仅在用户点击“切换”时按副本覆盖到主配置。
+- 一次性迁移：首次启动 3.2.0 会扫描旧的“副本文件”并合并到 `~/.cc-switch/config.json`
+  - Claude：`~/.claude/settings-*.json`（排除 `settings.json` / 历史 `claude.json`）
+  - Codex：`~/.codex/auth-*.json` 与 `config-*.toml`（按名称成对合并）
+- 去重与当前项：按“名称（忽略大小写）+ API Key”去重；若当前为空，将 live 合并项设为当前
+- 归档与清理：
+  - 归档目录：`~/.cc-switch/archive/<timestamp>/<category>/...`
+  - 归档成功后删除原副本；失败则保留原文件（保守策略）
+- v1 → v2 结构升级：会额外生成 `~/.cc-switch/config.v1.backup.<timestamp>.json` 以便回滚
+- 注意：迁移后不再持续归档日常切换/编辑操作，如需长期审计请自备备份方案
 
 ## 开发
 
@@ -138,7 +157,7 @@ cargo test
 
 ## 技术栈
 
-- **[Tauri 2.0](https://tauri.app/)** - 跨平台桌面应用框架
+- **[Tauri 2](https://tauri.app/)** - 跨平台桌面应用框架（集成 updater/process/opener/log/tray-icon）
 - **[React 18](https://react.dev/)** - 用户界面库
 - **[TypeScript](https://www.typescriptlang.org/)** - 类型安全的 JavaScript
 - **[Vite](https://vitejs.dev/)** - 极速的前端构建工具
@@ -176,6 +195,10 @@ cargo test
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=farion1231/cc-switch&type=Date)](https://www.star-history.com/#farion1231/cc-switch&Date)
 
 ## License
 

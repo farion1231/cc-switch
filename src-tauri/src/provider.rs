@@ -14,6 +14,8 @@ pub struct Provider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "websiteUrl")]
     pub website_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 impl Provider {
@@ -29,6 +31,7 @@ impl Provider {
             name,
             settings_config,
             website_url,
+            category: None,
         }
     }
 }
