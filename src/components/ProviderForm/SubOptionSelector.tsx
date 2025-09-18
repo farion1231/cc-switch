@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Loader2, Zap, Check, X, Wifi, WifiOff } from "lucide-react";
-import { tauriAPI } from "../../lib/tauri-api";
-import { isOnline, formatLatency } from "../../lib/speedTest";
+import { Loader2, Zap, Check, X, WifiOff } from "lucide-react";
+import { isOnline, formatLatency, testMultipleEndpoints } from "../../lib/speedTest";
 
 interface SubOption {
   name: string;
@@ -49,26 +48,26 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
   // 测速功能
   const handleSpeedTest = async () => {
     if (!currentEndpoints.length || testing) return;
-    
+
     // 检查网络连接
     if (!isOnline()) {
       console.warn("网络连接不可用，跳过测速");
       return;
     }
-    
+
     setTesting(true);
     setTestResults([]);
-    
+
     try {
-      const results = await tauriAPI.testMultipleEndpoints(currentEndpoints);
+      const results = await testMultipleEndpoints(currentEndpoints);
       setTestResults(results);
-      
+
       // 如果启用了自动选择，选择最快的成功节点
       if (autoSelectEnabled) {
         const fastest = results
-          .filter((r) => r.success)
-          .sort((a, b) => a.latency - b.latency)[0];
-        
+          .filter((r: EndpointTestResult) => r.success)
+          .sort((a: EndpointTestResult, b: EndpointTestResult) => a.latency - b.latency)[0];
+
         if (fastest) {
           onEndpointChange(fastest.endpoint);
         }
@@ -105,7 +104,7 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
       {/* 二级选项选择 - 只有在多个选项时才显示 */}
       {subOptions.length > 1 && (
         <div>
-          <label className="block text-sm font-medium text-gray-900 mb-2">
+          <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
             选择线路类型
           </label>
           <div className="flex gap-2">
@@ -116,7 +115,7 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   selectedOption === option.name
                     ? "bg-blue-500 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
                 }`}
                 onClick={() => onOptionChange(option.name)}
               >
@@ -130,17 +129,17 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
       {/* 端点选择 */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="block text-sm font-medium text-gray-900">
+          <label className="block text-sm font-medium text-gray-900 dark:text-gray-100">
             选择节点
           </label>
           {enableAutoSpeed && (
             <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 text-sm">
+              <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                 <input
                   type="checkbox"
                   checked={autoSelectEnabled}
                   onChange={(e) => setAutoSelectEnabled(e.target.checked)}
-                  className="rounded border-gray-300"
+                  className="rounded border-gray-300 dark:border-gray-600"
                 />
                 自动选择最快节点
               </label>
@@ -150,8 +149,8 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
                 disabled={testing || !networkOnline}
                 className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-medium rounded transition-colors ${
                   testing || !networkOnline
-                    ? "text-gray-400 cursor-not-allowed"
-                    : "text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                    ? "text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                    : "text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20"
                 }`}
                 title={!networkOnline ? "网络连接不可用" : "测试所有节点延迟"}
               >
@@ -175,11 +174,11 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
             </div>
           )}
         </div>
-        
+
         <select
           value={selectedEndpoint}
           onChange={(e) => onEndpointChange(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400"
         >
           {currentEndpoints.map((endpoint) => {
             const result = getEndpointResult(endpoint);
@@ -210,25 +209,25 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
                   key={result.endpoint}
                   className={`flex items-center justify-between px-3 py-2 text-sm rounded-lg ${
                     result.endpoint === selectedEndpoint
-                      ? "bg-blue-50 border border-blue-200"
-                      : "bg-gray-50"
+                      ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
+                      : "bg-gray-50 dark:bg-gray-800"
                   }`}
                 >
-                  <span className="font-medium truncate flex-1">
+                  <span className="font-medium truncate flex-1 text-gray-900 dark:text-gray-100">
                     {result.endpoint}
                   </span>
                   <span className="flex items-center gap-1 ml-2">
                     {result.success ? (
                       <>
-                        <Check size={14} className="text-green-500" />
-                        <span className="text-green-600">
+                        <Check size={14} className="text-green-500 dark:text-green-400" />
+                        <span className="text-green-600 dark:text-green-400">
                           {formatLatency(result.latency)}
                         </span>
                       </>
                     ) : (
                       <>
-                        <X size={14} className="text-red-500" />
-                        <span className="text-red-600">失败</span>
+                        <X size={14} className="text-red-500 dark:text-red-400" />
+                        <span className="text-red-600 dark:text-red-400">失败</span>
                       </>
                     )}
                   </span>

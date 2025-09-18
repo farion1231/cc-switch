@@ -30,7 +30,7 @@ export async function testEndpointSpeed(
     }
     
     // 发送请求测试连通性
-    const response = await fetch(testUrl, {
+    await fetch(testUrl, {
       method: "GET",
       signal: controller.signal,
       mode: "no-cors", // 避免 CORS 问题

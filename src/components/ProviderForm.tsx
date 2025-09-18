@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Provider, ProviderCategory } from "../types";
-import { AppType, tauriAPI } from "../lib/tauri-api";
+import { AppType } from "../lib/tauri-api";
 import {
   updateCommonConfigSnippet,
   hasCommonConfigSnippet,
@@ -126,7 +126,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [commonConfigError, setCommonConfigError] = useState("");
   // 用于跟踪是否正在通过通用配置更新
   const isUpdatingFromCommonConfig = useRef(false);
-  
+
   // Codex 通用配置状态
   const [useCodexCommonConfig, setUseCodexCommonConfig] = useState(false);
   const [codexCommonConfigSnippet, setCodexCommonConfigSnippetState] = useState<string>(() => {
@@ -459,7 +459,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
         isUpdatingFromCommonConfig.current = false;
       }, 0);
     }
-    
+
     // 保存通用配置到 localStorage
     if (isValidJson && typeof window !== "undefined") {
       try {
@@ -659,13 +659,13 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   // 处理端点变化
   const handleEndpointChange = (endpoint: string) => {
     setSelectedEndpoint(endpoint);
-    
+
     // 更新配置中的 BASE_URL
     try {
       const config = JSON.parse(formData.settingsConfig || "{}");
       if (!config.env) config.env = {};
       config.env.ANTHROPIC_BASE_URL = endpoint;
-      
+
       const configString = JSON.stringify(config, null, 2);
       setFormData((prev) => ({
         ...prev,
@@ -691,7 +691,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   // 处理 Codex 端点变化
   const handleCodexEndpointChange = (endpoint: string) => {
     setSelectedEndpoint(endpoint);
-    
+
     // 更新 config.toml 中的 base_url
     if (codexConfig) {
       const updatedConfig = codexConfig.replace(
@@ -798,7 +798,6 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     setCodexConfig(value);
   };
 
->>>>>>> main
   // 根据当前配置决定是否展示 API Key 输入框
   // 自定义模式(-1)也需要显示 API Key 输入框
   const showApiKey =
