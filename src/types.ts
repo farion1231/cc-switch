@@ -24,4 +24,6 @@ export interface AppConfig {
 export interface Settings {
   // 是否在系统托盘（macOS 菜单栏）显示图标
   showInTray: boolean;
+  // 点击关闭按钮时是否最小化到托盘而不是关闭应用
+  minimize_to_tray_on_close: boolean;
 }

@@ -30,11 +30,41 @@ impl From<&str> for AppType {
     }
 }
 
+/// 应用设置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Settings {
+    /// 是否在系统托盘显示图标
+    #[serde(default = "default_show_in_tray")]
+    pub show_in_tray: bool,
+    /// 点击关闭按钮时是否最小化到托盘而不是关闭应用
+    #[serde(default = "default_minimize_to_tray_on_close")]
+    pub minimize_to_tray_on_close: bool,
+}
+
+fn default_show_in_tray() -> bool {
+    true
+}
+
+fn default_minimize_to_tray_on_close() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            show_in_tray: true,
+            minimize_to_tray_on_close: true,
+        }
+    }
+}
+
 /// 多应用配置结构（向后兼容）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiAppConfig {
     #[serde(default = "default_version")]
     pub version: u32,
+    #[serde(default)]
+    pub settings: Settings,
     #[serde(flatten)]
     pub apps: HashMap<String, ProviderManager>,
 }
@@ -49,7 +79,11 @@ impl Default for MultiAppConfig {
         apps.insert("claude".to_string(), ProviderManager::default());
         apps.insert("codex".to_string(), ProviderManager::default());
 
-        Self { version: 2, apps }
+        Self { 
+            version: 2, 
+            settings: Settings::default(),
+            apps 
+        }
     }
 }
 
@@ -76,7 +110,11 @@ impl MultiAppConfig {
             apps.insert("claude".to_string(), v1_config);
             apps.insert("codex".to_string(), ProviderManager::default());
 
-            let config = Self { version: 2, apps };
+            let config = Self { 
+                version: 2, 
+                settings: Settings::default(),
+                apps 
+            };
 
             // 迁移前备份旧版(v1)配置文件
             let backup_dir = get_app_config_dir();
