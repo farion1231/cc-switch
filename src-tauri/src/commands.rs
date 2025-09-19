@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::app_config::AppType;
+use crate::app_config::{AppType, Settings};
 use crate::codex_config;
 use crate::config::{get_claude_settings_path, ConfigStatus};
 use crate::vscode;
@@ -667,4 +667,26 @@ pub async fn write_vscode_settings(content: String) -> Result<bool, String> {
     } else {
         Err("未找到 VS Code 用户设置文件".to_string())
     }
+}
+
+/// 获取应用设置
+#[tauri::command]
+pub async fn get_settings(state: tauri::State<'_, AppState>) -> Result<Settings, String> {
+    let config = state.config.lock().map_err(|e| format!("获取锁失败: {}", e))?;
+    Ok(config.settings.clone())
+}
+
+/// 保存应用设置
+#[tauri::command]
+pub async fn save_settings(
+    state: tauri::State<'_, AppState>,
+    settings: Settings,
+) -> Result<bool, String> {
+    {
+        let mut config = state.config.lock().map_err(|e| format!("获取锁失败: {}", e))?;
+        config.settings = settings;
+    }
+    
+    state.save()?;
+    Ok(true)
 }

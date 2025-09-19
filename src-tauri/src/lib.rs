@@ -122,6 +122,11 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     match event_id {
         "show_main" => {
             if let Some(window) = app.get_webview_window("main") {
+                // 恢复窗口到任务栏并显示
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = window.set_skip_taskbar(false);
+                }
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -237,11 +242,35 @@ async fn update_tray_menu(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
-        // 拦截窗口关闭：仅隐藏窗口，保持进程与托盘常驻
+        // 拦截窗口关闭：根据设置决定是否隐藏到托盘
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
-                api.prevent_close();
-                let _ = window.hide();
+                // 获取应用设置
+                if let Some(app_handle) = window.app_handle().try_state::<AppState>() {
+                    let config = app_handle.config.lock().unwrap();
+                    let settings = &config.settings;
+                    
+                    if settings.minimize_to_tray_on_close {
+                        // 最小化到托盘：阻止关闭并隐藏窗口
+                        api.prevent_close();
+                        let _ = window.hide();
+                        #[cfg(target_os = "windows")]
+                        {
+                            let _ = window.set_skip_taskbar(true);
+                        }
+                    } else {
+                        // 直接关闭应用
+                        window.app_handle().exit(0);
+                    }
+                } else {
+                    // 默认行为：最小化到托盘
+                    api.prevent_close();
+                    let _ = window.hide();
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = window.set_skip_taskbar(true);
+                    }
+                }
             }
             _ => {}
         })
@@ -374,6 +403,8 @@ pub fn run() {
         match event {
             RunEvent::Reopen { .. } => {
                 if let Some(window) = app_handle.get_webview_window("main") {
+                    // macOS恢复窗口到Dock并显示
+                    let _ = window.set_skip_taskbar(false);
                     let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();

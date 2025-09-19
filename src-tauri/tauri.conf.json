@@ -20,7 +20,9 @@
         "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
-        "titleBarStyle": "Transparent"
+        "titleBarStyle": "Transparent",
+        "skipTaskbar": false,
+        "visible": true
       }
     ],
     "security": {
