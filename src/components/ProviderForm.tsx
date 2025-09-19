@@ -18,6 +18,7 @@ import ApiKeyInput from "./ProviderForm/ApiKeyInput";
 import ClaudeConfigEditor from "./ProviderForm/ClaudeConfigEditor";
 import CodexConfigEditor from "./ProviderForm/CodexConfigEditor";
 import KimiModelSelector from "./ProviderForm/KimiModelSelector";
+import SubOptionSelector from "./ProviderForm/SubOptionSelector";
 import { X, AlertCircle, Save } from "lucide-react";
 // 分类仅用于控制少量交互（如官方禁用 API Key），不显示介绍组件
 
@@ -161,6 +162,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [kimiAnthropicModel, setKimiAnthropicModel] = useState("");
   const [kimiAnthropicSmallFastModel, setKimiAnthropicSmallFastModel] =
     useState("");
+
+  // 二级选项状态
+  const [selectedSubOption, setSelectedSubOption] = useState("");
+  const [selectedEndpoint, setSelectedEndpoint] = useState("");
 
   const validateSettingsConfig = (value: string): string => {
     return validateJsonConfig(value, "配置内容");
@@ -565,6 +570,15 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
         setClaudeSmallFastModel("");
       }
     }
+
+    // 处理二级选项
+    if (preset.subOptions && preset.subOptions.length > 0) {
+      setSelectedSubOption(preset.subOptions[0].name);
+      setSelectedEndpoint(preset.subOptions[0].endpoints[0] || "");
+    } else {
+      setSelectedSubOption("");
+      setSelectedEndpoint("");
+    }
   };
 
   // 处理点击自定义按钮
@@ -597,6 +611,8 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     setClaudeSmallFastModel("");
     setKimiAnthropicModel("");
     setKimiAnthropicSmallFastModel("");
+    setSelectedSubOption("");
+    setSelectedEndpoint("");
     setCategory("custom");
   };
 
@@ -622,6 +638,19 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
     // 清空 API Key，让用户重新输入
     setCodexApiKey("");
+
+    // 处理 Codex 端点
+    if (preset.endpoints && preset.endpoints.length > 0) {
+      setSelectedEndpoint(preset.endpoints[0]);
+      // 更新 config.toml 中的 base_url
+      if (preset.config) {
+        const updatedConfig = preset.config.replace(
+          /base_url = "[^"]*"/,
+          `base_url = "${preset.endpoints[0]}/v1"`
+        );
+        setCodexConfig(updatedConfig);
+      }
+    }
   };
 
   // Codex: 处理点击自定义按钮
@@ -636,6 +665,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     setCodexAuth("");
     setCodexConfig("");
     setCodexApiKey("");
+    setSelectedEndpoint("");
     setCategory("custom");
   };
 
@@ -674,6 +704,26 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     }
   };
 
+  // 处理端点变化
+  const handleEndpointChange = (endpoint: string) => {
+    setSelectedEndpoint(endpoint);
+
+    // 更新配置中的 BASE_URL
+    try {
+      const config = JSON.parse(formData.settingsConfig || "{}");
+      if (!config.env) config.env = {};
+      config.env.ANTHROPIC_BASE_URL = endpoint;
+
+      const configString = JSON.stringify(config, null, 2);
+      setFormData((prev) => ({
+        ...prev,
+        settingsConfig: configString,
+      }));
+    } catch (error) {
+      console.error("更新端点失败:", error);
+    }
+  };
+
   // Codex: 处理 API Key 输入并写回 auth.json
   const handleCodexApiKeyChange = (key: string) => {
     setCodexApiKey(key);
@@ -683,6 +733,20 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       setCodexAuth(JSON.stringify(auth, null, 2));
     } catch {
       // ignore
+    }
+  };
+
+  // 处理 Codex 端点变化
+  const handleCodexEndpointChange = (endpoint: string) => {
+    setSelectedEndpoint(endpoint);
+
+    // 更新 config.toml 中的 base_url
+    if (codexConfig) {
+      const updatedConfig = codexConfig.replace(
+        /base_url = "[^"]*"/,
+        `base_url = "${endpoint}/v1"`
+      );
+      setCodexConfig(updatedConfig);
     }
   };
 
@@ -1116,6 +1180,25 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
               </div>
             )}
 
+            {/* 二级选项选择器 */}
+            {!isCodex && selectedPreset !== null && selectedPreset >= 0 && (
+              (() => {
+                const preset = providerPresets[selectedPreset];
+                if (preset.subOptions && preset.subOptions.length > 0) {
+                  return (
+                    <SubOptionSelector
+                      subOptions={preset.subOptions}
+                      selectedOption={selectedSubOption}
+                      selectedEndpoint={selectedEndpoint}
+                      onOptionChange={setSelectedSubOption}
+                      onEndpointChange={handleEndpointChange}
+                    />
+                  );
+                }
+                return null;
+              })()
+            )}
+
             {!isCodex && shouldShowKimiSelector && (
               <KimiModelSelector
                 apiKey={apiKey}
@@ -1158,6 +1241,29 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   </div>
                 )}
               </div>
+            )}
+
+            {/* Codex 端点选择器 */}
+            {isCodex && selectedCodexPreset !== null && selectedCodexPreset >= 0 && (
+              (() => {
+                const preset = codexProviderPresets[selectedCodexPreset];
+                if (preset.endpoints && preset.endpoints.length > 0) {
+                  return (
+                    <SubOptionSelector
+                      subOptions={[{
+                        name: "PackyCode 节点",
+                        endpoints: preset.endpoints,
+                        enableAutoSpeed: preset.enableAutoSpeed || false,
+                      }]}
+                      selectedOption="PackyCode 节点"
+                      selectedEndpoint={selectedEndpoint}
+                      onOptionChange={() => {}} // 只有一个选项，无需处理
+                      onEndpointChange={handleCodexEndpointChange}
+                    />
+                  );
+                }
+                return null;
+              })()
             )}
 
             {/* Claude 或 Codex 的配置部分 */}
