@@ -1,9 +1,10 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useMemo } from "react";
 import { EditorView, basicSetup } from "codemirror";
 import { json } from "@codemirror/lang-json";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorState } from "@codemirror/state";
 import { placeholder } from "@codemirror/view";
+import { linter, Diagnostic } from "@codemirror/lint";
 
 interface JsonEditorProps {
   value: string;
@@ -11,6 +12,7 @@ interface JsonEditorProps {
   placeholder?: string;
   darkMode?: boolean;
   rows?: number;
+  showValidation?: boolean;
 }
 
 const JsonEditor: React.FC<JsonEditorProps> = ({
@@ -19,9 +21,49 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   placeholder: placeholderText = "",
   darkMode = false,
   rows = 12,
+  showValidation = true,
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+
+  // JSON linter 函数
+  const jsonLinter = useMemo(
+    () =>
+      linter((view) => {
+        const diagnostics: Diagnostic[] = [];
+        if (!showValidation) return diagnostics;
+
+        const doc = view.state.doc.toString();
+        if (!doc.trim()) return diagnostics;
+
+        try {
+          const parsed = JSON.parse(doc);
+          // 检查是否是JSON对象
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            // 格式正确
+          } else {
+            diagnostics.push({
+              from: 0,
+              to: doc.length,
+              severity: "error",
+              message: "配置必须是JSON对象，不能是数组或其他类型",
+            });
+          }
+        } catch (e) {
+          // 简单处理JSON解析错误
+          const message = e instanceof SyntaxError ? e.message : "JSON格式错误";
+          diagnostics.push({
+            from: 0,
+            to: doc.length,
+            severity: "error",
+            message,
+          });
+        }
+
+        return diagnostics;
+      }),
+    [showValidation],
+  );
 
   useEffect(() => {
     if (!editorRef.current) return;
@@ -43,6 +85,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       json(),
       placeholder(placeholderText || ""),
       sizingTheme,
+      jsonLinter,
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           const newValue = update.state.doc.toString();
@@ -75,7 +118,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       view.destroy();
       viewRef.current = null;
     };
-  }, [darkMode, rows]); // 依赖项中不包含 onChange 和 placeholder，避免不必要的重建
+  }, [darkMode, rows, jsonLinter]); // 依赖项中不包含 onChange 和 placeholder，避免不必要的重建
 
   // 当 value 从外部改变时更新编辑器内容
   useEffect(() => {

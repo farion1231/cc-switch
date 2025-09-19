@@ -22,7 +22,10 @@ const deepMerge = (
   return target;
 };
 
-const deepRemove = (target: Record<string, any>, source: Record<string, any>) => {
+const deepRemove = (
+  target: Record<string, any>,
+  source: Record<string, any>,
+) => {
   Object.entries(source).forEach(([key, value]) => {
     if (!(key in target)) return;
 
@@ -59,7 +62,7 @@ const isSubset = (target: any, source: any): boolean => {
 const deepClone = <T>(obj: T): T => {
   if (obj === null || typeof obj !== "object") return obj;
   if (obj instanceof Date) return new Date(obj.getTime()) as T;
-  if (obj instanceof Array) return obj.map(item => deepClone(item)) as T;
+  if (obj instanceof Array) return obj.map((item) => deepClone(item)) as T;
   if (obj instanceof Object) {
     const clonedObj = {} as T;
     for (const key in obj) {
@@ -76,6 +79,25 @@ export interface UpdateCommonConfigResult {
   updatedConfig: string;
   error?: string;
 }
+
+// 验证JSON配置格式
+export const validateJsonConfig = (
+  value: string,
+  fieldName: string = "配置",
+): string => {
+  if (!value.trim()) {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return `${fieldName}必须是 JSON 对象`;
+    }
+    return "";
+  } catch {
+    return `${fieldName}JSON格式错误，请检查语法`;
+  }
+};
 
 // 将通用配置片段写入/移除 settingsConfig
 export const updateCommonConfigSnippet = (
@@ -99,22 +121,16 @@ export const updateCommonConfigSnippet = (
     };
   }
 
-  let snippet: Record<string, any>;
-  try {
-    const parsed = JSON.parse(snippetString);
-    if (!isPlainObject(parsed)) {
-      return {
-        updatedConfig: JSON.stringify(config, null, 2),
-        error: "通用配置片段必须是 JSON 对象",
-      };
-    }
-    snippet = parsed;
-  } catch (err) {
+  // 使用统一的验证函数
+  const snippetError = validateJsonConfig(snippetString, "通用配置片段");
+  if (snippetError) {
     return {
       updatedConfig: JSON.stringify(config, null, 2),
-      error: "通用配置片段格式错误，需为合法 JSON",
+      error: snippetError,
     };
   }
+
+  const snippet = JSON.parse(snippetString) as Record<string, any>;
 
   if (enabled) {
     const merged = deepMerge(deepClone(config), snippet);
@@ -195,13 +211,13 @@ export const setApiKeyInConfig = (
 
 // ========== TOML Config Utilities ==========
 
-const COMMON_CONFIG_MARKER_START = "# === COMMON CONFIG START ===";
-const COMMON_CONFIG_MARKER_END = "# === COMMON CONFIG END ===";
-
 export interface UpdateTomlCommonConfigResult {
   updatedConfig: string;
   error?: string;
 }
+
+// 保存之前的通用配置片段，用于替换操作
+let previousCommonSnippet = "";
 
 // 将通用配置片段写入/移除 TOML 配置
 export const updateTomlCommonConfigSnippet = (
@@ -210,51 +226,50 @@ export const updateTomlCommonConfigSnippet = (
   enabled: boolean,
 ): UpdateTomlCommonConfigResult => {
   if (!snippetString.trim()) {
-    // 如果片段为空，移除已存在的通用配置部分
-    const cleaned = removeTomlCommonConfig(tomlString);
+    // 如果片段为空，直接返回原始配置
     return {
-      updatedConfig: cleaned,
+      updatedConfig: tomlString,
     };
   }
 
   if (enabled) {
     // 添加通用配置
-    const withoutOld = removeTomlCommonConfig(tomlString);
-    const commonSection = `\n${COMMON_CONFIG_MARKER_START}\n${snippetString}\n${COMMON_CONFIG_MARKER_END}\n`;
+    // 先移除旧的通用配置（如果有）
+    let updatedConfig = tomlString;
+    if (previousCommonSnippet && tomlString.includes(previousCommonSnippet)) {
+      updatedConfig = tomlString.replace(previousCommonSnippet, "");
+    }
+
+    // 在文件末尾添加新的通用配置
+    // 确保有适当的换行
+    const needsNewline = updatedConfig && !updatedConfig.endsWith("\n");
+    updatedConfig =
+      updatedConfig + (needsNewline ? "\n\n" : "\n") + snippetString;
+
+    // 保存当前通用配置片段
+    previousCommonSnippet = snippetString;
+
     return {
-      updatedConfig: withoutOld + commonSection,
+      updatedConfig: updatedConfig.trim() + "\n",
     };
   } else {
     // 移除通用配置
-    const cleaned = removeTomlCommonConfig(tomlString);
+    if (tomlString.includes(snippetString)) {
+      const updatedConfig = tomlString.replace(snippetString, "");
+      // 清理多余的空行
+      const cleaned = updatedConfig.replace(/\n{3,}/g, "\n\n").trim();
+
+      // 清空保存的状态
+      previousCommonSnippet = "";
+
+      return {
+        updatedConfig: cleaned ? cleaned + "\n" : "",
+      };
+    }
     return {
-      updatedConfig: cleaned,
+      updatedConfig: tomlString,
     };
   }
-};
-
-// 从 TOML 中移除通用配置部分
-const removeTomlCommonConfig = (tomlString: string): string => {
-  const startIdx = tomlString.indexOf(COMMON_CONFIG_MARKER_START);
-  const endIdx = tomlString.indexOf(COMMON_CONFIG_MARKER_END);
-  
-  if (startIdx === -1 || endIdx === -1) {
-    return tomlString;
-  }
-  
-  // 找到标记前的换行符（如果有）
-  let realStartIdx = startIdx;
-  if (startIdx > 0 && tomlString[startIdx - 1] === '\n') {
-    realStartIdx = startIdx - 1;
-  }
-  
-  // 找到标记后的换行符（如果有）
-  let realEndIdx = endIdx + COMMON_CONFIG_MARKER_END.length;
-  if (realEndIdx < tomlString.length && tomlString[realEndIdx] === '\n') {
-    realEndIdx = realEndIdx + 1;
-  }
-  
-  return tomlString.slice(0, realStartIdx) + tomlString.slice(realEndIdx);
 };
 
 // 检查 TOML 配置是否已包含通用配置片段
@@ -263,18 +278,12 @@ export const hasTomlCommonConfigSnippet = (
   snippetString: string,
 ): boolean => {
   if (!snippetString.trim()) return false;
-  
-  const startIdx = tomlString.indexOf(COMMON_CONFIG_MARKER_START);
-  const endIdx = tomlString.indexOf(COMMON_CONFIG_MARKER_END);
-  
-  if (startIdx === -1 || endIdx === -1 || startIdx >= endIdx) {
-    return false;
-  }
-  
-  // 提取标记之间的内容
-  const existingSnippet = tomlString
-    .slice(startIdx + COMMON_CONFIG_MARKER_START.length, endIdx)
-    .trim();
-  
-  return existingSnippet === snippetString.trim();
+
+  // 简单检查配置是否包含片段内容
+  // 去除空白字符后比较，避免格式差异影响
+  const normalizeWhitespace = (str: string) => str.replace(/\s+/g, " ").trim();
+
+  return normalizeWhitespace(tomlString).includes(
+    normalizeWhitespace(snippetString),
+  );
 };

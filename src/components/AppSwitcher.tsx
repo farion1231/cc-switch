@@ -26,8 +26,8 @@ export function AppSwitcher({ activeApp, onSwitch }: AppSwitcherProps) {
         <ClaudeIcon
           size={16}
           className={
-            activeApp === "claude" 
-              ? "text-[#D97757] dark:text-[#D97757] transition-colors duration-200" 
+            activeApp === "claude"
+              ? "text-[#D97757] dark:text-[#D97757] transition-colors duration-200"
               : "text-gray-500 dark:text-gray-400 group-hover:text-[#D97757] dark:group-hover:text-[#D97757] transition-colors duration-200"
           }
         />

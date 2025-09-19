@@ -12,6 +12,7 @@ interface CodexConfigEditorProps {
   commonConfigSnippet: string;
   onCommonConfigSnippetChange: (value: string) => void;
   commonConfigError: string;
+  authError: string;
 }
 
 const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
@@ -25,6 +26,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
   commonConfigSnippet,
   onCommonConfigSnippetChange,
   commonConfigError,
+  authError,
 }) => {
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
@@ -37,7 +39,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
   // 支持按下 ESC 关闭弹窗
   useEffect(() => {
     if (!isCommonConfigModalOpen) return;
-    
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -94,6 +96,9 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
           data-gramm_editor="false"
           data-enable-grammarly="false"
         />
+        {authError && (
+          <p className="text-xs text-red-500 dark:text-red-400">{authError}</p>
+        )}
         <p className="text-xs text-gray-500 dark:text-gray-400">
           Codex auth.json 配置内容
         </p>
@@ -154,7 +159,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
       </div>
 
       {isCommonConfigModalOpen && (
-        <div 
+        <div
           className="fixed inset-0 z-50 flex items-center justify-center"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) closeModal();
@@ -162,7 +167,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
         >
           {/* Backdrop - 统一背景样式 */}
           <div className="absolute inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm" />
-          
+
           {/* Modal - 统一窗口样式 */}
           <div className="relative bg-white dark:bg-gray-900 rounded-xl shadow-lg max-w-2xl w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
             {/* Header - 统一标题栏样式 */}
@@ -179,7 +184,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
                 <X size={18} />
               </button>
             </div>
-            
+
             {/* Content - 统一内容区域样式 */}
             <div className="flex-1 overflow-auto p-6 space-y-4">
               <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -187,7 +192,9 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
               </p>
               <textarea
                 value={commonConfigSnippet}
-                onChange={(e) => handleCommonConfigSnippetChange(e.target.value)}
+                onChange={(e) =>
+                  handleCommonConfigSnippetChange(e.target.value)
+                }
                 placeholder={`# Common Codex config
 # Add your common TOML configuration here`}
                 rows={12}
@@ -208,7 +215,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
                 </p>
               )}
             </div>
-            
+
             {/* Footer - 统一底部按钮样式 */}
             <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800">
               <button
