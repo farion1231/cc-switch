@@ -9,3 +9,17 @@ release/
 .npmrc
 CLAUDE.md
 AGENTS.md
+
+# IDE files
+.idea/
+.vscode/
+
+# Local settings
+.claude/
+
+# Documentation (development only)
+docs/
+
+# Package manager lock files (alternative)
+bun.lock
+yarn.lock
