@@ -11,6 +11,37 @@ use crate::config::{get_claude_settings_path, ConfigStatus};
 use crate::provider::Provider;
 use crate::store::AppState;
 
+fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), String> {
+    match app_type {
+        AppType::Claude => {
+            if !provider.settings_config.is_object() {
+                return Err("Claude 配置必须是 JSON 对象".to_string());
+            }
+        }
+        AppType::Codex => {
+            let settings = provider
+                .settings_config
+                .as_object()
+                .ok_or_else(|| "Codex 配置必须是 JSON 对象".to_string())?;
+            let auth = settings
+                .get("auth")
+                .ok_or_else(|| "Codex 配置缺少 auth 字段".to_string())?;
+            if !auth.is_object() {
+                return Err("Codex auth 配置必须是 JSON 对象".to_string());
+            }
+            if let Some(config_value) = settings.get("config") {
+                if !(config_value.is_string() || config_value.is_null()) {
+                    return Err("Codex config 字段必须是字符串".to_string());
+                }
+                if let Some(cfg_text) = config_value.as_str() {
+                    codex_config::validate_config_toml(cfg_text)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 获取所有供应商
 #[tauri::command]
 pub async fn get_providers(
@@ -74,6 +105,8 @@ pub async fn add_provider(
         .or_else(|| app.as_deref().map(|s| s.into()))
         .or_else(|| appType.as_deref().map(|s| s.into()))
         .unwrap_or(AppType::Claude);
+
+    validate_provider_settings(&app_type, &provider)?;
 
     // 读取当前是否是激活供应商（短锁）
     let is_current = {
@@ -139,6 +172,8 @@ pub async fn update_provider(
         .or_else(|| app.as_deref().map(|s| s.into()))
         .or_else(|| appType.as_deref().map(|s| s.into()))
         .unwrap_or(AppType::Claude);
+
+    validate_provider_settings(&app_type, &provider)?;
 
     // 读取校验 & 是否当前（短锁）
     let (exists, is_current) = {

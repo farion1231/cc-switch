@@ -7,13 +7,13 @@ mod provider;
 mod store;
 
 use store::AppState;
+#[cfg(target_os = "macos")]
+use tauri::RunEvent;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
 };
 use tauri::{Emitter, Manager};
-#[cfg(target_os = "macos")]
-use tauri::RunEvent;
 
 /// 创建动态托盘菜单
 fn create_tray_menu(
@@ -144,7 +144,9 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                     provider_id,
                 )
                 .await
-                { log::error!("切换Claude供应商失败: {}", e); }
+                {
+                    log::error!("切换Claude供应商失败: {}", e);
+                }
             });
         }
         id if id.starts_with("codex_") => {
@@ -161,7 +163,9 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                     provider_id,
                 )
                 .await
-                { log::error!("切换Codex供应商失败: {}", e); }
+                {
+                    log::error!("切换Codex供应商失败: {}", e);
+                }
             });
         }
         _ => {
