@@ -23,7 +23,9 @@
     "viewOnGithub": "View on GitHub",
     "toggleDarkMode": "Switch to Dark Mode",
     "toggleLightMode": "Switch to Light Mode",
-    "addProvider": "Add Provider"
+    "addProvider": "Add Provider",
+    "switchToChinese": "Switch to Chinese",
+    "switchToEnglish": "Switch to English"
   },
   "provider": {
     "noProviders": "No providers added yet",

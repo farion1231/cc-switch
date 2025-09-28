@@ -23,7 +23,9 @@
     "viewOnGithub": "在 GitHub 上查看",
     "toggleDarkMode": "切换到暗色模式",
     "toggleLightMode": "切换到亮色模式",
-    "addProvider": "添加供应商"
+    "addProvider": "添加供应商",
+    "switchToChinese": "切换到中文",
+    "switchToEnglish": "切换到英文"
   },
   "provider": {
     "noProviders": "还没有添加任何供应商",
