@@ -1,5 +1,6 @@
 import React from "react";
 import { AlertTriangle, X } from "lucide-react";
+import { isLinux } from "../lib/platform";
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -26,7 +27,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        className={`absolute inset-0 bg-black/50${isLinux() ? "" : " backdrop-blur-sm"}`}
         onClick={onCancel}
       />
 

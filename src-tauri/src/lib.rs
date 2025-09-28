@@ -4,7 +4,9 @@ mod commands;
 mod config;
 mod migration;
 mod provider;
+mod settings;
 mod store;
+mod vscode;
 
 use store::AppState;
 #[cfg(target_os = "macos")]
@@ -121,6 +123,10 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     match event_id {
         "show_main" => {
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = window.set_skip_taskbar(false);
+                }
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -235,16 +241,40 @@ async fn update_tray_menu(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
-        // 拦截窗口关闭：仅隐藏窗口，保持进程与托盘常驻
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    let builder = builder
+        // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
-                api.prevent_close();
-                let _ = window.hide();
+                let settings = crate::settings::get_settings();
+
+                if settings.minimize_to_tray_on_close {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = window.set_skip_taskbar(true);
+                    }
+                } else {
+                    window.app_handle().exit(0);
+                }
             }
             _ => {}
         })
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // 注册 Updater 插件（桌面端）
@@ -350,7 +380,9 @@ pub fn run() {
             commands::get_claude_config_status,
             commands::get_config_status,
             commands::get_claude_code_config_path,
+            commands::get_config_dir,
             commands::open_config_folder,
+            commands::pick_directory,
             commands::open_external,
             commands::get_app_config_path,
             commands::open_app_config_folder,
@@ -359,6 +391,10 @@ pub fn run() {
             commands::check_for_updates,
             commands::test_endpoint_latency,
             commands::test_multiple_endpoints,
+            commands::is_portable_mode,
+            commands::get_vscode_settings_status,
+            commands::read_vscode_settings,
+            commands::write_vscode_settings,
             update_tray_menu,
         ]);
 
@@ -372,6 +408,10 @@ pub fn run() {
         match event {
             RunEvent::Reopen { .. } => {
                 if let Some(window) = app_handle.get_webview_window("main") {
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = window.set_skip_taskbar(false);
+                    }
                     let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();

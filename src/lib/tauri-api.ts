@@ -122,6 +122,16 @@ export const tauriAPI = {
     }
   },
 
+  // 获取当前生效的配置目录
+  getConfigDir: async (app?: AppType): Promise<string> => {
+    try {
+      return await invoke("get_config_dir", { app_type: app, app });
+    } catch (error) {
+      console.error("获取配置目录失败:", error);
+      return "";
+    }
+  },
+
   // 获取 Claude Code 配置状态
   getClaudeConfigStatus: async (): Promise<ConfigStatus> => {
     try {
@@ -189,10 +199,20 @@ export const tauriAPI = {
 
   // （保留空位，取消迁移提示）
 
-  // 选择配置文件（Tauri 暂不实现，保留接口兼容性）
-  selectConfigFile: async (): Promise<string | null> => {
-    console.warn("selectConfigFile 在 Tauri 版本中暂不支持");
-    return null;
+  // 选择配置目录
+  selectConfigDirectory: async (
+    defaultPath?: string,
+  ): Promise<string | null> => {
+    try {
+      const sanitized =
+        defaultPath && defaultPath.trim() !== "" ? defaultPath : undefined;
+      return await invoke<string | null>("pick_directory", {
+        defaultPath: sanitized,
+      });
+    } catch (error) {
+      console.error("选择配置目录失败:", error);
+      return null;
+    }
   },
 
   // 获取设置
@@ -201,7 +221,7 @@ export const tauriAPI = {
       return await invoke("get_settings");
     } catch (error) {
       console.error("获取设置失败:", error);
-      return { showInTray: true };
+      return { showInTray: true, minimizeToTrayOnClose: true };
     }
   },
 
@@ -235,16 +255,30 @@ export const tauriAPI = {
   },
 
   // 批量测试多个节点
-  testMultipleEndpoints: async (endpoints: string[]): Promise<Array<{
-    endpoint: string;
-    latency: number;
-    success: boolean;
-  }>> => {
+  testMultipleEndpoints: async (
+    endpoints: string[],
+  ): Promise<
+    Array<{
+      endpoint: string;
+      latency: number;
+      success: boolean;
+    }>
+  > => {
     try {
       return await invoke("test_multiple_endpoints", { endpoints });
     } catch (error) {
       console.error("批量测试节点失败:", error);
       throw error;
+    }
+  },
+
+  // 判断是否为便携模式
+  isPortable: async (): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("is_portable_mode");
+    } catch (error) {
+      console.error("检测便携模式失败:", error);
+      return false;
     }
   },
 
@@ -264,6 +298,38 @@ export const tauriAPI = {
       await invoke("open_app_config_folder");
     } catch (error) {
       console.error("打开应用配置文件夹失败:", error);
+    }
+  },
+
+  // VS Code: 获取 settings.json 状态
+  getVSCodeSettingsStatus: async (): Promise<{
+    exists: boolean;
+    path: string;
+    error?: string;
+  }> => {
+    try {
+      return await invoke("get_vscode_settings_status");
+    } catch (error) {
+      console.error("获取 VS Code 设置状态失败:", error);
+      return { exists: false, path: "", error: String(error) };
+    }
+  },
+
+  // VS Code: 读取 settings.json 文本
+  readVSCodeSettings: async (): Promise<string> => {
+    try {
+      return await invoke("read_vscode_settings");
+    } catch (error) {
+      throw new Error(`读取 VS Code 设置失败: ${String(error)}`);
+    }
+  },
+
+  // VS Code: 写回 settings.json 文本（不自动创建）
+  writeVSCodeSettings: async (content: string): Promise<boolean> => {
+    try {
+      return await invoke("write_vscode_settings", { content });
+    } catch (error) {
+      throw new Error(`写入 VS Code 设置失败: ${String(error)}`);
     }
   },
 };

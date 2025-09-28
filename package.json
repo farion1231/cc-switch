@@ -1,6 +1,6 @@
 {
   "name": "cc-switch",
-  "version": "3.2.0",
+  "version": "3.3.1",
   "description": "Claude Code & Codex 供应商切换工具",
   "scripts": {
     "dev": "pnpm tauri dev",
@@ -33,9 +33,11 @@
     "@codemirror/view": "^6.38.2",
     "@tailwindcss/vite": "^4.1.13",
     "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
     "@tauri-apps/plugin-process": "^2.0.0",
     "@tauri-apps/plugin-updater": "^2.0.0",
     "codemirror": "^6.0.2",
+    "jsonc-parser": "^3.3.1",
     "lucide-react": "^0.542.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

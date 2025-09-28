@@ -14,21 +14,25 @@ export interface SpeedTestResult {
  */
 export async function testEndpointSpeed(
   endpoint: string,
-  timeout: number = 8000
+  timeout: number = 8000,
 ): Promise<SpeedTestResult> {
   const startTime = performance.now();
-  
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
-    
+
     // 构造测试 URL，优先使用 favicon 或其他轻量资源
     let testUrl = endpoint;
-    if (!testUrl.includes('/favicon') && !testUrl.includes('/ping') && !testUrl.includes('/health')) {
+    if (
+      !testUrl.includes("/favicon") &&
+      !testUrl.includes("/ping") &&
+      !testUrl.includes("/health")
+    ) {
       // 尝试添加常见的健康检查路径
-      testUrl = `${endpoint.replace(/\/$/, '')}/favicon.ico`;
+      testUrl = `${endpoint.replace(/\/$/, "")}/favicon.ico`;
     }
-    
+
     // 发送请求测试连通性
     await fetch(testUrl, {
       method: "GET",
@@ -40,11 +44,11 @@ export async function testEndpointSpeed(
         "User-Agent": "CC-Switch-SpeedTest/1.0",
       },
     });
-    
+
     clearTimeout(timeoutId);
     const endTime = performance.now();
     const latency = Math.round(endTime - startTime);
-    
+
     return {
       endpoint,
       latency,
@@ -53,11 +57,12 @@ export async function testEndpointSpeed(
   } catch (error) {
     const endTime = performance.now();
     const latency = Math.round(endTime - startTime);
-    
+
     // 对于 no-cors 模式，网络错误可能仍然表示连通
-    const isNetworkError = error instanceof Error && 
-      (error.name === 'TypeError' || error.message.includes('Failed to fetch'));
-    
+    const isNetworkError =
+      error instanceof Error &&
+      (error.name === "TypeError" || error.message.includes("Failed to fetch"));
+
     return {
       endpoint,
       latency: Math.min(latency, 10000), // 限制最大延迟显示
@@ -72,24 +77,24 @@ export async function testEndpointSpeed(
  */
 export async function testMultipleEndpoints(
   endpoints: string[],
-  concurrency: number = 5 // 限制并发数以避免过载
+  concurrency: number = 5, // 限制并发数以避免过载
 ): Promise<SpeedTestResult[]> {
   if (endpoints.length === 0) {
     return [];
   }
-  
+
   const results: SpeedTestResult[] = [];
-  
+
   // 分批并发测试以避免过载
   for (let i = 0; i < endpoints.length; i += concurrency) {
     const batch = endpoints.slice(i, i + concurrency);
     const batchPromises = batch.map((endpoint) => testEndpointSpeed(endpoint));
-    
+
     try {
       const batchResults = await Promise.allSettled(batchPromises);
-      
+
       batchResults.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
+        if (result.status === "fulfilled") {
           results.push(result.value);
         } else {
           // 处理 Promise 失败的情况
@@ -114,7 +119,7 @@ export async function testMultipleEndpoints(
       });
     }
   }
-  
+
   // 按延迟排序，成功的节点优先
   return results.sort((a, b) => {
     if (a.success && !b.success) return -1;
@@ -127,7 +132,7 @@ export async function testMultipleEndpoints(
  * 获取最快的可用节点
  */
 export async function getFastestEndpoint(
-  endpoints: string[]
+  endpoints: string[],
 ): Promise<string | null> {
   const results = await testMultipleEndpoints(endpoints);
   const fastest = results.find((r) => r.success);
@@ -138,7 +143,7 @@ export async function getFastestEndpoint(
  * 检查网络连接状态
  */
 export function isOnline(): boolean {
-  return typeof navigator !== 'undefined' ? navigator.onLine : true;
+  return typeof navigator !== "undefined" ? navigator.onLine : true;
 }
 
 /**

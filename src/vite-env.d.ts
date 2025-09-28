@@ -28,7 +28,8 @@ declare global {
       getClaudeCodeConfigPath: () => Promise<string>;
       getClaudeConfigStatus: () => Promise<ConfigStatus>;
       getConfigStatus: (app?: AppType) => Promise<ConfigStatus>;
-      selectConfigFile: () => Promise<string | null>;
+      getConfigDir: (app?: AppType) => Promise<string>;
+      selectConfigDirectory: (defaultPath?: string) => Promise<string | null>;
       openConfigFolder: (app?: AppType) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       updateTrayMenu: () => Promise<boolean>;
@@ -38,8 +39,13 @@ declare global {
       getSettings: () => Promise<Settings>;
       saveSettings: (settings: Settings) => Promise<boolean>;
       checkForUpdates: () => Promise<void>;
+      isPortable: () => Promise<boolean>;
       getAppConfigPath: () => Promise<string>;
       openAppConfigFolder: () => Promise<void>;
+      // VS Code settings.json 能力
+      getVSCodeSettingsStatus: () => Promise<ConfigStatus>;
+      readVSCodeSettings: () => Promise<string>;
+      writeVSCodeSettings: (content: string) => Promise<boolean>;
     };
     platform: {
       isMac: boolean;

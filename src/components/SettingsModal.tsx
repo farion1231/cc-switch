@@ -6,12 +6,18 @@ import {
   Download,
   ExternalLink,
   Check,
+  Undo2,
+  FolderSearch,
+  Save,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
+import { homeDir, join } from "@tauri-apps/api/path";
 import "../lib/tauri-api";
 import { relaunchApp } from "../lib/updater";
 import { useUpdate } from "../contexts/UpdateContext";
 import type { Settings } from "../types";
+import type { AppType } from "../lib/tauri-api";
+import { isLinux } from "../lib/platform";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -20,12 +26,18 @@ interface SettingsModalProps {
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [settings, setSettings] = useState<Settings>({
     showInTray: true,
+    minimizeToTrayOnClose: true,
+    claudeConfigDir: undefined,
+    codexConfigDir: undefined,
   });
   const [configPath, setConfigPath] = useState<string>("");
   const [version, setVersion] = useState<string>("");
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [showUpToDate, setShowUpToDate] = useState(false);
+  const [resolvedClaudeDir, setResolvedClaudeDir] = useState<string>("");
+  const [resolvedCodexDir, setResolvedCodexDir] = useState<string>("");
+  const [isPortable, setIsPortable] = useState(false);
   const { hasUpdate, updateInfo, updateHandle, checkUpdate, resetDismiss } =
     useUpdate();
 
@@ -33,6 +45,8 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     loadSettings();
     loadConfigPath();
     loadVersion();
+    loadResolvedDirs();
+    loadPortableFlag();
   }, []);
 
   const loadVersion = async () => {
@@ -49,12 +63,26 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const loadSettings = async () => {
     try {
       const loadedSettings = await window.api.getSettings();
-      if ((loadedSettings as any)?.showInTray !== undefined) {
-        setSettings({ showInTray: (loadedSettings as any).showInTray });
-      } else if ((loadedSettings as any)?.showInDock !== undefined) {
-        // 向后兼容：若历史上有 showInDock，则映射为 showInTray
-        setSettings({ showInTray: (loadedSettings as any).showInDock });
-      }
+      const showInTray =
+        (loadedSettings as any)?.showInTray ??
+        (loadedSettings as any)?.showInDock ??
+        true;
+      const minimizeToTrayOnClose =
+        (loadedSettings as any)?.minimizeToTrayOnClose ??
+        (loadedSettings as any)?.minimize_to_tray_on_close ??
+        true;
+      setSettings({
+        showInTray,
+        minimizeToTrayOnClose,
+        claudeConfigDir:
+          typeof (loadedSettings as any)?.claudeConfigDir === "string"
+            ? (loadedSettings as any).claudeConfigDir
+            : undefined,
+        codexConfigDir:
+          typeof (loadedSettings as any)?.codexConfigDir === "string"
+            ? (loadedSettings as any).codexConfigDir
+            : undefined,
+      });
     } catch (error) {
       console.error("加载设置失败:", error);
     }
@@ -71,9 +99,43 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     }
   };
 
+  const loadResolvedDirs = async () => {
+    try {
+      const [claudeDir, codexDir] = await Promise.all([
+        window.api.getConfigDir("claude"),
+        window.api.getConfigDir("codex"),
+      ]);
+      setResolvedClaudeDir(claudeDir || "");
+      setResolvedCodexDir(codexDir || "");
+    } catch (error) {
+      console.error("获取配置目录失败:", error);
+    }
+  };
+
+  const loadPortableFlag = async () => {
+    try {
+      const portable = await window.api.isPortable();
+      setIsPortable(portable);
+    } catch (error) {
+      console.error("检测便携模式失败:", error);
+    }
+  };
+
   const saveSettings = async () => {
     try {
-      await window.api.saveSettings(settings);
+      const payload: Settings = {
+        ...settings,
+        claudeConfigDir:
+          settings.claudeConfigDir && settings.claudeConfigDir.trim() !== ""
+            ? settings.claudeConfigDir.trim()
+            : undefined,
+        codexConfigDir:
+          settings.codexConfigDir && settings.codexConfigDir.trim() !== ""
+            ? settings.codexConfigDir.trim()
+            : undefined,
+      };
+      await window.api.saveSettings(payload);
+      setSettings(payload);
       onClose();
     } catch (error) {
       console.error("保存设置失败:", error);
@@ -82,6 +144,10 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
   const handleCheckUpdate = async () => {
     if (hasUpdate && updateHandle) {
+      if (isPortable) {
+        await window.api.checkForUpdates();
+        return;
+      }
       // 已检测到更新：直接复用 updateHandle 下载并安装，避免重复检查
       setIsDownloading(true);
       try {
@@ -135,6 +201,68 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     }
   };
 
+  const handleBrowseConfigDir = async (app: AppType) => {
+    try {
+      const currentResolved =
+        app === "claude"
+          ? (settings.claudeConfigDir ?? resolvedClaudeDir)
+          : (settings.codexConfigDir ?? resolvedCodexDir);
+
+      const selected = await window.api.selectConfigDirectory(currentResolved);
+
+      if (!selected) {
+        return;
+      }
+
+      const sanitized = selected.trim();
+
+      if (sanitized === "") {
+        return;
+      }
+
+      if (app === "claude") {
+        setSettings((prev) => ({ ...prev, claudeConfigDir: sanitized }));
+        setResolvedClaudeDir(sanitized);
+      } else {
+        setSettings((prev) => ({ ...prev, codexConfigDir: sanitized }));
+        setResolvedCodexDir(sanitized);
+      }
+    } catch (error) {
+      console.error("选择配置目录失败:", error);
+    }
+  };
+
+  const computeDefaultConfigDir = async (app: AppType) => {
+    try {
+      const home = await homeDir();
+      const folder = app === "claude" ? ".claude" : ".codex";
+      return await join(home, folder);
+    } catch (error) {
+      console.error("获取默认配置目录失败:", error);
+      return "";
+    }
+  };
+
+  const handleResetConfigDir = async (app: AppType) => {
+    setSettings((prev) => ({
+      ...prev,
+      ...(app === "claude"
+        ? { claudeConfigDir: undefined }
+        : { codexConfigDir: undefined }),
+    }));
+
+    const defaultDir = await computeDefaultConfigDir(app);
+    if (!defaultDir) {
+      return;
+    }
+
+    if (app === "claude") {
+      setResolvedClaudeDir(defaultDir);
+    } else {
+      setResolvedCodexDir(defaultDir);
+    }
+  };
+
   const handleOpenReleaseNotes = async () => {
     try {
       const targetVersion = updateInfo?.availableVersion || version;
@@ -163,8 +291,12 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="absolute inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm" />
-      <div className="relative bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-[500px] overflow-hidden">
+      <div
+        className={`absolute inset-0 bg-black/50 dark:bg-black/70${
+          isLinux() ? "" : " backdrop-blur-sm"
+        }`}
+      />
+      <div className="relative bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-[500px] max-h-[90vh] flex flex-col overflow-hidden">
         {/* 标题栏 */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800">
           <h2 className="text-lg font-semibold text-blue-500 dark:text-blue-400">
@@ -179,27 +311,38 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
 
         {/* 设置内容 */}
-        <div className="px-6 py-4 space-y-6">
-          {/* 系统托盘设置（未实现）
-              说明：此开关用于控制是否在系统托盘/菜单栏显示应用图标。 */}
-          {/* <div>
+        <div className="px-6 py-4 space-y-6 overflow-y-auto flex-1">
+          {/* 窗口行为设置 */}
+          <div>
             <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
-              显示设置（系统托盘）
+              窗口行为
             </h3>
-            <label className="flex items-center justify-between">
-              <span className="text-sm text-gray-500">
-                在菜单栏显示图标（系统托盘）
-              </span>
-              <input
-                type="checkbox"
-                checked={settings.showInTray}
-                onChange={(e) =>
-                  setSettings({ ...settings, showInTray: e.target.checked })
-                }
-                className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500/20"
-              />
-            </label>
-          </div> */}
+            <div className="space-y-3">
+              <label className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm text-gray-900 dark:text-gray-100">
+                    关闭时最小化到托盘
+                  </span>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.minimizeToTrayOnClose}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      minimizeToTrayOnClose: e.target.checked,
+                    }))
+                  }
+                  className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500/20"
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* VS Code 自动同步设置已移除 */}
 
           {/* 配置文件位置 */}
           <div>
@@ -222,6 +365,90 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                   className="text-gray-500 dark:text-gray-400"
                 />
               </button>
+            </div>
+          </div>
+
+          {/* 配置目录覆盖 */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+              配置目录覆盖（高级）
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 leading-relaxed">
+              在 WSL 等环境使用 Claude Code 或 Codex 的时候，可手动指定 WSL
+              里的配置目录，供应商数据与主环境保持一致。
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  Claude Code 配置目录
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={settings.claudeConfigDir ?? resolvedClaudeDir ?? ""}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        claudeConfigDir: e.target.value,
+                      })
+                    }
+                    placeholder="例如：/home/<你的用户名>/.claude"
+                    className="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleBrowseConfigDir("claude")}
+                    className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                    title="浏览目录"
+                  >
+                    <FolderSearch size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleResetConfigDir("claude")}
+                    className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                    title="恢复默认目录（需保存后生效）"
+                  >
+                    <Undo2 size={16} />
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  Codex 配置目录
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={settings.codexConfigDir ?? resolvedCodexDir ?? ""}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        codexConfigDir: e.target.value,
+                      })
+                    }
+                    placeholder="例如：/home/<你的用户名>/.codex"
+                    className="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleBrowseConfigDir("codex")}
+                    className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                    title="浏览目录"
+                  >
+                    <FolderSearch size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleResetConfigDir("codex")}
+                    className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                    title="恢复默认目录（需保存后生效）"
+                  >
+                    <Undo2 size={16} />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -308,8 +535,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           </button>
           <button
             onClick={saveSettings}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 rounded-lg transition-colors"
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 rounded-lg transition-colors flex items-center gap-2"
           >
+            <Save size={16} />
             保存
           </button>
         </div>

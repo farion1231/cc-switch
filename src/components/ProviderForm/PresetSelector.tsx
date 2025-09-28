@@ -16,6 +16,7 @@ interface PresetSelectorProps {
   onSelectPreset: (index: number) => void;
   onCustomClick: () => void;
   customLabel?: string;
+  renderCustomDescription?: () => React.ReactNode; // 新增：自定义描述渲染
 }
 
 const PresetSelector: React.FC<PresetSelectorProps> = ({
@@ -25,6 +26,7 @@ const PresetSelector: React.FC<PresetSelectorProps> = ({
   onSelectPreset,
   onCustomClick,
   customLabel = "自定义",
+  renderCustomDescription,
 }) => {
   const getButtonClass = (index: number, preset?: Preset) => {
     const isSelected = selectedIndex === index;
@@ -48,6 +50,10 @@ const PresetSelector: React.FC<PresetSelectorProps> = ({
 
   const getDescription = () => {
     if (selectedIndex === -1) {
+      // 如果提供了自定义描述渲染函数，使用它
+      if (renderCustomDescription) {
+        return renderCustomDescription();
+      }
       return "手动配置供应商，需要填写完整的配置信息";
     }
 
@@ -99,9 +105,9 @@ const PresetSelector: React.FC<PresetSelectorProps> = ({
         </div>
       </div>
       {getDescription() && (
-        <p className="text-sm text-gray-500 dark:text-gray-400">
+        <div className="text-sm text-gray-500 dark:text-gray-400">
           {getDescription()}
-        </p>
+        </div>
       )}
     </div>
   );

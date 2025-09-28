@@ -287,3 +287,34 @@ export const hasTomlCommonConfigSnippet = (
     normalizeWhitespace(snippetString),
   );
 };
+
+// ========== Codex base_url utils ==========
+
+// 从 Codex 的 TOML 配置文本中提取 base_url（支持单/双引号）
+export const extractCodexBaseUrl = (
+  configText: string | undefined | null,
+): string | undefined => {
+  try {
+    const text = typeof configText === "string" ? configText : "";
+    if (!text) return undefined;
+    const m = text.match(/base_url\s*=\s*(['"])([^'\"]+)\1/);
+    return m && m[2] ? m[2] : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+// 从 Provider 对象中提取 Codex base_url（当 settingsConfig.config 为 TOML 字符串时）
+export const getCodexBaseUrl = (
+  provider: { settingsConfig?: Record<string, any> } | undefined | null,
+): string | undefined => {
+  try {
+    const text =
+      typeof provider?.settingsConfig?.config === "string"
+        ? (provider as any).settingsConfig.config
+        : "";
+    return extractCodexBaseUrl(text);
+  } catch {
+    return undefined;
+  }
+};

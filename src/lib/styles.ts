@@ -38,7 +38,7 @@ export const cardStyles = {
 
   // 选中/激活态卡片
   selected:
-    "bg-white rounded-lg border border-blue-500 ring-1 ring-blue-500/20 bg-blue-500/5 p-4 dark:bg-gray-900 dark:border-blue-400 dark:ring-blue-400/20 dark:bg-blue-400/10",
+    "bg-white rounded-lg border border-blue-500 shadow-sm bg-blue-50 p-4 dark:bg-gray-900 dark:border-blue-400 dark:bg-blue-400/10",
 } as const;
 
 // 输入控件样式

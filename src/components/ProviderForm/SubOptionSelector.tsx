@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Loader2, Zap, Check, X, WifiOff } from "lucide-react";
-import { isOnline, formatLatency, testMultipleEndpoints } from "../../lib/speedTest";
+import {
+  isOnline,
+  formatLatency,
+  testMultipleEndpoints,
+} from "../../lib/speedTest";
 
 interface SubOption {
   name: string;
@@ -40,7 +44,10 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
 
   // 当选项改变时，自动选择第一个端点
   useEffect(() => {
-    if (currentEndpoints.length > 0 && !currentEndpoints.includes(selectedEndpoint)) {
+    if (
+      currentEndpoints.length > 0 &&
+      !currentEndpoints.includes(selectedEndpoint)
+    ) {
       onEndpointChange(currentEndpoints[0]);
     }
   }, [selectedOption, currentEndpoints]);
@@ -66,7 +73,10 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
       if (autoSelectEnabled) {
         const fastest = results
           .filter((r: EndpointTestResult) => r.success)
-          .sort((a: EndpointTestResult, b: EndpointTestResult) => a.latency - b.latency)[0];
+          .sort(
+            (a: EndpointTestResult, b: EndpointTestResult) =>
+              a.latency - b.latency,
+          )[0];
 
         if (fastest) {
           onEndpointChange(fastest.endpoint);
@@ -75,11 +85,11 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
     } catch (error) {
       console.error("测速失败:", error);
       // 创建失败结果
-      const failureResults = currentEndpoints.map(endpoint => ({
+      const failureResults = currentEndpoints.map((endpoint) => ({
         endpoint,
         latency: 10000,
         success: false,
-        error: "测速服务异常"
+        error: "测速服务异常",
       }));
       setTestResults(failureResults);
     } finally {
@@ -88,7 +98,9 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
   };
 
   // 获取端点的测试结果
-  const getEndpointResult = (endpoint: string): EndpointTestResult | undefined => {
+  const getEndpointResult = (
+    endpoint: string,
+  ): EndpointTestResult | undefined => {
     return testResults.find((r) => r.endpoint === endpoint);
   };
 
@@ -185,11 +197,10 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
             return (
               <option key={endpoint} value={endpoint}>
                 {endpoint}
-                {result && (
-                  result.success
+                {result &&
+                  (result.success
                     ? ` - ${formatLatency(result.latency)}`
-                    : " - 失败"
-                )}
+                    : " - 失败")}
               </option>
             );
           })}
@@ -219,15 +230,23 @@ const SubOptionSelector: React.FC<SubOptionSelectorProps> = ({
                   <span className="flex items-center gap-1 ml-2">
                     {result.success ? (
                       <>
-                        <Check size={14} className="text-green-500 dark:text-green-400" />
+                        <Check
+                          size={14}
+                          className="text-green-500 dark:text-green-400"
+                        />
                         <span className="text-green-600 dark:text-green-400">
                           {formatLatency(result.latency)}
                         </span>
                       </>
                     ) : (
                       <>
-                        <X size={14} className="text-red-500 dark:text-red-400" />
-                        <span className="text-red-600 dark:text-red-400">失败</span>
+                        <X
+                          size={14}
+                          className="text-red-500 dark:text-red-400"
+                        />
+                        <span className="text-red-600 dark:text-red-400">
+                          失败
+                        </span>
                       </>
                     )}
                   </span>

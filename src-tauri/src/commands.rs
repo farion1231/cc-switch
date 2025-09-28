@@ -3,13 +3,15 @@
 use std::collections::HashMap;
 use std::time::Duration;
 use tauri::State;
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::app_config::AppType;
 use crate::codex_config;
-use crate::config::{get_claude_settings_path, ConfigStatus};
+use crate::config::{self, get_claude_settings_path, ConfigStatus};
 use crate::provider::Provider;
 use crate::store::AppState;
+use crate::vscode;
 
 fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), String> {
     match app_type {
@@ -519,6 +521,26 @@ pub async fn get_claude_code_config_path() -> Result<String, String> {
     Ok(get_claude_settings_path().to_string_lossy().to_string())
 }
 
+/// 获取当前生效的配置目录
+#[tauri::command]
+pub async fn get_config_dir(
+    app_type: Option<AppType>,
+    app: Option<String>,
+    appType: Option<String>,
+) -> Result<String, String> {
+    let app = app_type
+        .or_else(|| app.as_deref().map(|s| s.into()))
+        .or_else(|| appType.as_deref().map(|s| s.into()))
+        .unwrap_or(AppType::Claude);
+
+    let dir = match app {
+        AppType::Claude => config::get_claude_config_dir(),
+        AppType::Codex => codex_config::get_codex_config_dir(),
+    };
+
+    Ok(dir.to_string_lossy().to_string())
+}
+
 /// 打开配置文件夹
 /// 兼容两种参数：`app_type`（推荐）或 `app`（字符串）
 #[tauri::command]
@@ -550,6 +572,38 @@ pub async fn open_config_folder(
         .map_err(|e| format!("打开文件夹失败: {}", e))?;
 
     Ok(true)
+}
+
+/// 弹出系统目录选择器并返回用户选择的路径
+#[tauri::command]
+pub async fn pick_directory(
+    app: tauri::AppHandle,
+    default_path: Option<String>,
+) -> Result<Option<String>, String> {
+    let initial = default_path
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty());
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut builder = app.dialog().file();
+        if let Some(path) = initial {
+            builder = builder.set_directory(path);
+        }
+        builder.blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| format!("弹出目录选择器失败: {}", e))?;
+
+    match result {
+        Some(file_path) => {
+            let resolved = file_path
+                .simplified()
+                .into_path()
+                .map_err(|e| format!("解析选择的目录失败: {}", e))?;
+            Ok(Some(resolved.to_string_lossy().to_string()))
+        }
+        None => Ok(None),
+    }
 }
 
 /// 打开外部链接
@@ -602,21 +656,14 @@ pub async fn open_app_config_folder(handle: tauri::AppHandle) -> Result<bool, St
 
 /// 获取设置
 #[tauri::command]
-pub async fn get_settings(_state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    // 暂时返回默认设置：系统托盘（菜单栏）显示开关
-    Ok(serde_json::json!({
-        "showInTray": true
-    }))
+pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
+    Ok(crate::settings::get_settings())
 }
 
 /// 保存设置
 #[tauri::command]
-pub async fn save_settings(
-    _state: State<'_, AppState>,
-    settings: serde_json::Value,
-) -> Result<bool, String> {
-    // TODO: 实现系统托盘显示开关的保存与应用（显示/隐藏菜单栏托盘图标）
-    log::info!("保存设置: {:?}", settings);
+pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<bool, String> {
+    crate::settings::update_settings(settings)?;
     Ok(true)
 }
 
@@ -627,7 +674,7 @@ pub async fn check_for_updates(handle: tauri::AppHandle) -> Result<bool, String>
     handle
         .opener()
         .open_url(
-            "https://github.com/farion1231/cc-switch/releases",
+            "https://github.com/farion1231/cc-switch/releases/latest",
             None::<String>,
         )
         .map_err(|e| format!("打开更新页面失败: {}", e))?;
@@ -749,4 +796,55 @@ pub async fn test_multiple_endpoints(endpoints: Vec<String>) -> Result<Vec<serde
         sorted_results.iter().filter(|r| r["success"].as_bool().unwrap_or(false)).count());
     
     Ok(sorted_results)
+}
+
+/// 判断是否为便携版（绿色版）运行
+#[tauri::command]
+pub async fn is_portable_mode() -> Result<bool, String> {
+    let exe_path = std::env::current_exe().map_err(|e| format!("获取可执行路径失败: {}", e))?;
+    if let Some(dir) = exe_path.parent() {
+        Ok(dir.join("portable.ini").is_file())
+    } else {
+        Ok(false)
+    }
+}
+
+/// VS Code: 获取用户 settings.json 状态
+#[tauri::command]
+pub async fn get_vscode_settings_status() -> Result<ConfigStatus, String> {
+    if let Some(p) = vscode::find_existing_settings() {
+        Ok(ConfigStatus {
+            exists: true,
+            path: p.to_string_lossy().to_string(),
+        })
+    } else {
+        // 默认返回 macOS 稳定版路径（或其他平台首选项的第一个候选），但标记不存在
+        let preferred = vscode::candidate_settings_paths().into_iter().next();
+        Ok(ConfigStatus {
+            exists: false,
+            path: preferred.unwrap_or_default().to_string_lossy().to_string(),
+        })
+    }
+}
+
+/// VS Code: 读取 settings.json 文本（仅当文件存在）
+#[tauri::command]
+pub async fn read_vscode_settings() -> Result<String, String> {
+    if let Some(p) = vscode::find_existing_settings() {
+        std::fs::read_to_string(&p).map_err(|e| format!("读取 VS Code 设置失败: {}", e))
+    } else {
+        Err("未找到 VS Code 用户设置文件".to_string())
+    }
+}
+
+/// VS Code: 写入 settings.json 文本（仅当文件存在；不自动创建）
+#[tauri::command]
+pub async fn write_vscode_settings(content: String) -> Result<bool, String> {
+    if let Some(p) = vscode::find_existing_settings() {
+        config::write_text_file(&p, &content)?;
+        Ok(true)
+    } else {
+        Err("未找到 VS Code 用户设置文件".to_string())
+    }
+}
 }

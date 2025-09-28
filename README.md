@@ -1,28 +1,27 @@
 # Claude Code & Codex 供应商切换器
 
-[![Version](https://img.shields.io/badge/version-3.2.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.3.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 
 一个用于管理和切换 Claude Code 与 Codex 不同供应商配置的桌面应用。
 
-> v3.2.0 重点：全新 UI、macOS系统托盘、内置更新器、原子写入与回滚、改进暗色样式、单一事实源（SSOT）与一次性迁移/归档（详见下文“迁移与归档 v3.2.0”）。
+> v3.3.0 ：VS Code Codex 插件一键配置/移除（默认自动同步）、Codex 通用配置片段与自定义向导增强、WSL 环境支持、跨平台托盘与 UI 优化。
+
+> v3.2.0 ：全新 UI、macOS系统托盘、内置更新器、原子写入与回滚、改进暗色样式、单一事实源（SSOT）与一次性迁移/归档。
 
 > v3.1.0 ：新增 Codex 供应商管理与一键切换，支持导入当前 Codex 配置为默认供应商，并在内部配置从 v1 → v2 迁移前自动备份（详见下文“迁移与归档”）。
 
 > v3.0.0 重大更新：从 Electron 完全迁移到 Tauri 2.0，应用体积显著降低、启动性能大幅提升。
 
-## 功能特性（v3.2.0）
+## 功能特性（v3.3.0）
 
-- **全新 UI**：感谢 [TinsFox](https://github.com/TinsFox) 大佬设计的全新 UI
-- **系统托盘（菜单栏）快速切换**：按应用分组（Claude / Codex），勾选态展示当前供应商
-- **内置更新器**：集成 Tauri Updater，支持检测/下载/安装与一键重启
-- **单一事实源（SSOT）**：不再写每个供应商的“副本文件”，统一存于 `~/.cc-switch/config.json`
-- **一次性迁移/归档**：首次升级自动导入旧副本并归档原文件，之后不再持续归档
-- **原子写入与回滚**：写入 `auth.json`/`config.toml`/`settings.json` 时避免半写状态
-- **深色模式优化**：Tailwind v4 适配与选择器修正
-- **丰富预设与自定义**：Qwen coder、Kimi、GLM、DeepSeek、PackyCode 等；可自定义 Base URL
-- **本地优先与隐私**：全部信息存储在本地 `~/.cc-switch/config.json`
+- **VS Code Codex 插件一键配置**：供应商卡片支持「应用到 VS Code / 从 VS Code 移除」，默认开启自动同步，并可跨 Code / Insiders / VSCodium 写入 `settings.json`
+- **通用配置片段**：Claude 与 Codex 共用 JSON/TOML 片段，提供编辑器 lint、内容校验、统一错误提示与本地持久化
+- **Codex 配置向导**：新增显示名称、专用 API Key URL、HTML5 校验与预设模板，方便快速配置第三方服务
+- **系统托盘与快捷操作**：窗口隐藏时仍可通过托盘切换供应商，并在自动同步开启时触发 VS Code 写入
+- **平台适配**：新增 Windows WSL 环境支持、Linux 自动禁用模态背景模糊解决白屏问题、macOS Dock 点击即可恢复窗口
+- **UI优化**：多处 UI 和使用体验优化
 
 ## 界面预览
 
@@ -54,7 +53,7 @@
 
 ### Linux 用户
 
-从 [Releases](../../releases) 页面下载最新版本的 `.deb` 包。
+从 [Releases](../../releases) 页面下载最新版本的 `.deb` 包或者 `AppImage`安装包。
 
 ## 使用说明
 
@@ -70,7 +69,7 @@
 
 - 在“设置”中点击“检查更新”，若内置 Updater 配置可用将直接检测与下载；否则会回退打开 Releases 页面
 
-### Codex 说明（v3.2.0 SSOT）
+### Codex 说明（SSOT）
 
 - 配置目录：`~/.codex/`
   - live 主配置：`auth.json`（必需）、`config.toml`（可为空）
@@ -82,7 +81,7 @@
 - 导入默认：当该应用无任何供应商时，从现有 live 主配置创建一条默认项并设为当前
 - 官方登录：可切换到预设“Codex 官方登录”，重启终端后按官方流程登录
 
-### Claude Code 说明（v3.2.0 SSOT）
+### Claude Code 说明（SSOT）
 
 - 配置目录：`~/.claude/`
   - live 主配置：`settings.json`（优先）或历史兼容 `claude.json`
@@ -94,9 +93,9 @@
 - 导入默认：当该应用无任何供应商时，从现有 live 主配置创建一条默认项并设为当前
 - 官方登录：可切换到预设“Claude 官方登录”，重启终端后可使用 `/login` 完成登录
 
-### 迁移与归档（v3.2.0）
+### 迁移与归档（自 v3.2.0 起）
 
-- 一次性迁移：首次启动 3.2.0 会扫描旧的“副本文件”并合并到 `~/.cc-switch/config.json`
+- 一次性迁移：首次启动 3.2.0 及以上版本会扫描旧的“副本文件”并合并到 `~/.cc-switch/config.json`
   - Claude：`~/.claude/settings-*.json`（排除 `settings.json` / 历史 `claude.json`）
   - Codex：`~/.codex/auth-*.json` 与 `config-*.toml`（按名称成对合并）
 - 去重与当前项：按“名称（忽略大小写）+ API Key”去重；若当前为空，将 live 合并项设为当前

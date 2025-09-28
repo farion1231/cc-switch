@@ -5,6 +5,25 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2025-09-22
+
+### ✨ Features
+- Add “Apply to VS Code / Remove from VS Code” actions on provider cards, writing settings for Code/Insiders/VSCodium variants
+- Enable VS Code auto-sync by default with window broadcast and tray hooks so Codex switches sync silently
+- Extend the Codex provider wizard with display name, dedicated API key URL, and clearer guidance
+- Introduce shared common config snippets with JSON/TOML reuse, validation, and consistent error surfaces
+
+### 🔧 Improvements
+- Keep the tray menu responsive when the window is hidden and standardize button styling and copy
+- Disable modal backdrop blur on Linux (WebKitGTK/Wayland) to avoid freezes; restore the window when clicking the macOS Dock icon
+- Support overriding config directories on WSL, refine placeholders/descriptions, and fix VS Code button wrapping on Windows
+- Add a `created_at` timestamp to provider records for future sorting and analytics
+
+### 🐛 Fixes
+- Correct regex escapes and common snippet trimming in the Codex wizard to prevent validation issues
+- Harden the VS Code sync flow with more reliable TOML/JSON parsing while reducing layout jank
+- Bundle `@codemirror/lint` to reinstate live linting in config editors
+
 ## [3.2.0] - 2025-09-13
 
 ### ✨ New Features

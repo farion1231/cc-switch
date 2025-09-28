@@ -226,6 +226,12 @@ jobs:
             $portableDir = 'release-assets/CC-Switch-Portable'
             New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
             Copy-Item $exePath $portableDir
+            $portableIniPath = Join-Path $portableDir 'portable.ini'
+            $portableContent = @(
+              '# CC Switch portable build marker',
+              'portable=true'
+            )
+            $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
             Compress-Archive -Path "$portableDir/*" -DestinationPath 'release-assets/CC-Switch-Windows-Portable.zip' -Force
             Remove-Item -Recurse -Force $portableDir
             Write-Host 'Windows portable zip created'

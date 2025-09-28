@@ -12,7 +12,11 @@ import {
   validateJsonConfig,
 } from "../utils/providerConfigUtils";
 import { providerPresets } from "../config/providerPresets";
-import { codexProviderPresets } from "../config/codexProviderPresets";
+import {
+  codexProviderPresets,
+  generateThirdPartyAuth,
+  generateThirdPartyConfig,
+} from "../config/codexProviderPresets";
 import PresetSelector from "./ProviderForm/PresetSelector";
 import ApiKeyInput from "./ProviderForm/ApiKeyInput";
 import ClaudeConfigEditor from "./ProviderForm/ClaudeConfigEditor";
@@ -20,6 +24,7 @@ import CodexConfigEditor from "./ProviderForm/CodexConfigEditor";
 import KimiModelSelector from "./ProviderForm/KimiModelSelector";
 import SubOptionSelector from "./ProviderForm/SubOptionSelector";
 import { X, AlertCircle, Save } from "lucide-react";
+import { isLinux } from "../lib/platform";
 // 分类仅用于控制少量交互（如官方禁用 API Key），不显示介绍组件
 
 const COMMON_CONFIG_STORAGE_KEY = "cc-switch:common-config-snippet";
@@ -72,6 +77,8 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [codexAuth, setCodexAuthState] = useState("");
   const [codexConfig, setCodexConfigState] = useState("");
   const [codexApiKey, setCodexApiKey] = useState("");
+  const [isCodexTemplateModalOpen, setIsCodexTemplateModalOpen] =
+    useState(false);
   // -1 表示自定义，null 表示未选择，>= 0 表示预设索引
   const [selectedCodexPreset, setSelectedCodexPreset] = useState<number | null>(
     showPresets && isCodex ? -1 : null,
@@ -135,19 +142,19 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [codexCommonConfigSnippet, setCodexCommonConfigSnippetState] =
     useState<string>(() => {
       if (typeof window === "undefined") {
-        return DEFAULT_CODEX_COMMON_CONFIG_SNIPPET;
+        return DEFAULT_CODEX_COMMON_CONFIG_SNIPPET.trim();
       }
       try {
         const stored = window.localStorage.getItem(
           CODEX_COMMON_CONFIG_STORAGE_KEY,
         );
         if (stored && stored.trim()) {
-          return stored;
+          return stored.trim();
         }
       } catch {
         // ignore localStorage 读取失败
       }
-      return DEFAULT_CODEX_COMMON_CONFIG_SNIPPET;
+      return DEFAULT_CODEX_COMMON_CONFIG_SNIPPET.trim();
     });
   const [codexCommonConfigError, setCodexCommonConfigError] = useState("");
   const isUpdatingFromCodexCommonConfig = useRef(false);
@@ -417,10 +424,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       // 不再从 JSON 自动提取或覆盖官网地址，只更新配置内容
       updateSettingsConfigValue(value);
     } else {
-      setFormData({
-        ...formData,
+      setFormData((prev) => ({
+        ...prev,
         [name]: value,
-      });
+      }));
     }
   };
 
@@ -646,7 +653,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       if (preset.config) {
         const updatedConfig = preset.config.replace(
           /base_url = "[^"]*"/,
-          `base_url = "${preset.endpoints[0]}/v1"`
+          `base_url = "${preset.endpoints[0]}/v1"`,
         );
         setCodexConfig(updatedConfig);
       }
@@ -656,14 +663,23 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   // Codex: 处理点击自定义按钮
   const handleCodexCustomClick = () => {
     setSelectedCodexPreset(-1);
+
+    // 设置自定义模板
+    const customAuth = generateThirdPartyAuth("");
+    const customConfig = generateThirdPartyConfig(
+      "custom",
+      "https://your-api-endpoint.com/v1",
+      "gpt-5-codex",
+    );
+
     setFormData({
       name: "",
       websiteUrl: "",
       settingsConfig: "",
     });
     setSettingsConfigError(validateSettingsConfig(""));
-    setCodexAuth("");
-    setCodexConfig("");
+    setCodexAuth(JSON.stringify(customAuth, null, 2));
+    setCodexConfig(customConfig);
     setCodexApiKey("");
     setSelectedEndpoint("");
     setCategory("custom");
@@ -744,7 +760,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     if (codexConfig) {
       const updatedConfig = codexConfig.replace(
         /base_url = "[^"]*"/,
-        `base_url = "${endpoint}/v1"`
+        `base_url = "${endpoint}/v1"`,
       );
       setCodexConfig(updatedConfig);
     }
@@ -752,12 +768,9 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
   // Codex: 处理通用配置开关
   const handleCodexCommonConfigToggle = (checked: boolean) => {
+    const snippet = codexCommonConfigSnippet.trim();
     const { updatedConfig, error: snippetError } =
-      updateTomlCommonConfigSnippet(
-        codexConfig,
-        codexCommonConfigSnippet,
-        checked,
-      );
+      updateTomlCommonConfigSnippet(codexConfig, snippet, checked);
 
     if (snippetError) {
       setCodexCommonConfigError(snippetError);
@@ -778,10 +791,11 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
   // Codex: 处理通用配置片段变化
   const handleCodexCommonConfigSnippetChange = (value: string) => {
-    const previousSnippet = codexCommonConfigSnippet;
+    const previousSnippet = codexCommonConfigSnippet.trim();
+    const sanitizedValue = value.trim();
     setCodexCommonConfigSnippet(value);
 
-    if (!value.trim()) {
+    if (!sanitizedValue) {
       setCodexCommonConfigError("");
       if (useCodexCommonConfig) {
         const { updatedConfig } = updateTomlCommonConfigSnippet(
@@ -804,7 +818,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       );
       const addResult = updateTomlCommonConfigSnippet(
         removeResult.updatedConfig,
-        value,
+        sanitizedValue,
         true,
       );
 
@@ -825,7 +839,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     // 保存 Codex 通用配置到 localStorage
     if (typeof window !== "undefined") {
       try {
-        window.localStorage.setItem(CODEX_COMMON_CONFIG_STORAGE_KEY, value);
+        window.localStorage.setItem(
+          CODEX_COMMON_CONFIG_STORAGE_KEY,
+          sanitizedValue,
+        );
       } catch {
         // ignore localStorage 写入失败
       }
@@ -894,7 +911,12 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   // 获取当前供应商的网址
   const getCurrentWebsiteUrl = () => {
     if (selectedPreset !== null && selectedPreset >= 0) {
-      return providerPresets[selectedPreset]?.websiteUrl || "";
+      const preset = providerPresets[selectedPreset];
+      if (!preset) return "";
+      // 仅第三方供应商使用专用 apiKeyUrl，其余使用官网地址
+      return preset.category === "third_party"
+        ? preset.apiKeyUrl || preset.websiteUrl || ""
+        : preset.websiteUrl || "";
     }
     return formData.websiteUrl || "";
   };
@@ -902,7 +924,12 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   // 获取 Codex 当前供应商的网址
   const getCurrentCodexWebsiteUrl = () => {
     if (selectedCodexPreset !== null && selectedCodexPreset >= 0) {
-      return codexProviderPresets[selectedCodexPreset]?.websiteUrl || "";
+      const preset = codexProviderPresets[selectedCodexPreset];
+      if (!preset) return "";
+      // 仅第三方供应商使用专用 apiKeyUrl，其余使用官网地址
+      return preset.category === "third_party"
+        ? preset.apiKeyUrl || preset.websiteUrl || ""
+        : preset.websiteUrl || "";
     }
     return formData.websiteUrl || "";
   };
@@ -931,7 +958,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
         codexProviderPresets[selectedCodexPreset]?.category === "official")) ||
     category === "official";
 
-  // 判断是否显示 Codex 的"获取 API Key"链接
+  // 判断是否显示 Codex 的"获取 API Key"链接（国产官方、聚合站和第三方显示）
   const shouldShowCodexApiKeyLink =
     isCodex &&
     !isCodexOfficialPreset &&
@@ -1030,7 +1057,11 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       }}
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm" />
+      <div
+        className={`absolute inset-0 bg-black/50 dark:bg-black/70${
+          isLinux() ? "" : " backdrop-blur-sm"
+        }`}
+      />
 
       {/* Modal */}
       <div className="relative bg-white dark:bg-gray-900 rounded-xl shadow-lg max-w-3xl w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
@@ -1082,6 +1113,18 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   applyCodexPreset(codexProviderPresets[index], index)
                 }
                 onCustomClick={handleCodexCustomClick}
+                renderCustomDescription={() => (
+                  <>
+                    手动配置供应商，需要填写完整的配置信息，或者
+                    <button
+                      type="button"
+                      onClick={() => setIsCodexTemplateModalOpen(true)}
+                      className="text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors ml-1"
+                    >
+                      使用配置向导
+                    </button>
+                  </>
+                )}
               />
             )}
 
@@ -1181,7 +1224,9 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             )}
 
             {/* 二级选项选择器 */}
-            {!isCodex && selectedPreset !== null && selectedPreset >= 0 && (
+            {!isCodex &&
+              selectedPreset !== null &&
+              selectedPreset >= 0 &&
               (() => {
                 const preset = providerPresets[selectedPreset];
                 if (preset.subOptions && preset.subOptions.length > 0) {
@@ -1196,8 +1241,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   );
                 }
                 return null;
-              })()
-            )}
+              })()}
 
             {!isCodex && shouldShowKimiSelector && (
               <KimiModelSelector
@@ -1244,17 +1288,21 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             )}
 
             {/* Codex 端点选择器 */}
-            {isCodex && selectedCodexPreset !== null && selectedCodexPreset >= 0 && (
+            {isCodex &&
+              selectedCodexPreset !== null &&
+              selectedCodexPreset >= 0 &&
               (() => {
                 const preset = codexProviderPresets[selectedCodexPreset];
                 if (preset.endpoints && preset.endpoints.length > 0) {
                   return (
                     <SubOptionSelector
-                      subOptions={[{
-                        name: "PackyCode 节点",
-                        endpoints: preset.endpoints,
-                        enableAutoSpeed: preset.enableAutoSpeed || false,
-                      }]}
+                      subOptions={[
+                        {
+                          name: "PackyCode 节点",
+                          endpoints: preset.endpoints,
+                          enableAutoSpeed: preset.enableAutoSpeed || false,
+                        },
+                      ]}
                       selectedOption="PackyCode 节点"
                       selectedEndpoint={selectedEndpoint}
                       onOptionChange={() => {}} // 只有一个选项，无需处理
@@ -1263,8 +1311,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   );
                 }
                 return null;
-              })()
-            )}
+              })()}
 
             {/* Claude 或 Codex 的配置部分 */}
             {isCodex ? (
@@ -1293,6 +1340,21 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                 }
                 commonConfigError={codexCommonConfigError}
                 authError={codexAuthError}
+                isCustomMode={selectedCodexPreset === -1}
+                onWebsiteUrlChange={(url) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    websiteUrl: url,
+                  }));
+                }}
+                onNameChange={(name) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    name,
+                  }));
+                }}
+                isTemplateModalOpen={isCodexTemplateModalOpen}
+                setIsTemplateModalOpen={setIsCodexTemplateModalOpen}
               />
             ) : (
               <>

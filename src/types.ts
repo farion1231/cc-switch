@@ -24,4 +24,10 @@ export interface AppConfig {
 export interface Settings {
   // 是否在系统托盘（macOS 菜单栏）显示图标
   showInTray: boolean;
+  // 点击关闭按钮时是否最小化到托盘而不是关闭应用
+  minimizeToTrayOnClose: boolean;
+  // 覆盖 Claude Code 配置目录（可选）
+  claudeConfigDir?: string;
+  // 覆盖 Codex 配置目录（可选）
+  codexConfigDir?: string;
 }
