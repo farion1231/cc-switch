@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Provider } from "../types";
 import { Play, Edit3, Trash2, CheckCircle2, Users } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
@@ -35,6 +36,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
   appType,
   onNotify,
 }) => {
+  const { t } = useTranslation();
   // 提取API地址（兼容不同供应商配置：Claude env / Codex TOML）
   const getApiUrl = (provider: Provider): string => {
     try {
@@ -49,9 +51,9 @@ const ProviderList: React.FC<ProviderListProps> = ({
         const match = cfg.config.match(/base_url\s*=\s*(['"])([^'\"]+)\1/);
         if (match && match[2]) return match[2];
       }
-      return "未配置官网地址";
+      return t("provider.notConfigured");
     } catch {
-      return "配置错误";
+      return t("provider.configError");
     }
   };
 
@@ -59,7 +61,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
     try {
       await window.api.openExternal(url);
     } catch (error) {
-      console.error("打开链接失败:", error);
+      console.error(t("console.openLinkFailed"), error);
     }
   };
 
@@ -106,11 +108,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
     try {
       const status = await window.api.getVSCodeSettingsStatus();
       if (!status.exists) {
-        onNotify?.(
-          "未找到 VS Code 用户设置文件 (settings.json)",
-          "error",
-          3000
-        );
+        onNotify?.(t("notifications.vscodeSettingsNotFound"), "error", 3000);
         return;
       }
 
@@ -121,7 +119,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
       if (!isOfficial) {
         const parsed = getCodexBaseUrl(provider);
         if (!parsed) {
-          onNotify?.("当前配置缺少 base_url，无法写入 VS Code", "error", 4000);
+          onNotify?.(t("notifications.missingBaseUrl"), "error", 4000);
           return;
         }
       }
@@ -131,7 +129,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
 
       if (next === raw) {
         // 幂等：没有变化也提示成功
-        onNotify?.("已应用到 VS Code，重启 Codex 插件以生效", "success", 3000);
+        onNotify?.(t("notifications.appliedToVSCode"), "success", 3000);
         setVscodeAppliedFor(provider.id);
         // 用户手动应用时，启用自动同步
         enableAutoSync();
@@ -139,13 +137,14 @@ const ProviderList: React.FC<ProviderListProps> = ({
       }
 
       await window.api.writeVSCodeSettings(next);
-      onNotify?.("已应用到 VS Code，重启 Codex 插件以生效", "success", 3000);
+      onNotify?.(t("notifications.appliedToVSCode"), "success", 3000);
       setVscodeAppliedFor(provider.id);
       // 用户手动应用时，启用自动同步
       enableAutoSync();
     } catch (e: any) {
       console.error(e);
-      const msg = e && e.message ? e.message : "应用到 VS Code 失败";
+      const msg =
+        e && e.message ? e.message : t("notifications.syncVSCodeFailed");
       onNotify?.(msg, "error", 5000);
     }
   };
@@ -154,11 +153,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
     try {
       const status = await window.api.getVSCodeSettingsStatus();
       if (!status.exists) {
-        onNotify?.(
-          "未找到 VS Code 用户设置文件 (settings.json)",
-          "error",
-          3000
-        );
+        onNotify?.(t("notifications.vscodeSettingsNotFound"), "error", 3000);
         return;
       }
       const raw = await window.api.readVSCodeSettings();
@@ -167,20 +162,21 @@ const ProviderList: React.FC<ProviderListProps> = ({
         isOfficial: true,
       });
       if (next === raw) {
-        onNotify?.("已从 VS Code 移除，重启 Codex 插件以生效", "success", 3000);
+        onNotify?.(t("notifications.removedFromVSCode"), "success", 3000);
         setVscodeAppliedFor(null);
         // 用户手动移除时，禁用自动同步
         disableAutoSync();
         return;
       }
       await window.api.writeVSCodeSettings(next);
-      onNotify?.("已从 VS Code 移除，重启 Codex 插件以生效", "success", 3000);
+      onNotify?.(t("notifications.removedFromVSCode"), "success", 3000);
       setVscodeAppliedFor(null);
       // 用户手动移除时，禁用自动同步
       disableAutoSync();
     } catch (e: any) {
       console.error(e);
-      const msg = e && e.message ? e.message : "移除失败";
+      const msg =
+        e && e.message ? e.message : t("notifications.syncVSCodeFailed");
       onNotify?.(msg, "error", 5000);
     }
   };
@@ -214,10 +210,10 @@ const ProviderList: React.FC<ProviderListProps> = ({
             <Users size={24} className="text-gray-400" />
           </div>
           <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
-            还没有添加任何供应商
+            {t("provider.noProviders")}
           </h3>
           <p className="text-gray-500 dark:text-gray-400 text-sm">
-            点击右上角的"添加供应商"按钮开始配置您的第一个API供应商
+            {t("provider.noProvidersDescription")}
           </p>
         </div>
       ) : (
@@ -247,7 +243,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
                         )}
                       >
                         <CheckCircle2 size={12} />
-                        当前使用
+                        {t("provider.currentlyUsing")}
                       </div>
                     </div>
 
@@ -292,13 +288,13 @@ const ProviderList: React.FC<ProviderListProps> = ({
                           )}
                           title={
                             vscodeAppliedFor === provider.id
-                              ? "从 VS Code 移除我们写入的配置"
-                              : "将当前供应商应用到 VS Code"
+                              ? t("provider.removeFromVSCode")
+                              : t("provider.applyToVSCode")
                           }
                         >
                           {vscodeAppliedFor === provider.id
-                            ? "从 VS Code 移除"
-                            : "应用到 VS Code"}
+                            ? t("provider.removeFromVSCode")
+                            : t("provider.applyToVSCode")}
                         </button>
                       )}
                     <button
@@ -312,13 +308,13 @@ const ProviderList: React.FC<ProviderListProps> = ({
                       )}
                     >
                       {!isCurrent && <Play size={14} />}
-                      {isCurrent ? "使用中" : "启用"}
+                      {isCurrent ? t("provider.inUse") : t("provider.enable")}
                     </button>
 
                     <button
                       onClick={() => onEdit(provider.id)}
                       className={buttonStyles.icon}
-                      title="编辑供应商"
+                      title={t("provider.editProvider")}
                     >
                       <Edit3 size={16} />
                     </button>
@@ -332,7 +328,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
                           ? "text-gray-400 cursor-not-allowed"
                           : "text-gray-500 hover:text-red-500 hover:bg-red-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-red-500/10"
                       )}
-                      title="删除供应商"
+                      title={t("provider.deleteProvider")}
                     >
                       <Trash2 size={16} />
                     </button>

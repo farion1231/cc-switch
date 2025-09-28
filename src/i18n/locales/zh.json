@@ -1,0 +1,109 @@
+{
+  "app": {
+    "title": "CC Switch",
+    "description": "Claude Code & Codex 供应商切换工具"
+  },
+  "common": {
+    "add": "添加",
+    "edit": "编辑",
+    "delete": "删除",
+    "save": "保存",
+    "cancel": "取消",
+    "confirm": "确定",
+    "close": "关闭",
+    "settings": "设置",
+    "about": "关于",
+    "version": "版本",
+    "loading": "加载中...",
+    "success": "成功",
+    "error": "错误",
+    "unknown": "未知"
+  },
+  "header": {
+    "viewOnGithub": "在 GitHub 上查看",
+    "toggleDarkMode": "切换到暗色模式",
+    "toggleLightMode": "切换到亮色模式",
+    "addProvider": "添加供应商"
+  },
+  "provider": {
+    "noProviders": "还没有添加任何供应商",
+    "noProvidersDescription": "点击右上角的\"添加供应商\"按钮开始配置您的第一个API供应商",
+    "currentlyUsing": "当前使用",
+    "enable": "启用",
+    "inUse": "使用中",
+    "editProvider": "编辑供应商",
+    "deleteProvider": "删除供应商",
+    "addNewProvider": "添加新供应商",
+    "configError": "配置错误",
+    "notConfigured": "未配置官网地址",
+    "applyToVSCode": "应用到 VS Code",
+    "removeFromVSCode": "从 VS Code 移除"
+  },
+  "notifications": {
+    "providerSaved": "供应商配置已保存",
+    "providerDeleted": "供应商删除成功",
+    "switchSuccess": "切换成功！请重启 {{appName}} 终端以生效",
+    "switchFailed": "切换失败，请检查配置",
+    "autoImported": "已从现有配置创建默认供应商",
+    "appliedToVSCode": "已应用到 VS Code，重启 Codex 插件以生效",
+    "removedFromVSCode": "已从 VS Code 移除，重启 Codex 插件以生效",
+    "syncedToVSCode": "已同步到 VS Code",
+    "vscodeSettingsNotFound": "未找到 VS Code 用户设置文件 (settings.json)",
+    "missingBaseUrl": "当前配置缺少 base_url，无法写入 VS Code",
+    "saveFailed": "保存失败：{{error}}",
+    "saveFailedGeneric": "保存失败，请重试",
+    "syncVSCodeFailed": "同步 VS Code 失败"
+  },
+  "confirm": {
+    "deleteProvider": "删除供应商",
+    "deleteProviderMessage": "确定要删除供应商 \"{{name}}\" 吗？此操作无法撤销。"
+  },
+  "settings": {
+    "title": "设置",
+    "windowBehavior": "窗口行为",
+    "minimizeToTray": "关闭时最小化到托盘",
+    "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
+    "configFileLocation": "配置文件位置",
+    "openFolder": "打开文件夹",
+    "configDirectoryOverride": "配置目录覆盖（高级）",
+    "configDirectoryDescription": "在 WSL 等环境使用 Claude Code 或 Codex 的时候，可手动指定 WSL 里的配置目录，供应商数据与主环境保持一致。",
+    "claudeConfigDir": "Claude Code 配置目录",
+    "codexConfigDir": "Codex 配置目录",
+    "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
+    "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
+    "browseDirectory": "浏览目录",
+    "resetDefault": "恢复默认目录（需保存后生效）",
+    "checkForUpdates": "检查更新",
+    "updateTo": "更新到 v{{version}}",
+    "updating": "更新中...",
+    "checking": "检查中...",
+    "upToDate": "已是最新",
+    "releaseNotes": "更新日志",
+    "viewReleaseNotes": "查看该版本更新日志",
+    "viewCurrentReleaseNotes": "查看当前版本更新日志"
+  },
+  "apps": {
+    "claude": "Claude Code",
+    "codex": "Codex"
+  },
+  "console": {
+    "providerSwitchReceived": "收到供应商切换事件:",
+    "setupListenerFailed": "设置供应商切换监听器失败:",
+    "updateProviderFailed": "更新供应商失败:",
+    "syncToVSCodeFailed": "同步到VS Code失败:",
+    "autoImportFailed": "自动导入默认配置失败:",
+    "openLinkFailed": "打开链接失败:",
+    "getVersionFailed": "获取版本信息失败:",
+    "loadSettingsFailed": "加载设置失败:",
+    "getConfigPathFailed": "获取配置路径失败:",
+    "getConfigDirFailed": "获取配置目录失败:",
+    "detectPortableFailed": "检测便携模式失败:",
+    "saveSettingsFailed": "保存设置失败:",
+    "updateFailed": "更新失败:",
+    "checkUpdateFailed": "检查更新失败:",
+    "openConfigFolderFailed": "打开配置文件夹失败:",
+    "selectConfigDirFailed": "选择配置目录失败:",
+    "getDefaultConfigDirFailed": "获取默认配置目录失败:",
+    "openReleaseNotesFailed": "打开更新日志失败:"
+  }
+}

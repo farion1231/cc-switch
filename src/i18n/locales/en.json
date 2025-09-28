@@ -1,0 +1,109 @@
+{
+  "app": {
+    "title": "CC Switch",
+    "description": "Claude Code & Codex Provider Switching Tool"
+  },
+  "common": {
+    "add": "Add",
+    "edit": "Edit",
+    "delete": "Delete",
+    "save": "Save",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "close": "Close",
+    "settings": "Settings",
+    "about": "About",
+    "version": "Version",
+    "loading": "Loading...",
+    "success": "Success",
+    "error": "Error",
+    "unknown": "Unknown"
+  },
+  "header": {
+    "viewOnGithub": "View on GitHub",
+    "toggleDarkMode": "Switch to Dark Mode",
+    "toggleLightMode": "Switch to Light Mode",
+    "addProvider": "Add Provider"
+  },
+  "provider": {
+    "noProviders": "No providers added yet",
+    "noProvidersDescription": "Click the \"Add Provider\" button in the top right to configure your first API provider",
+    "currentlyUsing": "Currently Using",
+    "enable": "Enable",
+    "inUse": "In Use",
+    "editProvider": "Edit Provider",
+    "deleteProvider": "Delete Provider",
+    "addNewProvider": "Add New Provider",
+    "configError": "Configuration Error",
+    "notConfigured": "Not configured for official website",
+    "applyToVSCode": "Apply to VS Code",
+    "removeFromVSCode": "Remove from VS Code"
+  },
+  "notifications": {
+    "providerSaved": "Provider configuration saved",
+    "providerDeleted": "Provider deleted successfully",
+    "switchSuccess": "Switch successful! Please restart {{appName}} terminal to take effect",
+    "switchFailed": "Switch failed, please check configuration",
+    "autoImported": "Default provider created from existing configuration",
+    "appliedToVSCode": "Applied to VS Code, restart Codex plugin to take effect",
+    "removedFromVSCode": "Removed from VS Code, restart Codex plugin to take effect",
+    "syncedToVSCode": "Synced to VS Code",
+    "vscodeSettingsNotFound": "VS Code user settings file (settings.json) not found",
+    "missingBaseUrl": "Current configuration missing base_url, cannot write to VS Code",
+    "saveFailed": "Save failed: {{error}}",
+    "saveFailedGeneric": "Save failed, please try again",
+    "syncVSCodeFailed": "Sync to VS Code failed"
+  },
+  "confirm": {
+    "deleteProvider": "Delete Provider",
+    "deleteProviderMessage": "Are you sure you want to delete provider \"{{name}}\"? This action cannot be undone."
+  },
+  "settings": {
+    "title": "Settings",
+    "windowBehavior": "Window Behavior",
+    "minimizeToTray": "Minimize to tray on close",
+    "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
+    "configFileLocation": "Configuration File Location",
+    "openFolder": "Open Folder",
+    "configDirectoryOverride": "Configuration Directory Override (Advanced)",
+    "configDirectoryDescription": "When using Claude Code or Codex in environments like WSL, you can manually specify the configuration directory in WSL to keep provider data consistent with the main environment.",
+    "claudeConfigDir": "Claude Code Configuration Directory",
+    "codexConfigDir": "Codex Configuration Directory",
+    "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
+    "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
+    "browseDirectory": "Browse Directory",
+    "resetDefault": "Reset to default directory (takes effect after saving)",
+    "checkForUpdates": "Check for Updates",
+    "updateTo": "Update to v{{version}}",
+    "updating": "Updating...",
+    "checking": "Checking...",
+    "upToDate": "Up to Date",
+    "releaseNotes": "Release Notes",
+    "viewReleaseNotes": "View release notes for this version",
+    "viewCurrentReleaseNotes": "View current version release notes"
+  },
+  "apps": {
+    "claude": "Claude Code",
+    "codex": "Codex"
+  },
+  "console": {
+    "providerSwitchReceived": "Received provider switch event:",
+    "setupListenerFailed": "Failed to setup provider switch listener:",
+    "updateProviderFailed": "Update provider failed:",
+    "syncToVSCodeFailed": "Sync to VS Code failed:",
+    "autoImportFailed": "Auto import default configuration failed:",
+    "openLinkFailed": "Failed to open link:",
+    "getVersionFailed": "Failed to get version info:",
+    "loadSettingsFailed": "Failed to load settings:",
+    "getConfigPathFailed": "Failed to get config path:",
+    "getConfigDirFailed": "Failed to get config directory:",
+    "detectPortableFailed": "Failed to detect portable mode:",
+    "saveSettingsFailed": "Failed to save settings:",
+    "updateFailed": "Update failed:",
+    "checkUpdateFailed": "Check for updates failed:",
+    "openConfigFolderFailed": "Failed to open config folder:",
+    "selectConfigDirFailed": "Failed to select config directory:",
+    "getDefaultConfigDirFailed": "Failed to get default config directory:",
+    "openReleaseNotesFailed": "Failed to open release notes:"
+  }
+}

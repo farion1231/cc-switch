@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { Provider } from "../types";
 import { AppType } from "../lib/tauri-api";
 import ProviderForm from "./ProviderForm";
@@ -16,6 +17,8 @@ const EditProviderModal: React.FC<EditProviderModalProps> = ({
   onSave,
   onClose,
 }) => {
+  const { t } = useTranslation();
+
   const handleSubmit = (data: Omit<Provider, "id">) => {
     onSave({
       ...provider,
@@ -26,8 +29,8 @@ const EditProviderModal: React.FC<EditProviderModalProps> = ({
   return (
     <ProviderForm
       appType={appType}
-      title="编辑供应商"
-      submitText="保存"
+      title={t("common.edit")}
+      submitText={t("common.save")}
       initialData={provider}
       showPresets={false}
       onSubmit={handleSubmit}

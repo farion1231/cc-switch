@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import {
   X,
   RefreshCw,
@@ -24,6 +25,7 @@ interface SettingsModalProps {
 }
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState<Settings>({
     showInTray: true,
     minimizeToTrayOnClose: true,
@@ -54,9 +56,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       const appVersion = await getVersion();
       setVersion(appVersion);
     } catch (error) {
-      console.error("获取版本信息失败:", error);
+      console.error(t("console.getVersionFailed"), error);
       // 失败时不硬编码版本号，显示为未知
-      setVersion("未知");
+      setVersion(t("common.unknown"));
     }
   };
 
@@ -300,7 +302,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         {/* 标题栏 */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800">
           <h2 className="text-lg font-semibold text-blue-500 dark:text-blue-400">
-            设置
+            {t("settings.title")}
           </h2>
           <button
             onClick={onClose}
@@ -315,16 +317,16 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           {/* 窗口行为设置 */}
           <div>
             <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
-              窗口行为
+              {t("settings.windowBehavior")}
             </h3>
             <div className="space-y-3">
               <label className="flex items-center justify-between">
                 <div>
                   <span className="text-sm text-gray-900 dark:text-gray-100">
-                    关闭时最小化到托盘
+                    {t("settings.minimizeToTray")}
                   </span>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。
+                    {t("settings.minimizeToTrayDescription")}
                   </p>
                 </div>
                 <input
@@ -347,18 +349,18 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           {/* 配置文件位置 */}
           <div>
             <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
-              配置文件位置
+              {t("settings.configFileLocation")}
             </h3>
             <div className="flex items-center gap-2">
               <div className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
                 <span className="text-xs font-mono text-gray-500 dark:text-gray-400">
-                  {configPath || "加载中..."}
+                  {configPath || t("common.loading")}
                 </span>
               </div>
               <button
                 onClick={handleOpenConfigFolder}
                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-                title="打开文件夹"
+                title={t("settings.openFolder")}
               >
                 <FolderOpen
                   size={18}
@@ -371,16 +373,15 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           {/* 配置目录覆盖 */}
           <div>
             <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-              配置目录覆盖（高级）
+              {t("settings.configDirectoryOverride")}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 leading-relaxed">
-              在 WSL 等环境使用 Claude Code 或 Codex 的时候，可手动指定 WSL
-              里的配置目录，供应商数据与主环境保持一致。
+              {t("settings.configDirectoryDescription")}
             </p>
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-                  Claude Code 配置目录
+                  {t("settings.claudeConfigDir")}
                 </label>
                 <div className="flex gap-2">
                   <input
