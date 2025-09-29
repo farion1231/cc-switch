@@ -29,7 +29,9 @@ const PRESET_CODEX_ENDPOINTS: EndpointTest[] = [
   },
 ];
 
-export const CodexPackyCodeSpeedTest: React.FC<CodexPackyCodeSpeedTestProps> = ({
+export const CodexPackyCodeSpeedTest: React.FC<
+  CodexPackyCodeSpeedTestProps
+> = ({
   providerName,
   baseUrl,
   onUpdateBaseUrl,

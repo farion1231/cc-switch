@@ -68,7 +68,7 @@ export const GenericSpeedTest: React.FC<GenericSpeedTestProps> = ({
 
   // 测试单个端点
   const testSingleEndpoint = async (
-    endpoint: EndpointTest
+    endpoint: EndpointTest,
   ): Promise<EndpointTest> => {
     try {
       const result = await invoke<{ latency: number | null }>(
@@ -76,7 +76,7 @@ export const GenericSpeedTest: React.FC<GenericSpeedTestProps> = ({
         {
           url: endpoint.url,
           ...testParams,
-        }
+        },
       );
       return { ...endpoint, latency: result.latency };
     } catch (error) {
@@ -87,28 +87,27 @@ export const GenericSpeedTest: React.FC<GenericSpeedTestProps> = ({
 
   // 批量测试端点（使用后端并发接口）
   const testEndpointsBatch = async (
-    endpoints: EndpointTest[]
+    endpoints: EndpointTest[],
   ): Promise<EndpointTest[]> => {
     try {
-      const urls = endpoints.map(ep => ep.url);
-      const results = await invoke<Array<{ url: string; latency: number | null }>>(
-        "test_endpoints_batch",
-        { urls }
-      );
-      
+      const urls = endpoints.map((ep) => ep.url);
+      const results = await invoke<
+        Array<{ url: string; latency: number | null }>
+      >("test_endpoints_batch", { urls });
+
       // 将结果映射回端点
-      return endpoints.map(endpoint => {
-        const result = results.find(r => r.url === endpoint.url);
+      return endpoints.map((endpoint) => {
+        const result = results.find((r) => r.url === endpoint.url);
         return {
           ...endpoint,
-          latency: result?.latency ?? null
+          latency: result?.latency ?? null,
         };
       });
     } catch (error) {
       console.error("批量测速失败，降级到单个测试:", error);
       // 如果批量测速失败，降级到单个测试
       return Promise.all(
-        endpoints.map((endpoint) => testSingleEndpoint(endpoint))
+        endpoints.map((endpoint) => testSingleEndpoint(endpoint)),
       );
     }
   };
@@ -157,7 +156,7 @@ export const GenericSpeedTest: React.FC<GenericSpeedTestProps> = ({
         if (!silent) setIsTestingSpeed(false);
       }
     },
-    [presetEndpoints, customEndpoints, autoSelect, onUpdateUrl, testParams]
+    [presetEndpoints, customEndpoints, autoSelect, onUpdateUrl, testParams],
   );
 
   // 添加自定义端点
@@ -178,7 +177,7 @@ export const GenericSpeedTest: React.FC<GenericSpeedTestProps> = ({
 
     // 检查是否已存在
     const exists = [...presetEndpoints, ...customEndpoints].some(
-      (ep) => ep.url === customUrl
+      (ep) => ep.url === customUrl,
     );
 
     if (exists) {
@@ -232,11 +231,11 @@ export const GenericSpeedTest: React.FC<GenericSpeedTestProps> = ({
           await performSpeedTest(true);
         }
       };
-      
+
       // 为不同的供应商使用不同的全局函数名
       const functionName = `speedTest_${Date.now()}`;
       (window as any)[functionName] = testFunction;
-      
+
       // 清理函数
       return () => {
         delete (window as any)[functionName];

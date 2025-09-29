@@ -4,11 +4,7 @@ import { Provider } from "../types";
 import { Play, Edit3, Trash2, CheckCircle2, Users, Check } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
 import { AppType } from "../lib/tauri-api";
-import {
-  applyProviderToVSCode,
-  detectApplied,
-  normalizeBaseUrl,
-} from "../utils/vscodeSettings";
+import { applyProviderToVSCode, detectApplied } from "../utils/vscodeSettings";
 import { getCodexBaseUrl } from "../utils/providerConfigUtils";
 import { useVSCodeAutoSync } from "../hooks/useVSCodeAutoSync";
 // 不再在列表中显示分类徽章，避免造成困惑
@@ -63,22 +59,36 @@ const ProviderList: React.FC<ProviderListProps> = ({
   };
 
   // 自动同步 hook
-  const { vscodeAppliedFor, handleAutoSync } = useVSCodeAutoSync(
-    appType,
-    currentProviderId,
-    providers,
-    onNotify,
-  );
+  const { isAutoSyncEnabled } = useVSCodeAutoSync();
+  const [vscodeAppliedFor, setVscodeAppliedFor] = useState<string | null>(null);
 
   // 监听当前供应商变化，若开启自动同步，自动执行
   useEffect(() => {
-    const autoSync = JSON.parse(
-      localStorage.getItem("vsCodeAutoSync") || "false",
-    );
-    if (autoSync) {
-      handleAutoSync();
+    if (isAutoSyncEnabled && appType === "codex" && currentProviderId) {
+      const currentProvider = providers[currentProviderId];
+      if (currentProvider && currentProvider.category !== "official") {
+        handleApplyToVSCode(currentProvider);
+      }
     }
-  }, [currentProviderId, handleAutoSync]);
+  }, [currentProviderId, isAutoSyncEnabled]);
+
+  // 从 localStorage 读取已应用的供应商
+  useEffect(() => {
+    const applied = localStorage.getItem("vsCodeAppliedFor");
+    if (applied) {
+      setVscodeAppliedFor(applied);
+    }
+  }, []);
+
+  // 监听应用状态变化
+  useEffect(() => {
+    const handler = () => {
+      const applied = localStorage.getItem("vsCodeAppliedFor");
+      setVscodeAppliedFor(applied);
+    };
+    window.addEventListener("vsCodeAppliedForChanged", handler);
+    return () => window.removeEventListener("vsCodeAppliedForChanged", handler);
+  }, []);
 
   // 手动检测已应用到 VS Code 的供应商
   useEffect(() => {
@@ -96,7 +106,9 @@ const ProviderList: React.FC<ProviderListProps> = ({
           const baseUrl = getCodexBaseUrl(provider);
           if (!baseUrl) continue;
 
-          if (detectApplied(raw, baseUrl)) {
+          const detected = detectApplied(raw);
+          if (detected.hasApiBase && detected.apiBase === baseUrl) {
+            setVscodeAppliedFor(id);
             localStorage.setItem("vsCodeAppliedFor", id);
             return;
           }
@@ -129,9 +141,12 @@ const ProviderList: React.FC<ProviderListProps> = ({
         const prevProvider = providers[prev];
         if (prevProvider) {
           const prevUrl = getCodexBaseUrl(prevProvider);
-          if (prevUrl && detectApplied(raw, prevUrl)) {
+          const detected = detectApplied(raw);
+          if (detected.hasApiBase && detected.apiBase === prevUrl) {
             onNotify?.(
-              t("notifications.vscodeAlreadyApplied", { name: prevProvider.name }),
+              t("notifications.vscodeAlreadyApplied", {
+                name: prevProvider.name,
+              }),
               "error",
               4000,
             );
@@ -144,12 +159,17 @@ const ProviderList: React.FC<ProviderListProps> = ({
       await window.api.writeVSCodeSettings(settings);
 
       // 记录已应用的供应商
+      setVscodeAppliedFor(provider.id);
       localStorage.setItem("vsCodeAppliedFor", provider.id);
       window.dispatchEvent(new Event("vsCodeAppliedForChanged"));
       onNotify?.(t("notifications.vscodeApplySuccess"), "success", 3000);
     } catch (error) {
       console.error("应用到 VS Code 失败:", error);
-      onNotify?.(t("notifications.vscodeApplyError", { error: String(error) }), "error", 3000);
+      onNotify?.(
+        t("notifications.vscodeApplyError", { error: String(error) }),
+        "error",
+        3000,
+      );
     }
   };
 
@@ -163,16 +183,19 @@ const ProviderList: React.FC<ProviderListProps> = ({
       const raw = await window.api.readVSCodeSettings();
       const next = applyProviderToVSCode(raw, {
         baseUrl: undefined,
-        key: undefined,
-        model: undefined,
       });
       await window.api.writeVSCodeSettings(next);
+      setVscodeAppliedFor(null);
       localStorage.removeItem("vsCodeAppliedFor");
       window.dispatchEvent(new Event("vsCodeAppliedForChanged"));
       onNotify?.(t("notifications.vscodeRemoveSuccess"), "success", 3000);
     } catch (error) {
       console.error("从 VS Code 移除失败:", error);
-      onNotify?.(t("notifications.vscodeRemoveError", { error: String(error) }), "error", 3000);
+      onNotify?.(
+        t("notifications.vscodeRemoveError", { error: String(error) }),
+        "error",
+        3000,
+      );
     }
   };
 
@@ -204,7 +227,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
             key={id}
             className={cn(
               cardStyles.base,
-              cardStyles.hover,
+              cardStyles.interactive,
               isCurrent && "ring-2 ring-blue-500 dark:ring-blue-400",
             )}
           >
@@ -219,13 +242,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
                       {provider.name}
                     </h3>
                     {isOfficial && (
-                      <span
-                        className={cn(
-                          badgeStyles.base,
-                          badgeStyles.variants.blue,
-                          badgeStyles.size.xs,
-                        )}
-                      >
+                      <span className={cn(badgeStyles.info)}>
                         {t("common.official")}
                       </span>
                     )}
@@ -234,9 +251,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
                       vscodeAppliedFor === provider.id && (
                         <span
                           className={cn(
-                            badgeStyles.base,
-                            badgeStyles.variants.green,
-                            badgeStyles.size.xs,
+                            badgeStyles.success,
                             "inline-flex items-center gap-0.5",
                           )}
                         >
@@ -248,7 +263,9 @@ const ProviderList: React.FC<ProviderListProps> = ({
                   <div className="flex flex-col gap-1">
                     {provider.websiteUrl && (
                       <div className="text-sm text-gray-500 dark:text-gray-400 truncate">
-                        <span className="opacity-60">{t("common.website")}: </span>
+                        <span className="opacity-60">
+                          {t("common.website")}:{" "}
+                        </span>
                         {provider.websiteUrl}
                       </div>
                     )}
@@ -276,7 +293,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
                             "inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors w-full whitespace-nowrap justify-center",
                             vscodeAppliedFor === provider.id
                               ? "border border-gray-300 text-gray-600 hover:border-red-300 hover:text-red-600 hover:bg-red-50 dark:border-gray-600 dark:text-gray-400 dark:hover:border-red-800 dark:hover:text-red-400 dark:hover:bg-red-900/20"
-                              : "border border-gray-300 text-gray-700 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-blue-700 dark:hover:text-blue-400 dark:hover:bg-blue-900/20"
+                              : "border border-gray-300 text-gray-700 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-blue-700 dark:hover:text-blue-400 dark:hover:bg-blue-900/20",
                           )}
                           title={
                             vscodeAppliedFor === provider.id
@@ -296,10 +313,8 @@ const ProviderList: React.FC<ProviderListProps> = ({
                     <button
                       onClick={() => onSwitch(id)}
                       className={cn(
-                        buttonStyles.base,
-                        buttonStyles.variants.primary,
-                        buttonStyles.sizes.sm,
-                        "inline-flex items-center gap-1.5",
+                        buttonStyles.primary,
+                        "inline-flex items-center gap-1.5 !px-3 !py-1.5",
                       )}
                     >
                       <Play className="w-4 h-4" />
@@ -309,22 +324,14 @@ const ProviderList: React.FC<ProviderListProps> = ({
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => onEdit(id)}
-                        className={cn(
-                          buttonStyles.base,
-                          buttonStyles.variants.ghost,
-                          buttonStyles.sizes.sm,
-                        )}
+                        className={cn(buttonStyles.ghost, "!px-2 !py-1.5")}
                       >
                         <Edit3 className="w-4 h-4" />
                       </button>
                       {!isOfficial && (
                         <button
                           onClick={() => onDelete(id)}
-                          className={cn(
-                            buttonStyles.base,
-                            buttonStyles.variants.danger,
-                            buttonStyles.sizes.sm,
-                          )}
+                          className={cn(buttonStyles.danger, "!px-2 !py-1.5")}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>

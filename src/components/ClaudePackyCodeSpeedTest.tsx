@@ -11,7 +11,7 @@ interface ClaudePackyCodeSpeedTestProps {
 
 // 预设的 Claude PackyCode 端点
 const CLAUDE_PACKYCODE_SERVICES = {
-  "公交车": [
+  公交车: [
     {
       name: "公交车 - 默认节点",
       url: "https://api.packycode.com",
@@ -38,7 +38,7 @@ const CLAUDE_PACKYCODE_SERVICES = {
       latency: null,
     },
   ],
-  "滴滴车": [
+  滴滴车: [
     {
       name: "滴滴车 - 默认节点",
       url: "https://share-api.packycode.com",
@@ -67,14 +67,18 @@ const CLAUDE_PACKYCODE_SERVICES = {
   ],
 };
 
-export const ClaudePackyCodeSpeedTest: React.FC<ClaudePackyCodeSpeedTestProps> = ({
+export const ClaudePackyCodeSpeedTest: React.FC<
+  ClaudePackyCodeSpeedTestProps
+> = ({
   providerName,
   baseUrl,
   apiKey: _apiKey, // 保留接口一致性
   onUpdateBaseUrl,
   onSpeedTestRequired,
 }) => {
-  const [selectedServiceType, setSelectedServiceType] = useState<"公交车" | "滴滴车" | null>(null);
+  const [selectedServiceType, setSelectedServiceType] = useState<
+    "公交车" | "滴滴车" | null
+  >(null);
   const [presetEndpoints, setPresetEndpoints] = useState<EndpointTest[]>([]);
 
   // 判断是否为 PackyCode 供应商
@@ -102,7 +106,10 @@ export const ClaudePackyCodeSpeedTest: React.FC<ClaudePackyCodeSpeedTestProps> =
   useEffect(() => {
     if (baseUrl.includes("share-api")) {
       setSelectedServiceType("滴滴车");
-    } else if (baseUrl.includes("api.packycode.com") || baseUrl.includes("api-")) {
+    } else if (
+      baseUrl.includes("api.packycode.com") ||
+      baseUrl.includes("api-")
+    ) {
       setSelectedServiceType("公交车");
     }
   }, []);

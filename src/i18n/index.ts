@@ -20,7 +20,8 @@ const getInitialLanguage = (): "zh" | "en" => {
 
   const navigatorLang =
     typeof navigator !== "undefined"
-      ? navigator.language?.toLowerCase() ?? navigator.languages?.[0]?.toLowerCase()
+      ? (navigator.language?.toLowerCase() ??
+        navigator.languages?.[0]?.toLowerCase())
       : undefined;
 
   if (navigatorLang?.startsWith("zh")) {
