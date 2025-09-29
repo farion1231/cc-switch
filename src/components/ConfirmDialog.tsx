@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { AlertTriangle, X } from "lucide-react";
 import { isLinux } from "../lib/platform";
 
@@ -16,11 +17,13 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   isOpen,
   title,
   message,
-  confirmText = "确定",
-  cancelText = "取消",
+  confirmText,
+  cancelText,
   onConfirm,
   onCancel,
 }) => {
+  const { t } = useTranslation();
+
   if (!isOpen) return null;
 
   return (
@@ -65,13 +68,13 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             className="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-900 hover:bg-white dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800 rounded-md transition-colors"
             autoFocus
           >
-            {cancelText}
+            {cancelText || t("common.cancel")}
           </button>
           <button
             onClick={onConfirm}
             className="px-4 py-2 text-sm font-medium bg-red-500 text-white hover:bg-red-500/90 rounded-md transition-colors"
           >
-            {confirmText}
+            {confirmText || t("common.confirm")}
           </button>
         </div>
       </div>

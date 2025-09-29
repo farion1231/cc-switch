@@ -30,4 +30,6 @@ export interface Settings {
   claudeConfigDir?: string;
   // 覆盖 Codex 配置目录（可选）
   codexConfigDir?: string;
+  // 首选语言（可选，默认中文）
+  language?: "en" | "zh";
 }

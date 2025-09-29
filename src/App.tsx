@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { Provider } from "./types";
 import { AppType } from "./lib/tauri-api";
 import ProviderList from "./components/ProviderList";
@@ -17,6 +18,7 @@ import { getCodexBaseUrl } from "./utils/providerConfigUtils";
 import { useVSCodeAutoSync } from "./hooks/useVSCodeAutoSync";
 
 function App() {
+  const { t } = useTranslation();
   const { isDarkMode, toggleDarkMode } = useDarkMode();
   const { isAutoSyncEnabled } = useVSCodeAutoSync();
   const [activeApp, setActiveApp] = useState<AppType>("claude");
@@ -24,7 +26,7 @@ function App() {
   const [currentProviderId, setCurrentProviderId] = useState<string>("");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(
-    null,
+    null
   );
   const [notification, setNotification] = useState<{
     message: string;
@@ -44,7 +46,7 @@ function App() {
   const showNotification = (
     message: string,
     type: "success" | "error",
-    duration = 3000,
+    duration = 3000
   ) => {
     // 清除之前的定时器
     if (timeoutRef.current) {
@@ -88,7 +90,7 @@ function App() {
       try {
         unlisten = await window.api.onProviderSwitched(async (data) => {
           if (import.meta.env.DEV) {
-            console.log("收到供应商切换事件:", data);
+            console.log(t("console.providerSwitchReceived"), data);
           }
 
           // 如果当前应用类型匹配，则重新加载数据
@@ -102,7 +104,7 @@ function App() {
           }
         });
       } catch (error) {
-        console.error("设置供应商切换监听器失败:", error);
+        console.error(t("console.setupListenerFailed"), error);
       }
     };
 
@@ -152,16 +154,16 @@ function App() {
       await loadProviders();
       setEditingProviderId(null);
       // 显示编辑成功提示
-      showNotification("供应商配置已保存", "success", 2000);
+      showNotification(t("notifications.providerSaved"), "success", 2000);
       // 更新托盘菜单
       await window.api.updateTrayMenu();
     } catch (error) {
-      console.error("更新供应商失败:", error);
+      console.error(t("console.updateProviderFailed"), error);
       setEditingProviderId(null);
       const errorMessage = extractErrorMessage(error);
       const message = errorMessage
-        ? `保存失败：${errorMessage}`
-        : "保存失败，请重试";
+        ? t("notifications.saveFailed", { error: errorMessage })
+        : t("notifications.saveFailedGeneric");
       showNotification(message, "error", errorMessage ? 6000 : 3000);
     }
   };
@@ -170,13 +172,13 @@ function App() {
     const provider = providers[id];
     setConfirmDialog({
       isOpen: true,
-      title: "删除供应商",
-      message: `确定要删除供应商 "${provider?.name}" 吗？此操作无法撤销。`,
+      title: t("confirm.deleteProvider"),
+      message: t("confirm.deleteProviderMessage", { name: provider?.name }),
       onConfirm: async () => {
         await window.api.deleteProvider(id, activeApp);
         await loadProviders();
         setConfirmDialog(null);
-        showNotification("供应商删除成功", "success");
+        showNotification(t("notifications.providerDeleted"), "success");
         // 更新托盘菜单
         await window.api.updateTrayMenu();
       },
@@ -190,9 +192,9 @@ function App() {
       if (!status.exists) {
         if (!silent) {
           showNotification(
-            "未找到 VS Code 用户设置文件 (settings.json)",
+            t("notifications.vscodeSettingsNotFound"),
             "error",
-            3000,
+            3000
           );
         }
         return;
@@ -208,11 +210,7 @@ function App() {
         const parsed = getCodexBaseUrl(provider);
         if (!parsed) {
           if (!silent) {
-            showNotification(
-              "当前配置缺少 base_url，无法写入 VS Code",
-              "error",
-              4000,
-            );
+            showNotification(t("notifications.missingBaseUrl"), "error", 4000);
           }
           return;
         }
@@ -226,16 +224,17 @@ function App() {
       if (updatedSettings !== raw) {
         await window.api.writeVSCodeSettings(updatedSettings);
         if (!silent) {
-          showNotification("已同步到 VS Code", "success", 1500);
+          showNotification(t("notifications.syncedToVSCode"), "success", 1500);
         }
       }
 
       // 触发providers重新加载，以更新VS Code按钮状态
       await loadProviders();
     } catch (error: any) {
-      console.error("同步到VS Code失败:", error);
+      console.error(t("console.syncToVSCodeFailed"), error);
       if (!silent) {
-        const errorMessage = error?.message || "同步 VS Code 失败";
+        const errorMessage =
+          error?.message || t("notifications.syncVSCodeFailed");
         showNotification(errorMessage, "error", 5000);
       }
     }
@@ -246,11 +245,11 @@ function App() {
     if (success) {
       setCurrentProviderId(id);
       // 显示重启提示
-      const appName = activeApp === "claude" ? "Claude Code" : "Codex";
+      const appName = t(`apps.${activeApp}`);
       showNotification(
-        `切换成功！请重启 ${appName} 终端以生效`,
+        t("notifications.switchSuccess", { appName }),
         "success",
-        2000,
+        2000
       );
       // 更新托盘菜单
       await window.api.updateTrayMenu();
@@ -260,7 +259,7 @@ function App() {
         await syncCodexToVSCode(id, true); // silent模式，不显示通知
       }
     } else {
-      showNotification("切换失败，请检查配置", "error");
+      showNotification(t("notifications.switchFailed"), "error");
     }
   };
 
@@ -271,13 +270,13 @@ function App() {
 
       if (result.success) {
         await loadProviders();
-        showNotification("已从现有配置创建默认供应商", "success", 3000);
+        showNotification(t("notifications.autoImported"), "success", 3000);
         // 更新托盘菜单
         await window.api.updateTrayMenu();
       }
       // 如果导入失败（比如没有现有配置），静默处理，不显示错误
     } catch (error) {
-      console.error("自动导入默认配置失败:", error);
+      console.error(t("console.autoImportFailed"), error);
       // 静默处理，不影响用户体验
     }
   };
@@ -293,14 +292,18 @@ function App() {
               target="_blank"
               rel="noopener noreferrer"
               className="text-xl font-semibold text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
-              title="在 GitHub 上查看"
+              title={t("header.viewOnGithub")}
             >
               CC Switch
             </a>
             <button
               onClick={toggleDarkMode}
               className={buttonStyles.icon}
-              title={isDarkMode ? "切换到亮色模式" : "切换到暗色模式"}
+              title={
+                isDarkMode
+                  ? t("header.toggleLightMode")
+                  : t("header.toggleDarkMode")
+              }
             >
               {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
             </button>
@@ -308,7 +311,7 @@ function App() {
               <button
                 onClick={() => setIsSettingsOpen(true)}
                 className={buttonStyles.icon}
-                title="设置"
+                title={t("common.settings")}
               >
                 <Settings size={18} />
               </button>
@@ -324,7 +327,7 @@ function App() {
               className={`inline-flex items-center gap-2 ${buttonStyles.primary}`}
             >
               <Plus size={16} />
-              添加供应商
+              {t("header.addProvider")}
             </button>
           </div>
         </div>

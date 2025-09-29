@@ -5,6 +5,8 @@ import { UpdateProvider } from "./contexts/UpdateContext";
 import "./index.css";
 // 导入 Tauri API（自动绑定到 window.api）
 import "./lib/tauri-api";
+// 导入国际化配置
+import "./i18n";
 
 // 根据平台添加 body class，便于平台特定样式
 try {
@@ -23,5 +25,5 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <UpdateProvider>
       <App />
     </UpdateProvider>
-  </React.StrictMode>,
+  </React.StrictMode>
 );

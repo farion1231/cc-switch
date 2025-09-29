@@ -15,6 +15,8 @@ pub struct AppSettings {
     pub claude_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -32,6 +34,7 @@ impl Default for AppSettings {
             minimize_to_tray_on_close: true,
             claude_config_dir: None,
             codex_config_dir: None,
+            language: None,
         }
     }
 }
@@ -54,6 +57,13 @@ impl AppSettings {
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.language = self
+            .language
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| matches!(*s, "en" | "zh"))
             .map(|s| s.to_string());
     }
 

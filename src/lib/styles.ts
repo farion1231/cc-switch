@@ -34,7 +34,7 @@ export const cardStyles = {
 
   // 带悬浮效果的卡片
   interactive:
-    "bg-white rounded-lg border border-gray-200 p-4 hover:border-gray-300 hover:shadow-sm dark:bg-gray-900 dark:border-gray-700 dark:hover:border-gray-600 transition-all duration-200",
+    "bg-white rounded-lg border border-gray-200 p-4 hover:border-gray-300 hover:shadow-sm dark:bg-gray-900 dark:border-gray-700 dark:hover:border-gray-600 transition-[border-color,box-shadow] duration-200",
 
   // 选中/激活态卡片
   selected:
