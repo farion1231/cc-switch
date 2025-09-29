@@ -53,18 +53,18 @@ impl std::error::Error for CloudSyncError {}
 
 impl From<std::io::Error> for CloudSyncError {
     fn from(err: std::io::Error) -> Self {
-        CloudSyncError::FileSystemError(err.to_string())
+        CloudSyncError::Io(err.to_string())
     }
 }
 
 impl From<reqwest::Error> for CloudSyncError {
     fn from(err: reqwest::Error) -> Self {
-        CloudSyncError::NetworkError(err.to_string())
+        CloudSyncError::Network(err.to_string())
     }
 }
 
 impl From<serde_json::Error> for CloudSyncError {
     fn from(err: serde_json::Error) -> Self {
-        CloudSyncError::ValidationError(err.to_string())
+        CloudSyncError::Parse(err.to_string())
     }
 }

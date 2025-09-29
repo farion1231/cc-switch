@@ -8,14 +8,18 @@ import {
   Check,
   Undo2,
   FolderSearch,
+  Cloud,
+  CloudUpload,
+  CloudDownload,
+  Shield,
+  Key,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import { homeDir, join } from "@tauri-apps/api/path";
-import "../lib/tauri-api";
+import tauriAPI, { type AppType } from "../lib/tauri-api";
 import { relaunchApp } from "../lib/updater";
 import { useUpdate } from "../contexts/UpdateContext";
 import type { Settings } from "../types";
-import type { AppType } from "../lib/tauri-api";
 import { isLinux } from "../lib/platform";
 
 interface SettingsModalProps {
@@ -38,11 +42,24 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const { hasUpdate, updateInfo, updateHandle, checkUpdate, resetDismiss } =
     useUpdate();
 
+  // 云同步相关状态
+  const [cloudSyncConfig, setCloudSyncConfig] = useState({
+    githubToken: "",
+    encryptionPassword: "",
+    gistUrl: "",
+    configured: false,
+    enabled: false,
+  });
+  const [isValidatingToken, setIsValidatingToken] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [tokenValid, setTokenValid] = useState<boolean | null>(null);
+
   useEffect(() => {
     loadSettings();
     loadConfigPath();
     loadVersion();
     loadResolvedDirs();
+    loadCloudSyncSettings();
   }, []);
 
   const loadVersion = async () => {
@@ -58,7 +75,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
   const loadSettings = async () => {
     try {
-      const loadedSettings = await window.api.getSettings();
+      const loadedSettings = await tauriAPI.getSettings();
       const showInTray =
         (loadedSettings as any)?.showInTray ??
         (loadedSettings as any)?.showInDock ??
@@ -81,7 +98,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
   const loadConfigPath = async () => {
     try {
-      const path = await window.api.getAppConfigPath();
+      const path = await tauriAPI.getAppConfigPath();
       if (path) {
         setConfigPath(path);
       }
@@ -93,13 +110,34 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const loadResolvedDirs = async () => {
     try {
       const [claudeDir, codexDir] = await Promise.all([
-        window.api.getConfigDir("claude"),
-        window.api.getConfigDir("codex"),
+        tauriAPI.getConfigDir("claude"),
+        tauriAPI.getConfigDir("codex"),
       ]);
       setResolvedClaudeDir(claudeDir || "");
       setResolvedCodexDir(codexDir || "");
     } catch (error) {
       console.error("获取配置目录失败:", error);
+    }
+  };
+
+  const loadCloudSyncSettings = async () => {
+    try {
+      const settings = await tauriAPI.cloudSync.getSettings("");
+
+      // 只更新非敏感信息
+      setCloudSyncConfig(prev => ({
+        ...prev,
+        gistUrl: settings.gistUrl || "",
+        configured: settings.configured || false,
+        enabled: settings.enabled || false,
+      }));
+
+      // 如果后端有 token，说明已经配置过
+      if (settings.hasToken) {
+        setTokenValid(true);
+      }
+    } catch (error) {
+      console.error("加载云同步设置失败:", error);
     }
   };
 
@@ -116,7 +154,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             ? settings.codexConfigDir.trim()
             : undefined,
       };
-      await window.api.saveSettings(payload);
+      await tauriAPI.saveSettings(payload);
       setSettings(payload);
       onClose();
     } catch (error) {
@@ -135,7 +173,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       } catch (error) {
         console.error("更新失败:", error);
         // 更新失败时回退到打开 Releases 页面
-        await window.api.checkForUpdates();
+        await tauriAPI.checkForUpdates();
       } finally {
         setIsDownloading(false);
       }
@@ -163,7 +201,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           }, 3000);
         } else {
           // 生产环境下如果更新插件不可用，回退到打开 Releases 页面
-          await window.api.checkForUpdates();
+          await tauriAPI.checkForUpdates();
         }
       } finally {
         setIsCheckingUpdate(false);
@@ -173,7 +211,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
   const handleOpenConfigFolder = async () => {
     try {
-      await window.api.openAppConfigFolder();
+      await tauriAPI.openAppConfigFolder();
     } catch (error) {
       console.error("打开配置文件夹失败:", error);
     }
@@ -186,7 +224,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           ? (settings.claudeConfigDir ?? resolvedClaudeDir)
           : (settings.codexConfigDir ?? resolvedCodexDir);
 
-      const selected = await window.api.selectConfigDirectory(currentResolved);
+      const selected = await tauriAPI.selectConfigDirectory(currentResolved);
 
       if (!selected) {
         return;
@@ -246,7 +284,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       const targetVersion = updateInfo?.availableVersion || version;
       // 如果未知或为空，回退到 releases 首页
       if (!targetVersion || targetVersion === "未知") {
-        await window.api.openExternal(
+        await tauriAPI.openExternal(
           "https://github.com/farion1231/cc-switch/releases"
         );
         return;
@@ -254,11 +292,119 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       const tag = targetVersion.startsWith("v")
         ? targetVersion
         : `v${targetVersion}`;
-      await window.api.openExternal(
+      await tauriAPI.openExternal(
         `https://github.com/farion1231/cc-switch/releases/tag/${tag}`
       );
     } catch (error) {
       console.error("打开更新日志失败:", error);
+    }
+  };
+
+  // 云同步相关函数
+  const handleValidateToken = async () => {
+    if (!cloudSyncConfig.githubToken.trim()) {
+      setTokenValid(false);
+      return;
+    }
+
+    setIsValidatingToken(true);
+    try {
+      const result = await tauriAPI.cloudSync.validateGitHubToken(
+        cloudSyncConfig.githubToken.trim()
+      );
+      setTokenValid(result.valid);
+    } catch (error) {
+      console.error("验证 Token 失败:", error);
+      setTokenValid(false);
+    } finally {
+      setIsValidatingToken(false);
+    }
+  };
+
+  const handleConfigureCloudSync = async () => {
+    // 如果是重新配置，需要新的 token
+    const hasNewToken = cloudSyncConfig.githubToken.trim() && cloudSyncConfig.githubToken !== "[已配置]";
+
+    // 如果是新配置，或者提供了新 token，需要验证
+    if (!cloudSyncConfig.configured || hasNewToken) {
+      if (!tokenValid || !hasNewToken || !cloudSyncConfig.encryptionPassword.trim()) {
+        alert("请先输入并验证 GitHub Token，以及设置加密密码");
+        return;
+      }
+    }
+
+    try {
+      const result = await tauriAPI.cloudSync.configure({
+        githubToken: hasNewToken ? cloudSyncConfig.githubToken.trim() : "",  // 如果没有新 token，发送空字符串
+        gistUrl: cloudSyncConfig.gistUrl.trim() || undefined,
+        encryptionPassword: cloudSyncConfig.encryptionPassword,
+        autoSyncEnabled: true,
+        syncOnStartup: false,
+      });
+
+      if (result.success) {
+        setCloudSyncConfig(prev => ({ ...prev, configured: true, enabled: true }));
+        alert("云同步配置成功！");
+      }
+    } catch (error) {
+      console.error("配置云同步失败:", error);
+      alert(`配置云同步失败: ${error}`);
+    }
+  };
+
+  const handleSyncToCloud = async () => {
+    if (!cloudSyncConfig.configured && !cloudSyncConfig.encryptionPassword.trim()) {
+      alert("请先配置云同步并输入加密密码");
+      return;
+    }
+
+    if (!cloudSyncConfig.encryptionPassword.trim()) {
+      alert("请输入加密密码");
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      const result = await tauriAPI.cloudSync.syncToCloud(
+        cloudSyncConfig.encryptionPassword
+      );
+
+      if (result.success && result.gistUrl) {
+        setCloudSyncConfig(prev => ({ ...prev, gistUrl: result.gistUrl }));
+        alert(`配置已成功同步到云端！\nGist URL: ${result.gistUrl}`);
+      }
+    } catch (error) {
+      console.error("同步到云端失败:", error);
+      alert(`同步失败: ${error}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleSyncFromCloud = async () => {
+    if (!cloudSyncConfig.gistUrl.trim()) {
+      alert("请输入 Gist URL");
+      return;
+    }
+
+    if (!cloudSyncConfig.encryptionPassword.trim()) {
+      alert("请输入加密密码");
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      await tauriAPI.cloudSync.syncFromCloud(
+        cloudSyncConfig.gistUrl,
+        cloudSyncConfig.encryptionPassword,
+        true // auto apply
+      );
+      alert("配置已成功从云端同步并应用！");
+    } catch (error) {
+      console.error("从云端同步失败:", error);
+      alert(`同步失败: ${error}`);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -274,9 +420,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           isLinux() ? "" : " backdrop-blur-sm"
         }`}
       />
-      <div className="relative bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-[500px] overflow-hidden">
+      <div className="relative bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-[500px] max-h-[90vh] flex flex-col overflow-hidden">
         {/* 标题栏 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
           <h2 className="text-lg font-semibold text-blue-500 dark:text-blue-400">
             设置
           </h2>
@@ -288,8 +434,8 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           </button>
         </div>
 
-        {/* 设置内容 */}
-        <div className="px-6 py-4 space-y-6">
+        {/* 设置内容 - 可滚动区域 */}
+        <div className="px-6 py-4 space-y-6 flex-1 overflow-y-auto">
           {/* 系统托盘设置（未实现）
               说明：此开关用于控制是否在系统托盘/菜单栏显示应用图标。 */}
           {/* <div>
@@ -421,6 +567,145 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             </div>
           </div>
 
+          {/* 云同步 */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2 flex items-center gap-2">
+              <Cloud size={16} />
+              云同步
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4 leading-relaxed">
+              通过 GitHub Gist 安全同步配置。配置会被加密后存储在云端，可以在多台设备间同步。
+            </p>
+
+            <div className="space-y-4">
+              {/* GitHub Token */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  <Key size={12} className="inline mr-1" />
+                  GitHub Personal Access Token
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={cloudSyncConfig.githubToken}
+                    onChange={(e) => {
+                      setCloudSyncConfig(prev => ({ ...prev, githubToken: e.target.value }));
+                      setTokenValid(null);
+                    }}
+                    placeholder={cloudSyncConfig.configured ? "输入新 Token 以更新" : "ghp_xxxxxxxxxxxxxxxxxxxx"}
+                    className="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleValidateToken}
+                    disabled={isValidatingToken || !cloudSyncConfig.githubToken.trim()}
+                    className={`px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                      tokenValid === true
+                        ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800"
+                        : tokenValid === false
+                        ? "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800"
+                        : "bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 border border-gray-200 dark:border-gray-600"
+                    }`}
+                  >
+                    {isValidatingToken ? (
+                      <RefreshCw size={12} className="animate-spin" />
+                    ) : tokenValid === true ? (
+                      <Check size={12} />
+                    ) : tokenValid === false ? (
+                      "无效"
+                    ) : (
+                      "验证"
+                    )}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                  需要创建具有 Gist 权限的 GitHub Token
+                </p>
+              </div>
+
+              {/* 加密密码 */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  <Shield size={12} className="inline mr-1" />
+                  加密密码
+                </label>
+                <input
+                  type="password"
+                  value={cloudSyncConfig.encryptionPassword}
+                  onChange={(e) =>
+                    setCloudSyncConfig(prev => ({ ...prev, encryptionPassword: e.target.value }))
+                  }
+                  placeholder={cloudSyncConfig.configured ? "输入密码以同步" : "用于加密配置的安全密码"}
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                />
+              </div>
+
+              {/* Gist URL（可选） */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  Gist URL（可选）
+                </label>
+                <input
+                  type="text"
+                  value={cloudSyncConfig.gistUrl}
+                  onChange={(e) =>
+                    setCloudSyncConfig(prev => ({ ...prev, gistUrl: e.target.value }))
+                  }
+                  placeholder="留空将自动创建新 Gist"
+                  className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                />
+              </div>
+
+              {/* 操作按钮 */}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleConfigureCloudSync}
+                  disabled={!tokenValid || !cloudSyncConfig.githubToken.trim() || !cloudSyncConfig.encryptionPassword.trim()}
+                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                    tokenValid && cloudSyncConfig.githubToken.trim() && cloudSyncConfig.encryptionPassword.trim()
+                      ? "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white"
+                      : "bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                  }`}
+                >
+                  <Cloud size={12} />
+                  配置云同步
+                </button>
+                <button
+                  onClick={handleSyncToCloud}
+                  disabled={!cloudSyncConfig.configured || isSyncing}
+                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                    cloudSyncConfig.configured && !isSyncing
+                      ? "bg-green-500 hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-700 text-white"
+                      : "bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                  }`}
+                >
+                  {isSyncing ? (
+                    <RefreshCw size={12} className="animate-spin" />
+                  ) : (
+                    <CloudUpload size={12} />
+                  )}
+                  上传配置
+                </button>
+                <button
+                  onClick={handleSyncFromCloud}
+                  disabled={!cloudSyncConfig.gistUrl.trim() || isSyncing}
+                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                    cloudSyncConfig.gistUrl.trim() && !isSyncing
+                      ? "bg-purple-500 hover:bg-purple-600 dark:bg-purple-600 dark:hover:bg-purple-700 text-white"
+                      : "bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                  }`}
+                >
+                  {isSyncing ? (
+                    <RefreshCw size={12} className="animate-spin" />
+                  ) : (
+                    <CloudDownload size={12} />
+                  )}
+                  下载配置
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* 关于 */}
           <div>
             <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
@@ -495,7 +780,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
 
         {/* 底部按钮 */}
-        <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-800">
+        <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-800 flex-shrink-0">
           <button
             onClick={onClose}
             className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"

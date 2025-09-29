@@ -87,8 +87,9 @@ impl CryptoService {
         let key = LessSafeKey::new(unbound_key);
 
         // Decrypt data
-        let nonce = Nonce::assume_unique_for_key(*Nonce::try_assume_unique_for_key(nonce_bytes)
-            .map_err(|_| CloudSyncError::Decryption("Invalid nonce".into()))?);
+        let mut nonce_array = [0u8; NONCE_LEN];
+        nonce_array.copy_from_slice(nonce_bytes);
+        let nonce = Nonce::assume_unique_for_key(nonce_array);
 
         let mut decrypted = encrypted_with_tag.to_vec();
         let plaintext = key.open_in_place(nonce, Aad::empty(), &mut decrypted)
