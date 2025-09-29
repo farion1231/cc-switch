@@ -1,4 +1,5 @@
 mod app_config;
+mod cloud_sync;
 mod codex_config;
 mod commands;
 mod config;
@@ -393,6 +394,11 @@ pub fn run() {
             commands::get_vscode_settings_status,
             commands::read_vscode_settings,
             commands::write_vscode_settings,
+            cloud_sync::configure_cloud_sync,
+            cloud_sync::get_cloud_sync_settings,
+            cloud_sync::sync_to_cloud,
+            cloud_sync::sync_from_cloud,
+            cloud_sync::validate_github_token,
             update_tray_menu,
         ]);
 

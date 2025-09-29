@@ -29,6 +29,13 @@ tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 dirs = "5.0"
 toml = "0.8"
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+tokio = { version = "1.40", features = ["full"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+ring = "0.17"
+uuid = { version = "1.11", features = ["v4", "serde"] }
+sha2 = "0.10"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
