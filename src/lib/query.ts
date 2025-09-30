@@ -8,6 +8,31 @@ import { getCodexBaseUrl } from '../utils/providerConfigUtils'
 
 export type AppType = "claude" | "codex"
 
+// Helper function to sort providers by creation time and name
+const sortProviders = (providers: Record<string, Provider>): Record<string, Provider> => {
+  return Object.fromEntries(
+    Object.values(providers).sort((a, b) => {
+      // 按添加时间排序
+      // 没有时间戳的视为最早添加的（排在最前面）
+      // 有时间戳的按时间升序排列
+      const timeA = a.createdAt || 0;
+      const timeB = b.createdAt || 0;
+
+      // 如果都没有时间戳，按名称排序
+      if (timeA === 0 && timeB === 0) {
+        return a.name.localeCompare(b.name, "zh-CN");
+      }
+
+      // 如果只有一个没有时间戳，没有时间戳的排在前面
+      if (timeA === 0) return -1;
+      if (timeB === 0) return 1;
+
+      // 都有时间戳，按时间升序
+      return timeA - timeB;
+    }).map(provider => [provider.id, provider])
+  );
+}
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -54,15 +79,18 @@ export const useProvidersQuery = (appType: AppType) => {
           }
         })()
         if (result.success) {
-          const [newProviders, newCurrentProviderId] = await Promise.all([
-            invoke("get_providers", { app_type: appType, app: appType }),
-            invoke("get_current_provider", { app_type: appType, app: appType })
-          ])
-          return { providers: newProviders as Record<string, Provider>, currentProviderId: newCurrentProviderId }
+          const newProviders = await invoke("get_providers", { app_type: appType, app: appType })
+          const newCurrentProviderId = await invoke("get_current_provider", { app_type: appType, app: appType })
+
+          const sortedProviders = sortProviders(newProviders as Record<string, Provider>);
+
+          return { providers: sortedProviders, currentProviderId: newCurrentProviderId }
         }
       }
 
-      return { providers, currentProviderId }
+      const sortedProviders = sortProviders(providers);
+
+      return { providers: sortedProviders, currentProviderId }
     }
   })
 }
