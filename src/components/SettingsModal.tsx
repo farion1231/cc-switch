@@ -425,8 +425,18 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       });
 
       if (result.success) {
-        setCloudSyncConfig(prev => ({ ...prev, configured: true, enabled: true }));
-        alert("云同步配置成功！");
+        setCloudSyncConfig(prev => ({
+          ...prev,
+          configured: true,
+          enabled: true,
+          gistUrl: result.gistUrl || prev.gistUrl // 更新 Gist URL（如果返回了的话）
+        }));
+
+        if (result.gistUrl) {
+          alert(`✅ 云同步配置成功！\n\n${result.gistUrl ? `Gist URL: ${result.gistUrl}` : ''}`);
+        } else {
+          alert("云同步配置成功！");
+        }
       }
     } catch (error) {
       console.error("配置云同步失败:", error);
@@ -452,8 +462,18 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       );
 
       if (result.success && result.gistUrl) {
-        setCloudSyncConfig(prev => ({ ...prev, gistUrl: result.gistUrl }));
-        alert(`配置已成功同步到云端！\nGist URL: ${result.gistUrl}`);
+        setCloudSyncConfig(prev => ({
+          ...prev,
+          gistUrl: result.gistUrl,
+          configured: true,
+          enabled: true
+        }));
+        // 显示成功消息，包含可复制的 Gist URL
+        const message = `✅ 配置已成功同步到云端！\n\n📋 Gist URL 已保存并自动填充到输入框\n${result.gistUrl}\n\n您可以通过此链接在 GitHub 上查看加密的配置。`;
+        alert(message);
+
+        // 自动重新加载云同步设置以确保 UI 更新
+        await loadCloudSyncSettings();
       }
     } catch (error) {
       console.error("同步到云端失败:", error);
@@ -766,15 +786,32 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                 <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
                   Gist URL（可选）
                 </label>
-                <input
-                  type="text"
-                  value={cloudSyncConfig.gistUrl}
-                  onChange={(e) =>
-                    setCloudSyncConfig(prev => ({ ...prev, gistUrl: e.target.value }))
-                  }
-                  placeholder="留空将自动创建新 Gist"
-                  className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={cloudSyncConfig.gistUrl}
+                    onChange={(e) =>
+                      setCloudSyncConfig(prev => ({ ...prev, gistUrl: e.target.value }))
+                    }
+                    placeholder="留空将自动创建新 Gist"
+                    className="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  />
+                  {cloudSyncConfig.gistUrl && (
+                    <button
+                      type="button"
+                      onClick={() => cloudSyncConfig.gistUrl && window.api.openExternal(cloudSyncConfig.gistUrl)}
+                      className="px-3 py-2 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 border border-gray-200 dark:border-gray-600 rounded-lg transition-colors flex items-center gap-1"
+                    >
+                      <ExternalLink size={12} />
+                      查看
+                    </button>
+                  )}
+                </div>
+                {cloudSyncConfig.gistUrl && (
+                  <p className="text-xs text-green-600 dark:text-green-400 mt-1">
+                    ✅ Gist URL 已保存，您的配置将同步到此位置
+                  </p>
+                )}
               </div>
 
               {/* 操作按钮 */}

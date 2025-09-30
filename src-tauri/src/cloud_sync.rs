@@ -252,7 +252,6 @@ impl GitHubClient {
 
 // 加密服务
 mod crypto {
-    use super::*;
     use chacha20poly1305::{
         aead::{Aead, AeadCore, KeyInit, OsRng},
         ChaCha20Poly1305, Nonce,
@@ -328,31 +327,40 @@ pub async fn configure_cloud_sync(
     github_token: String,
     gist_url: Option<String>,
 ) -> Result<Value, String> {
-    let mut guard = cloud_sync_store()
-        .write()
-        .map_err(|_| "Failed to acquire lock")?;
-
-    // Only update token if provided
+    // Validate token first if provided
     if !github_token.is_empty() {
-        // Validate token first
         let client = GitHubClient::new(github_token.clone());
         client.validate_token().await?;
-        guard.github_token = Some(github_token);
     }
 
-    // Update other settings
-    if let Some(url) = gist_url {
-        guard.gist_url = Some(url);
-    }
-    guard.enabled = true;
+    // Update settings after validation
+    let gist_url = {
+        let mut guard = cloud_sync_store()
+            .write()
+            .map_err(|_| "Failed to acquire lock")?;
 
-    // Save settings
-    guard.save()
-        .map_err(|e| format!("Failed to save settings: {}", e))?;
+        // Only update token if provided
+        if !github_token.is_empty() {
+            guard.github_token = Some(github_token);
+        }
+
+        // Update other settings
+        if let Some(url) = gist_url {
+            guard.gist_url = Some(url.clone());
+        }
+        guard.enabled = true;
+
+        // Save settings
+        guard.save()
+            .map_err(|e| format!("Failed to save settings: {}", e))?;
+
+        guard.gist_url.clone()
+    };
 
     Ok(json!({
         "success": true,
-        "message": "Cloud sync configured successfully"
+        "message": "Cloud sync configured successfully",
+        "gistUrl": gist_url
     }))
 }
 
