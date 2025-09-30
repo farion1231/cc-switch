@@ -19,9 +19,9 @@ html {
   color-scheme: light;
 }
 
-body {
+/* body {
   @apply m-0 p-0 bg-gray-50 text-gray-900 text-sm dark:bg-gray-950 dark:text-gray-100;
-}
+} */
 
 /* 暗色模式下启用暗色原生控件/滚动条配色 */
 html.dark {

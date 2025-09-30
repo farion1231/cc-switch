@@ -3,6 +3,8 @@ import { QueryClient, useQuery, useMutation, useQueryClient } from '@tanstack/re
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { Provider } from '../types'
+import { detectApplied, normalizeBaseUrl, applyProviderToVSCode } from '../utils/vscodeSettings'
+import { getCodexBaseUrl } from '../utils/providerConfigUtils'
 
 export type AppType = "claude" | "codex"
 
@@ -56,7 +58,7 @@ export const useProvidersQuery = (appType: AppType) => {
             invoke("get_providers", { app_type: appType, app: appType }),
             invoke("get_current_provider", { app_type: appType, app: appType })
           ])
-          return { providers: newProviders, currentProviderId: newCurrentProviderId }
+          return { providers: newProviders as Record<string, Provider>, currentProviderId: newCurrentProviderId }
         }
       }
 
@@ -200,7 +202,6 @@ export const useVSCodeSyncMutation = (appType: AppType) => {
       let baseUrl: string | undefined = undefined
 
       if (!isOfficial) {
-        const { getCodexBaseUrl } = await import('../utils/providerConfigUtils')
         const parsed = getCodexBaseUrl(provider)
         if (!parsed) {
           throw new Error('Missing base URL for non-official provider')
@@ -208,7 +209,6 @@ export const useVSCodeSyncMutation = (appType: AppType) => {
         baseUrl = parsed
       }
 
-      const { applyProviderToVSCode } = await import('../utils/vscodeSettings')
       const updatedSettings = applyProviderToVSCode(raw, { baseUrl, isOfficial })
 
       if (updatedSettings !== raw) {
@@ -258,6 +258,52 @@ export const useVSCodeSettingsQuery = () => {
   })
 }
 
+export const useVSCodeAppliedQuery = (appType: AppType, currentProviderId: string, providers: Record<string, Provider>) => {
+  return useQuery({
+    queryKey: ['vscode-applied', appType, currentProviderId],
+    queryFn: async () => {
+      if (appType !== "codex" || !currentProviderId) {
+        return null
+      }
+
+      const status = await (async () => {
+        try {
+          return await invoke("get_vscode_settings_status") as { exists: boolean; path: string; error?: string }
+        } catch (error) {
+          console.error("获取 VS Code 设置状态失败:", error)
+          return { exists: false, path: "", error: String(error) }
+        }
+      })()
+
+      if (!status.exists) {
+        return null
+      }
+
+      try {
+        const content = await invoke("read_vscode_settings") as string
+        const detected = detectApplied(content)
+        const current = providers[currentProviderId]
+
+        let applied = false
+        if (current && current.category !== "official") {
+          const base = getCodexBaseUrl(current)
+          if (detected.apiBase && base) {
+            applied = normalizeBaseUrl(detected.apiBase) === normalizeBaseUrl(base)
+          }
+        }
+
+        return applied ? currentProviderId : null
+      } catch (error) {
+        console.error("检查 VS Code 应用状态失败:", error)
+        return null
+      }
+    },
+    enabled: appType === "codex" && !!currentProviderId,
+    retry: false,
+    refetchOnWindowFocus: true
+  })
+}
+
 export const useVSCodeRemoveMutation = () => {
   return useMutation({
     mutationFn: async () => {
@@ -280,7 +326,6 @@ export const useVSCodeRemoveMutation = () => {
           throw new Error(`读取 VS Code 设置失败: ${String(error)}`)
         }
       })()
-      const { applyProviderToVSCode } = await import('../utils/vscodeSettings')
       const updatedSettings = applyProviderToVSCode(raw, {
         baseUrl: undefined,
         isOfficial: true,

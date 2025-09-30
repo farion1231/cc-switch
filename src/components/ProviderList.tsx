@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Provider } from "../types";
@@ -10,12 +10,9 @@ import {
   useVSCodeSyncMutation,
   useVSCodeRemoveMutation,
   useSwitchProviderMutation,
-  useDeleteProviderMutation
+  useDeleteProviderMutation,
+  useVSCodeAppliedQuery
 } from "../lib/query";
-import {
-  detectApplied,
-  normalizeBaseUrl,
-} from "../utils/vscodeSettings";
 import { getCodexBaseUrl } from "../utils/providerConfigUtils";
 import { useVSCodeAutoSync } from "../hooks/useVSCodeAutoSync";
 // 不再在列表中显示分类徽章，避免造成困惑
@@ -94,47 +91,13 @@ const ProviderList: React.FC<ProviderListProps> = ({
   // 解析 Codex 配置中的 base_url（已提取到公共工具）
 
   // VS Code 按钮：仅在 Codex + 当前供应商显示；按钮文案根据是否"已应用"变化
-  const [vscodeAppliedFor, setVscodeAppliedFor] = useState<string | null>(null);
   const { enableAutoSync, disableAutoSync } = useVSCodeAutoSync();
-
-  // 当当前供应商或 appType 变化时，尝试读取 VS Code settings 并检测状态
-  useEffect(() => {
-    const check = async () => {
-      if (appType !== "codex" || !currentProviderId) {
-        setVscodeAppliedFor(null);
-        return;
-      }
-      const status = await window.api.getVSCodeSettingsStatus();
-      if (!status.exists) {
-        setVscodeAppliedFor(null);
-        return;
-      }
-      try {
-        const content = await window.api.readVSCodeSettings();
-        const detected = detectApplied(content);
-        // 认为“已应用”的条件（非官方供应商）：VS Code 中的 apiBase 与当前供应商的 base_url 完全一致
-        const current = providers[currentProviderId];
-        let applied = false;
-        if (current && current.category !== "official") {
-          const base = getCodexBaseUrl(current);
-          if (detected.apiBase && base) {
-            applied =
-              normalizeBaseUrl(detected.apiBase) === normalizeBaseUrl(base);
-          }
-        }
-        setVscodeAppliedFor(applied ? currentProviderId : null);
-      } catch {
-        setVscodeAppliedFor(null);
-      }
-    };
-    check();
-  }, [appType, currentProviderId, providers]);
+  const { data: vscodeAppliedFor } = useVSCodeAppliedQuery(appType!, currentProviderId, providers);
 
   const handleApplyToVSCode = (provider: Provider) => {
     vscodeSyncMutation.mutate(provider.id, {
       onSuccess: () => {
         toast.success(t("notifications.appliedToVSCode"));
-        setVscodeAppliedFor(provider.id);
         enableAutoSync();
         // Refetch VS Code settings to update state
         refetchVSCodeSettings();
@@ -149,7 +112,6 @@ const ProviderList: React.FC<ProviderListProps> = ({
     vscodeRemoveMutation.mutate(undefined, {
       onSuccess: () => {
         toast.success(t("notifications.removedFromVSCode"));
-        setVscodeAppliedFor(null);
         disableAutoSync();
         // Refetch VS Code settings to update state
         refetchVSCodeSettings();
