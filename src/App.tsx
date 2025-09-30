@@ -16,6 +16,7 @@ import { useDarkMode } from "./hooks/useDarkMode";
 import { extractErrorMessage } from "./utils/errorUtils";
 import { useVSCodeAutoSync } from "./hooks/useVSCodeAutoSync";
 import { useQueryClient } from "@tanstack/react-query";
+import tauriAPI from "./lib/tauri-api";
 
 function App() {
   const { t } = useTranslation();
@@ -91,7 +92,7 @@ function App() {
 
     const setupListener = async () => {
       try {
-        unlisten = await window.api.onProviderSwitched(async (data) => {
+        unlisten = await tauriAPI.onProviderSwitched(async (data) => {
           if (import.meta.env.DEV) {
             console.log(t("console.providerSwitchReceived"), data);
           }
