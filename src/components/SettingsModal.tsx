@@ -11,10 +11,17 @@ import {
   FolderSearch,
   Save,
 } from "lucide-react";
-import { getVersion } from "@tauri-apps/api/app";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { relaunchApp } from "../lib/updater";
 import { useUpdate } from "../contexts/UpdateContext";
+import {
+  useSettingsQuery,
+  useSaveSettingsMutation,
+  useAppConfigPathQuery,
+  useConfigDirQuery,
+  useIsPortableQuery,
+  useVersionQuery,
+} from "../lib/query";
 import type { Settings } from "../types";
 import type { AppType } from "../lib/query";
 import { isLinux } from "../lib/platform";
@@ -25,6 +32,8 @@ interface SettingsModalProps {
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const { t, i18n } = useTranslation();
+  const { hasUpdate, updateInfo, updateHandle, checkUpdate, resetDismiss } =
+    useUpdate();
 
   const normalizeLanguage = (lang?: string | null): "zh" | "en" =>
     lang === "en" ? "en" : "zh";
@@ -41,6 +50,29 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
   const persistedLanguage = readPersistedLanguage();
 
+  // TanStack Query hooks
+  const { data: settingsData, isLoading: isLoadingSettings } = useSettingsQuery();
+  const saveSettingsMutation = useSaveSettingsMutation();
+  const { data: configPath, isLoading: isLoadingConfigPath } = useAppConfigPathQuery();
+  const { data: claudeConfigDir } = useConfigDirQuery("claude");
+  const { data: codexConfigDir } = useConfigDirQuery("codex");
+  const { data: isPortable } = useIsPortableQuery();
+  const { data: version, isLoading: isLoadingVersion } = useVersionQuery();
+
+  // Show loading state while initial data is loading
+  if (isLoadingSettings || isLoadingConfigPath || isLoadingVersion) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-[500px] p-8">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <p className="text-gray-500 dark:text-gray-400">{t("common.loading")}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const [settings, setSettings] = useState<Settings>({
     showInTray: true,
     minimizeToTrayOnClose: true,
@@ -51,50 +83,25 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [initialLanguage, setInitialLanguage] = useState<"zh" | "en">(
     persistedLanguage,
   );
-  const [configPath, setConfigPath] = useState<string>("");
-  const [version, setVersion] = useState<string>("");
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [showUpToDate, setShowUpToDate] = useState(false);
-  const [resolvedClaudeDir, setResolvedClaudeDir] = useState<string>("");
-  const [resolvedCodexDir, setResolvedCodexDir] = useState<string>("");
-  const [isPortable, setIsPortable] = useState(false);
-  const { hasUpdate, updateInfo, updateHandle, checkUpdate, resetDismiss } =
-    useUpdate();
 
+  // Initialize settings when data is loaded
   useEffect(() => {
-    loadSettings();
-    loadConfigPath();
-    loadVersion();
-    loadResolvedDirs();
-    loadPortableFlag();
-  }, []);
-
-  const loadVersion = async () => {
-    try {
-      const appVersion = await getVersion();
-      setVersion(appVersion);
-    } catch (error) {
-      console.error(t("console.getVersionFailed"), error);
-      // 失败时不硬编码版本号，显示为未知
-      setVersion(t("common.unknown"));
-    }
-  };
-
-  const loadSettings = async () => {
-    try {
-      const loadedSettings = await window.api.getSettings();
+    if (settingsData) {
+      const loadedSettings = settingsData as any;
       const showInTray =
-        (loadedSettings as any)?.showInTray ??
-        (loadedSettings as any)?.showInDock ??
+        loadedSettings?.showInTray ??
+        loadedSettings?.showInDock ??
         true;
       const minimizeToTrayOnClose =
-        (loadedSettings as any)?.minimizeToTrayOnClose ??
-        (loadedSettings as any)?.minimize_to_tray_on_close ??
+        loadedSettings?.minimizeToTrayOnClose ??
+        loadedSettings?.minimize_to_tray_on_close ??
         true;
       const storedLanguage = normalizeLanguage(
-        typeof (loadedSettings as any)?.language === "string"
-          ? (loadedSettings as any).language
+        typeof loadedSettings?.language === "string"
+          ? loadedSettings.language
           : persistedLanguage,
       );
 
@@ -102,12 +109,12 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         showInTray,
         minimizeToTrayOnClose,
         claudeConfigDir:
-          typeof (loadedSettings as any)?.claudeConfigDir === "string"
-            ? (loadedSettings as any).claudeConfigDir
+          typeof loadedSettings?.claudeConfigDir === "string"
+            ? loadedSettings.claudeConfigDir
             : undefined,
         codexConfigDir:
-          typeof (loadedSettings as any)?.codexConfigDir === "string"
-            ? (loadedSettings as any).codexConfigDir
+          typeof loadedSettings?.codexConfigDir === "string"
+            ? loadedSettings.codexConfigDir
             : undefined,
         language: storedLanguage,
       });
@@ -115,44 +122,10 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       if (i18n.language !== storedLanguage) {
         void i18n.changeLanguage(storedLanguage);
       }
-    } catch (error) {
-      console.error(t("console.loadSettingsFailed"), error);
     }
-  };
+  }, [settingsData, persistedLanguage, i18n]);
 
-  const loadConfigPath = async () => {
-    try {
-      const path = await window.api.getAppConfigPath();
-      if (path) {
-        setConfigPath(path);
-      }
-    } catch (error) {
-      console.error(t("console.getConfigPathFailed"), error);
-    }
-  };
-
-  const loadResolvedDirs = async () => {
-    try {
-      const [claudeDir, codexDir] = await Promise.all([
-        window.api.getConfigDir("claude"),
-        window.api.getConfigDir("codex"),
-      ]);
-      setResolvedClaudeDir(claudeDir || "");
-      setResolvedCodexDir(codexDir || "");
-    } catch (error) {
-      console.error(t("console.getConfigDirFailed"), error);
-    }
-  };
-
-  const loadPortableFlag = async () => {
-    try {
-      const portable = await window.api.isPortable();
-      setIsPortable(portable);
-    } catch (error) {
-      console.error(t("console.detectPortableFailed"), error);
-    }
-  };
-
+  
   const saveSettings = async () => {
     try {
       const selectedLanguage = settings.language === "en" ? "en" : "zh";
@@ -168,8 +141,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             : undefined,
         language: selectedLanguage,
       };
-      await window.api.saveSettings(payload);
-      setSettings(payload);
+
+      await saveSettingsMutation.mutateAsync(payload);
+
       try {
         window.localStorage.setItem("language", selectedLanguage);
       } catch (error) {
@@ -265,8 +239,8 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     try {
       const currentResolved =
         app === "claude"
-          ? (settings.claudeConfigDir ?? resolvedClaudeDir)
-          : (settings.codexConfigDir ?? resolvedCodexDir);
+          ? (settings.claudeConfigDir ?? claudeConfigDir ?? "")
+          : (settings.codexConfigDir ?? codexConfigDir ?? "");
 
       const selected = await window.api.selectConfigDirectory(currentResolved);
 
@@ -282,10 +256,8 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
       if (app === "claude") {
         setSettings((prev) => ({ ...prev, claudeConfigDir: sanitized }));
-        setResolvedClaudeDir(sanitized);
       } else {
         setSettings((prev) => ({ ...prev, codexConfigDir: sanitized }));
-        setResolvedCodexDir(sanitized);
       }
     } catch (error) {
       console.error(t("console.selectConfigDirFailed"), error);
@@ -310,17 +282,6 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         ? { claudeConfigDir: undefined }
         : { codexConfigDir: undefined }),
     }));
-
-    const defaultDir = await computeDefaultConfigDir(app);
-    if (!defaultDir) {
-      return;
-    }
-
-    if (app === "claude") {
-      setResolvedClaudeDir(defaultDir);
-    } else {
-      setResolvedCodexDir(defaultDir);
-    }
   };
 
   const handleOpenReleaseNotes = async () => {
@@ -444,7 +405,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             <div className="flex items-center gap-2">
               <div className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
                 <span className="text-xs font-mono text-gray-500 dark:text-gray-400">
-                  {configPath || t("common.loading")}
+                  {configPath || t("common.unknown")}
                 </span>
               </div>
               <button
@@ -476,7 +437,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                 <div className="flex gap-2">
                   <input
                     type="text"
-                    value={settings.claudeConfigDir ?? resolvedClaudeDir ?? ""}
+                    value={settings.claudeConfigDir ?? claudeConfigDir ?? ""}
                     onChange={(e) =>
                       setSettings({
                         ...settings,
@@ -512,7 +473,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                 <div className="flex gap-2">
                   <input
                     type="text"
-                    value={settings.codexConfigDir ?? resolvedCodexDir ?? ""}
+                    value={settings.codexConfigDir ?? codexConfigDir ?? ""}
                     onChange={(e) =>
                       setSettings({
                         ...settings,
@@ -556,7 +517,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                       CC Switch
                     </p>
                     <p className="mt-1 text-gray-500 dark:text-gray-400">
-                      {t("common.version")} {version}
+                      {t("common.version")} {version || t("common.unknown")}
                     </p>
                   </div>
                 </div>

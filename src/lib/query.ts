@@ -346,6 +346,101 @@ export const useVSCodeRemoveMutation = () => {
   })
 }
 
+// Settings-related queries and mutations
+export const useSettingsQuery = () => {
+  return useQuery({
+    queryKey: ['settings'],
+    queryFn: async () => {
+      try {
+        const settings = await invoke("get_settings")
+        return settings
+      } catch (error) {
+        console.error("获取设置失败:", error)
+        throw error
+      }
+    }
+  })
+}
+
+export const useSaveSettingsMutation = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (settings: any) => {
+      try {
+        return await invoke("save_settings", { settings })
+      } catch (error) {
+        console.error("保存设置失败:", error)
+        throw error
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+    }
+  })
+}
+
+export const useAppConfigPathQuery = () => {
+  return useQuery({
+    queryKey: ['app-config-path'],
+    queryFn: async () => {
+      try {
+        const path = await invoke("get_app_config_path")
+        return path as string
+      } catch (error) {
+        console.error("获取配置路径失败:", error)
+        throw error
+      }
+    }
+  })
+}
+
+export const useConfigDirQuery = (appType: AppType) => {
+  return useQuery({
+    queryKey: ['config-dir', appType],
+    queryFn: async () => {
+      try {
+        const dir = await invoke("get_config_dir", { app_type: appType })
+        return dir as string
+      } catch (error) {
+        console.error(`获取${appType}配置目录失败:`, error)
+        throw error
+      }
+    }
+  })
+}
+
+export const useIsPortableQuery = () => {
+  return useQuery({
+    queryKey: ['is-portable'],
+    queryFn: async () => {
+      try {
+        const portable = await invoke("is_portable")
+        return portable as boolean
+      } catch (error) {
+        console.error("检测便携模式失败:", error)
+        throw error
+      }
+    }
+  })
+}
+
+export const useVersionQuery = () => {
+  return useQuery({
+    queryKey: ['version'],
+    queryFn: async () => {
+      try {
+        const { getVersion } = await import("@tauri-apps/api/app")
+        const version = await getVersion()
+        return version
+      } catch (error) {
+        console.error("获取版本号失败:", error)
+        throw error
+      }
+    }
+  })
+}
+
 // Event listener for provider switching
 export const useProviderSwitchedListener = (
   callback: (data: { appType: string; providerId: string }) => void
