@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { Provider } from "../types";
 import { Play, Edit3, Trash2, CheckCircle2, Users, Check } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
@@ -24,11 +25,6 @@ interface ProviderListProps {
   currentProviderId: string;
   onEdit: (id: string) => void;
   appType?: AppType;
-  onNotify?: (
-    message: string,
-    type: "success" | "error",
-    duration?: number
-  ) => void;
 }
 
 const ProviderList: React.FC<ProviderListProps> = ({
@@ -36,7 +32,6 @@ const ProviderList: React.FC<ProviderListProps> = ({
   currentProviderId,
   onEdit,
   appType,
-  onNotify,
 }) => {
   const { t } = useTranslation();
 
@@ -69,10 +64,10 @@ const ProviderList: React.FC<ProviderListProps> = ({
   const handleSwitch = (providerId: string) => {
     switchProviderMutation.mutate(providerId, {
       onSuccess: () => {
-        onNotify?.(t("notifications.providerSwitched"), "success", 2000);
+        toast.success(t("notifications.providerSwitched"));
       },
       onError: (error: Error) => {
-        onNotify?.(error.message, "error", 3000);
+        toast.error(error.message);
       }
     });
   };
@@ -80,10 +75,10 @@ const ProviderList: React.FC<ProviderListProps> = ({
   const handleDelete = (providerId: string) => {
     deleteProviderMutation.mutate(providerId, {
       onSuccess: () => {
-        onNotify?.(t("notifications.providerDeleted"), "success", 2000);
+        toast.success(t("notifications.providerDeleted"));
       },
       onError: (error: Error) => {
-        onNotify?.(error.message, "error", 3000);
+        toast.error(error.message);
       }
     });
   };
@@ -138,14 +133,14 @@ const ProviderList: React.FC<ProviderListProps> = ({
   const handleApplyToVSCode = (provider: Provider) => {
     vscodeSyncMutation.mutate(provider.id, {
       onSuccess: () => {
-        onNotify?.(t("notifications.appliedToVSCode"), "success", 3000);
+        toast.success(t("notifications.appliedToVSCode"));
         setVscodeAppliedFor(provider.id);
         enableAutoSync();
         // Refetch VS Code settings to update state
         refetchVSCodeSettings();
       },
       onError: (error: Error) => {
-        onNotify?.(error.message, "error", 5000);
+        toast.error(error.message);
       }
     });
   };
@@ -153,14 +148,14 @@ const ProviderList: React.FC<ProviderListProps> = ({
   const handleRemoveFromVSCode = () => {
     vscodeRemoveMutation.mutate(undefined, {
       onSuccess: () => {
-        onNotify?.(t("notifications.removedFromVSCode"), "success", 3000);
+        toast.success(t("notifications.removedFromVSCode"));
         setVscodeAppliedFor(null);
         disableAutoSync();
         // Refetch VS Code settings to update state
         refetchVSCodeSettings();
       },
       onError: (error: Error) => {
-        onNotify?.(error.message, "error", 5000);
+        toast.error(error.message);
       }
     });
   };

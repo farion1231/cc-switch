@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { Provider } from "./types";
 import { AppType } from "./lib/query";
 import { useProvidersQuery, useAddProviderMutation, useUpdateProviderMutation, useVSCodeSyncMutation } from "./lib/query";
@@ -17,6 +18,7 @@ import { extractErrorMessage } from "./utils/errorUtils";
 import { useVSCodeAutoSync } from "./hooks/useVSCodeAutoSync";
 import { useQueryClient } from "@tanstack/react-query";
 import tauriAPI from "./lib/tauri-api";
+import { Toaster } from "./components/ui/sonner";
 
 function App() {
   const { t } = useTranslation();
@@ -28,11 +30,6 @@ function App() {
   const [editingProviderId, setEditingProviderId] = useState<string | null>(
     null
   );
-  const [notification, setNotification] = useState<{
-    message: string;
-    type: "success" | "error";
-  } | null>(null);
-  const [isNotificationVisible, setIsNotificationVisible] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     title: string;
@@ -40,7 +37,6 @@ function App() {
     onConfirm: () => void;
   } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Query hooks
   const { data: providersData, isLoading, error } = useProvidersQuery(activeApp);
@@ -51,41 +47,8 @@ function App() {
   const providers: Record<string, Provider> = providersData?.providers || Object.create(null);
   const currentProviderId = (providersData?.currentProviderId as string) || "";
 
-  // 设置通知的辅助函数
-  const showNotification = (
-    message: string,
-    type: "success" | "error",
-    duration = 3000
-  ) => {
-    // 清除之前的定时器
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-
-    // 立即显示通知
-    setNotification({ message, type });
-    setIsNotificationVisible(true);
-
-    // 设置淡出定时器
-    timeoutRef.current = setTimeout(() => {
-      setIsNotificationVisible(false);
-      // 等待淡出动画完成后清除通知
-      setTimeout(() => {
-        setNotification(null);
-        timeoutRef.current = null;
-      }, 300); // 与CSS动画时间匹配
-    }, duration);
-  };
-
-  // 清理定时器
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
+  
+  
   // 监听托盘切换事件（包括菜单切换）
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -127,7 +90,7 @@ function App() {
     addProviderMutation.mutate(provider, {
       onSuccess: () => {
         setIsAddModalOpen(false);
-        showNotification(t("notifications.providerAdded"), "success", 2000);
+        toast.success(t("notifications.providerAdded"));
       },
       onError: (error) => {
         console.error(t("console.addProviderFailed"), error);
@@ -135,7 +98,7 @@ function App() {
         const message = errorMessage
           ? t("notifications.addFailed", { error: errorMessage })
           : t("notifications.addFailedGeneric");
-        showNotification(message, "error", errorMessage ? 6000 : 3000);
+        toast.error(message);
       }
     });
   };
@@ -144,7 +107,7 @@ function App() {
     updateProviderMutation.mutate(provider, {
       onSuccess: () => {
         setEditingProviderId(null);
-        showNotification(t("notifications.providerSaved"), "success", 2000);
+        toast.success(t("notifications.providerSaved"));
       },
       onError: (error) => {
         console.error(t("console.updateProviderFailed"), error);
@@ -153,7 +116,7 @@ function App() {
         const message = errorMessage
           ? t("notifications.saveFailed", { error: errorMessage })
           : t("notifications.saveFailedGeneric");
-        showNotification(message, "error", errorMessage ? 6000 : 3000);
+        toast.error(message);
       }
     });
   };
@@ -234,25 +197,13 @@ function App() {
               </div>
             )}
 
-            {notification && (
-              <div
-                className={`fixed top-20 left-1/2 transform -translate-x-1/2 z-50 px-4 py-3 rounded-lg shadow-lg transition-all duration-300 ${
-                  notification.type === "error"
-                    ? "bg-red-500 text-white"
-                    : "bg-green-500 text-white"
-                } ${isNotificationVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"}`}
-              >
-                {notification.message}
-              </div>
-            )}
-
+            
             {!isLoading && !error && (
               <ProviderList
                 providers={providers}
                 currentProviderId={currentProviderId}
                 onEdit={setEditingProviderId}
                 appType={activeApp}
-                onNotify={showNotification}
               />
             )}
           </div>
@@ -289,6 +240,8 @@ function App() {
       {isSettingsOpen && (
         <SettingsModal onClose={() => setIsSettingsOpen(false)} />
       )}
+
+      <Toaster />
     </div>
   );
 }
