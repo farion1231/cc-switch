@@ -392,6 +392,61 @@ export const tauriAPI = {
       }
     },
   },
+
+  // 文件对话框
+  saveFileDialog: async (defaultName?: string): Promise<string | null> => {
+    try {
+      return await invoke<string | null>("save_file_dialog", { defaultName });
+    } catch (error) {
+      console.error("打开保存文件对话框失败:", error);
+      return null;
+    }
+  },
+
+  openFileDialog: async (): Promise<string | null> => {
+    try {
+      return await invoke<string | null>("open_file_dialog");
+    } catch (error) {
+      console.error("打开文件选择对话框失败:", error);
+      return null;
+    }
+  },
+
+  // 显示导入确认对话框
+  confirmImportDialog: async (fileName: string): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("confirm_import_dialog", { file_name: fileName });
+    } catch (error) {
+      console.error("显示确认对话框失败:", error);
+      return false;
+    }
+  },
+
+  // 导出配置到文件
+  exportConfigToFile: async (filePath: string): Promise<{
+    success: boolean;
+    message: string;
+    filePath: string;
+  }> => {
+    try {
+      return await invoke("export_config_to_file", { filePath });
+    } catch (error) {
+      throw new Error(`导出配置失败: ${String(error)}`);
+    }
+  },
+
+  // 从文件导入配置
+  importConfigFromFile: async (filePath: string): Promise<{
+    success: boolean;
+    message: string;
+    backupId?: string;
+  }> => {
+    try {
+      return await invoke("import_config_from_file", { filePath });
+    } catch (error) {
+      throw new Error(`导入配置失败: ${String(error)}`);
+    }
+  },
 };
 
 // 创建全局 API 对象，兼容现有代码

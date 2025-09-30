@@ -54,7 +54,8 @@
     "missingBaseUrl": "Current configuration missing base_url, cannot write to VS Code",
     "saveFailed": "Save failed: {{error}}",
     "saveFailedGeneric": "Save failed, please try again",
-    "syncVSCodeFailed": "Sync to VS Code failed"
+    "syncVSCodeFailed": "Sync to VS Code failed",
+    "importSuccess": "Configuration imported successfully"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",

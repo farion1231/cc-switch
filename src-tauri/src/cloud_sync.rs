@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 use base64::{Engine, engine::general_purpose::STANDARD as Base64Engine};
 use serde_json::{json, Value};
-use tauri::command;
 
 // 错误类型
 #[derive(Debug)]
@@ -322,7 +321,7 @@ mod crypto {
 
 // ============= Tauri Commands =============
 
-#[command]
+#[tauri::command]
 pub async fn configure_cloud_sync(
     github_token: String,
     gist_url: Option<String>,
@@ -364,7 +363,7 @@ pub async fn configure_cloud_sync(
     }))
 }
 
-#[command]
+#[tauri::command]
 pub async fn get_cloud_sync_settings() -> Result<Value, String> {
     let guard = cloud_sync_store()
         .read()
@@ -379,7 +378,7 @@ pub async fn get_cloud_sync_settings() -> Result<Value, String> {
     }))
 }
 
-#[command]
+#[tauri::command]
 pub async fn sync_to_cloud(encryption_password: String) -> Result<Value, String> {
     // Get settings
     let settings = {
@@ -446,11 +445,12 @@ pub async fn sync_to_cloud(encryption_password: String) -> Result<Value, String>
     }))
 }
 
-#[command]
+#[tauri::command]
 pub async fn sync_from_cloud(
     gist_url: String,
     encryption_password: String,
     auto_apply: bool,
+    state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<Value, String> {
     // Get GitHub token
     let github_token = {
@@ -474,15 +474,28 @@ pub async fn sync_from_cloud(
         .map_err(|e| format!("Invalid UTF-8: {}", e))?;
 
     if auto_apply {
+        // Parse the new configuration
+        let new_config: crate::app_config::MultiAppConfig = serde_json::from_str(&config_content)
+            .map_err(|e| format!("Invalid configuration: {}", e))?;
+
         // Get config path
         let config_path = crate::config::get_app_config_path();
 
         // Create backup
         let backup_id = create_backup(&config_path)?;
 
-        // Write new configuration
+        // Write new configuration to disk
         fs::write(&config_path, &config_content)
             .map_err(|e| format!("Failed to write configuration: {}", e))?;
+
+        // Update in-memory state
+        {
+            let mut config_state = state
+                .config
+                .lock()
+                .map_err(|e| format!("Failed to lock config: {}", e))?;
+            *config_state = new_config;
+        }
 
         // Update timestamp
         {
@@ -510,7 +523,7 @@ pub async fn sync_from_cloud(
     }
 }
 
-#[command]
+#[tauri::command]
 pub async fn validate_github_token(github_token: String) -> Result<Value, String> {
     let client = GitHubClient::new(github_token);
 
@@ -525,4 +538,61 @@ pub async fn validate_github_token(github_token: String) -> Result<Value, String
             "message": format!("Token validation failed: {}", e)
         }))
     }
+}
+
+// 导出配置文件（原文）
+#[tauri::command]
+pub async fn export_config_to_file(file_path: String) -> Result<Value, String> {
+    // 读取当前配置文件
+    let config_path = crate::config::get_app_config_path();
+    let config_content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read configuration: {}", e))?;
+
+    // 写入到指定文件
+    fs::write(&file_path, &config_content)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
+
+    Ok(json!({
+        "success": true,
+        "message": "Configuration exported successfully",
+        "filePath": file_path
+    }))
+}
+
+// 从文件导入配置
+#[tauri::command]
+pub async fn import_config_from_file(
+    file_path: String,
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<Value, String> {
+    // 读取导入的文件
+    let import_content = fs::read_to_string(&file_path)
+        .map_err(|e| format!("Failed to read import file: {}", e))?;
+
+    // 验证并解析为配置对象
+    let new_config: crate::app_config::MultiAppConfig = serde_json::from_str(&import_content)
+        .map_err(|e| format!("Invalid configuration file: {}", e))?;
+
+    // 备份当前配置
+    let config_path = crate::config::get_app_config_path();
+    let backup_id = create_backup(&config_path)?;
+
+    // 写入新配置到磁盘
+    fs::write(&config_path, &import_content)
+        .map_err(|e| format!("Failed to write configuration: {}", e))?;
+
+    // 更新内存中的状态
+    {
+        let mut config_state = state
+            .config
+            .lock()
+            .map_err(|e| format!("Failed to lock config: {}", e))?;
+        *config_state = new_config;
+    }
+
+    Ok(json!({
+        "success": true,
+        "message": "Configuration imported successfully",
+        "backupId": backup_id
+    }))
 }

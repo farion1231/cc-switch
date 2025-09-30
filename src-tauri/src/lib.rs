@@ -394,11 +394,16 @@ pub fn run() {
             commands::get_vscode_settings_status,
             commands::read_vscode_settings,
             commands::write_vscode_settings,
+            commands::save_file_dialog,
+            commands::open_file_dialog,
+            commands::confirm_import_dialog,
             cloud_sync::configure_cloud_sync,
             cloud_sync::get_cloud_sync_settings,
             cloud_sync::sync_to_cloud,
             cloud_sync::sync_from_cloud,
             cloud_sync::validate_github_token,
+            cloud_sync::export_config_to_file,
+            cloud_sync::import_config_from_file,
             update_tray_menu,
         ]);
 

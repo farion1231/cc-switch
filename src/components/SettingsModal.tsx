@@ -18,6 +18,7 @@ import {
 
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
+import { ImportProgressModal } from "./ImportProgressModal";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { type AppType } from "../lib/tauri-api";
 import { relaunchApp } from "../lib/updater";
@@ -27,9 +28,10 @@ import { isLinux } from "../lib/platform";
 
 interface SettingsModalProps {
   onClose: () => void;
+  onImportSuccess?: () => void;  // 新增导入成功回调
 }
 
-export default function SettingsModal({ onClose }: SettingsModalProps) {
+export default function SettingsModal({ onClose, onImportSuccess }: SettingsModalProps) {
   const { t, i18n } = useTranslation();
 
   const normalizeLanguage = (lang?: string | null): "zh" | "en" =>
@@ -79,6 +81,11 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [isValidatingToken, setIsValidatingToken] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [tokenValid, setTokenValid] = useState<boolean | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState<'idle' | 'importing' | 'success' | 'error'>('idle');
+  const [importError, setImportError] = useState<string>("");
+  const [importBackupId, setImportBackupId] = useState<string>("");
+  const [selectedImportFile, setSelectedImportFile] = useState<string>(''); // 新增：保存选择的文件路径
 
   useEffect(() => {
     loadSettings();
@@ -174,7 +181,8 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
   const loadCloudSyncSettings = async () => {
     try {
-      const settings = await window.api.cloudSync.getSettings();
+      // getSettings 不需要密码参数，因为我们只是获取非敏感信息
+      const settings = await window.api.cloudSync.getSettings("");
 
       // 只更新非敏感信息
       setCloudSyncConfig(prev => ({
@@ -422,6 +430,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       const result = await window.api.cloudSync.configure({
         githubToken: hasNewToken ? cloudSyncConfig.githubToken.trim() : "",  // 如果没有新 token，发送空字符串
         gistUrl: cloudSyncConfig.gistUrl.trim() || undefined,
+        encryptionPassword: cloudSyncConfig.encryptionPassword.trim(),
+        autoSyncEnabled: false,
+        syncOnStartup: false
       });
 
       if (result.success) {
@@ -429,14 +440,10 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           ...prev,
           configured: true,
           enabled: true,
-          gistUrl: result.gistUrl || prev.gistUrl // 更新 Gist URL（如果返回了的话）
+          gistUrl: prev.gistUrl // 保持现有的 Gist URL
         }));
 
-        if (result.gistUrl) {
-          alert(`✅ 云同步配置成功！\n\n${result.gistUrl ? `Gist URL: ${result.gistUrl}` : ''}`);
-        } else {
-          alert("云同步配置成功！");
-        }
+        alert("云同步配置成功！");
       }
     } catch (error) {
       console.error("配置云同步失败:", error);
@@ -502,6 +509,14 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         true // auto apply
       );
       alert("配置已成功从云端同步并应用！");
+
+      // 刷新数据
+      if (onImportSuccess) {
+        onImportSuccess();
+      }
+
+      // 关闭设置页面
+      onClose();
     } catch (error) {
       console.error("从云端同步失败:", error);
       alert(`同步失败: ${error}`);
@@ -510,8 +525,89 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     }
   };
 
+  // 导出配置到文件
+  const handleExportConfig = async () => {
+    try {
+      // 使用 Tauri 的保存文件对话框
+      const defaultName = `cc-switch-config-${new Date().toISOString().split('T')[0]}.json`;
+      const filePath = await window.api.saveFileDialog(defaultName);
+
+      if (!filePath) return; // 用户取消了
+
+      const result = await window.api.exportConfigToFile(filePath);
+
+      if (result.success) {
+        alert(`配置已导出到：\n${result.filePath}`);
+      }
+    } catch (error) {
+      console.error("导出配置失败:", error);
+      alert(`导出失败: ${error}`);
+    }
+  };
+
+  // 选择要导入的文件
+  const handleSelectImportFile = async () => {
+    try {
+      const filePath = await window.api.openFileDialog();
+      if (filePath) {
+        setSelectedImportFile(filePath);
+        setImportStatus('idle'); // 重置状态
+        setImportError('');
+      }
+    } catch (error) {
+      console.error('选择文件失败:', error);
+      alert(`选择文件失败: ${error}`);
+    }
+  };
+
+  // 执行导入
+  const handleExecuteImport = async () => {
+    if (!selectedImportFile || isImporting) return;
+
+    setIsImporting(true);
+    setImportStatus('importing');
+
+    try {
+      const result = await window.api.importConfigFromFile(selectedImportFile);
+
+      if (result.success) {
+        setImportBackupId(result.backupId || '');
+        setImportStatus('success');
+        // ImportProgressModal 组件会在2秒后自动重新加载
+      } else {
+        setImportError(result.message || '配置文件可能已损坏');
+        setImportStatus('error');
+        setIsImporting(false);
+      }
+    } catch (error) {
+      setImportError(String(error));
+      setImportStatus('error');
+      setIsImporting(false);
+    }
+  };
+
   return (
-    <div
+    <>
+      {/* 导入进度模态框 */}
+      {importStatus !== 'idle' && (
+        <ImportProgressModal
+          status={importStatus}
+          message={importError}
+          backupId={importBackupId}
+          onComplete={() => setImportStatus('idle')}
+          onSuccess={() => {
+            // 导入成功后调用父组件的刷新函数
+            if (onImportSuccess) {
+              onImportSuccess();
+            }
+            // 关闭设置页面
+            onClose();
+          }}
+        />
+      )}
+
+      {/* 设置模态框 */}
+      <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) handleCancel();
@@ -861,6 +957,49 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                   下载配置
                 </button>
               </div>
+
+              {/* 本地导入导出 */}
+              <div className="flex flex-col gap-3 mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                {/* 导出按钮 */}
+                <button
+                  onClick={handleExportConfig}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded-lg transition-colors bg-gray-500 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-700 text-white"
+                >
+                  <Save size={12} />
+                  导出配置到文件
+                </button>
+
+                {/* 导入区域 */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleSelectImportFile}
+                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded-lg transition-colors bg-gray-500 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-700 text-white"
+                    >
+                      <FolderOpen size={12} />
+                      选择配置文件
+                    </button>
+                    <button
+                      onClick={handleExecuteImport}
+                      disabled={!selectedImportFile || isImporting}
+                      className={`px-3 py-2 text-xs font-medium rounded-lg transition-colors text-white ${
+                        !selectedImportFile || isImporting
+                          ? 'bg-gray-400 cursor-not-allowed'
+                          : 'bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700'
+                      }`}
+                    >
+                      {isImporting ? '导入中...' : '导入'}
+                    </button>
+                  </div>
+
+                  {/* 显示选择的文件 */}
+                  {selectedImportFile && (
+                    <div className="text-xs text-gray-600 dark:text-gray-400 px-2 py-1 bg-gray-50 dark:bg-gray-900 rounded break-all">
+                      {selectedImportFile.split('/').pop() || selectedImportFile.split('\\').pop() || selectedImportFile}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -959,5 +1098,6 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
       </div>
     </div>
+    </>
   );
 }

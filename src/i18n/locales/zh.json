@@ -54,7 +54,8 @@
     "missingBaseUrl": "当前配置缺少 base_url，无法写入 VS Code",
     "saveFailed": "保存失败：{{error}}",
     "saveFailedGeneric": "保存失败，请重试",
-    "syncVSCodeFailed": "同步 VS Code 失败"
+    "syncVSCodeFailed": "同步 VS Code 失败",
+    "importSuccess": "配置导入成功"
   },
   "confirm": {
     "deleteProvider": "删除供应商",

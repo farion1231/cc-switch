@@ -391,7 +391,14 @@ function App() {
       )}
 
       {isSettingsOpen && (
-        <SettingsModal onClose={() => setIsSettingsOpen(false)} />
+        <SettingsModal
+          onClose={() => setIsSettingsOpen(false)}
+          onImportSuccess={async () => {
+            // 导入成功后重新加载数据
+            await loadProviders();
+            showNotification(t("notifications.importSuccess"), "success", 3000);
+          }}
+        />
       )}
     </div>
   );
