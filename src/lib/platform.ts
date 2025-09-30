@@ -22,9 +22,10 @@ export const isLinux = (): boolean => {
   try {
     const ua = navigator.userAgent || "";
     // WebKitGTK/Chromium 在 Linux/Wayland/X11 下 UA 通常包含 Linux 或 X11
-    return /linux|x11/i.test(ua) && !/android/i.test(ua) && !isMac() && !isWindows();
+    return (
+      /linux|x11/i.test(ua) && !/android/i.test(ua) && !isMac() && !isWindows()
+    );
   } catch {
     return false;
   }
 };
-

@@ -6,6 +6,7 @@ import { ProviderCategory } from "../types";
 export interface CodexProviderPreset {
   name: string;
   websiteUrl: string;
+  apiKeyUrl?: string; // 新增：获取 API Key 的链接
   auth: Record<string, any>; // 将写入 ~/.codex/auth.json
   config: string; // 将写入 ~/.codex/config.toml（TOML 字符串）
   isOfficial?: boolean; // 标识是否为官方预设
@@ -28,7 +29,7 @@ export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
 export function generateThirdPartyConfig(
   providerName: string,
   baseUrl: string,
-  modelName = "gpt-5-codex"
+  modelName = "gpt-5-codex",
 ): string {
   // 清理供应商名称，确保符合TOML键名规范
   const cleanProviderName =
@@ -62,12 +63,13 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "PackyCode",
     websiteUrl: "https://codex.packycode.com/",
+    apiKeyUrl: "https://www.packycode.com/?aff=rlo54mgz",
     category: "third_party",
     auth: generateThirdPartyAuth("sk-your-api-key-here"),
     config: generateThirdPartyConfig(
       "packycode",
       "https://codex-api.packycode.com/v1",
-      "gpt-5-codex"
+      "gpt-5-codex",
     ),
   },
 ];

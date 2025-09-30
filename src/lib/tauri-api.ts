@@ -205,9 +205,7 @@ export const tauriAPI = {
   ): Promise<string | null> => {
     try {
       const sanitized =
-        defaultPath && defaultPath.trim() !== ""
-          ? defaultPath
-          : undefined;
+        defaultPath && defaultPath.trim() !== "" ? defaultPath : undefined;
       return await invoke<string | null>("pick_directory", {
         defaultPath: sanitized,
       });

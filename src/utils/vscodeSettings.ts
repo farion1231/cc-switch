@@ -80,12 +80,12 @@ export function removeManagedKeys(content: string): string {
     // - 标量值（null、字符串、数字等）
     // - 数组
     // - 空对象
-    const shouldRemove = cfg !== undefined && (
-      cfg === null ||
-      typeof cfg !== "object" ||
-      Array.isArray(cfg) ||
-      (typeof cfg === "object" && Object.keys(cfg).length === 0)
-    );
+    const shouldRemove =
+      cfg !== undefined &&
+      (cfg === null ||
+        typeof cfg !== "object" ||
+        Array.isArray(cfg) ||
+        (typeof cfg === "object" && Object.keys(cfg).length === 0));
 
     if (shouldRemove) {
       out = applyEdits(

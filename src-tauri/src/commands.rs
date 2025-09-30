@@ -720,6 +720,89 @@ pub async fn read_vscode_settings() -> Result<String, String> {
     }
 }
 
+/// PackyCode: 测试所有服务的端点延迟（完全并发）
+#[tauri::command]
+pub async fn test_packycode_endpoints() -> Result<serde_json::Value, String> {
+    use crate::packycode;
+    use futures::future::join_all;
+    
+    let services = packycode::get_packycode_services();
+    
+    // 并发测试所有服务的所有端点
+    let service_tasks = services.into_iter().map(|service| {
+        async move {
+            // 收集该服务的所有端点 URL
+            let urls: Vec<String> = service.endpoints.iter().map(|ep| ep.url.clone()).collect();
+            
+            // 并发测试该服务的所有端点
+            let test_results = packycode::test_endpoints_batch(urls).await;
+            
+            // 更新端点延迟信息
+            let mut endpoints = service.endpoints.clone();
+            for (i, endpoint) in endpoints.iter_mut().enumerate() {
+                if let Some((_, latency)) = test_results.get(i) {
+                    endpoint.latency = *latency;
+                }
+            }
+            
+            serde_json::json!({
+                "name": service.name,
+                "endpoints": endpoints,
+            })
+        }
+    });
+    
+    // 等待所有服务测试完成
+    let results = join_all(service_tasks).await;
+    
+    Ok(serde_json::json!(results))
+}
+
+/// PackyCode: 为指定服务选择最佳端点
+#[tauri::command]
+pub async fn select_best_packycode_endpoint(
+    service_name: String,
+) -> Result<serde_json::Value, String> {
+    use crate::packycode;
+    
+    let best = packycode::select_best_endpoint(&service_name).await?;
+    Ok(serde_json::json!({
+        "name": best.name,
+        "url": best.url,
+        "latency": best.latency,
+    }))
+}
+
+/// PackyCode: 测试单个端点的延迟
+#[tauri::command]
+pub async fn test_single_endpoint(url: String) -> Result<serde_json::Value, String> {
+    use crate::packycode;
+    
+    match packycode::test_endpoint_latency(&url).await {
+        Ok(latency) => Ok(serde_json::json!({
+            "latency": latency,
+        })),
+        Err(_) => Ok(serde_json::json!({
+            "latency": null,
+        })),
+    }
+}
+
+/// 批量测试端点延迟（并发）
+#[tauri::command]
+pub async fn test_endpoints_batch(urls: Vec<String>) -> Result<Vec<serde_json::Value>, String> {
+    use crate::packycode;
+    
+    let results = packycode::test_endpoints_batch(urls).await;
+    
+    Ok(results.into_iter().map(|(url, latency)| {
+        serde_json::json!({
+            "url": url,
+            "latency": latency,
+        })
+    }).collect())
+}
+
 /// VS Code: 写入 settings.json 文本（仅当文件存在；不自动创建）
 #[tauri::command]
 pub async fn write_vscode_settings(content: String) -> Result<bool, String> {

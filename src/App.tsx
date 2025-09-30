@@ -26,7 +26,7 @@ function App() {
   const [currentProviderId, setCurrentProviderId] = useState<string>("");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(
-    null
+    null,
   );
   const [notification, setNotification] = useState<{
     message: string;
@@ -46,7 +46,7 @@ function App() {
   const showNotification = (
     message: string,
     type: "success" | "error",
-    duration = 3000
+    duration = 3000,
   ) => {
     // 清除之前的定时器
     if (timeoutRef.current) {
@@ -194,7 +194,7 @@ function App() {
           showNotification(
             t("notifications.vscodeSettingsNotFound"),
             "error",
-            3000
+            3000,
           );
         }
         return;
@@ -249,7 +249,7 @@ function App() {
       showNotification(
         t("notifications.switchSuccess", { appName }),
         "success",
-        2000
+        2000,
       );
       // 更新托盘菜单
       await window.api.updateTrayMenu();

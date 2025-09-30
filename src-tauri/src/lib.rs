@@ -3,6 +3,7 @@ mod codex_config;
 mod commands;
 mod config;
 mod migration;
+mod packycode;
 mod provider;
 mod settings;
 mod store;
@@ -418,6 +419,10 @@ pub fn run() {
             commands::get_vscode_settings_status,
             commands::read_vscode_settings,
             commands::write_vscode_settings,
+            commands::test_packycode_endpoints,
+            commands::select_best_packycode_endpoint,
+            commands::test_single_endpoint,
+            commands::test_endpoints_batch,
             update_tray_menu,
         ]);
 

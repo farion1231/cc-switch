@@ -331,7 +331,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       // 如果未知或为空，回退到 releases 首页
       if (!targetVersion || targetVersion === unknownLabel) {
         await window.api.openExternal(
-          "https://github.com/farion1231/cc-switch/releases"
+          "https://github.com/farion1231/cc-switch/releases",
         );
         return;
       }
@@ -339,7 +339,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         ? targetVersion
         : `v${targetVersion}`;
       await window.api.openExternal(
-        `https://github.com/farion1231/cc-switch/releases/tag/${tag}`
+        `https://github.com/farion1231/cc-switch/releases/tag/${tag}`,
       );
     } catch (error) {
       console.error(t("console.openReleaseNotesFailed"), error);
