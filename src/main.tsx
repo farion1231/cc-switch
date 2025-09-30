@@ -7,6 +7,8 @@ import "./index.css";
 import "./lib/tauri-api";
 // 导入国际化配置
 import "./i18n";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "./lib/query";
 
 // 根据平台添加 body class，便于平台特定样式
 try {
@@ -22,8 +24,10 @@ try {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <UpdateProvider>
-      <App />
-    </UpdateProvider>
+    <QueryClientProvider client={queryClient}>
+      <UpdateProvider>
+        <App />
+      </UpdateProvider>
+    </QueryClientProvider>
   </React.StrictMode>
 );
