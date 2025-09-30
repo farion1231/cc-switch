@@ -1,5 +1,6 @@
 import { X, Download } from "lucide-react";
 import { useUpdate } from "../contexts/UpdateContext";
+import { Badge } from "@/components/ui/badge";
 
 interface UpdateBadgeProps {
   className?: string;
@@ -15,15 +16,12 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
   }
 
   return (
-    <div
+    <Badge
+      variant="secondary"
       className={`
         flex items-center gap-1.5 px-2.5 py-1
-        bg-white dark:bg-gray-800
-        border border-gray-200 dark:border-gray-700
-        rounded-lg text-xs
-        shadow-sm
+        cursor-pointer hover:bg-accent
         transition-all duration-200
-        ${onClick ? "cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750" : ""}
         ${className}
       `}
       role={onClick ? "button" : undefined}
@@ -56,6 +54,6 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
       >
         <X className="w-3 h-3 text-gray-400 dark:text-gray-500" />
       </button>
-    </div>
+    </Badge>
   );
 }
