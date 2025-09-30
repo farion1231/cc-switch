@@ -36,6 +36,9 @@ chrono = { version = "0.4", features = ["serde"] }
 ring = "0.17"
 uuid = { version = "1.11", features = ["v4", "serde"] }
 sha2 = "0.10"
+chacha20poly1305 = "0.10"
+pbkdf2 = "0.12"
+rand = "0.8"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"

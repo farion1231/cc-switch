@@ -174,7 +174,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
   const loadCloudSyncSettings = async () => {
     try {
-      const settings = await window.api.cloudSync.getSettings("");
+      const settings = await window.api.cloudSync.getSettings();
 
       // 只更新非敏感信息
       setCloudSyncConfig(prev => ({
@@ -422,9 +422,6 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       const result = await window.api.cloudSync.configure({
         githubToken: hasNewToken ? cloudSyncConfig.githubToken.trim() : "",  // 如果没有新 token，发送空字符串
         gistUrl: cloudSyncConfig.gistUrl.trim() || undefined,
-        encryptionPassword: cloudSyncConfig.encryptionPassword,
-        autoSyncEnabled: true,
-        syncOnStartup: false,
       });
 
       if (result.success) {
