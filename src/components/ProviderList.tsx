@@ -3,9 +3,15 @@ import { useTranslation } from "react-i18next";
 import { Provider } from "../types";
 import { Play, Edit3, Trash2, CheckCircle2, Users, Check } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
-import { AppType } from "../lib/tauri-api";
+import { AppType } from "../lib/query";
 import {
-  applyProviderToVSCode,
+  useVSCodeSettingsQuery,
+  useVSCodeSyncMutation,
+  useVSCodeRemoveMutation,
+  useSwitchProviderMutation,
+  useDeleteProviderMutation
+} from "../lib/query";
+import {
   detectApplied,
   normalizeBaseUrl,
 } from "../utils/vscodeSettings";
@@ -16,8 +22,6 @@ import { useVSCodeAutoSync } from "../hooks/useVSCodeAutoSync";
 interface ProviderListProps {
   providers: Record<string, Provider>;
   currentProviderId: string;
-  onSwitch: (id: string) => void;
-  onDelete: (id: string) => void;
   onEdit: (id: string) => void;
   appType?: AppType;
   onNotify?: (
@@ -30,13 +34,18 @@ interface ProviderListProps {
 const ProviderList: React.FC<ProviderListProps> = ({
   providers,
   currentProviderId,
-  onSwitch,
-  onDelete,
   onEdit,
   appType,
   onNotify,
 }) => {
   const { t } = useTranslation();
+
+  // React Query mutations
+  const switchProviderMutation = useSwitchProviderMutation(appType!);
+  const deleteProviderMutation = useDeleteProviderMutation(appType!);
+  const vscodeSyncMutation = useVSCodeSyncMutation(appType!);
+  const vscodeRemoveMutation = useVSCodeRemoveMutation();
+  const { refetch: refetchVSCodeSettings } = useVSCodeSettingsQuery();
   // 提取API地址（兼容不同供应商配置：Claude env / Codex TOML）
   const getApiUrl = (provider: Provider): string => {
     try {
@@ -55,6 +64,28 @@ const ProviderList: React.FC<ProviderListProps> = ({
     } catch {
       return t("provider.configError");
     }
+  };
+
+  const handleSwitch = (providerId: string) => {
+    switchProviderMutation.mutate(providerId, {
+      onSuccess: () => {
+        onNotify?.(t("notifications.providerSwitched"), "success", 2000);
+      },
+      onError: (error: Error) => {
+        onNotify?.(error.message, "error", 3000);
+      }
+    });
+  };
+
+  const handleDelete = (providerId: string) => {
+    deleteProviderMutation.mutate(providerId, {
+      onSuccess: () => {
+        onNotify?.(t("notifications.providerDeleted"), "success", 2000);
+      },
+      onError: (error: Error) => {
+        onNotify?.(error.message, "error", 3000);
+      }
+    });
   };
 
   const handleUrlClick = async (url: string) => {
@@ -104,81 +135,34 @@ const ProviderList: React.FC<ProviderListProps> = ({
     check();
   }, [appType, currentProviderId, providers]);
 
-  const handleApplyToVSCode = async (provider: Provider) => {
-    try {
-      const status = await window.api.getVSCodeSettingsStatus();
-      if (!status.exists) {
-        onNotify?.(t("notifications.vscodeSettingsNotFound"), "error", 3000);
-        return;
-      }
-
-      const raw = await window.api.readVSCodeSettings();
-
-      const isOfficial = provider.category === "official";
-      // 非官方且缺少 base_url 时直接报错并返回，避免“空写入”假成功
-      if (!isOfficial) {
-        const parsed = getCodexBaseUrl(provider);
-        if (!parsed) {
-          onNotify?.(t("notifications.missingBaseUrl"), "error", 4000);
-          return;
-        }
-      }
-
-      const baseUrl = isOfficial ? undefined : getCodexBaseUrl(provider);
-      const next = applyProviderToVSCode(raw, { baseUrl, isOfficial });
-
-      if (next === raw) {
-        // 幂等：没有变化也提示成功
+  const handleApplyToVSCode = (provider: Provider) => {
+    vscodeSyncMutation.mutate(provider.id, {
+      onSuccess: () => {
         onNotify?.(t("notifications.appliedToVSCode"), "success", 3000);
         setVscodeAppliedFor(provider.id);
-        // 用户手动应用时，启用自动同步
         enableAutoSync();
-        return;
+        // Refetch VS Code settings to update state
+        refetchVSCodeSettings();
+      },
+      onError: (error: Error) => {
+        onNotify?.(error.message, "error", 5000);
       }
-
-      await window.api.writeVSCodeSettings(next);
-      onNotify?.(t("notifications.appliedToVSCode"), "success", 3000);
-      setVscodeAppliedFor(provider.id);
-      // 用户手动应用时，启用自动同步
-      enableAutoSync();
-    } catch (e: any) {
-      console.error(e);
-      const msg =
-        e && e.message ? e.message : t("notifications.syncVSCodeFailed");
-      onNotify?.(msg, "error", 5000);
-    }
+    });
   };
 
-  const handleRemoveFromVSCode = async () => {
-    try {
-      const status = await window.api.getVSCodeSettingsStatus();
-      if (!status.exists) {
-        onNotify?.(t("notifications.vscodeSettingsNotFound"), "error", 3000);
-        return;
-      }
-      const raw = await window.api.readVSCodeSettings();
-      const next = applyProviderToVSCode(raw, {
-        baseUrl: undefined,
-        isOfficial: true,
-      });
-      if (next === raw) {
+  const handleRemoveFromVSCode = () => {
+    vscodeRemoveMutation.mutate(undefined, {
+      onSuccess: () => {
         onNotify?.(t("notifications.removedFromVSCode"), "success", 3000);
         setVscodeAppliedFor(null);
-        // 用户手动移除时，禁用自动同步
         disableAutoSync();
-        return;
+        // Refetch VS Code settings to update state
+        refetchVSCodeSettings();
+      },
+      onError: (error: Error) => {
+        onNotify?.(error.message, "error", 5000);
       }
-      await window.api.writeVSCodeSettings(next);
-      onNotify?.(t("notifications.removedFromVSCode"), "success", 3000);
-      setVscodeAppliedFor(null);
-      // 用户手动移除时，禁用自动同步
-      disableAutoSync();
-    } catch (e: any) {
-      console.error(e);
-      const msg =
-        e && e.message ? e.message : t("notifications.syncVSCodeFailed");
-      onNotify?.(msg, "error", 5000);
-    }
+    });
   };
 
   // 对供应商列表进行排序
@@ -285,33 +269,41 @@ const ProviderList: React.FC<ProviderListProps> = ({
                               "inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors w-full whitespace-nowrap justify-center",
                               vscodeAppliedFor === provider.id
                                 ? "border border-gray-300 text-gray-600 hover:border-red-300 hover:text-red-600 hover:bg-red-50 dark:border-gray-600 dark:text-gray-400 dark:hover:border-red-800 dark:hover:text-red-400 dark:hover:bg-red-900/20"
+                                : vscodeSyncMutation.isPending
+                                ? "border border-gray-300 text-gray-400 cursor-wait dark:border-gray-600 dark:text-gray-500"
                                 : "border border-gray-300 text-gray-700 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-blue-700 dark:hover:text-blue-400 dark:hover:bg-blue-900/20"
                             )}
                             title={
                               vscodeAppliedFor === provider.id
                                 ? t("provider.removeFromVSCode")
+                                : vscodeSyncMutation.isPending
+                                ? t("common.applying")
                                 : t("provider.applyToVSCode")
                             }
                           >
                             {vscodeAppliedFor === provider.id
                               ? t("provider.removeFromVSCode")
+                              : vscodeSyncMutation.isPending
+                              ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
                               : t("provider.applyToVSCode")}
                           </button>
                         )}
                       </div>
                     ) : null}
                     <button
-                      onClick={() => onSwitch(provider.id)}
-                      disabled={isCurrent}
+                      onClick={() => handleSwitch(provider.id)}
+                      disabled={isCurrent || switchProviderMutation.isPending}
                       className={cn(
                         "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors w-[90px] justify-center whitespace-nowrap",
                         isCurrent
                           ? "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500 cursor-not-allowed"
+                          : switchProviderMutation.isPending
+                          ? "bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-400 cursor-wait"
                           : "bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700"
                       )}
                     >
-                      {isCurrent ? <Check size={14} /> : <Play size={14} />}
-                      {isCurrent ? t("provider.inUse") : t("provider.enable")}
+                      {isCurrent ? <Check size={14} /> : switchProviderMutation.isPending ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" /> : <Play size={14} />}
+                      {isCurrent ? t("provider.inUse") : switchProviderMutation.isPending ? t("common.switching") : t("provider.enable")}
                     </button>
 
                     <button
@@ -323,17 +315,19 @@ const ProviderList: React.FC<ProviderListProps> = ({
                     </button>
 
                     <button
-                      onClick={() => onDelete(provider.id)}
-                      disabled={isCurrent}
+                      onClick={() => handleDelete(provider.id)}
+                      disabled={isCurrent || deleteProviderMutation.isPending}
                       className={cn(
                         buttonStyles.icon,
                         isCurrent
                           ? "text-gray-400 cursor-not-allowed"
+                          : deleteProviderMutation.isPending
+                          ? "text-gray-400 cursor-wait"
                           : "text-gray-500 hover:text-red-500 hover:bg-red-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-red-500/10"
                       )}
                       title={t("provider.deleteProvider")}
                     >
-                      <Trash2 size={16} />
+                      {deleteProviderMutation.isPending ? <div className="w-4 h-4 border border-current border-t-transparent rounded-full animate-spin" /> : <Trash2 size={16} />}
                     </button>
                   </div>
                 </div>

@@ -13,11 +13,10 @@ import {
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import { homeDir, join } from "@tauri-apps/api/path";
-import "../lib/tauri-api";
 import { relaunchApp } from "../lib/updater";
 import { useUpdate } from "../contexts/UpdateContext";
 import type { Settings } from "../types";
-import type { AppType } from "../lib/tauri-api";
+import type { AppType } from "../lib/query";
 import { isLinux } from "../lib/platform";
 
 interface SettingsModalProps {

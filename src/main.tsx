@@ -3,8 +3,6 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import "./index.css";
-// 导入 Tauri API（自动绑定到 window.api）
-import "./lib/tauri-api";
 // 导入国际化配置
 import "./i18n";
 import { QueryClientProvider } from "@tanstack/react-query";

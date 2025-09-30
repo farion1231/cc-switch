@@ -1,7 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { Provider } from "../types";
-import { AppType } from "../lib/tauri-api";
+import { AppType } from "../lib/query";
 import ProviderForm from "./ProviderForm";
 
 interface EditProviderModalProps {

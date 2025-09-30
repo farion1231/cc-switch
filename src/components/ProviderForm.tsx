@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Provider, ProviderCategory } from "../types";
-import { AppType } from "../lib/tauri-api";
+import { AppType } from "../lib/query";
 import {
   updateCommonConfigSnippet,
   hasCommonConfigSnippet,
@@ -851,7 +851,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       if (!preset) return "";
       // 仅第三方供应商使用专用 apiKeyUrl，其余使用官网地址
       return preset.category === "third_party"
-        ? preset.apiKeyUrl || preset.websiteUrl || ""
+        ? (preset as any).apiKeyUrl || preset.websiteUrl || ""
         : preset.websiteUrl || "";
     }
     return formData.websiteUrl || "";
@@ -864,7 +864,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       if (!preset) return "";
       // 仅第三方供应商使用专用 apiKeyUrl，其余使用官网地址
       return preset.category === "third_party"
-        ? preset.apiKeyUrl || preset.websiteUrl || ""
+        ? (preset as any).apiKeyUrl || preset.websiteUrl || ""
         : preset.websiteUrl || "";
     }
     return formData.websiteUrl || "";

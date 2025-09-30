@@ -1,6 +1,10 @@
+import React from 'react'
 import { QueryClient, useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { invoke } from '@tauri-apps/api/core'
+import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { Provider } from '../types'
-import type { AppType } from '../lib/tauri-api'
+
+export type AppType = "claude" | "codex"
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -15,18 +19,42 @@ export const useProvidersQuery = (appType: AppType) => {
   return useQuery({
     queryKey: ['providers', appType],
     queryFn: async () => {
-      const [providers, currentProviderId] = await Promise.all([
-        window.api.getProviders(appType),
-        window.api.getCurrentProvider(appType)
-      ])
+      let providers: Record<string, Provider> = {}
+      let currentProviderId = ""
+
+      try {
+        providers = await invoke("get_providers", { app_type: appType, app: appType })
+      } catch (error) {
+        console.error("获取供应商列表失败:", error)
+      }
+
+      try {
+        currentProviderId = await invoke("get_current_provider", { app_type: appType, app: appType })
+      } catch (error) {
+        console.error("获取当前供应商失败:", error)
+      }
 
       // Auto-import default providers if list is empty
       if (Object.keys(providers).length === 0) {
-        const result = await window.api.importCurrentConfigAsDefault(appType)
+        const result = await (async () => {
+          try {
+            const success = await invoke<boolean>("import_default_config", { app_type: appType, app: appType })
+            return {
+              success,
+              message: success ? "成功导入默认配置" : "导入失败",
+            }
+          } catch (error) {
+            console.error("导入默认配置失败:", error)
+            return {
+              success: false,
+              message: String(error),
+            }
+          }
+        })()
         if (result.success) {
           const [newProviders, newCurrentProviderId] = await Promise.all([
-            window.api.getProviders(appType),
-            window.api.getCurrentProvider(appType)
+            invoke("get_providers", { app_type: appType, app: appType }),
+            invoke("get_current_provider", { app_type: appType, app: appType })
           ])
           return { providers: newProviders, currentProviderId: newCurrentProviderId }
         }
@@ -47,12 +75,20 @@ export const useAddProviderMutation = (appType: AppType) => {
         id: crypto.randomUUID(),
         createdAt: Date.now(),
       }
-      await window.api.addProvider(newProvider, appType)
-      return newProvider
+      try {
+        return await invoke("add_provider", { provider: newProvider, app_type: appType, app: appType })
+      } catch (error) {
+        console.error("添加供应商失败:", error)
+        throw error
+      }
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['providers', appType] })
-      await window.api.updateTrayMenu()
+      try {
+        await invoke("update_tray_menu")
+      } catch (error) {
+        console.error("更新托盘菜单失败:", error)
+      }
     }
   })
 }
@@ -62,12 +98,20 @@ export const useUpdateProviderMutation = (appType: AppType) => {
 
   return useMutation({
     mutationFn: async (provider: Provider) => {
-      await window.api.updateProvider(provider, appType)
-      return provider
+      try {
+        return await invoke("update_provider", { provider, app_type: appType, app: appType })
+      } catch (error) {
+        console.error("更新供应商失败:", error)
+        throw error
+      }
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['providers', appType] })
-      await window.api.updateTrayMenu()
+      try {
+        await invoke("update_tray_menu")
+      } catch (error) {
+        console.error("更新托盘菜单失败:", error)
+      }
     }
   })
 }
@@ -77,12 +121,20 @@ export const useDeleteProviderMutation = (appType: AppType) => {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      await window.api.deleteProvider(id, appType)
-      return id
+      try {
+        return await invoke("delete_provider", { id, app_type: appType, app: appType })
+      } catch (error) {
+        console.error("删除供应商失败:", error)
+        throw error
+      }
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['providers', appType] })
-      await window.api.updateTrayMenu()
+      try {
+        await invoke("update_tray_menu")
+      } catch (error) {
+        console.error("更新托盘菜单失败:", error)
+      }
     }
   })
 }
@@ -92,13 +144,22 @@ export const useSwitchProviderMutation = (appType: AppType) => {
 
   return useMutation({
     mutationFn: async (providerId: string) => {
-      const success = await window.api.switchProvider(providerId, appType)
-      return { providerId, success }
+      try {
+        const success = await invoke("switch_provider", { id: providerId, app_type: appType, app: appType })
+        return { providerId, success }
+      } catch (error) {
+        console.error("切换供应商失败:", error)
+        return { providerId, success: false }
+      }
     },
     onSuccess: async ({ success }) => {
       if (success) {
         await queryClient.invalidateQueries({ queryKey: ['providers', appType] })
-        await window.api.updateTrayMenu()
+        try {
+          await invoke("update_tray_menu")
+        } catch (error) {
+          console.error("更新托盘菜单失败:", error)
+        }
       }
     }
   })
@@ -109,12 +170,25 @@ export const useVSCodeSyncMutation = (appType: AppType) => {
 
   return useMutation({
     mutationFn: async (providerId: string) => {
-      const status = await window.api.getVSCodeSettingsStatus()
+      const status = await (async () => {
+        try {
+          return await invoke("get_vscode_settings_status") as { exists: boolean; path: string; error?: string }
+        } catch (error) {
+          console.error("获取 VS Code 设置状态失败:", error)
+          return { exists: false, path: "", error: String(error) }
+        }
+      })()
       if (!status.exists) {
         throw new Error('VS Code settings not found')
       }
 
-      const raw = await window.api.readVSCodeSettings()
+      const raw = await (async () => {
+        try {
+          return await invoke("read_vscode_settings") as string
+        } catch (error) {
+          throw new Error(`读取 VS Code 设置失败: ${String(error)}`)
+        }
+      })()
       const providersData = queryClient.getQueryData<{ providers: Record<string, Provider>, currentProviderId: string }>(['providers', appType])
       const provider = providersData?.providers[providerId]
 
@@ -138,7 +212,13 @@ export const useVSCodeSyncMutation = (appType: AppType) => {
       const updatedSettings = applyProviderToVSCode(raw, { baseUrl, isOfficial })
 
       if (updatedSettings !== raw) {
-        await window.api.writeVSCodeSettings(updatedSettings)
+        await (async () => {
+          try {
+            return await invoke("write_vscode_settings", { content: updatedSettings }) as boolean
+          } catch (error) {
+            throw new Error(`写入 VS Code 设置失败: ${String(error)}`)
+          }
+        })()
       }
 
       await queryClient.invalidateQueries({ queryKey: ['providers', appType] })
@@ -146,4 +226,104 @@ export const useVSCodeSyncMutation = (appType: AppType) => {
       return { success: true, updated: updatedSettings !== raw }
     }
   })
+}
+
+export const useVSCodeSettingsQuery = () => {
+  return useQuery({
+    queryKey: ['vscode-settings'],
+    queryFn: async () => {
+      const status = await (async () => {
+        try {
+          return await invoke("get_vscode_settings_status") as { exists: boolean; path: string; error?: string }
+        } catch (error) {
+          console.error("获取 VS Code 设置状态失败:", error)
+          return { exists: false, path: "", error: String(error) }
+        }
+      })()
+      if (!status.exists) {
+        return { status: null, content: null }
+      }
+
+      const content = await (async () => {
+        try {
+          return await invoke("read_vscode_settings")
+        } catch (error) {
+          throw new Error(`读取 VS Code 设置失败: ${String(error)}`)
+        }
+      })()
+      return { status, content }
+    },
+    enabled: false, // Manual query only
+    retry: false
+  })
+}
+
+export const useVSCodeRemoveMutation = () => {
+  return useMutation({
+    mutationFn: async () => {
+      const status = await (async () => {
+        try {
+          return await invoke("get_vscode_settings_status") as { exists: boolean; path: string; error?: string }
+        } catch (error) {
+          console.error("获取 VS Code 设置状态失败:", error)
+          return { exists: false, path: "", error: String(error) }
+        }
+      })()
+      if (!status.exists) {
+        throw new Error('VS Code settings not found')
+      }
+
+      const raw = await (async () => {
+        try {
+          return await invoke("read_vscode_settings") as string
+        } catch (error) {
+          throw new Error(`读取 VS Code 设置失败: ${String(error)}`)
+        }
+      })()
+      const { applyProviderToVSCode } = await import('../utils/vscodeSettings')
+      const updatedSettings = applyProviderToVSCode(raw, {
+        baseUrl: undefined,
+        isOfficial: true,
+      })
+
+      if (updatedSettings !== raw) {
+        await (async () => {
+          try {
+            return await invoke("write_vscode_settings", { content: updatedSettings }) as boolean
+          } catch (error) {
+            throw new Error(`写入 VS Code 设置失败: ${String(error)}`)
+          }
+        })()
+      }
+
+      return { success: true, updated: updatedSettings !== raw }
+    }
+  })
+}
+
+// Event listener for provider switching
+export const useProviderSwitchedListener = (
+  callback: (data: { appType: string; providerId: string }) => void
+) => {
+  React.useEffect(() => {
+    let unlisten: UnlistenFn | null = null
+
+    const setupListener = async () => {
+      try {
+        unlisten = await listen("provider-switched", (event) => {
+          callback(event.payload as { appType: string; providerId: string })
+        })
+      } catch (error) {
+        console.error("Failed to setup provider switched listener:", error)
+      }
+    }
+
+    setupListener()
+
+    return () => {
+      if (unlisten) {
+        unlisten()
+      }
+    }
+  }, [callback])
 }

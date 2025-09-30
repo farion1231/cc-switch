@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Provider } from "./types";
-import { AppType } from "./lib/tauri-api";
-import { useProvidersQuery, useAddProviderMutation, useUpdateProviderMutation, useDeleteProviderMutation, useSwitchProviderMutation, useVSCodeSyncMutation } from "./lib/query";
+import { AppType } from "./lib/query";
+import { useProvidersQuery, useAddProviderMutation, useUpdateProviderMutation, useVSCodeSyncMutation } from "./lib/query";
 import ProviderList from "./components/ProviderList";
 import AddProviderModal from "./components/AddProviderModal";
 import EditProviderModal from "./components/EditProviderModal";
@@ -45,12 +45,10 @@ function App() {
   const { data: providersData, isLoading, error } = useProvidersQuery(activeApp);
   const addProviderMutation = useAddProviderMutation(activeApp);
   const updateProviderMutation = useUpdateProviderMutation(activeApp);
-  const deleteProviderMutation = useDeleteProviderMutation(activeApp);
-  const switchProviderMutation = useSwitchProviderMutation(activeApp);
   const vscodeSyncMutation = useVSCodeSyncMutation(activeApp);
 
-  const providers = providersData?.providers || {};
-  const currentProviderId = providersData?.currentProviderId || "";
+  const providers: Record<string, Provider> = providersData?.providers || Object.create(null);
+  const currentProviderId = (providersData?.currentProviderId as string) || "";
 
   // 设置通知的辅助函数
   const showNotification = (
@@ -159,59 +157,7 @@ function App() {
     });
   };
 
-  const handleDeleteProvider = (id: string) => {
-    const provider = providers[id];
-    setConfirmDialog({
-      isOpen: true,
-      title: t("confirm.deleteProvider"),
-      message: t("confirm.deleteProviderMessage", { name: provider?.name }),
-      onConfirm: () => {
-        deleteProviderMutation.mutate(id, {
-          onSuccess: () => {
-            setConfirmDialog(null);
-            showNotification(t("notifications.providerDeleted"), "success");
-          },
-          onError: (error) => {
-            console.error(t("console.deleteProviderFailed"), error);
-            setConfirmDialog(null);
-            const errorMessage = extractErrorMessage(error);
-            const message = errorMessage
-              ? t("notifications.deleteFailed", { error: errorMessage })
-              : t("notifications.deleteFailedGeneric");
-            showNotification(message, "error", errorMessage ? 6000 : 3000);
-          }
-        });
-      },
-    });
-  };
-
-  const handleSwitchProvider = (id: string) => {
-    switchProviderMutation.mutate(id, {
-      onSuccess: ({ success }) => {
-        if (success) {
-          // 显示重启提示
-          const appName = t(`apps.${activeApp}`);
-          showNotification(
-            t("notifications.switchSuccess", { appName }),
-            "success",
-            2000
-          );
-
-          // Codex: 切换供应商后，只在自动同步启用时同步到 VS Code
-          if (activeApp === "codex" && isAutoSyncEnabled) {
-            vscodeSyncMutation.mutate(id); // silent mode through mutation
-          }
-        } else {
-          showNotification(t("notifications.switchFailed"), "error");
-        }
-      },
-      onError: (error) => {
-        console.error(t("console.switchProviderFailed"), error);
-        showNotification(t("notifications.switchFailed"), "error");
-      }
-    });
-  };
-
+  
   
   return (
     <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-950">
@@ -303,8 +249,6 @@ function App() {
               <ProviderList
                 providers={providers}
                 currentProviderId={currentProviderId}
-                onSwitch={handleSwitchProvider}
-                onDelete={handleDeleteProvider}
                 onEdit={setEditingProviderId}
                 appType={activeApp}
                 onNotify={showNotification}

@@ -17,7 +17,9 @@
     "loading": "Loading...",
     "success": "Success",
     "error": "Error",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "switching": "Switching...",
+    "applying": "Applying..."
   },
   "header": {
     "viewOnGithub": "View on GitHub",
@@ -44,6 +46,7 @@
   "notifications": {
     "providerSaved": "Provider configuration saved",
     "providerDeleted": "Provider deleted successfully",
+    "providerSwitched": "Provider switched successfully",
     "switchSuccess": "Switch successful! Please restart {{appName}} terminal to take effect",
     "switchFailed": "Switch failed, please check configuration",
     "autoImported": "Default provider created from existing configuration",
