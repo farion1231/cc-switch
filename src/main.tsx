@@ -7,6 +7,7 @@ import "./index.css";
 import "./i18n";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/query";
+import { ThemeProvider } from "./components/theme-provider";
 
 // 根据平台添加 body class，便于平台特定样式
 try {
@@ -23,9 +24,11 @@ try {
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <UpdateProvider>
-        <App />
-      </UpdateProvider>
+      <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
+        <UpdateProvider>
+          <App />
+        </UpdateProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   </React.StrictMode>
 );

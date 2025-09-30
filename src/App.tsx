@@ -11,9 +11,10 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { AppSwitcher } from "./components/AppSwitcher";
 import SettingsModal from "./components/SettingsModal";
 import { UpdateBadge } from "./components/UpdateBadge";
-import { Plus, Settings, Moon, Sun } from "lucide-react";
+import { Plus, Settings } from "lucide-react";
 import { buttonStyles } from "./lib/styles";
-import { useDarkMode } from "./hooks/useDarkMode";
+import { ModeToggle } from "./components/mode-toggle";
+import { useTheme } from "./components/theme-provider";
 import { extractErrorMessage } from "./utils/errorUtils";
 import { useVSCodeAutoSync } from "./hooks/useVSCodeAutoSync";
 import { useQueryClient } from "@tanstack/react-query";
@@ -22,7 +23,7 @@ import { Toaster } from "./components/ui/sonner";
 
 function App() {
   const { t } = useTranslation();
-  const { isDarkMode, toggleDarkMode } = useDarkMode();
+  const { theme } = useTheme();
   const { isAutoSyncEnabled } = useVSCodeAutoSync();
   const queryClient = useQueryClient();
   const [activeApp, setActiveApp] = useState<AppType>("claude");
@@ -138,17 +139,7 @@ function App() {
             >
               CC Switch
             </a>
-            <button
-              onClick={toggleDarkMode}
-              className={buttonStyles.icon}
-              title={
-                isDarkMode
-                  ? t("header.toggleLightMode")
-                  : t("header.toggleDarkMode")
-              }
-            >
-              {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
+            <ModeToggle />
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsSettingsOpen(true)}
