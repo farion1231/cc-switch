@@ -1,0 +1,8 @@
+msrv = "1.75.0"
+
+# Allow certain lints for the cloud_sync module
+warn-on-all-wildcard-imports = true
+too-many-arguments-threshold = 8
+single-char-binding-names-threshold = 4
+type-complexity-threshold = 250
+cognitive-complexity-threshold = 25

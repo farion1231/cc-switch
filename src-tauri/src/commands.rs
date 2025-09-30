@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use tauri::State;
+use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -729,4 +730,90 @@ pub async fn write_vscode_settings(content: String) -> Result<bool, String> {
     } else {
         Err("未找到 VS Code 用户设置文件".to_string())
     }
+}
+
+/// 弹出文件保存对话框
+#[tauri::command]
+pub async fn save_file_dialog(
+    app: tauri::AppHandle,
+    default_name: Option<String>,
+) -> Result<Option<String>, String> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut builder = app.dialog().file();
+        if let Some(name) = default_name {
+            builder = builder.set_file_name(&name);
+        }
+        builder.add_filter("JSON", &["json"])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| format!("弹出保存对话框失败: {}", e))?;
+
+    match result {
+        Some(file_path) => {
+            let resolved = file_path
+                .simplified()
+                .into_path()
+                .map_err(|e| format!("解析选择的文件路径失败: {}", e))?;
+            Ok(Some(resolved.to_string_lossy().to_string()))
+        }
+        None => Ok(None),
+    }
+}
+
+/// 弹出文件选择对话框
+#[tauri::command]
+pub async fn open_file_dialog(
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("JSON", &["json"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| format!("弹出打开对话框失败: {}", e))?;
+
+    match result {
+        Some(file_path) => {
+            let resolved = file_path
+                .simplified()
+                .into_path()
+                .map_err(|e| format!("解析选择的文件路径失败: {}", e))?;
+            Ok(Some(resolved.to_string_lossy().to_string()))
+        }
+        None => Ok(None),
+    }
+}
+
+/// 显示导入确认对话框
+#[tauri::command]
+pub async fn confirm_import_dialog(
+    app: tauri::AppHandle,
+    file_name: String,
+) -> Result<bool, String> {
+    log::info!("显示导入确认对话框: {}", file_name);
+
+    // 获取主窗口作为父窗口
+    let window = app.get_webview_window("main");
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut dialog_builder = app.dialog()
+            .message(format!("确认要导入配置文件：\n{}\n\n这将覆盖当前配置（会自动备份）", file_name))
+            .title("确认导入");
+
+        // 如果有主窗口，设置为父窗口
+        if let Some(win) = window {
+            dialog_builder = dialog_builder.parent(&win);
+        }
+
+        let result = dialog_builder.blocking_show();
+        log::info!("对话框结果: {}", result);
+        result
+    })
+    .await
+    .map_err(|e| format!("显示确认对话框失败: {}", e))?;
+
+    Ok(result)
 }

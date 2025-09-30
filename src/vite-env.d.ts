@@ -46,6 +46,38 @@ declare global {
       getVSCodeSettingsStatus: () => Promise<ConfigStatus>;
       readVSCodeSettings: () => Promise<string>;
       writeVSCodeSettings: (content: string) => Promise<boolean>;
+      // 云同步功能
+      cloudSync: {
+        validateGitHubToken: (githubToken: string) => Promise<{ valid: boolean; user?: any; message: string }>;
+        configure: (config: {
+          githubToken: string;
+          gistUrl?: string;
+          encryptionPassword: string;
+          autoSyncEnabled: boolean;
+          syncOnStartup: boolean;
+        }) => Promise<{ success: boolean; message: string }>;
+        getSettings: (encryptionPassword: string) => Promise<{
+          configured: boolean;
+          gistUrl?: string;
+          enabled: boolean;
+          syncMode: string;
+          lastSyncTimestamp?: string;
+          hasToken?: boolean;
+        }>;
+        syncToCloud: (encryptionPassword: string, forceOverwrite?: boolean) => Promise<{
+          success: boolean;
+          gistUrl: string;
+          backupId: string;
+          message: string;
+        }>;
+        syncFromCloud: (gistUrl: string, encryptionPassword: string, autoApply?: boolean) => Promise<{
+          success: boolean;
+          applied: boolean;
+          configuration?: string;
+          backupId?: string;
+          message: string;
+        }>;
+      };
     };
     platform: {
       isMac: boolean;

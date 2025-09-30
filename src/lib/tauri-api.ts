@@ -306,6 +306,147 @@ export const tauriAPI = {
       throw new Error(`写入 VS Code 设置失败: ${String(error)}`);
     }
   },
+
+  // 云同步功能
+  cloudSync: {
+    // 验证 GitHub Token
+    validateGitHubToken: async (githubToken: string): Promise<{ valid: boolean; user?: any; message: string }> => {
+      try {
+        return await invoke("validate_github_token", { githubToken });
+      } catch (error) {
+        throw new Error(`GitHub Token 验证失败: ${String(error)}`);
+      }
+    },
+
+    // 配置云同步
+    configure: async (config: {
+      githubToken: string;
+      gistUrl?: string;
+      encryptionPassword: string;
+      autoSyncEnabled: boolean;
+      syncOnStartup: boolean;
+    }): Promise<{ success: boolean; message: string }> => {
+      try {
+        return await invoke("configure_cloud_sync", {
+          githubToken: config.githubToken,
+          gistUrl: config.gistUrl,
+          encryptionPassword: config.encryptionPassword,
+          autoSyncEnabled: config.autoSyncEnabled,
+          syncOnStartup: config.syncOnStartup,
+        });
+      } catch (error) {
+        throw new Error(`配置云同步失败: ${String(error)}`);
+      }
+    },
+
+    // 获取云同步设置
+    getSettings: async (encryptionPassword: string): Promise<{
+      configured: boolean;
+      gistUrl?: string;
+      enabled: boolean;
+      syncMode: string;
+      lastSyncTimestamp?: string;
+    }> => {
+      try {
+        return await invoke("get_cloud_sync_settings", {
+          encryptionPassword
+        });
+      } catch (error) {
+        throw new Error(`获取云同步设置失败: ${String(error)}`);
+      }
+    },
+
+    // 同步到云端
+    syncToCloud: async (encryptionPassword: string, forceOverwrite = true): Promise<{
+      success: boolean;
+      gistUrl: string;
+      backupId: string;
+      message: string;
+    }> => {
+      try {
+        return await invoke("sync_to_cloud", {
+          encryptionPassword,
+          forceOverwrite,
+        });
+      } catch (error) {
+        throw new Error(`同步到云端失败: ${String(error)}`);
+      }
+    },
+
+    // 从云端同步
+    syncFromCloud: async (gistUrl: string, encryptionPassword: string, autoApply = false): Promise<{
+      success: boolean;
+      applied: boolean;
+      configuration?: string;
+      backupId?: string;
+      message: string;
+    }> => {
+      try {
+        return await invoke("sync_from_cloud", {
+          gistUrl,
+          encryptionPassword,
+          autoApply,
+        });
+      } catch (error) {
+        throw new Error(`从云端同步失败: ${String(error)}`);
+      }
+    },
+  },
+
+  // 文件对话框
+  saveFileDialog: async (defaultName?: string): Promise<string | null> => {
+    try {
+      return await invoke<string | null>("save_file_dialog", { defaultName });
+    } catch (error) {
+      console.error("打开保存文件对话框失败:", error);
+      return null;
+    }
+  },
+
+  openFileDialog: async (): Promise<string | null> => {
+    try {
+      return await invoke<string | null>("open_file_dialog");
+    } catch (error) {
+      console.error("打开文件选择对话框失败:", error);
+      return null;
+    }
+  },
+
+  // 显示导入确认对话框
+  confirmImportDialog: async (fileName: string): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("confirm_import_dialog", { file_name: fileName });
+    } catch (error) {
+      console.error("显示确认对话框失败:", error);
+      return false;
+    }
+  },
+
+  // 导出配置到文件
+  exportConfigToFile: async (filePath: string): Promise<{
+    success: boolean;
+    message: string;
+    filePath: string;
+  }> => {
+    try {
+      return await invoke("export_config_to_file", { filePath });
+    } catch (error) {
+      throw new Error(`导出配置失败: ${String(error)}`);
+    }
+  },
+
+  // 从文件导入配置
+  importConfigFromFile: async (filePath: string): Promise<{
+    success: boolean;
+    message: string;
+    backupId?: string;
+  }> => {
+    try {
+      return await invoke("import_config_from_file", { filePath });
+    } catch (error) {
+      throw new Error(`导入配置失败: ${String(error)}`);
+    }
+  },
 };
 
 // 创建全局 API 对象，兼容现有代码
