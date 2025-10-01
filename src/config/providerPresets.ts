@@ -3,6 +3,13 @@
  */
 import { ProviderCategory } from "../types";
 
+export interface TemplateValueConfig {
+  label: string;
+  placeholder: string;
+  defaultValue?: string;
+  editorValue: string;
+}
+
 export interface ProviderPreset {
   name: string;
   websiteUrl: string;
@@ -11,6 +18,8 @@ export interface ProviderPreset {
   settingsConfig: object;
   isOfficial?: boolean; // 标识是否为官方预设
   category?: ProviderCategory; // 新增：分类
+  // 新增：模板变量定义，用于动态替换配置中的值
+  templateValues?: Record<string, TemplateValueConfig>; // editorValue 存储编辑器中的实时输入值
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -100,5 +109,27 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "third_party",
+  },
+  {
+    name: "KAT-Coder 官方",
+    websiteUrl: "https://console.streamlake.ai/wanqing/",
+    apiKeyUrl: "https://console.streamlake.ai/console/wanqing/api-key",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "KAT-Coder",
+        ANTHROPIC_SMALL_FAST_MODEL: "KAT-Coder",
+      },
+    },
+    category: "cn_official",
+    templateValues: {
+      ENDPOINT_ID: {
+        label: "Vanchin Endpoint ID",
+        placeholder: "ep-xxx-xxx",
+        defaultValue: "",
+        editorValue: "",
+      },
+    },
   },
 ];

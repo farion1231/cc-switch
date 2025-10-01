@@ -10,8 +10,10 @@ import {
   updateTomlCommonConfigSnippet,
   hasTomlCommonConfigSnippet,
   validateJsonConfig,
+  applyTemplateValues,
 } from "../utils/providerConfigUtils";
 import { providerPresets } from "../config/providerPresets";
+import type { TemplateValueConfig } from "../config/providerPresets";
 import {
   codexProviderPresets,
   generateThirdPartyAuth,
@@ -25,6 +27,136 @@ import KimiModelSelector from "./ProviderForm/KimiModelSelector";
 import { X, AlertCircle, Save } from "lucide-react";
 import { isLinux } from "../lib/platform";
 // 分类仅用于控制少量交互（如官方禁用 API Key），不显示介绍组件
+
+type TemplateValueMap = Record<string, TemplateValueConfig>;
+
+type TemplatePath = Array<string | number>;
+
+const collectTemplatePaths = (
+  source: unknown,
+  templateKeys: string[],
+  currentPath: TemplatePath = [],
+  acc: TemplatePath[] = [],
+): TemplatePath[] => {
+  if (typeof source === "string") {
+    const hasPlaceholder = templateKeys.some((key) =>
+      source.includes(`\${${key}}`),
+    );
+    if (hasPlaceholder) {
+      acc.push([...currentPath]);
+    }
+    return acc;
+  }
+
+  if (Array.isArray(source)) {
+    source.forEach((item, index) =>
+      collectTemplatePaths(item, templateKeys, [...currentPath, index], acc),
+    );
+    return acc;
+  }
+
+  if (source && typeof source === "object") {
+    Object.entries(source).forEach(([key, value]) =>
+      collectTemplatePaths(value, templateKeys, [...currentPath, key], acc),
+    );
+  }
+
+  return acc;
+};
+
+const getValueAtPath = (source: any, path: TemplatePath) => {
+  return path.reduce<any>((acc, key) => {
+    if (acc === undefined || acc === null) {
+      return undefined;
+    }
+    return acc[key as keyof typeof acc];
+  }, source);
+};
+
+const setValueAtPath = (
+  target: any,
+  path: TemplatePath,
+  value: unknown,
+): any => {
+  if (path.length === 0) {
+    return value;
+  }
+
+  let current = target;
+
+  for (let i = 0; i < path.length - 1; i++) {
+    const key = path[i];
+    const nextKey = path[i + 1];
+    const isNextIndex = typeof nextKey === "number";
+
+    if (current[key as keyof typeof current] === undefined) {
+      current[key as keyof typeof current] = isNextIndex ? [] : {};
+    } else {
+      const currentValue = current[key as keyof typeof current];
+      if (isNextIndex && !Array.isArray(currentValue)) {
+        current[key as keyof typeof current] = [];
+      } else if (
+        !isNextIndex &&
+        (typeof currentValue !== "object" || currentValue === null)
+      ) {
+        current[key as keyof typeof current] = {};
+      }
+    }
+
+    current = current[key as keyof typeof current];
+  }
+
+  const finalKey = path[path.length - 1];
+  current[finalKey as keyof typeof current] = value;
+  return target;
+};
+
+const applyTemplateValuesToConfigString = (
+  presetConfig: any,
+  currentConfigString: string,
+  values: TemplateValueMap,
+) => {
+  const replacedConfig = applyTemplateValues(presetConfig, values);
+  const templateKeys = Object.keys(values);
+  if (templateKeys.length === 0) {
+    return JSON.stringify(replacedConfig, null, 2);
+  }
+
+  const placeholderPaths = collectTemplatePaths(presetConfig, templateKeys);
+
+  try {
+    const parsedConfig = currentConfigString.trim()
+      ? JSON.parse(currentConfigString)
+      : {};
+    let targetConfig: any;
+    if (Array.isArray(parsedConfig)) {
+      targetConfig = [...parsedConfig];
+    } else if (parsedConfig && typeof parsedConfig === "object") {
+      targetConfig = JSON.parse(JSON.stringify(parsedConfig));
+    } else {
+      targetConfig = {};
+    }
+
+    if (placeholderPaths.length === 0) {
+      return JSON.stringify(targetConfig, null, 2);
+    }
+
+    let mutatedConfig = targetConfig;
+
+    for (const path of placeholderPaths) {
+      const nextValue = getValueAtPath(replacedConfig, path);
+      if (path.length === 0) {
+        mutatedConfig = nextValue;
+      } else {
+        setValueAtPath(mutatedConfig, path, nextValue);
+      }
+    }
+
+    return JSON.stringify(mutatedConfig, null, 2);
+  } catch {
+    return JSON.stringify(replacedConfig, null, 2);
+  }
+};
 
 const COMMON_CONFIG_STORAGE_KEY = "cc-switch:common-config-snippet";
 const CODEX_COMMON_CONFIG_STORAGE_KEY = "cc-switch:codex-common-config-snippet";
@@ -71,6 +203,9 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [claudeModel, setClaudeModel] = useState("");
   const [claudeSmallFastModel, setClaudeSmallFastModel] = useState("");
   const [baseUrl, setBaseUrl] = useState(""); // 新增：基础 URL 状态
+  // 模板变量状态
+  const [templateValues, setTemplateValues] =
+    useState<Record<string, TemplateValueConfig>>({});
 
   // Codex 特有的状态
   const [codexAuth, setCodexAuthState] = useState("");
@@ -157,6 +292,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     });
   const [codexCommonConfigError, setCodexCommonConfigError] = useState("");
   const isUpdatingFromCodexCommonConfig = useRef(false);
+
   // -1 表示自定义，null 表示未选择，>= 0 表示预设索引
   const [selectedPreset, setSelectedPreset] = useState<number | null>(
     showPresets ? -1 : null
@@ -377,6 +513,22 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
         setError(currentSettingsError);
         return;
       }
+
+      if (selectedTemplatePreset && templateValueEntries.length > 0) {
+        for (const [key, config] of templateValueEntries) {
+          const entry = templateValues[key];
+          const resolvedValue = (
+            entry?.editorValue ??
+            entry?.defaultValue ??
+            config.defaultValue ??
+            ""
+          ).trim();
+          if (!resolvedValue) {
+            setError(`请填写 ${config.label}`);
+            return;
+          }
+        }
+      }
       // Claude: 原有逻辑
       if (!formData.settingsConfig.trim()) {
         setError("请填写配置内容");
@@ -529,7 +681,30 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   };
 
   const applyPreset = (preset: (typeof providerPresets)[0], index: number) => {
-    const configString = JSON.stringify(preset.settingsConfig, null, 2);
+    let appliedSettingsConfig = preset.settingsConfig;
+    let initialTemplateValues: TemplateValueMap = {};
+
+    if (preset.templateValues) {
+      initialTemplateValues = Object.fromEntries(
+        Object.entries(preset.templateValues).map(([key, config]) => [
+          key,
+          {
+            ...config,
+            editorValue: config.editorValue
+              ? config.editorValue
+              : config.defaultValue ?? "",
+          },
+        ])
+      );
+      appliedSettingsConfig = applyTemplateValues(
+        preset.settingsConfig,
+        initialTemplateValues
+      );
+    }
+
+    setTemplateValues(initialTemplateValues);
+
+    const configString = JSON.stringify(appliedSettingsConfig, null, 2);
 
     setFormData({
       name: preset.name,
@@ -554,8 +729,8 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     setCommonConfigError("");
 
     // 如果预设包含模型配置，初始化模型输入框
-    if (preset.settingsConfig && typeof preset.settingsConfig === "object") {
-      const config = preset.settingsConfig as { env?: Record<string, any> };
+    if (appliedSettingsConfig && typeof appliedSettingsConfig === "object") {
+      const config = appliedSettingsConfig as { env?: Record<string, any> };
       if (config.env) {
         setClaudeModel(config.env.ANTHROPIC_MODEL || "");
         setClaudeSmallFastModel(config.env.ANTHROPIC_SMALL_FAST_MODEL || "");
@@ -577,6 +752,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   // 处理点击自定义按钮
   const handleCustomClick = () => {
     setSelectedPreset(-1);
+    setTemplateValues({});
 
     // 设置自定义模板
     const customTemplate = {
@@ -802,6 +978,21 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const showApiKey =
     selectedPreset !== null ||
     (!showPresets && hasApiKeyField(formData.settingsConfig));
+
+  const selectedTemplatePreset =
+    !isCodex &&
+    selectedPreset !== null &&
+    selectedPreset >= 0 &&
+    selectedPreset < providerPresets.length
+      ? providerPresets[selectedPreset]
+      : null;
+
+  const templateValueEntries: Array<[string, TemplateValueConfig]> =
+    selectedTemplatePreset?.templateValues
+      ? (Object.entries(
+          selectedTemplatePreset.templateValues
+        ) as Array<[string, TemplateValueConfig]>)
+      : [];
 
   // 判断当前选中的预设是否是官方
   const isOfficialPreset =
@@ -1130,6 +1321,74 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                     </a>
                   </div>
                 )}
+              </div>
+            )}
+
+            {!isCodex && selectedTemplatePreset && templateValueEntries.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  参数配置 - {selectedTemplatePreset.name.trim()} *
+                </h3>
+                <div className="space-y-4">
+                  {templateValueEntries.map(([key, config]) => (
+                    <div key={key} className="space-y-2">
+                      <label className="sr-only" htmlFor={`template-${key}`}>
+                        {config.label}
+                      </label>
+                      <input
+                        id={`template-${key}`}
+                        type="text"
+                        required
+                        placeholder={`${config.label} *`}
+                        value={
+                          templateValues[key]?.editorValue ??
+                          config.editorValue ??
+                          config.defaultValue ??
+                          ""
+                        }
+                        onChange={(e) => {
+                          const newValue = e.target.value;
+                          setTemplateValues((prev) => {
+                            const prevEntry = prev[key];
+                            const nextEntry: TemplateValueConfig = {
+                              ...config,
+                              ...(prevEntry ?? {}),
+                              editorValue: newValue,
+                            };
+                            const nextValues: TemplateValueMap = {
+                              ...prev,
+                              [key]: nextEntry,
+                            };
+
+                            if (selectedTemplatePreset) {
+                              try {
+                                const configString = applyTemplateValuesToConfigString(
+                                  selectedTemplatePreset.settingsConfig,
+                                  formData.settingsConfig,
+                                  nextValues
+                                );
+                                setFormData((prevForm) => ({
+                                  ...prevForm,
+                                  settingsConfig: configString,
+                                }));
+                                setSettingsConfigError(
+                                  validateSettingsConfig(configString)
+                                );
+                              } catch (err) {
+                                console.error("更新模板值失败:", err);
+                              }
+                            }
+
+                            return nextValues;
+                          });
+                        }}
+                        aria-label={config.label}
+                        autoComplete="off"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
