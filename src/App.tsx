@@ -1,106 +1,72 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Provider } from "./types";
-import { AppType } from "./lib/tauri-api";
+import { AppType } from "./lib/query";
+import { useProvidersQuery, useVSCodeSyncMutation } from "./lib/query";
 import ProviderList from "./components/ProviderList";
-import AddProviderModal from "./components/AddProviderModal";
-import EditProviderModal from "./components/EditProviderModal";
+import { AddProviderDialog } from "./components/AddProviderDialog";
+import { EditProviderDialog } from "./components/EditProviderDialog";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { AppSwitcher } from "./components/AppSwitcher";
-import SettingsModal from "./components/SettingsModal";
+import { SettingsDialog } from "./components/SettingsDialog";
+import {
+  Dialog,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { UpdateBadge } from "./components/UpdateBadge";
-import { Plus, Settings, Moon, Sun } from "lucide-react";
-import { buttonStyles } from "./lib/styles";
-import { useDarkMode } from "./hooks/useDarkMode";
-import { extractErrorMessage } from "./utils/errorUtils";
-import { applyProviderToVSCode } from "./utils/vscodeSettings";
-import { getCodexBaseUrl } from "./utils/providerConfigUtils";
+import { Plus, Settings } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ModeToggle } from "./components/mode-toggle";
 import { useVSCodeAutoSync } from "./hooks/useVSCodeAutoSync";
+import { useQueryClient } from "@tanstack/react-query";
+import tauriAPI from "./lib/tauri-api";
+import { Toaster } from "./components/ui/sonner";
 
 function App() {
   const { t } = useTranslation();
-  const { isDarkMode, toggleDarkMode } = useDarkMode();
   const { isAutoSyncEnabled } = useVSCodeAutoSync();
+  const queryClient = useQueryClient();
   const [activeApp, setActiveApp] = useState<AppType>("claude");
-  const [providers, setProviders] = useState<Record<string, Provider>>({});
-  const [currentProviderId, setCurrentProviderId] = useState<string>("");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(
     null
   );
-  const [notification, setNotification] = useState<{
-    message: string;
-    type: "success" | "error";
-  } | null>(null);
-  const [isNotificationVisible, setIsNotificationVisible] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     title: string;
     message: string;
     onConfirm: () => void;
   } | null>(null);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 设置通知的辅助函数
-  const showNotification = (
-    message: string,
-    type: "success" | "error",
-    duration = 3000
-  ) => {
-    // 清除之前的定时器
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
+  // Query hooks
+  const { data: providersData, isLoading, error } = useProvidersQuery(activeApp);
+  const vscodeSyncMutation = useVSCodeSyncMutation(activeApp);
 
-    // 立即显示通知
-    setNotification({ message, type });
-    setIsNotificationVisible(true);
+  const providers: Record<string, Provider> = providersData?.providers || Object.create(null);
+  const currentProviderId = (providersData?.currentProviderId as string) || "";
 
-    // 设置淡出定时器
-    timeoutRef.current = setTimeout(() => {
-      setIsNotificationVisible(false);
-      // 等待淡出动画完成后清除通知
-      setTimeout(() => {
-        setNotification(null);
-        timeoutRef.current = null;
-      }, 300); // 与CSS动画时间匹配
-    }, duration);
-  };
-
-  // 加载供应商列表
-  useEffect(() => {
-    loadProviders();
-  }, [activeApp]); // 当切换应用时重新加载
-
-  // 清理定时器
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
+  
+  
   // 监听托盘切换事件（包括菜单切换）
   useEffect(() => {
     let unlisten: (() => void) | null = null;
 
     const setupListener = async () => {
       try {
-        unlisten = await window.api.onProviderSwitched(async (data) => {
+        unlisten = await tauriAPI.onProviderSwitched(async (data) => {
           if (import.meta.env.DEV) {
             console.log(t("console.providerSwitchReceived"), data);
           }
 
           // 如果当前应用类型匹配，则重新加载数据
           if (data.appType === activeApp) {
-            await loadProviders();
+            await queryClient.invalidateQueries({ queryKey: ['providers', activeApp] });
           }
 
           // 若为 Codex 且开启自动同步，则静默同步到 VS Code（覆盖）
           if (data.appType === "codex" && isAutoSyncEnabled) {
-            await syncCodexToVSCode(data.providerId, true);
+            vscodeSyncMutation.mutate(data.providerId);
           }
         });
       } catch (error) {
@@ -118,169 +84,13 @@ function App() {
     };
   }, [activeApp, isAutoSyncEnabled]);
 
-  const loadProviders = async () => {
-    const loadedProviders = await window.api.getProviders(activeApp);
-    const currentId = await window.api.getCurrentProvider(activeApp);
-    setProviders(loadedProviders);
-    setCurrentProviderId(currentId);
-
-    // 如果供应商列表为空，尝试自动从 live 导入一条默认供应商
-    if (Object.keys(loadedProviders).length === 0) {
-      await handleAutoImportDefault();
-    }
+  
+  const handleEditProvider = (providerId: string) => {
+    setEditingProviderId(providerId);
   };
 
-  // 生成唯一ID
-  const generateId = () => {
-    return crypto.randomUUID();
-  };
-
-  const handleAddProvider = async (provider: Omit<Provider, "id">) => {
-    const newProvider: Provider = {
-      ...provider,
-      id: generateId(),
-      createdAt: Date.now(), // 添加创建时间戳
-    };
-    await window.api.addProvider(newProvider, activeApp);
-    await loadProviders();
-    setIsAddModalOpen(false);
-    // 更新托盘菜单
-    await window.api.updateTrayMenu();
-  };
-
-  const handleEditProvider = async (provider: Provider) => {
-    try {
-      await window.api.updateProvider(provider, activeApp);
-      await loadProviders();
-      setEditingProviderId(null);
-      // 显示编辑成功提示
-      showNotification(t("notifications.providerSaved"), "success", 2000);
-      // 更新托盘菜单
-      await window.api.updateTrayMenu();
-    } catch (error) {
-      console.error(t("console.updateProviderFailed"), error);
-      setEditingProviderId(null);
-      const errorMessage = extractErrorMessage(error);
-      const message = errorMessage
-        ? t("notifications.saveFailed", { error: errorMessage })
-        : t("notifications.saveFailedGeneric");
-      showNotification(message, "error", errorMessage ? 6000 : 3000);
-    }
-  };
-
-  const handleDeleteProvider = async (id: string) => {
-    const provider = providers[id];
-    setConfirmDialog({
-      isOpen: true,
-      title: t("confirm.deleteProvider"),
-      message: t("confirm.deleteProviderMessage", { name: provider?.name }),
-      onConfirm: async () => {
-        await window.api.deleteProvider(id, activeApp);
-        await loadProviders();
-        setConfirmDialog(null);
-        showNotification(t("notifications.providerDeleted"), "success");
-        // 更新托盘菜单
-        await window.api.updateTrayMenu();
-      },
-    });
-  };
-
-  // 同步Codex供应商到VS Code设置（静默覆盖）
-  const syncCodexToVSCode = async (providerId: string, silent = false) => {
-    try {
-      const status = await window.api.getVSCodeSettingsStatus();
-      if (!status.exists) {
-        if (!silent) {
-          showNotification(
-            t("notifications.vscodeSettingsNotFound"),
-            "error",
-            3000
-          );
-        }
-        return;
-      }
-
-      const raw = await window.api.readVSCodeSettings();
-      const provider = providers[providerId];
-      const isOfficial = provider?.category === "official";
-
-      // 非官方供应商需要解析 base_url（使用公共工具函数）
-      let baseUrl: string | undefined = undefined;
-      if (!isOfficial) {
-        const parsed = getCodexBaseUrl(provider);
-        if (!parsed) {
-          if (!silent) {
-            showNotification(t("notifications.missingBaseUrl"), "error", 4000);
-          }
-          return;
-        }
-        baseUrl = parsed;
-      }
-
-      const updatedSettings = applyProviderToVSCode(raw, {
-        baseUrl,
-        isOfficial,
-      });
-      if (updatedSettings !== raw) {
-        await window.api.writeVSCodeSettings(updatedSettings);
-        if (!silent) {
-          showNotification(t("notifications.syncedToVSCode"), "success", 1500);
-        }
-      }
-
-      // 触发providers重新加载，以更新VS Code按钮状态
-      await loadProviders();
-    } catch (error: any) {
-      console.error(t("console.syncToVSCodeFailed"), error);
-      if (!silent) {
-        const errorMessage =
-          error?.message || t("notifications.syncVSCodeFailed");
-        showNotification(errorMessage, "error", 5000);
-      }
-    }
-  };
-
-  const handleSwitchProvider = async (id: string) => {
-    const success = await window.api.switchProvider(id, activeApp);
-    if (success) {
-      setCurrentProviderId(id);
-      // 显示重启提示
-      const appName = t(`apps.${activeApp}`);
-      showNotification(
-        t("notifications.switchSuccess", { appName }),
-        "success",
-        2000
-      );
-      // 更新托盘菜单
-      await window.api.updateTrayMenu();
-
-      // Codex: 切换供应商后，只在自动同步启用时同步到 VS Code
-      if (activeApp === "codex" && isAutoSyncEnabled) {
-        await syncCodexToVSCode(id, true); // silent模式，不显示通知
-      }
-    } else {
-      showNotification(t("notifications.switchFailed"), "error");
-    }
-  };
-
-  // 自动从 live 导入一条默认供应商（仅首次初始化时）
-  const handleAutoImportDefault = async () => {
-    try {
-      const result = await window.api.importCurrentConfigAsDefault(activeApp);
-
-      if (result.success) {
-        await loadProviders();
-        showNotification(t("notifications.autoImported"), "success", 3000);
-        // 更新托盘菜单
-        await window.api.updateTrayMenu();
-      }
-      // 如果导入失败（比如没有现有配置），静默处理，不显示错误
-    } catch (error) {
-      console.error(t("console.autoImportFailed"), error);
-      // 静默处理，不影响用户体验
-    }
-  };
-
+  
+  
   return (
     <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-950">
       {/* 顶部导航区域 - 固定高度 */}
@@ -296,39 +106,36 @@ function App() {
             >
               CC Switch
             </a>
-            <button
-              onClick={toggleDarkMode}
-              className={buttonStyles.icon}
-              title={
-                isDarkMode
-                  ? t("header.toggleLightMode")
-                  : t("header.toggleDarkMode")
-              }
-            >
-              {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
+            <ModeToggle />
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsSettingsOpen(true)}
-                className={buttonStyles.icon}
-                title={t("common.settings")}
-              >
-                <Settings size={18} />
-              </button>
-              <UpdateBadge onClick={() => setIsSettingsOpen(true)} />
+              <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+                <DialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title={t("common.settings")}
+                  >
+                    <Settings size={18} />
+                  </Button>
+                </DialogTrigger>
+                <SettingsDialog onOpenChange={setIsSettingsOpen} />
+              </Dialog>
+              <UpdateBadge onClick={() => {/* Settings dialog can be opened via settings button */}} />
             </div>
           </div>
 
           <div className="flex items-center gap-4">
             <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
 
-            <button
-              onClick={() => setIsAddModalOpen(true)}
-              className={`inline-flex items-center gap-2 ${buttonStyles.primary}`}
-            >
-              <Plus size={16} />
-              {t("header.addProvider")}
-            </button>
+            <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm">
+                  <Plus size={16} />
+                  {t("header.addProvider")}
+                </Button>
+              </DialogTrigger>
+              <AddProviderDialog appType={activeApp} onOpenChange={setIsAddModalOpen} />
+            </Dialog>
           </div>
         </div>
       </header>
@@ -338,46 +145,44 @@ function App() {
         <div className="pt-3 px-6 pb-6">
           <div className="max-w-4xl mx-auto">
             {/* 通知组件 - 相对于视窗定位 */}
-            {notification && (
-              <div
-                className={`fixed top-20 left-1/2 transform -translate-x-1/2 z-50 px-4 py-3 rounded-lg shadow-lg transition-all duration-300 ${
-                  notification.type === "error"
-                    ? "bg-red-500 text-white"
-                    : "bg-green-500 text-white"
-                } ${isNotificationVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"}`}
-              >
-                {notification.message}
+            {isLoading && (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                <span className="ml-3 text-gray-600 dark:text-gray-400">
+                  {t("common.loading")}
+                </span>
               </div>
             )}
 
-            <ProviderList
-              providers={providers}
-              currentProviderId={currentProviderId}
-              onSwitch={handleSwitchProvider}
-              onDelete={handleDeleteProvider}
-              onEdit={setEditingProviderId}
-              appType={activeApp}
-              onNotify={showNotification}
-            />
+            {error && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-6">
+                <p className="text-red-800 dark:text-red-200">
+                  {t("notifications.loadFailed")}
+                </p>
+              </div>
+            )}
+
+            
+            {!isLoading && !error && (
+              <ProviderList
+                providers={providers}
+                currentProviderId={currentProviderId}
+                onEdit={handleEditProvider}
+                appType={activeApp}
+              />
+            )}
           </div>
         </div>
       </main>
 
-      {isAddModalOpen && (
-        <AddProviderModal
-          appType={activeApp}
-          onAdd={handleAddProvider}
-          onClose={() => setIsAddModalOpen(false)}
-        />
-      )}
-
-      {editingProviderId && providers[editingProviderId] && (
-        <EditProviderModal
-          appType={activeApp}
-          provider={providers[editingProviderId]}
-          onSave={handleEditProvider}
-          onClose={() => setEditingProviderId(null)}
-        />
+      {editingProviderId && (
+        <Dialog open={!!editingProviderId} onOpenChange={(open) => !open && setEditingProviderId(null)}>
+          <EditProviderDialog
+            appType={activeApp}
+            providerId={editingProviderId}
+            onOpenChange={(open) => !open && setEditingProviderId(null)}
+          />
+        </Dialog>
       )}
 
       {confirmDialog && (
@@ -390,9 +195,7 @@ function App() {
         />
       )}
 
-      {isSettingsOpen && (
-        <SettingsModal onClose={() => setIsSettingsOpen(false)} />
-      )}
+      <Toaster />
     </div>
   );
 }

@@ -17,7 +17,9 @@
     "loading": "加载中...",
     "success": "成功",
     "error": "错误",
-    "unknown": "未知"
+    "unknown": "未知",
+    "switching": "切换中...",
+    "applying": "应用中..."
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
@@ -44,6 +46,7 @@
   "notifications": {
     "providerSaved": "供应商配置已保存",
     "providerDeleted": "供应商删除成功",
+    "providerSwitched": "供应商切换成功",
     "switchSuccess": "切换成功！请重启 {{appName}} 终端以生效",
     "switchFailed": "切换失败，请检查配置",
     "autoImported": "已从现有配置创建默认供应商",
