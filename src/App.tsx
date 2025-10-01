@@ -129,7 +129,7 @@ function App() {
 
             <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
               <DialogTrigger asChild>
-                <Button>
+                <Button size="sm">
                   <Plus size={16} />
                   {t("header.addProvider")}
                 </Button>
