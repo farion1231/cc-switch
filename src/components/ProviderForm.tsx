@@ -25,6 +25,10 @@ import ClaudeConfigEditor from "./ProviderForm/ClaudeConfigEditor";
 import CodexConfigEditor from "./ProviderForm/CodexConfigEditor";
 import KimiModelSelector from "./ProviderForm/KimiModelSelector";
 import { AlertCircle, Save } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 // 分类仅用于控制少量交互（如官方禁用 API Key），不显示介绍组件
 
 const COMMON_CONFIG_STORAGE_KEY = "cc-switch:common-config-snippet";
@@ -948,15 +952,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       <div className="flex-1 overflow-auto p-6 space-y-6">
 
             {error && (
-              <div className="flex items-center gap-3 p-4 bg-red-100 dark:bg-red-900/20 border border-red-500/20 dark:border-red-500/30 rounded-lg">
-                <AlertCircle
-                  size={20}
-                  className="text-red-500 dark:text-red-400 flex-shrink-0"
-                />
-                <p className="text-red-500 dark:text-red-400 text-sm font-medium">
-                  {error}
-                </p>
-              </div>
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             )}
 
             {showPresets && !isCodex && (
@@ -994,14 +993,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             )}
 
             <div className="space-y-2">
-              <label
-                htmlFor="name"
-                className="block text-sm font-medium text-gray-900 dark:text-gray-100"
-              >
+              <Label htmlFor="name">
                 供应商名称 *
-              </label>
-              <input
-                type="text"
+              </Label>
+              <Input
                 id="name"
                 {...register("name", {
                   validate: validateName
@@ -1009,27 +1004,19 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                 placeholder="例如：Anthropic 官方"
                 required
                 autoComplete="off"
-                className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 transition-colors ${
-                  errors.name
-                    ? "border-red-500 dark:border-red-400 focus:ring-red-500/20 dark:focus:ring-red-400/20 focus:border-red-500 dark:focus:border-red-400"
-                    : "border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 focus:border-blue-500 dark:focus:border-blue-400"
-                }`}
               />
               {errors.name && (
-                <em className="text-red-500 dark:text-red-400 text-sm">
+                <p className="text-sm font-medium text-destructive">
                   {errors.name.message}
-                </em>
+                </p>
               )}
             </div>
 
             <div className="space-y-2">
-              <label
-                htmlFor="websiteUrl"
-                className="block text-sm font-medium text-gray-900 dark:text-gray-100"
-              >
+              <Label htmlFor="websiteUrl">
                 官网地址
-              </label>
-              <input
+              </Label>
+              <Input
                 type="url"
                 id="websiteUrl"
                 {...register("websiteUrl", {
@@ -1037,16 +1024,11 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                 })}
                 placeholder="https://example.com（可选）"
                 autoComplete="off"
-                className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 transition-colors ${
-                  errors.websiteUrl
-                    ? "border-red-500 dark:border-red-400 focus:ring-red-500/20 dark:focus:ring-red-400/20 focus:border-red-500 dark:focus:border-red-400"
-                    : "border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 focus:border-blue-500 dark:focus:border-blue-400"
-                }`}
               />
               {errors.websiteUrl && (
-                <em className="text-red-500 dark:text-red-400 text-sm">
+                <p className="text-sm font-medium text-destructive">
                   {errors.websiteUrl.message}
-                </em>
+                </p>
               )}
             </div>
 
@@ -1091,20 +1073,16 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             {/* 基础 URL 输入框 - 仅在自定义模式下显示 */}
             {!isCodex && showBaseUrlInput && (
               <div className="space-y-2">
-                <label
-                  htmlFor="baseUrl"
-                  className="block text-sm font-medium text-gray-900 dark:text-gray-100"
-                >
+                <Label htmlFor="baseUrl">
                   请求地址
-                </label>
-                <input
+                </Label>
+                <Input
                   type="url"
                   id="baseUrl"
                   value={baseUrl}
                   onChange={(e) => handleBaseUrlChange(e.target.value)}
                   placeholder="https://your-api-endpoint.com"
                   autoComplete="off"
-                  className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 focus:border-blue-500 dark:focus:border-blue-400 transition-colors"
                 />
                 <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
                   <p className="text-xs text-amber-600 dark:text-amber-400">
@@ -1202,14 +1180,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <label
-                          htmlFor="anthropicModel"
-                          className="block text-sm font-medium text-gray-900 dark:text-gray-100"
-                        >
+                        <Label htmlFor="anthropicModel">
                           主模型 (可选)
-                        </label>
-                        <input
-                          type="text"
+                        </Label>
+                        <Input
                           id="anthropicModel"
                           value={claudeModel}
                           onChange={(e) =>
@@ -1217,19 +1191,14 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                           }
                           placeholder="例如: GLM-4.5"
                           autoComplete="off"
-                          className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 focus:border-blue-500 dark:focus:border-blue-400 transition-colors"
                         />
                       </div>
 
                       <div className="space-y-2">
-                        <label
-                          htmlFor="anthropicSmallFastModel"
-                          className="block text-sm font-medium text-gray-900 dark:text-gray-100"
-                        >
+                        <Label htmlFor="anthropicSmallFastModel">
                           快速模型 (可选)
-                        </label>
-                        <input
-                          type="text"
+                        </Label>
+                        <Input
                           id="anthropicSmallFastModel"
                           value={claudeSmallFastModel}
                           onChange={(e) =>
@@ -1240,7 +1209,6 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                           }
                           placeholder="例如: GLM-4.5-Air"
                           autoComplete="off"
-                          className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 focus:border-blue-500 dark:focus:border-blue-400 transition-colors"
                         />
                       </div>
                     </div>
@@ -1281,22 +1249,21 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
       {/* Footer */}
       {showFooter && (
-        <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800">
-          <button
+        <div className="flex items-center justify-end gap-3 p-6 border-t border-border bg-muted/50">
+          <Button
             type="button"
+            variant="outline"
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-white dark:hover:bg-gray-700 rounded-lg transition-colors"
           >
             取消
-          </button>
-          <button
+          </Button>
+          <Button
             type="submit"
             disabled={isSubmitting}
-            className="px-4 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center gap-2"
           >
             <Save className="w-4 h-4" />
             {isSubmitting ? "..." : submitText}
-          </button>
+          </Button>
         </div>
       )}
     </form>

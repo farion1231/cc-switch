@@ -1,5 +1,7 @@
 import React from "react";
 import { Zap } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { ProviderCategory } from "../../types";
 import { ClaudeIcon, CodexIcon } from "../BrandIcons";
 
@@ -28,24 +30,31 @@ const PresetSelector: React.FC<PresetSelectorProps> = ({
   customLabel = "自定义",
   renderCustomDescription,
 }) => {
-  const getButtonClass = (index: number, preset?: Preset) => {
+  const getButtonVariant = (index: number) => {
     const isSelected = selectedIndex === index;
-    const baseClass =
-      "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors";
 
-    if (isSelected) {
-      if (preset?.isOfficial || preset?.category === "official") {
-        // Codex 官方使用黑色背景
-        if (preset?.name.includes("Codex")) {
-          return `${baseClass} bg-gray-900 text-white`;
-        }
-        // Claude 官方使用品牌色背景
-        return `${baseClass} bg-[#D97757] text-white`;
-      }
-      return `${baseClass} bg-blue-500 text-white`;
+    if (!isSelected) {
+      return "outline";
     }
 
-    return `${baseClass} bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700`;
+    // For selected items, we'll use custom styling via className
+    // to maintain the brand colors for official providers
+    return "default";
+  };
+
+  const getButtonClass = (index: number, preset?: Preset) => {
+    const isSelected = selectedIndex === index;
+
+    if (isSelected && (preset?.isOfficial || preset?.category === "official")) {
+      // Codex 官方使用黑色背景
+      if (preset?.name.includes("Codex")) {
+        return "bg-gray-900 text-white hover:bg-gray-800 border-gray-900";
+      }
+      // Claude 官方使用品牌色背景
+      return "bg-[#D97757] text-white hover:bg-[#B86548] border-[#D97757]";
+    }
+
+    return "";
   };
 
   const getDescription = () => {
@@ -70,21 +79,23 @@ const PresetSelector: React.FC<PresetSelectorProps> = ({
   return (
     <div className="space-y-4">
       <div>
-        <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
+        <Label className="text-base font-semibold mb-3">
           {title}
-        </label>
+        </Label>
         <div className="flex flex-wrap gap-2">
-          <button
+          <Button
             type="button"
-            className={`${getButtonClass(-1)} ${selectedIndex === -1 ? "" : ""}`}
+            variant={getButtonVariant(-1)}
+            className={getButtonClass(-1)}
             onClick={onCustomClick}
           >
             {customLabel}
-          </button>
+          </Button>
           {presets.map((preset, index) => (
-            <button
+            <Button
               key={index}
               type="button"
+              variant={getButtonVariant(index)}
               className={getButtonClass(index, preset)}
               onClick={() => onSelectPreset(index)}
             >
@@ -100,12 +111,12 @@ const PresetSelector: React.FC<PresetSelectorProps> = ({
                 </>
               )}
               {preset.name}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
       {getDescription() && (
-        <div className="text-sm text-gray-500 dark:text-gray-400">
+        <div className="text-sm text-muted-foreground">
           {getDescription()}
         </div>
       )}

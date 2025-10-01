@@ -4,6 +4,7 @@ import { Provider } from "../types";
 import { AppType } from "../lib/query";
 import { useUpdateProviderMutation, useProvidersQuery } from "../lib/query";
 import ProviderForm from "./ProviderForm";
+import { Button } from "@/components/ui/button";
 import {
   DialogContent,
   DialogHeader,
@@ -76,21 +77,17 @@ export function EditProviderDialog({
       </div>
       <DialogFooter>
         <DialogClose asChild>
-          <button
-            type="button"
-            className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-white dark:hover:bg-gray-700 rounded-lg transition-colors"
-          >
+          <Button variant="outline" type="button">
             {t("common.cancel")}
-          </button>
+          </Button>
         </DialogClose>
-        <button
+        <Button
           type="submit"
           form="provider-form"
           disabled={updateProviderMutation.isPending}
-          className="px-4 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center gap-2"
         >
           {t("common.save")}
-        </button>
+        </Button>
       </DialogFooter>
     </DialogContent>
   );

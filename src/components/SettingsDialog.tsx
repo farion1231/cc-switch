@@ -22,6 +22,17 @@ import {
 } from "../lib/query";
 import type { Settings } from "../types";
 import type { AppType } from "../lib/query";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   DialogContent,
   DialogHeader,
@@ -304,104 +315,92 @@ export function SettingsDialog({ onOpenChange }: SettingsDialogProps) {
           <div className="space-y-6 overflow-y-auto flex-1 py-4">
             {/* 语言设置 */}
             <div>
-              <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
+              <Label className="text-sm font-medium mb-3">
                 {t("settings.language")}
-              </h3>
-              <div className="inline-flex p-0.5 bg-gray-100 dark:bg-gray-800 rounded-lg">
-                <button
-                  type="button"
-                  onClick={() => handleLanguageChange("zh")}
-                  className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all min-w-[80px] ${
-                    (settings.language ?? "zh") === "zh"
-                      ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm"
-                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200"
-                  }`}
-                >
-                  {t("settings.languageOptionChinese")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleLanguageChange("en")}
-                  className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all min-w-[80px] ${
-                    settings.language === "en"
-                      ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm"
-                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200"
-                  }`}
-                >
-                  {t("settings.languageOptionEnglish")}
-                </button>
-              </div>
+              </Label>
+              <Select
+                value={settings.language ?? "zh"}
+                onValueChange={(value: "zh" | "en") => handleLanguageChange(value)}
+              >
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder={t("settings.selectLanguage")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="zh">
+                    {t("settings.languageOptionChinese")}
+                  </SelectItem>
+                  <SelectItem value="en">
+                    {t("settings.languageOptionEnglish")}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             {/* 窗口行为设置 */}
             <div>
-              <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
+              <Label className="text-sm font-medium mb-3">
                 {t("settings.windowBehavior")}
-              </h3>
+              </Label>
               <div className="space-y-3">
-                <label className="flex items-center justify-between">
-                  <div>
-                    <span className="text-sm text-gray-900 dark:text-gray-100">
+                <div className="flex items-center justify-between space-x-2">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-normal">
                       {t("settings.minimizeToTray")}
-                    </span>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
                       {t("settings.minimizeToTrayDescription")}
                     </p>
                   </div>
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={settings.minimizeToTrayOnClose}
-                    onChange={(e) =>
+                    onCheckedChange={(checked) =>
                       setSettings((prev) => ({
                         ...prev,
-                        minimizeToTrayOnClose: e.target.checked,
+                        minimizeToTrayOnClose: checked as boolean,
                       }))
                     }
-                    className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500/20"
                   />
-                </label>
+                </div>
               </div>
             </div>
 
             {/* 配置文件位置 */}
             <div>
-              <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
+              <Label className="text-sm font-medium mb-3">
                 {t("settings.configFileLocation")}
-              </h3>
+              </Label>
               <div className="flex items-center gap-2">
-                <div className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
-                  <span className="text-xs font-mono text-gray-500 dark:text-gray-400">
+                <div className="flex-1 px-3 py-2 bg-muted rounded-lg">
+                  <span className="text-xs font-mono text-muted-foreground">
                     {configPath || t("common.unknown")}
                   </span>
                 </div>
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={handleOpenConfigFolder}
-                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
                   title={t("settings.openFolder")}
                 >
-                  <FolderOpen
-                    size={18}
-                    className="text-gray-500 dark:text-gray-400"
-                  />
-                </button>
+                  <FolderOpen size={18} />
+                </Button>
               </div>
             </div>
 
             {/* 配置目录覆盖 */}
             <div>
-              <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+              <Label className="text-sm font-medium mb-2">
                 {t("settings.configDirectoryOverride")}
-              </h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 leading-relaxed">
+              </Label>
+              <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
                 {t("settings.configDirectoryDescription")}
               </p>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  <Label className="text-xs font-medium mb-1">
                     {t("settings.claudeConfigDir")}
-                  </label>
+                  </Label>
                   <div className="flex gap-2">
-                    <input
+                    <Input
                       type="text"
                       value={settings.claudeConfigDir ?? claudeConfigDir ?? ""}
                       onChange={(e) =>
@@ -411,33 +410,35 @@ export function SettingsDialog({ onOpenChange }: SettingsDialogProps) {
                         })
                       }
                       placeholder={t("settings.browsePlaceholderClaude")}
-                      className="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                      className="flex-1 text-xs font-mono"
                     />
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       onClick={() => handleBrowseConfigDir("claude")}
-                      className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
                       title={t("settings.browseDirectory")}
                     >
                       <FolderSearch size={16} />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       onClick={() => handleResetConfigDir("claude")}
-                      className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
                       title={t("settings.resetDefault")}
                     >
                       <Undo2 size={16} />
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  <Label className="text-xs font-medium mb-1">
                     {t("settings.codexConfigDir")}
-                  </label>
+                  </Label>
                   <div className="flex gap-2">
-                    <input
+                    <Input
                       type="text"
                       value={settings.codexConfigDir ?? codexConfigDir ?? ""}
                       onChange={(e) =>
@@ -447,24 +448,26 @@ export function SettingsDialog({ onOpenChange }: SettingsDialogProps) {
                         })
                       }
                       placeholder={t("settings.browsePlaceholderCodex")}
-                      className="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                      className="flex-1 text-xs font-mono"
                     />
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       onClick={() => handleBrowseConfigDir("codex")}
-                      className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
                       title={t("settings.browseDirectory")}
                     >
                       <FolderSearch size={16} />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       onClick={() => handleResetConfigDir("codex")}
-                      className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
                       title={t("settings.resetDefault")}
                     >
                       <Undo2 size={16} />
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -472,75 +475,68 @@ export function SettingsDialog({ onOpenChange }: SettingsDialogProps) {
 
             {/* 关于 */}
             <div>
-              <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
+              <Label className="text-sm font-medium mb-3">
                 {t("common.about")}
-              </h3>
-              <div className="p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
+              </Label>
+              <div className="p-4 bg-muted rounded-lg">
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="text-sm">
-                      <p className="font-medium text-gray-900 dark:text-gray-100">
+                      <p className="font-medium">
                         CC Switch
                       </p>
-                      <p className="mt-1 text-gray-500 dark:text-gray-400">
+                      <p className="mt-1 text-muted-foreground">
                         {t("common.version")} {version || t("common.unknown")}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={handleOpenReleaseNotes}
-                      className="px-2 py-1 text-xs font-medium text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 rounded-lg hover:bg-blue-500/10 transition-colors"
                       title={
                         hasUpdate
                           ? t("settings.viewReleaseNotes")
                           : t("settings.viewCurrentReleaseNotes")
                       }
                     >
-                      <span className="inline-flex items-center gap-1">
-                        <ExternalLink size={12} />
-                        {t("settings.releaseNotes")}
-                      </span>
-                    </button>
-                    <button
+                      <ExternalLink size={12} />
+                      {t("settings.releaseNotes")}
+                    </Button>
+                    <Button
+                      variant={hasUpdate ? "default" : showUpToDate ? "secondary" : "outline"}
+                      size="sm"
                       onClick={handleCheckUpdate}
                       disabled={isCheckingUpdate || isDownloading}
-                      className={`min-w-[88px] px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
-                        isCheckingUpdate || isDownloading
-                          ? "bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed border border-transparent"
-                          : hasUpdate
-                            ? "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white border border-transparent"
-                            : showUpToDate
-                              ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800"
-                              : "bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-blue-500 dark:text-blue-400 border border-gray-200 dark:border-gray-600"
-                      }`}
+                      className="min-w-[88px]"
                     >
                       {isDownloading ? (
-                        <span className="flex items-center gap-1">
+                        <>
                           <Download size={12} className="animate-pulse" />
                           {t("settings.updating")}
-                        </span>
+                        </>
                       ) : isCheckingUpdate ? (
-                        <span className="flex items-center gap-1">
+                        <>
                           <RefreshCw size={12} className="animate-spin" />
                           {t("settings.checking")}
-                        </span>
+                        </>
                       ) : hasUpdate ? (
-                        <span className="flex items-center gap-1">
+                        <>
                           <Download size={12} />
                           {t("settings.updateTo", {
                             version: updateInfo?.availableVersion ?? "",
                           })}
-                        </span>
+                        </>
                       ) : showUpToDate ? (
-                        <span className="flex items-center gap-1">
+                        <>
                           <Check size={12} />
                           {t("settings.upToDate")}
-                        </span>
+                        </>
                       ) : (
                         t("settings.checkForUpdates")
                       )}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -551,20 +547,14 @@ export function SettingsDialog({ onOpenChange }: SettingsDialogProps) {
         {/* 底部按钮 */}
         <DialogFooter className="pt-4">
           <DialogClose asChild>
-            <button
-              onClick={handleCancel}
-              className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-            >
+            <Button variant="outline" onClick={handleCancel}>
               {t("common.cancel")}
-            </button>
+            </Button>
           </DialogClose>
-          <button
-            onClick={saveSettings}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 rounded-lg transition-colors flex items-center gap-2"
-          >
+          <Button onClick={saveSettings}>
             <Save size={16} />
             {t("common.save")}
-          </button>
+          </Button>
         </DialogFooter>
       </DialogContent>
   );

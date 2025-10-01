@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { UpdateBadge } from "./components/UpdateBadge";
 import { Plus, Settings } from "lucide-react";
-import { buttonStyles } from "./lib/styles";
+import { Button } from "@/components/ui/button";
 import { ModeToggle } from "./components/mode-toggle";
 import { useVSCodeAutoSync } from "./hooks/useVSCodeAutoSync";
 import { useQueryClient } from "@tanstack/react-query";
@@ -110,12 +110,13 @@ function App() {
             <div className="flex items-center gap-2">
               <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
                 <DialogTrigger asChild>
-                  <button
-                    className={buttonStyles.icon}
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     title={t("common.settings")}
                   >
                     <Settings size={18} />
-                  </button>
+                  </Button>
                 </DialogTrigger>
                 <SettingsDialog onOpenChange={setIsSettingsOpen} />
               </Dialog>
@@ -128,12 +129,10 @@ function App() {
 
             <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
               <DialogTrigger asChild>
-                <button
-                  className={`inline-flex items-center gap-2 ${buttonStyles.primary}`}
-                >
+                <Button>
                   <Plus size={16} />
                   {t("header.addProvider")}
-                </button>
+                </Button>
               </DialogTrigger>
               <AddProviderDialog appType={activeApp} onOpenChange={setIsAddModalOpen} />
             </Dialog>
