@@ -1,21 +1,22 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
 import { Provider } from "./types";
 import { AppType } from "./lib/query";
-import { useProvidersQuery, useAddProviderMutation, useUpdateProviderMutation, useVSCodeSyncMutation } from "./lib/query";
+import { useProvidersQuery, useVSCodeSyncMutation } from "./lib/query";
 import ProviderList from "./components/ProviderList";
-import AddProviderModal from "./components/AddProviderModal";
-import EditProviderModal from "./components/EditProviderModal";
+import { AddProviderDialog } from "./components/AddProviderDialog";
+import { EditProviderDialog } from "./components/EditProviderDialog";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { AppSwitcher } from "./components/AppSwitcher";
-import SettingsModal from "./components/SettingsModal";
+import { SettingsDialog } from "./components/SettingsDialog";
+import {
+  Dialog,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { UpdateBadge } from "./components/UpdateBadge";
 import { Plus, Settings } from "lucide-react";
 import { buttonStyles } from "./lib/styles";
 import { ModeToggle } from "./components/mode-toggle";
-import { useTheme } from "./components/theme-provider";
-import { extractErrorMessage } from "./utils/errorUtils";
 import { useVSCodeAutoSync } from "./hooks/useVSCodeAutoSync";
 import { useQueryClient } from "@tanstack/react-query";
 import tauriAPI from "./lib/tauri-api";
@@ -23,11 +24,11 @@ import { Toaster } from "./components/ui/sonner";
 
 function App() {
   const { t } = useTranslation();
-  const { theme } = useTheme();
   const { isAutoSyncEnabled } = useVSCodeAutoSync();
   const queryClient = useQueryClient();
   const [activeApp, setActiveApp] = useState<AppType>("claude");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(
     null
   );
@@ -37,12 +38,9 @@ function App() {
     message: string;
     onConfirm: () => void;
   } | null>(null);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Query hooks
   const { data: providersData, isLoading, error } = useProvidersQuery(activeApp);
-  const addProviderMutation = useAddProviderMutation(activeApp);
-  const updateProviderMutation = useUpdateProviderMutation(activeApp);
   const vscodeSyncMutation = useVSCodeSyncMutation(activeApp);
 
   const providers: Record<string, Provider> = providersData?.providers || Object.create(null);
@@ -87,39 +85,8 @@ function App() {
   }, [activeApp, isAutoSyncEnabled]);
 
   
-  const handleAddProvider = (provider: Omit<Provider, "id">) => {
-    addProviderMutation.mutate(provider, {
-      onSuccess: () => {
-        setIsAddModalOpen(false);
-        toast.success(t("notifications.providerAdded"));
-      },
-      onError: (error) => {
-        console.error(t("console.addProviderFailed"), error);
-        const errorMessage = extractErrorMessage(error);
-        const message = errorMessage
-          ? t("notifications.addFailed", { error: errorMessage })
-          : t("notifications.addFailedGeneric");
-        toast.error(message);
-      }
-    });
-  };
-
-  const handleEditProvider = (provider: Provider) => {
-    updateProviderMutation.mutate(provider, {
-      onSuccess: () => {
-        setEditingProviderId(null);
-        toast.success(t("notifications.providerSaved"));
-      },
-      onError: (error) => {
-        console.error(t("console.updateProviderFailed"), error);
-        setEditingProviderId(null);
-        const errorMessage = extractErrorMessage(error);
-        const message = errorMessage
-          ? t("notifications.saveFailed", { error: errorMessage })
-          : t("notifications.saveFailedGeneric");
-        toast.error(message);
-      }
-    });
+  const handleEditProvider = (providerId: string) => {
+    setEditingProviderId(providerId);
   };
 
   
@@ -141,27 +108,35 @@ function App() {
             </a>
             <ModeToggle />
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsSettingsOpen(true)}
-                className={buttonStyles.icon}
-                title={t("common.settings")}
-              >
-                <Settings size={18} />
-              </button>
-              <UpdateBadge onClick={() => setIsSettingsOpen(true)} />
+              <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+                <DialogTrigger asChild>
+                  <button
+                    className={buttonStyles.icon}
+                    title={t("common.settings")}
+                  >
+                    <Settings size={18} />
+                  </button>
+                </DialogTrigger>
+                <SettingsDialog onOpenChange={setIsSettingsOpen} />
+              </Dialog>
+              <UpdateBadge onClick={() => {/* Settings dialog can be opened via settings button */}} />
             </div>
           </div>
 
           <div className="flex items-center gap-4">
             <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
 
-            <button
-              onClick={() => setIsAddModalOpen(true)}
-              className={`inline-flex items-center gap-2 ${buttonStyles.primary}`}
-            >
-              <Plus size={16} />
-              {t("header.addProvider")}
-            </button>
+            <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
+              <DialogTrigger asChild>
+                <button
+                  className={`inline-flex items-center gap-2 ${buttonStyles.primary}`}
+                >
+                  <Plus size={16} />
+                  {t("header.addProvider")}
+                </button>
+              </DialogTrigger>
+              <AddProviderDialog appType={activeApp} onOpenChange={setIsAddModalOpen} />
+            </Dialog>
           </div>
         </div>
       </header>
@@ -193,7 +168,7 @@ function App() {
               <ProviderList
                 providers={providers}
                 currentProviderId={currentProviderId}
-                onEdit={setEditingProviderId}
+                onEdit={handleEditProvider}
                 appType={activeApp}
               />
             )}
@@ -201,21 +176,14 @@ function App() {
         </div>
       </main>
 
-      {isAddModalOpen && (
-        <AddProviderModal
-          appType={activeApp}
-          onAdd={handleAddProvider}
-          onClose={() => setIsAddModalOpen(false)}
-        />
-      )}
-
-      {editingProviderId && providers[editingProviderId] && (
-        <EditProviderModal
-          appType={activeApp}
-          provider={providers[editingProviderId]}
-          onSave={handleEditProvider}
-          onClose={() => setEditingProviderId(null)}
-        />
+      {editingProviderId && (
+        <Dialog open={!!editingProviderId} onOpenChange={(open) => !open && setEditingProviderId(null)}>
+          <EditProviderDialog
+            appType={activeApp}
+            providerId={editingProviderId}
+            onOpenChange={(open) => !open && setEditingProviderId(null)}
+          />
+        </Dialog>
       )}
 
       {confirmDialog && (
@@ -226,10 +194,6 @@ function App() {
           onConfirm={confirmDialog.onConfirm}
           onCancel={() => setConfirmDialog(null)}
         />
-      )}
-
-      {isSettingsOpen && (
-        <SettingsModal onClose={() => setIsSettingsOpen(false)} />
       )}
 
       <Toaster />

@@ -24,8 +24,7 @@ import ApiKeyInput from "./ProviderForm/ApiKeyInput";
 import ClaudeConfigEditor from "./ProviderForm/ClaudeConfigEditor";
 import CodexConfigEditor from "./ProviderForm/CodexConfigEditor";
 import KimiModelSelector from "./ProviderForm/KimiModelSelector";
-import { X, AlertCircle, Save } from "lucide-react";
-import { isLinux } from "../lib/platform";
+import { AlertCircle, Save } from "lucide-react";
 // 分类仅用于控制少量交互（如官方禁用 API Key），不显示介绍组件
 
 const COMMON_CONFIG_STORAGE_KEY = "cc-switch:common-config-snippet";
@@ -64,7 +63,6 @@ const validateSettingsConfig = (value: string) => {
 
 interface ProviderFormProps {
   appType?: AppType;
-  title: string;
   submitText: string;
   initialData?: Provider;
   showPresets?: boolean;
@@ -74,7 +72,6 @@ interface ProviderFormProps {
 
 const ProviderForm: React.FC<ProviderFormProps> = ({
   appType = "claude",
-  title,
   submitText,
   initialData,
   showPresets = false,
@@ -944,51 +941,9 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     if (parsedKey) setApiKey(parsedKey);
   }, [initialData]);
 
-  // 支持按下 ESC 关闭弹窗
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      {/* Backdrop */}
-      <div
-        className={`absolute inset-0 bg-black/50 dark:bg-black/70${
-          isLinux() ? "" : " backdrop-blur-sm"
-        }`}
-      />
-
-      {/* Modal */}
-      <div className="relative bg-white dark:bg-gray-900 rounded-xl shadow-lg max-w-3xl w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-800">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-            {title}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md transition-colors"
-            aria-label="关闭"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit(handleFormSubmit)} className="flex flex-col flex-1 min-h-0">
-          <div className="flex-1 overflow-auto p-6 space-y-6">
+    <form onSubmit={handleSubmit(handleFormSubmit)} className="flex flex-col flex-1 min-h-0">
+      <div className="flex-1 overflow-auto p-6 space-y-6">
 
             {error && (
               <div className="flex items-center gap-3 p-4 bg-red-100 dark:bg-red-900/20 border border-red-500/20 dark:border-red-500/30 rounded-lg">
@@ -1322,27 +1277,25 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             )}
           </div>
 
-          {/* Footer */}
-          <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-white dark:hover:bg-gray-700 rounded-lg transition-colors"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-4 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center gap-2"
-            >
-              <Save className="w-4 h-4" />
-              {isSubmitting ? "..." : submitText}
-            </button>
-          </div>
-        </form>
+      {/* Footer */}
+      <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800">
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-white dark:hover:bg-gray-700 rounded-lg transition-colors"
+        >
+          取消
+        </button>
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="px-4 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center gap-2"
+        >
+          <Save className="w-4 h-4" />
+          {isSubmitting ? "..." : submitText}
+        </button>
       </div>
-    </div>
+    </form>
   );
 };
 

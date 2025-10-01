@@ -13,7 +13,6 @@ import {
   useDeleteProviderMutation,
   useVSCodeAppliedQuery
 } from "../lib/query";
-import { getCodexBaseUrl } from "../utils/providerConfigUtils";
 import { useVSCodeAutoSync } from "../hooks/useVSCodeAutoSync";
 // 不再在列表中显示分类徽章，避免造成困惑
 
