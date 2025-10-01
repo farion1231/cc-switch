@@ -68,6 +68,7 @@ interface ProviderFormProps {
   showPresets?: boolean;
   onSubmit: (data: Omit<Provider, "id">) => void;
   onClose: () => void;
+  showFooter?: boolean;
 }
 
 const ProviderForm: React.FC<ProviderFormProps> = ({
@@ -77,6 +78,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   showPresets = false,
   onSubmit,
   onClose,
+  showFooter = true,
 }) => {
   // 对于 Codex，需要分离 auth 和 config
   const isCodex = appType === "codex";
@@ -942,7 +944,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   }, [initialData]);
 
   return (
-    <form onSubmit={handleSubmit(handleFormSubmit)} className="flex flex-col flex-1 min-h-0">
+    <form id="provider-form" onSubmit={handleSubmit(handleFormSubmit)} className="flex flex-col flex-1 min-h-0">
       <div className="flex-1 overflow-auto p-6 space-y-6">
 
             {error && (
@@ -1278,23 +1280,25 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
           </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800">
-        <button
-          type="button"
-          onClick={onClose}
-          className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-white dark:hover:bg-gray-700 rounded-lg transition-colors"
-        >
-          取消
-        </button>
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="px-4 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center gap-2"
-        >
-          <Save className="w-4 h-4" />
-          {isSubmitting ? "..." : submitText}
-        </button>
-      </div>
+      {showFooter && (
+        <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-white dark:hover:bg-gray-700 rounded-lg transition-colors"
+          >
+            取消
+          </button>
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="px-4 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center gap-2"
+          >
+            <Save className="w-4 h-4" />
+            {isSubmitting ? "..." : submitText}
+          </button>
+        </div>
+      )}
     </form>
   );
 };

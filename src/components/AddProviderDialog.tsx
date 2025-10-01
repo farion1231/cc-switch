@@ -8,6 +8,8 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
+  DialogClose,
 } from "@/components/ui/dialog";
 import { extractErrorMessage } from "../utils/errorUtils";
 
@@ -52,8 +54,27 @@ export function AddProviderDialog({
           showPresets={true}
           onSubmit={handleAddProvider}
           onClose={() => onOpenChange(false)}
+          showFooter={false}
         />
       </div>
+      <DialogFooter>
+        <DialogClose asChild>
+          <button
+            type="button"
+            className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-white dark:hover:bg-gray-700 rounded-lg transition-colors"
+          >
+            {t("common.cancel")}
+          </button>
+        </DialogClose>
+        <button
+          type="submit"
+          form="provider-form"
+          disabled={addProviderMutation.isPending}
+          className="px-4 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center gap-2"
+        >
+          {t("common.add")}
+        </button>
+      </DialogFooter>
     </DialogContent>
   );
 }

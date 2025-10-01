@@ -6,6 +6,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
@@ -48,14 +49,14 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center justify-end gap-3 pt-4 border-t">
+        <DialogFooter>
           <Button variant="outline" onClick={onCancel} autoFocus>
             {cancelText || t("common.cancel")}
           </Button>
           <Button variant="destructive" onClick={onConfirm}>
             {confirmText || t("common.confirm")}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

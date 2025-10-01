@@ -27,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogClose,
+  DialogFooter,
 } from "@/components/ui/dialog";
 
 interface SettingsDialogProps {
@@ -548,7 +549,7 @@ export function SettingsDialog({ onOpenChange }: SettingsDialogProps) {
         )}
 
         {/* 底部按钮 */}
-        <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-800">
+        <DialogFooter className="pt-4">
           <DialogClose asChild>
             <button
               onClick={handleCancel}
@@ -564,7 +565,7 @@ export function SettingsDialog({ onOpenChange }: SettingsDialogProps) {
             <Save size={16} />
             {t("common.save")}
           </button>
-        </div>
+        </DialogFooter>
       </DialogContent>
   );
 }
