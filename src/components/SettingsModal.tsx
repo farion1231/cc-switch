@@ -12,6 +12,7 @@ import {
   Save,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
+import { ImportProgressModal } from "./ImportProgressModal";
 import { homeDir, join } from "@tauri-apps/api/path";
 import "../lib/tauri-api";
 import { relaunchApp } from "../lib/updater";
@@ -22,9 +23,10 @@ import { isLinux } from "../lib/platform";
 
 interface SettingsModalProps {
   onClose: () => void;
+  onImportSuccess?: () => void;
 }
 
-export default function SettingsModal({ onClose }: SettingsModalProps) {
+export default function SettingsModal({ onClose, onImportSuccess }: SettingsModalProps) {
   const { t, i18n } = useTranslation();
 
   const normalizeLanguage = (lang?: string | null): "zh" | "en" =>
@@ -62,6 +64,13 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [isPortable, setIsPortable] = useState(false);
   const { hasUpdate, updateInfo, updateHandle, checkUpdate, resetDismiss } =
     useUpdate();
+
+  // 导入/导出相关状态
+  const [isImporting, setIsImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState<'idle' | 'importing' | 'success' | 'error'>('idle');
+  const [importError, setImportError] = useState<string>("");
+  const [importBackupId, setImportBackupId] = useState<string>("");
+  const [selectedImportFile, setSelectedImportFile] = useState<string>('');
 
   useEffect(() => {
     loadSettings();
@@ -346,6 +355,66 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     }
   };
 
+  // 导出配置处理函数
+  const handleExportConfig = async () => {
+    try {
+      const defaultName = `cc-switch-config-${new Date().toISOString().split('T')[0]}.json`;
+      const filePath = await window.api.saveFileDialog(defaultName);
+
+      if (!filePath) return; // 用户取消了
+
+      const result = await window.api.exportConfigToFile(filePath);
+
+      if (result.success) {
+        alert(`${t("settings.configExported")}\n${result.filePath}`);
+      }
+    } catch (error) {
+      console.error("导出配置失败:", error);
+      alert(`${t("settings.exportFailed")}: ${error}`);
+    }
+  };
+
+  // 选择要导入的文件
+  const handleSelectImportFile = async () => {
+    try {
+      const filePath = await window.api.openFileDialog();
+      if (filePath) {
+        setSelectedImportFile(filePath);
+        setImportStatus('idle'); // 重置状态
+        setImportError('');
+      }
+    } catch (error) {
+      console.error('选择文件失败:', error);
+      alert(`${t("settings.selectFileFailed")}: ${error}`);
+    }
+  };
+
+  // 执行导入
+  const handleExecuteImport = async () => {
+    if (!selectedImportFile || isImporting) return;
+
+    setIsImporting(true);
+    setImportStatus('importing');
+
+    try {
+      const result = await window.api.importConfigFromFile(selectedImportFile);
+
+      if (result.success) {
+        setImportBackupId(result.backupId || '');
+        setImportStatus('success');
+        // ImportProgressModal 组件会在2秒后自动重新加载
+      } else {
+        setImportError(result.message || t("settings.configCorrupted"));
+        setImportStatus('error');
+      }
+    } catch (error) {
+      setImportError(String(error));
+      setImportStatus('error');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
@@ -544,6 +613,56 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             </div>
           </div>
 
+          {/* 导入导出 */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
+              {t("settings.importExport")}
+            </h3>
+            <div className="p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
+              <div className="space-y-3">
+                {/* 导出按钮 */}
+                <button
+                  onClick={handleExportConfig}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded-lg transition-colors bg-gray-500 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-700 text-white"
+                >
+                  <Save size={12} />
+                  {t("settings.exportConfig")}
+                </button>
+
+                {/* 导入区域 */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleSelectImportFile}
+                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded-lg transition-colors bg-gray-500 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-700 text-white"
+                    >
+                      <FolderOpen size={12} />
+                      {t("settings.selectConfigFile")}
+                    </button>
+                    <button
+                      onClick={handleExecuteImport}
+                      disabled={!selectedImportFile || isImporting}
+                      className={`px-3 py-2 text-xs font-medium rounded-lg transition-colors text-white ${
+                        !selectedImportFile || isImporting
+                          ? 'bg-gray-400 cursor-not-allowed'
+                          : 'bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700'
+                      }`}
+                    >
+                      {isImporting ? t("settings.importing") : t("settings.import")}
+                    </button>
+                  </div>
+
+                  {/* 显示选择的文件 */}
+                  {selectedImportFile && (
+                    <div className="text-xs text-gray-600 dark:text-gray-400 px-2 py-1 bg-gray-50 dark:bg-gray-900 rounded break-all">
+                      {selectedImportFile.split('/').pop() || selectedImportFile.split('\\').pop() || selectedImportFile}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* 关于 */}
           <div>
             <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
@@ -638,6 +757,24 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           </button>
         </div>
       </div>
+
+      {/* Import Progress Modal */}
+      {importStatus !== 'idle' && (
+        <ImportProgressModal
+          status={importStatus}
+          message={importError}
+          backupId={importBackupId}
+          onComplete={() => {
+            setImportStatus('idle');
+            setImportError('');
+            setSelectedImportFile('');
+          }}
+          onSuccess={() => {
+            onImportSuccess?.();
+            window.location.reload(); // 重新加载应用
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@ mod app_config;
 mod codex_config;
 mod commands;
 mod config;
+mod import_export;
 mod migration;
 mod provider;
 mod settings;
@@ -393,6 +394,10 @@ pub fn run() {
             commands::get_vscode_settings_status,
             commands::read_vscode_settings,
             commands::write_vscode_settings,
+            import_export::export_config_to_file,
+            import_export::import_config_from_file,
+            import_export::save_file_dialog,
+            import_export::open_file_dialog,
             update_tray_menu,
         ]);
 
