@@ -1,12 +1,14 @@
 # Claude Code & Codex 供应商切换器
 
-[![Version](https://img.shields.io/badge/version-3.3.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.4.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 
 一个用于管理和切换 Claude Code 与 Codex 不同供应商配置的桌面应用。
 
-> v3.3.0 ：VS Code Codex 插件一键配置/移除（默认自动同步）、Codex 通用配置片段与自定义向导增强、WSL 环境支持、跨平台托盘与 UI 优化。
+> v3.4.0 ：新增 i18next 国际化（还有部分未完成）、对新模型（qwen-3-max, GLM-4.6, DeepSeek-V3.2-Exp）的支持、Claude 插件、单实例守护、托盘最小化及安装器优化等。
+
+> v3.3.0 ：VS Code Codex 插件一键配置/移除（默认自动同步）、Codex 通用配置片段与自定义向导增强、WSL 环境支持、跨平台托盘与 UI 优化。（该 VS Code 写入功能已在 v3.4.x 停用）
 
 > v3.2.0 ：全新 UI、macOS系统托盘、内置更新器、原子写入与回滚、改进暗色样式、单一事实源（SSOT）与一次性迁移/归档。
 
@@ -14,14 +16,15 @@
 
 > v3.0.0 重大更新：从 Electron 完全迁移到 Tauri 2.0，应用体积显著降低、启动性能大幅提升。
 
-## 功能特性（v3.3.0）
+## 功能特性（v3.4.0）
 
-- **VS Code Codex 插件一键配置**：供应商卡片支持「应用到 VS Code / 从 VS Code 移除」，默认开启自动同步，并可跨 Code / Insiders / VSCodium 写入 `settings.json`
-- **通用配置片段**：Claude 与 Codex 共用 JSON/TOML 片段，提供编辑器 lint、内容校验、统一错误提示与本地持久化
-- **Codex 配置向导**：新增显示名称、专用 API Key URL、HTML5 校验与预设模板，方便快速配置第三方服务
-- **系统托盘与快捷操作**：窗口隐藏时仍可通过托盘切换供应商，并在自动同步开启时触发 VS Code 写入
-- **平台适配**：新增 Windows WSL 环境支持、Linux 自动禁用模态背景模糊解决白屏问题、macOS Dock 点击即可恢复窗口
-- **UI优化**：多处 UI 和使用体验优化
+- **国际化与语言切换**：内置 i18next，默认显示中文，可在设置中快速切换到英文，界面文文案自动实时刷新。
+- **Claude 插件同步**：内置按钮可一键应用或恢复 Claude 插件配置，切换供应商后立即生效。
+- **VS Code Codex 设置停用**：由于新版 Codex 插件无需修改 `settings.json`，应用不再写入 VS Code 设置，避免潜在冲突。
+- **供应商预设扩展**：新增 DeepSeek--V3.2-Exp、Qwen3-Max、GLM-4.6 等最新模型。
+- **系统托盘与窗口行为**：窗口关闭可最小化到托盘，macOS 支持托盘模式下隐藏/显示 Dock，托盘切换时同步 Claude/Codex/插件状态。
+- **单实例**：保证同一时间仅运行一个实例，避免多开冲突。
+- **UI 与安装体验优化**：设置面板改为可滚动布局并加入保存图标，按钮宽度与状态一致性加强，Windows MSI 安装默认写入 per-user LocalAppData 并改进组件跟踪，Windows 便携版现在指向最新 release 页面，不再自动更为为安装版。
 
 ## 界面预览
 

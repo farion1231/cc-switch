@@ -6,6 +6,8 @@ import { ProviderCategory } from "../types";
 export interface CodexProviderPreset {
   name: string;
   websiteUrl: string;
+  // 第三方供应商可提供单独的获取 API Key 链接
+  apiKeyUrl?: string;
   auth: Record<string, any>; // 将写入 ~/.codex/auth.json
   config: string; // 将写入 ~/.codex/config.toml（TOML 字符串）
   isOfficial?: boolean; // 标识是否为官方预设

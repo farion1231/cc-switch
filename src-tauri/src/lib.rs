@@ -1,4 +1,5 @@
 mod app_config;
+mod claude_plugin;
 mod codex_config;
 mod commands;
 mod config;
@@ -7,15 +8,14 @@ mod migration;
 mod provider;
 mod settings;
 mod store;
-mod vscode;
 
 use store::AppState;
-#[cfg(target_os = "macos")]
-use tauri::RunEvent;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
 };
+#[cfg(target_os = "macos")]
+use tauri::{ActivationPolicy, RunEvent};
 use tauri::{Emitter, Manager};
 
 /// 创建动态托盘菜单
@@ -117,6 +117,23 @@ fn create_tray_menu(
         .map_err(|e| format!("构建菜单失败: {}", e))
 }
 
+#[cfg(target_os = "macos")]
+fn apply_tray_policy(app: &tauri::AppHandle, dock_visible: bool) {
+    let desired_policy = if dock_visible {
+        ActivationPolicy::Regular
+    } else {
+        ActivationPolicy::Accessory
+    };
+
+    if let Err(err) = app.set_dock_visibility(dock_visible) {
+        log::warn!("设置 Dock 显示状态失败: {}", err);
+    }
+
+    if let Err(err) = app.set_activation_policy(desired_policy) {
+        log::warn!("设置激活策略失败: {}", err);
+    }
+}
+
 /// 处理托盘菜单事件
 fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     log::info!("处理托盘菜单事件: {}", event_id);
@@ -131,6 +148,10 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
+                #[cfg(target_os = "macos")]
+                {
+                    apply_tray_policy(app, true);
+                }
             }
         }
         "quit" => {
@@ -268,6 +289,10 @@ pub fn run() {
                     {
                         let _ = window.set_skip_taskbar(true);
                     }
+                    #[cfg(target_os = "macos")]
+                    {
+                        apply_tray_policy(&window.app_handle(), false);
+                    }
                 } else {
                     window.app_handle().exit(0);
                 }
@@ -391,9 +416,10 @@ pub fn run() {
             commands::save_settings,
             commands::check_for_updates,
             commands::is_portable_mode,
-            commands::get_vscode_settings_status,
-            commands::read_vscode_settings,
-            commands::write_vscode_settings,
+            commands::get_claude_plugin_status,
+            commands::read_claude_plugin_config,
+            commands::apply_claude_plugin_config,
+            commands::is_claude_plugin_applied,
             import_export::export_config_to_file,
             import_export::import_config_from_file,
             import_export::save_file_dialog,
@@ -418,6 +444,7 @@ pub fn run() {
                     let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();
+                    apply_tray_policy(app_handle, true);
                 }
             }
             _ => {}

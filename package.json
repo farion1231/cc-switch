@@ -1,6 +1,6 @@
 {
   "name": "cc-switch",
-  "version": "3.3.1",
+  "version": "3.4.0",
   "description": "Claude Code & Codex 供应商切换工具",
   "scripts": {
     "dev": "pnpm tauri dev",

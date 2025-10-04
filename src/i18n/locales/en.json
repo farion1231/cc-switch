@@ -38,8 +38,8 @@
     "addNewProvider": "Add New Provider",
     "configError": "Configuration Error",
     "notConfigured": "Not configured for official website",
-    "applyToVSCode": "Apply to VS Code",
-    "removeFromVSCode": "Remove from VS Code"
+    "applyToClaudePlugin": "Apply to Claude plugin",
+    "removeFromClaudePlugin": "Remove from Claude plugin"
   },
   "notifications": {
     "providerSaved": "Provider configuration saved",
@@ -47,14 +47,11 @@
     "switchSuccess": "Switch successful! Please restart {{appName}} terminal to take effect",
     "switchFailed": "Switch failed, please check configuration",
     "autoImported": "Default provider created from existing configuration",
-    "appliedToVSCode": "Applied to VS Code, restart Codex plugin to take effect",
-    "removedFromVSCode": "Removed from VS Code, restart Codex plugin to take effect",
-    "syncedToVSCode": "Synced to VS Code",
-    "vscodeSettingsNotFound": "VS Code user settings file (settings.json) not found",
-    "missingBaseUrl": "Current configuration missing base_url, cannot write to VS Code",
     "saveFailed": "Save failed: {{error}}",
     "saveFailedGeneric": "Save failed, please try again",
-    "syncVSCodeFailed": "Sync to VS Code failed"
+    "appliedToClaudePlugin": "Applied to Claude plugin",
+    "removedFromClaudePlugin": "Removed from Claude plugin",
+    "syncClaudePluginFailed": "Sync Claude plugin failed"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -109,7 +106,6 @@
     "providerSwitchReceived": "Received provider switch event:",
     "setupListenerFailed": "Failed to setup provider switch listener:",
     "updateProviderFailed": "Update provider failed:",
-    "syncToVSCodeFailed": "Sync to VS Code failed:",
     "autoImportFailed": "Auto import default configuration failed:",
     "openLinkFailed": "Failed to open link:",
     "getVersionFailed": "Failed to get version info:",

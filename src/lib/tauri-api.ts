@@ -197,8 +197,6 @@ export const tauriAPI = {
     });
   },
 
-  // （保留空位，取消迁移提示）
-
   // 选择配置目录
   selectConfigDirectory: async (
     defaultPath?: string,
@@ -275,35 +273,43 @@ export const tauriAPI = {
     }
   },
 
-  // VS Code: 获取 settings.json 状态
-  getVSCodeSettingsStatus: async (): Promise<{
-    exists: boolean;
-    path: string;
-    error?: string;
-  }> => {
+  // Claude 插件：获取 ~/.claude/config.json 状态
+  getClaudePluginStatus: async (): Promise<ConfigStatus> => {
     try {
-      return await invoke("get_vscode_settings_status");
+      return await invoke<ConfigStatus>("get_claude_plugin_status");
     } catch (error) {
-      console.error("获取 VS Code 设置状态失败:", error);
+      console.error("获取 Claude 插件状态失败:", error);
       return { exists: false, path: "", error: String(error) };
     }
   },
 
-  // VS Code: 读取 settings.json 文本
-  readVSCodeSettings: async (): Promise<string> => {
+  // Claude 插件：读取配置内容
+  readClaudePluginConfig: async (): Promise<string | null> => {
     try {
-      return await invoke("read_vscode_settings");
+      return await invoke<string | null>("read_claude_plugin_config");
     } catch (error) {
-      throw new Error(`读取 VS Code 设置失败: ${String(error)}`);
+      throw new Error(`读取 Claude 插件配置失败: ${String(error)}`);
     }
   },
 
-  // VS Code: 写回 settings.json 文本（不自动创建）
-  writeVSCodeSettings: async (content: string): Promise<boolean> => {
+  // Claude 插件：应用或移除固定配置
+  applyClaudePluginConfig: async (options: {
+    official: boolean;
+  }): Promise<boolean> => {
+    const { official } = options;
     try {
-      return await invoke("write_vscode_settings", { content });
+      return await invoke<boolean>("apply_claude_plugin_config", { official });
     } catch (error) {
-      throw new Error(`写入 VS Code 设置失败: ${String(error)}`);
+      throw new Error(`写入 Claude 插件配置失败: ${String(error)}`);
+    }
+  },
+
+  // Claude 插件：检测是否已应用目标配置
+  isClaudePluginApplied: async (): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("is_claude_plugin_applied");
+    } catch (error) {
+      throw new Error(`检测 Claude 插件配置失败: ${String(error)}`);
     }
   },
 

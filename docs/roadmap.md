@@ -5,4 +5,3 @@
 - i18n
 - gemini cli
 - homebrew 支持
-- 自定义 vscode 路径

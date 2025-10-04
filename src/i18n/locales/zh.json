@@ -38,8 +38,8 @@
     "addNewProvider": "添加新供应商",
     "configError": "配置错误",
     "notConfigured": "未配置官网地址",
-    "applyToVSCode": "应用到 VS Code",
-    "removeFromVSCode": "从 VS Code 移除"
+    "applyToClaudePlugin": "应用到 Claude 插件",
+    "removeFromClaudePlugin": "从 Claude 插件移除"
   },
   "notifications": {
     "providerSaved": "供应商配置已保存",
@@ -47,14 +47,11 @@
     "switchSuccess": "切换成功！请重启 {{appName}} 终端以生效",
     "switchFailed": "切换失败，请检查配置",
     "autoImported": "已从现有配置创建默认供应商",
-    "appliedToVSCode": "已应用到 VS Code，重启 Codex 插件以生效",
-    "removedFromVSCode": "已从 VS Code 移除，重启 Codex 插件以生效",
-    "syncedToVSCode": "已同步到 VS Code",
-    "vscodeSettingsNotFound": "未找到 VS Code 用户设置文件 (settings.json)",
-    "missingBaseUrl": "当前配置缺少 base_url，无法写入 VS Code",
     "saveFailed": "保存失败：{{error}}",
     "saveFailedGeneric": "保存失败，请重试",
-    "syncVSCodeFailed": "同步 VS Code 失败"
+    "appliedToClaudePlugin": "已应用到 Claude 插件",
+    "removedFromClaudePlugin": "已从 Claude 插件移除",
+    "syncClaudePluginFailed": "同步 Claude 插件失败"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -109,7 +106,6 @@
     "providerSwitchReceived": "收到供应商切换事件:",
     "setupListenerFailed": "设置供应商切换监听器失败:",
     "updateProviderFailed": "更新供应商失败:",
-    "syncToVSCodeFailed": "同步到VS Code失败:",
     "autoImportFailed": "自动导入默认配置失败:",
     "openLinkFailed": "打开链接失败:",
     "getVersionFailed": "获取版本信息失败:",

@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "3.3.1"
+version = "3.4.0"
 description = "Claude Code & Codex 供应商配置管理工具"
 authors = ["Jason Young"]
 license = "MIT"

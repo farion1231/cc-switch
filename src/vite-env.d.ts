@@ -42,10 +42,13 @@ declare global {
       isPortable: () => Promise<boolean>;
       getAppConfigPath: () => Promise<string>;
       openAppConfigFolder: () => Promise<void>;
-      // VS Code settings.json 能力
-      getVSCodeSettingsStatus: () => Promise<ConfigStatus>;
-      readVSCodeSettings: () => Promise<string>;
-      writeVSCodeSettings: (content: string) => Promise<boolean>;
+      // Claude 插件配置能力
+      getClaudePluginStatus: () => Promise<ConfigStatus>;
+      readClaudePluginConfig: () => Promise<string | null>;
+      applyClaudePluginConfig: (options: {
+        official: boolean;
+      }) => Promise<boolean>;
+      isClaudePluginApplied: () => Promise<boolean>;
     };
     platform: {
       isMac: boolean;

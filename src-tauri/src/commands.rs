@@ -6,11 +6,11 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::app_config::AppType;
+use crate::claude_plugin;
 use crate::codex_config;
 use crate::config::{self, get_claude_settings_path, ConfigStatus};
 use crate::provider::Provider;
 use crate::store::AppState;
-use crate::vscode;
 
 fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), String> {
     match app_type {
@@ -692,41 +692,36 @@ pub async fn is_portable_mode() -> Result<bool, String> {
     }
 }
 
-/// VS Code: 获取用户 settings.json 状态
+/// Claude 插件：获取 ~/.claude/config.json 状态
 #[tauri::command]
-pub async fn get_vscode_settings_status() -> Result<ConfigStatus, String> {
-    if let Some(p) = vscode::find_existing_settings() {
-        Ok(ConfigStatus {
-            exists: true,
-            path: p.to_string_lossy().to_string(),
-        })
-    } else {
-        // 默认返回 macOS 稳定版路径（或其他平台首选项的第一个候选），但标记不存在
-        let preferred = vscode::candidate_settings_paths().into_iter().next();
-        Ok(ConfigStatus {
-            exists: false,
-            path: preferred.unwrap_or_default().to_string_lossy().to_string(),
-        })
+pub async fn get_claude_plugin_status() -> Result<ConfigStatus, String> {
+    match claude_plugin::claude_config_status() {
+        Ok((exists, path)) => Ok(ConfigStatus {
+            exists,
+            path: path.to_string_lossy().to_string(),
+        }),
+        Err(err) => Err(err),
     }
 }
 
-/// VS Code: 读取 settings.json 文本（仅当文件存在）
+/// Claude 插件：读取配置内容（若不存在返回 Ok(None)）
 #[tauri::command]
-pub async fn read_vscode_settings() -> Result<String, String> {
-    if let Some(p) = vscode::find_existing_settings() {
-        std::fs::read_to_string(&p).map_err(|e| format!("读取 VS Code 设置失败: {}", e))
+pub async fn read_claude_plugin_config() -> Result<Option<String>, String> {
+    claude_plugin::read_claude_config()
+}
+
+/// Claude 插件：写入/清除固定配置
+#[tauri::command]
+pub async fn apply_claude_plugin_config(official: bool) -> Result<bool, String> {
+    if official {
+        claude_plugin::clear_claude_config()
     } else {
-        Err("未找到 VS Code 用户设置文件".to_string())
+        claude_plugin::write_claude_config()
     }
 }
 
-/// VS Code: 写入 settings.json 文本（仅当文件存在；不自动创建）
+/// Claude 插件：检测是否已写入目标配置
 #[tauri::command]
-pub async fn write_vscode_settings(content: String) -> Result<bool, String> {
-    if let Some(p) = vscode::find_existing_settings() {
-        config::write_text_file(&p, &content)?;
-        Ok(true)
-    } else {
-        Err("未找到 VS Code 用户设置文件".to_string())
-    }
+pub async fn is_claude_plugin_applied() -> Result<bool, String> {
+    claude_plugin::is_claude_config_applied()
 }

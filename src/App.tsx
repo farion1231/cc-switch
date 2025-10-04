@@ -13,14 +13,10 @@ import { Plus, Settings, Moon, Sun } from "lucide-react";
 import { buttonStyles } from "./lib/styles";
 import { useDarkMode } from "./hooks/useDarkMode";
 import { extractErrorMessage } from "./utils/errorUtils";
-import { applyProviderToVSCode } from "./utils/vscodeSettings";
-import { getCodexBaseUrl } from "./utils/providerConfigUtils";
-import { useVSCodeAutoSync } from "./hooks/useVSCodeAutoSync";
 
 function App() {
   const { t } = useTranslation();
   const { isDarkMode, toggleDarkMode } = useDarkMode();
-  const { isAutoSyncEnabled } = useVSCodeAutoSync();
   const [activeApp, setActiveApp] = useState<AppType>("claude");
   const [providers, setProviders] = useState<Record<string, Provider>>({});
   const [currentProviderId, setCurrentProviderId] = useState<string>("");
@@ -98,9 +94,9 @@ function App() {
             await loadProviders();
           }
 
-          // 若为 Codex 且开启自动同步，则静默同步到 VS Code（覆盖）
-          if (data.appType === "codex" && isAutoSyncEnabled) {
-            await syncCodexToVSCode(data.providerId, true);
+          // 若为 Claude，则同步插件配置
+          if (data.appType === "claude") {
+            await syncClaudePlugin(data.providerId, true);
           }
         });
       } catch (error) {
@@ -116,7 +112,7 @@ function App() {
         unlisten();
       }
     };
-  }, [activeApp, isAutoSyncEnabled]);
+  }, [activeApp]);
 
   const loadProviders = async () => {
     const loadedProviders = await window.api.getProviders(activeApp);
@@ -185,57 +181,28 @@ function App() {
     });
   };
 
-  // 同步Codex供应商到VS Code设置（静默覆盖）
-  const syncCodexToVSCode = async (providerId: string, silent = false) => {
+  // 同步 Claude 插件配置（写入/移除固定 JSON）
+  const syncClaudePlugin = async (providerId: string, silent = false) => {
     try {
-      const status = await window.api.getVSCodeSettingsStatus();
-      if (!status.exists) {
-        if (!silent) {
-          showNotification(
-            t("notifications.vscodeSettingsNotFound"),
-            "error",
-            3000
-          );
-        }
-        return;
-      }
-
-      const raw = await window.api.readVSCodeSettings();
       const provider = providers[providerId];
-      const isOfficial = provider?.category === "official";
-
-      // 非官方供应商需要解析 base_url（使用公共工具函数）
-      let baseUrl: string | undefined = undefined;
-      if (!isOfficial) {
-        const parsed = getCodexBaseUrl(provider);
-        if (!parsed) {
-          if (!silent) {
-            showNotification(t("notifications.missingBaseUrl"), "error", 4000);
-          }
-          return;
-        }
-        baseUrl = parsed;
-      }
-
-      const updatedSettings = applyProviderToVSCode(raw, {
-        baseUrl,
-        isOfficial,
-      });
-      if (updatedSettings !== raw) {
-        await window.api.writeVSCodeSettings(updatedSettings);
-        if (!silent) {
-          showNotification(t("notifications.syncedToVSCode"), "success", 1500);
-        }
-      }
-
-      // 触发providers重新加载，以更新VS Code按钮状态
-      await loadProviders();
-    } catch (error: any) {
-      console.error(t("console.syncToVSCodeFailed"), error);
+      if (!provider) return;
+      const isOfficial = provider.category === "official";
+      await window.api.applyClaudePluginConfig({ official: isOfficial });
       if (!silent) {
-        const errorMessage =
-          error?.message || t("notifications.syncVSCodeFailed");
-        showNotification(errorMessage, "error", 5000);
+        showNotification(
+          isOfficial
+            ? t("notifications.removedFromClaudePlugin")
+            : t("notifications.appliedToClaudePlugin"),
+          "success",
+          2000,
+        );
+      }
+    } catch (error: any) {
+      console.error("同步 Claude 插件失败:", error);
+      if (!silent) {
+        const message =
+          error?.message || t("notifications.syncClaudePluginFailed");
+        showNotification(message, "error", 5000);
       }
     }
   };
@@ -254,9 +221,8 @@ function App() {
       // 更新托盘菜单
       await window.api.updateTrayMenu();
 
-      // Codex: 切换供应商后，只在自动同步启用时同步到 VS Code
-      if (activeApp === "codex" && isAutoSyncEnabled) {
-        await syncCodexToVSCode(id, true); // silent模式，不显示通知
+      if (activeApp === "claude") {
+        await syncClaudePlugin(id, true);
       }
     } else {
       showNotification(t("notifications.switchFailed"), "error");

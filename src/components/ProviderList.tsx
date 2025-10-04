@@ -4,13 +4,6 @@ import { Provider } from "../types";
 import { Play, Edit3, Trash2, CheckCircle2, Users, Check } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
 import { AppType } from "../lib/tauri-api";
-import {
-  applyProviderToVSCode,
-  detectApplied,
-  normalizeBaseUrl,
-} from "../utils/vscodeSettings";
-import { getCodexBaseUrl } from "../utils/providerConfigUtils";
-import { useVSCodeAutoSync } from "../hooks/useVSCodeAutoSync";
 // 不再在列表中显示分类徽章，避免造成困惑
 
 interface ProviderListProps {
@@ -65,118 +58,52 @@ const ProviderList: React.FC<ProviderListProps> = ({
     }
   };
 
-  // 解析 Codex 配置中的 base_url（已提取到公共工具）
+  const [claudeApplied, setClaudeApplied] = useState<boolean>(false);
 
-  // VS Code 按钮：仅在 Codex + 当前供应商显示；按钮文案根据是否"已应用"变化
-  const [vscodeAppliedFor, setVscodeAppliedFor] = useState<string | null>(null);
-  const { enableAutoSync, disableAutoSync } = useVSCodeAutoSync();
-
-  // 当当前供应商或 appType 变化时，尝试读取 VS Code settings 并检测状态
+  // 检查 Claude 插件配置是否已应用
   useEffect(() => {
-    const check = async () => {
-      if (appType !== "codex" || !currentProviderId) {
-        setVscodeAppliedFor(null);
-        return;
-      }
-      const status = await window.api.getVSCodeSettingsStatus();
-      if (!status.exists) {
-        setVscodeAppliedFor(null);
+    const checkClaude = async () => {
+      if (appType !== "claude" || !currentProviderId) {
+        setClaudeApplied(false);
         return;
       }
       try {
-        const content = await window.api.readVSCodeSettings();
-        const detected = detectApplied(content);
-        // 认为“已应用”的条件（非官方供应商）：VS Code 中的 apiBase 与当前供应商的 base_url 完全一致
-        const current = providers[currentProviderId];
-        let applied = false;
-        if (current && current.category !== "official") {
-          const base = getCodexBaseUrl(current);
-          if (detected.apiBase && base) {
-            applied =
-              normalizeBaseUrl(detected.apiBase) === normalizeBaseUrl(base);
-          }
-        }
-        setVscodeAppliedFor(applied ? currentProviderId : null);
-      } catch {
-        setVscodeAppliedFor(null);
+        const applied = await window.api.isClaudePluginApplied();
+        setClaudeApplied(applied);
+      } catch (error) {
+        console.error("检测 Claude 插件配置失败:", error);
+        setClaudeApplied(false);
       }
     };
-    check();
+    checkClaude();
   }, [appType, currentProviderId, providers]);
 
-  const handleApplyToVSCode = async (provider: Provider) => {
+  const handleApplyToClaudePlugin = async () => {
     try {
-      const status = await window.api.getVSCodeSettingsStatus();
-      if (!status.exists) {
-        onNotify?.(t("notifications.vscodeSettingsNotFound"), "error", 3000);
-        return;
-      }
-
-      const raw = await window.api.readVSCodeSettings();
-
-      const isOfficial = provider.category === "official";
-      // 非官方且缺少 base_url 时直接报错并返回，避免“空写入”假成功
-      if (!isOfficial) {
-        const parsed = getCodexBaseUrl(provider);
-        if (!parsed) {
-          onNotify?.(t("notifications.missingBaseUrl"), "error", 4000);
-          return;
-        }
-      }
-
-      const baseUrl = isOfficial ? undefined : getCodexBaseUrl(provider);
-      const next = applyProviderToVSCode(raw, { baseUrl, isOfficial });
-
-      if (next === raw) {
-        // 幂等：没有变化也提示成功
-        onNotify?.(t("notifications.appliedToVSCode"), "success", 3000);
-        setVscodeAppliedFor(provider.id);
-        // 用户手动应用时，启用自动同步
-        enableAutoSync();
-        return;
-      }
-
-      await window.api.writeVSCodeSettings(next);
-      onNotify?.(t("notifications.appliedToVSCode"), "success", 3000);
-      setVscodeAppliedFor(provider.id);
-      // 用户手动应用时，启用自动同步
-      enableAutoSync();
-    } catch (e: any) {
-      console.error(e);
+      await window.api.applyClaudePluginConfig({ official: false });
+      onNotify?.(t("notifications.appliedToClaudePlugin"), "success", 3000);
+      setClaudeApplied(true);
+    } catch (error: any) {
+      console.error(error);
       const msg =
-        e && e.message ? e.message : t("notifications.syncVSCodeFailed");
+        error && error.message
+          ? error.message
+          : t("notifications.syncClaudePluginFailed");
       onNotify?.(msg, "error", 5000);
     }
   };
 
-  const handleRemoveFromVSCode = async () => {
+  const handleRemoveFromClaudePlugin = async () => {
     try {
-      const status = await window.api.getVSCodeSettingsStatus();
-      if (!status.exists) {
-        onNotify?.(t("notifications.vscodeSettingsNotFound"), "error", 3000);
-        return;
-      }
-      const raw = await window.api.readVSCodeSettings();
-      const next = applyProviderToVSCode(raw, {
-        baseUrl: undefined,
-        isOfficial: true,
-      });
-      if (next === raw) {
-        onNotify?.(t("notifications.removedFromVSCode"), "success", 3000);
-        setVscodeAppliedFor(null);
-        // 用户手动移除时，禁用自动同步
-        disableAutoSync();
-        return;
-      }
-      await window.api.writeVSCodeSettings(next);
-      onNotify?.(t("notifications.removedFromVSCode"), "success", 3000);
-      setVscodeAppliedFor(null);
-      // 用户手动移除时，禁用自动同步
-      disableAutoSync();
-    } catch (e: any) {
-      console.error(e);
+      await window.api.applyClaudePluginConfig({ official: true });
+      onNotify?.(t("notifications.removedFromClaudePlugin"), "success", 3000);
+      setClaudeApplied(false);
+    } catch (error: any) {
+      console.error(error);
       const msg =
-        e && e.message ? e.message : t("notifications.syncVSCodeFailed");
+        error && error.message
+          ? error.message
+          : t("notifications.syncClaudePluginFailed");
       onNotify?.(msg, "error", 5000);
     }
   };
@@ -271,31 +198,30 @@ const ProviderList: React.FC<ProviderListProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 ml-4">
-                    {/* VS Code 按钮占位容器 - 始终保持空间，避免布局跳动 */}
-                    {appType === "codex" ? (
+                    {appType === "claude" ? (
                       <div className="w-[130px]">
                         {provider.category !== "official" && isCurrent && (
                           <button
                             onClick={() =>
-                              vscodeAppliedFor === provider.id
-                                ? handleRemoveFromVSCode()
-                                : handleApplyToVSCode(provider)
+                              claudeApplied
+                                ? handleRemoveFromClaudePlugin()
+                                : handleApplyToClaudePlugin()
                             }
                             className={cn(
                               "inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors w-full whitespace-nowrap justify-center",
-                              vscodeAppliedFor === provider.id
+                              claudeApplied
                                 ? "border border-gray-300 text-gray-600 hover:border-red-300 hover:text-red-600 hover:bg-red-50 dark:border-gray-600 dark:text-gray-400 dark:hover:border-red-800 dark:hover:text-red-400 dark:hover:bg-red-900/20"
-                                : "border border-gray-300 text-gray-700 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-blue-700 dark:hover:text-blue-400 dark:hover:bg-blue-900/20"
+                                : "border border-gray-300 text-gray-700 hover:border-green-300 hover:text-green-600 hover:bg-green-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-green-700 dark:hover:text-green-400 dark:hover:bg-green-900/20"
                             )}
                             title={
-                              vscodeAppliedFor === provider.id
-                                ? t("provider.removeFromVSCode")
-                                : t("provider.applyToVSCode")
+                              claudeApplied
+                                ? t("provider.removeFromClaudePlugin")
+                                : t("provider.applyToClaudePlugin")
                             }
                           >
-                            {vscodeAppliedFor === provider.id
-                              ? t("provider.removeFromVSCode")
-                              : t("provider.applyToVSCode")}
+                            {claudeApplied
+                              ? t("provider.removeFromClaudePlugin")
+                              : t("provider.applyToClaudePlugin")}
                           </button>
                         )}
                       </div>
