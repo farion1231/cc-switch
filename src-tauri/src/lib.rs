@@ -7,6 +7,7 @@ mod migration;
 mod provider;
 mod settings;
 mod store;
+mod speedtest;
 
 use store::AppState;
 use tauri::{
@@ -419,6 +420,7 @@ pub fn run() {
             commands::read_claude_plugin_config,
             commands::apply_claude_plugin_config,
             commands::is_claude_plugin_applied,
+            commands::test_api_endpoints,
             update_tray_menu,
         ]);
 

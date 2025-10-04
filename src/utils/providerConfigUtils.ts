@@ -365,3 +365,25 @@ export const getCodexBaseUrl = (
     return undefined;
   }
 };
+
+// 在 Codex 的 TOML 配置文本中写入或更新 base_url 字段
+export const setCodexBaseUrl = (
+  configText: string,
+  baseUrl: string,
+): string => {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) {
+    return configText;
+  }
+
+  const normalizedUrl = trimmed.replace(/\s+/g, "").replace(/\/+$/, "");
+  const replacementLine = `base_url = "${normalizedUrl}"`;
+  const pattern = /base_url\s*=\s*(["'])([^"']+)\1/;
+
+  if (pattern.test(configText)) {
+    return configText.replace(pattern, replacementLine);
+  }
+
+  const prefix = configText && !configText.endsWith("\n") ? `${configText}\n` : configText;
+  return `${prefix}${replacementLine}\n`;
+};

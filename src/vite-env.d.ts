@@ -49,6 +49,15 @@ declare global {
         official: boolean;
       }) => Promise<boolean>;
       isClaudePluginApplied: () => Promise<boolean>;
+      testApiEndpoints: (
+        urls: string[],
+        options?: { timeoutSecs?: number },
+      ) => Promise<Array<{
+        url: string;
+        latency: number | null;
+        status?: number;
+        error?: string;
+      }>>;
     };
     platform: {
       isMac: boolean;

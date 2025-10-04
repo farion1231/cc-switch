@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Provider, ProviderCategory } from "../types";
 import { AppType } from "../lib/tauri-api";
 import {
@@ -11,6 +11,8 @@ import {
   hasTomlCommonConfigSnippet,
   validateJsonConfig,
   applyTemplateValues,
+  extractCodexBaseUrl,
+  setCodexBaseUrl as setCodexBaseUrlInConfig,
 } from "../utils/providerConfigUtils";
 import { providerPresets } from "../config/providerPresets";
 import type { TemplateValueConfig } from "../config/providerPresets";
@@ -26,6 +28,9 @@ import CodexConfigEditor from "./ProviderForm/CodexConfigEditor";
 import KimiModelSelector from "./ProviderForm/KimiModelSelector";
 import { X, AlertCircle, Save } from "lucide-react";
 import { isLinux } from "../lib/platform";
+import EndpointSpeedTest, {
+  EndpointCandidate,
+} from "./ProviderForm/EndpointSpeedTest";
 // 分类仅用于控制少量交互（如官方禁用 API Key），不显示介绍组件
 
 type TemplateValueMap = Record<string, TemplateValueConfig>;
@@ -211,6 +216,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [codexAuth, setCodexAuthState] = useState("");
   const [codexConfig, setCodexConfigState] = useState("");
   const [codexApiKey, setCodexApiKey] = useState("");
+  const [codexBaseUrl, setCodexBaseUrl] = useState("");
   const [isCodexTemplateModalOpen, setIsCodexTemplateModalOpen] =
     useState(false);
   // -1 表示自定义，null 表示未选择，>= 0 表示预设索引
@@ -223,8 +229,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     setCodexAuthError(validateCodexAuth(value));
   };
 
-  const setCodexConfig = (value: string) => {
-    setCodexConfigState(value);
+  const setCodexConfig = (value: string | ((prev: string) => string)) => {
+    setCodexConfigState((prev) =>
+      typeof value === "function" ? (value as (input: string) => string)(prev) : value,
+    );
   };
 
   const setCodexCommonConfigSnippet = (value: string) => {
@@ -238,6 +246,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       if (typeof config === "object" && config !== null) {
         setCodexAuth(JSON.stringify(config.auth || {}, null, 2));
         setCodexConfig(config.config || "");
+        const initialBaseUrl = extractCodexBaseUrl(config.config);
+        if (initialBaseUrl) {
+          setCodexBaseUrl(initialBaseUrl);
+        }
         try {
           const auth = config.auth || {};
           if (auth && typeof auth.OPENAI_API_KEY === "string") {
@@ -292,6 +304,8 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     });
   const [codexCommonConfigError, setCodexCommonConfigError] = useState("");
   const isUpdatingFromCodexCommonConfig = useRef(false);
+  const isUpdatingBaseUrlRef = useRef(false);
+  const isUpdatingCodexBaseUrlRef = useRef(false);
 
   // -1 表示自定义，null 表示未选择，>= 0 表示预设索引
   const [selectedPreset, setSelectedPreset] = useState<number | null>(
@@ -435,6 +449,49 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       }
     }
   }, [showPresets, isCodex, selectedPreset, selectedCodexPreset]);
+
+  // 与 JSON 配置保持基础 URL 同步（Claude 第三方/自定义）
+  useEffect(() => {
+    if (isCodex) return;
+    const currentCategory = category ?? initialData?.category;
+    if (currentCategory !== "third_party" && currentCategory !== "custom") {
+      return;
+    }
+    if (isUpdatingBaseUrlRef.current) {
+      return;
+    }
+    try {
+      const config = JSON.parse(formData.settingsConfig || "{}");
+      const envUrl: unknown = config?.env?.ANTHROPIC_BASE_URL;
+      if (typeof envUrl === "string" && envUrl && envUrl !== baseUrl) {
+        setBaseUrl(envUrl.trim());
+      }
+    } catch {
+      // ignore JSON parse errors
+    }
+  }, [
+    isCodex,
+    category,
+    initialData,
+    formData.settingsConfig,
+    baseUrl,
+  ]);
+
+  // 与 TOML 配置保持基础 URL 同步（Codex 第三方/自定义）
+  useEffect(() => {
+    if (!isCodex) return;
+    const currentCategory = category ?? initialData?.category;
+    if (currentCategory !== "third_party" && currentCategory !== "custom") {
+      return;
+    }
+    if (isUpdatingCodexBaseUrlRef.current) {
+      return;
+    }
+    const extracted = extractCodexBaseUrl(codexConfig) || "";
+    if (extracted !== codexBaseUrl) {
+      setCodexBaseUrl(extracted);
+    }
+  }, [isCodex, category, initialData, codexConfig, codexBaseUrl]);
 
   // 同步本地存储的通用配置片段
   useEffect(() => {
@@ -721,7 +778,6 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
     // 清空 API Key 输入框，让用户重新输入
     setApiKey("");
-    setBaseUrl(""); // 清空基础 URL
 
     // 同步通用配置状态
     const hasCommon = hasCommonConfigSnippet(configString, commonConfigSnippet);
@@ -734,6 +790,11 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       if (config.env) {
         setClaudeModel(config.env.ANTHROPIC_MODEL || "");
         setClaudeSmallFastModel(config.env.ANTHROPIC_SMALL_FAST_MODEL || "");
+        const presetBaseUrl =
+          typeof config.env.ANTHROPIC_BASE_URL === "string"
+            ? config.env.ANTHROPIC_BASE_URL
+            : "";
+        setBaseUrl(presetBaseUrl);
 
         // 如果是 Kimi 预设，同步 Kimi 模型选择
         if (preset.name?.includes("Kimi")) {
@@ -745,6 +806,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       } else {
         setClaudeModel("");
         setClaudeSmallFastModel("");
+        setBaseUrl("");
       }
     }
   };
@@ -791,6 +853,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     const authString = JSON.stringify(preset.auth || {}, null, 2);
     setCodexAuth(authString);
     setCodexConfig(preset.config || "");
+    const presetBaseUrl = extractCodexBaseUrl(preset.config);
+    if (presetBaseUrl) {
+      setCodexBaseUrl(presetBaseUrl);
+    }
 
     setFormData((prev) => ({
       ...prev,
@@ -828,6 +894,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     setCodexAuth(JSON.stringify(customAuth, null, 2));
     setCodexConfig(customConfig);
     setCodexApiKey("");
+    setCodexBaseUrl("https://your-api-endpoint.com/v1");
     setCategory("custom");
   };
 
@@ -851,19 +918,40 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
   // 处理基础 URL 变化
   const handleBaseUrlChange = (url: string) => {
-    setBaseUrl(url);
+    const sanitized = url.trim().replace(/\/+$/, "");
+    setBaseUrl(sanitized);
+    isUpdatingBaseUrlRef.current = true;
 
     try {
       const config = JSON.parse(formData.settingsConfig || "{}");
       if (!config.env) {
         config.env = {};
       }
-      config.env.ANTHROPIC_BASE_URL = url.trim();
+      config.env.ANTHROPIC_BASE_URL = sanitized;
 
       updateSettingsConfigValue(JSON.stringify(config, null, 2));
     } catch {
       // ignore
+    } finally {
+      setTimeout(() => {
+        isUpdatingBaseUrlRef.current = false;
+      }, 0);
     }
+  };
+
+  const handleCodexBaseUrlChange = (url: string) => {
+    const sanitized = url.trim().replace(/\/+$/, "");
+    setCodexBaseUrl(sanitized);
+
+    if (!sanitized) {
+      return;
+    }
+
+    isUpdatingCodexBaseUrlRef.current = true;
+    setCodexConfig((prev) => setCodexBaseUrlInConfig(prev, sanitized));
+    setTimeout(() => {
+      isUpdatingCodexBaseUrlRef.current = false;
+    }, 0);
   };
 
   // Codex: 处理 API Key 输入并写回 auth.json
@@ -971,6 +1059,12 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       setUseCodexCommonConfig(hasCommon);
     }
     setCodexConfig(value);
+    if (!isUpdatingCodexBaseUrlRef.current) {
+      const extracted = extractCodexBaseUrl(value) || "";
+      if (extracted !== codexBaseUrl) {
+        setCodexBaseUrl(extracted);
+      }
+    }
   };
 
   // 根据当前配置决定是否展示 API Key 输入框
@@ -978,6 +1072,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const showApiKey =
     selectedPreset !== null ||
     (!showPresets && hasApiKeyField(formData.settingsConfig));
+
+  const normalizedCategory = category ?? initialData?.category;
+  const shouldShowSpeedTest =
+    normalizedCategory === "third_party" || normalizedCategory === "custom";
 
   const selectedTemplatePreset =
     !isCodex &&
@@ -1020,7 +1118,87 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const shouldShowKimiSelector = isKimiPreset || isEditingKimi;
 
   // 判断是否显示基础 URL 输入框（仅自定义模式显示）
-  const showBaseUrlInput = selectedPreset === -1 && !isCodex;
+  const showBaseUrlInput =
+    !isCodex && shouldShowSpeedTest;
+
+  const claudeSpeedTestEndpoints = useMemo<EndpointCandidate[]>(() => {
+    if (isCodex) return [];
+    const map = new Map<string, EndpointCandidate>();
+    const add = (url?: string, label?: string) => {
+      if (!url) return;
+      const sanitized = url.trim().replace(/\/+$/, "");
+      if (!sanitized || map.has(sanitized)) return;
+      map.set(sanitized, { url: sanitized, label });
+    };
+
+    if (baseUrl) {
+      add(baseUrl, "当前地址");
+    }
+
+    if (initialData && typeof initialData.settingsConfig === "object") {
+      const envUrl = (initialData.settingsConfig as any)?.env?.ANTHROPIC_BASE_URL;
+      if (typeof envUrl === "string") {
+        add(envUrl, envUrl === baseUrl ? "当前地址" : "历史地址");
+      }
+    }
+
+    if (
+      selectedPreset !== null &&
+      selectedPreset >= 0 &&
+      selectedPreset < providerPresets.length
+    ) {
+      const preset = providerPresets[selectedPreset];
+      const presetEnv = (preset.settingsConfig as any)?.env?.ANTHROPIC_BASE_URL;
+      if (typeof presetEnv === "string") {
+        add(presetEnv, presetEnv === baseUrl ? "当前地址" : "预设地址");
+      }
+    }
+
+    return Array.from(map.values());
+  }, [isCodex, baseUrl, initialData, selectedPreset]);
+
+  const codexSpeedTestEndpoints = useMemo<EndpointCandidate[]>(() => {
+    if (!isCodex) return [];
+    const map = new Map<string, EndpointCandidate>();
+    const add = (url?: string, label?: string) => {
+      if (!url) return;
+      const sanitized = url.trim().replace(/\/+$/, "");
+      if (!sanitized || map.has(sanitized)) return;
+      map.set(sanitized, { url: sanitized, label });
+    };
+
+    if (codexBaseUrl) {
+      add(codexBaseUrl, "当前地址");
+    }
+
+    const initialCodexConfig =
+      initialData && typeof initialData.settingsConfig?.config === "string"
+        ? (initialData.settingsConfig as any).config
+        : "";
+    const existing = extractCodexBaseUrl(initialCodexConfig);
+    if (existing) {
+      add(existing, existing === codexBaseUrl ? "当前地址" : "历史地址");
+    }
+
+    if (
+      selectedCodexPreset !== null &&
+      selectedCodexPreset >= 0 &&
+      selectedCodexPreset < codexProviderPresets.length
+    ) {
+      const presetConfig = codexProviderPresets[selectedCodexPreset]?.config;
+      const presetBase = extractCodexBaseUrl(presetConfig);
+      if (presetBase) {
+        add(presetBase, presetBase === codexBaseUrl ? "当前地址" : "预设地址");
+      }
+    }
+
+    return Array.from(map.values());
+  }, [
+    isCodex,
+    codexBaseUrl,
+    initialData,
+    selectedCodexPreset,
+  ]);
 
   // 判断是否显示"获取 API Key"链接（国产官方、聚合站和第三方显示）
   const shouldShowApiKeyLink =
@@ -1392,6 +1570,15 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
               </div>
             )}
 
+            {!isCodex && shouldShowSpeedTest && (
+              <EndpointSpeedTest
+                appType={appType}
+                value={baseUrl}
+                onChange={handleBaseUrlChange}
+                initialEndpoints={claudeSpeedTestEndpoints}
+              />
+            )}
+
             {/* 基础 URL 输入框 - 仅在自定义模式下显示 */}
             {!isCodex && showBaseUrlInput && (
               <div className="space-y-2">
@@ -1460,6 +1647,15 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   </div>
                 )}
               </div>
+            )}
+
+            {isCodex && shouldShowSpeedTest && (
+              <EndpointSpeedTest
+                appType={appType}
+                value={codexBaseUrl}
+                onChange={handleCodexBaseUrlChange}
+                initialEndpoints={codexSpeedTestEndpoints}
+              />
             )}
 
             {/* Claude 或 Codex 的配置部分 */}

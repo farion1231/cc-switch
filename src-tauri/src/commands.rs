@@ -10,6 +10,7 @@ use crate::claude_plugin;
 use crate::codex_config;
 use crate::config::{self, get_claude_settings_path, ConfigStatus};
 use crate::provider::Provider;
+use crate::speedtest;
 use crate::store::AppState;
 
 fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), String> {
@@ -724,4 +725,17 @@ pub async fn apply_claude_plugin_config(official: bool) -> Result<bool, String> 
 #[tauri::command]
 pub async fn is_claude_plugin_applied() -> Result<bool, String> {
     claude_plugin::is_claude_config_applied()
+}
+
+/// 测试第三方/自定义供应商端点的网络延迟
+#[tauri::command]
+pub async fn test_api_endpoints(
+    urls: Vec<String>,
+    timeout_secs: Option<u64>,
+) -> Result<Vec<speedtest::EndpointLatency>, String> {
+    let filtered: Vec<String> = urls
+        .into_iter()
+        .filter(|url| !url.trim().is_empty())
+        .collect();
+    speedtest::test_endpoints(filtered, timeout_secs).await
 }

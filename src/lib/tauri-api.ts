@@ -18,6 +18,13 @@ interface ImportResult {
   message?: string;
 }
 
+export interface EndpointLatencyResult {
+  url: string;
+  latency: number | null;
+  status?: number;
+  error?: string;
+}
+
 // Tauri API 封装，提供统一的全局 API 接口
 export const tauriAPI = {
   // 获取所有供应商
@@ -310,6 +317,22 @@ export const tauriAPI = {
       return await invoke<boolean>("is_claude_plugin_applied");
     } catch (error) {
       throw new Error(`检测 Claude 插件配置失败: ${String(error)}`);
+    }
+  },
+
+  // 第三方/自定义供应商：批量测试端点延迟
+  testApiEndpoints: async (
+    urls: string[],
+    options?: { timeoutSecs?: number },
+  ): Promise<EndpointLatencyResult[]> => {
+    try {
+      return await invoke<EndpointLatencyResult[]>("test_api_endpoints", {
+        urls,
+        timeout_secs: options?.timeoutSecs,
+      });
+    } catch (error) {
+      console.error("测速调用失败:", error);
+      throw error;
     }
   },
 };
