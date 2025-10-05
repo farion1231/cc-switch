@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ChevronDown, RefreshCw, AlertCircle } from "lucide-react";
 
-
 interface KimiModel {
   id: string;
   object: string;
