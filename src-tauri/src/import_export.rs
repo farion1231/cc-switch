@@ -3,6 +3,9 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 
+// 默认仅保留最近 10 份备份，避免目录无限膨胀
+const MAX_BACKUPS: usize = 10;
+
 /// 创建配置文件备份
 pub fn create_backup(config_path: &PathBuf) -> Result<String, String> {
     if !config_path.exists() {
@@ -12,7 +15,8 @@ pub fn create_backup(config_path: &PathBuf) -> Result<String, String> {
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
     let backup_id = format!("backup_{}", timestamp);
 
-    let backup_dir = config_path.parent()
+    let backup_dir = config_path
+        .parent()
         .ok_or("Invalid config path")?
         .join("backups");
 
@@ -23,10 +27,56 @@ pub fn create_backup(config_path: &PathBuf) -> Result<String, String> {
     let backup_path = backup_dir.join(format!("{}.json", backup_id));
 
     // 复制配置文件到备份
-    fs::copy(config_path, backup_path)
-        .map_err(|e| format!("Failed to create backup: {}", e))?;
+    fs::copy(config_path, backup_path).map_err(|e| format!("Failed to create backup: {}", e))?;
+
+    // 备份完成后清理旧的备份文件（仅保留最近 MAX_BACKUPS 份）
+    cleanup_old_backups(&backup_dir, MAX_BACKUPS)?;
 
     Ok(backup_id)
+}
+
+fn cleanup_old_backups(backup_dir: &PathBuf, retain: usize) -> Result<(), String> {
+    if retain == 0 {
+        return Ok(());
+    }
+
+    let mut entries: Vec<_> = match fs::read_dir(backup_dir) {
+        Ok(iter) => iter
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .map(|ext| ext == "json")
+                    .unwrap_or(false)
+            })
+            .collect(),
+        Err(_) => return Ok(()),
+    };
+
+    if entries.len() <= retain {
+        return Ok(());
+    }
+
+    let remove_count = entries.len().saturating_sub(retain);
+
+    entries.sort_by(|a, b| {
+        let a_time = a.metadata().and_then(|m| m.modified()).ok();
+        let b_time = b.metadata().and_then(|m| m.modified()).ok();
+        a_time.cmp(&b_time)
+    });
+
+    for entry in entries.into_iter().take(remove_count) {
+        if let Err(err) = fs::remove_file(entry.path()) {
+            log::warn!(
+                "Failed to remove old backup {}: {}",
+                entry.path().display(),
+                err
+            );
+        }
+    }
+
+    Ok(())
 }
 
 /// 导出配置文件
@@ -38,8 +88,7 @@ pub async fn export_config_to_file(file_path: String) -> Result<Value, String> {
         .map_err(|e| format!("Failed to read configuration: {}", e))?;
 
     // 写入到指定文件
-    fs::write(&file_path, &config_content)
-        .map_err(|e| format!("Failed to write file: {}", e))?;
+    fs::write(&file_path, &config_content).map_err(|e| format!("Failed to write file: {}", e))?;
 
     Ok(json!({
         "success": true,
@@ -55,8 +104,8 @@ pub async fn import_config_from_file(
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<Value, String> {
     // 读取导入的文件
-    let import_content = fs::read_to_string(&file_path)
-        .map_err(|e| format!("Failed to read import file: {}", e))?;
+    let import_content =
+        fs::read_to_string(&file_path).map_err(|e| format!("Failed to read import file: {}", e))?;
 
     // 验证并解析为配置对象
     let new_config: crate::app_config::MultiAppConfig = serde_json::from_str(&import_content)
@@ -95,7 +144,8 @@ pub async fn save_file_dialog<R: tauri::Runtime>(
     use tauri_plugin_dialog::DialogExt;
 
     let dialog = app.dialog();
-    let result = dialog.file()
+    let result = dialog
+        .file()
         .add_filter("JSON", &["json"])
         .set_file_name(&default_name)
         .blocking_save_file();
@@ -111,7 +161,8 @@ pub async fn open_file_dialog<R: tauri::Runtime>(
     use tauri_plugin_dialog::DialogExt;
 
     let dialog = app.dialog();
-    let result = dialog.file()
+    let result = dialog
+        .file()
         .add_filter("JSON", &["json"])
         .blocking_pick_file();
 
