@@ -1608,8 +1608,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
                     <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
                       <p className="text-xs text-amber-600 dark:text-amber-400">
-                        💡
-                        留空将使用供应商的默认模型。Haiku=快速模型，Sonnet=均衡模型，Opus=最强模型
+                        💡 留空将使用供应商的默认模型。Haiku=快速模型，Sonnet=均衡模型，Opus=最强模型
                       </p>
                     </div>
                   </div>
