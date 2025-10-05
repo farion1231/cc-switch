@@ -696,7 +696,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             ...config,
             editorValue: config.editorValue
               ? config.editorValue
-              : (config.defaultValue ?? ""),
+              : config.defaultValue ?? "",
           },
         ]),
       );
