@@ -73,7 +73,7 @@
     "selectFileFailed": "Failed to select file",
     "configCorrupted": "Config file may be corrupted or invalid",
     "backupId": "Backup ID",
-    "autoReload": "Application will reload in 2 seconds...",
+    "autoReload": "Data will refresh automatically in 2 seconds...",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
     "windowBehavior": "Window Behavior",

@@ -402,7 +402,7 @@ export default function SettingsModal({ onClose, onImportSuccess }: SettingsModa
       if (result.success) {
         setImportBackupId(result.backupId || '');
         setImportStatus('success');
-        // ImportProgressModal 组件会在2秒后自动重新加载
+        // ImportProgressModal 会在2秒后触发数据刷新回调
       } else {
         setImportError(result.message || t("settings.configCorrupted"));
         setImportStatus('error');
