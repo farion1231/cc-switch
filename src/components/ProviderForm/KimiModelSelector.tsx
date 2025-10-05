@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { ChevronDown, RefreshCw, AlertCircle } from "lucide-react";
 
+
 interface KimiModel {
   id: string;
   object: string;
@@ -10,10 +11,11 @@ interface KimiModel {
 
 interface KimiModelSelectorProps {
   apiKey: string;
-  anthropicModel: string;
-  anthropicSmallFastModel: string;
+  claudeHaikuModel: string;
+  claudeSonnetModel: string;
+  claudeOpusModel: string;
   onModelChange: (
-    field: "ANTHROPIC_MODEL" | "ANTHROPIC_SMALL_FAST_MODEL",
+    field: "ANTHROPIC_DEFAULT_HAIKU_MODEL" | "ANTHROPIC_DEFAULT_SONNET_MODEL" | "ANTHROPIC_DEFAULT_OPUS_MODEL",
     value: string,
   ) => void;
   disabled?: boolean;
@@ -21,8 +23,9 @@ interface KimiModelSelectorProps {
 
 const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
   apiKey,
-  anthropicModel,
-  anthropicSmallFastModel,
+  claudeHaikuModel,
+  claudeSonnetModel,
+  claudeOpusModel,
   onModelChange,
   disabled = false,
 }) => {
@@ -156,18 +159,21 @@ const KimiModelSelector: React.FC<KimiModelSelectorProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <ModelSelect
-          label="主模型"
-          value={anthropicModel}
-          onChange={(value) => onModelChange("ANTHROPIC_MODEL", value)}
+          label="Haiku 模型"
+          value={claudeHaikuModel}
+          onChange={(value) => onModelChange("ANTHROPIC_DEFAULT_HAIKU_MODEL", value)}
         />
         <ModelSelect
-          label="快速模型"
-          value={anthropicSmallFastModel}
-          onChange={(value) =>
-            onModelChange("ANTHROPIC_SMALL_FAST_MODEL", value)
-          }
+          label="Sonnet 模型"
+          value={claudeSonnetModel}
+          onChange={(value) => onModelChange("ANTHROPIC_DEFAULT_SONNET_MODEL", value)}
+        />
+        <ModelSelect
+          label="Opus 模型"
+          value={claudeOpusModel}
+          onChange={(value) => onModelChange("ANTHROPIC_DEFAULT_OPUS_MODEL", value)}
         />
       </div>
 
