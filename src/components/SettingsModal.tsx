@@ -23,7 +23,7 @@ import { isLinux } from "../lib/platform";
 
 interface SettingsModalProps {
   onClose: () => void;
-  onImportSuccess?: () => void;
+  onImportSuccess?: () => void | Promise<void>;
 }
 
 export default function SettingsModal({ onClose, onImportSuccess }: SettingsModalProps) {
@@ -768,8 +768,12 @@ export default function SettingsModal({ onClose, onImportSuccess }: SettingsModa
             setSelectedImportFile('');
           }}
           onSuccess={() => {
-            onImportSuccess?.();
-            window.location.reload(); // 重新加载应用
+            if (onImportSuccess) {
+              void onImportSuccess();
+            }
+            void window.api
+              .updateTrayMenu()
+              .catch((error) => console.error("[SettingsModal] Failed to refresh tray menu", error));
           }}
         />
       )}
