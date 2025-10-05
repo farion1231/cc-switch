@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Zap, Loader2, Plus, Trash2, AlertCircle, Check } from "lucide-react";
+import { Zap, Loader2, Plus, X, AlertCircle } from "lucide-react";
+import { isLinux } from "../../lib/platform";
 
 import type { AppType } from "../../lib/tauri-api";
 
@@ -16,6 +17,7 @@ interface EndpointSpeedTestProps {
   onChange: (url: string) => void;
   initialEndpoints: EndpointCandidate[];
   visible?: boolean;
+  onClose: () => void;
 }
 
 interface EndpointEntry extends EndpointCandidate {
@@ -80,6 +82,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
   onChange,
   initialEndpoints,
   visible = true,
+  onClose,
 }) => {
   const [entries, setEntries] = useState<EndpointEntry[]>(() =>
     buildInitialEntries(initialEndpoints, value),
@@ -185,12 +188,12 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     try {
       parsed = new URL(candidate);
     } catch {
-      setAddError("URL 格式不正确，请确认包含 http(s) 前缀");
+      setAddError("URL 格式不正确");
       return;
     }
 
     if (!parsed.protocol.startsWith("http")) {
-      setAddError("仅支持 HTTP/HTTPS 地址");
+      setAddError("仅支持 HTTP/HTTPS");
       return;
     }
 
@@ -240,12 +243,12 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
   const runSpeedTest = useCallback(async () => {
     const urls = entries.map((entry) => entry.url);
     if (urls.length === 0) {
-      setLastError("请先添加至少一个地址再进行测速");
+      setLastError("请先添加端点");
       return;
     }
 
     if (typeof window === "undefined" || !window.api?.testApiEndpoints) {
-      setLastError("测速功能仅在桌面应用中可用");
+      setLastError("测速功能不可用");
       return;
     }
 
@@ -268,7 +271,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
               ...entry,
               latency: null,
               status: undefined,
-              error: "未返回测速结果",
+              error: "未返回结果",
             };
           }
           return {
@@ -307,170 +310,222 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     [normalizedSelected, onChange],
   );
 
+  // 支持按下 ESC 关闭弹窗
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   if (!visible) {
     return null;
   }
 
   return (
-    <div className="mt-4 space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900/40">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-            节点测速
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      {/* Backdrop */}
+      <div
+        className={`absolute inset-0 bg-black/50 dark:bg-black/70${
+          isLinux() ? "" : " backdrop-blur-sm"
+        }`}
+      />
+
+      {/* Modal */}
+      <div className="relative bg-white dark:bg-gray-900 rounded-lg shadow-lg w-full max-w-2xl mx-4 max-h-[80vh] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+          <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">
+            请求地址管理
           </h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            添加多个端点后可一键测速，自动选取延迟最低的地址
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-            <input
-              type="checkbox"
-              checked={autoSelect}
-              onChange={(event) => setAutoSelect(event.target.checked)}
-              className="rounded border-gray-300 text-blue-500 focus:ring-blue-400"
-            />
-            自动选择最快节点
-          </label>
           <button
             type="button"
-            onClick={runSpeedTest}
-            disabled={isTesting || entries.length === 0}
-            className="flex items-center gap-2 rounded-md bg-blue-500 px-3 py-1.5 text-sm text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={onClose}
+            className="p-1 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md transition-colors"
+            aria-label="关闭"
           >
-            {isTesting ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                测速中...
-              </>
-            ) : (
-              <>
-                <Zap className="h-4 w-4" />
-                开始测速
-              </>
-            )}
+            <X size={16} />
           </button>
         </div>
-      </div>
 
-      {hasEndpoints ? (
-        <div className="space-y-2">
-          {sortedEntries.map((entry) => {
-            const isSelected = normalizedSelected === entry.url;
-            const latency = entry.latency;
-            const statusBadge =
-              latency !== null
-                ? latency <= 100
-                  ? "text-green-600 dark:text-green-400"
-                  : latency <= 300
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-red-600 dark:text-red-400"
-                : "text-gray-500 dark:text-gray-400";
-
-            return (
-              <div
-                key={entry.id}
-                className={`flex items-start justify-between gap-2 rounded-lg border px-3 py-2 text-sm transition ${
-                  isSelected
-                    ? "border-green-400 bg-green-50 dark:border-green-500 dark:bg-green-900/30"
-                    : "border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800"
-                }`}
+        {/* Content */}
+        <div className="flex-1 overflow-auto px-6 py-4 space-y-4">
+          {/* 测速控制栏 */}
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-gray-600 dark:text-gray-400">
+              {entries.length} 个端点
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={autoSelect}
+                  onChange={(event) => setAutoSelect(event.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-gray-300 dark:border-gray-600"
+                />
+                自动选择
+              </label>
+              <button
+                type="button"
+                onClick={runSpeedTest}
+                disabled={isTesting || !hasEndpoints}
+                className="flex h-7 items-center gap-1.5 rounded-md bg-gray-900 px-2.5 text-xs font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200"
               >
-                <label className="flex flex-1 cursor-pointer items-start gap-2">
-                  <input
-                    type="radio"
-                    name="endpoint-speedtest"
-                    checked={isSelected}
-                    onChange={() => handleSelect(entry.url)}
-                    className="mt-1 h-4 w-4 border-gray-300 text-green-500 focus:ring-green-400"
-                  />
-                  <div className="flex flex-1 flex-col gap-1">
+                {isTesting ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    测速中
+                  </>
+                ) : (
+                  <>
+                    <Zap className="h-3.5 w-3.5" />
+                    测速
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* 添加输入 */}
+          <div className="space-y-1.5">
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={customUrl}
+                placeholder="https://api.example.com"
+                onChange={(event) => setCustomUrl(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleAddEndpoint();
+                  }
+                }}
+                className="flex-1 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 placeholder-gray-400 transition focus:border-gray-400 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:placeholder-gray-500 dark:focus:border-gray-600"
+              />
+              <button
+                type="button"
+                onClick={handleAddEndpoint}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 transition hover:border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:border-gray-600 dark:hover:bg-gray-800"
+              >
+                <Plus className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+              </button>
+            </div>
+            {addError && (
+              <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+                <AlertCircle className="h-3 w-3" />
+                {addError}
+              </div>
+            )}
+          </div>
+
+          {/* 端点列表 */}
+          {hasEndpoints ? (
+            <div className="space-y-px overflow-hidden rounded-md border border-gray-200 dark:border-gray-700">
+              {sortedEntries.map((entry, index) => {
+                const isSelected = normalizedSelected === entry.url;
+                const latency = entry.latency;
+
+                return (
+                  <div
+                    key={entry.id}
+                    onClick={() => handleSelect(entry.url)}
+                    className={`group flex cursor-pointer items-center justify-between px-3 py-2.5 transition ${
+                      isSelected
+                        ? "bg-gray-100 dark:bg-gray-800"
+                        : "bg-white hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-850"
+                    } ${index > 0 ? "border-t border-gray-100 dark:border-gray-800" : ""}`}
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      {/* 选择指示器 */}
+                      <div
+                        className={`h-1.5 w-1.5 flex-shrink-0 rounded-full transition ${
+                          isSelected
+                            ? "bg-gray-900 dark:bg-gray-100"
+                            : "bg-gray-300 dark:bg-gray-700"
+                        }`}
+                      />
+
+                      {/* 内容 */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {entry.label}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
+                          {entry.url}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 右侧信息 */}
                     <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-800 dark:text-gray-100">
-                        {entry.label || "候选节点"}
-                      </span>
-                      {isSelected && (
-                        <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                          <Check className="h-3 w-3" /> 已选中
-                        </span>
+                      {latency !== null ? (
+                        <div className="text-right">
+                          <div className="font-mono text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {latency}ms
+                          </div>
+                        </div>
+                      ) : isTesting ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                      ) : entry.error ? (
+                        <div className="text-xs text-gray-400">失败</div>
+                      ) : (
+                        <div className="text-xs text-gray-400">—</div>
+                      )}
+
+                      {entry.isCustom && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemoveEndpoint(entry);
+                          }}
+                          className="opacity-0 transition hover:text-red-600 group-hover:opacity-100 dark:hover:text-red-400"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
                       )}
                     </div>
-                    <span className="break-all text-xs text-gray-500 dark:text-gray-400">
-                      {entry.url}
-                    </span>
                   </div>
-                </label>
-                <div className="flex items-center gap-3">
-                  <div className="text-xs font-mono">
-                    {latency !== null ? (
-                      <span className={statusBadge}>{latency} ms</span>
-                    ) : isTesting ? (
-                      <span className="text-gray-400">等待结果</span>
-                    ) : entry.error ? (
-                      <span className="flex items-center gap-1 text-red-500">
-                        <AlertCircle className="h-3 w-3" />
-                        失败
-                      </span>
-                    ) : (
-                      <span className="text-gray-400">未测速</span>
-                    )}
-                  </div>
-                  {entry.isCustom && (
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveEndpoint(entry)}
-                      className="rounded-md p-1 text-red-500 transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
-                      title="删除该地址"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="rounded-md border border-dashed border-gray-300 bg-white p-4 text-center text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
-          暂无可测速的地址，请先添加至少一个请求地址
-        </div>
-      )}
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-md border border-dashed border-gray-200 bg-gray-50 py-8 text-center text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+              暂无端点
+            </div>
+          )}
 
-      <div>
-        <div className="flex gap-2">
-          <input
-            type="url"
-            value={customUrl}
-            placeholder="https://example.com/claude"
-            onChange={(event) => setCustomUrl(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                handleAddEndpoint();
-              }
-            }}
-            className="flex-1 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-800 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-          />
+          {/* 错误提示 */}
+          {lastError && (
+            <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+              <AlertCircle className="h-3 w-3" />
+              {lastError}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end px-6 py-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800">
           <button
             type="button"
-            onClick={handleAddEndpoint}
-            className="flex items-center gap-1 rounded-md bg-green-500 px-3 py-1.5 text-sm text-white transition hover:bg-green-600"
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
           >
-            <Plus className="h-4 w-4" />
-            添加
+            完成
           </button>
         </div>
-        {addError && (
-          <p className="mt-1 text-xs text-red-500">{addError}</p>
-        )}
       </div>
-
-      {lastError && (
-        <p className="text-xs text-red-500">
-          <AlertCircle className="mr-1 inline h-3 w-3 align-middle" />
-          {lastError}
-        </p>
-      )}
     </div>
   );
 };

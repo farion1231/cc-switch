@@ -219,6 +219,9 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [codexBaseUrl, setCodexBaseUrl] = useState("");
   const [isCodexTemplateModalOpen, setIsCodexTemplateModalOpen] =
     useState(false);
+  // 端点测速弹窗状态
+  const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
+  const [isCodexEndpointModalOpen, setIsCodexEndpointModalOpen] = useState(false);
   // -1 表示自定义，null 表示未选择，>= 0 表示预设索引
   const [selectedCodexPreset, setSelectedCodexPreset] = useState<number | null>(
     showPresets && isCodex ? -1 : null
@@ -1117,10 +1120,6 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   // 综合判断是否应该显示 Kimi 模型选择器
   const shouldShowKimiSelector = isKimiPreset || isEditingKimi;
 
-  // 判断是否显示基础 URL 输入框（仅自定义模式显示）
-  const showBaseUrlInput =
-    !isCodex && shouldShowSpeedTest;
-
   const claudeSpeedTestEndpoints = useMemo<EndpointCandidate[]>(() => {
     if (isCodex) return [];
     const map = new Map<string, EndpointCandidate>();
@@ -1571,23 +1570,22 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             )}
 
             {!isCodex && shouldShowSpeedTest && (
-              <EndpointSpeedTest
-                appType={appType}
-                value={baseUrl}
-                onChange={handleBaseUrlChange}
-                initialEndpoints={claudeSpeedTestEndpoints}
-              />
-            )}
-
-            {/* 基础 URL 输入框 - 仅在自定义模式下显示 */}
-            {!isCodex && showBaseUrlInput && (
               <div className="space-y-2">
-                <label
-                  htmlFor="baseUrl"
-                  className="block text-sm font-medium text-gray-900 dark:text-gray-100"
-                >
-                  请求地址
-                </label>
+                <div className="flex items-center justify-between">
+                  <label
+                    htmlFor="baseUrl"
+                    className="block text-sm font-medium text-gray-900 dark:text-gray-100"
+                  >
+                    请求地址
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsEndpointModalOpen(true)}
+                    className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                  >
+                    高级
+                  </button>
+                </div>
                 <input
                   type="url"
                   id="baseUrl"
@@ -1603,6 +1601,18 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   </p>
                 </div>
               </div>
+            )}
+
+            {/* 端点测速弹窗 - Claude */}
+            {!isCodex && shouldShowSpeedTest && isEndpointModalOpen && (
+              <EndpointSpeedTest
+                appType={appType}
+                value={baseUrl}
+                onChange={handleBaseUrlChange}
+                initialEndpoints={claudeSpeedTestEndpoints}
+                visible={isEndpointModalOpen}
+                onClose={() => setIsEndpointModalOpen(false)}
+              />
             )}
 
             {!isCodex && shouldShowKimiSelector && (
@@ -1650,11 +1660,43 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             )}
 
             {isCodex && shouldShowSpeedTest && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label
+                    htmlFor="codexBaseUrl"
+                    className="block text-sm font-medium text-gray-900 dark:text-gray-100"
+                  >
+                    请求地址
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsCodexEndpointModalOpen(true)}
+                    className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                  >
+                    高级
+                  </button>
+                </div>
+                <input
+                  type="url"
+                  id="codexBaseUrl"
+                  value={codexBaseUrl}
+                  onChange={(e) => handleCodexBaseUrlChange(e.target.value)}
+                  placeholder="https://your-api-endpoint.com/v1"
+                  autoComplete="off"
+                  className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 focus:border-blue-500 dark:focus:border-blue-400 transition-colors"
+                />
+              </div>
+            )}
+
+            {/* 端点测速弹窗 - Codex */}
+            {isCodex && shouldShowSpeedTest && isCodexEndpointModalOpen && (
               <EndpointSpeedTest
                 appType={appType}
                 value={codexBaseUrl}
                 onChange={handleCodexBaseUrlChange}
                 initialEndpoints={codexSpeedTestEndpoints}
+                visible={isCodexEndpointModalOpen}
+                onClose={() => setIsCodexEndpointModalOpen(false)}
               />
             )}
 
