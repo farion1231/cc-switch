@@ -1345,13 +1345,26 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // 若有子弹窗（端点测速/模板向导）处于打开状态，则交由子弹窗自身处理，避免级联关闭
+        if (
+          isEndpointModalOpen ||
+          isCodexEndpointModalOpen ||
+          isCodexTemplateModalOpen
+        ) {
+          return;
+        }
         e.preventDefault();
         onClose();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [
+    onClose,
+    isEndpointModalOpen,
+    isCodexEndpointModalOpen,
+    isCodexTemplateModalOpen,
+  ]);
 
   return (
     <div
