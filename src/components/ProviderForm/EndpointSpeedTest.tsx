@@ -387,8 +387,8 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
 
           {/* 端点列表 */}
           {hasEndpoints ? (
-            <div className="space-y-px overflow-hidden rounded-md border border-gray-200 dark:border-gray-700">
-              {sortedEntries.map((entry, index) => {
+            <div className="space-y-2">
+              {sortedEntries.map((entry) => {
                 const isSelected = normalizedSelected === entry.url;
                 const latency = entry.latency;
 
@@ -396,18 +396,18 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                   <div
                     key={entry.id}
                     onClick={() => handleSelect(entry.url)}
-                    className={`group flex cursor-pointer items-center justify-between px-3 py-2.5 transition ${
+                    className={`group flex cursor-pointer items-center justify-between px-3 py-2.5 rounded-lg border transition ${
                       isSelected
-                        ? "bg-gray-100 dark:bg-gray-800"
-                        : "bg-white hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-850"
-                    } ${index > 0 ? "border-t border-gray-100 dark:border-gray-800" : ""}`}
+                        ? "border-blue-500 bg-blue-50 dark:border-blue-500 dark:bg-blue-900/20"
+                        : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:border-gray-600 dark:hover:bg-gray-850"
+                    }`}
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-3">
                       {/* 选择指示器 */}
                       <div
                         className={`h-1.5 w-1.5 flex-shrink-0 rounded-full transition ${
                           isSelected
-                            ? "bg-gray-900 dark:bg-gray-100"
+                            ? "bg-blue-500 dark:bg-blue-400"
                             : "bg-gray-300 dark:bg-gray-700"
                         }`}
                       />
@@ -436,18 +436,16 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                         <div className="text-xs text-gray-400">—</div>
                       )}
 
-                      {entry.isCustom && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRemoveEndpoint(entry);
-                          }}
-                          className="opacity-0 transition hover:text-red-600 group-hover:opacity-100 dark:hover:text-red-400"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveEndpoint(entry);
+                        }}
+                        className="opacity-0 transition hover:text-red-600 group-hover:opacity-100 dark:hover:text-red-400"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
                     </div>
                   </div>
                 );
