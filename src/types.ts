@@ -20,6 +20,13 @@ export interface AppConfig {
   current: string;
 }
 
+// 自定义端点配置
+export interface CustomEndpoint {
+  url: string;
+  addedAt: number;
+  lastUsed?: number;
+}
+
 // 应用设置类型（用于 SettingsModal 与 Tauri API）
 export interface Settings {
   // 是否在系统托盘（macOS 菜单栏）显示图标
@@ -32,4 +39,8 @@ export interface Settings {
   codexConfigDir?: string;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh";
+  // Claude 自定义端点列表
+  customEndpointsClaude?: Record<string, CustomEndpoint>;
+  // Codex 自定义端点列表
+  customEndpointsCodex?: Record<string, CustomEndpoint>;
 }

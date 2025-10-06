@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import { Provider, Settings } from "../types";
+import { Provider, Settings, CustomEndpoint } from "../types";
 
 // 应用类型
 export type AppType = "claude" | "codex";
@@ -333,6 +333,63 @@ export const tauriAPI = {
     } catch (error) {
       console.error("测速调用失败:", error);
       throw error;
+    }
+  },
+
+  // 获取自定义端点列表
+  getCustomEndpoints: async (appType: AppType): Promise<CustomEndpoint[]> => {
+    try {
+      return await invoke<CustomEndpoint[]>("get_custom_endpoints", {
+        app_type: appType,
+      });
+    } catch (error) {
+      console.error("获取自定义端点列表失败:", error);
+      return [];
+    }
+  },
+
+  // 添加自定义端点
+  addCustomEndpoint: async (appType: AppType, url: string): Promise<void> => {
+    try {
+      await invoke("add_custom_endpoint", {
+        app_type: appType,
+        url,
+      });
+    } catch (error) {
+      console.error("添加自定义端点失败:", error);
+      throw error;
+    }
+  },
+
+  // 删除自定义端点
+  removeCustomEndpoint: async (
+    appType: AppType,
+    url: string,
+  ): Promise<void> => {
+    try {
+      await invoke("remove_custom_endpoint", {
+        app_type: appType,
+        url,
+      });
+    } catch (error) {
+      console.error("删除自定义端点失败:", error);
+      throw error;
+    }
+  },
+
+  // 更新端点最后使用时间
+  updateEndpointLastUsed: async (
+    appType: AppType,
+    url: string,
+  ): Promise<void> => {
+    try {
+      await invoke("update_endpoint_last_used", {
+        app_type: appType,
+        url,
+      });
+    } catch (error) {
+      console.error("更新端点最后使用时间失败:", error);
+      // 不抛出错误，因为这不是关键操作
     }
   },
 };

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import { Provider, Settings } from "./types";
+import { Provider, Settings, CustomEndpoint } from "./types";
 import { AppType } from "./lib/tauri-api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -58,6 +58,11 @@ declare global {
         status?: number;
         error?: string;
       }>>;
+      // 自定义端点管理
+      getCustomEndpoints: (appType: AppType) => Promise<CustomEndpoint[]>;
+      addCustomEndpoint: (appType: AppType, url: string) => Promise<void>;
+      removeCustomEndpoint: (appType: AppType, url: string) => Promise<void>;
+      updateEndpointLastUsed: (appType: AppType, url: string) => Promise<void>;
     };
     platform: {
       isMac: boolean;

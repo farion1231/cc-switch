@@ -421,6 +421,10 @@ pub fn run() {
             commands::apply_claude_plugin_config,
             commands::is_claude_plugin_applied,
             commands::test_api_endpoints,
+            commands::get_custom_endpoints,
+            commands::add_custom_endpoint,
+            commands::remove_custom_endpoint,
+            commands::update_endpoint_last_used,
             update_tray_menu,
         ]);
 

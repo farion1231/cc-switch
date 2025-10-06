@@ -739,3 +739,100 @@ pub async fn test_api_endpoints(
         .collect();
     speedtest::test_endpoints(filtered, timeout_secs).await
 }
+
+/// 获取自定义端点列表
+#[tauri::command]
+pub async fn get_custom_endpoints(app_type: AppType) -> Result<Vec<crate::settings::CustomEndpoint>, String> {
+    let settings = crate::settings::get_settings();
+    let endpoints = match app_type {
+        AppType::Claude => &settings.custom_endpoints_claude,
+        AppType::Codex => &settings.custom_endpoints_codex,
+    };
+
+    let mut result: Vec<crate::settings::CustomEndpoint> = endpoints.values().cloned().collect();
+    // 按添加时间降序排序（最新的在前）
+    result.sort_by(|a, b| b.added_at.cmp(&a.added_at));
+
+    Ok(result)
+}
+
+/// 添加自定义端点
+#[tauri::command]
+pub async fn add_custom_endpoint(
+    app_type: AppType,
+    url: String,
+) -> Result<(), String> {
+    let normalized = url.trim().trim_end_matches('/').to_string();
+    if normalized.is_empty() {
+        return Err("URL 不能为空".to_string());
+    }
+
+    let mut settings = crate::settings::get_settings();
+    let endpoints = match app_type {
+        AppType::Claude => &mut settings.custom_endpoints_claude,
+        AppType::Codex => &mut settings.custom_endpoints_codex,
+    };
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+
+    let endpoint = crate::settings::CustomEndpoint {
+        url: normalized.clone(),
+        added_at: timestamp,
+        last_used: None,
+    };
+
+    endpoints.insert(normalized, endpoint);
+    crate::settings::update_settings(settings)?;
+
+    Ok(())
+}
+
+/// 删除自定义端点
+#[tauri::command]
+pub async fn remove_custom_endpoint(
+    app_type: AppType,
+    url: String,
+) -> Result<(), String> {
+    let normalized = url.trim().trim_end_matches('/').to_string();
+
+    let mut settings = crate::settings::get_settings();
+    let endpoints = match app_type {
+        AppType::Claude => &mut settings.custom_endpoints_claude,
+        AppType::Codex => &mut settings.custom_endpoints_codex,
+    };
+
+    endpoints.remove(&normalized);
+    crate::settings::update_settings(settings)?;
+
+    Ok(())
+}
+
+/// 更新端点最后使用时间
+#[tauri::command]
+pub async fn update_endpoint_last_used(
+    app_type: AppType,
+    url: String,
+) -> Result<(), String> {
+    let normalized = url.trim().trim_end_matches('/').to_string();
+
+    let mut settings = crate::settings::get_settings();
+    let endpoints = match app_type {
+        AppType::Claude => &mut settings.custom_endpoints_claude,
+        AppType::Codex => &mut settings.custom_endpoints_codex,
+    };
+
+    if let Some(endpoint) = endpoints.get_mut(&normalized) {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        endpoint.last_used = Some(timestamp);
+        crate::settings::update_settings(settings)?;
+    }
+
+    Ok(())
+}
