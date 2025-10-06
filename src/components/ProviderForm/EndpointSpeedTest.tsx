@@ -7,7 +7,6 @@ import type { AppType } from "../../lib/tauri-api";
 export interface EndpointCandidate {
   id?: string;
   url: string;
-  label?: string;
   isCustom?: boolean;
 }
 
@@ -40,25 +39,11 @@ const buildInitialEntries = (
   const addCandidate = (candidate: EndpointCandidate) => {
     const sanitized = candidate.url ? normalizeEndpointUrl(candidate.url) : "";
     if (!sanitized) return;
-    if (map.has(sanitized)) {
-      const existing = map.get(sanitized)!;
-      if (candidate.label && candidate.label !== existing.label) {
-        map.set(sanitized, { ...existing, label: candidate.label });
-      }
-      return;
-    }
-    const index = map.size;
-    const label =
-      candidate.label ??
-      (candidate.isCustom
-        ? `自定义 ${index + 1}`
-        : index === 0
-          ? "默认地址"
-          : `候选 ${index + 1}`);
+    if (map.has(sanitized)) return;
+
     map.set(sanitized, {
       id: candidate.id ?? randomId(),
       url: sanitized,
-      label,
       isCustom: candidate.isCustom ?? false,
       latency: null,
       status: undefined,
@@ -70,7 +55,7 @@ const buildInitialEntries = (
 
   const selectedUrl = normalizeEndpointUrl(selected);
   if (selectedUrl && !map.has(selectedUrl)) {
-    addCandidate({ url: selectedUrl, label: "当前地址", isCustom: true });
+    addCandidate({ url: selectedUrl, isCustom: true });
   }
 
   return Array.from(map.values());
@@ -112,25 +97,11 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
           : "";
         if (!sanitized) return;
         const existing = map.get(sanitized);
-        if (existing) {
-          if (candidate.label && candidate.label !== existing.label) {
-            map.set(sanitized, { ...existing, label: candidate.label });
-            changed = true;
-          }
-          return;
-        }
-        const index = map.size;
-        const label =
-          candidate.label ??
-          (candidate.isCustom
-            ? `自定义 ${index + 1}`
-            : index === 0
-              ? "默认地址"
-              : `候选 ${index + 1}`);
+        if (existing) return;
+
         map.set(sanitized, {
           id: candidate.id ?? randomId(),
           url: sanitized,
-          label,
           isCustom: candidate.isCustom ?? false,
           latency: null,
           status: undefined,
@@ -141,19 +112,8 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
 
       initialEndpoints.forEach(mergeCandidate);
 
-      if (normalizedSelected) {
-        const existing = map.get(normalizedSelected);
-        if (existing) {
-          if (existing.label !== "当前地址") {
-            map.set(normalizedSelected, {
-              ...existing,
-              label: existing.isCustom ? existing.label : "当前地址",
-            });
-            changed = true;
-          }
-        } else {
-          mergeCandidate({ url: normalizedSelected, label: "当前地址", isCustom: true });
-        }
+      if (normalizedSelected && !map.has(normalizedSelected)) {
+        mergeCandidate({ url: normalizedSelected, isCustom: true });
       }
 
       if (!changed) {
@@ -204,13 +164,11 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
         setAddError("该地址已存在");
         return prev;
       }
-      const customCount = prev.filter((entry) => entry.isCustom).length;
       return [
         ...prev,
         {
           id: randomId(),
           url: sanitized,
-          label: `自定义 ${customCount + 1}`,
           isCustom: true,
           latency: null,
           status: undefined,
@@ -341,9 +299,9 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
       />
 
       {/* Modal */}
-      <div className="relative bg-white dark:bg-gray-900 rounded-lg shadow-lg w-full max-w-2xl mx-4 max-h-[80vh] overflow-hidden flex flex-col">
+      <div className="relative bg-white dark:bg-gray-900 rounded-xl shadow-lg w-full max-w-2xl mx-4 max-h-[80vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-800">
           <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">
             请求地址管理
           </h3>
@@ -378,7 +336,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                 type="button"
                 onClick={runSpeedTest}
                 disabled={isTesting || !hasEndpoints}
-                className="flex h-7 items-center gap-1.5 rounded-md bg-gray-900 px-2.5 text-xs font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200"
+                className="flex h-7 items-center gap-1.5 rounded-md bg-blue-500 px-2.5 text-xs font-medium text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-blue-600 dark:hover:bg-blue-700"
               >
                 {isTesting ? (
                   <>
@@ -456,12 +414,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
 
                       {/* 内容 */}
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                            {entry.label}
-                          </span>
-                        </div>
-                        <div className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
+                        <div className="truncate text-sm text-gray-900 dark:text-gray-100">
                           {entry.url}
                         </div>
                       </div>
@@ -516,11 +469,11 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end px-6 py-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800">
+        <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+            className="px-4 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-700 transition-colors text-sm font-medium"
           >
             完成
           </button>

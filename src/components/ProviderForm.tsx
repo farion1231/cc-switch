@@ -1123,21 +1123,21 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const claudeSpeedTestEndpoints = useMemo<EndpointCandidate[]>(() => {
     if (isCodex) return [];
     const map = new Map<string, EndpointCandidate>();
-    const add = (url?: string, label?: string) => {
+    const add = (url?: string) => {
       if (!url) return;
       const sanitized = url.trim().replace(/\/+$/, "");
       if (!sanitized || map.has(sanitized)) return;
-      map.set(sanitized, { url: sanitized, label });
+      map.set(sanitized, { url: sanitized });
     };
 
     if (baseUrl) {
-      add(baseUrl, "当前地址");
+      add(baseUrl);
     }
 
     if (initialData && typeof initialData.settingsConfig === "object") {
       const envUrl = (initialData.settingsConfig as any)?.env?.ANTHROPIC_BASE_URL;
       if (typeof envUrl === "string") {
-        add(envUrl, envUrl === baseUrl ? "当前地址" : "历史地址");
+        add(envUrl);
       }
     }
 
@@ -1149,7 +1149,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       const preset = providerPresets[selectedPreset];
       const presetEnv = (preset.settingsConfig as any)?.env?.ANTHROPIC_BASE_URL;
       if (typeof presetEnv === "string") {
-        add(presetEnv, presetEnv === baseUrl ? "当前地址" : "预设地址");
+        add(presetEnv);
       }
     }
 
@@ -1159,15 +1159,15 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const codexSpeedTestEndpoints = useMemo<EndpointCandidate[]>(() => {
     if (!isCodex) return [];
     const map = new Map<string, EndpointCandidate>();
-    const add = (url?: string, label?: string) => {
+    const add = (url?: string) => {
       if (!url) return;
       const sanitized = url.trim().replace(/\/+$/, "");
       if (!sanitized || map.has(sanitized)) return;
-      map.set(sanitized, { url: sanitized, label });
+      map.set(sanitized, { url: sanitized });
     };
 
     if (codexBaseUrl) {
-      add(codexBaseUrl, "当前地址");
+      add(codexBaseUrl);
     }
 
     const initialCodexConfig =
@@ -1176,7 +1176,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
         : "";
     const existing = extractCodexBaseUrl(initialCodexConfig);
     if (existing) {
-      add(existing, existing === codexBaseUrl ? "当前地址" : "历史地址");
+      add(existing);
     }
 
     if (
@@ -1187,7 +1187,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       const presetConfig = codexProviderPresets[selectedCodexPreset]?.config;
       const presetBase = extractCodexBaseUrl(presetConfig);
       if (presetBase) {
-        add(presetBase, presetBase === codexBaseUrl ? "当前地址" : "预设地址");
+        add(presetBase);
       }
     }
 
