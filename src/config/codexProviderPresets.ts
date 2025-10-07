@@ -13,6 +13,8 @@ export interface CodexProviderPreset {
   isOfficial?: boolean; // 标识是否为官方预设
   category?: ProviderCategory; // 新增：分类
   isCustomTemplate?: boolean; // 标识是否为自定义模板
+  // 新增：请求地址候选列表（用于地址管理/测速）
+  endpointCandidates?: string[];
 }
 
 /**
@@ -71,5 +73,11 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       "https://codex-api.packycode.com/v1",
       "gpt-5-codex"
     ),
+    // Codex 请求地址候选（用于地址管理/测速）
+    endpointCandidates: [
+      "https://codex-api.packycode.com/v1",
+      "https://codex-api-hk-cn2.packycode.com/v1",
+      "https://codex-api-hk-cdn.packycode.com/v1",
+    ],
   },
 ];

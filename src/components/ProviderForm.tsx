@@ -41,11 +41,11 @@ const collectTemplatePaths = (
   source: unknown,
   templateKeys: string[],
   currentPath: TemplatePath = [],
-  acc: TemplatePath[] = [],
+  acc: TemplatePath[] = []
 ): TemplatePath[] => {
   if (typeof source === "string") {
     const hasPlaceholder = templateKeys.some((key) =>
-      source.includes(`\${${key}}`),
+      source.includes(`\${${key}}`)
     );
     if (hasPlaceholder) {
       acc.push([...currentPath]);
@@ -55,14 +55,14 @@ const collectTemplatePaths = (
 
   if (Array.isArray(source)) {
     source.forEach((item, index) =>
-      collectTemplatePaths(item, templateKeys, [...currentPath, index], acc),
+      collectTemplatePaths(item, templateKeys, [...currentPath, index], acc)
     );
     return acc;
   }
 
   if (source && typeof source === "object") {
     Object.entries(source).forEach(([key, value]) =>
-      collectTemplatePaths(value, templateKeys, [...currentPath, key], acc),
+      collectTemplatePaths(value, templateKeys, [...currentPath, key], acc)
     );
   }
 
@@ -81,7 +81,7 @@ const getValueAtPath = (source: any, path: TemplatePath) => {
 const setValueAtPath = (
   target: any,
   path: TemplatePath,
-  value: unknown,
+  value: unknown
 ): any => {
   if (path.length === 0) {
     return value;
@@ -119,7 +119,7 @@ const setValueAtPath = (
 const applyTemplateValuesToConfigString = (
   presetConfig: any,
   currentConfigString: string,
-  values: TemplateValueMap,
+  values: TemplateValueMap
 ) => {
   const replacedConfig = applyTemplateValues(presetConfig, values);
   const templateKeys = Object.keys(values);
@@ -209,8 +209,9 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [claudeSmallFastModel, setClaudeSmallFastModel] = useState("");
   const [baseUrl, setBaseUrl] = useState(""); // 新增：基础 URL 状态
   // 模板变量状态
-  const [templateValues, setTemplateValues] =
-    useState<Record<string, TemplateValueConfig>>({});
+  const [templateValues, setTemplateValues] = useState<
+    Record<string, TemplateValueConfig>
+  >({});
 
   // Codex 特有的状态
   const [codexAuth, setCodexAuthState] = useState("");
@@ -225,7 +226,8 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   );
   // 端点测速弹窗状态
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
-  const [isCodexEndpointModalOpen, setIsCodexEndpointModalOpen] = useState(false);
+  const [isCodexEndpointModalOpen, setIsCodexEndpointModalOpen] =
+    useState(false);
   // -1 表示自定义，null 表示未选择，>= 0 表示预设索引
   const [selectedCodexPreset, setSelectedCodexPreset] = useState<number | null>(
     showPresets && isCodex ? -1 : null
@@ -238,7 +240,9 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
   const setCodexConfig = (value: string | ((prev: string) => string)) => {
     setCodexConfigState((prev) =>
-      typeof value === "function" ? (value as (input: string) => string)(prev) : value,
+      typeof value === "function"
+        ? (value as (input: string) => string)(prev)
+        : value
     );
   };
 
@@ -476,13 +480,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     } catch {
       // ignore JSON parse errors
     }
-  }, [
-    isCodex,
-    category,
-    initialData,
-    formData.settingsConfig,
-    baseUrl,
-  ]);
+  }, [isCodex, category, initialData, formData.settingsConfig, baseUrl]);
 
   // 与 TOML 配置保持基础 URL 同步（Codex 第三方/自定义）
   useEffect(() => {
@@ -774,7 +772,7 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             ...config,
             editorValue: config.editorValue
               ? config.editorValue
-              : config.defaultValue ?? "",
+              : (config.defaultValue ?? ""),
           },
         ])
       );
@@ -1112,9 +1110,9 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
 
   const templateValueEntries: Array<[string, TemplateValueConfig]> =
     selectedTemplatePreset?.templateValues
-      ? (Object.entries(
-          selectedTemplatePreset.templateValues
-        ) as Array<[string, TemplateValueConfig]>)
+      ? (Object.entries(selectedTemplatePreset.templateValues) as Array<
+          [string, TemplateValueConfig]
+        >)
       : [];
 
   // 判断当前选中的预设是否是官方
@@ -1157,7 +1155,8 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
     }
 
     if (initialData && typeof initialData.settingsConfig === "object") {
-      const envUrl = (initialData.settingsConfig as any)?.env?.ANTHROPIC_BASE_URL;
+      const envUrl = (initialData.settingsConfig as any)?.env
+        ?.ANTHROPIC_BASE_URL;
       if (typeof envUrl === "string") {
         add(envUrl);
       }
@@ -1172,6 +1171,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       const presetEnv = (preset.settingsConfig as any)?.env?.ANTHROPIC_BASE_URL;
       if (typeof presetEnv === "string") {
         add(presetEnv);
+      }
+      // 合并预设内置的请求地址候选
+      if (Array.isArray((preset as any).endpointCandidates)) {
+        ((preset as any).endpointCandidates as string[]).forEach((u) => add(u));
       }
     }
 
@@ -1206,20 +1209,19 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       selectedCodexPreset >= 0 &&
       selectedCodexPreset < codexProviderPresets.length
     ) {
-      const presetConfig = codexProviderPresets[selectedCodexPreset]?.config;
-      const presetBase = extractCodexBaseUrl(presetConfig);
+      const preset = codexProviderPresets[selectedCodexPreset];
+      const presetBase = extractCodexBaseUrl(preset?.config || "");
       if (presetBase) {
         add(presetBase);
+      }
+      // 合并预设内置的请求地址候选
+      if (Array.isArray((preset as any)?.endpointCandidates)) {
+        ((preset as any).endpointCandidates as string[]).forEach((u) => add(u));
       }
     }
 
     return Array.from(map.values());
-  }, [
-    isCodex,
-    codexBaseUrl,
-    initialData,
-    selectedCodexPreset,
-  ]);
+  }, [isCodex, codexBaseUrl, initialData, selectedCodexPreset]);
 
   // 判断是否显示"获取 API Key"链接（国产官方、聚合站和第三方显示）
   const shouldShowApiKeyLink =
@@ -1536,73 +1538,76 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
               </div>
             )}
 
-            {!isCodex && selectedTemplatePreset && templateValueEntries.length > 0 && (
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                  参数配置 - {selectedTemplatePreset.name.trim()} *
-                </h3>
-                <div className="space-y-4">
-                  {templateValueEntries.map(([key, config]) => (
-                    <div key={key} className="space-y-2">
-                      <label className="sr-only" htmlFor={`template-${key}`}>
-                        {config.label}
-                      </label>
-                      <input
-                        id={`template-${key}`}
-                        type="text"
-                        required
-                        placeholder={`${config.label} *`}
-                        value={
-                          templateValues[key]?.editorValue ??
-                          config.editorValue ??
-                          config.defaultValue ??
-                          ""
-                        }
-                        onChange={(e) => {
-                          const newValue = e.target.value;
-                          setTemplateValues((prev) => {
-                            const prevEntry = prev[key];
-                            const nextEntry: TemplateValueConfig = {
-                              ...config,
-                              ...(prevEntry ?? {}),
-                              editorValue: newValue,
-                            };
-                            const nextValues: TemplateValueMap = {
-                              ...prev,
-                              [key]: nextEntry,
-                            };
+            {!isCodex &&
+              selectedTemplatePreset &&
+              templateValueEntries.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    参数配置 - {selectedTemplatePreset.name.trim()} *
+                  </h3>
+                  <div className="space-y-4">
+                    {templateValueEntries.map(([key, config]) => (
+                      <div key={key} className="space-y-2">
+                        <label className="sr-only" htmlFor={`template-${key}`}>
+                          {config.label}
+                        </label>
+                        <input
+                          id={`template-${key}`}
+                          type="text"
+                          required
+                          placeholder={`${config.label} *`}
+                          value={
+                            templateValues[key]?.editorValue ??
+                            config.editorValue ??
+                            config.defaultValue ??
+                            ""
+                          }
+                          onChange={(e) => {
+                            const newValue = e.target.value;
+                            setTemplateValues((prev) => {
+                              const prevEntry = prev[key];
+                              const nextEntry: TemplateValueConfig = {
+                                ...config,
+                                ...(prevEntry ?? {}),
+                                editorValue: newValue,
+                              };
+                              const nextValues: TemplateValueMap = {
+                                ...prev,
+                                [key]: nextEntry,
+                              };
 
-                            if (selectedTemplatePreset) {
-                              try {
-                                const configString = applyTemplateValuesToConfigString(
-                                  selectedTemplatePreset.settingsConfig,
-                                  formData.settingsConfig,
-                                  nextValues
-                                );
-                                setFormData((prevForm) => ({
-                                  ...prevForm,
-                                  settingsConfig: configString,
-                                }));
-                                setSettingsConfigError(
-                                  validateSettingsConfig(configString)
-                                );
-                              } catch (err) {
-                                console.error("更新模板值失败:", err);
+                              if (selectedTemplatePreset) {
+                                try {
+                                  const configString =
+                                    applyTemplateValuesToConfigString(
+                                      selectedTemplatePreset.settingsConfig,
+                                      formData.settingsConfig,
+                                      nextValues
+                                    );
+                                  setFormData((prevForm) => ({
+                                    ...prevForm,
+                                    settingsConfig: configString,
+                                  }));
+                                  setSettingsConfigError(
+                                    validateSettingsConfig(configString)
+                                  );
+                                } catch (err) {
+                                  console.error("更新模板值失败:", err);
+                                }
                               }
-                            }
 
-                            return nextValues;
-                          });
-                        }}
-                        aria-label={config.label}
-                        autoComplete="off"
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  ))}
+                              return nextValues;
+                            });
+                          }}
+                          aria-label={config.label}
+                          autoComplete="off"
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
             {!isCodex && shouldShowSpeedTest && (
               <div className="space-y-2">
