@@ -26,7 +26,7 @@ import ApiKeyInput from "./ProviderForm/ApiKeyInput";
 import ClaudeConfigEditor from "./ProviderForm/ClaudeConfigEditor";
 import CodexConfigEditor from "./ProviderForm/CodexConfigEditor";
 import KimiModelSelector from "./ProviderForm/KimiModelSelector";
-import { X, AlertCircle, Save } from "lucide-react";
+import { X, AlertCircle, Save, Zap } from "lucide-react";
 import { isLinux } from "../lib/platform";
 import EndpointSpeedTest, {
   EndpointCandidate,
@@ -1621,9 +1621,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsEndpointModalOpen(true)}
-                    className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                    className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
                   >
-                    高级
+                    <Zap className="h-3.5 w-3.5" />
+                    管理与测速
                   </button>
                 </div>
                 <input
@@ -1713,9 +1714,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsCodexEndpointModalOpen(true)}
-                    className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                    className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
                   >
-                    高级
+                    <Zap className="h-3.5 w-3.5" />
+                    管理与测速
                   </button>
                 </div>
                 <input
