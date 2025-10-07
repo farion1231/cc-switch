@@ -19,6 +19,9 @@ pub struct Provider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "createdAt")]
     pub created_at: Option<i64>,
+    /// 供应商元数据（不写入 live 配置，仅存于 ~/.cc-switch/config.json）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<ProviderMeta>,
 }
 
 impl Provider {
@@ -36,6 +39,7 @@ impl Provider {
             website_url,
             category: None,
             created_at: None,
+            meta: None,
         }
     }
 }
@@ -54,6 +58,14 @@ impl Default for ProviderManager {
             current: String::new(),
         }
     }
+}
+
+/// 供应商元数据
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderMeta {
+    /// 自定义端点列表（按 URL 去重存储）
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub custom_endpoints: HashMap<String, crate::settings::CustomEndpoint>,
 }
 
 impl ProviderManager {

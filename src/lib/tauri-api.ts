@@ -337,10 +337,18 @@ export const tauriAPI = {
   },
 
   // 获取自定义端点列表
-  getCustomEndpoints: async (appType: AppType): Promise<CustomEndpoint[]> => {
+  getCustomEndpoints: async (
+    appType: AppType,
+    providerId: string,
+  ): Promise<CustomEndpoint[]> => {
     try {
       return await invoke<CustomEndpoint[]>("get_custom_endpoints", {
+        // 兼容不同后端参数命名
         app_type: appType,
+        app: appType,
+        appType: appType,
+        provider_id: providerId,
+        providerId: providerId,
       });
     } catch (error) {
       console.error("获取自定义端点列表失败:", error);
@@ -349,26 +357,44 @@ export const tauriAPI = {
   },
 
   // 添加自定义端点
-  addCustomEndpoint: async (appType: AppType, url: string): Promise<void> => {
+  addCustomEndpoint: async (
+    appType: AppType,
+    providerId: string,
+    url: string,
+  ): Promise<void> => {
     try {
       await invoke("add_custom_endpoint", {
         app_type: appType,
+        app: appType,
+        appType: appType,
+        provider_id: providerId,
+        providerId: providerId,
         url,
       });
     } catch (error) {
       console.error("添加自定义端点失败:", error);
-      throw error;
+      // 尽量抛出可读信息
+      if (error instanceof Error) {
+        throw error;
+      } else {
+        throw new Error(String(error));
+      }
     }
   },
 
   // 删除自定义端点
   removeCustomEndpoint: async (
     appType: AppType,
+    providerId: string,
     url: string,
   ): Promise<void> => {
     try {
       await invoke("remove_custom_endpoint", {
         app_type: appType,
+        app: appType,
+        appType: appType,
+        provider_id: providerId,
+        providerId: providerId,
         url,
       });
     } catch (error) {
@@ -380,11 +406,16 @@ export const tauriAPI = {
   // 更新端点最后使用时间
   updateEndpointLastUsed: async (
     appType: AppType,
+    providerId: string,
     url: string,
   ): Promise<void> => {
     try {
       await invoke("update_endpoint_last_used", {
         app_type: appType,
+        app: appType,
+        appType: appType,
+        provider_id: providerId,
+        providerId: providerId,
         url,
       });
     } catch (error) {

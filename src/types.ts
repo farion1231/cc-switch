@@ -13,6 +13,8 @@ export interface Provider {
   // 新增：供应商分类（用于差异化提示/能力开关）
   category?: ProviderCategory;
   createdAt?: number; // 添加时间戳（毫秒）
+  // 可选：供应商元数据（仅存于 ~/.cc-switch/config.json，不写入 live 配置）
+  meta?: ProviderMeta;
 }
 
 export interface AppConfig {
@@ -25,6 +27,12 @@ export interface CustomEndpoint {
   url: string;
   addedAt: number;
   lastUsed?: number;
+}
+
+// 供应商元数据（字段名与后端一致，保持 snake_case）
+export interface ProviderMeta {
+  // 自定义端点：以 URL 为键，值为端点信息
+  custom_endpoints?: Record<string, CustomEndpoint>;
 }
 
 // 应用设置类型（用于 SettingsModal 与 Tauri API）

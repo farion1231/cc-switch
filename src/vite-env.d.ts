@@ -59,10 +59,25 @@ declare global {
         error?: string;
       }>>;
       // 自定义端点管理
-      getCustomEndpoints: (appType: AppType) => Promise<CustomEndpoint[]>;
-      addCustomEndpoint: (appType: AppType, url: string) => Promise<void>;
-      removeCustomEndpoint: (appType: AppType, url: string) => Promise<void>;
-      updateEndpointLastUsed: (appType: AppType, url: string) => Promise<void>;
+      getCustomEndpoints: (
+        appType: AppType,
+        providerId: string
+      ) => Promise<CustomEndpoint[]>;
+      addCustomEndpoint: (
+        appType: AppType,
+        providerId: string,
+        url: string
+      ) => Promise<void>;
+      removeCustomEndpoint: (
+        appType: AppType,
+        providerId: string,
+        url: string
+      ) => Promise<void>;
+      updateEndpointLastUsed: (
+        appType: AppType,
+        providerId: string,
+        url: string
+      ) => Promise<void>;
     };
     platform: {
       isMac: boolean;

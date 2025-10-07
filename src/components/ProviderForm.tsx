@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { Provider, ProviderCategory } from "../types";
+import { Provider, ProviderCategory, CustomEndpoint } from "../types";
 import { AppType } from "../lib/tauri-api";
 import {
   updateCommonConfigSnippet,
@@ -219,6 +219,10 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
   const [codexBaseUrl, setCodexBaseUrl] = useState("");
   const [isCodexTemplateModalOpen, setIsCodexTemplateModalOpen] =
     useState(false);
+  // 新建供应商：收集端点测速弹窗中的“自定义端点”，提交时一次性落盘到 meta.custom_endpoints
+  const [draftCustomEndpoints, setDraftCustomEndpoints] = useState<string[]>(
+    []
+  );
   // 端点测速弹窗状态
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
   const [isCodexEndpointModalOpen, setIsCodexEndpointModalOpen] = useState(false);
@@ -603,13 +607,31 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       }
     }
 
-    onSubmit({
+    // 构造基础提交数据
+    const basePayload: Omit<Provider, "id"> = {
       name: formData.name,
       websiteUrl: formData.websiteUrl,
       settingsConfig,
       // 仅在用户选择了预设或手动选择“自定义”时持久化分类
       ...(category ? { category } : {}),
-    });
+    };
+
+    // 若为“新建供应商”，且已在弹窗中添加了自定义端点，则随提交一并落盘
+    if (!initialData && draftCustomEndpoints.length > 0) {
+      const now = Date.now();
+      const customMap: Record<string, CustomEndpoint> = {};
+      for (const raw of draftCustomEndpoints) {
+        const url = raw.trim().replace(/\/+$/, "");
+        if (!url) continue;
+        if (!customMap[url]) {
+          customMap[url] = { url, addedAt: now };
+        }
+      }
+      onSubmit({ ...basePayload, meta: { custom_endpoints: customMap } });
+      return;
+    }
+
+    onSubmit(basePayload);
   };
 
   const handleChange = (
@@ -1620,11 +1642,13 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             {!isCodex && shouldShowSpeedTest && isEndpointModalOpen && (
               <EndpointSpeedTest
                 appType={appType}
+                providerId={initialData?.id}
                 value={baseUrl}
                 onChange={handleBaseUrlChange}
                 initialEndpoints={claudeSpeedTestEndpoints}
                 visible={isEndpointModalOpen}
                 onClose={() => setIsEndpointModalOpen(false)}
+                onCustomEndpointsChange={setDraftCustomEndpoints}
               />
             )}
 
@@ -1705,11 +1729,13 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
             {isCodex && shouldShowSpeedTest && isCodexEndpointModalOpen && (
               <EndpointSpeedTest
                 appType={appType}
+                providerId={initialData?.id}
                 value={codexBaseUrl}
                 onChange={handleCodexBaseUrlChange}
                 initialEndpoints={codexSpeedTestEndpoints}
                 visible={isCodexEndpointModalOpen}
                 onClose={() => setIsCodexEndpointModalOpen(false)}
+                onCustomEndpointsChange={setDraftCustomEndpoints}
               />
             )}
 
