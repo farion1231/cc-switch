@@ -199,7 +199,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
 
                   <div className="flex items-center gap-2 ml-4">
                     {appType === "claude" ? (
-                      <div className="w-[130px]">
+                      <div className="flex-shrink-0">
                         {provider.category !== "official" && isCurrent && (
                           <button
                             onClick={() =>

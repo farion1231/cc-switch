@@ -565,6 +565,7 @@ dependencies = [
 name = "cc-switch"
 version = "3.4.0"
 dependencies = [
+ "chrono",
  "dirs 5.0.1",
  "futures",
  "log",
@@ -631,8 +632,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "145052bdd345b87320e369255277e3fb5152762ad123a901ef5c262dd38fe8d2"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link 0.2.0",
 ]
 

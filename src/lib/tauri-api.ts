@@ -139,40 +139,22 @@ export const tauriAPI = {
     }
   },
 
-  // 获取 Claude Code 配置状态
-  getClaudeConfigStatus: async (): Promise<ConfigStatus> => {
-    try {
-      return await invoke("get_claude_config_status");
-    } catch (error) {
-      console.error("获取配置状态失败:", error);
-      return {
-        exists: false,
-        path: "",
-        error: String(error),
-      };
-    }
-  },
-
-  // 获取应用配置状态（通用）
-  getConfigStatus: async (app?: AppType): Promise<ConfigStatus> => {
-    try {
-      return await invoke("get_config_status", { app_type: app, app });
-    } catch (error) {
-      console.error("获取配置状态失败:", error);
-      return {
-        exists: false,
-        path: "",
-        error: String(error),
-      };
-    }
-  },
-
-  // 打开配置文件夹
+  // 打开配置目录（按应用类型）
   openConfigFolder: async (app?: AppType): Promise<void> => {
     try {
       await invoke("open_config_folder", { app_type: app, app });
     } catch (error) {
-      console.error("打开配置文件夹失败:", error);
+      console.error("打开配置目录失败:", error);
+    }
+  },
+
+  // 选择配置目录（可选默认路径）
+  selectConfigDirectory: async (defaultPath?: string): Promise<string | null> => {
+    try {
+      return await invoke("pick_directory", { defaultPath });
+    } catch (error) {
+      console.error("选择配置目录失败:", error);
+      return null;
     }
   },
 
@@ -188,47 +170,20 @@ export const tauriAPI = {
   // 更新托盘菜单
   updateTrayMenu: async (): Promise<boolean> => {
     try {
-      return await invoke("update_tray_menu");
+      return await invoke<boolean>("update_tray_menu");
     } catch (error) {
       console.error("更新托盘菜单失败:", error);
       return false;
     }
   },
 
-  // 监听供应商切换事件
-  onProviderSwitched: async (
-    callback: (data: { appType: string; providerId: string }) => void,
-  ): Promise<UnlistenFn> => {
-    return await listen("provider-switched", (event) => {
-      callback(event.payload as { appType: string; providerId: string });
-    });
-  },
-
-  // 选择配置目录
-  selectConfigDirectory: async (
-    defaultPath?: string,
-  ): Promise<string | null> => {
-    try {
-      const sanitized =
-        defaultPath && defaultPath.trim() !== ""
-          ? defaultPath
-          : undefined;
-      return await invoke<string | null>("pick_directory", {
-        defaultPath: sanitized,
-      });
-    } catch (error) {
-      console.error("选择配置目录失败:", error);
-      return null;
-    }
-  },
-
-  // 获取设置
+  // 获取应用设置
   getSettings: async (): Promise<Settings> => {
     try {
       return await invoke("get_settings");
     } catch (error) {
       console.error("获取设置失败:", error);
-      return { showInTray: true, minimizeToTrayOnClose: true };
+      throw error;
     }
   },
 
@@ -320,6 +275,7 @@ export const tauriAPI = {
     }
   },
 
+  // ours: 第三方/自定义供应商——测速与端点管理
   // 第三方/自定义供应商：批量测试端点延迟
   testApiEndpoints: async (
     urls: string[],
@@ -422,6 +378,70 @@ export const tauriAPI = {
       console.error("更新端点最后使用时间失败:", error);
       // 不抛出错误，因为这不是关键操作
     }
+  },
+
+  // theirs: 导入导出与文件对话框
+  // 导出配置到文件
+  exportConfigToFile: async (filePath: string): Promise<{
+    success: boolean;
+    message: string;
+    filePath: string;
+  }> => {
+    try {
+      return await invoke("export_config_to_file", { filePath });
+    } catch (error) {
+      throw new Error(`导出配置失败: ${String(error)}`);
+    }
+  },
+
+  // 从文件导入配置
+  importConfigFromFile: async (filePath: string): Promise<{
+    success: boolean;
+    message: string;
+    backupId?: string;
+  }> => {
+    try {
+      return await invoke("import_config_from_file", { filePath });
+    } catch (error) {
+      throw new Error(`导入配置失败: ${String(error)}`);
+    }
+  },
+
+  // 保存文件对话框
+  saveFileDialog: async (defaultName: string): Promise<string | null> => {
+    try {
+      const result = await invoke<string | null>("save_file_dialog", { defaultName });
+      return result;
+    } catch (error) {
+      console.error("打开保存对话框失败:", error);
+      return null;
+    }
+  },
+
+  // 打开文件对话框
+  openFileDialog: async (): Promise<string | null> => {
+    try {
+      const result = await invoke<string | null>("open_file_dialog");
+      return result;
+    } catch (error) {
+      console.error("打开文件对话框失败:", error);
+      return null;
+    }
+  },
+  
+  // 监听供应商切换事件
+  onProviderSwitched: async (
+    callback: (data: { appType: string; providerId: string }) => void,
+  ): Promise<UnlistenFn> => {
+    const unlisten = await listen("provider-switched", (event) => {
+      try {
+        // 事件 payload 形如 { appType: string, providerId: string }
+        callback(event.payload as any);
+      } catch (e) {
+        console.error("处理 provider-switched 事件失败: ", e);
+      }
+    });
+    return unlisten;
   },
 };
 

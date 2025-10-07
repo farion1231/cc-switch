@@ -229,6 +229,15 @@ function App() {
     }
   };
 
+  const handleImportSuccess = async () => {
+    await loadProviders();
+    try {
+      await window.api.updateTrayMenu();
+    } catch (error) {
+      console.error("[App] Failed to refresh tray menu after import", error);
+    }
+  };
+
   // 自动从 live 导入一条默认供应商（仅首次初始化时）
   const handleAutoImportDefault = async () => {
     try {
@@ -357,7 +366,10 @@ function App() {
       )}
 
       {isSettingsOpen && (
-        <SettingsModal onClose={() => setIsSettingsOpen(false)} />
+        <SettingsModal
+          onClose={() => setIsSettingsOpen(false)}
+          onImportSuccess={handleImportSuccess}
+        />
       )}
     </div>
   );

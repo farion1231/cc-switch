@@ -3,6 +3,7 @@ mod claude_plugin;
 mod codex_config;
 mod commands;
 mod config;
+mod import_export;
 mod migration;
 mod provider;
 mod settings;
@@ -420,11 +421,17 @@ pub fn run() {
             commands::read_claude_plugin_config,
             commands::apply_claude_plugin_config,
             commands::is_claude_plugin_applied,
+            // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
             commands::get_custom_endpoints,
             commands::add_custom_endpoint,
             commands::remove_custom_endpoint,
             commands::update_endpoint_last_used,
+            // theirs: config import/export and dialogs
+            import_export::export_config_to_file,
+            import_export::import_config_from_file,
+            import_export::save_file_dialog,
+            import_export::open_file_dialog,
             update_tray_menu,
         ]);
 
