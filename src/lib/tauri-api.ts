@@ -428,7 +428,7 @@ export const tauriAPI = {
       return null;
     }
   },
-  
+
   // 监听供应商切换事件
   onProviderSwitched: async (
     callback: (data: { appType: string; providerId: string }) => void,
