@@ -10,6 +10,7 @@ mod provider;
 mod settings;
 mod store;
 mod speedtest;
+mod usage_script;
 
 use store::AppState;
 use tauri::{
@@ -428,6 +429,8 @@ pub fn run() {
             commands::upsert_claude_mcp_server,
             commands::delete_claude_mcp_server,
             commands::validate_mcp_command,
+            // usage query
+            commands::query_provider_usage,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
             commands::get_custom_endpoints,

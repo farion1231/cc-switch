@@ -60,12 +60,55 @@ impl Default for ProviderManager {
     }
 }
 
+/// 用量查询脚本配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageScript {
+    pub enabled: bool,
+    pub language: String,
+    pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+}
+
+/// 用量数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "planName")]
+    pub plan_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "expiresAt")]
+    pub expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "isValid")]
+    pub is_valid: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used: Option<f64>,
+    pub remaining: f64,
+    pub unit: String,
+}
+
+/// 用量查询结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageResult {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<UsageData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
     /// 自定义端点列表（按 URL 去重存储）
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub custom_endpoints: HashMap<String, crate::settings::CustomEndpoint>,
+    /// 用量查询脚本配置
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_script: Option<UsageScript>,
 }
 
 impl ProviderManager {

@@ -285,6 +285,24 @@ export const tauriAPI = {
     }
   },
 
+  // 查询供应商用量
+  queryProviderUsage: async (
+    providerId: string,
+    app: AppType
+  ): Promise<import("../types").UsageResult> => {
+    try {
+      return await invoke("query_provider_usage", {
+        provider_id: providerId,
+        providerId: providerId,
+        app_type: app,
+        app: app,
+        appType: app,
+      });
+    } catch (error) {
+      throw new Error(`查询用量失败: ${String(error)}`);
+    }
+  },
+
   // Claude MCP：获取状态（用户级 ~/.claude.json）
   getClaudeMcpStatus: async (): Promise<McpStatus> => {
     try {

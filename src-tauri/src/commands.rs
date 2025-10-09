@@ -695,6 +695,168 @@ pub async fn validate_mcp_command(cmd: String) -> Result<bool, String> {
     claude_mcp::validate_command_in_path(&cmd)
 }
 
+// =====================
+// 用量查询命令
+// =====================
+
+/// 查询供应商用量
+#[tauri::command]
+pub async fn query_provider_usage(
+    state: State<'_, AppState>,
+    provider_id: Option<String>,
+    providerId: Option<String>,
+    app_type: Option<AppType>,
+    app: Option<String>,
+    appType: Option<String>,
+) -> Result<crate::provider::UsageResult, String> {
+    use crate::provider::{UsageData, UsageResult};
+
+    // 解析参数
+    let provider_id = provider_id
+        .or(providerId)
+        .ok_or("缺少 providerId 参数")?;
+
+    let app_type = app_type
+        .or_else(|| app.as_deref().map(|s| s.into()))
+        .or_else(|| appType.as_deref().map(|s| s.into()))
+        .unwrap_or(AppType::Claude);
+
+    // 1. 获取供应商配置并克隆所需数据
+    let (api_key, base_url, usage_script_code, timeout) = {
+        let config = state
+            .config
+            .lock()
+            .map_err(|e| format!("获取锁失败: {}", e))?;
+
+        let manager = config
+            .get_manager(&app_type)
+            .ok_or("应用类型不存在")?;
+
+        let provider = manager
+            .providers
+            .get(&provider_id)
+            .ok_or("供应商不存在")?;
+
+        // 2. 检查脚本配置
+        let usage_script = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.usage_script.as_ref())
+            .ok_or("未配置用量查询脚本")?;
+
+        if !usage_script.enabled {
+            return Err("用量查询未启用".to_string());
+        }
+
+        // 3. 提取凭证和脚本配置
+        let (api_key, base_url) = extract_credentials(provider, &app_type)?;
+        let timeout = usage_script.timeout.unwrap_or(10);
+        let code = usage_script.code.clone();
+
+        // 显式释放锁
+        drop(config);
+
+        (api_key, base_url, code, timeout)
+    };
+
+    // 5. 执行脚本
+    log::info!("执行用量查询脚本，timeout: {}s", timeout);
+
+    let result = crate::usage_script::execute_usage_script(
+        &usage_script_code,
+        &api_key,
+        &base_url,
+        timeout,
+    )
+    .await;
+
+    // 6. 构建结果
+    match result {
+        Ok(data) => {
+            let usage_data: UsageData = serde_json::from_value(data)
+                .map_err(|e| format!("数据格式错误: {}", e))?;
+
+            log::info!("用量查询成功: 剩余 {} {}", usage_data.remaining, usage_data.unit);
+
+            Ok(UsageResult {
+                success: true,
+                data: Some(usage_data),
+                error: None,
+            })
+        }
+        Err(e) => {
+            log::warn!("用量查询失败: {}", e);
+            Ok(UsageResult {
+                success: false,
+                data: None,
+                error: Some(e),
+            })
+        }
+    }
+}
+
+/// 从供应商配置中提取 API Key 和 Base URL
+fn extract_credentials(
+    provider: &crate::provider::Provider,
+    app_type: &AppType,
+) -> Result<(String, String), String> {
+    match app_type {
+        AppType::Claude => {
+            let env = provider
+                .settings_config
+                .get("env")
+                .and_then(|v| v.as_object())
+                .ok_or("配置格式错误: 缺少 env")?;
+
+            let api_key = env
+                .get("ANTHROPIC_AUTH_TOKEN")
+                .and_then(|v| v.as_str())
+                .ok_or("缺少 API Key")?
+                .to_string();
+
+            let base_url = env
+                .get("ANTHROPIC_BASE_URL")
+                .and_then(|v| v.as_str())
+                .unwrap_or("https://api.anthropic.com")
+                .to_string();
+
+            Ok((api_key, base_url))
+        }
+        AppType::Codex => {
+            let auth = provider
+                .settings_config
+                .get("auth")
+                .and_then(|v| v.as_object())
+                .ok_or("配置格式错误: 缺少 auth")?;
+
+            let api_key = auth
+                .get("OPENAI_API_KEY")
+                .and_then(|v| v.as_str())
+                .ok_or("缺少 API Key")?
+                .to_string();
+
+            // 从 config TOML 中提取 base_url
+            let config_toml = provider
+                .settings_config
+                .get("config")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let base_url = if config_toml.contains("base_url") {
+                let re = regex::Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).unwrap();
+                re.captures(config_toml)
+                    .and_then(|caps| caps.get(1))
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_else(|| "https://api.openai.com".to_string())
+            } else {
+                "https://api.openai.com".to_string()
+            };
+
+            Ok((api_key, base_url))
+        }
+    }
+}
+
 /// 获取设置
 #[tauri::command]
 pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
