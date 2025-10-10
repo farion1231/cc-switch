@@ -246,6 +246,7 @@ pub async fn update_provider(
                     }
                     updated.meta = Some(crate::provider::ProviderMeta {
                         custom_endpoints: merged_map,
+                        usage_script: old_meta.usage_script.clone(),
                     });
                 }
                 // 旧 meta 不存在：使用入参（可能为 None）
