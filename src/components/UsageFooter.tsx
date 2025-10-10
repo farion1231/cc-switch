@@ -106,41 +106,46 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
 
 // 单个套餐数据展示组件
 const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
-  const { planName, expiresAt, isValid, total, used, remaining, unit } = data;
+  const { planName, extra, isValid, invalidMessage, total, used, remaining, unit } = data;
 
   // 判断套餐是否失效（isValid 为 false 或未定义时视为有效）
   const isExpired = isValid === false;
 
   return (
-    <div className="flex items-center justify-between gap-4">
-      {/* 左侧：套餐名称 + 过期时间 */}
-      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 min-w-0 flex-shrink">
-        {planName && (
+    <div className="flex items-center gap-3">
+      {/* 标题部分：25% */}
+      <div className="text-xs text-gray-500 dark:text-gray-400 min-w-0" style={{ width: "25%" }}>
+        {planName ? (
           <span
-            className={`font-medium truncate ${isExpired ? "text-red-500 dark:text-red-400" : ""}`}
+            className={`font-medium truncate block ${isExpired ? "text-red-500 dark:text-red-400" : ""}`}
             title={planName}
           >
             💰 {planName}
           </span>
+        ) : (
+          <span className="opacity-50">—</span>
         )}
-        {expiresAt && (
+      </div>
+
+      {/* 扩展字段：35% */}
+      <div className="text-xs text-gray-500 dark:text-gray-400 min-w-0 flex items-center gap-2" style={{ width: "35%" }}>
+        {extra && (
           <span
             className={`truncate ${isExpired ? "text-red-500 dark:text-red-400" : ""}`}
-            title={expiresAt}
+            title={extra}
           >
-            ⏰ {formatDate(expiresAt)}
+            {extra}
           </span>
         )}
         {isExpired && (
           <span className="text-red-500 dark:text-red-400 font-medium text-[10px] px-1.5 py-0.5 bg-red-50 dark:bg-red-900/20 rounded flex-shrink-0">
-            已失效
+            {invalidMessage || "已失效"}
           </span>
         )}
-        {!planName && !expiresAt && <span className="opacity-50">—</span>}
       </div>
 
-      {/* 右侧：用量信息（总：xx | 使用：xx | 剩余：xx） */}
-      <div className="flex items-center gap-2 text-xs flex-shrink-0">
+      {/* 用量信息：40% */}
+      <div className="flex items-center justify-end gap-2 text-xs flex-shrink-0" style={{ width: "40%" }}>
         {/* 总额度 */}
         {total !== undefined && (
           <>
@@ -164,37 +169,28 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
         )}
 
         {/* 剩余额度 - 突出显示 */}
-        <span className="text-gray-500 dark:text-gray-400">剩余：</span>
-        <span
-          className={`font-semibold tabular-nums ${
-            isExpired
-              ? "text-red-500 dark:text-red-400"
-              : remaining < (total || remaining) * 0.1
-                ? "text-orange-500 dark:text-orange-400"
-                : "text-green-600 dark:text-green-400"
-          }`}
-        >
-          {remaining.toFixed(2)}
-        </span>
+        {remaining !== undefined && (
+          <>
+            <span className="text-gray-500 dark:text-gray-400">剩余：</span>
+            <span
+              className={`font-semibold tabular-nums ${
+                isExpired
+                  ? "text-red-500 dark:text-red-400"
+                  : remaining < (total || remaining) * 0.1
+                    ? "text-orange-500 dark:text-orange-400"
+                    : "text-green-600 dark:text-green-400"
+              }`}
+            >
+              {remaining.toFixed(2)}
+            </span>
+          </>
+        )}
 
-        <span className="text-gray-500 dark:text-gray-400">{unit}</span>
+        {unit && <span className="text-gray-500 dark:text-gray-400">{unit}</span>}
       </div>
     </div>
   );
 };
 
-// 日期格式化辅助函数
-function formatDate(dateStr: string): string {
-  try {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString("zh-CN", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-  } catch {
-    return dateStr;
-  }
-}
 
 export default UsageFooter;

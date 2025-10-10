@@ -77,17 +77,21 @@ pub struct UsageData {
     #[serde(rename = "planName")]
     pub plan_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "expiresAt")]
-    pub expires_at: Option<String>,
+    pub extra: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "isValid")]
     pub is_valid: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "invalidMessage")]
+    pub invalid_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub used: Option<f64>,
-    pub remaining: f64,
-    pub unit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
 }
 
 /// 用量查询结果（支持多套餐）

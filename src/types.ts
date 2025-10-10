@@ -40,12 +40,13 @@ export interface UsageScript {
 // 单个套餐用量数据
 export interface UsageData {
   planName?: string; // 套餐名称（可选）
-  expiresAt?: string; // 过期时间（可选，ISO 8601）
-  isValid?: boolean; // 套餐是否有效（可选，默认 true）
+  extra?: string; // 扩展字段，可自由补充需要展示的文本（可选）
+  isValid?: boolean; // 套餐是否有效（可选）
+  invalidMessage?: string; // 失效原因说明（可选，当 isValid 为 false 时显示）
   total?: number; // 总额度（可选）
   used?: number; // 已用额度（可选）
-  remaining: number; // 剩余额度（必选）
-  unit: string; // 单位（必选）
+  remaining?: number; // 剩余额度（可选）
+  unit?: string; // 单位（可选）
 }
 
 // 用量查询结果（支持多套餐）

@@ -204,34 +204,30 @@ fn validate_result(result: &Value) -> Result<(), String> {
 fn validate_single_usage(result: &Value) -> Result<(), String> {
     let obj = result.as_object().ok_or("脚本必须返回对象或对象数组")?;
 
-    // 必需字段检查
-    if !obj.contains_key("isValid") {
-        return Err("缺少必需字段: isValid".to_string());
+    // 所有字段均为可选，只进行类型检查
+    if obj.contains_key("isValid") && !result["isValid"].is_null() && !result["isValid"].is_boolean() {
+        return Err("isValid 必须是布尔值或 null".to_string());
     }
-    if !obj.contains_key("remaining") {
-        return Err("缺少必需字段: remaining".to_string());
+    if obj.contains_key("invalidMessage") && !result["invalidMessage"].is_null() && !result["invalidMessage"].is_string() {
+        return Err("invalidMessage 必须是字符串或 null".to_string());
     }
-    if !obj.contains_key("unit") {
-        return Err("缺少必需字段: unit".to_string());
+    if obj.contains_key("remaining") && !result["remaining"].is_null() && !result["remaining"].is_number() {
+        return Err("remaining 必须是数字或 null".to_string());
     }
-
-    // 类型检查
-    if !result["isValid"].is_boolean() {
-        return Err("isValid 必须是布尔值".to_string());
+    if obj.contains_key("unit") && !result["unit"].is_null() && !result["unit"].is_string() {
+        return Err("unit 必须是字符串或 null".to_string());
     }
-    if !result["remaining"].is_number() {
-        return Err("remaining 必须是数字".to_string());
-    }
-    if !result["unit"].is_string() {
-        return Err("unit 必须是字符串".to_string());
-    }
-
-    // 可选字段类型检查（允许 total 为任意数字，包括 -1 表示无限）
     if obj.contains_key("total") && !result["total"].is_null() && !result["total"].is_number() {
         return Err("total 必须是数字或 null".to_string());
     }
     if obj.contains_key("used") && !result["used"].is_null() && !result["used"].is_number() {
         return Err("used 必须是数字或 null".to_string());
+    }
+    if obj.contains_key("planName") && !result["planName"].is_null() && !result["planName"].is_string() {
+        return Err("planName 必须是字符串或 null".to_string());
+    }
+    if obj.contains_key("extra") && !result["extra"].is_null() && !result["extra"].is_string() {
+        return Err("extra 必须是字符串或 null".to_string());
     }
 
     Ok(())

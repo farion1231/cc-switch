@@ -39,44 +39,40 @@ const PRESET_TEMPLATES: Record<string, string> = {
   }
 })`,
 
-  DeepSeek: `({
+  NewAPI: `({
   request: {
-    url: "{{baseUrl}}/user/balance",
+    url: "{{baseUrl}}/api/usage/token",
     method: "GET",
     headers: {
-      "Authorization": "Bearer {{apiKey}}"
+      Authorization: "Bearer {{apiKey}}",
+    },
+  },
+  extractor: function (response) {
+    if (response.code) {
+      if (response.data.unlimited_quota) {
+        return {
+          planName: response.data.name,
+          total: -1,
+          used: response.data.total_used / 500000,
+          unit: "USD",
+        };
+      }
+      return {
+        isValid: true,
+        planName: response.data.name,
+        total: response.data.total_granted / 500000,
+        used: response.data.total_used / 500000,
+        remaining: response.data.total_available / 500000,
+        unit: "USD",
+      };
+    }
+    if (response.error) {
+      return {
+        isValid: false,
+        invalidMessage: response.error.message,
+      };
     }
   },
-  extractor: function(response) {
-    return {
-      isValid: response.is_active,
-      planName: response.plan_name,
-      expiresAt: response.expire_time,
-      total: response.total_balance,
-      used: response.used_balance,
-      remaining: response.available_balance,
-      unit: "RMB"
-    };
-  }
-})`,
-
-  OpenAI: `({
-  request: {
-    url: "{{baseUrl}}/dashboard/billing/credit_grants",
-    method: "GET",
-    headers: {
-      "Authorization": "Bearer {{apiKey}}"
-    }
-  },
-  extractor: function(response) {
-    return {
-      isValid: true,
-      total: response.total_granted,
-      used: response.total_used,
-      remaining: response.total_available,
-      unit: "USD"
-    };
-  }
 })`,
 };
 
@@ -233,8 +229,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   language="javascript"
                 />
                 <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                  支持变量: <code>{"{{{apiKey}}}"}</code>,{" "}
-                  <code>{"{{{baseUrl}}}"}</code> | 支持 async/await 和 fetch API
+                  支持变量: <code>{"{{apiKey}}"}</code>,{" "}
+                  <code>{"{{baseUrl}}"}</code> | extractor 函数接收 API 响应的 JSON 对象
                 </p>
               </div>
 
@@ -287,22 +283,23 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   </div>
 
                   <div>
-                    <strong>extractor 返回格式：</strong>
+                    <strong>extractor 返回格式（所有字段均为可选）：</strong>
                     <ul className="mt-1 space-y-0.5 ml-2">
-                      <li>• <code className="text-red-600 dark:text-red-400">isValid*</code>: 布尔值，套餐是否有效</li>
-                      <li>• <code className="text-red-600 dark:text-red-400">remaining*</code>: 数字，剩余额度</li>
-                      <li>• <code className="text-red-600 dark:text-red-400">unit*</code>: 字符串，单位（如 "USD"）</li>
-                      <li>• <code>planName</code>: 字符串，套餐名称（可选）</li>
-                      <li>• <code>total</code>: 数字，总额度（可选）</li>
-                      <li>• <code>used</code>: 数字，已用额度（可选）</li>
-                      <li>• <code>expiresAt</code>: 字符串，过期时间（可选）</li>
+                      <li>• <code>isValid</code>: 布尔值，套餐是否有效</li>
+                      <li>• <code>invalidMessage</code>: 字符串，失效原因说明（当 isValid 为 false 时显示）</li>
+                      <li>• <code>remaining</code>: 数字，剩余额度</li>
+                      <li>• <code>unit</code>: 字符串，单位（如 "USD"）</li>
+                      <li>• <code>planName</code>: 字符串，套餐名称</li>
+                      <li>• <code>total</code>: 数字，总额度</li>
+                      <li>• <code>used</code>: 数字，已用额度</li>
+                      <li>• <code>extra</code>: 字符串，扩展字段，可自由补充需要展示的文本</li>
                     </ul>
                   </div>
 
                   <div className="text-gray-600 dark:text-gray-400">
                     <strong>💡 提示：</strong>
                     <ul className="mt-1 space-y-0.5 ml-2">
-                      <li>• 变量 <code>{"{{{apiKey}}}"}</code> 和 <code>{"{{{baseUrl}}}"}</code> 会自动替换</li>
+                      <li>• 变量 <code>{"{{apiKey}}"}</code> 和 <code>{"{{baseUrl}}"}</code> 会自动替换</li>
                       <li>• extractor 函数在沙箱环境中执行，支持 ES2020+ 语法</li>
                       <li>• 整个配置必须用 <code>()</code> 包裹，形成对象字面量表达式</li>
                     </ul>

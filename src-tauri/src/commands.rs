@@ -791,8 +791,8 @@ pub async fn query_provider_usage(
                     "  套餐[{}]: {} - 剩余 {} {}",
                     idx,
                     item.plan_name.as_deref().unwrap_or("未命名"),
-                    item.remaining,
-                    item.unit
+                    item.remaining.map(|r| r.to_string()).unwrap_or_else(|| "N/A".to_string()),
+                    item.unit.as_deref().unwrap_or("")
                 );
             }
 
