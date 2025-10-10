@@ -123,17 +123,19 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     try {
       const result = await window.api.queryProviderUsage(
         provider.id,
-        appType,
-        true
+        appType
       );
-      if (result.success) {
-        onNotify?.(
-          `测试成功！剩余: ${result.data?.remaining} ${result.data?.unit}`,
-          "success",
-          3000
-        );
+      if (result.success && result.data && result.data.length > 0) {
+        // 显示所有套餐数据
+        const summary = result.data
+          .map((plan) => {
+            const planInfo = plan.planName ? `[${plan.planName}]` : "";
+            return `${planInfo} 剩余: ${plan.remaining} ${plan.unit}`;
+          })
+          .join(", ");
+        onNotify?.(`测试成功！${summary}`, "success", 3000);
       } else {
-        onNotify?.(`测试失败: ${result.error}`, "error", 5000);
+        onNotify?.(`测试失败: ${result.error || "无数据返回"}`, "error", 5000);
       }
     } catch (error: any) {
       onNotify?.(`测试失败: ${error?.message || "未知错误"}`, "error", 5000);
@@ -146,7 +148,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     try {
       const formatted = await prettier.format(script.code, {
         parser: "babel",
-        plugins: [parserBabel, pluginEstree],
+        plugins: [parserBabel as any, pluginEstree as any],
         semi: true,
         singleQuote: false,
         tabWidth: 2,

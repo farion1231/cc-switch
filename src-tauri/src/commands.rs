@@ -770,17 +770,35 @@ pub async fn query_provider_usage(
     )
     .await;
 
-    // 6. 构建结果
+    // 6. 构建结果（支持单对象或数组）
     match result {
         Ok(data) => {
-            let usage_data: UsageData = serde_json::from_value(data)
-                .map_err(|e| format!("数据格式错误: {}", e))?;
+            // 尝试解析为数组
+            let usage_list: Vec<UsageData> = if data.is_array() {
+                // 直接解析为数组
+                serde_json::from_value(data)
+                    .map_err(|e| format!("数据格式错误: {}", e))?
+            } else {
+                // 单对象包装为数组（向后兼容）
+                let single: UsageData = serde_json::from_value(data)
+                    .map_err(|e| format!("数据格式错误: {}", e))?;
+                vec![single]
+            };
 
-            log::info!("用量查询成功: 剩余 {} {}", usage_data.remaining, usage_data.unit);
+            log::info!("用量查询成功: 返回 {} 个套餐数据", usage_list.len());
+            for (idx, item) in usage_list.iter().enumerate() {
+                log::info!(
+                    "  套餐[{}]: {} - 剩余 {} {}",
+                    idx,
+                    item.plan_name.as_deref().unwrap_or("未命名"),
+                    item.remaining,
+                    item.unit
+                );
+            }
 
             Ok(UsageResult {
                 success: true,
-                data: Some(usage_data),
+                data: Some(usage_list),
                 error: None,
             })
         }

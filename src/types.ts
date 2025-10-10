@@ -37,18 +37,21 @@ export interface UsageScript {
   timeout?: number; // 超时时间（秒，默认 10）
 }
 
-// 用量查询结果
+// 单个套餐用量数据
+export interface UsageData {
+  planName?: string; // 套餐名称（可选）
+  expiresAt?: string; // 过期时间（可选，ISO 8601）
+  isValid?: boolean; // 套餐是否有效（可选，默认 true）
+  total?: number; // 总额度（可选）
+  used?: number; // 已用额度（可选）
+  remaining: number; // 剩余额度（必选）
+  unit: string; // 单位（必选）
+}
+
+// 用量查询结果（支持多套餐）
 export interface UsageResult {
   success: boolean;
-  data?: {
-    planName?: string; // 套餐名称（可选）
-    expiresAt?: string; // 过期时间（可选，ISO 8601）
-    isValid?: boolean; // 套餐是否有效（可选，默认 true）
-    total?: number; // 总额度（可选）
-    used?: number; // 已用额度（可选）
-    remaining: number; // 剩余额度（必选）
-    unit: string; // 单位（必选）
-  };
+  data?: UsageData[]; // 改为数组，支持返回多个套餐
   error?: string;
 }
 

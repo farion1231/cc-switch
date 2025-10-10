@@ -305,7 +305,6 @@ const ProviderList: React.FC<ProviderListProps> = ({
                 <UsageFooter
                   providerId={provider.id}
                   appType={appType!}
-                  isCurrent={isCurrent}
                   usageEnabled={provider.meta?.usage_script?.enabled || false}
                 />
               </div>

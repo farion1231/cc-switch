@@ -182,9 +182,27 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
     Ok(text)
 }
 
-/// 验证脚本返回值
+/// 验证脚本返回值（支持单对象或数组）
 fn validate_result(result: &Value) -> Result<(), String> {
-    let obj = result.as_object().ok_or("脚本必须返回对象")?;
+    // 如果是数组，验证每个元素
+    if let Some(arr) = result.as_array() {
+        if arr.is_empty() {
+            return Err("脚本返回的数组不能为空".to_string());
+        }
+        for (idx, item) in arr.iter().enumerate() {
+            validate_single_usage(item)
+                .map_err(|e| format!("数组索引[{}]验证失败: {}", idx, e))?;
+        }
+        return Ok(());
+    }
+
+    // 如果是单对象，直接验证（向后兼容）
+    validate_single_usage(result)
+}
+
+/// 验证单个用量数据对象
+fn validate_single_usage(result: &Value) -> Result<(), String> {
+    let obj = result.as_object().ok_or("脚本必须返回对象或对象数组")?;
 
     // 必需字段检查
     if !obj.contains_key("isValid") {

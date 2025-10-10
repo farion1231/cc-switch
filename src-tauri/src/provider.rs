@@ -90,12 +90,12 @@ pub struct UsageData {
     pub unit: String,
 }
 
-/// 用量查询结果
+/// 用量查询结果（支持多套餐）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageResult {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<UsageData>,
+    pub data: Option<Vec<UsageData>>, // 支持返回多个套餐
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
