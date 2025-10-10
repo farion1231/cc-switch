@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Provider, UsageScript } from "../types";
+import { AppType } from "../lib/tauri-api";
 import { Play, Edit3, Trash2, CheckCircle2, Users, Check, BarChart3 } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
 import UsageFooter from "./UsageFooter";
@@ -13,6 +14,7 @@ interface ProviderListProps {
   onSwitch: (id: string) => void;
   onDelete: (id: string) => void;
   onEdit: (id: string) => void;
+  appType: AppType;
   onNotify?: (
     message: string,
     type: "success" | "error",
@@ -26,6 +28,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
   onSwitch,
   onDelete,
   onEdit,
+  appType,
   onNotify,
 }) => {
   const { t, i18n } = useTranslation();

@@ -944,7 +944,7 @@ fn extract_credentials(
             let base_url = env
                 .get("ANTHROPIC_BASE_URL")
                 .and_then(|v| v.as_str())
-                .unwrap_or("https://api.anthropic.com")
+                .ok_or("缺少 ANTHROPIC_BASE_URL 配置")?
                 .to_string();
 
             Ok((api_key, base_url))
@@ -974,9 +974,9 @@ fn extract_credentials(
                 re.captures(config_toml)
                     .and_then(|caps| caps.get(1))
                     .map(|m| m.as_str().to_string())
-                    .unwrap_or_else(|| "https://api.openai.com".to_string())
+                    .ok_or("config.toml 中 base_url 格式错误")?
             } else {
-                "https://api.openai.com".to_string()
+                return Err("config.toml 中缺少 base_url 配置".to_string());
             };
 
             Ok((api_key, base_url))
