@@ -17,10 +17,15 @@ const AddProviderModal: React.FC<AddProviderModalProps> = ({
 }) => {
   const { t } = useTranslation();
 
+  const title =
+    appType === "claude"
+      ? t("provider.addClaudeProvider")
+      : t("provider.addCodexProvider");
+
   return (
     <ProviderForm
       appType={appType}
-      title={t("provider.addNewProvider")}
+      title={title}
       submitText={t("common.add")}
       showPresets={true}
       onSubmit={onAdd}

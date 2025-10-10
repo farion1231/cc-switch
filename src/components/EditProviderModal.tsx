@@ -18,7 +18,8 @@ const EditProviderModal: React.FC<EditProviderModalProps> = ({
   onClose,
 }) => {
   const { t } = useTranslation();
-  const [effectiveProvider, setEffectiveProvider] = useState<Provider>(provider);
+  const [effectiveProvider, setEffectiveProvider] =
+    useState<Provider>(provider);
 
   // 若为当前应用且正在编辑“当前供应商”，则优先读取 live 配置作为初始值（Claude/Codex 均适用）
   useEffect(() => {
@@ -51,10 +52,15 @@ const EditProviderModal: React.FC<EditProviderModalProps> = ({
     });
   };
 
+  const title =
+    appType === "claude"
+      ? t("provider.editClaudeProvider")
+      : t("provider.editCodexProvider");
+
   return (
     <ProviderForm
       appType={appType}
-      title={t("common.edit")}
+      title={title}
       submitText={t("common.save")}
       initialData={effectiveProvider}
       showPresets={false}

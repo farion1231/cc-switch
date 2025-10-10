@@ -22,6 +22,9 @@ pub struct AppSettings {
     pub show_in_tray: bool,
     #[serde(default = "default_minimize_to_tray_on_close")]
     pub minimize_to_tray_on_close: bool,
+    /// 是否启用 Claude 插件联动
+    #[serde(default)]
+    pub enable_claude_plugin_integration: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,6 +52,7 @@ impl Default for AppSettings {
         Self {
             show_in_tray: true,
             minimize_to_tray_on_close: true,
+            enable_claude_plugin_integration: false,
             claude_config_dir: None,
             codex_config_dir: None,
             language: None,

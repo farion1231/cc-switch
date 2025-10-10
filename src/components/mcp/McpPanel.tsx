@@ -1,14 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { X, Plus, Server } from "lucide-react";
+import { X, Plus, Server, Check } from "lucide-react";
 import { McpServer } from "../../types";
 import McpListItem from "./McpListItem";
 import McpFormModal from "./McpFormModal";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { extractErrorMessage } from "../../utils/errorUtils";
-import { mcpPresets } from "../../config/mcpPresets";
-import McpToggle from "./McpToggle";
-import { buttonStyles, cardStyles, cn } from "../../lib/styles";
+// 预设相关逻辑已迁移到“新增 MCP”面板，列表此处无需引用
+import { buttonStyles } from "../../lib/styles";
 import { AppType } from "../../lib/tauri-api";
 
 interface McpPanelProps {
@@ -51,29 +50,14 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
   useEffect(() => {
     const setup = async () => {
       try {
-        // 初始化导入：按应用类型从对应客户端导入已有 MCP（设为 enabled=true）
+        // 初始化：仅从对应客户端导入已有 MCP，不做“预设落库”
         if (appType === "claude") {
           await window.api.importMcpFromClaude();
         } else if (appType === "codex") {
           await window.api.importMcpFromCodex();
         }
-
-        // 读取现有 config.json 内容
-        const cfg = await window.api.getMcpConfig(appType);
-        const existing = cfg.servers || {};
-
-        // 将预设落库为禁用（若缺失）
-        const missing = mcpPresets.filter((p) => !existing[p.id]);
-        for (const p of missing) {
-          const seed: McpServer = {
-            ...(p.server as McpServer),
-            enabled: false,
-            source: "preset",
-          } as unknown as McpServer;
-          await window.api.upsertMcpServerInConfig(appType, p.id, seed);
-        }
       } catch (e) {
-        console.warn("MCP 初始化导入/落库失败（忽略继续）", e);
+        console.warn("MCP 初始化导入失败（忽略继续）", e);
       } finally {
         await reload();
       }
@@ -83,25 +67,27 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
   }, [appType]);
 
   const handleToggle = async (id: string, enabled: boolean) => {
+    // 乐观更新：立即更新 UI
+    const previousServers = servers;
+    setServers((prev) => ({
+      ...prev,
+      [id]: {
+        ...prev[id],
+        enabled,
+      },
+    }));
+
     try {
-      const server = servers[id];
-      if (!server) {
-        const preset = mcpPresets.find((p) => p.id === id);
-        if (!preset) return;
-        await window.api.upsertMcpServerInConfig(
-          appType,
-          id,
-          preset.server as McpServer,
-        );
-      }
+      // 后台调用 API
       await window.api.setMcpEnabled(appType, id, enabled);
-      await reload();
       onNotify?.(
         enabled ? t("mcp.msg.enabled") : t("mcp.msg.disabled"),
         "success",
         1500,
       );
     } catch (e: any) {
+      // 失败时回滚
+      setServers(previousServers);
       const detail = extractErrorMessage(e);
       onNotify?.(
         detail || t("mcp.error.saveFailed"),
@@ -170,6 +156,9 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
 
   const serverEntries = useMemo(() => Object.entries(servers), [servers]);
 
+  const panelTitle =
+    appType === "claude" ? t("mcp.claudeTitle") : t("mcp.codexTitle");
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
@@ -183,8 +172,7 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
         {/* Header */}
         <div className="flex-shrink-0 flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-800">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-            {t("mcp.title")} ·{" "}
-            {t(appType === "claude" ? "apps.claude" : "apps.codex")}
+            {panelTitle}
           </h3>
 
           <div className="flex items-center gap-3">
@@ -219,11 +207,7 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
             </div>
           ) : (
             (() => {
-              const notInstalledPresets = mcpPresets.filter(
-                (p) => !servers[p.id],
-              );
-              const hasAny =
-                serverEntries.length > 0 || notInstalledPresets.length > 0;
+              const hasAny = serverEntries.length > 0;
               if (!hasAny) {
                 return (
                   <div className="text-center py-12">
@@ -257,52 +241,35 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
                     />
                   ))}
 
-                  {/* 预设（未安装） */}
-                  {notInstalledPresets.map((p) => {
-                    return (
-                      <div
-                        key={`preset-${p.id}`}
-                        className={cn(
-                          cardStyles.interactive,
-                          "!p-4 opacity-95",
-                        )}
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className="flex-shrink-0">
-                            <McpToggle
-                              enabled={false}
-                              onChange={(en) => handleToggle(p.id, en)}
-                            />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h3 className="font-medium text-gray-900 dark:text-gray-100 mb-1">
-                              {p.id}
-                            </h3>
-                            {p.description && (
-                              <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
-                                {p.description}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {/* 预设已移至"新增 MCP"面板中展示与套用 */}
                 </div>
               );
             })()
           )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex-shrink-0 flex items-center justify-end p-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800">
+          <button
+            onClick={onClose}
+            className={`inline-flex items-center gap-2 ${buttonStyles.mcp}`}
+          >
+            <Check size={16} />
+            {t("common.done")}
+          </button>
         </div>
       </div>
 
       {/* Form Modal */}
       {isFormOpen && (
         <McpFormModal
+          appType={appType}
           editingId={editingId || undefined}
           initialData={editingId ? servers[editingId] : undefined}
           existingIds={Object.keys(servers)}
           onSave={handleSave}
           onClose={handleCloseForm}
+          onNotify={onNotify}
         />
       )}
 

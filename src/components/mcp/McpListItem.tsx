@@ -2,6 +2,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { Edit3, Trash2 } from "lucide-react";
 import { McpServer } from "../../types";
+import { mcpPresets } from "../../config/mcpPresets";
 import { cardStyles, buttonStyles, cn } from "../../lib/styles";
 import McpToggle from "./McpToggle";
 
@@ -32,9 +33,22 @@ const McpListItem: React.FC<McpListItemProps> = ({
   // 只显示 description，没有则留空
   const description = (server as any).description || "";
 
+  // 匹配预设元信息（用于展示文档链接等）
+  const meta = mcpPresets.find((p) => p.id === id);
+
+  const openDocs = async () => {
+    const url = meta?.docs || meta?.homepage;
+    if (!url) return;
+    try {
+      await window.api.openExternal(url);
+    } catch {
+      // ignore
+    }
+  };
+
   return (
-    <div className={cn(cardStyles.interactive, "!p-4")}>
-      <div className="flex items-center gap-4">
+    <div className={cn(cardStyles.interactive, "!p-4 h-16")}>
+      <div className="flex items-center gap-4 h-full">
         {/* 左侧：Toggle 开关 */}
         <div className="flex-shrink-0">
           <McpToggle
@@ -53,10 +67,20 @@ const McpListItem: React.FC<McpListItemProps> = ({
               {description}
             </p>
           )}
+          {/* 预设标记已移除 */}
         </div>
 
         {/* 右侧：操作按钮 */}
         <div className="flex items-center gap-2 flex-shrink-0">
+          {meta?.docs && (
+            <button
+              onClick={openDocs}
+              className={buttonStyles.ghost}
+              title={t("mcp.presets.docs")}
+            >
+              {t("mcp.presets.docs")}
+            </button>
+          )}
           <button
             onClick={() => onEdit(id)}
             className={buttonStyles.icon}

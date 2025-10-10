@@ -2,16 +2,24 @@ import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { X, Save, AlertCircle } from "lucide-react";
 import { McpServer } from "../../types";
+import { mcpPresets } from "../../config/mcpPresets";
 import { buttonStyles, inputStyles } from "../../lib/styles";
 import McpWizardModal from "./McpWizardModal";
 import { extractErrorMessage } from "../../utils/errorUtils";
+import { AppType } from "../../lib/tauri-api";
 
 interface McpFormModalProps {
+  appType: AppType;
   editingId?: string;
   initialData?: McpServer;
   onSave: (id: string, server: McpServer) => Promise<void>;
   onClose: () => void;
   existingIds?: string[];
+  onNotify?: (
+    message: string,
+    type: "success" | "error",
+    duration?: number,
+  ) => void;
 }
 
 /**
@@ -35,11 +43,13 @@ const validateJson = (text: string): string => {
  * 仅包含：标题（必填）、描述（可选）、JSON 配置（可选，带格式校验）
  */
 const McpFormModal: React.FC<McpFormModalProps> = ({
+  appType,
   editingId,
   initialData,
   onSave,
   onClose,
   existingIds = [],
+  onNotify,
 }) => {
   const { t } = useTranslation();
   const [formId, setFormId] = useState(editingId || "");
@@ -57,12 +67,50 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   // 编辑模式下禁止修改 ID
   const isEditing = !!editingId;
 
+  // 预设选择状态（仅新增模式显示；-1 表示自定义）
+  const [selectedPreset, setSelectedPreset] = useState<number | null>(
+    isEditing ? null : -1,
+  );
+
   const handleIdChange = (value: string) => {
     setFormId(value);
     if (!isEditing) {
       const exists = existingIds.includes(value.trim());
       setIdError(exists ? t("mcp.error.idExists") : "");
     }
+  };
+
+  const ensureUniqueId = (base: string): string => {
+    let candidate = base.trim();
+    if (!candidate) candidate = "mcp-server";
+    if (!existingIds.includes(candidate)) return candidate;
+    let i = 1;
+    while (existingIds.includes(`${candidate}-${i}`)) i++;
+    return `${candidate}-${i}`;
+  };
+
+  // 应用预设（写入表单但不落库）
+  const applyPreset = (index: number) => {
+    if (index < 0 || index >= mcpPresets.length) return;
+    const p = mcpPresets[index];
+    const id = ensureUniqueId(p.id);
+    setFormId(id);
+    setFormDescription(p.description || "");
+    const json = JSON.stringify(p.server, null, 2);
+    setFormJson(json);
+    // 触发一次校验
+    setJsonError(validateJson(json));
+    setSelectedPreset(index);
+  };
+
+  // 切回自定义
+  const applyCustom = () => {
+    setSelectedPreset(-1);
+    // 恢复到空白模板
+    setFormId("");
+    setFormDescription("");
+    setFormJson("");
+    setJsonError("");
   };
 
   const handleJsonChange = (value: string) => {
@@ -111,7 +159,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
   const handleSubmit = async () => {
     if (!formId.trim()) {
-      alert(t("mcp.error.idRequired"));
+      onNotify?.(t("mcp.error.idRequired"), "error", 3000);
       return;
     }
 
@@ -125,7 +173,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     const currentJsonError = validateJson(formJson);
     setJsonError(currentJsonError);
     if (currentJsonError) {
-      alert(t("mcp.error.jsonInvalid"));
+      onNotify?.(t("mcp.error.jsonInvalid"), "error", 3000);
       return;
     }
 
@@ -138,11 +186,11 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
         // 前置必填校验，避免后端拒绝后才提示
         if (server?.type === "stdio" && !server?.command?.trim()) {
-          alert(t("mcp.error.commandRequired"));
+          onNotify?.(t("mcp.error.commandRequired"), "error", 3000);
           return;
         }
         if (server?.type === "http" && !server?.url?.trim()) {
-          alert(t("mcp.wizard.urlRequired"));
+          onNotify?.(t("mcp.wizard.urlRequired"), "error", 3000);
           return;
         }
       } else {
@@ -170,9 +218,17 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       // 提取后端错误信息（支持 string / {message} / tauri payload）
       const detail = extractErrorMessage(error);
       const msg = detail || t("mcp.error.saveFailed");
-      alert(msg);
+      onNotify?.(msg, "error", detail ? 6000 : 4000);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const getFormTitle = () => {
+    if (appType === "claude") {
+      return isEditing ? t("mcp.editClaudeServer") : t("mcp.addClaudeServer");
+    } else {
+      return isEditing ? t("mcp.editCodexServer") : t("mcp.addCodexServer");
     }
   };
 
@@ -185,11 +241,11 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       />
 
       {/* Modal */}
-      <div className="relative bg-white dark:bg-gray-900 rounded-xl shadow-lg max-w-2xl w-full mx-4 overflow-hidden">
+      <div className="relative bg-white dark:bg-gray-900 rounded-xl shadow-lg max-w-3xl w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex-shrink-0 flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-800">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-            {isEditing ? t("mcp.editServer") : t("mcp.addServer")}
+            {getFormTitle()}
           </h3>
           <button
             onClick={onClose}
@@ -199,8 +255,43 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-6 space-y-4">
+        {/* Content - Scrollable */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {/* 预设选择（仅新增时展示） */}
+          {!isEditing && (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                {t("mcp.presets.title")}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={applyCustom}
+                  className={`${
+                    selectedPreset === -1 ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900" : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                  } px-3 py-1.5 rounded-md text-xs font-medium transition-colors`}
+                >
+                  {t("presetSelector.custom")}
+                </button>
+                {mcpPresets.map((p, idx) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => applyPreset(idx)}
+                    className={`${
+                      selectedPreset === idx
+                        ? "bg-emerald-500 text-white"
+                        : "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+                    } px-3 py-1.5 rounded-md text-xs font-medium transition-colors`}
+                    title={p.description}
+                  >
+                    {p.name || p.id}
+                  </button>
+                ))}
+              </div>
+              {/* 无需环境变量提示：已移除 */}
+            </div>
+          )}
           {/* ID (标题) */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -265,7 +356,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800">
+        <div className="flex-shrink-0 flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800">
           <button onClick={onClose} className={buttonStyles.secondary}>
             {t("common.cancel")}
           </button>
@@ -289,6 +380,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         isOpen={isWizardOpen}
         onClose={() => setIsWizardOpen(false)}
         onApply={handleWizardApply}
+        onNotify={onNotify}
       />
     </div>
   );

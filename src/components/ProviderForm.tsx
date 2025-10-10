@@ -615,19 +615,61 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
       ...(category ? { category } : {}),
     };
 
-    // 若为"新建供应商"，且已在弹窗中添加了自定义端点，则随提交一并落盘
-    if (!initialData && draftCustomEndpoints.length > 0) {
-      const now = Date.now();
-      const customMap: Record<string, CustomEndpoint> = {};
-      for (const raw of draftCustomEndpoints) {
-        const url = raw.trim().replace(/\/+$/, "");
-        if (!url) continue;
-        if (!customMap[url]) {
-          customMap[url] = { url, addedAt: now, lastUsed: undefined };
+    // 若为"新建供应商"，将端点候选一并随提交落盘到 meta.custom_endpoints：
+    // - 用户在弹窗中新增的自定义端点（draftCustomEndpoints，已去重）
+    // - 预设中的 endpointCandidates（若存在）
+    // - 当前选中的基础 URL（baseUrl/codexBaseUrl）
+    if (!initialData) {
+      const urlSet = new Set<string>();
+      const push = (raw?: string) => {
+        const url = (raw || "").trim().replace(/\/+$/, "");
+        if (url) urlSet.add(url);
+      };
+
+      // 自定义端点（仅来自用户新增）
+      for (const u of draftCustomEndpoints) push(u);
+
+      // 预设端点候选
+      if (!isCodex) {
+        if (
+          selectedPreset !== null &&
+          selectedPreset >= 0 &&
+          selectedPreset < providerPresets.length
+        ) {
+          const preset = providerPresets[selectedPreset] as any;
+          if (Array.isArray(preset?.endpointCandidates)) {
+            for (const u of preset.endpointCandidates as string[]) push(u);
+          }
         }
+        // 当前 Claude 基础地址
+        push(baseUrl);
+      } else {
+        if (
+          selectedCodexPreset !== null &&
+          selectedCodexPreset >= 0 &&
+          selectedCodexPreset < codexProviderPresets.length
+        ) {
+          const preset = codexProviderPresets[selectedCodexPreset] as any;
+          if (Array.isArray(preset?.endpointCandidates)) {
+            for (const u of preset.endpointCandidates as string[]) push(u);
+          }
+        }
+        // 当前 Codex 基础地址
+        push(codexBaseUrl);
       }
-      onSubmit({ ...basePayload, meta: { custom_endpoints: customMap } });
-      return;
+
+      const urls = Array.from(urlSet.values());
+      if (urls.length > 0) {
+        const now = Date.now();
+        const customMap: Record<string, CustomEndpoint> = {};
+        for (const url of urls) {
+          if (!customMap[url]) {
+            customMap[url] = { url, addedAt: now, lastUsed: undefined };
+          }
+        }
+        onSubmit({ ...basePayload, meta: { custom_endpoints: customMap } });
+        return;
+      }
     }
 
     onSubmit(basePayload);

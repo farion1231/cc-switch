@@ -8,20 +8,38 @@ export type McpPreset = {
   server: McpServer;
   homepage?: string;
   docs?: string;
-  requiresEnv?: string[];
 };
 
-// 预设库（数据文件，当前未接入 UI，便于后续“一键启用”）
-// 注意：预设数据暂时清空，仅保留结构与引用位置。
-// 原因：
-// - 近期决定将 MCP SSOT 拆分为 mcp.claude / mcp.codex，不同客户端的格式与支持能力不同；
-// - 需要先完善“隐藏预设/不回种”机制与导入/同步策略，避免用户删除后被自动回填；
-// - 在上述机制与 Codex 适配完成前，避免内置示例误导或造成意外写入。
-// 后续计划（占位备注）：
-// - 重新引入官方/社区 MCP 预设，区分 `source: "preset"`；
-// - 支持每客户端（Claude/Codex）独立隐藏名单 `hiddenPresets`，仅影响自动回种；
-// - UI 提供“删除并隐藏”与“恢复预设”操作；
-// - 导入/同步与启用状态解耦，仅启用项投影至对应客户端的用户配置文件。
-export const mcpPresets: McpPreset[] = [];
+// 预设 MCP（逻辑简化版）：
+// - 仅包含最常用、可快速落地的 stdio 模式示例
+// - 不涉及分类/模板/测速等复杂逻辑，默认以 disabled 形式“回种”到 config.json
+// - 用户可在 MCP 面板中一键启用/编辑
+export const mcpPresets: McpPreset[] = [
+  {
+    id: "fetch",
+    name: "mcp-server-fetch",
+    description:
+      "通用 HTTP Fetch（stdio，经 uvx 运行 mcp-server-fetch），适合快速请求接口/抓取数据",
+    tags: ["stdio", "http"],
+    server: {
+      type: "stdio",
+      command: "uvx",
+      args: ["mcp-server-fetch"],
+    } as McpServer,
+  },
+  {
+    id: "context7",
+    name: "mcp-context7",
+    description: "Context7 示例（无需环境变量），可按需在表单中调整参数",
+    tags: ["stdio", "docs"],
+    server: {
+      type: "stdio",
+      command: "uvx",
+      // 使用 fetch 服务器作为基础示例，用户可在表单中补充 args
+      args: ["mcp-server-fetch"],
+    } as McpServer,
+    docs: "https://github.com/context7",
+  },
+];
 
 export default mcpPresets;

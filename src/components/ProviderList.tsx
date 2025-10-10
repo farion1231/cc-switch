@@ -1,9 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { useTranslation } from "react-i18next";
 import { Provider, UsageScript } from "../types";
 import { Play, Edit3, Trash2, CheckCircle2, Users, Check, BarChart3 } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
-import { AppType } from "../lib/tauri-api";
 import UsageFooter from "./UsageFooter";
 import UsageScriptModal from "./UsageScriptModal";
 // 不再在列表中显示分类徽章，避免造成困惑
@@ -14,7 +13,6 @@ interface ProviderListProps {
   onSwitch: (id: string) => void;
   onDelete: (id: string) => void;
   onEdit: (id: string) => void;
-  appType?: AppType;
   onNotify?: (
     message: string,
     type: "success" | "error",
@@ -28,7 +26,6 @@ const ProviderList: React.FC<ProviderListProps> = ({
   onSwitch,
   onDelete,
   onEdit,
-  appType,
   onNotify,
 }) => {
   const { t, i18n } = useTranslation();
@@ -59,58 +56,15 @@ const ProviderList: React.FC<ProviderListProps> = ({
       await window.api.openExternal(url);
     } catch (error) {
       console.error(t("console.openLinkFailed"), error);
+      onNotify?.(
+        `${t("console.openLinkFailed")}: ${String(error)}`,
+        "error",
+        4000,
+      );
     }
   };
 
-  const [claudeApplied, setClaudeApplied] = useState<boolean>(false);
-
-  // 检查 Claude 插件配置是否已应用
-  useEffect(() => {
-    const checkClaude = async () => {
-      if (appType !== "claude" || !currentProviderId) {
-        setClaudeApplied(false);
-        return;
-      }
-      try {
-        const applied = await window.api.isClaudePluginApplied();
-        setClaudeApplied(applied);
-      } catch (error) {
-        console.error(t("console.setupListenerFailed"), error);
-        setClaudeApplied(false);
-      }
-    };
-    checkClaude();
-  }, [appType, currentProviderId, providers, t]);
-
-  const handleApplyToClaudePlugin = async () => {
-    try {
-      await window.api.applyClaudePluginConfig({ official: false });
-      onNotify?.(t("notifications.appliedToClaudePlugin"), "success", 3000);
-      setClaudeApplied(true);
-    } catch (error: any) {
-      console.error(error);
-      const msg =
-        error && error.message
-          ? error.message
-          : t("notifications.syncClaudePluginFailed");
-      onNotify?.(msg, "error", 5000);
-    }
-  };
-
-  const handleRemoveFromClaudePlugin = async () => {
-    try {
-      await window.api.applyClaudePluginConfig({ official: true });
-      onNotify?.(t("notifications.removedFromClaudePlugin"), "success", 3000);
-      setClaudeApplied(false);
-    } catch (error: any) {
-      console.error(error);
-      const msg =
-        error && error.message
-          ? error.message
-          : t("notifications.syncClaudePluginFailed");
-      onNotify?.(msg, "error", 5000);
-    }
-  };
+  // 列表页不再提供 Claude 插件按钮，统一在“设置”中控制
 
   // 处理用量配置保存
   const handleSaveUsageScript = async (providerId: string, script: UsageScript) => {
@@ -226,34 +180,6 @@ const ProviderList: React.FC<ProviderListProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 ml-4">
-                    {appType === "claude" ? (
-                      <div className="flex-shrink-0">
-                        {provider.category !== "official" && isCurrent && (
-                          <button
-                            onClick={() =>
-                              claudeApplied
-                                ? handleRemoveFromClaudePlugin()
-                                : handleApplyToClaudePlugin()
-                            }
-                            className={cn(
-                              "inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors w-full whitespace-nowrap justify-center",
-                              claudeApplied
-                                ? "border border-gray-300 text-gray-600 hover:border-red-300 hover:text-red-600 hover:bg-red-50 dark:border-gray-600 dark:text-gray-400 dark:hover:border-red-800 dark:hover:text-red-400 dark:hover:bg-red-900/20"
-                                : "border border-gray-300 text-gray-700 hover:border-green-300 hover:text-green-600 hover:bg-green-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-green-700 dark:hover:text-green-400 dark:hover:bg-green-900/20",
-                            )}
-                            title={
-                              claudeApplied
-                                ? t("provider.removeFromClaudePlugin")
-                                : t("provider.applyToClaudePlugin")
-                            }
-                          >
-                            {claudeApplied
-                              ? t("provider.removeFromClaudePlugin")
-                              : t("provider.applyToClaudePlugin")}
-                          </button>
-                        )}
-                      </div>
-                    ) : null}
                     <button
                       onClick={() => onSwitch(provider.id)}
                       disabled={isCurrent}

@@ -70,6 +70,8 @@ export interface Settings {
   showInTray: boolean;
   // 点击关闭按钮时是否最小化到托盘而不是关闭应用
   minimizeToTrayOnClose: boolean;
+  // 启用 Claude 插件联动（写入 ~/.claude/config.json 的 primaryApiKey）
+  enableClaudePluginIntegration?: boolean;
   // 覆盖 Claude Code 配置目录（可选）
   claudeConfigDir?: string;
   // 覆盖 Codex 配置目录（可选）

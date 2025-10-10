@@ -217,7 +217,7 @@ pub async fn update_provider(
         }
     }
 
-    // 更新内存并保存
+    // 更新内存并保存（保留/合并已有的 meta.custom_endpoints，避免丢失在编辑流程中新增的自定义端点）
     {
         let mut config = state
             .config
@@ -226,9 +226,43 @@ pub async fn update_provider(
         let manager = config
             .get_manager_mut(&app_type)
             .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+
+        // 若已存在旧供应商，合并其 meta（尤其是 custom_endpoints）到新对象
+        let merged_provider = if let Some(existing) = manager.providers.get(&provider.id) {
+            // 克隆入参作为基准
+            let mut updated = provider.clone();
+
+            match (existing.meta.as_ref(), updated.meta.take()) {
+                // 入参未携带 meta：直接沿用旧 meta
+                (Some(old_meta), None) => {
+                    updated.meta = Some(old_meta.clone());
+                }
+                // 入参携带 meta：与旧 meta 合并（以旧值为准，保留新增项）
+                (Some(old_meta), Some(mut new_meta)) => {
+                    // 合并 custom_endpoints（URL 去重，保留旧端点的时间信息，补充新增端点）
+                    let mut merged_map = old_meta.custom_endpoints.clone();
+                    for (url, ep) in new_meta.custom_endpoints.drain() {
+                        merged_map.entry(url).or_insert(ep);
+                    }
+                    updated.meta = Some(crate::provider::ProviderMeta {
+                        custom_endpoints: merged_map,
+                    });
+                }
+                // 旧 meta 不存在：使用入参（可能为 None）
+                (None, maybe_new) => {
+                    updated.meta = maybe_new;
+                }
+            }
+
+            updated
+        } else {
+            // 不存在旧供应商（理论上不应发生，因为前面已校验 exists）
+            provider.clone()
+        };
+
         manager
             .providers
-            .insert(provider.id.clone(), provider.clone());
+            .insert(merged_provider.id.clone(), merged_provider);
     }
     state.save()?;
 

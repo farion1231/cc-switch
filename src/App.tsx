@@ -183,9 +183,14 @@ function App() {
     });
   };
 
-  // 同步 Claude 插件配置（写入/移除固定 JSON）
+  // 同步 Claude 插件配置（按设置决定是否联动；开启时：非官方写入，官方移除）
   const syncClaudePlugin = async (providerId: string, silent = false) => {
     try {
+      const settings = await window.api.getSettings();
+      if (!(settings as any)?.enableClaudePluginIntegration) {
+        // 未开启联动：不执行写入/移除
+        return;
+      }
       const provider = providers[providerId];
       if (!provider) return;
       const isOfficial = provider.category === "official";
@@ -349,7 +354,6 @@ function App() {
               onSwitch={handleSwitchProvider}
               onDelete={handleDeleteProvider}
               onEdit={setEditingProviderId}
-              appType={activeApp}
               onNotify={showNotification}
             />
           </div>
@@ -387,6 +391,7 @@ function App() {
         <SettingsModal
           onClose={() => setIsSettingsOpen(false)}
           onImportSuccess={handleImportSuccess}
+          onNotify={showNotification}
         />
       )}
 

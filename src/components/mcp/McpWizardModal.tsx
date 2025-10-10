@@ -8,6 +8,11 @@ interface McpWizardModalProps {
   isOpen: boolean;
   onClose: () => void;
   onApply: (json: string) => void;
+  onNotify?: (
+    message: string,
+    type: "success" | "error",
+    duration?: number,
+  ) => void;
 }
 
 /**
@@ -66,6 +71,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
   isOpen,
   onClose,
   onApply,
+  onNotify,
 }) => {
   const { t } = useTranslation();
   const [wizardType, setWizardType] = useState<"stdio" | "http">("stdio");
@@ -124,11 +130,11 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
 
   const handleApply = () => {
     if (wizardType === "stdio" && !wizardCommand.trim()) {
-      alert(t("mcp.error.commandRequired"));
+      onNotify?.(t("mcp.error.commandRequired"), "error", 3000);
       return;
     }
     if (wizardType === "http" && !wizardUrl.trim()) {
-      alert(t("mcp.wizard.urlRequired"));
+      onNotify?.(t("mcp.wizard.urlRequired"), "error", 3000);
       return;
     }
 
@@ -256,7 +262,6 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     onChange={(e) => setWizardCommand(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder={t("mcp.wizard.commandPlaceholder")}
-                    required
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
                   />
                 </div>
@@ -321,7 +326,6 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     onChange={(e) => setWizardUrl(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder={t("mcp.wizard.urlPlaceholder")}
-                    required
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
                   />
                 </div>

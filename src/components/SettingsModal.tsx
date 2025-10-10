@@ -24,11 +24,17 @@ import { isLinux } from "../lib/platform";
 interface SettingsModalProps {
   onClose: () => void;
   onImportSuccess?: () => void | Promise<void>;
+  onNotify?: (
+    message: string,
+    type: "success" | "error",
+    duration?: number,
+  ) => void;
 }
 
 export default function SettingsModal({
   onClose,
   onImportSuccess,
+  onNotify,
 }: SettingsModalProps) {
   const { t, i18n } = useTranslation();
 
@@ -50,6 +56,7 @@ export default function SettingsModal({
   const [settings, setSettings] = useState<Settings>({
     showInTray: true,
     minimizeToTrayOnClose: true,
+    enableClaudePluginIntegration: false,
     claudeConfigDir: undefined,
     codexConfigDir: undefined,
     language: persistedLanguage,
@@ -116,6 +123,11 @@ export default function SettingsModal({
       setSettings({
         showInTray,
         minimizeToTrayOnClose,
+        enableClaudePluginIntegration:
+          typeof (loadedSettings as any)?.enableClaudePluginIntegration ===
+          "boolean"
+            ? (loadedSettings as any).enableClaudePluginIntegration
+            : false,
         claudeConfigDir:
           typeof (loadedSettings as any)?.claudeConfigDir === "string"
             ? (loadedSettings as any).claudeConfigDir
@@ -184,6 +196,16 @@ export default function SettingsModal({
         language: selectedLanguage,
       };
       await window.api.saveSettings(payload);
+      // 立即生效：根据开关无条件写入/移除 ~/.claude/config.json
+      try {
+        if (payload.enableClaudePluginIntegration) {
+          await window.api.applyClaudePluginConfig({ official: false });
+        } else {
+          await window.api.applyClaudePluginConfig({ official: true });
+        }
+      } catch (e) {
+        console.warn("[Settings] Apply Claude plugin config on save failed", e);
+      }
       setSettings(payload);
       try {
         window.localStorage.setItem("language", selectedLanguage);
@@ -371,11 +393,19 @@ export default function SettingsModal({
       const result = await window.api.exportConfigToFile(filePath);
 
       if (result.success) {
-        alert(`${t("settings.configExported")}\n${result.filePath}`);
+        onNotify?.(
+          `${t("settings.configExported")}\n${result.filePath}`,
+          "success",
+          4000,
+        );
       }
     } catch (error) {
       console.error(t("settings.exportFailedError"), error);
-      alert(`${t("settings.exportFailed")}: ${error}`);
+      onNotify?.(
+        `${t("settings.exportFailed")}: ${String(error)}`,
+        "error",
+        5000,
+      );
     }
   };
 
@@ -390,7 +420,11 @@ export default function SettingsModal({
       }
     } catch (error) {
       console.error(t("settings.selectFileFailed") + ":", error);
-      alert(`${t("settings.selectFileFailed")}: ${error}`);
+      onNotify?.(
+        `${t("settings.selectFileFailed")}: ${String(error)}`,
+        "error",
+        5000,
+      );
     }
   };
 
@@ -501,6 +535,28 @@ export default function SettingsModal({
                     setSettings((prev) => ({
                       ...prev,
                       minimizeToTrayOnClose: e.target.checked,
+                    }))
+                  }
+                  className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500/20"
+                />
+              </label>
+              {/* Claude 插件联动开关 */}
+              <label className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm text-gray-900 dark:text-gray-100">
+                    {t("settings.enableClaudePluginIntegration")}
+                  </span>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-[34rem]">
+                    {t("settings.enableClaudePluginIntegrationDescription")}
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={!!settings.enableClaudePluginIntegration}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      enableClaudePluginIntegration: e.target.checked,
                     }))
                   }
                   className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500/20"
