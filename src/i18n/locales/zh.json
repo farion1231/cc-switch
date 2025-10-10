@@ -258,12 +258,41 @@
     "empty": "暂无 MCP 服务器",
     "emptyDescription": "点击右上角按钮添加第一个 MCP 服务器",
     "add": "添加 MCP",
-    "addServer": "新增服务器",
-    "editServer": "编辑服务器",
+    "addServer": "新增 MCP",
+    "editServer": "编辑 MCP",
     "configPath": "配置路径",
     "serverCount": "已配置 {{count}} 个 MCP 服务器",
     "template": {
       "fetch": "快速模板：mcp-fetch"
+    },
+    "form": {
+      "title": "MCP 标题（唯一）",
+      "titlePlaceholder": "my-mcp-server",
+      "description": "描述",
+      "descriptionPlaceholder": "可选的描述信息",
+      "jsonConfig": "JSON 配置",
+      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
+      "useWizard": "配置向导"
+    },
+    "wizard": {
+      "title": "MCP 配置向导",
+      "hint": "快速配置 MCP 服务器，自动生成 JSON 配置",
+      "type": "类型",
+      "command": "命令",
+      "commandPlaceholder": "uvx",
+      "args": "参数（每行一个）",
+      "argsPlaceholder": "mcp-server-fetch\n--config config.json",
+      "cwd": "工作目录",
+      "cwdPlaceholder": "/path/to/project",
+      "env": "环境变量",
+      "envPlaceholder": "KEY=VALUE\n(一行一个)",
+      "url": "URL",
+      "urlPlaceholder": "https://api.example.com/mcp",
+      "urlRequired": "请输入 URL",
+      "headers": "请求头（可选）",
+      "headersPlaceholder": "Authorization: Bearer token\nContent-Type: application/json",
+      "preview": "配置预览",
+      "apply": "应用配置"
     },
     "id": "标识 (唯一)",
     "type": "类型",
@@ -287,7 +316,10 @@
     },
     "error": {
       "idRequired": "请填写标识",
+      "idExists": "该标识已存在，请更换",
+      "jsonInvalid": "JSON 格式错误，请检查",
       "commandRequired": "请填写命令",
+      "singleServerObjectRequired": "此处只需单个服务器对象，请不要粘贴包含 mcpServers 的整份配置",
       "saveFailed": "保存失败",
       "deleteFailed": "删除失败"
     },
@@ -298,6 +330,14 @@
     "confirm": {
       "deleteTitle": "删除 MCP 服务器",
       "deleteMessage": "确定要删除 MCP 服务器 \"{{id}}\" 吗？此操作无法撤销。"
+    },
+    "presets": {
+      "title": "预设库",
+      "enable": "启用",
+      "enabled": "已启用",
+      "installed": "已安装",
+      "docs": "文档",
+      "requiresEnv": "需要环境变量"
     }
   }
 }

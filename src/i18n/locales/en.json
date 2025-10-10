@@ -258,12 +258,41 @@
     "empty": "No MCP servers",
     "emptyDescription": "Click the button in the top right to add your first MCP server",
     "add": "Add MCP",
-    "addServer": "Add Server",
-    "editServer": "Edit Server",
+    "addServer": "Add MCP",
+    "editServer": "Edit MCP",
     "configPath": "Config Path",
     "serverCount": "{{count}} MCP server(s) configured",
     "template": {
       "fetch": "Quick Template: mcp-fetch"
+    },
+    "form": {
+      "title": "MCP Title (Unique)",
+      "titlePlaceholder": "my-mcp-server",
+      "description": "Description",
+      "descriptionPlaceholder": "Optional description",
+      "jsonConfig": "JSON Configuration",
+      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
+      "useWizard": "Config Wizard"
+    },
+    "wizard": {
+      "title": "MCP Configuration Wizard",
+      "hint": "Quickly configure MCP server and auto-generate JSON configuration",
+      "type": "Type",
+      "command": "Command",
+      "commandPlaceholder": "uvx",
+      "args": "Arguments (one per line)",
+      "argsPlaceholder": "mcp-server-fetch\n--config config.json",
+      "cwd": "Working Directory",
+      "cwdPlaceholder": "/path/to/project",
+      "env": "Environment Variables",
+      "envPlaceholder": "KEY=VALUE\n(one per line)",
+      "url": "URL",
+      "urlPlaceholder": "https://api.example.com/mcp",
+      "urlRequired": "Please enter URL",
+      "headers": "Headers (optional)",
+      "headersPlaceholder": "Authorization: Bearer token\nContent-Type: application/json",
+      "preview": "Configuration Preview",
+      "apply": "Apply Configuration"
     },
     "id": "Identifier (unique)",
     "type": "Type",
@@ -287,7 +316,10 @@
     },
     "error": {
       "idRequired": "Please enter identifier",
+      "idExists": "Identifier already exists. Please choose another.",
+      "jsonInvalid": "Invalid JSON format",
       "commandRequired": "Please enter command",
+      "singleServerObjectRequired": "Please paste a single MCP server object (do not include top-level mcpServers)",
       "saveFailed": "Save failed",
       "deleteFailed": "Delete failed"
     },
@@ -298,6 +330,14 @@
     "confirm": {
       "deleteTitle": "Delete MCP Server",
       "deleteMessage": "Are you sure you want to delete MCP server \"{{id}}\"? This action cannot be undone."
+    },
+    "presets": {
+      "title": "Presets",
+      "enable": "Enable",
+      "enabled": "Enabled",
+      "installed": "Installed",
+      "docs": "Docs",
+      "requiresEnv": "Requires env"
     }
   }
 }

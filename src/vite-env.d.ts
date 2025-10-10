@@ -1,6 +1,12 @@
 /// <reference types="vite/client" />
 
-import { Provider, Settings, CustomEndpoint, McpStatus } from "./types";
+import {
+  Provider,
+  Settings,
+  CustomEndpoint,
+  McpStatus,
+  McpConfigResponse,
+} from "./types";
 import { AppType } from "./lib/tauri-api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -70,6 +76,30 @@ declare global {
       ) => Promise<boolean>;
       deleteClaudeMcpServer: (id: string) => Promise<boolean>;
       validateMcpCommand: (cmd: string) => Promise<boolean>;
+      // 新：config.json 为 SSOT 的 MCP API
+      getMcpConfig: (app?: AppType) => Promise<McpConfigResponse>;
+      upsertMcpServerInConfig: (
+        app: AppType | undefined,
+        id: string,
+        spec: Record<string, any>,
+      ) => Promise<boolean>;
+      deleteMcpServerInConfig: (
+        app: AppType | undefined,
+        id: string,
+      ) => Promise<boolean>;
+      setMcpEnabled: (
+        app: AppType | undefined,
+        id: string,
+        enabled: boolean,
+      ) => Promise<boolean>;
+      syncEnabledMcpToClaude: () => Promise<boolean>;
+      syncEnabledMcpToCodex: () => Promise<boolean>;
+      importMcpFromClaude: () => Promise<number>;
+      importMcpFromCodex: () => Promise<number>;
+      // 读取当前生效（live）的 provider settings（根据 appType）
+      // Codex: { auth: object, config: string }
+      // Claude: settings.json 内容
+      getLiveProviderSettings: (app?: AppType) => Promise<any>;
       testApiEndpoints: (
         urls: string[],
         options?: { timeoutSecs?: number },

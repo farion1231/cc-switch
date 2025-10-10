@@ -1,6 +1,32 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// MCP 配置：单客户端维度（claude 或 codex 下的一组服务器）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct McpConfig {
+    /// 以 id 为键的服务器定义（宽松 JSON 对象，包含 enabled/source 等 UI 辅助字段）
+    #[serde(default)]
+    pub servers: HashMap<String, serde_json::Value>,
+}
+
+/// MCP 根：按客户端分开维护（无历史兼容压力，直接以 v2 结构落地）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpRoot {
+    #[serde(default)]
+    pub claude: McpConfig,
+    #[serde(default)]
+    pub codex: McpConfig,
+}
+
+impl Default for McpRoot {
+    fn default() -> Self {
+        Self {
+            claude: McpConfig::default(),
+            codex: McpConfig::default(),
+        }
+    }
+}
+
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
 use crate::provider::ProviderManager;
 
@@ -35,8 +61,12 @@ impl From<&str> for AppType {
 pub struct MultiAppConfig {
     #[serde(default = "default_version")]
     pub version: u32,
+    /// 应用管理器（claude/codex）
     #[serde(flatten)]
     pub apps: HashMap<String, ProviderManager>,
+    /// MCP 配置（按客户端分治）
+    #[serde(default)]
+    pub mcp: McpRoot,
 }
 
 fn default_version() -> u32 {
@@ -49,7 +79,11 @@ impl Default for MultiAppConfig {
         apps.insert("claude".to_string(), ProviderManager::default());
         apps.insert("codex".to_string(), ProviderManager::default());
 
-        Self { version: 2, apps }
+        Self {
+            version: 2,
+            apps,
+            mcp: McpRoot::default(),
+        }
     }
 }
 
@@ -76,7 +110,11 @@ impl MultiAppConfig {
             apps.insert("claude".to_string(), v1_config);
             apps.insert("codex".to_string(), ProviderManager::default());
 
-            let config = Self { version: 2, apps };
+            let config = Self {
+                version: 2,
+                apps,
+                mcp: McpRoot::default(),
+            };
 
             // 迁移前备份旧版(v1)配置文件
             let backup_dir = get_app_config_dir();
@@ -134,6 +172,22 @@ impl MultiAppConfig {
         if !self.apps.contains_key(app.as_str()) {
             self.apps
                 .insert(app.as_str().to_string(), ProviderManager::default());
+        }
+    }
+
+    /// 获取指定客户端的 MCP 配置（不可变引用）
+    pub fn mcp_for(&self, app: &AppType) -> &McpConfig {
+        match app {
+            AppType::Claude => &self.mcp.claude,
+            AppType::Codex => &self.mcp.codex,
+        }
+    }
+
+    /// 获取指定客户端的 MCP 配置（可变引用）
+    pub fn mcp_for_mut(&mut self, app: &AppType) -> &mut McpConfig {
+        match app {
+            AppType::Claude => &mut self.mcp.claude,
+            AppType::Codex => &mut self.mcp.codex,
         }
     }
 }

@@ -8,11 +8,11 @@ use tauri_plugin_opener::OpenerExt;
 use crate::app_config::AppType;
 use crate::claude_plugin;
 use crate::claude_mcp;
+use crate::store::AppState;
 use crate::codex_config;
 use crate::config::{self, get_claude_settings_path, ConfigStatus};
 use crate::provider::{Provider, ProviderMeta};
 use crate::speedtest;
-use crate::store::AppState;
 
 fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), String> {
     match app_type {
@@ -314,16 +314,20 @@ pub async fn switch_provider(
         .lock()
         .map_err(|e| format!("获取锁失败: {}", e))?;
 
-    let manager = config
-        .get_manager_mut(&app_type)
-        .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+    // 为避免长期可变借用，尽快获取必要数据并缩小借用范围
+    let provider = {
+        let manager = config
+            .get_manager_mut(&app_type)
+            .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
 
-    // 检查供应商是否存在
-    let provider = manager
-        .providers
-        .get(&id)
-        .ok_or_else(|| format!("供应商不存在: {}", id))?
-        .clone();
+        // 检查供应商是否存在
+        let provider = manager
+            .providers
+            .get(&id)
+            .ok_or_else(|| format!("供应商不存在: {}", id))?
+            .clone();
+        provider
+    };
 
     // SSOT 切换：先回填 live 配置到当前供应商，然后从内存写入目标主配置
     match app_type {
@@ -331,7 +335,12 @@ pub async fn switch_provider(
             use serde_json::Value;
 
             // 回填：读取 live（auth.json + config.toml）写回当前供应商 settings_config
-            if !manager.current.is_empty() {
+            if !{
+                let cur = config
+                    .get_manager_mut(&app_type)
+                    .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+                cur.current.is_empty()
+            } {
                 let auth_path = codex_config::get_codex_auth_path();
                 let config_path = codex_config::get_codex_config_path();
                 if auth_path.exists() {
@@ -353,7 +362,16 @@ pub async fn switch_provider(
                         "config": config_str,
                     });
 
-                    if let Some(cur) = manager.providers.get_mut(&manager.current) {
+                    let cur_id2 = {
+                        let m = config
+                            .get_manager(&app_type)
+                            .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+                        m.current.clone()
+                    };
+                    let m = config
+                        .get_manager_mut(&app_type)
+                        .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+                    if let Some(cur) = m.providers.get_mut(&cur_id2) {
                         cur.settings_config = live;
                     }
                 }
@@ -376,10 +394,21 @@ pub async fn switch_provider(
             let settings_path = get_claude_settings_path();
 
             // 回填：读取 live settings.json 写回当前供应商 settings_config
-            if settings_path.exists() && !manager.current.is_empty() {
-                if let Ok(live) = read_json_file::<serde_json::Value>(&settings_path) {
-                    if let Some(cur) = manager.providers.get_mut(&manager.current) {
-                        cur.settings_config = live;
+            if settings_path.exists() {
+                let cur_id = {
+                    let m = config
+                        .get_manager(&app_type)
+                        .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+                    m.current.clone()
+                };
+                if !cur_id.is_empty() {
+                    if let Ok(live) = read_json_file::<serde_json::Value>(&settings_path) {
+                        let m = config
+                            .get_manager_mut(&app_type)
+                            .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+                        if let Some(cur) = m.providers.get_mut(&cur_id) {
+                            cur.settings_config = live;
+                        }
                     }
                 }
             }
@@ -391,11 +420,56 @@ pub async fn switch_provider(
 
             // 不做归档，直接写入
             write_json_file(&settings_path, &provider.settings_config)?;
+
+            // 写入后回读 live，并回填到目标供应商的 SSOT，保证一致
+            if settings_path.exists() {
+                if let Ok(live_after) = read_json_file::<serde_json::Value>(&settings_path) {
+                    let m = config
+                        .get_manager_mut(&app_type)
+                        .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+                    if let Some(target) = m.providers.get_mut(&id) {
+                        target.settings_config = live_after;
+                    }
+                }
+            }
         }
     }
 
-    // 更新当前供应商
-    manager.current = id;
+    // 更新当前供应商（短借用范围）
+    {
+        let manager = config
+            .get_manager_mut(&app_type)
+            .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+        manager.current = id;
+    }
+
+    // 对 Codex：切换完成后，同步 MCP 到 config.toml，并将最新的 config.toml 回填到当前供应商 settings_config.config
+    if let AppType::Codex = app_type {
+        // 1) 依据 SSOT 将启用的 MCP 投影到 ~/.codex/config.toml
+        crate::mcp::sync_enabled_to_codex(&config)?;
+
+        // 2) 读取投影后的 live config.toml 文本
+        let cfg_text_after = crate::codex_config::read_and_validate_codex_config_text()?;
+
+        // 3) 回填到当前（目标）供应商的 settings_config.config，确保编辑面板读取到最新 MCP
+        let cur_id = {
+            let m = config
+                .get_manager(&app_type)
+                .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+            m.current.clone()
+        };
+        let m = config
+            .get_manager_mut(&app_type)
+            .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+        if let Some(p) = m.providers.get_mut(&cur_id) {
+            if let Some(obj) = p.settings_config.as_object_mut() {
+                obj.insert(
+                    "config".to_string(),
+                    serde_json::Value::String(cfg_text_after),
+                );
+            }
+        }
+    }
 
     log::info!("成功切换到供应商: {}", provider.name);
 
@@ -871,6 +945,181 @@ fn extract_credentials(
             };
 
             Ok((api_key, base_url))
+        }
+    }
+}
+
+// =====================
+// 新：集中以 config.json 为 SSOT 的 MCP 配置命令
+// =====================
+
+#[derive(serde::Serialize)]
+pub struct McpConfigResponse {
+    pub config_path: String,
+    pub servers: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// 获取 MCP 配置（来自 ~/.cc-switch/config.json）
+#[tauri::command]
+pub async fn get_mcp_config(state: State<'_, AppState>, app: Option<String>) -> Result<McpConfigResponse, String> {
+    let config_path = crate::config::get_app_config_path().to_string_lossy().to_string();
+    let cfg = state
+        .config
+        .lock()
+        .map_err(|e| format!("获取锁失败: {}", e))?;
+    let app_ty = crate::app_config::AppType::from(app.as_deref().unwrap_or("claude"));
+    let servers = crate::mcp::get_servers_snapshot_for(&cfg, &app_ty);
+    Ok(McpConfigResponse { config_path, servers })
+}
+
+/// 在 config.json 中新增或更新一个 MCP 服务器定义
+#[tauri::command]
+pub async fn upsert_mcp_server_in_config(
+    state: State<'_, AppState>,
+    app: Option<String>,
+    id: String,
+    spec: serde_json::Value,
+) -> Result<bool, String> {
+    let mut cfg = state
+        .config
+        .lock()
+        .map_err(|e| format!("获取锁失败: {}", e))?;
+    let app_ty = crate::app_config::AppType::from(app.as_deref().unwrap_or("claude"));
+    let changed = crate::mcp::upsert_in_config_for(&mut cfg, &app_ty, &id, spec)?;
+    drop(cfg);
+    state.save()?;
+    Ok(changed)
+}
+
+/// 在 config.json 中删除一个 MCP 服务器定义
+#[tauri::command]
+pub async fn delete_mcp_server_in_config(
+    state: State<'_, AppState>,
+    app: Option<String>,
+    id: String,
+) -> Result<bool, String> {
+    let mut cfg = state
+        .config
+        .lock()
+        .map_err(|e| format!("获取锁失败: {}", e))?;
+    let app_ty = crate::app_config::AppType::from(app.as_deref().unwrap_or("claude"));
+    let existed = crate::mcp::delete_in_config_for(&mut cfg, &app_ty, &id)?;
+    drop(cfg);
+    state.save()?;
+    // 若删除的是 Claude/Codex 客户端的条目，则同步一次，确保启用项从对应 live 配置中移除
+    let cfg2 = state
+        .config
+        .lock()
+        .map_err(|e| format!("获取锁失败: {}", e))?;
+    match app_ty {
+        crate::app_config::AppType::Claude => crate::mcp::sync_enabled_to_claude(&cfg2)?,
+        crate::app_config::AppType::Codex => crate::mcp::sync_enabled_to_codex(&cfg2)?,
+    }
+    Ok(existed)
+}
+
+/// 设置启用状态并同步到 ~/.claude.json
+#[tauri::command]
+pub async fn set_mcp_enabled(
+    state: State<'_, AppState>,
+    app: Option<String>,
+    id: String,
+    enabled: bool,
+) -> Result<bool, String> {
+    let mut cfg = state
+        .config
+        .lock()
+        .map_err(|e| format!("获取锁失败: {}", e))?;
+    let app_ty = crate::app_config::AppType::from(app.as_deref().unwrap_or("claude"));
+    let changed = crate::mcp::set_enabled_and_sync_for(&mut cfg, &app_ty, &id, enabled)?;
+    drop(cfg);
+    state.save()?;
+    Ok(changed)
+}
+
+/// 手动同步：将启用的 MCP 投影到 ~/.claude.json（不更改 config.json）
+#[tauri::command]
+pub async fn sync_enabled_mcp_to_claude(state: State<'_, AppState>) -> Result<bool, String> {
+    let cfg = state
+        .config
+        .lock()
+        .map_err(|e| format!("获取锁失败: {}", e))?;
+    crate::mcp::sync_enabled_to_claude(&cfg)?;
+    Ok(true)
+}
+
+/// 手动同步：将启用的 MCP 投影到 ~/.codex/config.toml（不更改 config.json）
+#[tauri::command]
+pub async fn sync_enabled_mcp_to_codex(state: State<'_, AppState>) -> Result<bool, String> {
+    let cfg = state
+        .config
+        .lock()
+        .map_err(|e| format!("获取锁失败: {}", e))?;
+    crate::mcp::sync_enabled_to_codex(&cfg)?;
+    Ok(true)
+}
+
+/// 从 ~/.claude.json 导入 MCP 定义到 config.json，返回变更数量
+#[tauri::command]
+pub async fn import_mcp_from_claude(state: State<'_, AppState>) -> Result<usize, String> {
+    let mut cfg = state
+        .config
+        .lock()
+        .map_err(|e| format!("获取锁失败: {}", e))?;
+    let changed = crate::mcp::import_from_claude(&mut cfg)?;
+    drop(cfg);
+    if changed > 0 {
+        state.save()?;
+    }
+    Ok(changed)
+}
+
+/// 从 ~/.codex/config.toml 导入 MCP 定义到 config.json（Codex 作用域），返回变更数量
+#[tauri::command]
+pub async fn import_mcp_from_codex(state: State<'_, AppState>) -> Result<usize, String> {
+    let mut cfg = state
+        .config
+        .lock()
+        .map_err(|e| format!("获取锁失败: {}", e))?;
+    let changed = crate::mcp::import_from_codex(&mut cfg)?;
+    drop(cfg);
+    if changed > 0 {
+        state.save()?;
+    }
+    Ok(changed)
+}
+
+/// 读取当前生效（live）的配置内容，返回可直接作为 provider.settings_config 的对象
+/// - Codex: 返回 { auth: JSON, config: string }
+/// - Claude: 返回 settings.json 的 JSON 内容
+#[tauri::command]
+pub async fn read_live_provider_settings(
+    app_type: Option<AppType>,
+    app: Option<String>,
+    appType: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let app_type = app_type
+        .or_else(|| app.as_deref().map(|s| s.into()))
+        .or_else(|| appType.as_deref().map(|s| s.into()))
+        .unwrap_or(AppType::Claude);
+
+    match app_type {
+        AppType::Codex => {
+            let auth_path = crate::codex_config::get_codex_auth_path();
+            if !auth_path.exists() {
+                return Err("Codex 配置文件不存在：缺少 auth.json".to_string());
+            }
+            let auth: serde_json::Value = crate::config::read_json_file(&auth_path)?;
+            let cfg_text = crate::codex_config::read_and_validate_codex_config_text()?;
+            Ok(serde_json::json!({ "auth": auth, "config": cfg_text }))
+        }
+        AppType::Claude => {
+            let path = crate::config::get_claude_settings_path();
+            if !path.exists() {
+                return Err("Claude Code 配置文件不存在".to_string());
+            }
+            let v: serde_json::Value = crate::config::read_json_file(&path)?;
+            Ok(v)
         }
     }
 }

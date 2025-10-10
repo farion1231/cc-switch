@@ -26,13 +26,11 @@ const McpListItem: React.FC<McpListItemProps> = ({
 }) => {
   const { t } = useTranslation();
 
-  // 默认启用
-  const enabled = server.enabled !== false;
+  // 仅当显式为 true 时视为启用；避免 undefined 被误判为启用
+  const enabled = server.enabled === true;
 
-  // 构建详细信息文本
-  const details = [server.type, server.command, ...(server.args || [])].join(
-    " · ",
-  );
+  // 只显示 description，没有则留空
+  const description = (server as any).description || "";
 
   return (
     <div className={cn(cardStyles.interactive, "!p-4")}>
@@ -50,9 +48,11 @@ const McpListItem: React.FC<McpListItemProps> = ({
           <h3 className="font-medium text-gray-900 dark:text-gray-100 mb-1">
             {id}
           </h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
-            {details}
-          </p>
+          {description && (
+            <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+              {description}
+            </p>
+          )}
         </div>
 
         {/* 右侧：操作按钮 */}

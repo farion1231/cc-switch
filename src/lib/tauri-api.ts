@@ -6,6 +6,7 @@ import {
   CustomEndpoint,
   McpStatus,
   McpServer,
+  McpConfigResponse,
 } from "../types";
 
 // 应用类型
@@ -353,6 +354,112 @@ export const tauriAPI = {
     } catch (error) {
       console.error("校验 MCP 命令失败:", error);
       return false;
+    }
+  },
+
+  // 新：config.json 为 SSOT 的 MCP API（按客户端）
+  getMcpConfig: async (app: AppType = "claude"): Promise<McpConfigResponse> => {
+    try {
+      return await invoke<McpConfigResponse>("get_mcp_config", { app });
+    } catch (error) {
+      console.error("获取 MCP 配置失败:", error);
+      throw error;
+    }
+  },
+
+  upsertMcpServerInConfig: async (
+    app: AppType = "claude",
+    id: string,
+    spec: McpServer | Record<string, any>,
+  ): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("upsert_mcp_server_in_config", {
+        app,
+        id,
+        spec,
+      });
+    } catch (error) {
+      console.error("写入 MCP（config.json）失败:", error);
+      throw error;
+    }
+  },
+
+  deleteMcpServerInConfig: async (
+    app: AppType = "claude",
+    id: string,
+  ): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("delete_mcp_server_in_config", { app, id });
+    } catch (error) {
+      console.error("删除 MCP（config.json）失败:", error);
+      throw error;
+    }
+  },
+
+  setMcpEnabled: async (
+    app: AppType = "claude",
+    id: string,
+    enabled: boolean,
+  ): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("set_mcp_enabled", { app, id, enabled });
+    } catch (error) {
+      console.error("设置 MCP 启用状态失败:", error);
+      throw error;
+    }
+  },
+
+  syncEnabledMcpToClaude: async (): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("sync_enabled_mcp_to_claude");
+    } catch (error) {
+      console.error("同步启用 MCP 到 .claude.json 失败:", error);
+      throw error;
+    }
+  },
+
+  // 手动同步：将启用的 MCP 投影到 ~/.codex/config.toml
+  syncEnabledMcpToCodex: async (): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("sync_enabled_mcp_to_codex");
+    } catch (error) {
+      console.error("同步启用 MCP 到 config.toml 失败:", error);
+      throw error;
+    }
+  },
+
+  importMcpFromClaude: async (): Promise<number> => {
+    try {
+      return await invoke<number>("import_mcp_from_claude");
+    } catch (error) {
+      console.error("从 ~/.claude.json 导入 MCP 失败:", error);
+      throw error;
+    }
+  },
+
+  // 从 ~/.codex/config.toml 导入 MCP（Codex 作用域）
+  importMcpFromCodex: async (): Promise<number> => {
+    try {
+      return await invoke<number>("import_mcp_from_codex");
+    } catch (error) {
+      console.error("从 ~/.codex/config.toml 导入 MCP 失败:", error);
+      throw error;
+    }
+  },
+
+  // 读取当前生效（live）的 provider settings（根据 appType）
+  // Codex: { auth: object, config: string }
+  // Claude: settings.json 内容
+  getLiveProviderSettings: async (app?: AppType): Promise<any> => {
+    try {
+      return await invoke<any>("read_live_provider_settings", {
+        app_type: app,
+        app,
+        appType: app,
+      });
+    } catch (error) {
+      console.error("读取 live 配置失败:", error);
+      throw error;
     }
   },
 

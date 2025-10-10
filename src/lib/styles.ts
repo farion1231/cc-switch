@@ -16,6 +16,9 @@ export const buttonStyles = {
   danger:
     "px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 transition-colors text-sm font-medium",
 
+  // MCP 专属按钮：绿底白字
+  mcp: "px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700 transition-colors text-sm font-medium",
+
   // 幽灵按钮：无背景，仅悬浮反馈
   ghost:
     "px-4 py-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium",

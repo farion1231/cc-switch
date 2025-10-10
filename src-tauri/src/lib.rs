@@ -1,6 +1,7 @@
 mod app_config;
 mod claude_plugin;
 mod claude_mcp;
+mod mcp;
 mod codex_config;
 mod commands;
 mod config;
@@ -415,6 +416,7 @@ pub fn run() {
             commands::open_external,
             commands::get_app_config_path,
             commands::open_app_config_folder,
+            commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
             commands::check_for_updates,
@@ -431,6 +433,15 @@ pub fn run() {
             commands::validate_mcp_command,
             // usage query
             commands::query_provider_usage,
+            // New MCP via config.json (SSOT)
+            commands::get_mcp_config,
+            commands::upsert_mcp_server_in_config,
+            commands::delete_mcp_server_in_config,
+            commands::set_mcp_enabled,
+            commands::sync_enabled_mcp_to_claude,
+            commands::sync_enabled_mcp_to_codex,
+            commands::import_mcp_from_claude,
+            commands::import_mcp_from_codex,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
             commands::get_custom_endpoints,

@@ -310,7 +310,7 @@ function App() {
 
             <button
               onClick={() => setIsMcpOpen(true)}
-              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium rounded-md transition-colors bg-emerald-500 text-white hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
+              className="inline-flex items-center gap-2 px-7 py-2 text-sm font-medium rounded-lg transition-colors bg-emerald-500 text-white hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
             >
               MCP
             </button>
@@ -333,7 +333,7 @@ function App() {
             {/* 通知组件 - 相对于视窗定位 */}
             {notification && (
               <div
-                className={`fixed top-20 left-1/2 transform -translate-x-1/2 z-50 px-4 py-3 rounded-lg shadow-lg transition-all duration-300 ${
+                className={`fixed top-20 left-1/2 transform -translate-x-1/2 z-[80] px-4 py-3 rounded-lg shadow-lg transition-all duration-300 ${
                   notification.type === "error"
                     ? "bg-red-500 text-white"
                     : "bg-green-500 text-white"
@@ -392,6 +392,7 @@ function App() {
 
       {isMcpOpen && (
         <McpPanel
+          appType={activeApp}
           onClose={() => setIsMcpOpen(false)}
           onNotify={showNotification}
         />

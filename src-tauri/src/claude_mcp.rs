@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -76,16 +76,27 @@ pub fn upsert_mcp_server(id: &str, spec: Value) -> Result<bool, String> {
     if !spec.is_object() {
         return Err("MCP 服务器定义必须为 JSON 对象".into());
     }
-    let t = spec
-        .get("type")
-        .and_then(|x| x.as_str())
-        .unwrap_or("");
-    if t != "stdio" && t != "sse" {
-        return Err("MCP 服务器 type 必须是 'stdio' 或 'sse'".into());
+    let t_opt = spec.get("type").and_then(|x| x.as_str());
+    let is_stdio = t_opt.map(|t| t == "stdio").unwrap_or(true); // 兼容缺省（按 stdio 处理）
+    let is_http = t_opt.map(|t| t == "http").unwrap_or(false);
+    if !(is_stdio || is_http) {
+        return Err("MCP 服务器 type 必须是 'stdio' 或 'http'（或省略表示 stdio）".into());
     }
-    let cmd = spec.get("command").and_then(|x| x.as_str()).unwrap_or("");
-    if cmd.is_empty() {
-        return Err("MCP 服务器缺少 command".into());
+
+    // stdio 类型必须有 command
+    if is_stdio {
+        let cmd = spec.get("command").and_then(|x| x.as_str()).unwrap_or("");
+        if cmd.is_empty() {
+            return Err("stdio 类型的 MCP 服务器缺少 command 字段".into());
+        }
+    }
+
+    // http 类型必须有 url
+    if is_http {
+        let url = spec.get("url").and_then(|x| x.as_str()).unwrap_or("");
+        if url.is_empty() {
+            return Err("http 类型的 MCP 服务器缺少 url 字段".into());
+        }
     }
 
     let path = user_config_path();
@@ -170,4 +181,33 @@ pub fn validate_command_in_path(cmd: &str) -> Result<bool, String> {
         }
     }
     Ok(false)
+}
+
+/// 将给定的启用 MCP 服务器映射写入到用户级 ~/.claude.json 的 mcpServers 字段
+/// 仅覆盖 mcpServers，其他字段保持不变
+pub fn set_mcp_servers_map(servers: &std::collections::HashMap<String, Value>) -> Result<(), String> {
+    let path = user_config_path();
+    let mut root = if path.exists() { read_json_value(&path)? } else { serde_json::json!({}) };
+
+    // 构建 mcpServers 对象：移除 UI 辅助字段（enabled/source），仅保留实际 MCP 规范
+    let mut out: Map<String, Value> = Map::new();
+    for (id, spec) in servers.iter() {
+        if let Some(mut obj) = spec.as_object().cloned() {
+            obj.remove("enabled");
+            obj.remove("source");
+            out.insert(id.clone(), Value::Object(obj));
+        } else {
+            return Err(format!("MCP 服务器 '{}' 不是对象", id));
+        }
+    }
+
+    {
+        let obj = root
+            .as_object_mut()
+            .ok_or_else(|| "~/.claude.json 根必须是对象".to_string())?;
+        obj.insert("mcpServers".into(), Value::Object(out));
+    }
+
+    write_json_value(&path, &root)?;
+    Ok(())
 }
