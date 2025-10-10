@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { UsageResult, UsageData } from "../types";
 import { AppType } from "../lib/tauri-api";
 import { RefreshCw, AlertCircle } from "lucide-react";
@@ -17,7 +17,13 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   const [usage, setUsage] = useState<UsageResult | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // 记录上次请求的关键参数，防止重复请求
+  const lastFetchParamsRef = useRef<string>('');
+
   const fetchUsage = async () => {
+    // 防止并发请求
+    if (loading) return;
+
     setLoading(true);
     try {
       const result = await window.api.queryProviderUsage(
@@ -38,9 +44,20 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
 
   useEffect(() => {
     if (usageEnabled) {
-      fetchUsage();
+      // 生成当前参数的唯一标识
+      const currentParams = `${providerId}-${appType}`;
+
+      // 只有参数真正变化时才发起请求
+      if (currentParams !== lastFetchParamsRef.current) {
+        lastFetchParamsRef.current = currentParams;
+        fetchUsage();
+      }
+    } else {
+      // 如果禁用了，清空记录和数据
+      lastFetchParamsRef.current = '';
+      setUsage(null);
     }
-  }, [providerId, usageEnabled]);
+  }, [providerId, usageEnabled, appType]);
 
   // 只在启用用量查询且有数据时显示
   if (!usageEnabled || !usage) return null;
@@ -73,9 +90,6 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
 
   // 无数据时不显示
   if (usageDataList.length === 0) return null;
-
-  // 根据套餐数量决定布局
-  const isSinglePlan = usageDataList.length === 1;
 
   return (
     <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">

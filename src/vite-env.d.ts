@@ -67,6 +67,11 @@ declare global {
         official: boolean;
       }) => Promise<boolean>;
       isClaudePluginApplied: () => Promise<boolean>;
+      // 查询供应商用量
+      queryProviderUsage: (
+        providerId: string,
+        app: AppType
+      ) => Promise<import("./types").UsageResult>;
       // Claude MCP
       getClaudeMcpStatus: () => Promise<McpStatus>;
       readClaudeMcpConfig: () => Promise<string | null>;
