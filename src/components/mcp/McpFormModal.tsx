@@ -5,8 +5,17 @@ import { McpServer } from "../../types";
 import { mcpPresets } from "../../config/mcpPresets";
 import { buttonStyles, inputStyles } from "../../lib/styles";
 import McpWizardModal from "./McpWizardModal";
-import { extractErrorMessage } from "../../utils/errorUtils";
+import {
+  extractErrorMessage,
+  translateMcpBackendError,
+} from "../../utils/errorUtils";
 import { AppType } from "../../lib/tauri-api";
+import {
+  validateToml,
+  tomlToMcpServer,
+  extractIdFromToml,
+  mcpServerToToml,
+} from "../../utils/tomlUtils";
 
 interface McpFormModalProps {
   appType: AppType;
@@ -23,24 +32,9 @@ interface McpFormModalProps {
 }
 
 /**
- * 验证 JSON 格式
- */
-const validateJson = (text: string): string => {
-  if (!text.trim()) return "";
-  try {
-    const parsed = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return "JSON 必须是对象";
-    }
-    return "";
-  } catch {
-    return "JSON 格式错误";
-  }
-};
-
-/**
  * MCP 表单模态框组件（简化版）
- * 仅包含：标题（必填）、描述（可选）、JSON 配置（可选，带格式校验）
+ * Claude: 使用 JSON 格式
+ * Codex: 使用 TOML 格式
  */
 const McpFormModal: React.FC<McpFormModalProps> = ({
   appType,
@@ -52,20 +46,54 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   onNotify,
 }) => {
   const { t } = useTranslation();
+
+  // JSON 基本校验（返回 i18n 文案）
+  const validateJson = (text: string): string => {
+    if (!text.trim()) return "";
+    try {
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return t("mcp.error.jsonInvalid");
+      }
+      return "";
+    } catch {
+      return t("mcp.error.jsonInvalid");
+    }
+  };
+
+  // 统一格式化 TOML 错误（本地化 + 详情）
+  const formatTomlError = (err: string): string => {
+    if (!err) return "";
+    if (err === "mustBeObject" || err === "parseError") {
+      return t("mcp.error.tomlInvalid");
+    }
+    return `${t("mcp.error.tomlInvalid")}: ${err}`;
+  };
   const [formId, setFormId] = useState(editingId || "");
   const [formDescription, setFormDescription] = useState(
     (initialData as any)?.description || "",
   );
-  const [formJson, setFormJson] = useState(
-    initialData ? JSON.stringify(initialData, null, 2) : "",
-  );
-  const [jsonError, setJsonError] = useState("");
+
+  // 根据 appType 决定初始格式
+  const [formConfig, setFormConfig] = useState(() => {
+    if (!initialData) return "";
+    if (appType === "codex") {
+      return mcpServerToToml(initialData);
+    } else {
+      return JSON.stringify(initialData, null, 2);
+    }
+  });
+
+  const [configError, setConfigError] = useState("");
   const [saving, setSaving] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [idError, setIdError] = useState("");
 
   // 编辑模式下禁止修改 ID
   const isEditing = !!editingId;
+
+  // 判断是否使用 TOML 格式
+  const useToml = appType === "codex";
 
   // 预设选择状态（仅新增模式显示；-1 表示自定义）
   const [selectedPreset, setSelectedPreset] = useState<number | null>(
@@ -96,10 +124,20 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     const id = ensureUniqueId(p.id);
     setFormId(id);
     setFormDescription(p.description || "");
-    const json = JSON.stringify(p.server, null, 2);
-    setFormJson(json);
-    // 触发一次校验
-    setJsonError(validateJson(json));
+
+    // 根据格式转换配置
+    if (useToml) {
+      const toml = mcpServerToToml(p.server);
+      setFormConfig(toml);
+      {
+        const err = validateToml(toml);
+        setConfigError(formatTomlError(err));
+      }
+    } else {
+      const json = JSON.stringify(p.server, null, 2);
+      setFormConfig(json);
+      setConfigError(validateJson(json));
+    }
     setSelectedPreset(index);
   };
 
@@ -109,52 +147,101 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     // 恢复到空白模板
     setFormId("");
     setFormDescription("");
-    setFormJson("");
-    setJsonError("");
+    setFormConfig("");
+    setConfigError("");
   };
 
-  const handleJsonChange = (value: string) => {
-    setFormJson(value);
+  const handleConfigChange = (value: string) => {
+    setFormConfig(value);
 
-    // 基础 JSON 校验
-    const baseErr = validateJson(value);
-    if (baseErr) {
-      setJsonError(baseErr);
-      return;
-    }
+    if (useToml) {
+      // TOML 校验
+      const err = validateToml(value);
+      if (err) {
+        setConfigError(formatTomlError(err));
+        return;
+      }
 
-    // 进一步结构校验：仅允许单个服务器对象，禁止整份配置
-    if (value.trim()) {
-      try {
-        const obj = JSON.parse(value);
-        if (obj && typeof obj === "object") {
-          if (Object.prototype.hasOwnProperty.call(obj, "mcpServers")) {
-            setJsonError(t("mcp.error.singleServerObjectRequired"));
+      // 尝试解析并做必填字段提示
+      if (value.trim()) {
+        try {
+          const server = tomlToMcpServer(value);
+          if (server.type === "stdio" && !server.command?.trim()) {
+            setConfigError(t("mcp.error.commandRequired"));
+            return;
+          }
+          if (server.type === "http" && !server.url?.trim()) {
+            setConfigError(t("mcp.wizard.urlRequired"));
             return;
           }
 
-          // 若带有类型，做必填字段提示（不阻止输入，仅给出即时反馈）
-          const typ = (obj as any)?.type;
-          if (typ === "stdio" && !(obj as any)?.command?.trim()) {
-            setJsonError(t("mcp.error.commandRequired"));
-            return;
+          // 尝试提取 ID（如果用户还没有填写）
+          if (!formId.trim()) {
+            const extractedId = extractIdFromToml(value);
+            if (extractedId) {
+              setFormId(extractedId);
+            }
           }
-          if (typ === "http" && !(obj as any)?.url?.trim()) {
-            setJsonError(t("mcp.wizard.urlRequired"));
-            return;
-          }
+        } catch (e: any) {
+          const msg = e?.message || String(e);
+          setConfigError(formatTomlError(msg));
+          return;
         }
-      } catch {
-        // 解析异常已在基础校验覆盖
+      }
+    } else {
+      // JSON 校验
+      const baseErr = validateJson(value);
+      if (baseErr) {
+        setConfigError(baseErr);
+        return;
+      }
+
+      // 进一步结构校验
+      if (value.trim()) {
+        try {
+          const obj = JSON.parse(value);
+          if (obj && typeof obj === "object") {
+            if (Object.prototype.hasOwnProperty.call(obj, "mcpServers")) {
+              setConfigError(t("mcp.error.singleServerObjectRequired"));
+              return;
+            }
+
+            const typ = (obj as any)?.type;
+            if (typ === "stdio" && !(obj as any)?.command?.trim()) {
+              setConfigError(t("mcp.error.commandRequired"));
+              return;
+            }
+            if (typ === "http" && !(obj as any)?.url?.trim()) {
+              setConfigError(t("mcp.wizard.urlRequired"));
+              return;
+            }
+          }
+        } catch {
+          // 解析异常已在基础校验覆盖
+        }
       }
     }
 
-    setJsonError("");
+    setConfigError("");
   };
 
-  const handleWizardApply = (json: string) => {
-    setFormJson(json);
-    setJsonError(validateJson(json));
+  const handleWizardApply = (title: string, json: string) => {
+    setFormId(title);
+    // Wizard 返回的是 JSON，根据格式决定是否需要转换
+    if (useToml) {
+      try {
+        const server = JSON.parse(json) as McpServer;
+        const toml = mcpServerToToml(server);
+        setFormConfig(toml);
+        const err = validateToml(toml);
+        setConfigError(formatTomlError(err));
+      } catch (e: any) {
+        setConfigError(t("mcp.error.jsonInvalid"));
+      }
+    } else {
+      setFormConfig(json);
+      setConfigError(validateJson(json));
+    }
   };
 
   const handleSubmit = async () => {
@@ -169,39 +256,74 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       return;
     }
 
-    // 验证 JSON
-    const currentJsonError = validateJson(formJson);
-    setJsonError(currentJsonError);
-    if (currentJsonError) {
-      onNotify?.(t("mcp.error.jsonInvalid"), "error", 3000);
-      return;
-    }
+    // 验证配置格式
+    let server: McpServer;
 
-    setSaving(true);
-    try {
-      let server: McpServer;
-      if (formJson.trim()) {
-        // 解析 JSON 配置
-        server = JSON.parse(formJson) as McpServer;
+    if (useToml) {
+      // TOML 模式
+      const tomlError = validateToml(formConfig);
+      setConfigError(formatTomlError(tomlError));
+      if (tomlError) {
+        onNotify?.(t("mcp.error.tomlInvalid"), "error", 3000);
+        return;
+      }
 
-        // 前置必填校验，避免后端拒绝后才提示
-        if (server?.type === "stdio" && !server?.command?.trim()) {
-          onNotify?.(t("mcp.error.commandRequired"), "error", 3000);
-          return;
-        }
-        if (server?.type === "http" && !server?.url?.trim()) {
-          onNotify?.(t("mcp.wizard.urlRequired"), "error", 3000);
-          return;
-        }
-      } else {
-        // 空 JSON 时提供默认值（注意：后端会校验 stdio 需要非空 command / http 需要 url）
+      if (!formConfig.trim()) {
+        // 空配置
         server = {
           type: "stdio",
           command: "",
           args: [],
         };
+      } else {
+        try {
+          server = tomlToMcpServer(formConfig);
+        } catch (e: any) {
+          const msg = e?.message || String(e);
+          setConfigError(formatTomlError(msg));
+          onNotify?.(t("mcp.error.tomlInvalid"), "error", 4000);
+          return;
+        }
+      }
+    } else {
+      // JSON 模式
+      const jsonError = validateJson(formConfig);
+      setConfigError(jsonError);
+      if (jsonError) {
+        onNotify?.(t("mcp.error.jsonInvalid"), "error", 3000);
+        return;
       }
 
+      if (!formConfig.trim()) {
+        // 空配置
+        server = {
+          type: "stdio",
+          command: "",
+          args: [],
+        };
+      } else {
+        try {
+          server = JSON.parse(formConfig) as McpServer;
+        } catch (e: any) {
+          setConfigError(t("mcp.error.jsonInvalid"));
+          onNotify?.(t("mcp.error.jsonInvalid"), "error", 4000);
+          return;
+        }
+      }
+    }
+
+    // 前置必填校验
+    if (server?.type === "stdio" && !server?.command?.trim()) {
+      onNotify?.(t("mcp.error.commandRequired"), "error", 3000);
+      return;
+    }
+    if (server?.type === "http" && !server?.url?.trim()) {
+      onNotify?.(t("mcp.wizard.urlRequired"), "error", 3000);
+      return;
+    }
+
+    setSaving(true);
+    try {
       // 保留原有的 enabled 状态
       if (initialData?.enabled !== undefined) {
         server.enabled = initialData.enabled;
@@ -212,13 +334,13 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         (server as any).description = formDescription.trim();
       }
 
-      // 显式等待父组件保存流程，以便正确处理成功/失败
+      // 显式等待父组件保存流程
       await onSave(formId.trim(), server);
     } catch (error: any) {
-      // 提取后端错误信息（支持 string / {message} / tauri payload）
       const detail = extractErrorMessage(error);
-      const msg = detail || t("mcp.error.saveFailed");
-      onNotify?.(msg, "error", detail ? 6000 : 4000);
+      const mapped = translateMcpBackendError(detail, t);
+      const msg = mapped || detail || t("mcp.error.saveFailed");
+      onNotify?.(msg, "error", mapped || detail ? 6000 : 4000);
     } finally {
       setSaving(false);
     }
@@ -259,17 +381,19 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {/* 预设选择（仅新增时展示） */}
           {!isEditing && (
-            <div className="space-y-2">
-              <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+            <div>
+              <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
                 {t("mcp.presets.title")}
-              </div>
+              </label>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={applyCustom}
-                  className={`${
-                    selectedPreset === -1 ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900" : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200"
-                  } px-3 py-1.5 rounded-md text-xs font-medium transition-colors`}
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    selectedPreset === -1
+                      ? "bg-emerald-500 text-white dark:bg-emerald-600"
+                      : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+                  }`}
                 >
                   {t("presetSelector.custom")}
                 </button>
@@ -278,18 +402,17 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     key={p.id}
                     type="button"
                     onClick={() => applyPreset(idx)}
-                    className={`${
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                       selectedPreset === idx
-                        ? "bg-emerald-500 text-white"
-                        : "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
-                    } px-3 py-1.5 rounded-md text-xs font-medium transition-colors`}
+                        ? "bg-emerald-500 text-white dark:bg-emerald-600"
+                        : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+                    }`}
                     title={p.description}
                   >
                     {p.name || p.id}
                   </button>
                 ))}
               </div>
-              {/* 无需环境变量提示：已移除 */}
             </div>
           )}
           {/* ID (标题) */}
@@ -326,30 +449,36 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
             />
           </div>
 
-          {/* JSON 配置 */}
+          {/* 配置输入框（根据格式显示 JSON 或 TOML） */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                {t("mcp.form.jsonConfig")}
+                {useToml ? t("mcp.form.tomlConfig") : t("mcp.form.jsonConfig")}
               </label>
-              <button
-                type="button"
-                onClick={() => setIsWizardOpen(true)}
-                className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
-              >
-                {t("mcp.form.useWizard")}
-              </button>
+              {(isEditing || selectedPreset === -1) && (
+                <button
+                  type="button"
+                  onClick={() => setIsWizardOpen(true)}
+                  className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
+                >
+                  {t("mcp.form.useWizard")}
+                </button>
+              )}
             </div>
             <textarea
               className={`${inputStyles.text} h-48 resize-none font-mono text-xs`}
-              placeholder={t("mcp.form.jsonPlaceholder")}
-              value={formJson}
-              onChange={(e) => handleJsonChange(e.target.value)}
+              placeholder={
+                useToml
+                  ? t("mcp.form.tomlPlaceholder")
+                  : t("mcp.form.jsonPlaceholder")
+              }
+              value={formConfig}
+              onChange={(e) => handleConfigChange(e.target.value)}
             />
-            {jsonError && (
+            {configError && (
               <div className="flex items-center gap-2 mt-2 text-red-500 dark:text-red-400 text-sm">
                 <AlertCircle size={16} />
-                <span>{jsonError}</span>
+                <span>{configError}</span>
               </div>
             )}
           </div>
@@ -357,7 +486,10 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
         {/* Footer */}
         <div className="flex-shrink-0 flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800">
-          <button onClick={onClose} className={buttonStyles.secondary}>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-200 rounded-lg transition-colors text-sm font-medium"
+          >
             {t("common.cancel")}
           </button>
           <button

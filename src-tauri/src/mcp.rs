@@ -306,8 +306,8 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, String> {
 /// 将 config.json 中 Codex 的 enabled==true 项以 TOML 形式写入 ~/.codex/config.toml 的 [mcp.servers]
 /// 策略：
 /// - 读取现有 config.toml；若语法无效则报错，不尝试覆盖
-/// - 重写根下的 `mcp` 节点（整体替换），其他节点保持不变
-/// - 仅写入启用项；无启用项时移除 `mcp` 节点
+/// - 仅更新 `mcp.servers` 或 `mcp_servers` 子表，保留 `mcp` 其它键
+/// - 仅写入启用项；无启用项时清理对应子表
 pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), String> {
     use toml::{value::Value as TomlValue, Table as TomlTable};
 
@@ -324,10 +324,28 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), String> {
     };
 
     // 3) 写入 servers 表（支持 mcp.servers 与 mcp_servers；优先沿用已有风格，默认 mcp_servers）
-    let prefer_mcp_servers = root.contains_key("mcp_servers") || !root.contains_key("mcp");
+    let prefer_mcp_servers = root
+        .get("mcp_servers")
+        .is_some()
+        || root.get("mcp").is_none();
     if enabled.is_empty() {
         // 无启用项：移除两种节点
-        root.remove("mcp");
+        // 清除 mcp.servers，但保留其他 mcp 字段
+        let mut should_drop_mcp = false;
+        if let Some(mcp_val) = root.get_mut("mcp") {
+            match mcp_val {
+                TomlValue::Table(tbl) => {
+                    tbl.remove("servers");
+                    should_drop_mcp = tbl.is_empty();
+                }
+                _ => should_drop_mcp = true,
+            }
+        }
+        if should_drop_mcp {
+            root.remove("mcp");
+        }
+
+        // 清除顶层 mcp_servers
         root.remove("mcp_servers");
     } else {
         let mut servers_tbl = TomlTable::new();
@@ -406,13 +424,49 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), String> {
             servers_tbl.insert(id.clone(), TomlValue::Table(s));
         }
 
+        let servers_value = TomlValue::Table(servers_tbl.clone());
+
         if prefer_mcp_servers {
-            root.insert("mcp_servers".into(), TomlValue::Table(servers_tbl));
-            root.remove("mcp");
+            root.insert("mcp_servers".into(), servers_value);
+
+            // 若存在 mcp，则仅移除 servers 字段，保留其他键
+            let mut should_drop_mcp = false;
+            if let Some(mcp_val) = root.get_mut("mcp") {
+                match mcp_val {
+                    TomlValue::Table(tbl) => {
+                        tbl.remove("servers");
+                        should_drop_mcp = tbl.is_empty();
+                    }
+                    _ => should_drop_mcp = true,
+                }
+            }
+            if should_drop_mcp {
+                root.remove("mcp");
+            }
         } else {
-            let mut mcp_tbl = TomlTable::new();
-            mcp_tbl.insert("servers".into(), TomlValue::Table(servers_tbl));
-            root.insert("mcp".into(), TomlValue::Table(mcp_tbl));
+            let mut inserted = false;
+
+            if let Some(mcp_val) = root.get_mut("mcp") {
+                match mcp_val {
+                    TomlValue::Table(tbl) => {
+                        tbl.insert("servers".into(), TomlValue::Table(servers_tbl.clone()));
+                        inserted = true;
+                    }
+                    _ => {
+                        let mut mcp_tbl = TomlTable::new();
+                        mcp_tbl.insert("servers".into(), TomlValue::Table(servers_tbl.clone()));
+                        *mcp_val = TomlValue::Table(mcp_tbl);
+                        inserted = true;
+                    }
+                }
+            }
+
+            if !inserted {
+                let mut mcp_tbl = TomlTable::new();
+                mcp_tbl.insert("servers".into(), TomlValue::Table(servers_tbl));
+                root.insert("mcp".into(), TomlValue::Table(mcp_tbl));
+            }
+
             root.remove("mcp_servers");
         }
     }

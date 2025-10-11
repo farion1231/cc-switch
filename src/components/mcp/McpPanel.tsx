@@ -5,7 +5,10 @@ import { McpServer } from "../../types";
 import McpListItem from "./McpListItem";
 import McpFormModal from "./McpFormModal";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { extractErrorMessage } from "../../utils/errorUtils";
+import {
+  extractErrorMessage,
+  translateMcpBackendError,
+} from "../../utils/errorUtils";
 // 预设相关逻辑已迁移到“新增 MCP”面板，列表此处无需引用
 import { buttonStyles } from "../../lib/styles";
 import { AppType } from "../../lib/tauri-api";
@@ -89,10 +92,11 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
       // 失败时回滚
       setServers(previousServers);
       const detail = extractErrorMessage(e);
+      const mapped = translateMcpBackendError(detail, t);
       onNotify?.(
-        detail || t("mcp.error.saveFailed"),
+        mapped || detail || t("mcp.error.saveFailed"),
         "error",
-        detail ? 6000 : 5000,
+        mapped || detail ? 6000 : 5000,
       );
     }
   };
@@ -120,10 +124,11 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
           onNotify?.(t("mcp.msg.deleted"), "success", 1500);
         } catch (e: any) {
           const detail = extractErrorMessage(e);
+          const mapped = translateMcpBackendError(detail, t);
           onNotify?.(
-            detail || t("mcp.error.deleteFailed"),
+            mapped || detail || t("mcp.error.deleteFailed"),
             "error",
-            detail ? 6000 : 5000,
+            mapped || detail ? 6000 : 5000,
           );
         }
       },
@@ -139,10 +144,11 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
       onNotify?.(t("mcp.msg.saved"), "success", 1500);
     } catch (e: any) {
       const detail = extractErrorMessage(e);
+      const mapped = translateMcpBackendError(detail, t);
       onNotify?.(
-        detail || t("mcp.error.saveFailed"),
+        mapped || detail || t("mcp.error.saveFailed"),
         "error",
-        detail ? 6000 : 5000,
+        mapped || detail ? 6000 : 5000,
       );
       // 继续抛出错误，让表单层可以给到直观反馈（避免被更高层遮挡）
       throw e;

@@ -388,7 +388,14 @@ export default function SettingsModal({
       const defaultName = `cc-switch-config-${new Date().toISOString().split("T")[0]}.json`;
       const filePath = await window.api.saveFileDialog(defaultName);
 
-      if (!filePath) return; // 用户取消了
+      if (!filePath) {
+        onNotify?.(
+          `${t("settings.exportFailed")}: ${t("settings.selectFileFailed")}`,
+          "error",
+          4000,
+        );
+        return;
+      }
 
       const result = await window.api.exportConfigToFile(filePath);
 

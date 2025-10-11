@@ -7,7 +7,7 @@ import { isLinux } from "../../lib/platform";
 interface McpWizardModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApply: (json: string) => void;
+  onApply: (title: string, json: string) => void;
   onNotify?: (
     message: string,
     type: "success" | "error",
@@ -75,10 +75,10 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
 }) => {
   const { t } = useTranslation();
   const [wizardType, setWizardType] = useState<"stdio" | "http">("stdio");
+  const [wizardTitle, setWizardTitle] = useState("");
   // stdio 字段
   const [wizardCommand, setWizardCommand] = useState("");
   const [wizardArgs, setWizardArgs] = useState("");
-  const [wizardCwd, setWizardCwd] = useState("");
   const [wizardEnv, setWizardEnv] = useState("");
   // http 字段
   const [wizardUrl, setWizardUrl] = useState("");
@@ -100,10 +100,6 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
           .split("\n")
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
-      }
-
-      if (wizardCwd.trim()) {
-        config.cwd = wizardCwd.trim();
       }
 
       if (wizardEnv.trim()) {
@@ -129,6 +125,10 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
   };
 
   const handleApply = () => {
+    if (!wizardTitle.trim()) {
+      onNotify?.(t("mcp.error.idRequired"), "error", 3000);
+      return;
+    }
     if (wizardType === "stdio" && !wizardCommand.trim()) {
       onNotify?.(t("mcp.error.commandRequired"), "error", 3000);
       return;
@@ -139,16 +139,16 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
     }
 
     const json = generatePreview();
-    onApply(json);
+    onApply(wizardTitle.trim(), json);
     handleClose();
   };
 
   const handleClose = () => {
     // 重置表单
     setWizardType("stdio");
+    setWizardTitle("");
     setWizardCommand("");
     setWizardArgs("");
-    setWizardCwd("");
     setWizardEnv("");
     setWizardUrl("");
     setWizardHeaders("");
@@ -209,7 +209,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
           </div>
 
           {/* Form Fields */}
-          <div className="space-y-4">
+          <div className="space-y-4 min-h-[400px]">
             {/* Type */}
             <div>
               <label className="mb-2 block text-sm font-medium text-gray-900 dark:text-gray-100">
@@ -227,7 +227,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     className="w-4 h-4 text-emerald-500 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 focus:ring-emerald-500 dark:focus:ring-emerald-400 focus:ring-2"
                   />
                   <span className="text-sm text-gray-900 dark:text-gray-100">
-                    stdio
+                    {t("mcp.wizard.typeStdio")}
                   </span>
                 </label>
                 <label className="inline-flex items-center gap-2 cursor-pointer">
@@ -241,10 +241,25 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     className="w-4 h-4 text-emerald-500 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 focus:ring-emerald-500 dark:focus:ring-emerald-400 focus:ring-2"
                   />
                   <span className="text-sm text-gray-900 dark:text-gray-100">
-                    http
+                    {t("mcp.wizard.typeHttp")}
                   </span>
                 </label>
               </div>
+            </div>
+
+            {/* Title */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-900 dark:text-gray-100">
+                {t("mcp.form.title")} <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={wizardTitle}
+                onChange={(e) => setWizardTitle(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={t("mcp.form.titlePlaceholder")}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+              />
             </div>
 
             {/* Stdio 类型字段 */}
@@ -277,21 +292,6 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     placeholder={t("mcp.wizard.argsPlaceholder")}
                     rows={3}
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 resize-y"
-                  />
-                </div>
-
-                {/* CWD */}
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-900 dark:text-gray-100">
-                    {t("mcp.wizard.cwd")}
-                  </label>
-                  <input
-                    type="text"
-                    value={wizardCwd}
-                    onChange={(e) => setWizardCwd(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={t("mcp.wizard.cwdPlaceholder")}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
                   />
                 </div>
 
@@ -350,7 +350,6 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
           {/* Preview */}
           {(wizardCommand ||
             wizardArgs ||
-            wizardCwd ||
             wizardEnv ||
             wizardUrl ||
             wizardHeaders) && (

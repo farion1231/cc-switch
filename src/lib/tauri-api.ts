@@ -578,8 +578,11 @@ export const tauriAPI = {
     filePath: string;
   }> => {
     try {
-      // 后端参数为 snake_case：file_path
-      return await invoke("export_config_to_file", { file_path: filePath });
+      // 兼容参数命名差异：同时传递 file_path 与 filePath
+      return await invoke("export_config_to_file", {
+        file_path: filePath,
+        filePath: filePath,
+      });
     } catch (error) {
       throw new Error(`导出配置失败: ${String(error)}`);
     }
@@ -594,8 +597,11 @@ export const tauriAPI = {
     backupId?: string;
   }> => {
     try {
-      // 后端参数为 snake_case：file_path
-      return await invoke("import_config_from_file", { file_path: filePath });
+      // 兼容参数命名差异：同时传递 file_path 与 filePath
+      return await invoke("import_config_from_file", {
+        file_path: filePath,
+        filePath: filePath,
+      });
     } catch (error) {
       throw new Error(`导入配置失败: ${String(error)}`);
     }
@@ -604,9 +610,10 @@ export const tauriAPI = {
   // 保存文件对话框
   saveFileDialog: async (defaultName: string): Promise<string | null> => {
     try {
-      // 后端参数为 snake_case：default_name
+      // 兼容参数命名差异：同时传递 default_name 与 defaultName
       const result = await invoke<string | null>("save_file_dialog", {
         default_name: defaultName,
+        defaultName: defaultName,
       });
       return result;
     } catch (error) {
