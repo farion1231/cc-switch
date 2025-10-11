@@ -12,6 +12,7 @@ import {
   TestTube2,
   CircleAlert,
   CircleCheck,
+  Zap,
 } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
 import { AppType } from "../lib/tauri-api";
@@ -58,6 +59,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
   const [testStates, setTestStates] = useState<
     Record<string, ProviderConnectionState>
   >({});
+  const [isTestingAll, setIsTestingAll] = useState(false);
 
   const summarizeResultDetail = (
     result: ProviderTestResult,
@@ -210,6 +212,102 @@ const ProviderList: React.FC<ProviderListProps> = ({
     }
   };
 
+  const handleTestAll = async () => {
+    if (Object.keys(providers).length === 0) {
+      onNotify?.(t("provider.noProviders"), "error", 3000);
+      return;
+    }
+
+    setIsTestingAll(true);
+
+    // 设置所有供应商为测试中状态
+    const loadingStates: Record<string, ProviderConnectionState> = {};
+    Object.keys(providers).forEach((providerId) => {
+      loadingStates[providerId] = {
+        status: "loading",
+        testedAt: Date.now(),
+      };
+    });
+    setTestStates(loadingStates);
+
+    try {
+      const results = await window.api.testAllProviderConnections(appType);
+      const testedAt = Date.now();
+      const newTestStates: Record<string, ProviderConnectionState> = {};
+
+      let successCount = 0;
+      let errorCount = 0;
+
+      Object.entries(results).forEach(([providerId, result]) => {
+        const detail = summarizeResultDetail(result);
+        newTestStates[providerId] = {
+          status: result.success ? "success" : "error",
+          message: result.message,
+          detail,
+          statusCode: result.status,
+          latencyMs: result.latencyMs,
+          testedAt,
+        };
+
+        if (result.success) {
+          successCount++;
+        } else {
+          errorCount++;
+        }
+      });
+
+      setTestStates(newTestStates);
+
+      // 通知测试结果
+      if (errorCount === 0) {
+        onNotify?.(
+          t("providerTest.allSuccess", { count: successCount }),
+          "success",
+          4000,
+        );
+      } else if (successCount === 0) {
+        onNotify?.(
+          t("providerTest.allError", { count: errorCount }),
+          "error",
+          5000,
+        );
+      } else {
+        onNotify?.(
+          t("providerTest.partialSuccess", {
+            success: successCount,
+            error: errorCount,
+          }),
+          "warning",
+          5000,
+        );
+      }
+    } catch (error) {
+      console.error(t("console.testAllProvidersFailed"), error);
+      const fallback =
+        error instanceof Error ? error.message : String(error ?? "");
+
+      // 重置所有状态为错误
+      const errorStates: Record<string, ProviderConnectionState> = {};
+      Object.keys(providers).forEach((providerId) => {
+        errorStates[providerId] = {
+          status: "error",
+          message: fallback,
+          detail: fallback,
+          testedAt: Date.now(),
+        };
+      });
+      setTestStates(errorStates);
+
+      onNotify?.(
+        t("providerTest.notifyError", { error: fallback }),
+        "error",
+        5000,
+      );
+    } finally {
+      setIsTestingAll(false);
+    }
+  };
+
   const renderStatusRow = (
     providerId: string,
     override?: ProviderConnectionState,
@@ -300,8 +398,38 @@ const ProviderList: React.FC<ProviderListProps> = ({
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {sortedProviders.map((provider) => {
+        <>
+          {/* 批量操作按钮区域 */}
+          <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+            <div className="text-sm text-gray-600 dark:text-gray-300">
+              {t("provider.totalCount", { count: sortedProviders.length })}
+            </div>
+            <button
+              onClick={handleTestAll}
+              disabled={isTestingAll}
+              className={cn(
+                "inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors",
+                isTestingAll
+                  ? "bg-gray-300 text-gray-500 cursor-not-allowed dark:bg-gray-600 dark:text-gray-400"
+                  : "bg-emerald-500 text-white hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
+              )}
+            >
+              {isTestingAll ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t("providerTest.testingAll")}
+                </>
+              ) : (
+                <>
+                  <Zap className="h-4 w-4" />
+                  {t("providerTest.testAll")}
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            {sortedProviders.map((provider) => {
             const isCurrent = provider.id === currentProviderId;
             const apiUrl = getApiUrl(provider);
             const testState = testStates[provider.id];
@@ -419,7 +547,8 @@ const ProviderList: React.FC<ProviderListProps> = ({
               </div>
             );
           })}
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

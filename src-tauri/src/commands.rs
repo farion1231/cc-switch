@@ -1279,3 +1279,31 @@ pub async fn test_provider_connection(
 
     Ok(test_provider::test_provider(provider, app_type).await)
 }
+
+/// 批量测试所有供应商的 API Key 与连通性
+#[tauri::command]
+pub async fn test_all_provider_connections(
+    state: State<'_, crate::store::AppState>,
+    app_type: Option<AppType>,
+    app: Option<String>,
+    appType: Option<String>,
+) -> Result<std::collections::HashMap<String, test_provider::ProviderTestResult>, String> {
+    let app_type = app_type
+        .or_else(|| app.as_deref().map(|s| s.into()))
+        .or_else(|| appType.as_deref().map(|s| s.into()))
+        .unwrap_or(AppType::Claude);
+
+    // 克隆所有供应商，释放锁后发起异步请求
+    let providers = {
+        let config = state
+            .config
+            .lock()
+            .map_err(|e| format!("获取锁失败: {}", e))?;
+        let manager = config
+            .get_manager(&app_type)
+            .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+        manager.providers.clone()
+    };
+
+    Ok(test_provider::test_all_providers(providers, app_type).await)
+}

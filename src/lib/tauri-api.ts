@@ -62,6 +62,20 @@ export const tauriAPI = {
     }
   },
 
+  testAllProviderConnections: async (
+    app?: AppType,
+  ): Promise<Record<string, ProviderTestResult>> => {
+    try {
+      return await invoke<Record<string, ProviderTestResult>>("test_all_provider_connections", {
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("批量测试供应商配置失败:", error);
+      throw error;
+    }
+  },
+
   // 获取当前供应商ID
   getCurrentProvider: async (app?: AppType): Promise<string> => {
     try {

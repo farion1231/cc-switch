@@ -222,3 +222,18 @@ pub async fn test_provider(provider: Provider, app_type: AppType) -> ProviderTes
         AppType::Codex => test_codex(&provider).await,
     }
 }
+
+/// 批量测试所有供应商的连接
+pub async fn test_all_providers(
+    providers: std::collections::HashMap<String, Provider>,
+    app_type: AppType,
+) -> std::collections::HashMap<String, ProviderTestResult> {
+    let mut results = std::collections::HashMap::new();
+
+    for (provider_id, provider) in providers {
+        let result = test_provider(provider, app_type.clone()).await;
+        results.insert(provider_id, result);
+    }
+
+    results
+}

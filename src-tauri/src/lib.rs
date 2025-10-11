@@ -447,6 +447,7 @@ pub fn run() {
             commands::remove_custom_endpoint,
             commands::update_endpoint_last_used,
             commands::test_provider_connection,
+            commands::test_all_provider_connections,
             // theirs: config import/export and dialogs
             import_export::export_config_to_file,
             import_export::import_config_from_file,

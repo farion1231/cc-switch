@@ -63,7 +63,8 @@
     "configError": "配置错误",
     "notConfigured": "未配置官网地址",
     "applyToClaudePlugin": "应用到 Claude 插件",
-    "removeFromClaudePlugin": "从 Claude 插件移除"
+    "removeFromClaudePlugin": "从 Claude 插件移除",
+    "totalCount": "共 {{count}} 个供应商"
   },
   "providerTest": {
     "button": "测试",
@@ -75,7 +76,12 @@
     "error": "上次测试失败：{{message}}",
     "notifyError": "测试失败：{{error}}",
     "cachedNotice": "已返回缓存结果（按住 Shift 可立即重测）",
-    "unknownError": "未知错误"
+    "unknownError": "未知错误",
+    "testAll": "测试所有",
+    "testingAll": "测试所有中…",
+    "allSuccess": "全部 {{count}} 个供应商测试成功",
+    "allError": "全部 {{count}} 个供应商测试失败",
+    "partialSuccess": "{{success}} 个成功，{{error}} 个失败"
   },
   "notifications": {
     "providerSaved": "供应商配置已保存",
@@ -159,7 +165,8 @@
     "selectConfigDirFailed": "选择配置目录失败:",
     "getDefaultConfigDirFailed": "获取默认配置目录失败:",
     "openReleaseNotesFailed": "打开更新日志失败:",
-    "testProviderFailed": "测试供应商失败:"
+    "testProviderFailed": "测试供应商失败:",
+    "testAllProvidersFailed": "批量测试供应商失败:"
   },
   "providerForm": {
     "supplierName": "供应商名称",
