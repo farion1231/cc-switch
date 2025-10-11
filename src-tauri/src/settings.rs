@@ -26,6 +26,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub enable_claude_plugin_integration: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
@@ -53,6 +55,7 @@ impl Default for AppSettings {
             show_in_tray: true,
             minimize_to_tray_on_close: true,
             enable_claude_plugin_integration: false,
+            app_config_dir: None,
             claude_config_dir: None,
             codex_config_dir: None,
             language: None,
@@ -64,10 +67,22 @@ impl Default for AppSettings {
 
 impl AppSettings {
     fn settings_path() -> PathBuf {
-        crate::config::get_app_config_dir().join("settings.json")
+        // settings.json 必须使用固定路径，不能被 app_config_dir 覆盖
+        // 否则会造成循环依赖：读取 settings 需要知道路径，但路径在 settings 中
+        dirs::home_dir()
+            .expect("无法获取用户主目录")
+            .join(".cc-switch")
+            .join("settings.json")
     }
 
     fn normalize_paths(&mut self) {
+        self.app_config_dir = self
+            .app_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
         self.claude_config_dir = self
             .claude_config_dir
             .as_ref()
@@ -176,6 +191,14 @@ pub fn get_codex_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
         .codex_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn get_app_config_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .app_config_dir
         .as_ref()
         .map(|p| resolve_override_path(p))
 }

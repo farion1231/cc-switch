@@ -208,6 +208,16 @@ export const tauriAPI = {
     }
   },
 
+  // 重启应用程序
+  restartApp: async (): Promise<boolean> => {
+    try {
+      return await invoke("restart_app");
+    } catch (error) {
+      console.error("重启应用失败:", error);
+      return false;
+    }
+  },
+
   // 检查更新
   checkForUpdates: async (): Promise<void> => {
     try {

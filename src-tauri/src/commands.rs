@@ -991,6 +991,13 @@ pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<boo
     Ok(true)
 }
 
+/// 重启应用程序（当 app_config_dir 变更后使用）
+#[tauri::command]
+pub async fn restart_app(app: tauri::AppHandle) -> Result<bool, String> {
+    // 使用 tauri-plugin-process 重启应用
+    app.restart();
+}
+
 /// 检查更新
 #[tauri::command]
 pub async fn check_for_updates(handle: tauri::AppHandle) -> Result<bool, String> {

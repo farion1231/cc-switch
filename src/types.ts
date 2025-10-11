@@ -43,6 +43,8 @@ export interface Settings {
   minimizeToTrayOnClose: boolean;
   // 启用 Claude 插件联动（写入 ~/.claude/config.json 的 primaryApiKey）
   enableClaudePluginIntegration?: boolean;
+  // 覆盖应用配置目录（.cc-switch）（可选）
+  appConfigDir?: string;
   // 覆盖 Claude Code 配置目录（可选）
   claudeConfigDir?: string;
   // 覆盖 Codex 配置目录（可选）
