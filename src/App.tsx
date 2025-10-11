@@ -354,7 +354,9 @@ function App() {
               onSwitch={handleSwitchProvider}
               onDelete={handleDeleteProvider}
               onEdit={setEditingProviderId}
+              appType={activeApp}
               onNotify={showNotification}
+              onProvidersUpdated={loadProviders}
             />
           </div>
         </div>

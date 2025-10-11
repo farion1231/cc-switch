@@ -11,6 +11,7 @@ mod provider;
 mod settings;
 mod store;
 mod speedtest;
+mod usage_script;
 
 use store::AppState;
 use tauri::{
@@ -430,6 +431,8 @@ pub fn run() {
             commands::upsert_claude_mcp_server,
             commands::delete_claude_mcp_server,
             commands::validate_mcp_command,
+            // usage query
+            commands::query_provider_usage,
             // New MCP via config.json (SSOT)
             commands::get_mcp_config,
             commands::upsert_mcp_server_in_config,

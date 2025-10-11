@@ -1,8 +1,11 @@
-import React from "react";
+import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Provider } from "../types";
-import { Play, Edit3, Trash2, CheckCircle2, Users, Check } from "lucide-react";
+import { Provider, UsageScript } from "../types";
+import { AppType } from "../lib/tauri-api";
+import { Play, Edit3, Trash2, CheckCircle2, Users, Check, BarChart3 } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
+import UsageFooter from "./UsageFooter";
+import UsageScriptModal from "./UsageScriptModal";
 // 不再在列表中显示分类徽章，避免造成困惑
 
 interface ProviderListProps {
@@ -11,11 +14,13 @@ interface ProviderListProps {
   onSwitch: (id: string) => void;
   onDelete: (id: string) => void;
   onEdit: (id: string) => void;
+  appType: AppType;
   onNotify?: (
     message: string,
     type: "success" | "error",
     duration?: number,
   ) => void;
+  onProvidersUpdated?: () => Promise<void>;
 }
 
 const ProviderList: React.FC<ProviderListProps> = ({
@@ -24,9 +29,13 @@ const ProviderList: React.FC<ProviderListProps> = ({
   onSwitch,
   onDelete,
   onEdit,
+  appType,
   onNotify,
+  onProvidersUpdated,
 }) => {
   const { t, i18n } = useTranslation();
+  const [usageModalProviderId, setUsageModalProviderId] = useState<string | null>(null);
+
   // 提取API地址（兼容不同供应商配置：Claude env / Codex TOML）
   const getApiUrl = (provider: Provider): string => {
     try {
@@ -61,6 +70,29 @@ const ProviderList: React.FC<ProviderListProps> = ({
   };
 
   // 列表页不再提供 Claude 插件按钮，统一在“设置”中控制
+
+  // 处理用量配置保存
+  const handleSaveUsageScript = async (providerId: string, script: UsageScript) => {
+    try {
+      const provider = providers[providerId];
+      const updatedProvider = {
+        ...provider,
+        meta: {
+          ...provider.meta,
+          usage_script: script,
+        },
+      };
+      await window.api.updateProvider(updatedProvider, appType);
+      onNotify?.("用量查询配置已保存", "success", 2000);
+      // 重新加载供应商列表,触发 UsageFooter 的 useEffect
+      if (onProvidersUpdated) {
+        await onProvidersUpdated();
+      }
+    } catch (error) {
+      console.error("保存用量配置失败:", error);
+      onNotify?.("保存失败", "error");
+    }
+  };
 
   // 对供应商列表进行排序
   const sortedProviders = Object.values(providers).sort((a, b) => {
@@ -177,6 +209,15 @@ const ProviderList: React.FC<ProviderListProps> = ({
                       <Edit3 size={16} />
                     </button>
 
+                    {/* 新增：用量配置按钮 */}
+                    <button
+                      onClick={() => setUsageModalProviderId(provider.id)}
+                      className={buttonStyles.icon}
+                      title="配置用量查询"
+                    >
+                      <BarChart3 size={16} />
+                    </button>
+
                     <button
                       onClick={() => onDelete(provider.id)}
                       disabled={isCurrent}
@@ -192,10 +233,30 @@ const ProviderList: React.FC<ProviderListProps> = ({
                     </button>
                   </div>
                 </div>
+
+                {/* 用量信息 Footer */}
+                <UsageFooter
+                  providerId={provider.id}
+                  appType={appType!}
+                  usageEnabled={provider.meta?.usage_script?.enabled || false}
+                />
               </div>
             );
           })}
         </div>
+      )}
+
+      {/* 用量配置模态框 */}
+      {usageModalProviderId && providers[usageModalProviderId] && (
+        <UsageScriptModal
+          provider={providers[usageModalProviderId]}
+          appType={appType!}
+          onClose={() => setUsageModalProviderId(null)}
+          onSave={(script) =>
+            handleSaveUsageScript(usageModalProviderId, script)
+          }
+          onNotify={onNotify}
+        />
       )}
     </div>
   );

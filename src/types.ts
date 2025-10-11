@@ -29,10 +29,39 @@ export interface CustomEndpoint {
   lastUsed?: number;
 }
 
+// 用量查询脚本配置
+export interface UsageScript {
+  enabled: boolean; // 是否启用用量查询
+  language: "javascript"; // 脚本语言
+  code: string; // 脚本代码（JSON 格式配置）
+  timeout?: number; // 超时时间（秒，默认 10）
+}
+
+// 单个套餐用量数据
+export interface UsageData {
+  planName?: string; // 套餐名称（可选）
+  extra?: string; // 扩展字段，可自由补充需要展示的文本（可选）
+  isValid?: boolean; // 套餐是否有效（可选）
+  invalidMessage?: string; // 失效原因说明（可选，当 isValid 为 false 时显示）
+  total?: number; // 总额度（可选）
+  used?: number; // 已用额度（可选）
+  remaining?: number; // 剩余额度（可选）
+  unit?: string; // 单位（可选）
+}
+
+// 用量查询结果（支持多套餐）
+export interface UsageResult {
+  success: boolean;
+  data?: UsageData[]; // 改为数组，支持返回多个套餐
+  error?: string;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
+  // 用量查询脚本配置
+  usage_script?: UsageScript;
 }
 
 // 应用设置类型（用于 SettingsModal 与 Tauri API）
