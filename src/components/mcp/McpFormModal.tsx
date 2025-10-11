@@ -152,7 +152,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     setJsonError("");
   };
 
-  const handleWizardApply = (json: string) => {
+  const handleWizardApply = (title: string, json: string) => {
+    setFormId(title);
     setFormJson(json);
     setJsonError(validateJson(json));
   };
@@ -259,17 +260,19 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {/* 预设选择（仅新增时展示） */}
           {!isEditing && (
-            <div className="space-y-2">
-              <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+            <div>
+              <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
                 {t("mcp.presets.title")}
-              </div>
+              </label>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={applyCustom}
-                  className={`${
-                    selectedPreset === -1 ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900" : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200"
-                  } px-3 py-1.5 rounded-md text-xs font-medium transition-colors`}
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    selectedPreset === -1
+                      ? "bg-emerald-500 text-white dark:bg-emerald-600"
+                      : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+                  }`}
                 >
                   {t("presetSelector.custom")}
                 </button>
@@ -278,18 +281,17 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     key={p.id}
                     type="button"
                     onClick={() => applyPreset(idx)}
-                    className={`${
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                       selectedPreset === idx
-                        ? "bg-emerald-500 text-white"
-                        : "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
-                    } px-3 py-1.5 rounded-md text-xs font-medium transition-colors`}
+                        ? "bg-emerald-500 text-white dark:bg-emerald-600"
+                        : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+                    }`}
                     title={p.description}
                   >
                     {p.name || p.id}
                   </button>
                 ))}
               </div>
-              {/* 无需环境变量提示：已移除 */}
             </div>
           )}
           {/* ID (标题) */}
@@ -332,13 +334,15 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
                 {t("mcp.form.jsonConfig")}
               </label>
-              <button
-                type="button"
-                onClick={() => setIsWizardOpen(true)}
-                className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
-              >
-                {t("mcp.form.useWizard")}
-              </button>
+              {(isEditing || selectedPreset === -1) && (
+                <button
+                  type="button"
+                  onClick={() => setIsWizardOpen(true)}
+                  className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
+                >
+                  {t("mcp.form.useWizard")}
+                </button>
+              )}
             </div>
             <textarea
               className={`${inputStyles.text} h-48 resize-none font-mono text-xs`}
@@ -357,7 +361,10 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
         {/* Footer */}
         <div className="flex-shrink-0 flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800">
-          <button onClick={onClose} className={buttonStyles.secondary}>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-200 rounded-lg transition-colors text-sm font-medium"
+          >
             {t("common.cancel")}
           </button>
           <button
