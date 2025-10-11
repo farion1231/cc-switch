@@ -64,7 +64,25 @@
     "notConfigured": "未配置官网地址",
     "applyToClaudePlugin": "应用到 Claude 插件",
     "removeFromClaudePlugin": "从 Claude 插件移除",
-    "totalCount": "共 {{count}} 个供应商"
+    "totalCount": "共 {{count}} 个供应商",
+    "batch": {
+      "mode": "批量操作",
+      "exit": "退出批量",
+      "selectAll": "全选",
+      "deselectAll": "取消全选",
+      "selected": "已选择 {{count}} 个",
+      "select": "选择",
+      "cannotSelectCurrent": "不能选择当前使用的供应商"
+    },
+    "batchDelete": {
+      "button": "删除选中",
+      "confirm": "确定要删除选中的 {{count}} 个供应商吗？此操作无法撤销。",
+      "noSelection": "请先选择要删除的供应商",
+      "cannotDeleteCurrent": "不能删除当前正在使用的供应商",
+      "success": "成功删除 {{count}} 个供应商",
+      "partialSuccess": "成功删除 {{success}} 个，失败 {{error}} 个",
+      "failed": "批量删除失败"
+    }
   },
   "providerTest": {
     "button": "测试",

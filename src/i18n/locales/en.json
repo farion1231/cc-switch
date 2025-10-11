@@ -64,7 +64,25 @@
     "notConfigured": "Not configured for official website",
     "applyToClaudePlugin": "Apply to Claude plugin",
     "removeFromClaudePlugin": "Remove from Claude plugin",
-    "totalCount": "{{count}} providers total"
+    "totalCount": "{{count}} providers total",
+    "batch": {
+      "mode": "Batch Operations",
+      "exit": "Exit Batch",
+      "selectAll": "Select All",
+      "deselectAll": "Deselect All",
+      "selected": "{{count}} selected",
+      "select": "Select",
+      "cannotSelectCurrent": "Cannot select the currently used provider"
+    },
+    "batchDelete": {
+      "button": "Delete Selected",
+      "confirm": "Are you sure you want to delete the selected {{count}} providers? This action cannot be undone.",
+      "noSelection": "Please select providers to delete first",
+      "cannotDeleteCurrent": "Cannot delete the currently used provider",
+      "success": "Successfully deleted {{count}} providers",
+      "partialSuccess": "Successfully deleted {{success}}, failed {{error}}",
+      "failed": "Batch delete failed"
+    }
   },
   "providerTest": {
     "button": "Test",

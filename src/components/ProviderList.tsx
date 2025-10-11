@@ -13,6 +13,9 @@ import {
   CircleAlert,
   CircleCheck,
   Zap,
+  Square,
+  CheckSquare,
+  MoreHorizontal,
 } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
 import { AppType } from "../lib/tauri-api";
@@ -60,6 +63,8 @@ const ProviderList: React.FC<ProviderListProps> = ({
     Record<string, ProviderConnectionState>
   >({});
   const [isTestingAll, setIsTestingAll] = useState(false);
+  const [selectedProviders, setSelectedProviders] = useState<Set<string>>(new Set());
+  const [isBatchMode, setIsBatchMode] = useState(false);
 
   const summarizeResultDetail = (
     result: ProviderTestResult,
@@ -76,6 +81,28 @@ const ProviderList: React.FC<ProviderListProps> = ({
           return parsed.trim() || undefined;
         }
         if (parsed && typeof parsed === "object") {
+          // 处理 {"Error": "upstream_error", "details": "..."} 格式
+          if (typeof parsed.Error === "string") {
+            let errorMsg = parsed.Error.trim();
+            // 处理嵌套的 details 字段
+            if (typeof parsed.details === "string") {
+              try {
+                const nestedDetails = JSON.parse(parsed.details);
+                if (nestedDetails && typeof nestedDetails === "object") {
+                  if (typeof nestedDetails.detail === "string") {
+                    errorMsg = `${errorMsg}: ${nestedDetails.detail.trim()}`;
+                  } else if (typeof nestedDetails.title === "string") {
+                    errorMsg = `${errorMsg}: ${nestedDetails.title.trim()}`;
+                  }
+                }
+              } catch {
+                // 如果解析失败，直接使用原始字符串
+                errorMsg = `${errorMsg}: ${parsed.details.trim()}`;
+              }
+            }
+            return errorMsg || undefined;
+          }
+          // 标准错误格式
           if (typeof parsed.error === "string") {
             return parsed.error.trim() || undefined;
           }
@@ -88,6 +115,9 @@ const ProviderList: React.FC<ProviderListProps> = ({
           }
           if (typeof parsed.message === "string") {
             return parsed.message.trim() || undefined;
+          }
+          if (typeof parsed.title === "string") {
+            return parsed.title.trim() || undefined;
           }
         }
       } catch {
@@ -220,45 +250,68 @@ const ProviderList: React.FC<ProviderListProps> = ({
 
     setIsTestingAll(true);
 
-    // 设置所有供应商为测试中状态
-    const loadingStates: Record<string, ProviderConnectionState> = {};
-    Object.keys(providers).forEach((providerId) => {
-      loadingStates[providerId] = {
-        status: "loading",
-        testedAt: Date.now(),
-      };
-    });
-    setTestStates(loadingStates);
+    let successCount = 0;
+    let errorCount = 0;
+    const providerIds = Object.keys(providers);
 
     try {
-      const results = await window.api.testAllProviderConnections(appType);
-      const testedAt = Date.now();
-      const newTestStates: Record<string, ProviderConnectionState> = {};
+      // 逐个测试供应商，每完成一个就立即显示结果
+      for (const providerId of providerIds) {
+        // 设置当前供应商为测试中状态
+        setTestStates((prev) => ({
+          ...prev,
+          [providerId]: {
+            status: "loading",
+            testedAt: Date.now(),
+          },
+        }));
 
-      let successCount = 0;
-      let errorCount = 0;
+        try {
+          // 测试单个供应商
+          const result = await window.api.testProviderConnection(providerId, appType);
+          const detail = summarizeResultDetail(result);
+          const testedAt = Date.now();
 
-      Object.entries(results).forEach(([providerId, result]) => {
-        const detail = summarizeResultDetail(result);
-        newTestStates[providerId] = {
-          status: result.success ? "success" : "error",
-          message: result.message,
-          detail,
-          statusCode: result.status,
-          latencyMs: result.latencyMs,
-          testedAt,
-        };
+          // 立即更新该供应商的测试结果
+          setTestStates((prev) => ({
+            ...prev,
+            [providerId]: {
+              status: result.success ? "success" : "error",
+              message: result.message,
+              detail,
+              statusCode: result.status,
+              latencyMs: result.latencyMs,
+              testedAt,
+            },
+          }));
 
-        if (result.success) {
-          successCount++;
-        } else {
+          // 统计成功/失败数量
+          if (result.success) {
+            successCount++;
+          } else {
+            errorCount++;
+          }
+        } catch (error) {
+          console.error(t("console.testProviderFailed"), providerId, error);
+          const fallback =
+            error instanceof Error ? error.message : String(error ?? "");
+
+          // 立即更新该供应商的错误状态
+          setTestStates((prev) => ({
+            ...prev,
+            [providerId]: {
+              status: "error",
+              message: fallback,
+              detail: fallback,
+              testedAt: Date.now(),
+            },
+          }));
+
           errorCount++;
         }
-      });
+      }
 
-      setTestStates(newTestStates);
-
-      // 通知测试结果
+      // 所有测试完成后显示汇总通知
       if (errorCount === 0) {
         onNotify?.(
           t("providerTest.allSuccess", { count: successCount }),
@@ -277,7 +330,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
             success: successCount,
             error: errorCount,
           }),
-          "warning",
+          "error",
           5000,
         );
       }
@@ -286,18 +339,6 @@ const ProviderList: React.FC<ProviderListProps> = ({
       const fallback =
         error instanceof Error ? error.message : String(error ?? "");
 
-      // 重置所有状态为错误
-      const errorStates: Record<string, ProviderConnectionState> = {};
-      Object.keys(providers).forEach((providerId) => {
-        errorStates[providerId] = {
-          status: "error",
-          message: fallback,
-          detail: fallback,
-          testedAt: Date.now(),
-        };
-      });
-      setTestStates(errorStates);
-
       onNotify?.(
         t("providerTest.notifyError", { error: fallback }),
         "error",
@@ -305,6 +346,92 @@ const ProviderList: React.FC<ProviderListProps> = ({
       );
     } finally {
       setIsTestingAll(false);
+    }
+  };
+
+  // 批量操作相关函数
+  const toggleBatchMode = () => {
+    setIsBatchMode(!isBatchMode);
+    setSelectedProviders(new Set());
+  };
+
+  const toggleProviderSelection = (providerId: string) => {
+    setSelectedProviders(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(providerId)) {
+        newSet.delete(providerId);
+      } else {
+        newSet.add(providerId);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedProviders.size === sortedProviders.length) {
+      setSelectedProviders(new Set());
+    } else {
+      setSelectedProviders(new Set(sortedProviders.map(p => p.id)));
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedProviders.size === 0) {
+      onNotify?.(t("provider.batchDelete.noSelection"), "error", 3000);
+      return;
+    }
+
+    // 检查是否包含当前供应商
+    const selectedArray = Array.from(selectedProviders);
+    const currentProviderIndex = selectedArray.indexOf(currentProviderId);
+    if (currentProviderIndex !== -1) {
+      onNotify?.(t("provider.batchDelete.cannotDeleteCurrent"), "error", 3000);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      t("provider.batchDelete.confirm", { count: selectedProviders.size })
+    );
+    if (!confirmed) return;
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    try {
+      for (const providerId of selectedArray) {
+        try {
+          await onDelete(providerId);
+          successCount++;
+        } catch (error) {
+          console.error(`删除供应商失败: ${providerId}`, error);
+          errorCount++;
+        }
+      }
+
+      // 清空选择
+      setSelectedProviders(new Set());
+      setIsBatchMode(false);
+
+      // 显示结果通知
+      if (errorCount === 0) {
+        onNotify?.(
+          t("provider.batchDelete.success", { count: successCount }),
+          "success",
+          4000
+        );
+      } else {
+        onNotify?.(
+          t("provider.batchDelete.partialSuccess", {
+            success: successCount,
+            error: errorCount,
+          }),
+          "error",
+          5000
+        );
+      }
+    } catch (error) {
+      console.error("批量删除失败", error);
+      onNotify?.(t("provider.batchDelete.failed"), "error", 5000);
     }
   };
 
@@ -349,15 +476,20 @@ const ProviderList: React.FC<ProviderListProps> = ({
       );
     }
 
-    const message = truncate(
-      state.detail ?? state.message ?? t("providerTest.unknownError"),
-    );
+    // 直接显示错误详情，状态码会单独显示在徽章中
+    const detail = state.detail ?? state.message ?? t("providerTest.unknownError");
+    const errorMessage = truncate(detail, 100);
 
     return (
-      <div className="mt-2 flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
-        <CircleAlert className="h-3.5 w-3.5" />
-        <span className="max-w-[28rem] truncate">
-          {t("providerTest.error", { message })}
+      <div className="mt-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+        <CircleAlert className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+        <span className="max-w-[28rem] break-words">
+          {typeof state.statusCode === "number" && (
+            <span className="inline-block bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded font-mono text-xs font-medium mr-1.5">
+              {state.statusCode}
+            </span>
+          )}
+          <span>{t("providerTest.error", { message: errorMessage })}</span>
         </span>
       </div>
     );
@@ -401,31 +533,87 @@ const ProviderList: React.FC<ProviderListProps> = ({
         <>
           {/* 批量操作按钮区域 */}
           <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
-            <div className="text-sm text-gray-600 dark:text-gray-300">
-              {t("provider.totalCount", { count: sortedProviders.length })}
+            <div className="flex items-center gap-4">
+              <div className="text-sm text-gray-600 dark:text-gray-300">
+                {t("provider.totalCount", { count: sortedProviders.length })}
+              </div>
+
+              {isBatchMode && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={toggleSelectAll}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
+                  >
+                    {selectedProviders.size === sortedProviders.length ? (
+                      <CheckSquare className="h-4 w-4" />
+                    ) : (
+                      <Square className="h-4 w-4" />
+                    )}
+                    {selectedProviders.size === sortedProviders.length
+                      ? t("provider.batch.deselectAll")
+                      : t("provider.batch.selectAll")}
+                  </button>
+
+                  {selectedProviders.size > 0 && (
+                    <span className="text-sm text-gray-600 dark:text-gray-400">
+                      {t("provider.batch.selected", { count: selectedProviders.size })}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
-            <button
-              onClick={handleTestAll}
-              disabled={isTestingAll}
-              className={cn(
-                "inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors",
-                isTestingAll
-                  ? "bg-gray-300 text-gray-500 cursor-not-allowed dark:bg-gray-600 dark:text-gray-400"
-                  : "bg-emerald-500 text-white hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
+
+            <div className="flex items-center gap-2">
+              {isBatchMode && selectedProviders.size > 0 && (
+                <button
+                  onClick={handleBatchDelete}
+                  className={cn(
+                    "inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700"
+                  )}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {t("provider.batchDelete.button")}
+                </button>
               )}
-            >
-              {isTestingAll ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {t("providerTest.testingAll")}
-                </>
-              ) : (
-                <>
-                  <Zap className="h-4 w-4" />
-                  {t("providerTest.testAll")}
-                </>
+
+              <button
+                onClick={toggleBatchMode}
+                className={cn(
+                  "inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors",
+                  isBatchMode
+                    ? "bg-gray-300 text-gray-700 hover:bg-gray-400 dark:bg-gray-600 dark:text-gray-300 dark:hover:bg-gray-500"
+                    : "bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700"
+                )}
+              >
+                <MoreHorizontal className="h-4 w-4" />
+                {isBatchMode ? t("provider.batch.exit") : t("provider.batch.mode")}
+              </button>
+
+              {!isBatchMode && (
+                <button
+                  onClick={handleTestAll}
+                  disabled={isTestingAll}
+                  className={cn(
+                    "inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors",
+                    isTestingAll
+                      ? "bg-gray-300 text-gray-500 cursor-not-allowed dark:bg-gray-600 dark:text-gray-400"
+                      : "bg-emerald-500 text-white hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
+                  )}
+                >
+                  {isTestingAll ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t("providerTest.testingAll")}
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="h-4 w-4" />
+                      {t("providerTest.testAll")}
+                    </>
+                  )}
+                </button>
               )}
-            </button>
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -439,9 +627,34 @@ const ProviderList: React.FC<ProviderListProps> = ({
                 key={provider.id}
                 className={cn(
                   isCurrent ? cardStyles.selected : cardStyles.interactive,
+                  isBatchMode && "border-l-4 border-l-blue-500 dark:border-l-blue-400",
                 )}
               >
                 <div className="flex items-start justify-between">
+                  {/* 批量模式复选框 */}
+                  {isBatchMode && (
+                    <div className="mr-3 pt-1">
+                      <button
+                        onClick={() => toggleProviderSelection(provider.id)}
+                        disabled={isCurrent}
+                        className={cn(
+                          "p-1 rounded transition-colors",
+                          selectedProviders.has(provider.id)
+                            ? "text-blue-600 dark:text-blue-400"
+                            : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300",
+                          isCurrent && "cursor-not-allowed opacity-50"
+                        )}
+                        title={isCurrent ? t("provider.batch.cannotSelectCurrent") : t("provider.batch.select")}
+                      >
+                        {selectedProviders.has(provider.id) ? (
+                          <CheckSquare className="h-5 w-5" />
+                        ) : (
+                          <Square className="h-5 w-5" />
+                        )}
+                      </button>
+                    </div>
+                  )}
+
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
                       <h3 className="font-medium text-gray-900 dark:text-gray-100">
@@ -486,6 +699,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
                     {renderStatusRow(provider.id, testState)}
                   </div>
 
+                  {!isBatchMode && (
                   <div className="flex items-center gap-2 ml-4">
                     <button
                       onClick={(event) =>
@@ -543,6 +757,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
                       <Trash2 size={16} />
                     </button>
                   </div>
+                )}
                 </div>
               </div>
             );
