@@ -65,6 +65,18 @@
     "applyToClaudePlugin": "应用到 Claude 插件",
     "removeFromClaudePlugin": "从 Claude 插件移除"
   },
+  "providerTest": {
+    "button": "测试",
+    "tooltip": "测试 API Key 和连通性，按住 Shift 强制重新测试。",
+    "testing": "正在测试…",
+    "success": "测试通过",
+    "latency": "{{latency}} 毫秒",
+    "status": "状态 {{status}}",
+    "error": "上次测试失败：{{message}}",
+    "notifyError": "测试失败：{{error}}",
+    "cachedNotice": "已返回缓存结果（按住 Shift 可立即重测）",
+    "unknownError": "未知错误"
+  },
   "notifications": {
     "providerSaved": "供应商配置已保存",
     "providerDeleted": "供应商删除成功",
@@ -146,7 +158,8 @@
     "openConfigFolderFailed": "打开配置文件夹失败:",
     "selectConfigDirFailed": "选择配置目录失败:",
     "getDefaultConfigDirFailed": "获取默认配置目录失败:",
-    "openReleaseNotesFailed": "打开更新日志失败:"
+    "openReleaseNotesFailed": "打开更新日志失败:",
+    "testProviderFailed": "测试供应商失败:"
   },
   "providerForm": {
     "supplierName": "供应商名称",

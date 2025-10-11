@@ -7,6 +7,7 @@ import {
   McpStatus,
   McpServer,
   McpConfigResponse,
+  ProviderTestResult,
 } from "../types";
 
 // 应用类型
@@ -41,6 +42,23 @@ export const tauriAPI = {
     } catch (error) {
       console.error("获取供应商列表失败:", error);
       return {};
+    }
+  },
+
+  testProviderConnection: async (
+    providerId: string,
+    app?: AppType,
+  ): Promise<ProviderTestResult> => {
+    try {
+      return await invoke<ProviderTestResult>("test_provider_connection", {
+        provider_id: providerId,
+        providerId,
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("测试供应商配置失败:", error);
+      throw error;
     }
   },
 

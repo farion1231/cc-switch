@@ -6,13 +6,14 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::app_config::AppType;
-use crate::claude_plugin;
 use crate::claude_mcp;
-use crate::store::AppState;
+use crate::claude_plugin;
 use crate::codex_config;
 use crate::config::{self, get_claude_settings_path, ConfigStatus};
 use crate::provider::{Provider, ProviderMeta};
 use crate::speedtest;
+use crate::store::AppState;
+use crate::test_provider;
 
 fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), String> {
     match app_type {
@@ -381,11 +382,7 @@ pub async fn switch_provider(
                     let auth: Value = crate::config::read_json_file(&auth_path)?;
                     let config_str = if config_path.exists() {
                         std::fs::read_to_string(&config_path).map_err(|e| {
-                            format!(
-                                "读取 config.toml 失败: {}: {}",
-                                config_path.display(),
-                                e
-                            )
+                            format!("读取 config.toml 失败: {}: {}", config_path.display(), e)
                         })?
                     } else {
                         String::new()
@@ -784,7 +781,6 @@ pub async fn read_claude_mcp_config() -> Result<Option<String>, String> {
     claude_mcp::read_mcp_json()
 }
 
-
 /// 新增或更新一个 MCP 服务器条目
 #[tauri::command]
 pub async fn upsert_claude_mcp_server(id: String, spec: serde_json::Value) -> Result<bool, String> {
@@ -815,15 +811,23 @@ pub struct McpConfigResponse {
 
 /// 获取 MCP 配置（来自 ~/.cc-switch/config.json）
 #[tauri::command]
-pub async fn get_mcp_config(state: State<'_, AppState>, app: Option<String>) -> Result<McpConfigResponse, String> {
-    let config_path = crate::config::get_app_config_path().to_string_lossy().to_string();
+pub async fn get_mcp_config(
+    state: State<'_, AppState>,
+    app: Option<String>,
+) -> Result<McpConfigResponse, String> {
+    let config_path = crate::config::get_app_config_path()
+        .to_string_lossy()
+        .to_string();
     let cfg = state
         .config
         .lock()
         .map_err(|e| format!("获取锁失败: {}", e))?;
     let app_ty = crate::app_config::AppType::from(app.as_deref().unwrap_or("claude"));
     let servers = crate::mcp::get_servers_snapshot_for(&cfg, &app_ty);
-    Ok(McpConfigResponse { config_path, servers })
+    Ok(McpConfigResponse {
+        config_path,
+        servers,
+    })
 }
 
 /// 在 config.json 中新增或更新一个 MCP 服务器定义
@@ -1237,4 +1241,41 @@ pub async fn update_endpoint_last_used(
     drop(cfg_guard);
     state.save()?;
     Ok(())
+}
+
+/// 测试供应商配置的 API Key 与连通性
+#[tauri::command]
+pub async fn test_provider_connection(
+    state: State<'_, crate::store::AppState>,
+    app_type: Option<AppType>,
+    app: Option<String>,
+    appType: Option<String>,
+    provider_id: Option<String>,
+    providerId: Option<String>,
+) -> Result<test_provider::ProviderTestResult, String> {
+    let app_type = app_type
+        .or_else(|| app.as_deref().map(|s| s.into()))
+        .or_else(|| appType.as_deref().map(|s| s.into()))
+        .unwrap_or(AppType::Claude);
+    let provider_id = provider_id
+        .or(providerId)
+        .ok_or_else(|| "缺少 providerId".to_string())?;
+
+    // 克隆供应商，释放锁后发起异步请求
+    let provider = {
+        let config = state
+            .config
+            .lock()
+            .map_err(|e| format!("获取锁失败: {}", e))?;
+        let manager = config
+            .get_manager(&app_type)
+            .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+        manager
+            .providers
+            .get(&provider_id)
+            .cloned()
+            .ok_or_else(|| format!("供应商不存在: {}", provider_id))?
+    };
+
+    Ok(test_provider::test_provider(provider, app_type).await)
 }

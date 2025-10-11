@@ -65,6 +65,18 @@
     "applyToClaudePlugin": "Apply to Claude plugin",
     "removeFromClaudePlugin": "Remove from Claude plugin"
   },
+  "providerTest": {
+    "button": "Test",
+    "tooltip": "Test your API key and connectivity. Hold Shift to force retest.",
+    "testing": "Testing...",
+    "success": "Test passed",
+    "latency": "{{latency}} ms",
+    "status": "status {{status}}",
+    "error": "Last test failed: {{message}}",
+    "notifyError": "Test failed: {{error}}",
+    "cachedNotice": "Using cached result (hold Shift to retest)",
+    "unknownError": "Unknown error"
+  },
   "notifications": {
     "providerSaved": "Provider configuration saved",
     "providerDeleted": "Provider deleted successfully",
@@ -146,7 +158,8 @@
     "openConfigFolderFailed": "Failed to open config folder:",
     "selectConfigDirFailed": "Failed to select config directory:",
     "getDefaultConfigDirFailed": "Failed to get default config directory:",
-    "openReleaseNotesFailed": "Failed to open release notes:"
+    "openReleaseNotesFailed": "Failed to open release notes:",
+    "testProviderFailed": "Provider test failed:"
   },
   "providerForm": {
     "supplierName": "Provider Name",

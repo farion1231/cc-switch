@@ -6,6 +6,7 @@ import {
   CustomEndpoint,
   McpStatus,
   McpConfigResponse,
+  ProviderTestResult,
 } from "./types";
 import { AppType } from "./lib/tauri-api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -100,6 +101,10 @@ declare global {
       // Codex: { auth: object, config: string }
       // Claude: settings.json 内容
       getLiveProviderSettings: (app?: AppType) => Promise<any>;
+      testProviderConnection: (
+        providerId: string,
+        app?: AppType,
+      ) => Promise<ProviderTestResult>;
       testApiEndpoints: (
         urls: string[],
         options?: { timeoutSecs?: number },

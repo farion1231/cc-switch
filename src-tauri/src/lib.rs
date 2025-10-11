@@ -1,16 +1,17 @@
 mod app_config;
-mod claude_plugin;
 mod claude_mcp;
-mod mcp;
+mod claude_plugin;
 mod codex_config;
 mod commands;
 mod config;
 mod import_export;
+mod mcp;
 mod migration;
 mod provider;
 mod settings;
-mod store;
 mod speedtest;
+mod store;
+mod test_provider;
 
 use store::AppState;
 use tauri::{
@@ -445,6 +446,7 @@ pub fn run() {
             commands::add_custom_endpoint,
             commands::remove_custom_endpoint,
             commands::update_endpoint_last_used,
+            commands::test_provider_connection,
             // theirs: config import/export and dialogs
             import_export::export_config_to_file,
             import_export::import_config_from_file,
