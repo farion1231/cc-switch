@@ -1,2 +1,5 @@
+packages:
+  - '.'
+
 onlyBuiltDependencies:
   - '@tailwindcss/oxide'

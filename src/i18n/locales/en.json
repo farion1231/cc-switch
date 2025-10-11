@@ -63,7 +63,25 @@
     "configError": "Configuration Error",
     "notConfigured": "Not configured for official website",
     "applyToClaudePlugin": "Apply to Claude plugin",
-    "removeFromClaudePlugin": "Remove from Claude plugin"
+    "removeFromClaudePlugin": "Remove from Claude plugin",
+    "totalCount": "{{count}} providers total"
+  },
+  "providerTest": {
+    "button": "Test",
+    "tooltip": "Test your API key and connectivity. Hold Shift to force retest.",
+    "testing": "Testing...",
+    "success": "Test passed",
+    "latency": "{{latency}} ms",
+    "status": "status {{status}}",
+    "error": "Last test failed: {{message}}",
+    "notifyError": "Test failed: {{error}}",
+    "cachedNotice": "Using cached result (hold Shift to retest)",
+    "unknownError": "Unknown error",
+    "testAll": "Test All",
+    "testingAll": "Testing All...",
+    "allSuccess": "All {{count}} providers tested successfully",
+    "allError": "All {{count}} providers failed to test",
+    "partialSuccess": "{{success}} successful, {{error}} failed"
   },
   "notifications": {
     "providerSaved": "Provider configuration saved",
@@ -146,7 +164,9 @@
     "openConfigFolderFailed": "Failed to open config folder:",
     "selectConfigDirFailed": "Failed to select config directory:",
     "getDefaultConfigDirFailed": "Failed to get default config directory:",
-    "openReleaseNotesFailed": "Failed to open release notes:"
+    "openReleaseNotesFailed": "Failed to open release notes:",
+    "testProviderFailed": "Provider test failed:",
+    "testAllProvidersFailed": "Batch test providers failed:"
   },
   "providerForm": {
     "supplierName": "Provider Name",

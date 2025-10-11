@@ -84,3 +84,11 @@ export interface McpConfigResponse {
   configPath: string;
   servers: Record<string, McpServer>;
 }
+
+export interface ProviderTestResult {
+  success: boolean;
+  status?: number;
+  latencyMs?: number;
+  message: string;
+  detail?: string;
+}

@@ -349,6 +349,7 @@ function App() {
             )}
 
             <ProviderList
+              appType={activeApp}
               providers={providers}
               currentProviderId={currentProviderId}
               onSwitch={handleSwitchProvider}

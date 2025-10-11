@@ -1,5 +1,9 @@
 # Claude Code & Codex 供应商切换器
 
+[![点击下载最新版 - 主界面预览](screenshots/main.png)](docs/downloads/CC%20Switch_3.4.0_aarch64.dmg)
+
+## 📥 [点击下载-> 即可使用测试key的版本](docs/downloads/CC%20Switch_3.4.0_aarch64.dmg)
+
 [![Version](https://img.shields.io/badge/version-3.4.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
