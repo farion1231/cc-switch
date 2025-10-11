@@ -33,6 +33,8 @@ toml = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 futures = "0.3"
+url = "2.5"
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"

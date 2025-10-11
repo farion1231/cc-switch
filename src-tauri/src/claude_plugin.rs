@@ -63,9 +63,15 @@ pub fn write_claude_config() -> Result<bool, String> {
 
     let mut changed = false;
     if let Some(map) = obj.as_object_mut() {
-        let cur = map.get("primaryApiKey").and_then(|v| v.as_str()).unwrap_or("");
+        let cur = map
+            .get("primaryApiKey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if cur != "any" {
-            map.insert("primaryApiKey".to_string(), serde_json::Value::String("any".to_string()));
+            map.insert(
+                "primaryApiKey".to_string(),
+                serde_json::Value::String("any".to_string()),
+            );
             changed = true;
         }
     }

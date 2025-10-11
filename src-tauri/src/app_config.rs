@@ -27,8 +27,42 @@ impl Default for McpRoot {
     }
 }
 
+/// 分组配置（单客户端维度）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GroupsConfig {
+    /// 以 id 为键的分组定义
+    #[serde(default)]
+    pub groups: HashMap<String, ProviderGroup>,
+    /// 分组显示顺序
+    #[serde(default)]
+    #[serde(rename = "groupsOrder")]
+    pub groups_order: Vec<String>,
+    /// 全局排序配置
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "globalSortConfig")]
+    pub global_sort_config: Option<SortConfig>,
+}
+
+/// 分组根：按客户端分开维护
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupsRoot {
+    #[serde(default)]
+    pub claude: GroupsConfig,
+    #[serde(default)]
+    pub codex: GroupsConfig,
+}
+
+impl Default for GroupsRoot {
+    fn default() -> Self {
+        Self {
+            claude: GroupsConfig::default(),
+            codex: GroupsConfig::default(),
+        }
+    }
+}
+
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
-use crate::provider::ProviderManager;
+use crate::provider::{ProviderGroup, ProviderManager, SortConfig};
 
 /// 应用类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +101,9 @@ pub struct MultiAppConfig {
     /// MCP 配置（按客户端分治）
     #[serde(default)]
     pub mcp: McpRoot,
+    /// 分组配置（按客户端分治）
+    #[serde(default)]
+    pub groups: GroupsRoot,
 }
 
 fn default_version() -> u32 {
@@ -83,6 +120,7 @@ impl Default for MultiAppConfig {
             version: 2,
             apps,
             mcp: McpRoot::default(),
+            groups: GroupsRoot::default(),
         }
     }
 }
@@ -114,6 +152,7 @@ impl MultiAppConfig {
                 version: 2,
                 apps,
                 mcp: McpRoot::default(),
+                groups: GroupsRoot::default(),
             };
 
             // 迁移前备份旧版(v1)配置文件
@@ -188,6 +227,22 @@ impl MultiAppConfig {
         match app {
             AppType::Claude => &mut self.mcp.claude,
             AppType::Codex => &mut self.mcp.codex,
+        }
+    }
+
+    /// 获取指定客户端的分组配置（不可变引用）
+    pub fn groups_for(&self, app: &AppType) -> &GroupsConfig {
+        match app {
+            AppType::Claude => &self.groups.claude,
+            AppType::Codex => &self.groups.codex,
+        }
+    }
+
+    /// 获取指定客户端的分组配置（可变引用）
+    pub fn groups_for_mut(&mut self, app: &AppType) -> &mut GroupsConfig {
+        match app {
+            AppType::Claude => &mut self.groups.claude,
+            AppType::Codex => &mut self.groups.codex,
         }
     }
 }

@@ -16,6 +16,7 @@ import {
   Square,
   CheckSquare,
   MoreHorizontal,
+  Bug,
 } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
 import { AppType } from "../lib/tauri-api";
@@ -65,6 +66,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
   const [isTestingAll, setIsTestingAll] = useState(false);
   const [selectedProviders, setSelectedProviders] = useState<Set<string>>(new Set());
   const [isBatchMode, setIsBatchMode] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState<Record<string, boolean>>({});
 
   const summarizeResultDetail = (
     result: ProviderTestResult,
@@ -75,6 +77,38 @@ const ProviderList: React.FC<ProviderListProps> = ({
 
     const detail = result.detail?.trim();
     if (detail) {
+      // 检查是否为HTML响应（如403错误页面）
+      if (detail.startsWith("<!DOCTYPE") || detail.startsWith("<html")) {
+        // 尝试从HTML中提取title或错误信息
+        const titleMatch = detail.match(/<title[^>]*>([^<]+)<\/title>/i);
+        if (titleMatch && titleMatch[1]) {
+          const title = titleMatch[1].trim();
+          if (title.includes("403") || title.includes("Forbidden")) {
+            return "访问被拒绝 (403 Forbidden) - 服务器拒绝了请求";
+          }
+          return title;
+        }
+
+        // 检查常见的HTTP错误状态码
+        if (detail.includes("403") || detail.includes("Forbidden")) {
+          return "访问被拒绝 (403 Forbidden) - 服务器拒绝了请求";
+        }
+        if (detail.includes("401") || detail.includes("Unauthorized")) {
+          return "身份验证失败 (401 Unauthorized) - API密钥无效或缺失";
+        }
+        if (detail.includes("404") || detail.includes("Not Found")) {
+          return "端点不存在 (404 Not Found) - API地址不正确";
+        }
+        if (detail.includes("429") || detail.includes("Too Many Requests")) {
+          return "请求频率限制 (429) - 请求过于频繁，请稍后重试";
+        }
+        if (detail.includes("500") || detail.includes("Internal Server Error")) {
+          return "服务器内部错误 (500) - 服务端出现问题";
+        }
+
+        return "服务器返回HTML错误页面";
+      }
+
       try {
         const parsed = JSON.parse(detail);
         if (typeof parsed === "string") {
@@ -126,6 +160,34 @@ const ProviderList: React.FC<ProviderListProps> = ({
       return detail;
     }
 
+    // 如果没有detail，根据status码提供具体的错误信息
+    if (result.status) {
+      const statusCode = result.status;
+      switch (statusCode) {
+        case 403:
+          return "访问被拒绝 (403 Forbidden) - 服务器拒绝了请求，可能需要检查API密钥或网络访问权限";
+        case 401:
+          return "身份验证失败 (401 Unauthorized) - API密钥无效或缺失";
+        case 404:
+          return "端点不存在 (404 Not Found) - API地址不正确";
+        case 429:
+          return "请求频率限制 (429) - 请求过于频繁，请稍后重试";
+        case 500:
+          return "服务器内部错误 (500) - 服务端出现问题";
+        case 502:
+          return "网关错误 (502) - 服务器网关问题";
+        case 503:
+          return "服务不可用 (503) - 服务器暂时不可用";
+        default:
+          if (statusCode >= 400 && statusCode < 500) {
+            return `客户端错误 (${statusCode}) - 请求问题`;
+          }
+          if (statusCode >= 500) {
+            return `服务器错误 (${statusCode}) - 服务端问题`;
+          }
+      }
+    }
+
     const message = result.message?.trim();
     return message || undefined;
   };
@@ -135,6 +197,70 @@ const ProviderList: React.FC<ProviderListProps> = ({
       return value;
     }
     return `${value.slice(0, max)}…`;
+  };
+
+  // 提供连接诊断信息的辅助函数
+  const getDiagnosticInfo = (provider: Provider, testState?: ProviderConnectionState) => {
+    const diagnostics: string[] = [];
+
+    // 检查API密钥配置
+    if (appType === "claude") {
+      const apiKey = provider.settingsConfig?.env?.ANTHROPIC_AUTH_TOKEN;
+      if (!apiKey || typeof apiKey !== "string" || apiKey.trim() === "") {
+        diagnostics.push("❌ API密钥缺失或为空");
+      } else if (apiKey.length < 10) {
+        diagnostics.push("⚠️ API密钥长度可能不足");
+      } else {
+        diagnostics.push("✅ API密钥已配置");
+      }
+    } else if (appType === "codex") {
+      const apiKey = provider.settingsConfig?.auth?.OPENAI_API_KEY;
+      if (!apiKey || typeof apiKey !== "string" || apiKey.trim() === "") {
+        diagnostics.push("❌ API密钥缺失或为空");
+      } else if (apiKey.length < 10) {
+        diagnostics.push("⚠️ API密钥长度可能不足");
+      } else {
+        diagnostics.push("✅ API密钥已配置");
+      }
+    }
+
+    // 检查API地址
+    const apiUrl = getApiUrl(provider);
+    if (apiUrl === t("provider.notConfigured")) {
+      diagnostics.push("❌ API地址未配置");
+    } else if (apiUrl === t("provider.configError")) {
+      diagnostics.push("❌ 配置解析错误");
+    } else {
+      diagnostics.push(`✅ API地址: ${apiUrl}`);
+
+      // 检查URL格式
+      try {
+        const url = new URL(apiUrl);
+        if (!url.protocol.startsWith("http")) {
+          diagnostics.push("⚠️ URL协议不正确");
+        }
+        if (url.hostname.includes("localhost") || url.hostname.includes("127.0.0.1")) {
+          diagnostics.push("ℹ️ 使用本地地址，请确保服务正在运行");
+        }
+      } catch {
+        diagnostics.push("⚠️ API地址格式可能不正确");
+      }
+    }
+
+    // 添加测试状态相关信息
+    if (testState) {
+      if (testState.statusCode === 403) {
+        diagnostics.push("🔍 403错误可能原因: API密钥无效、账户被限制、需要特殊权限");
+      } else if (testState.statusCode === 401) {
+        diagnostics.push("🔍 401错误可能原因: API密钥过期或格式错误");
+      } else if (testState.statusCode === 404) {
+        diagnostics.push("🔍 404错误可能原因: API地址错误或服务不可用");
+      } else if (testState.statusCode && testState.statusCode >= 500) {
+        diagnostics.push("🔍 服务器错误可能原因: 服务临时不可用或维护中");
+      }
+    }
+
+    return diagnostics;
   };
 
   const isCacheFresh = (state?: ProviderConnectionState) => {
@@ -481,16 +607,18 @@ const ProviderList: React.FC<ProviderListProps> = ({
     const errorMessage = truncate(detail, 100);
 
     return (
-      <div className="mt-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
-        <CircleAlert className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
-        <span className="max-w-[28rem] break-words">
-          {typeof state.statusCode === "number" && (
-            <span className="inline-block bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded font-mono text-xs font-medium mr-1.5">
-              {state.statusCode}
-            </span>
-          )}
-          <span>{t("providerTest.error", { message: errorMessage })}</span>
-        </span>
+      <div className="mt-2 space-y-2">
+        <div className="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+          <CircleAlert className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+          <span className="max-w-[28rem] break-words">
+            {typeof state.statusCode === "number" && (
+              <span className="inline-block bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded font-mono text-xs font-medium mr-1.5">
+                {state.statusCode}
+              </span>
+            )}
+            <span>{t("providerTest.error", { message: errorMessage })}</span>
+          </span>
+        </div>
       </div>
     );
   };
@@ -697,6 +825,28 @@ const ProviderList: React.FC<ProviderListProps> = ({
                     </div>
 
                     {renderStatusRow(provider.id, testState)}
+
+                    {/* 诊断信息 */}
+                    {showDiagnostics[provider.id] && (
+                      <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700">
+                        <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-1">
+                          <Bug className="h-3 w-3" />
+                          连接诊断信息
+                        </h4>
+                        <div className="space-y-1">
+                          {getDiagnosticInfo(provider, testState).map((diagnostic, index) => (
+                            <div key={index} className="text-xs text-gray-600 dark:text-gray-400 font-mono">
+                              {diagnostic}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                          <div className="text-xs text-gray-500 dark:text-gray-500">
+                            💡 提示：如果遇到403/401错误，请检查API密钥是否正确且有效
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {!isBatchMode && (
@@ -741,6 +891,24 @@ const ProviderList: React.FC<ProviderListProps> = ({
                       title={t("provider.editProvider")}
                     >
                       <Edit3 size={16} />
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setShowDiagnostics(prev => ({
+                          ...prev,
+                          [provider.id]: !prev[provider.id]
+                        }));
+                      }}
+                      className={cn(
+                        buttonStyles.icon,
+                        showDiagnostics[provider.id]
+                          ? "text-blue-500 bg-blue-100 dark:bg-blue-500/20"
+                          : "text-gray-500 hover:text-blue-500 hover:bg-blue-100 dark:text-gray-400 dark:hover:text-blue-400 dark:hover:bg-blue-500/10"
+                      )}
+                      title="显示诊断信息"
+                    >
+                      <Bug size={16} />
                     </button>
 
                     <button

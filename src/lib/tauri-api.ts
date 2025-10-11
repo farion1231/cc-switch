@@ -8,6 +8,8 @@ import {
   McpServer,
   McpConfigResponse,
   ProviderTestResult,
+  ProviderGroup,
+  SortConfig,
 } from "../types";
 
 // 应用类型
@@ -660,6 +662,166 @@ export const tauriAPI = {
       }
     });
     return unlisten;
+  },
+
+  // ========== 分组管理 API ==========
+
+  // 获取所有分组
+  getGroups: async (app?: AppType): Promise<Record<string, ProviderGroup>> => {
+    try {
+      return await invoke<Record<string, ProviderGroup>>("get_groups", {
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("获取分组列表失败:", error);
+      return {};
+    }
+  },
+
+  // 创建分组
+  createGroup: async (
+    group: Omit<ProviderGroup, "id" | "createdAt" | "updatedAt">,
+    app?: AppType,
+  ): Promise<ProviderGroup> => {
+    try {
+      return await invoke<ProviderGroup>("create_group", {
+        group,
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("创建分组失败:", error);
+      throw error;
+    }
+  },
+
+  // 更新分组
+  updateGroup: async (
+    group: ProviderGroup,
+    app?: AppType,
+  ): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("update_group", {
+        group,
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("更新分组失败:", error);
+      throw error;
+    }
+  },
+
+  // 删除分组
+  deleteGroup: async (groupId: string, app?: AppType): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("delete_group", {
+        group_id: groupId,
+        groupId,
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("删除分组失败:", error);
+      throw error;
+    }
+  },
+
+  // 将供应商添加到分组
+  addProviderToGroup: async (
+    providerId: string,
+    groupId: string,
+    app?: AppType,
+  ): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("add_provider_to_group", {
+        provider_id: providerId,
+        providerId,
+        group_id: groupId,
+        groupId,
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("添加供应商到分组失败:", error);
+      throw error;
+    }
+  },
+
+  // 从分组中移除供应商
+  removeProviderFromGroup: async (
+    providerId: string,
+    app?: AppType,
+  ): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("remove_provider_from_group", {
+        provider_id: providerId,
+        providerId,
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("从分组移除供应商失败:", error);
+      throw error;
+    }
+  },
+
+  // 更新分组顺序
+  updateGroupsOrder: async (
+    groupIds: string[],
+    app?: AppType,
+  ): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("update_groups_order", {
+        group_ids: groupIds,
+        groupIds,
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("更新分组顺序失败:", error);
+      throw error;
+    }
+  },
+
+  // 设置全局排序配置
+  setGlobalSortConfig: async (
+    sortConfig: SortConfig,
+    app?: AppType,
+  ): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("set_global_sort_config", {
+        sort_config: sortConfig,
+        sortConfig,
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("设置全局排序配置失败:", error);
+      throw error;
+    }
+  },
+
+  // 设置分组排序配置
+  setGroupSortConfig: async (
+    groupId: string,
+    sortConfig: SortConfig,
+    app?: AppType,
+  ): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("set_group_sort_config", {
+        group_id: groupId,
+        groupId,
+        sort_config: sortConfig,
+        sortConfig,
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("设置分组排序配置失败:", error);
+      throw error;
+    }
   },
 };
 

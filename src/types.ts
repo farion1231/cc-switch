@@ -5,6 +5,39 @@ export type ProviderCategory =
   | "third_party" // 第三方供应商
   | "custom"; // 自定义
 
+// 排序维度
+export type SortField =
+  | "name"           // 名称 A-Z
+  | "id"             // 供应商ID
+  | "createdAt"      // 创建时间
+  | "lastUsed"       // 最近使用时间
+  | "priority"       // 优先级
+  | "contractExpiry" // 合同到期日
+  | "custom";        // 自定义顺序
+
+export type SortOrder = "asc" | "desc";
+
+// 排序配置
+export interface SortConfig {
+  field: SortField;
+  order: SortOrder;
+}
+
+// 供应商分组
+export interface ProviderGroup {
+  id: string;                    // 分组唯一ID
+  name: string;                  // 分组名称
+  color?: string;                // 分组颜色标记
+  icon?: string;                 // 分组图标
+  parentId?: string;             // 父分组ID（支持嵌套）
+  providerIds: string[];         // 包含的供应商ID列表
+  collapsed?: boolean;           // 是否折叠
+  sortConfig?: SortConfig;       // 分组内独立排序配置
+  order?: number;                // 分组显示顺序
+  createdAt: number;             // 创建时间
+  updatedAt: number;             // 更新时间
+}
+
 export interface Provider {
   id: string;
   name: string;
@@ -15,11 +48,22 @@ export interface Provider {
   createdAt?: number; // 添加时间戳（毫秒）
   // 可选：供应商元数据（仅存于 ~/.cc-switch/config.json，不写入 live 配置）
   meta?: ProviderMeta;
+
+  // 分组和排序相关字段
+  groupId?: string;              // 所属分组ID
+  priority?: number;             // 优先级评分 (0-100)
+  contractExpiry?: number;       // 合同到期时间戳
+  lastUsedAt?: number;           // 最后使用时间
+  tags?: string[];               // 标签
+  customOrder?: number;          // 自定义排序顺序
 }
 
 export interface AppConfig {
   providers: Record<string, Provider>;
   current: string;
+  groups?: Record<string, ProviderGroup>;     // 分组配置
+  globalSortConfig?: SortConfig;              // 全局排序配置
+  groupsOrder?: string[];                     // 分组显示顺序
 }
 
 // 自定义端点配置
@@ -53,6 +97,11 @@ export interface Settings {
   customEndpointsClaude?: Record<string, CustomEndpoint>;
   // Codex 自定义端点列表
   customEndpointsCodex?: Record<string, CustomEndpoint>;
+
+  // 分组和排序偏好设置
+  defaultSortConfig?: SortConfig;             // 默认排序规则
+  showUngroupedProviders?: boolean;           // 是否显示未分组供应商
+  rememberGroupCollapseState?: boolean;       // 记住分组折叠状态
 }
 
 // MCP 服务器定义（宽松：允许扩展字段）

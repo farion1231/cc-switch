@@ -27,8 +27,8 @@ fn read_json_value(path: &Path) -> Result<Value, String> {
     }
     let content =
         fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}: {}", path.display(), e))?;
-    let value: Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析 JSON 失败: {}: {}", path.display(), e))?;
+    let value: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("解析 JSON 失败: {}: {}", path.display(), e))?;
     Ok(value)
 }
 
@@ -37,7 +37,8 @@ fn write_json_value(path: &Path, value: &Value) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|e| format!("创建目录失败: {}: {}", parent.display(), e))?;
     }
-    let json = serde_json::to_string_pretty(value).map_err(|e| format!("序列化 JSON 失败: {}", e))?;
+    let json =
+        serde_json::to_string_pretty(value).map_err(|e| format!("序列化 JSON 失败: {}", e))?;
     atomic_write(path, json.as_bytes())
 }
 
@@ -63,8 +64,7 @@ pub fn read_mcp_json() -> Result<Option<String>, String> {
     if !path.exists() {
         return Ok(None);
     }
-    let content =
-        fs::read_to_string(&path).map_err(|e| format!("读取 MCP 配置失败: {}", e))?;
+    let content = fs::read_to_string(&path).map_err(|e| format!("读取 MCP 配置失败: {}", e))?;
     Ok(Some(content))
 }
 
@@ -100,21 +100,24 @@ pub fn upsert_mcp_server(id: &str, spec: Value) -> Result<bool, String> {
     }
 
     let path = user_config_path();
-    let mut root = if path.exists() { read_json_value(&path)? } else { serde_json::json!({}) };
+    let mut root = if path.exists() {
+        read_json_value(&path)?
+    } else {
+        serde_json::json!({})
+    };
 
     // 确保 mcpServers 对象存在
     {
-        let obj = root.as_object_mut().ok_or_else(|| "mcp.json 根必须是对象".to_string())?;
+        let obj = root
+            .as_object_mut()
+            .ok_or_else(|| "mcp.json 根必须是对象".to_string())?;
         if !obj.contains_key("mcpServers") {
             obj.insert("mcpServers".into(), serde_json::json!({}));
         }
     }
 
     let before = root.clone();
-    if let Some(servers) = root
-        .get_mut("mcpServers")
-        .and_then(|v| v.as_object_mut())
-    {
+    if let Some(servers) = root.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
         servers.insert(id.to_string(), spec);
     }
 
@@ -185,9 +188,15 @@ pub fn validate_command_in_path(cmd: &str) -> Result<bool, String> {
 
 /// 将给定的启用 MCP 服务器映射写入到用户级 ~/.claude.json 的 mcpServers 字段
 /// 仅覆盖 mcpServers，其他字段保持不变
-pub fn set_mcp_servers_map(servers: &std::collections::HashMap<String, Value>) -> Result<(), String> {
+pub fn set_mcp_servers_map(
+    servers: &std::collections::HashMap<String, Value>,
+) -> Result<(), String> {
     let path = user_config_path();
-    let mut root = if path.exists() { read_json_value(&path)? } else { serde_json::json!({}) };
+    let mut root = if path.exists() {
+        read_json_value(&path)?
+    } else {
+        serde_json::json!({})
+    };
 
     // 构建 mcpServers 对象：移除 UI 辅助字段（enabled/source），仅保留实际 MCP 规范
     let mut out: Map<String, Value> = Map::new();

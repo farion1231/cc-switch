@@ -66,17 +66,21 @@ pub fn write_codex_live_atomic(auth: &Value, config_text_opt: Option<&str>) -> R
 
     // 读取旧内容用于回滚
     let old_auth = if auth_path.exists() {
-        Some(fs::read(&auth_path)
-            .map_err(|e| format!("读取旧 auth.json 失败: {}: {}", auth_path.display(), e))?)
+        Some(
+            fs::read(&auth_path)
+                .map_err(|e| format!("读取旧 auth.json 失败: {}: {}", auth_path.display(), e))?,
+        )
     } else {
         None
     };
-    let _old_config = if config_path.exists() {
-        Some(fs::read(&config_path)
-            .map_err(|e| format!("读取旧 config.toml 失败: {}: {}", config_path.display(), e))?)
-    } else {
-        None
-    };
+    let _old_config =
+        if config_path.exists() {
+            Some(fs::read(&config_path).map_err(|e| {
+                format!("读取旧 config.toml 失败: {}: {}", config_path.display(), e)
+            })?)
+        } else {
+            None
+        };
 
     // 准备写入内容
     let cfg_text = match config_text_opt {

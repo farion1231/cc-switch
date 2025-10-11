@@ -4,6 +4,7 @@ mod claude_plugin;
 mod codex_config;
 mod commands;
 mod config;
+mod groups;
 mod import_export;
 mod mcp;
 mod migration;
@@ -454,6 +455,16 @@ pub fn run() {
             import_export::save_file_dialog,
             import_export::open_file_dialog,
             update_tray_menu,
+            // groups: 分组管理
+            groups::get_groups,
+            groups::create_group,
+            groups::update_group,
+            groups::delete_group,
+            groups::add_provider_to_group,
+            groups::remove_provider_from_group,
+            groups::update_groups_order,
+            groups::set_global_sort_config,
+            groups::set_group_sort_config,
         ]);
 
     let app = builder

@@ -118,11 +118,10 @@ pub fn read_json_file<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T, Stri
         return Err(format!("文件不存在: {}", path.display()));
     }
 
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("读取文件失败: {}: {}", path.display(), e))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}: {}", path.display(), e))?;
 
-    serde_json::from_str(&content)
-        .map_err(|e| format!("解析 JSON 失败: {}: {}", path.display(), e))
+    serde_json::from_str(&content).map_err(|e| format!("解析 JSON 失败: {}: {}", path.display(), e))
 }
 
 /// 写入 JSON 配置文件
@@ -192,14 +191,26 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
         if path.exists() {
             let _ = fs::remove_file(path);
         }
-        fs::rename(&tmp, path)
-            .map_err(|e| format!("原子替换失败: {} -> {}: {}", tmp.display(), path.display(), e))?;
+        fs::rename(&tmp, path).map_err(|e| {
+            format!(
+                "原子替换失败: {} -> {}: {}",
+                tmp.display(),
+                path.display(),
+                e
+            )
+        })?;
     }
 
     #[cfg(not(windows))]
     {
-        fs::rename(&tmp, path)
-            .map_err(|e| format!("原子替换失败: {} -> {}: {}", tmp.display(), path.display(), e))?;
+        fs::rename(&tmp, path).map_err(|e| {
+            format!(
+                "原子替换失败: {} -> {}: {}",
+                tmp.display(),
+                path.display(),
+                e
+            )
+        })?;
     }
     Ok(())
 }

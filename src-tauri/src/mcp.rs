@@ -12,7 +12,7 @@ fn validate_mcp_spec(spec: &Value) -> Result<(), String> {
     // 支持两种：stdio/http；若缺省 type 则按 stdio 处理（与社区常见 .mcp.json 一致）
     let is_stdio = t_opt.map(|t| t == "stdio").unwrap_or(true);
     let is_http = t_opt.map(|t| t == "http").unwrap_or(false);
-    
+
     if !(is_stdio || is_http) {
         return Err("MCP 服务器 type 必须是 'stdio' 或 'http'（或省略表示 stdio）".into());
     }
@@ -74,7 +74,11 @@ pub fn upsert_in_config_for(
     Ok(before.is_none())
 }
 
-pub fn delete_in_config_for(config: &mut MultiAppConfig, app: &AppType, id: &str) -> Result<bool, String> {
+pub fn delete_in_config_for(
+    config: &mut MultiAppConfig,
+    app: &AppType,
+    id: &str,
+) -> Result<bool, String> {
     if id.trim().is_empty() {
         return Err("MCP 服务器 ID 不能为空".into());
     }
@@ -94,7 +98,10 @@ pub fn set_enabled_and_sync_for(
     }
     if let Some(spec) = config.mcp_for_mut(app).servers.get_mut(id) {
         // 写入 enabled 字段
-        let mut obj = spec.as_object().cloned().ok_or_else(|| "MCP 服务器定义必须为 JSON 对象".to_string())?;
+        let mut obj = spec
+            .as_object()
+            .cloned()
+            .ok_or_else(|| "MCP 服务器定义必须为 JSON 对象".to_string())?;
         obj.insert("enabled".into(), json!(enabled));
         *spec = Value::Object(obj);
     } else {
@@ -127,8 +134,11 @@ pub fn sync_enabled_to_claude(config: &MultiAppConfig) -> Result<(), String> {
 pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, String> {
     let text_opt = crate::claude_mcp::read_mcp_json()?;
     let Some(text) = text_opt else { return Ok(0) };
-    let v: Value = serde_json::from_str(&text).map_err(|e| format!("解析 ~/.claude.json 失败: {}", e))?;
-    let Some(map) = v.get("mcpServers").and_then(|x| x.as_object()) else { return Ok(0) };
+    let v: Value =
+        serde_json::from_str(&text).map_err(|e| format!("解析 ~/.claude.json 失败: {}", e))?;
+    let Some(map) = v.get("mcpServers").and_then(|x| x.as_object()) else {
+        return Ok(0);
+    };
 
     let mut changed = 0usize;
     for (id, spec) in map.iter() {
@@ -136,10 +146,16 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, String> 
         validate_mcp_spec(spec)?;
 
         // 规范化为对象
-        let mut obj = spec.as_object().cloned().ok_or_else(|| "MCP 服务器定义必须为 JSON 对象".to_string())?;
+        let mut obj = spec
+            .as_object()
+            .cloned()
+            .ok_or_else(|| "MCP 服务器定义必须为 JSON 对象".to_string())?;
         obj.insert("enabled".into(), json!(true));
 
-        let entry = config.mcp_for_mut(&AppType::Claude).servers.entry(id.clone());
+        let entry = config
+            .mcp_for_mut(&AppType::Claude)
+            .servers
+            .entry(id.clone());
         use std::collections::hash_map::Entry;
         match entry {
             Entry::Vacant(vac) => {
@@ -149,7 +165,10 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, String> 
             Entry::Occupied(mut occ) => {
                 // 只确保 enabled=true；不覆盖其他字段
                 if let Some(mut existing) = occ.get().as_object().cloned() {
-                    let prev = existing.get("enabled").and_then(|b| b.as_bool()).unwrap_or(false);
+                    let prev = existing
+                        .get("enabled")
+                        .and_then(|b| b.as_bool())
+                        .unwrap_or(false);
                     if !prev {
                         existing.insert("enabled".into(), json!(true));
                         occ.insert(Value::Object(existing));
@@ -171,8 +190,8 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, String> {
         return Ok(0);
     }
 
-    let root: toml::Table = toml::from_str(&text)
-        .map_err(|e| format!("解析 ~/.codex/config.toml 失败: {}", e))?;
+    let root: toml::Table =
+        toml::from_str(&text).map_err(|e| format!("解析 ~/.codex/config.toml 失败: {}", e))?;
 
     let mut changed_total = 0usize;
 
@@ -180,7 +199,9 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, String> {
     let mut import_servers_tbl = |servers_tbl: &toml::value::Table| {
         let mut changed = 0usize;
         for (id, entry_val) in servers_tbl.iter() {
-            let Some(entry_tbl) = entry_val.as_table() else { continue };
+            let Some(entry_tbl) = entry_val.as_table() else {
+                continue;
+            };
 
             // type 缺省为 stdio
             let typ = entry_tbl
@@ -336,10 +357,7 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), String> {
             let mut s = TomlTable::new();
 
             // 类型（缺省视为 stdio）
-            let typ = spec
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("stdio");
+            let typ = spec.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
             s.insert("type".into(), TomlValue::String(typ.to_string()));
 
             match typ {
