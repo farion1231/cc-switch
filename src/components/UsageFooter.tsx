@@ -44,8 +44,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
 
   useEffect(() => {
     if (usageEnabled) {
-      // 生成当前参数的唯一标识
-      const currentParams = `${providerId}-${appType}`;
+      // 生成当前参数的唯一标识(包含 usageEnabled 状态)
+      const currentParams = `${providerId}-${appType}-${usageEnabled}`;
 
       // 只有参数真正变化时才发起请求
       if (currentParams !== lastFetchParamsRef.current) {

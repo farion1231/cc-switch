@@ -356,6 +356,7 @@ function App() {
               onEdit={setEditingProviderId}
               appType={activeApp}
               onNotify={showNotification}
+              onProvidersUpdated={loadProviders}
             />
           </div>
         </div>

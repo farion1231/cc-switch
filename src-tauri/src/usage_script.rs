@@ -16,9 +16,6 @@ pub async fn execute_usage_script(
         .replace("{{apiKey}}", api_key)
         .replace("{{baseUrl}}", base_url);
 
-    log::info!("========== 执行用量查询脚本 ==========");
-    log::debug!("脚本内容:\n{}", replaced);
-
     // 2. 在独立作用域中提取 request 配置（确保 Runtime/Context 在 await 前释放）
     let request_config = {
         let runtime = Runtime::new().map_err(|e| format!("创建 JS 运行时失败: {}", e))?;
@@ -51,13 +48,8 @@ pub async fn execute_usage_script(
     let request: RequestConfig = serde_json::from_str(&request_config)
         .map_err(|e| format!("request 配置格式错误: {}", e))?;
 
-    log::info!("请求 URL: {}", request.url);
-    log::info!("请求 Method: {}", request.method);
-
     // 4. 发送 HTTP 请求
     let response_data = send_http_request(&request, timeout_secs).await?;
-
-    log::info!("收到响应，开始执行 extractor");
 
     // 5. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
     let result: Value = {
@@ -98,9 +90,6 @@ pub async fn execute_usage_script(
         })?
     }; // Runtime 和 Context 在这里被 drop
 
-    log::info!("脚本执行成功: {:?}", result);
-    log::info!("===================================");
-
     // 6. 验证返回值格式
     validate_result(&result)?;
 
@@ -132,29 +121,13 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
 
     let mut req = client.request(method.clone(), &config.url);
 
-    // 打印请求日志
-    log::info!("Headers:");
+    // 添加请求头
     for (k, v) in &config.headers {
-        // 脱敏处理
-        let value_str = if k.to_lowercase().contains("auth")
-            || k.to_lowercase().contains("token")
-            || k.to_lowercase().contains("key")
-        {
-            if v.len() > 8 {
-                format!("{}...{}", &v[..4], &v[v.len() - 4..])
-            } else {
-                "***".to_string()
-            }
-        } else {
-            v.clone()
-        };
-        log::info!("  {}: {}", k, value_str);
-
         req = req.header(k, v);
     }
 
+    // 添加请求体
     if let Some(body) = &config.body {
-        log::info!("Body: {}", body);
         req = req.body(body.clone());
     }
 

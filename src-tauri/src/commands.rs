@@ -246,7 +246,7 @@ pub async fn update_provider(
                     }
                     updated.meta = Some(crate::provider::ProviderMeta {
                         custom_endpoints: merged_map,
-                        usage_script: old_meta.usage_script.clone(),
+                        usage_script: new_meta.usage_script.clone(),
                     });
                 }
                 // 旧 meta 不存在：使用入参（可能为 None）
@@ -869,8 +869,6 @@ pub async fn query_provider_usage(
     };
 
     // 5. 执行脚本
-    log::info!("执行用量查询脚本，timeout: {}s", timeout);
-
     let result = crate::usage_script::execute_usage_script(
         &usage_script_code,
         &api_key,
@@ -894,17 +892,6 @@ pub async fn query_provider_usage(
                 vec![single]
             };
 
-            log::info!("用量查询成功: 返回 {} 个套餐数据", usage_list.len());
-            for (idx, item) in usage_list.iter().enumerate() {
-                log::info!(
-                    "  套餐[{}]: {} - 剩余 {} {}",
-                    idx,
-                    item.plan_name.as_deref().unwrap_or("未命名"),
-                    item.remaining.map(|r| r.to_string()).unwrap_or_else(|| "N/A".to_string()),
-                    item.unit.as_deref().unwrap_or("")
-                );
-            }
-
             Ok(UsageResult {
                 success: true,
                 data: Some(usage_list),
@@ -912,7 +899,6 @@ pub async fn query_provider_usage(
             })
         }
         Err(e) => {
-            log::warn!("用量查询失败: {}", e);
             Ok(UsageResult {
                 success: false,
                 data: None,

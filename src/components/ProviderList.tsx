@@ -20,6 +20,7 @@ interface ProviderListProps {
     type: "success" | "error",
     duration?: number,
   ) => void;
+  onProvidersUpdated?: () => Promise<void>;
 }
 
 const ProviderList: React.FC<ProviderListProps> = ({
@@ -30,6 +31,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
   onEdit,
   appType,
   onNotify,
+  onProvidersUpdated,
 }) => {
   const { t, i18n } = useTranslation();
   const [usageModalProviderId, setUsageModalProviderId] = useState<string | null>(null);
@@ -82,8 +84,10 @@ const ProviderList: React.FC<ProviderListProps> = ({
       };
       await window.api.updateProvider(updatedProvider, appType);
       onNotify?.("用量查询配置已保存", "success", 2000);
-      // 刷新页面以重新加载供应商列表
-      window.location.reload();
+      // 重新加载供应商列表,触发 UsageFooter 的 useEffect
+      if (onProvidersUpdated) {
+        await onProvidersUpdated();
+      }
     } catch (error) {
       console.error("保存用量配置失败:", error);
       onNotify?.("保存失败", "error");
