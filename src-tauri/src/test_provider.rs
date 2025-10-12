@@ -956,7 +956,61 @@ async fn test_claude(provider: &Provider) -> ProviderTestResult {
         Err(err) => return error_result(err, None, None),
     };
 
-    // 尝试多个可能的端点进行测试
+    let start = Instant::now();
+    
+    // 优先使用实际的 API 调用进行测试（更准确）
+    // 尝试发送一个最小的 messages 请求
+    let messages_url = format!("{}/v1/messages", base_url);
+    
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-api-key",
+        HeaderValue::from_str(&api_key).unwrap_or_else(|_| HeaderValue::from_static("")),
+    );
+    headers.insert(
+        "anthropic-version",
+        HeaderValue::from_static(ANTHROPIC_VERSION),
+    );
+    headers.insert(
+        "content-type",
+        HeaderValue::from_static("application/json"),
+    );
+    
+    // 构建一个最小的测试请求体
+    let test_body = serde_json::json!({
+        "model": "claude-3-5-sonnet-20241022",
+        "max_tokens": 1,
+        "messages": [{
+            "role": "user",
+            "content": "hi"
+        }]
+    });
+    
+    let request_builder = client
+        .post(&messages_url)
+        .headers(headers.clone())
+        .json(&test_body);
+    
+    // 首先尝试实际 API 调用
+    match retry_request(&client, request_builder, 1).await {
+        Ok(response) => {
+            let status = response.status();
+            let latency = start.elapsed().as_millis();
+            
+            // 任何非 404 的响应都说明 API 是可达的
+            if status.is_success() || status.as_u16() == 400 || status.as_u16() == 401 || status.as_u16() == 403 {
+                // 400: 请求格式问题（但 API 可达）
+                // 401/403: 认证问题（但 API 可达）
+                // 成功: API 完全可用
+                return success_result(status, latency);
+            }
+        }
+        Err(_) => {
+            // 如果 POST 请求失败，回退到 HEAD 请求测试
+        }
+    }
+    
+    // 回退方案: 尝试多个可能的端点进行测试
     let test_endpoints = vec![
         format!("{}/v1/models", base_url),      // 优先测试 models 端点
         format!("{}/v1/messages", base_url),    // 然后是 messages 端点
@@ -964,7 +1018,6 @@ async fn test_claude(provider: &Provider) -> ProviderTestResult {
         format!("{}/", base_url),               // 根路径
     ];
 
-    let start = Instant::now();
     let auth_variants = build_auto_auth_variants(&api_key, None);
     
     let mut best_response: Option<(reqwest::Response, u16, String)> = None;
