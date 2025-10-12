@@ -109,6 +109,9 @@
     "openFolder": "Open Folder",
     "configDirectoryOverride": "Configuration Directory Override (Advanced)",
     "configDirectoryDescription": "When using Claude Code or Codex in environments like WSL, you can manually specify the configuration directory in WSL to keep provider data consistent with the main environment.",
+    "appConfigDir": "CC-Switch Configuration Directory",
+    "appConfigDirDescription": "Customize the storage location for CC-Switch configuration files (config.json, etc.)",
+    "browsePlaceholderApp": "e.g., C:\\Users\\Administrator\\.cc-switch",
     "claudeConfigDir": "Claude Code Configuration Directory",
     "codexConfigDir": "Codex Configuration Directory",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
@@ -123,7 +126,12 @@
     "releaseNotes": "Release Notes",
     "viewReleaseNotes": "View release notes for this version",
     "viewCurrentReleaseNotes": "View current version release notes",
-    "exportFailedError": "Export config failed:"
+    "exportFailedError": "Export config failed:",
+    "restartRequired": "Restart Required",
+    "restartRequiredMessage": "Modifying the CC-Switch configuration directory requires restarting the application to take effect. Restart now?",
+    "restartNow": "Restart Now",
+    "restartLater": "Restart Later",
+    "devModeRestartHint": "Dev Mode: Configuration saved. Please manually restart the application for changes to take effect"
   },
   "apps": {
     "claude": "Claude Code",

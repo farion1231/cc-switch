@@ -28,6 +28,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-store = "2"
 dirs = "5.0"
 toml = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

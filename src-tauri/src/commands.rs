@@ -1011,6 +1011,13 @@ pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<boo
     Ok(true)
 }
 
+/// 重启应用程序（当 app_config_dir 变更后使用）
+#[tauri::command]
+pub async fn restart_app(app: tauri::AppHandle) -> Result<bool, String> {
+    // 使用 tauri-plugin-process 重启应用
+    app.restart();
+}
+
 /// 检查更新
 #[tauri::command]
 pub async fn check_for_updates(handle: tauri::AppHandle) -> Result<bool, String> {
@@ -1257,4 +1264,21 @@ pub async fn update_endpoint_last_used(
     drop(cfg_guard);
     state.save()?;
     Ok(())
+}
+
+/// 获取 app_config_dir 覆盖配置 (从 Store)
+#[tauri::command]
+pub async fn get_app_config_dir_override(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    Ok(crate::app_store::get_app_config_dir_from_store(&app)
+        .map(|p| p.to_string_lossy().to_string()))
+}
+
+/// 设置 app_config_dir 覆盖配置 (到 Store)
+#[tauri::command]
+pub async fn set_app_config_dir_override(
+    app: tauri::AppHandle,
+    path: Option<String>,
+) -> Result<bool, String> {
+    crate::app_store::set_app_config_dir_to_store(&app, path.as_deref())?;
+    Ok(true)
 }

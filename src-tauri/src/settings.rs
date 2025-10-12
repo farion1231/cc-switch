@@ -64,7 +64,12 @@ impl Default for AppSettings {
 
 impl AppSettings {
     fn settings_path() -> PathBuf {
-        crate::config::get_app_config_dir().join("settings.json")
+        // settings.json 必须使用固定路径，不能被 app_config_dir 覆盖
+        // 否则会造成循环依赖：读取 settings 需要知道路径，但路径在 settings 中
+        dirs::home_dir()
+            .expect("无法获取用户主目录")
+            .join(".cc-switch")
+            .join("settings.json")
     }
 
     fn normalize_paths(&mut self) {

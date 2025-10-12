@@ -1,4 +1,5 @@
 mod app_config;
+mod app_store;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
@@ -304,7 +305,10 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
+            // 设置全局 AppHandle 以供 Store 使用
+            app_store::set_app_handle(app.handle().clone());
             // 注册 Updater 插件（桌面端）
             #[cfg(desktop)]
             {
@@ -357,6 +361,11 @@ pub fn run() {
 
             // 初始化应用状态（仅创建一次，并在本函数末尾注入 manage）
             let app_state = AppState::new();
+
+            // 迁移旧的 app_config_dir 配置到 Store
+            if let Err(e) = app_store::migrate_app_config_dir_from_settings(&app.handle()) {
+                log::warn!("迁移 app_config_dir 失败: {}", e);
+            }
 
             // 首次启动迁移：扫描副本文件，合并到 config.json，并归档副本；旧 config.json 先归档
             {
@@ -417,6 +426,7 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::restart_app,
             commands::check_for_updates,
             commands::is_portable_mode,
             commands::get_claude_plugin_status,
@@ -444,6 +454,9 @@ pub fn run() {
             commands::add_custom_endpoint,
             commands::remove_custom_endpoint,
             commands::update_endpoint_last_used,
+            // app_config_dir override via Store
+            commands::get_app_config_dir_override,
+            commands::set_app_config_dir_override,
             // theirs: config import/export and dialogs
             import_export::export_config_to_file,
             import_export::import_config_from_file,

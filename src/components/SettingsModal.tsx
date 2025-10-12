@@ -61,6 +61,10 @@ export default function SettingsModal({
     codexConfigDir: undefined,
     language: persistedLanguage,
   });
+  // appConfigDir 现在从 Store 独立管理
+  const [appConfigDir, setAppConfigDir] = useState<string | undefined>(
+    undefined,
+  );
   const [initialLanguage, setInitialLanguage] = useState<"zh" | "en">(
     persistedLanguage,
   );
@@ -69,9 +73,14 @@ export default function SettingsModal({
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [showUpToDate, setShowUpToDate] = useState(false);
+  const [resolvedAppConfigDir, setResolvedAppConfigDir] = useState<string>("");
   const [resolvedClaudeDir, setResolvedClaudeDir] = useState<string>("");
   const [resolvedCodexDir, setResolvedCodexDir] = useState<string>("");
   const [isPortable, setIsPortable] = useState(false);
+  const [initialAppConfigDir, setInitialAppConfigDir] = useState<
+    string | undefined
+  >(undefined);
+  const [showRestartDialog, setShowRestartDialog] = useState(false);
   const { hasUpdate, updateInfo, updateHandle, checkUpdate, resetDismiss } =
     useUpdate();
 
@@ -86,6 +95,7 @@ export default function SettingsModal({
 
   useEffect(() => {
     loadSettings();
+    loadAppConfigDirFromStore(); // 从 Store 加载 appConfigDir
     loadConfigPath();
     loadVersion();
     loadResolvedDirs();
@@ -100,6 +110,24 @@ export default function SettingsModal({
       console.error(t("console.getVersionFailed"), error);
       // 失败时不硬编码版本号，显示为未知
       setVersion(t("common.unknown"));
+    }
+  };
+
+  // 从 Tauri Store 加载 appConfigDir
+  const loadAppConfigDirFromStore = async () => {
+    try {
+      const storeValue = await (window as any).api.getAppConfigDirOverride();
+      if (storeValue) {
+        setAppConfigDir(storeValue);
+        setInitialAppConfigDir(storeValue);
+        setResolvedAppConfigDir(storeValue);
+      } else {
+        // 使用默认值
+        const defaultDir = await computeDefaultAppConfigDir();
+        setResolvedAppConfigDir(defaultDir);
+      }
+    } catch (error) {
+      console.error("从 Store 加载 appConfigDir 失败:", error);
     }
   };
 
@@ -195,7 +223,17 @@ export default function SettingsModal({
             : undefined,
         language: selectedLanguage,
       };
+
+      // 保存 settings.json (不包含 appConfigDir)
       await window.api.saveSettings(payload);
+
+      // 单独保存 appConfigDir 到 Store
+      const normalizedAppConfigDir =
+        appConfigDir && appConfigDir.trim() !== ""
+          ? appConfigDir.trim()
+          : null;
+      await (window as any).api.setAppConfigDirOverride(normalizedAppConfigDir);
+
       // 立即生效：根据开关无条件写入/移除 ~/.claude/config.json
       try {
         if (payload.enableClaudePluginIntegration) {
@@ -206,7 +244,14 @@ export default function SettingsModal({
       } catch (e) {
         console.warn("[Settings] Apply Claude plugin config on save failed", e);
       }
+
+      // 检测 appConfigDir 是否真正发生变化
+      const appConfigDirChanged =
+        (normalizedAppConfigDir || undefined) !==
+        (initialAppConfigDir || undefined);
+
       setSettings(payload);
+      setInitialAppConfigDir(normalizedAppConfigDir ?? undefined);
       try {
         window.localStorage.setItem("language", selectedLanguage);
       } catch (error) {
@@ -216,10 +261,45 @@ export default function SettingsModal({
       if (i18n.language !== selectedLanguage) {
         void i18n.changeLanguage(selectedLanguage);
       }
-      onClose();
+
+      // 如果修改了 appConfigDir,需要提示用户重启应用程序
+      if (appConfigDirChanged) {
+        setShowRestartDialog(true);
+      } else {
+        onClose();
+      }
     } catch (error) {
       console.error(t("console.saveSettingsFailed"), error);
     }
+  };
+
+  const handleRestartNow = async () => {
+    // 开发模式下不真正重启,只提示
+    if (import.meta.env.DEV) {
+      onNotify?.(
+        t("settings.devModeRestartHint"),
+        "success",
+        5000,
+      );
+      setShowRestartDialog(false);
+      onClose();
+      return;
+    }
+
+    // 生产模式下真正重启应用
+    try {
+      await window.api.restartApp();
+    } catch (e) {
+      console.warn("[Settings] Restart app failed", e);
+      // 如果重启失败，仍然关闭设置窗口
+      setShowRestartDialog(false);
+      onClose();
+    }
+  };
+
+  const handleRestartLater = () => {
+    setShowRestartDialog(false);
+    onClose();
   };
 
   const handleLanguageChange = (lang: "zh" | "en") => {
@@ -298,6 +378,28 @@ export default function SettingsModal({
     }
   };
 
+  const handleBrowseAppConfigDir = async () => {
+    try {
+      const currentResolved = appConfigDir ?? resolvedAppConfigDir;
+      const selected = await window.api.selectConfigDirectory(currentResolved);
+
+      if (!selected) {
+        return;
+      }
+
+      const sanitized = selected.trim();
+
+      if (sanitized === "") {
+        return;
+      }
+
+      setAppConfigDir(sanitized);
+      setResolvedAppConfigDir(sanitized);
+    } catch (error) {
+      console.error(t("console.selectConfigDirFailed"), error);
+    }
+  };
+
   const handleBrowseConfigDir = async (app: AppType) => {
     try {
       const currentResolved =
@@ -337,6 +439,24 @@ export default function SettingsModal({
     } catch (error) {
       console.error(t("console.getDefaultConfigDirFailed"), error);
       return "";
+    }
+  };
+
+  const computeDefaultAppConfigDir = async () => {
+    try {
+      const home = await homeDir();
+      return await join(home, ".cc-switch");
+    } catch (error) {
+      console.error(t("console.getDefaultConfigDirFailed"), error);
+      return "";
+    }
+  };
+
+  const handleResetAppConfigDir = async () => {
+    setAppConfigDir(undefined);
+    const defaultDir = await computeDefaultAppConfigDir();
+    if (defaultDir) {
+      setResolvedAppConfigDir(defaultDir);
     }
   };
 
@@ -607,6 +727,40 @@ export default function SettingsModal({
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  {t("settings.appConfigDir")}
+                </label>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">
+                  {t("settings.appConfigDirDescription")}
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={appConfigDir ?? resolvedAppConfigDir ?? ""}
+                    onChange={(e) => setAppConfigDir(e.target.value)}
+                    placeholder={t("settings.browsePlaceholderApp")}
+                    className="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleBrowseAppConfigDir}
+                    className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                    title={t("settings.browseDirectory")}
+                  >
+                    <FolderSearch size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetAppConfigDir}
+                    className="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                    title={t("settings.resetDefault")}
+                  >
+                    <Undo2 size={16} />
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
                   {t("settings.claudeConfigDir")}
                 </label>
                 <div className="flex gap-2">
@@ -853,6 +1007,39 @@ export default function SettingsModal({
               );
           }}
         />
+      )}
+
+      {/* Restart Confirmation Dialog */}
+      {showRestartDialog && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center">
+          <div
+            className={`absolute inset-0 bg-black/50 dark:bg-black/70${
+              isLinux() ? "" : " backdrop-blur-sm"
+            }`}
+          />
+          <div className="relative bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-[400px] p-6">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">
+              {t("settings.restartRequired")}
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+              {t("settings.restartRequiredMessage")}
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={handleRestartLater}
+                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+              >
+                {t("settings.restartLater")}
+              </button>
+              <button
+                onClick={handleRestartNow}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 rounded-lg transition-colors"
+              >
+                {t("settings.restartNow")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

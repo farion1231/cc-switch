@@ -58,6 +58,7 @@ declare global {
       ) => Promise<UnlistenFn>;
       getSettings: () => Promise<Settings>;
       saveSettings: (settings: Settings) => Promise<boolean>;
+      restartApp: () => Promise<boolean>;
       checkForUpdates: () => Promise<void>;
       isPortable: () => Promise<boolean>;
       getAppConfigPath: () => Promise<string>;

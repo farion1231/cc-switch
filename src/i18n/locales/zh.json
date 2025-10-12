@@ -109,6 +109,9 @@
     "openFolder": "打开文件夹",
     "configDirectoryOverride": "配置目录覆盖（高级）",
     "configDirectoryDescription": "在 WSL 等环境使用 Claude Code 或 Codex 的时候，可手动指定 WSL 里的配置目录，供应商数据与主环境保持一致。",
+    "appConfigDir": "CC-Switch 配置目录",
+    "appConfigDirDescription": "自定义 CC-Switch 的配置存储位置（config.json 等文件）",
+    "browsePlaceholderApp": "例如：C:\\Users\\Administrator\\.cc-switch",
     "claudeConfigDir": "Claude Code 配置目录",
     "codexConfigDir": "Codex 配置目录",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
@@ -123,7 +126,12 @@
     "releaseNotes": "更新日志",
     "viewReleaseNotes": "查看该版本更新日志",
     "viewCurrentReleaseNotes": "查看当前版本更新日志",
-    "exportFailedError": "导出配置失败:"
+    "exportFailedError": "导出配置失败:",
+    "restartRequired": "需要重启应用",
+    "restartRequiredMessage": "修改 CC-Switch 配置目录后需要重启应用才能生效，是否立即重启？",
+    "restartNow": "立即重启",
+    "restartLater": "稍后重启",
+    "devModeRestartHint": "开发模式：配置已保存，请手动重启应用以使新配置生效"
   },
   "apps": {
     "claude": "Claude Code",

@@ -209,6 +209,16 @@ export const tauriAPI = {
     }
   },
 
+  // 重启应用程序
+  restartApp: async (): Promise<boolean> => {
+    try {
+      return await invoke("restart_app");
+    } catch (error) {
+      console.error("重启应用失败:", error);
+      return false;
+    }
+  },
+
   // 检查更新
   checkForUpdates: async (): Promise<void> => {
     try {
@@ -629,6 +639,26 @@ export const tauriAPI = {
       }
     });
     return unlisten;
+  },
+
+  // 获取 app_config_dir 覆盖配置(从 Store)
+  getAppConfigDirOverride: async (): Promise<string | null> => {
+    try {
+      return await invoke<string | null>("get_app_config_dir_override");
+    } catch (error) {
+      console.error("获取 app_config_dir 覆盖配置失败:", error);
+      return null;
+    }
+  },
+
+  // 设置 app_config_dir 覆盖配置(到 Store)
+  setAppConfigDirOverride: async (path: string | null): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("set_app_config_dir_override", { path });
+    } catch (error) {
+      console.error("设置 app_config_dir 覆盖配置失败:", error);
+      throw error;
+    }
   },
 };
 
