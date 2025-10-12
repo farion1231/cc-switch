@@ -82,6 +82,13 @@
       "success": "成功删除 {{count}} 个供应商",
       "partialSuccess": "成功删除 {{success}} 个，失败 {{error}} 个",
       "failed": "批量删除失败"
+    },
+    "search": {
+      "placeholder": "搜索供应商名称或API地址...",
+      "noResults": "未找到匹配的供应商",
+      "noResultsDescription": "没有供应商匹配",
+      "clearSearch": "清除搜索",
+      "resultsCount": "找到 {{count}} 个匹配的供应商"
     }
   },
   "providerTest": {

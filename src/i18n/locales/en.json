@@ -82,6 +82,13 @@
       "success": "Successfully deleted {{count}} providers",
       "partialSuccess": "Successfully deleted {{success}}, failed {{error}}",
       "failed": "Batch delete failed"
+    },
+    "search": {
+      "placeholder": "Search provider name or API address...",
+      "noResults": "No matching providers found",
+      "noResultsDescription": "No providers match",
+      "clearSearch": "Clear search",
+      "resultsCount": "Found {{count}} matching providers"
     }
   },
   "providerTest": {

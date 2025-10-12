@@ -17,6 +17,15 @@ import {
   CheckSquare,
   MoreHorizontal,
   Bug,
+  Send,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  CheckCheck,
+  ArrowUpDown,
+  Clock,
+  Search,
+  X,
 } from "lucide-react";
 import { buttonStyles, cardStyles, badgeStyles, cn } from "../lib/styles";
 import { AppType } from "../lib/tauri-api";
@@ -67,6 +76,15 @@ const ProviderList: React.FC<ProviderListProps> = ({
   const [selectedProviders, setSelectedProviders] = useState<Set<string>>(new Set());
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState<Record<string, boolean>>({});
+  const [collapsedDiagnostics, setCollapsedDiagnostics] = useState<Record<string, boolean>>({});
+  const [showFullError, setShowFullError] = useState<Record<string, boolean>>({});
+  const [testMessage, setTestMessage] = useState<Record<string, string>>({});
+  const [testResults, setTestResults] = useState<Record<string, { loading: boolean; response?: string }>>({});
+  const [copiedResponse, setCopiedResponse] = useState<Record<string, boolean>>({});
+  // 排序模式: 'default' | 'latency' | 'error'
+  const [sortMode, setSortMode] = useState<'default' | 'latency' | 'error'>('default');
+  // 搜索关键词
+  const [searchKeyword, setSearchKeyword] = useState('');
 
   const summarizeResultDetail = (
     result: ProviderTestResult,
@@ -77,127 +95,31 @@ const ProviderList: React.FC<ProviderListProps> = ({
 
     const detail = result.detail?.trim();
     if (detail) {
-      // 检查是否为HTML响应（如403错误页面）
+      // 如果是HTML响应，提取title或提示是HTML页面
       if (detail.startsWith("<!DOCTYPE") || detail.startsWith("<html")) {
-        // 尝试从HTML中提取title或错误信息
         const titleMatch = detail.match(/<title[^>]*>([^<]+)<\/title>/i);
         if (titleMatch && titleMatch[1]) {
-          const title = titleMatch[1].trim();
-          if (title.includes("403") || title.includes("Forbidden")) {
-            return "访问被拒绝 (403 Forbidden) - 服务器拒绝了请求";
-          }
-          return title;
+          return titleMatch[1].trim();
         }
-
-        // 检查常见的HTTP错误状态码
-        if (detail.includes("403") || detail.includes("Forbidden")) {
-          return "访问被拒绝 (403 Forbidden) - 服务器拒绝了请求";
-        }
-        if (detail.includes("401") || detail.includes("Unauthorized")) {
-          return "身份验证失败 (401 Unauthorized) - API密钥无效或缺失";
-        }
-        if (detail.includes("404") || detail.includes("Not Found")) {
-          return "端点不存在 (404 Not Found) - API地址不正确";
-        }
-        if (detail.includes("429") || detail.includes("Too Many Requests")) {
-          return "请求频率限制 (429) - 请求过于频繁，请稍后重试";
-        }
-        if (detail.includes("500") || detail.includes("Internal Server Error")) {
-          return "服务器内部错误 (500) - 服务端出现问题";
-        }
-
-        return "服务器返回HTML错误页面";
+        return "[服务器返回HTML页面，非JSON响应]";
       }
 
+      // 尝试格式化JSON，让其更易读
       try {
         const parsed = JSON.parse(detail);
-        if (typeof parsed === "string") {
-          return parsed.trim() || undefined;
-        }
-        if (parsed && typeof parsed === "object") {
-          // 处理 {"Error": "upstream_error", "details": "..."} 格式
-          if (typeof parsed.Error === "string") {
-            let errorMsg = parsed.Error.trim();
-            // 处理嵌套的 details 字段
-            if (typeof parsed.details === "string") {
-              try {
-                const nestedDetails = JSON.parse(parsed.details);
-                if (nestedDetails && typeof nestedDetails === "object") {
-                  if (typeof nestedDetails.detail === "string") {
-                    errorMsg = `${errorMsg}: ${nestedDetails.detail.trim()}`;
-                  } else if (typeof nestedDetails.title === "string") {
-                    errorMsg = `${errorMsg}: ${nestedDetails.title.trim()}`;
-                  }
-                }
-              } catch {
-                // 如果解析失败，直接使用原始字符串
-                errorMsg = `${errorMsg}: ${parsed.details.trim()}`;
-              }
-            }
-            return errorMsg || undefined;
-          }
-          // 标准错误格式
-          if (typeof parsed.error === "string") {
-            return parsed.error.trim() || undefined;
-          }
-          if (
-            parsed.error &&
-            typeof parsed.error === "object" &&
-            typeof parsed.error.message === "string"
-          ) {
-            return parsed.error.message.trim() || undefined;
-          }
-          if (typeof parsed.message === "string") {
-            return parsed.message.trim() || undefined;
-          }
-          if (typeof parsed.title === "string") {
-            return parsed.title.trim() || undefined;
-          }
-        }
+        // 返回格式化后的JSON字符串，保留原始结构
+        return JSON.stringify(parsed, null, 2);
       } catch {
-        // detail is not JSON; use raw string below
-      }
-      return detail;
-    }
-
-    // 如果没有detail，根据status码提供具体的错误信息
-    if (result.status) {
-      const statusCode = result.status;
-      switch (statusCode) {
-        case 403:
-          return "访问被拒绝 (403 Forbidden) - 服务器拒绝了请求，可能需要检查API密钥或网络访问权限";
-        case 401:
-          return "身份验证失败 (401 Unauthorized) - API密钥无效或缺失";
-        case 404:
-          return "端点不存在 (404 Not Found) - API地址不正确";
-        case 429:
-          return "请求频率限制 (429) - 请求过于频繁，请稍后重试";
-        case 500:
-          return "服务器内部错误 (500) - 服务端出现问题";
-        case 502:
-          return "网关错误 (502) - 服务器网关问题";
-        case 503:
-          return "服务不可用 (503) - 服务器暂时不可用";
-        default:
-          if (statusCode >= 400 && statusCode < 500) {
-            return `客户端错误 (${statusCode}) - 请求问题`;
-          }
-          if (statusCode >= 500) {
-            return `服务器错误 (${statusCode}) - 服务端问题`;
-          }
+        // 如果不是JSON，直接返回原始字符串
+        return detail;
       }
     }
 
+    // 如果没有detail，返回message
     const message = result.message?.trim();
-    return message || undefined;
+    return message || "未知错误";
   };
 
-  const truncate = (value: string, max = 140) => {
-    if (value.length <= max) {
-      return value;
-    }
-    return `${value.slice(0, max)}…`;
-  };
 
   // 提供连接诊断信息的辅助函数
   const getDiagnosticInfo = (provider: Provider, testState?: ProviderConnectionState) => {
@@ -376,24 +298,24 @@ const ProviderList: React.FC<ProviderListProps> = ({
 
     setIsTestingAll(true);
 
-    let successCount = 0;
-    let errorCount = 0;
     const providerIds = Object.keys(providers);
 
-    try {
-      // 逐个测试供应商，每完成一个就立即显示结果
-      for (const providerId of providerIds) {
-        // 设置当前供应商为测试中状态
-        setTestStates((prev) => ({
-          ...prev,
-          [providerId]: {
-            status: "loading",
-            testedAt: Date.now(),
-          },
-        }));
+    // 先将所有供应商设置为测试中状态
+    setTestStates((prev) => {
+      const newStates = { ...prev };
+      providerIds.forEach((providerId) => {
+        newStates[providerId] = {
+          status: "loading",
+          testedAt: Date.now(),
+        };
+      });
+      return newStates;
+    });
 
+    try {
+      // 并发测试所有供应商
+      const testPromises = providerIds.map(async (providerId) => {
         try {
-          // 测试单个供应商
           const result = await window.api.testProviderConnection(providerId, appType);
           const detail = summarizeResultDetail(result);
           const testedAt = Date.now();
@@ -411,12 +333,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
             },
           }));
 
-          // 统计成功/失败数量
-          if (result.success) {
-            successCount++;
-          } else {
-            errorCount++;
-          }
+          return { success: result.success, providerId };
         } catch (error) {
           console.error(t("console.testProviderFailed"), providerId, error);
           const fallback =
@@ -433,9 +350,16 @@ const ProviderList: React.FC<ProviderListProps> = ({
             },
           }));
 
-          errorCount++;
+          return { success: false, providerId };
         }
-      }
+      });
+
+      // 等待所有测试完成
+      const results = await Promise.all(testPromises);
+
+      // 统计成功/失败数量
+      const successCount = results.filter(r => r.success).length;
+      const errorCount = results.filter(r => !r.success).length;
 
       // 所有测试完成后显示汇总通知
       if (errorCount === 0) {
@@ -459,6 +383,11 @@ const ProviderList: React.FC<ProviderListProps> = ({
           "error",
           5000,
         );
+      }
+
+      // 如果有成功的测试结果,自动启用按延迟排序
+      if (successCount > 0) {
+        setSortMode('latency');
       }
     } catch (error) {
       console.error(t("console.testAllProvidersFailed"), error);
@@ -498,6 +427,66 @@ const ProviderList: React.FC<ProviderListProps> = ({
       setSelectedProviders(new Set());
     } else {
       setSelectedProviders(new Set(sortedProviders.map(p => p.id)));
+    }
+  };
+
+  const handleSendTestMessage = async (providerId: string) => {
+    const message = testMessage[providerId] || "Hello";
+    if (!message.trim()) {
+      onNotify?.("请输入测试消息", "error", 2000);
+      return;
+    }
+
+    setTestResults(prev => ({
+      ...prev,
+      [providerId]: { loading: true }
+    }));
+
+    try {
+      const response = await window.api.sendTestMessage(providerId, message, appType);
+
+      // 尝试格式化JSON响应以便更好地显示
+      let formattedResponse: string;
+      try {
+        const parsed = JSON.parse(response);
+        formattedResponse = JSON.stringify(parsed, null, 2);
+      } catch {
+        // 如果不是JSON，直接显示原始响应
+        formattedResponse = response;
+      }
+
+      setTestResults(prev => ({
+        ...prev,
+        [providerId]: { loading: false, response: formattedResponse }
+      }));
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      setTestResults(prev => ({
+        ...prev,
+        [providerId]: {
+          loading: false,
+          response: `错误: ${errorMsg}`
+        }
+      }));
+    }
+  };
+
+  const handleCopyResponse = async (providerId: string) => {
+    const response = testResults[providerId]?.response;
+    if (!response) return;
+
+    try {
+      await navigator.clipboard.writeText(response);
+      setCopiedResponse(prev => ({ ...prev, [providerId]: true }));
+      onNotify?.("响应已复制到剪贴板", "success", 2000);
+      
+      // 2秒后重置复制状态
+      setTimeout(() => {
+        setCopiedResponse(prev => ({ ...prev, [providerId]: false }));
+      }, 2000);
+    } catch (error) {
+      console.error("复制失败:", error);
+      onNotify?.("复制失败", "error", 2000);
     }
   };
 
@@ -604,30 +593,238 @@ const ProviderList: React.FC<ProviderListProps> = ({
 
     // 直接显示错误详情，状态码会单独显示在徽章中
     const detail = state.detail ?? state.message ?? t("providerTest.unknownError");
-    const errorMessage = truncate(detail, 100);
+    const isExpanded = showFullError[providerId];
 
     return (
-      <div className="mt-2 space-y-2">
-        <div className="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
-          <CircleAlert className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
-          <span className="max-w-[28rem] break-words">
-            {typeof state.statusCode === "number" && (
-              <span className="inline-block bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded font-mono text-xs font-medium mr-1.5">
-                {state.statusCode}
+      <div className="mt-2 space-y-2 w-full">
+        <div className="flex items-start justify-between gap-3 text-xs text-red-600 dark:text-red-400">
+          {/* 左侧：图标 + 状态码 + 错误消息 */}
+          <div className="flex items-start gap-1.5 flex-1 min-w-0">
+            <CircleAlert className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+            <div className="flex items-center gap-2 flex-wrap">
+              {typeof state.statusCode === "number" && (
+                <span className="inline-block bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded font-mono text-xs font-medium">
+                  {state.statusCode}
+                </span>
+              )}
+              <span className="text-xs break-words">
+                {state.message ?? "所有测试端点和认证方式都无法访问"}
               </span>
-            )}
-            <span>{t("providerTest.error", { message: errorMessage })}</span>
-          </span>
+            </div>
+          </div>
+          
+          {/* 右侧：折叠按钮 */}
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button
+              onClick={() => setShowFullError(prev => ({ ...prev, [providerId]: !prev[providerId] }))}
+              className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+              title={isExpanded ? "隐藏测试" : "隐藏测试"}
+            >
+              {isExpanded ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+            </button>
+          </div>
         </div>
+        
+        {/* 展开时显示左右两列布局 */}
+        {isExpanded && (
+          <div className="mt-3 w-full border-amber-300 border rounded-lg p-4">
+            <div className="grid gap-4 lg:grid-cols-2 w-full">
+              {/* 左侧：完整错误信息 */}
+              <div className="flex flex-col p-4 bg-red-50 dark:bg-red-900/10 rounded-lg border border-red-200 dark:border-red-800">
+                <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                  所有测试端点和认证方式都无法访问
+                </h4>
+                <div className="flex-1 overflow-y-auto text-sm text-gray-700 dark:text-gray-300 break-words whitespace-pre-wrap font-mono max-h-[400px] leading-relaxed p-3 bg-white/50 dark:bg-gray-900/30 rounded">
+                  {detail}
+                </div>
+              </div>
+
+              {/* 右侧：测试输入区域 */}
+              <div className="flex flex-col p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
+                  发送测试消息
+                </h4>
+                <div className="flex gap-2 mb-4">
+                  <input
+                    type="text"
+                    value={testMessage[providerId] || ""}
+                    onChange={(e) => setTestMessage(prev => ({ ...prev, [providerId]: e.target.value }))}
+                    placeholder="输入测试消息 (如: Hello)"
+                    className="flex-1 px-3 py-2.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        handleSendTestMessage(providerId);
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => handleSendTestMessage(providerId)}
+                    disabled={testResults[providerId]?.loading}
+                    className={cn(
+                      "inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded-lg transition-all duration-200 whitespace-nowrap min-w-[80px]",
+                      testResults[providerId]?.loading
+                        ? "bg-gray-300 text-gray-500 cursor-not-allowed dark:bg-gray-600 dark:text-gray-400"
+                        : "bg-green-500 text-white hover:bg-green-600 active:bg-green-700 hover:shadow-md dark:bg-green-600 dark:hover:bg-green-700"
+                    )}
+                  >
+                    {testResults[providerId]?.loading ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>发送中</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-3.5 w-3.5" />
+                        <span>发送</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* 显示测试响应 */}
+                {testResults[providerId]?.response && (
+                  <div className="flex-1 flex flex-col p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-300">响应消息</h5>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          {new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        <button
+                          onClick={() => handleCopyResponse(providerId)}
+                          className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors"
+                          title="复制响应"
+                        >
+                          {copiedResponse[providerId] ? (
+                            <>
+                              <CheckCheck className="h-3.5 w-3.5" />
+                              <span>已复制</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3.5 w-3.5" />
+                              <span>复制</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <pre className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-mono break-all overflow-y-auto max-h-[280px] leading-relaxed p-3 bg-gray-50 dark:bg-gray-800 rounded">
+                        {testResults[providerId].response}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
 
   // 列表页不再提供 Claude 插件按钮，统一在“设置”中控制
 
-  // 对供应商列表进行排序
+  // 对供应商列表进行搜索和排序
   const sortedProviders = useMemo(() => {
-    return Object.values(providers).sort((a, b) => {
+    let providerList = Object.values(providers);
+
+    // 先进行搜索过滤
+    if (searchKeyword.trim()) {
+      const keyword = searchKeyword.toLowerCase().trim();
+      providerList = providerList.filter(provider => {
+        // 搜索供应商名称
+        if (provider.name.toLowerCase().includes(keyword)) {
+          return true;
+        }
+        // 搜索API地址
+        const apiUrl = getApiUrl(provider).toLowerCase();
+        if (apiUrl.includes(keyword)) {
+          return true;
+        }
+        return false;
+      });
+    }
+
+    // 按延迟排序
+    if (sortMode === 'latency') {
+      return providerList.sort((a, b) => {
+        const stateA = testStates[a.id];
+        const stateB = testStates[b.id];
+
+        // 优先显示测试成功的供应商
+        const successA = stateA?.status === "success";
+        const successB = stateB?.status === "success";
+
+        if (successA && !successB) return -1;
+        if (!successA && successB) return 1;
+
+        // 都成功时,按延迟排序(延迟低的在前)
+        if (successA && successB) {
+          const latencyA = stateA?.latencyMs ?? Infinity;
+          const latencyB = stateB?.latencyMs ?? Infinity;
+          return latencyA - latencyB;
+        }
+
+        // 都不成功时,按创建时间排序
+        const timeA = a.createdAt || 0;
+        const timeB = b.createdAt || 0;
+
+        if (timeA === 0 && timeB === 0) {
+          const locale = i18n.language === "zh" ? "zh-CN" : "en-US";
+          return a.name.localeCompare(b.name, locale);
+        }
+
+        if (timeA === 0) return -1;
+        if (timeB === 0) return 1;
+
+        return timeA - timeB;
+      });
+    }
+
+    // 按错误排序
+    if (sortMode === 'error') {
+      return providerList.sort((a, b) => {
+        const stateA = testStates[a.id];
+        const stateB = testStates[b.id];
+
+        // 优先显示测试失败的供应商
+        const errorA = stateA?.status === "error";
+        const errorB = stateB?.status === "error";
+
+        if (errorA && !errorB) return -1;
+        if (!errorA && errorB) return 1;
+
+        // 都失败时,按状态码排序(状态码高的在前,表示更严重的错误)
+        if (errorA && errorB) {
+          const codeA = stateA?.statusCode ?? 0;
+          const codeB = stateB?.statusCode ?? 0;
+          return codeB - codeA;
+        }
+
+        // 都不是错误时,按创建时间排序
+        const timeA = a.createdAt || 0;
+        const timeB = b.createdAt || 0;
+
+        if (timeA === 0 && timeB === 0) {
+          const locale = i18n.language === "zh" ? "zh-CN" : "en-US";
+          return a.name.localeCompare(b.name, locale);
+        }
+
+        if (timeA === 0) return -1;
+        if (timeB === 0) return 1;
+
+        return timeA - timeB;
+      });
+    }
+
+    // 默认按创建时间排序
+    return providerList.sort((a, b) => {
       const timeA = a.createdAt || 0;
       const timeB = b.createdAt || 0;
 
@@ -641,11 +838,11 @@ const ProviderList: React.FC<ProviderListProps> = ({
 
       return timeA - timeB;
     });
-  }, [providers, i18n.language]);
+  }, [providers, i18n.language, sortMode, testStates, searchKeyword]);
 
   return (
     <div className="space-y-4">
-      {sortedProviders.length === 0 ? (
+      {Object.keys(providers).length === 0 ? (
         <div className="text-center py-12">
           <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
             <Users size={24} className="text-gray-400" />
@@ -662,6 +859,29 @@ const ProviderList: React.FC<ProviderListProps> = ({
           {/* 批量操作按钮区域 */}
           <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
             <div className="flex items-center gap-4">
+              {/* 搜索框 */}
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Search className="h-4 w-4 text-gray-400" />
+                </div>
+                <input
+                  type="text"
+                  value={searchKeyword}
+                  onChange={(e) => setSearchKeyword(e.target.value)}
+                  placeholder={t("provider.search.placeholder")}
+                  className="w-48 pl-9 pr-8 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                />
+                {searchKeyword && (
+                  <button
+                    onClick={() => setSearchKeyword('')}
+                    className="absolute inset-y-0 right-0 pr-2 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                    title={t("provider.search.clearSearch")}
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+
               <div className="text-sm text-gray-600 dark:text-gray-300">
                 {t("provider.totalCount", { count: sortedProviders.length })}
               </div>
@@ -692,6 +912,54 @@ const ProviderList: React.FC<ProviderListProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              {/* 排序切换按钮 */}
+              {!isBatchMode && (
+                <button
+                  onClick={() => {
+                    // 循环切换: default -> latency -> error -> default
+                    if (sortMode === 'default') {
+                      setSortMode('latency');
+                    } else if (sortMode === 'latency') {
+                      setSortMode('error');
+                    } else {
+                      setSortMode('default');
+                    }
+                  }}
+                  className={cn(
+                    "inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors",
+                    sortMode === 'latency'
+                      ? "bg-purple-500 text-white hover:bg-purple-600 dark:bg-purple-600 dark:hover:bg-purple-700"
+                      : sortMode === 'error'
+                      ? "bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700"
+                      : "bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  )}
+                  title={
+                    sortMode === 'latency'
+                      ? "按延迟排序(点击切换到错误排序)"
+                      : sortMode === 'error'
+                      ? "按错误排序(点击恢复顺序排序)"
+                      : "按添加顺序排序(点击切换到延迟排序)"
+                  }
+                >
+                  {sortMode === 'latency' ? (
+                    <>
+                      <Clock className="h-4 w-4" />
+                      <span>延迟排序</span>
+                    </>
+                  ) : sortMode === 'error' ? (
+                    <>
+                      <CircleAlert className="h-4 w-4" />
+                      <span>错误排序</span>
+                    </>
+                  ) : (
+                    <>
+                      <ArrowUpDown className="h-4 w-4" />
+                      <span>顺序排序</span>
+                    </>
+                  )}
+                </button>
+              )}
+
               {isBatchMode && selectedProviders.size > 0 && (
                 <button
                   onClick={handleBatchDelete}
@@ -744,8 +1012,28 @@ const ProviderList: React.FC<ProviderListProps> = ({
             </div>
           </div>
 
-          <div className="space-y-3">
-            {sortedProviders.map((provider) => {
+          {/* 搜索无结果提示 */}
+          {sortedProviders.length === 0 && searchKeyword.trim() ? (
+            <div className="text-center py-12">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center">
+                <Search size={24} className="text-gray-400" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+                {t("provider.search.noResults")}
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">
+                {t("provider.search.noResultsDescription")} "<span className="font-semibold">{searchKeyword}</span>"
+              </p>
+              <button
+                onClick={() => setSearchKeyword('')}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 transition-colors"
+              >
+                {t("provider.search.clearSearch")}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {sortedProviders.map((provider) => {
             const isCurrent = provider.id === currentProviderId;
             const apiUrl = getApiUrl(provider);
             const testState = testStates[provider.id];
@@ -784,7 +1072,8 @@ const ProviderList: React.FC<ProviderListProps> = ({
                   )}
 
                   <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
+                    <div className="flex justify-between">
+                      <div className="flex items-center gap-3 mb-2">
                       <h3 className="font-medium text-gray-900 dark:text-gray-100">
                         {provider.name}
                       </h3>
@@ -799,57 +1088,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
                         {t("provider.currentlyUsing")}
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-2 text-sm">
-                      {provider.websiteUrl ? (
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault();
-                            handleUrlClick(provider.websiteUrl!);
-                          }}
-                          className="inline-flex items-center gap-1 text-blue-500 dark:text-blue-400 hover:opacity-90 transition-colors"
-                          title={t("providerForm.visitWebsite", {
-                            url: provider.websiteUrl,
-                          })}
-                        >
-                          {provider.websiteUrl}
-                        </button>
-                      ) : (
-                        <span
-                          className="text-gray-500 dark:text-gray-400"
-                          title={apiUrl}
-                        >
-                          {apiUrl}
-                        </span>
-                      )}
-                    </div>
-
-                    {renderStatusRow(provider.id, testState)}
-
-                    {/* 诊断信息 */}
-                    {showDiagnostics[provider.id] && (
-                      <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700">
-                        <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-1">
-                          <Bug className="h-3 w-3" />
-                          连接诊断信息
-                        </h4>
-                        <div className="space-y-1">
-                          {getDiagnosticInfo(provider, testState).map((diagnostic, index) => (
-                            <div key={index} className="text-xs text-gray-600 dark:text-gray-400 font-mono">
-                              {diagnostic}
-                            </div>
-                          ))}
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                          <div className="text-xs text-gray-500 dark:text-gray-500">
-                            💡 提示：如果遇到403/401错误，请检查API密钥是否正确且有效
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {!isBatchMode && (
+                      {!isBatchMode && (
                   <div className="flex items-center gap-2 ml-4">
                     <button
                       onClick={(event) =>
@@ -926,11 +1165,83 @@ const ProviderList: React.FC<ProviderListProps> = ({
                     </button>
                   </div>
                 )}
+                    </div>
+
+                    <div className="flex items-center gap-2 text-sm">
+                      {provider.websiteUrl ? (
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleUrlClick(provider.websiteUrl!);
+                          }}
+                          className="inline-flex items-center gap-1 text-blue-500 dark:text-blue-400 hover:opacity-90 transition-colors"
+                          title={t("providerForm.visitWebsite", {
+                            url: provider.websiteUrl,
+                          })}
+                        >
+                          {provider.websiteUrl}
+                        </button>
+                      ) : (
+                        <span
+                          className="text-gray-500 dark:text-gray-400"
+                          title={apiUrl}
+                        >
+                          {apiUrl}
+                        </span>
+                      )}
+                    </div>
+
+                    {renderStatusRow(provider.id, testState)}
+
+                    {/* 诊断信息 */}
+                    {showDiagnostics[provider.id] && (
+                      <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1">
+                            <Bug className="h-3 w-3" />
+                            连接诊断信息
+                          </h4>
+                          <button
+                            onClick={() => setCollapsedDiagnostics(prev => ({
+                              ...prev,
+                              [provider.id]: !prev[provider.id]
+                            }))}
+                            className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                            title={collapsedDiagnostics[provider.id] ? "展开" : "收起"}
+                          >
+                            {collapsedDiagnostics[provider.id] ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronUp className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+
+                        {!collapsedDiagnostics[provider.id] && (
+                          <>
+                            <div className="space-y-1">
+                              {getDiagnosticInfo(provider, testState).map((diagnostic, index) => (
+                                <div key={index} className="text-xs text-gray-600 dark:text-gray-400 font-mono">
+                                  {diagnostic}
+                                </div>
+                              ))}
+                            </div>
+                            <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                              <div className="text-xs text-gray-500 dark:text-gray-500">
+                                💡 提示：如果遇到403/401错误，请检查API密钥是否正确且有效
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             );
           })}
-          </div>
+            </div>
+          )}
         </>
       )}
     </div>

@@ -13,6 +13,12 @@ export default defineConfig({
   server: {
     port: 3000,
     strictPort: true,
+    watch: {
+      usePolling: true,
+    },
+    hmr: {
+      overlay: true,
+    },
   },
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_"],
