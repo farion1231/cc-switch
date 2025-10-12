@@ -105,6 +105,14 @@ declare global {
         providerId: string,
         app?: AppType,
       ) => Promise<ProviderTestResult>;
+      testAllProviderConnections: (
+        app?: AppType,
+      ) => Promise<Record<string, ProviderTestResult>>;
+      sendTestMessage: (
+        providerId: string,
+        message: string,
+        app?: AppType,
+      ) => Promise<string>;
       testApiEndpoints: (
         urls: string[],
         options?: { timeoutSecs?: number },

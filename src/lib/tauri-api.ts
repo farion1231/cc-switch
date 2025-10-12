@@ -78,6 +78,25 @@ export const tauriAPI = {
     }
   },
 
+  sendTestMessage: async (
+    providerId: string,
+    message: string,
+    app?: AppType,
+  ): Promise<string> => {
+    try {
+      return await invoke<string>("send_test_message", {
+        provider_id: providerId,
+        providerId,
+        message,
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("发送测试消息失败:", error);
+      throw error;
+    }
+  },
+
   // 获取当前供应商ID
   getCurrentProvider: async (app?: AppType): Promise<string> => {
     try {

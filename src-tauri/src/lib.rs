@@ -1,4 +1,4 @@
-mod app_config;
+pub mod app_config;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
@@ -8,11 +8,11 @@ mod groups;
 mod import_export;
 mod mcp;
 mod migration;
-mod provider;
+pub mod provider;
 mod settings;
 mod speedtest;
 mod store;
-mod test_provider;
+pub mod test_provider;
 
 use store::AppState;
 use tauri::{
@@ -346,6 +346,20 @@ pub fn run() {
                         use objc2::msg_send;
                         let _: () = msg_send![&*ns_window, setBackgroundColor: &*bg_color];
                     }
+                    
+                    // 开发模式下自动打开 DevTools
+                    #[cfg(debug_assertions)]
+                    {
+                        window.open_devtools();
+                    }
+                }
+            }
+            
+            // 其他平台也在开发模式下打开 DevTools
+            #[cfg(all(debug_assertions, not(target_os = "macos")))]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
                 }
             }
 
@@ -449,6 +463,7 @@ pub fn run() {
             commands::update_endpoint_last_used,
             commands::test_provider_connection,
             commands::test_all_provider_connections,
+            commands::send_test_message,
             // theirs: config import/export and dialogs
             import_export::export_config_to_file,
             import_export::import_config_from_file,

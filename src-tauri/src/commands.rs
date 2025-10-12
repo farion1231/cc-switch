@@ -1293,7 +1293,7 @@ pub async fn test_all_provider_connections(
         .or_else(|| appType.as_deref().map(|s| s.into()))
         .unwrap_or(AppType::Claude);
 
-    // 克隆所有供应商，释放锁后发起异步请求
+    // 克隆所有供应商,释放锁后发起异步请求
     let providers = {
         let config = state
             .config
@@ -1306,4 +1306,46 @@ pub async fn test_all_provider_connections(
     };
 
     Ok(test_provider::test_all_providers(providers, app_type).await)
+}
+
+/// 发送测试消息到供应商并返回真实API响应
+#[tauri::command]
+pub async fn send_test_message(
+    state: State<'_, crate::store::AppState>,
+    app_type: Option<AppType>,
+    app: Option<String>,
+    appType: Option<String>,
+    provider_id: Option<String>,
+    providerId: Option<String>,
+    message: String,
+) -> Result<String, String> {
+    let app_type = app_type
+        .or_else(|| app.as_deref().map(|s| s.into()))
+        .or_else(|| appType.as_deref().map(|s| s.into()))
+        .unwrap_or(AppType::Claude);
+    let provider_id = provider_id
+        .or(providerId)
+        .ok_or_else(|| "缺少 providerId".to_string())?;
+
+    if message.trim().is_empty() {
+        return Err("消息内容不能为空".to_string());
+    }
+
+    // 克隆供应商,释放锁后发起异步请求
+    let provider = {
+        let config = state
+            .config
+            .lock()
+            .map_err(|e| format!("获取锁失败: {}", e))?;
+        let manager = config
+            .get_manager(&app_type)
+            .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+        manager
+            .providers
+            .get(&provider_id)
+            .cloned()
+            .ok_or_else(|| format!("供应商不存在: {}", provider_id))?
+    };
+
+    test_provider::send_test_message_to_provider(provider, app_type, message).await
 }
