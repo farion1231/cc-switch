@@ -33,7 +33,7 @@ pub fn get_codex_provider_paths(
     provider_name: Option<&str>,
 ) -> (PathBuf, PathBuf) {
     let base_name = provider_name
-        .map(|name| sanitize_provider_name(name))
+        .map(sanitize_provider_name)
         .unwrap_or_else(|| sanitize_provider_name(provider_id));
 
     let auth_path = get_codex_config_dir().join(format!("auth-{}.json", base_name));
@@ -66,17 +66,21 @@ pub fn write_codex_live_atomic(auth: &Value, config_text_opt: Option<&str>) -> R
 
     // 读取旧内容用于回滚
     let old_auth = if auth_path.exists() {
-        Some(fs::read(&auth_path)
-            .map_err(|e| format!("读取旧 auth.json 失败: {}: {}", auth_path.display(), e))?)
+        Some(
+            fs::read(&auth_path)
+                .map_err(|e| format!("读取旧 auth.json 失败: {}: {}", auth_path.display(), e))?,
+        )
     } else {
         None
     };
-    let _old_config = if config_path.exists() {
-        Some(fs::read(&config_path)
-            .map_err(|e| format!("读取旧 config.toml 失败: {}: {}", config_path.display(), e))?)
-    } else {
-        None
-    };
+    let _old_config =
+        if config_path.exists() {
+            Some(fs::read(&config_path).map_err(|e| {
+                format!("读取旧 config.toml 失败: {}: {}", config_path.display(), e)
+            })?)
+        } else {
+            None
+        };
 
     // 准备写入内容
     let cfg_text = match config_text_opt {

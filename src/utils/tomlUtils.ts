@@ -1,5 +1,5 @@
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
-import { McpServer } from "../types";
+import { McpServerSpec } from "../types";
 
 /**
  * 验证 TOML 格式并转换为 JSON 对象
@@ -21,10 +21,10 @@ export const validateToml = (text: string): string => {
 };
 
 /**
- * 将 McpServer 对象转换为 TOML 字符串
+ * 将 McpServerSpec 对象转换为 TOML 字符串
  * 使用 @iarna/toml 的 stringify，自动处理转义与嵌套表
  */
-export const mcpServerToToml = (server: McpServer): string => {
+export const mcpServerToToml = (server: McpServerSpec): string => {
   const obj: any = {};
   if (server.type) obj.type = server.type;
 
@@ -49,7 +49,7 @@ export const mcpServerToToml = (server: McpServer): string => {
 };
 
 /**
- * 将 TOML 文本转换为 McpServer 对象（单个服务器配置）
+ * 将 TOML 文本转换为 McpServerSpec 对象（单个服务器配置）
  * 支持两种格式：
  * 1. 直接的服务器配置（type, command, args 等）
  * 2. [mcp.servers.<id>] 或 [mcp_servers.<id>] 格式（取第一个服务器）
@@ -57,7 +57,7 @@ export const mcpServerToToml = (server: McpServer): string => {
  * @returns McpServer 对象
  * @throws 解析或转换失败时抛出错误
  */
-export const tomlToMcpServer = (tomlText: string): McpServer => {
+export const tomlToMcpServer = (tomlText: string): McpServerSpec => {
   if (!tomlText.trim()) {
     throw new Error("TOML 内容不能为空");
   }
@@ -104,7 +104,7 @@ export const tomlToMcpServer = (tomlText: string): McpServer => {
 /**
  * 规范化服务器配置对象为 McpServer 格式
  */
-function normalizeServerConfig(config: any): McpServer {
+function normalizeServerConfig(config: any): McpServerSpec {
   if (!config || typeof config !== "object") {
     throw new Error("服务器配置必须是对象");
   }
@@ -116,7 +116,7 @@ function normalizeServerConfig(config: any): McpServer {
       throw new Error("stdio 类型的 MCP 服务器必须包含 command 字段");
     }
 
-    const server: McpServer = {
+    const server: McpServerSpec = {
       type: "stdio",
       command: config.command,
     };
@@ -142,7 +142,7 @@ function normalizeServerConfig(config: any): McpServer {
       throw new Error("http 类型的 MCP 服务器必须包含 url 字段");
     }
 
-    const server: McpServer = {
+    const server: McpServerSpec = {
       type: "http",
       url: config.url,
     };

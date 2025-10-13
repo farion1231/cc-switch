@@ -169,11 +169,12 @@
     "getApiKey": "获取 API Key",
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
-    "mainModelPlaceholder": "例如: GLM-4.5",
+    "mainModelPlaceholder": "例如: GLM-4.6",
     "fastModel": "快速模型 (可选)",
     "fastModelPlaceholder": "例如: GLM-4.5-Air",
     "modelHint": "💡 留空将使用供应商的默认模型",
     "apiHint": "💡 填写兼容 Claude API 的服务端点地址",
+    "codexApiHint": "💡 填写兼容 OpenAI Response 格式的服务端点地址",
     "fillSupplierName": "请填写供应商名称",
     "fillConfigContent": "请填写配置内容",
     "fillParameter": "请填写 {{label}}",
@@ -275,14 +276,24 @@
     "editCodexServer": "编辑 Codex MCP",
     "configPath": "配置路径",
     "serverCount": "已配置 {{count}} 个 MCP 服务器",
+    "enabledCount": "已启用 {{count}} 个",
     "template": {
       "fetch": "快速模板：mcp-fetch"
     },
     "form": {
       "title": "MCP 标题（唯一）",
       "titlePlaceholder": "my-mcp-server",
+      "name": "显示名称",
+      "namePlaceholder": "例如 @modelcontextprotocol/server-time",
       "description": "描述",
       "descriptionPlaceholder": "可选的描述信息",
+      "tags": "标签（逗号分隔）",
+      "tagsPlaceholder": "stdio, time, utility",
+      "homepage": "主页链接",
+      "homepagePlaceholder": "https://example.com",
+      "docs": "文档链接",
+      "docsPlaceholder": "https://example.com/docs",
+      "additionalInfo": "附加信息",
       "jsonConfig": "JSON 配置",
       "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
       "tomlConfig": "TOML 配置",
@@ -352,7 +363,27 @@
       "enabled": "已启用",
       "installed": "已安装",
       "docs": "文档",
-      "requiresEnv": "需要环境变量"
+      "requiresEnv": "需要环境变量",
+      "fetch": {
+        "name": "mcp-server-fetch",
+        "description": "通用 HTTP 请求工具，支持 GET/POST 等 HTTP 方法，适合快速请求接口/抓取网页数据"
+      },
+      "time": {
+        "name": "@modelcontextprotocol/server-time",
+        "description": "时间查询工具，提供当前时间、时区转换、日期计算等功能"
+      },
+      "memory": {
+        "name": "@modelcontextprotocol/server-memory",
+        "description": "知识图谱记忆系统，支持存储实体、关系和观察，让 AI 记住对话中的重要信息"
+      },
+      "sequential-thinking": {
+        "name": "@modelcontextprotocol/server-sequential-thinking",
+        "description": "顺序思考工具，帮助 AI 将复杂问题分解为多个步骤，逐步深入思考"
+      },
+      "context7": {
+        "name": "@upstash/context7-mcp",
+        "description": "Context7 文档搜索工具，提供最新的库文档和代码示例，配置 key 会有更高限额"
+      }
     }
   }
 }

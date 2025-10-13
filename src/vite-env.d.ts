@@ -6,6 +6,8 @@ import {
   CustomEndpoint,
   McpStatus,
   McpConfigResponse,
+  McpServer,
+  McpServerSpec,
 } from "./types";
 import { AppType } from "./lib/tauri-api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -77,7 +79,7 @@ declare global {
       readClaudeMcpConfig: () => Promise<string | null>;
       upsertClaudeMcpServer: (
         id: string,
-        spec: Record<string, any>,
+        spec: McpServerSpec | Record<string, any>,
       ) => Promise<boolean>;
       deleteClaudeMcpServer: (id: string) => Promise<boolean>;
       validateMcpCommand: (cmd: string) => Promise<boolean>;
@@ -86,7 +88,7 @@ declare global {
       upsertMcpServerInConfig: (
         app: AppType | undefined,
         id: string,
-        spec: Record<string, any>,
+        spec: McpServer,
       ) => Promise<boolean>;
       deleteMcpServerInConfig: (
         app: AppType | undefined,

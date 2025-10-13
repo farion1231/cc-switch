@@ -363,19 +363,13 @@ pub fn migrate_copies_into_config(config: &mut MultiAppConfig) -> Result<bool, S
     }
     for (_, ap, cp, _) in codex_items.into_iter() {
         if let Some(ap) = ap {
-            match archive_file(ts, "codex", &ap) {
-                Ok(Some(_)) => {
-                    let _ = delete_file(&ap);
-                }
-                _ => {}
+            if let Ok(Some(_)) = archive_file(ts, "codex", &ap) {
+                let _ = delete_file(&ap);
             }
         }
         if let Some(cp) = cp {
-            match archive_file(ts, "codex", &cp) {
-                Ok(Some(_)) => {
-                    let _ = delete_file(&cp);
-                }
-                _ => {}
+            if let Ok(Some(_)) = archive_file(ts, "codex", &cp) {
+                let _ = delete_file(&cp);
             }
         }
     }

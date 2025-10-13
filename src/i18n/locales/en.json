@@ -169,11 +169,12 @@
     "getApiKey": "Get API Key",
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
-    "mainModelPlaceholder": "e.g., GLM-4.5",
+    "mainModelPlaceholder": "e.g., GLM-4.6",
     "fastModel": "Fast Model (optional)",
     "fastModelPlaceholder": "e.g., GLM-4.5-Air",
     "modelHint": "💡 Leave blank to use provider's default model",
     "apiHint": "💡 Fill in Claude API compatible service endpoint",
+    "codexApiHint": "💡 Fill in service endpoint compatible with OpenAI Response format",
     "fillSupplierName": "Please fill in provider name",
     "fillConfigContent": "Please fill in configuration content",
     "fillParameter": "Please fill in {{label}}",
@@ -275,14 +276,24 @@
     "editCodexServer": "Edit Codex MCP",
     "configPath": "Config Path",
     "serverCount": "{{count}} MCP server(s) configured",
+    "enabledCount": "{{count}} enabled",
     "template": {
       "fetch": "Quick Template: mcp-fetch"
     },
     "form": {
       "title": "MCP Title (Unique)",
       "titlePlaceholder": "my-mcp-server",
+      "name": "Display Name",
+      "namePlaceholder": "e.g. @modelcontextprotocol/server-time",
       "description": "Description",
       "descriptionPlaceholder": "Optional description",
+      "tags": "Tags (comma separated)",
+      "tagsPlaceholder": "stdio, time, utility",
+      "homepage": "Homepage",
+      "homepagePlaceholder": "https://example.com",
+      "docs": "Docs",
+      "docsPlaceholder": "https://example.com/docs",
+      "additionalInfo": "Additional Info",
       "jsonConfig": "JSON Configuration",
       "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
       "tomlConfig": "TOML Configuration",
@@ -352,7 +363,27 @@
       "enabled": "Enabled",
       "installed": "Installed",
       "docs": "Docs",
-      "requiresEnv": "Requires env"
+      "requiresEnv": "Requires env",
+      "fetch": {
+        "name": "mcp-server-fetch",
+        "description": "Universal HTTP request tool, supports GET/POST and other HTTP methods, suitable for quick API requests and web data scraping"
+      },
+      "time": {
+        "name": "@modelcontextprotocol/server-time",
+        "description": "Time query tool providing current time, timezone conversion, and date calculation features"
+      },
+      "memory": {
+        "name": "@modelcontextprotocol/server-memory",
+        "description": "Knowledge graph memory system supporting entities, relations, and observations to help AI remember important information from conversations"
+      },
+      "sequential-thinking": {
+        "name": "@modelcontextprotocol/server-sequential-thinking",
+        "description": "Sequential thinking tool helping AI break down complex problems into multiple steps for deeper thinking"
+      },
+      "context7": {
+        "name": "@upstash/context7-mcp",
+        "description": "Context7 documentation search tool providing latest library docs and code examples, with higher limits when configured with a key"
+      }
     }
   }
 }

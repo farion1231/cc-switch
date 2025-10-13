@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { X, Save } from "lucide-react";
-import { McpServer } from "../../types";
+import { McpServerSpec } from "../../types";
 import { isLinux } from "../../lib/platform";
 
 interface McpWizardModalProps {
@@ -86,7 +86,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
 
   // 生成预览 JSON
   const generatePreview = (): string => {
-    const config: McpServer = {
+    const config: McpServerSpec = {
       type: wizardType,
     };
 

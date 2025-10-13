@@ -1,8 +1,11 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { X, Save, AlertCircle } from "lucide-react";
-import { McpServer } from "../../types";
-import { mcpPresets } from "../../config/mcpPresets";
+import { X, Save, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { McpServer, McpServerSpec } from "../../types";
+import {
+  mcpPresets,
+  getMcpPresetWithDescription,
+} from "../../config/mcpPresets";
 import { buttonStyles, inputStyles } from "../../lib/styles";
 import McpWizardModal from "./McpWizardModal";
 import {
@@ -69,28 +72,47 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     }
     return `${t("mcp.error.tomlInvalid")}: ${err}`;
   };
-  const [formId, setFormId] = useState(editingId || "");
+  const [formId, setFormId] = useState(
+    () => editingId || initialData?.id || "",
+  );
+  const [formName, setFormName] = useState(initialData?.name || "");
   const [formDescription, setFormDescription] = useState(
-    (initialData as any)?.description || "",
+    initialData?.description || "",
+  );
+  const [formHomepage, setFormHomepage] = useState(initialData?.homepage || "");
+  const [formDocs, setFormDocs] = useState(initialData?.docs || "");
+  const [formTags, setFormTags] = useState(initialData?.tags?.join(", ") || "");
+
+  // 编辑模式下禁止修改 ID
+  const isEditing = !!editingId;
+
+  // 判断是否在编辑模式下有附加信息
+  const hasAdditionalInfo = !!(
+    initialData?.description ||
+    initialData?.tags?.length ||
+    initialData?.homepage ||
+    initialData?.docs
+  );
+
+  // 附加信息展开状态（编辑模式下有值时默认展开）
+  const [showMetadata, setShowMetadata] = useState(
+    isEditing ? hasAdditionalInfo : false,
   );
 
   // 根据 appType 决定初始格式
   const [formConfig, setFormConfig] = useState(() => {
-    if (!initialData) return "";
+    const spec = initialData?.server;
+    if (!spec) return "";
     if (appType === "codex") {
-      return mcpServerToToml(initialData);
-    } else {
-      return JSON.stringify(initialData, null, 2);
+      return mcpServerToToml(spec);
     }
+    return JSON.stringify(spec, null, 2);
   });
 
   const [configError, setConfigError] = useState("");
   const [saving, setSaving] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [idError, setIdError] = useState("");
-
-  // 编辑模式下禁止修改 ID
-  const isEditing = !!editingId;
 
   // 判断是否使用 TOML 格式
   const useToml = appType === "codex";
@@ -120,21 +142,27 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   // 应用预设（写入表单但不落库）
   const applyPreset = (index: number) => {
     if (index < 0 || index >= mcpPresets.length) return;
-    const p = mcpPresets[index];
-    const id = ensureUniqueId(p.id);
+    const preset = mcpPresets[index];
+    const presetWithDesc = getMcpPresetWithDescription(preset, t);
+
+    const id = ensureUniqueId(presetWithDesc.id);
     setFormId(id);
-    setFormDescription(p.description || "");
+    setFormName(presetWithDesc.name || presetWithDesc.id);
+    setFormDescription(presetWithDesc.description || "");
+    setFormHomepage(presetWithDesc.homepage || "");
+    setFormDocs(presetWithDesc.docs || "");
+    setFormTags(presetWithDesc.tags?.join(", ") || "");
 
     // 根据格式转换配置
     if (useToml) {
-      const toml = mcpServerToToml(p.server);
+      const toml = mcpServerToToml(presetWithDesc.server);
       setFormConfig(toml);
       {
         const err = validateToml(toml);
         setConfigError(formatTomlError(err));
       }
     } else {
-      const json = JSON.stringify(p.server, null, 2);
+      const json = JSON.stringify(presetWithDesc.server, null, 2);
       setFormConfig(json);
       setConfigError(validateJson(json));
     }
@@ -146,7 +174,11 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     setSelectedPreset(-1);
     // 恢复到空白模板
     setFormId("");
+    setFormName("");
     setFormDescription("");
+    setFormHomepage("");
+    setFormDocs("");
+    setFormTags("");
     setFormConfig("");
     setConfigError("");
   };
@@ -227,10 +259,13 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
   const handleWizardApply = (title: string, json: string) => {
     setFormId(title);
+    if (!formName.trim()) {
+      setFormName(title);
+    }
     // Wizard 返回的是 JSON，根据格式决定是否需要转换
     if (useToml) {
       try {
-        const server = JSON.parse(json) as McpServer;
+        const server = JSON.parse(json) as McpServerSpec;
         const toml = mcpServerToToml(server);
         setFormConfig(toml);
         const err = validateToml(toml);
@@ -245,19 +280,20 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   };
 
   const handleSubmit = async () => {
-    if (!formId.trim()) {
+    const trimmedId = formId.trim();
+    if (!trimmedId) {
       onNotify?.(t("mcp.error.idRequired"), "error", 3000);
       return;
     }
 
     // 新增模式：阻止提交重名 ID
-    if (!isEditing && existingIds.includes(formId.trim())) {
+    if (!isEditing && existingIds.includes(trimmedId)) {
       setIdError(t("mcp.error.idExists"));
       return;
     }
 
     // 验证配置格式
-    let server: McpServer;
+    let serverSpec: McpServerSpec;
 
     if (useToml) {
       // TOML 模式
@@ -270,14 +306,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
       if (!formConfig.trim()) {
         // 空配置
-        server = {
+        serverSpec = {
           type: "stdio",
           command: "",
           args: [],
         };
       } else {
         try {
-          server = tomlToMcpServer(formConfig);
+          serverSpec = tomlToMcpServer(formConfig);
         } catch (e: any) {
           const msg = e?.message || String(e);
           setConfigError(formatTomlError(msg));
@@ -296,14 +332,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
       if (!formConfig.trim()) {
         // 空配置
-        server = {
+        serverSpec = {
           type: "stdio",
           command: "",
           args: [],
         };
       } else {
         try {
-          server = JSON.parse(formConfig) as McpServer;
+          serverSpec = JSON.parse(formConfig) as McpServerSpec;
         } catch (e: any) {
           setConfigError(t("mcp.error.jsonInvalid"));
           onNotify?.(t("mcp.error.jsonInvalid"), "error", 4000);
@@ -313,29 +349,65 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     }
 
     // 前置必填校验
-    if (server?.type === "stdio" && !server?.command?.trim()) {
+    if (serverSpec?.type === "stdio" && !serverSpec?.command?.trim()) {
       onNotify?.(t("mcp.error.commandRequired"), "error", 3000);
       return;
     }
-    if (server?.type === "http" && !server?.url?.trim()) {
+    if (serverSpec?.type === "http" && !serverSpec?.url?.trim()) {
       onNotify?.(t("mcp.wizard.urlRequired"), "error", 3000);
       return;
     }
 
     setSaving(true);
     try {
-      // 保留原有的 enabled 状态
+      const entry: McpServer = {
+        ...(initialData ? { ...initialData } : {}),
+        id: trimmedId,
+        server: serverSpec,
+      };
+
       if (initialData?.enabled !== undefined) {
-        server.enabled = initialData.enabled;
+        entry.enabled = initialData.enabled;
+      } else if (!initialData) {
+        delete entry.enabled;
       }
 
-      // 保存 description 到 server 对象
-      if (formDescription.trim()) {
-        (server as any).description = formDescription.trim();
+      const nameTrimmed = (formName || trimmedId).trim();
+      entry.name = nameTrimmed || trimmedId;
+
+      const descriptionTrimmed = formDescription.trim();
+      if (descriptionTrimmed) {
+        entry.description = descriptionTrimmed;
+      } else {
+        delete entry.description;
+      }
+
+      const homepageTrimmed = formHomepage.trim();
+      if (homepageTrimmed) {
+        entry.homepage = homepageTrimmed;
+      } else {
+        delete entry.homepage;
+      }
+
+      const docsTrimmed = formDocs.trim();
+      if (docsTrimmed) {
+        entry.docs = docsTrimmed;
+      } else {
+        delete entry.docs;
+      }
+
+      const parsedTags = formTags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter((tag) => tag.length > 0);
+      if (parsedTags.length > 0) {
+        entry.tags = parsedTags;
+      } else {
+        delete entry.tags;
       }
 
       // 显式等待父组件保存流程
-      await onSave(formId.trim(), server);
+      await onSave(trimmedId, entry);
     } catch (error: any) {
       const detail = extractErrorMessage(error);
       const mapped = translateMcpBackendError(detail, t);
@@ -397,21 +469,24 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 >
                   {t("presetSelector.custom")}
                 </button>
-                {mcpPresets.map((p, idx) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => applyPreset(idx)}
-                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      selectedPreset === idx
-                        ? "bg-emerald-500 text-white dark:bg-emerald-600"
-                        : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
-                    }`}
-                    title={p.description}
-                  >
-                    {p.name || p.id}
-                  </button>
-                ))}
+                {mcpPresets.map((preset, idx) => {
+                  const descriptionKey = `mcp.presets.${preset.id}.description`;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => applyPreset(idx)}
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        selectedPreset === idx
+                          ? "bg-emerald-500 text-white dark:bg-emerald-600"
+                          : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+                      }`}
+                      title={t(descriptionKey)}
+                    >
+                      {preset.id}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -436,18 +511,91 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
             />
           </div>
 
-          {/* Description (描述) */}
+          {/* Name */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              {t("mcp.form.description")}
+              {t("mcp.form.name")}
             </label>
             <input
               className={inputStyles.text}
-              placeholder={t("mcp.form.descriptionPlaceholder")}
-              value={formDescription}
-              onChange={(e) => setFormDescription(e.target.value)}
+              placeholder={t("mcp.form.namePlaceholder")}
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
             />
           </div>
+
+          {/* 可折叠的附加信息按钮 */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowMetadata(!showMetadata)}
+              className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+            >
+              {showMetadata ? (
+                <ChevronUp size={16} />
+              ) : (
+                <ChevronDown size={16} />
+              )}
+              {t("mcp.form.additionalInfo")}
+            </button>
+          </div>
+
+          {/* 附加信息区域（可折叠） */}
+          {showMetadata && (
+            <>
+              {/* Description (描述) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  {t("mcp.form.description")}
+                </label>
+                <input
+                  className={inputStyles.text}
+                  placeholder={t("mcp.form.descriptionPlaceholder")}
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                />
+              </div>
+
+              {/* Tags */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  {t("mcp.form.tags")}
+                </label>
+                <input
+                  className={inputStyles.text}
+                  placeholder={t("mcp.form.tagsPlaceholder")}
+                  value={formTags}
+                  onChange={(e) => setFormTags(e.target.value)}
+                />
+              </div>
+
+              {/* Homepage */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  {t("mcp.form.homepage")}
+                </label>
+                <input
+                  className={inputStyles.text}
+                  placeholder={t("mcp.form.homepagePlaceholder")}
+                  value={formHomepage}
+                  onChange={(e) => setFormHomepage(e.target.value)}
+                />
+              </div>
+
+              {/* Docs */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  {t("mcp.form.docs")}
+                </label>
+                <input
+                  className={inputStyles.text}
+                  placeholder={t("mcp.form.docsPlaceholder")}
+                  value={formDocs}
+                  onChange={(e) => setFormDocs(e.target.value)}
+                />
+              </div>
+            </>
+          )}
 
           {/* 配置输入框（根据格式显示 JSON 或 TOML） */}
           <div>

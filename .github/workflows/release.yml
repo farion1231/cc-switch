@@ -161,6 +161,7 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
           echo "Looking for updater artifact (.tar.gz) and .app for zip..."
           TAR_GZ=""; APP_PATH=""
           for path in \
@@ -177,15 +178,18 @@ jobs:
             echo "No macOS .tar.gz updater artifact found" >&2
             exit 1
           fi
-          cp "$TAR_GZ" release-assets/
-          [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" release-assets/ || echo ".sig for macOS not found yet"
-          echo "macOS updater artifact copied: $(basename "$TAR_GZ")"
+          # 重命名 tar.gz 为统一格式
+          NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
+          cp "$TAR_GZ" "release-assets/$NEW_TAR_GZ"
+          [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig" || echo ".sig for macOS not found yet"
+          echo "macOS updater artifact copied: $NEW_TAR_GZ"
           if [ -n "$APP_PATH" ]; then
             APP_DIR=$(dirname "$APP_PATH"); APP_NAME=$(basename "$APP_PATH")
+            NEW_ZIP="CC-Switch-${VERSION}-macOS.zip"
             cd "$APP_DIR"
-            ditto -c -k --sequesterRsrc --keepParent "$APP_NAME" "CC-Switch-macOS.zip"
-            mv "CC-Switch-macOS.zip" "$GITHUB_WORKSPACE/release-assets/"
-            echo "macOS zip ready: CC-Switch-macOS.zip"
+            ditto -c -k --sequesterRsrc --keepParent "$APP_NAME" "$NEW_ZIP"
+            mv "$NEW_ZIP" "$GITHUB_WORKSPACE/release-assets/"
+            echo "macOS zip ready: $NEW_ZIP"
           else
             echo "No .app found to zip (optional)" >&2
           fi
@@ -196,6 +200,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $VERSION = $env:GITHUB_REF_NAME  # e.g., v3.5.0
           # 仅打包 MSI 安装器 + .sig（用于 Updater）
           $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle/msi' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($null -eq $msi) {
@@ -203,7 +208,7 @@ jobs:
             $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if ($null -ne $msi) {
-            $dest = 'CC-Switch-Setup.msi'
+            $dest = "CC-Switch-$VERSION-Windows.msi"
             Copy-Item $msi.FullName (Join-Path release-assets $dest)
             Write-Host "Installer copied: $dest"
             $sigPath = "$($msi.FullName).sig"
@@ -232,9 +237,10 @@ jobs:
               'portable=true'
             )
             $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
-            Compress-Archive -Path "$portableDir/*" -DestinationPath 'release-assets/CC-Switch-Windows-Portable.zip' -Force
+            $portableZip = "release-assets/CC-Switch-$VERSION-Windows-Portable.zip"
+            Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
             Remove-Item -Recurse -Force $portableDir
-            Write-Host 'Windows portable zip created'
+            Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows-Portable.zip"
           } else {
             Write-Warning 'Portable exe not found'
           }
@@ -245,20 +251,23 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
           # Updater artifact: AppImage（含对应 .sig）
           APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
           if [ -n "$APPIMAGE" ]; then
-            cp "$APPIMAGE" release-assets/
-            [ -f "$APPIMAGE.sig" ] && cp "$APPIMAGE.sig" release-assets/ || echo ".sig for AppImage not found"
-            echo "AppImage copied"
+            NEW_APPIMAGE="CC-Switch-${VERSION}-Linux.AppImage"
+            cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
+            [ -f "$APPIMAGE.sig" ] && cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig" || echo ".sig for AppImage not found"
+            echo "AppImage copied: $NEW_APPIMAGE"
           else
             echo "No AppImage found under target/release/bundle" >&2
           fi
           # 额外上传 .deb（用于手动安装，不参与 Updater）
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
           if [ -n "$DEB" ]; then
-            cp "$DEB" release-assets/
-            echo "Deb package copied"
+            NEW_DEB="CC-Switch-${VERSION}-Linux.deb"
+            cp "$DEB" "release-assets/$NEW_DEB"
+            echo "Deb package copied: $NEW_DEB"
           else
             echo "No .deb found (optional)"
           fi
@@ -288,12 +297,12 @@ jobs:
 
             ### 下载
 
-            - macOS: `CC-Switch-macOS.zip`（解压即用）
-            - Windows: `CC-Switch-Setup.msi`（安装版）；`CC-Switch-Windows-Portable.zip`（绿色版）
-            - Linux: `*.deb`（Debian/Ubuntu 安装包）
+            - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）或 `CC-Switch-${{ github.ref_name }}-macOS.tar.gz`（Homebrew）
+            - **Windows**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
+            - **Linux**: `CC-Switch-${{ github.ref_name }}-Linux.AppImage`（AppImage）或 `CC-Switch-${{ github.ref_name }}-Linux.deb`（Debian/Ubuntu）
 
             ---
-            提示：macOS 如遇“已损坏”提示，可在终端执行：`xattr -cr "/Applications/CC Switch.app"`
+            提示：macOS 如遇"已损坏"提示，可在终端执行：`xattr -cr "/Applications/CC Switch.app"`
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

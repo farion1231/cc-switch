@@ -55,9 +55,19 @@ export const translateMcpBackendError = (
   }
   if (
     msg.includes("MCP 服务器定义必须为 JSON 对象") ||
+    msg.includes("MCP 服务器条目必须为 JSON 对象") ||
+    msg.includes("MCP 服务器条目缺少 server 字段") ||
+    msg.includes("MCP 服务器 server 字段必须为 JSON 对象") ||
+    msg.includes("MCP 服务器连接定义必须为 JSON 对象") ||
     msg.includes("MCP 服务器 '" /* 不是对象 */) ||
     msg.includes("不是对象") ||
-    msg.includes("服务器配置必须是对象")
+    msg.includes("服务器配置必须是对象") ||
+    msg.includes("MCP 服务器 name 必须为字符串") ||
+    msg.includes("MCP 服务器 description 必须为字符串") ||
+    msg.includes("MCP 服务器 homepage 必须为字符串") ||
+    msg.includes("MCP 服务器 docs 必须为字符串") ||
+    msg.includes("MCP 服务器 tags 必须为字符串数组") ||
+    msg.includes("MCP 服务器 enabled 必须为布尔值")
   ) {
     return t("mcp.error.jsonInvalid");
   }

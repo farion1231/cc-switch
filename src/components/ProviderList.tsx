@@ -143,7 +143,7 @@ const ProviderList: React.FC<ProviderListProps> = ({
                   isCurrent ? cardStyles.selected : cardStyles.interactive,
                 )}
               >
-                <div className="flex items-start justify-between">
+                <div className="flex items-center justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
                       <h3 className="font-medium text-gray-900 dark:text-gray-100">

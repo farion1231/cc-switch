@@ -10,21 +10,12 @@ pub struct McpConfig {
 }
 
 /// MCP 根：按客户端分开维护（无历史兼容压力，直接以 v2 结构落地）
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpRoot {
     #[serde(default)]
     pub claude: McpConfig,
     #[serde(default)]
     pub codex: McpConfig,
-}
-
-impl Default for McpRoot {
-    fn default() -> Self {
-        Self {
-            claude: McpConfig::default(),
-            codex: McpConfig::default(),
-        }
-    }
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};

@@ -6,6 +6,7 @@ import {
   CustomEndpoint,
   McpStatus,
   McpServer,
+  McpServerSpec,
   McpConfigResponse,
 } from "../types";
 
@@ -327,7 +328,7 @@ export const tauriAPI = {
   // Claude MCP：新增/更新服务器定义
   upsertClaudeMcpServer: async (
     id: string,
-    spec: McpServer | Record<string, any>,
+    spec: McpServerSpec | Record<string, any>,
   ): Promise<boolean> => {
     try {
       return await invoke<boolean>("upsert_claude_mcp_server", { id, spec });
@@ -370,7 +371,7 @@ export const tauriAPI = {
   upsertMcpServerInConfig: async (
     app: AppType = "claude",
     id: string,
-    spec: McpServer | Record<string, any>,
+    spec: McpServer,
   ): Promise<boolean> => {
     try {
       return await invoke<boolean>("upsert_mcp_server_in_config", {

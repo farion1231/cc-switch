@@ -1,17 +1,17 @@
 mod app_config;
-mod claude_plugin;
 mod claude_mcp;
-mod mcp;
+mod claude_plugin;
 mod codex_config;
 mod commands;
 mod config;
 mod import_export;
+mod mcp;
 mod migration;
 mod provider;
 mod settings;
-mod store;
 mod speedtest;
 mod usage_script;
+mod store;
 
 use store::AppState;
 use tauri::{
@@ -220,7 +220,7 @@ async fn switch_provider_internal(
         let provider_id_clone = provider_id.clone();
 
         crate::commands::switch_provider(
-            app_state.clone().into(),
+            app_state.clone(),
             Some(app_type),
             None,
             None,
@@ -282,8 +282,8 @@ pub fn run() {
 
     let builder = builder
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
-        .on_window_event(|window, event| match event {
-            tauri::WindowEvent::CloseRequested { api, .. } => {
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let settings = crate::settings::get_settings();
 
                 if settings.minimize_to_tray_on_close {
@@ -295,13 +295,12 @@ pub fn run() {
                     }
                     #[cfg(target_os = "macos")]
                     {
-                        apply_tray_policy(&window.app_handle(), false);
+                        apply_tray_policy(window.app_handle(), false);
                     }
                 } else {
                     window.app_handle().exit(0);
                 }
             }
-            _ => {}
         })
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
@@ -363,7 +362,7 @@ pub fn run() {
             // 首次启动迁移：扫描副本文件，合并到 config.json，并归档副本；旧 config.json 先归档
             {
                 let mut config_guard = app_state.config.lock().unwrap();
-                let migrated = migration::migrate_copies_into_config(&mut *config_guard)?;
+                let migrated = migration::migrate_copies_into_config(&mut config_guard)?;
                 if migrated {
                     log::info!("已将副本文件导入到 config.json，并完成归档");
                 }
@@ -376,7 +375,7 @@ pub fn run() {
             let _ = app_state.save();
 
             // 创建动态托盘菜单
-            let menu = create_tray_menu(&app.handle(), &app_state)?;
+            let menu = create_tray_menu(app.handle(), &app_state)?;
 
             // 构建托盘
             let mut tray_builder = TrayIconBuilder::with_id("main")
@@ -463,20 +462,17 @@ pub fn run() {
     app.run(|app_handle, event| {
         #[cfg(target_os = "macos")]
         // macOS 在 Dock 图标被点击并重新激活应用时会触发 Reopen 事件，这里手动恢复主窗口
-        match event {
-            RunEvent::Reopen { .. } => {
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    #[cfg(target_os = "windows")]
-                    {
-                        let _ = window.set_skip_taskbar(false);
-                    }
-                    let _ = window.unminimize();
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    apply_tray_policy(app_handle, true);
+        if let RunEvent::Reopen { .. } = event {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = window.set_skip_taskbar(false);
                 }
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+                apply_tray_policy(app_handle, true);
             }
-            _ => {}
         }
 
         #[cfg(not(target_os = "macos"))]

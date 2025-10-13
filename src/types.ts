@@ -84,8 +84,8 @@ export interface Settings {
   customEndpointsCodex?: Record<string, CustomEndpoint>;
 }
 
-// MCP 服务器定义（宽松：允许扩展字段）
-export interface McpServer {
+// MCP 服务器连接参数（宽松：允许扩展字段）
+export interface McpServerSpec {
   // 可选：社区常见 .mcp.json 中 stdio 配置可不写 type
   type?: "stdio" | "http";
   // stdio 字段
@@ -97,7 +97,20 @@ export interface McpServer {
   url?: string;
   headers?: Record<string, string>;
   // 通用字段
-  enabled?: boolean; // 是否启用该 MCP 服务器，默认 true
+  [key: string]: any;
+}
+
+// MCP 服务器条目（含元信息）
+export interface McpServer {
+  id: string;
+  name?: string;
+  description?: string;
+  tags?: string[];
+  homepage?: string;
+  docs?: string;
+  enabled?: boolean;
+  server: McpServerSpec;
+  source?: string;
   [key: string]: any;
 }
 

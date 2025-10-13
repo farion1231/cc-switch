@@ -1774,6 +1774,11 @@ const ProviderForm: React.FC<ProviderFormProps> = ({
                   autoComplete="off"
                   className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 focus:border-blue-500 dark:focus:border-blue-400 transition-colors"
                 />
+                <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    {t("providerForm.codexApiHint")}
+                  </p>
+                </div>
               </div>
             )}
 

@@ -137,7 +137,8 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
 
   const handleSave = async (id: string, server: McpServer) => {
     try {
-      await window.api.upsertMcpServerInConfig(appType, id, server);
+      const payload: McpServer = { ...server, id };
+      await window.api.upsertMcpServerInConfig(appType, id, payload);
       await reload();
       setIsFormOpen(false);
       setEditingId(null);
@@ -160,7 +161,15 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
     setEditingId(null);
   };
 
-  const serverEntries = useMemo(() => Object.entries(servers), [servers]);
+  const serverEntries = useMemo(
+    () => Object.entries(servers) as Array<[string, McpServer]>,
+    [servers],
+  );
+
+  const enabledCount = useMemo(
+    () => serverEntries.filter(([_, server]) => server.enabled).length,
+    [serverEntries],
+  );
 
   const panelTitle =
     appType === "claude" ? t("mcp.claudeTitle") : t("mcp.codexTitle");
@@ -201,7 +210,8 @@ const McpPanel: React.FC<McpPanelProps> = ({ onClose, onNotify, appType }) => {
         {/* Info Section */}
         <div className="flex-shrink-0 px-6 pt-4 pb-2">
           <div className="text-sm text-gray-500 dark:text-gray-400">
-            {t("mcp.serverCount", { count: Object.keys(servers).length })}
+            {t("mcp.serverCount", { count: Object.keys(servers).length })} ·{" "}
+            {t("mcp.enabledCount", { count: enabledCount })}
           </div>
         </div>
 

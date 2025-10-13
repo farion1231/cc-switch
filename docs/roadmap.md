@@ -1,7 +1,9 @@
 - 自动升级自定义路径 ✅
 - win 绿色版报毒问题 ✅
-- codex 更多预设供应商
-- mcp 管理器
-- i18n
+- mcp 管理器 ✅
+- i18n ✅
 - gemini cli
 - homebrew 支持
+- memory 管理
+- codex 更多预设供应商
+- 云同步

@@ -128,6 +128,24 @@ export const providerPresets: ProviderPreset[] = [
     },
   },
   {
+    name: "Longcat",
+    websiteUrl: "https://longcat.chat/platform",
+    apiKeyUrl: "https://longcat.chat/platform/api_keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.longcat.chat/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "LongCat-Flash-Chat",
+        ANTHROPIC_SMALL_FAST_MODEL: "LongCat-Flash-Chat",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "LongCat-Flash-Chat",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "LongCat-Flash-Chat",
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: "6000",
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
+      },
+    },
+    category: "cn_official",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packycode.com",
     apiKeyUrl: "https://www.packycode.com/?aff=rlo54mgz",
