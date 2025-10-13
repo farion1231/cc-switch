@@ -10,6 +10,7 @@ release/
 CLAUDE.md
 AGENTS.md
 /.claude
+/.cursor
 
 # 构建产物
 # docs/downloads/*.dmg
