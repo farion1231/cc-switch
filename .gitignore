@@ -10,3 +10,12 @@ release/
 CLAUDE.md
 AGENTS.md
 /.claude
+
+# 构建产物
+# docs/downloads/*.dmg
+# docs/downloads/*.app
+# docs/downloads/*.msi
+# docs/downloads/*.exe
+# docs/downloads/*.AppImage
+# docs/downloads/*.deb
+# docs/downloads/*.rpm

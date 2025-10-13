@@ -4,6 +4,7 @@ mod claude_plugin;
 mod codex_config;
 mod commands;
 mod config;
+pub mod endpoint_cache;
 mod groups;
 mod import_export;
 mod mcp;
