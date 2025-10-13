@@ -141,8 +141,8 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
         )}
       </div>
 
-      {/* 扩展字段：35% */}
-      <div className="text-xs text-gray-500 dark:text-gray-400 min-w-0 flex items-center gap-2" style={{ width: "35%" }}>
+      {/* 扩展字段：30% */}
+      <div className="text-xs text-gray-500 dark:text-gray-400 min-w-0 flex items-center gap-2" style={{ width: "30%" }}>
         {extra && (
           <span
             className={`truncate ${isExpired ? "text-red-500 dark:text-red-400" : ""}`}
@@ -158,8 +158,8 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
         )}
       </div>
 
-      {/* 用量信息：40% */}
-      <div className="flex items-center justify-end gap-2 text-xs flex-shrink-0" style={{ width: "40%" }}>
+      {/* 用量信息：45% */}
+      <div className="flex items-center justify-end gap-2 text-xs flex-shrink-0" style={{ width: "45%" }}>
         {/* 总额度 */}
         {total !== undefined && (
           <>
