@@ -71,7 +71,6 @@ const SortableProviderItem: React.FC<SortableProviderItemProps> = ({
     listeners,
     setNodeRef,
     transform,
-    transition,
     isDragging,
   } = useSortable({
     id: provider.id,
