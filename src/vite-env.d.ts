@@ -140,6 +140,14 @@ declare global {
         providerId: string,
         url: string,
       ) => Promise<void>;
+      // Provider sort order management
+      updateProvidersSortOrder: (
+        updates: Array<{ id: string; sortIndex: number }>,
+        app?: AppType,
+      ) => Promise<boolean>;
+      // app_config_dir override via Store
+      getAppConfigDirOverride: () => Promise<string | null>;
+      setAppConfigDirOverride: (path: string | null) => Promise<boolean>;
     };
     platform: {
       isMac: boolean;

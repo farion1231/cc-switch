@@ -49,7 +49,28 @@ fn create_tray_menu(
         menu_builder = menu_builder.item(&claude_header);
 
         if !claude_manager.providers.is_empty() {
-            for (id, provider) in &claude_manager.providers {
+            // Sort providers by sortIndex, then by createdAt, then by name
+            let mut sorted_providers: Vec<_> = claude_manager.providers.iter().collect();
+            sorted_providers.sort_by(|(_, a), (_, b)| {
+                // Priority 1: sortIndex
+                match (a.sort_index, b.sort_index) {
+                    (Some(idx_a), Some(idx_b)) => return idx_a.cmp(&idx_b),
+                    (Some(_), None) => return std::cmp::Ordering::Less,
+                    (None, Some(_)) => return std::cmp::Ordering::Greater,
+                    _ => {}
+                }
+                // Priority 2: createdAt
+                match (a.created_at, b.created_at) {
+                    (Some(time_a), Some(time_b)) => return time_a.cmp(&time_b),
+                    (Some(_), None) => return std::cmp::Ordering::Greater,
+                    (None, Some(_)) => return std::cmp::Ordering::Less,
+                    _ => {}
+                }
+                // Priority 3: name
+                a.name.cmp(&b.name)
+            });
+
+            for (id, provider) in sorted_providers {
                 let is_current = claude_manager.current == *id;
                 let item = CheckMenuItem::with_id(
                     app,
@@ -84,7 +105,28 @@ fn create_tray_menu(
         menu_builder = menu_builder.item(&codex_header);
 
         if !codex_manager.providers.is_empty() {
-            for (id, provider) in &codex_manager.providers {
+            // Sort providers by sortIndex, then by createdAt, then by name
+            let mut sorted_providers: Vec<_> = codex_manager.providers.iter().collect();
+            sorted_providers.sort_by(|(_, a), (_, b)| {
+                // Priority 1: sortIndex
+                match (a.sort_index, b.sort_index) {
+                    (Some(idx_a), Some(idx_b)) => return idx_a.cmp(&idx_b),
+                    (Some(_), None) => return std::cmp::Ordering::Less,
+                    (None, Some(_)) => return std::cmp::Ordering::Greater,
+                    _ => {}
+                }
+                // Priority 2: createdAt
+                match (a.created_at, b.created_at) {
+                    (Some(time_a), Some(time_b)) => return time_a.cmp(&time_b),
+                    (Some(_), None) => return std::cmp::Ordering::Greater,
+                    (None, Some(_)) => return std::cmp::Ordering::Less,
+                    _ => {}
+                }
+                // Priority 3: name
+                a.name.cmp(&b.name)
+            });
+
+            for (id, provider) in sorted_providers {
                 let is_current = codex_manager.current == *id;
                 let item = CheckMenuItem::with_id(
                     app,
@@ -460,6 +502,8 @@ pub fn run() {
             // app_config_dir override via Store
             commands::get_app_config_dir_override,
             commands::set_app_config_dir_override,
+            // provider sort order management
+            commands::update_providers_sort_order,
             // theirs: config import/export and dialogs
             import_export::export_config_to_file,
             import_export::import_config_from_file,

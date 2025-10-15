@@ -683,6 +683,23 @@ export const tauriAPI = {
       throw error;
     }
   },
+
+  // Update providers sort order
+  updateProvidersSortOrder: async (
+    updates: Array<{ id: string; sortIndex: number }>,
+    app?: AppType,
+  ): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("update_providers_sort_order", {
+        updates,
+        app_type: app,
+        app,
+      });
+    } catch (error) {
+      console.error("更新供应商排序失败:", error);
+      throw error;
+    }
+  },
 };
 
 // 创建全局 API 对象，兼容现有代码

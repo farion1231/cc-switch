@@ -63,7 +63,9 @@
     "configError": "配置错误",
     "notConfigured": "未配置官网地址",
     "applyToClaudePlugin": "应用到 Claude 插件",
-    "removeFromClaudePlugin": "从 Claude 插件移除"
+    "removeFromClaudePlugin": "从 Claude 插件移除",
+    "dragToReorder": "拖拽以重新排序",
+    "sortUpdateFailed": "排序更新失败"
   },
   "notifications": {
     "providerSaved": "供应商配置已保存",

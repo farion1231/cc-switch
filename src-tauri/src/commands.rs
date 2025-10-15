@@ -1493,3 +1493,50 @@ pub async fn set_app_config_dir_override(
     crate::app_store::set_app_config_dir_to_store(&app, path.as_deref())?;
     Ok(true)
 }
+
+// =====================
+// Provider Sort Order Management
+// =====================
+
+#[derive(serde::Deserialize)]
+pub struct ProviderSortUpdate {
+    pub id: String,
+    #[serde(rename = "sortIndex")]
+    pub sort_index: usize,
+}
+
+/// Update sort order for multiple providers
+#[tauri::command]
+pub async fn update_providers_sort_order(
+    state: State<'_, AppState>,
+    app_type: Option<AppType>,
+    app: Option<String>,
+    appType: Option<String>,
+    updates: Vec<ProviderSortUpdate>,
+) -> Result<bool, String> {
+    let app_type = app_type
+        .or_else(|| app.as_deref().map(|s| s.into()))
+        .or_else(|| appType.as_deref().map(|s| s.into()))
+        .unwrap_or(AppType::Claude);
+
+    let mut config = state
+        .config
+        .lock()
+        .map_err(|e| format!("获取锁失败: {}", e))?;
+
+    let manager = config
+        .get_manager_mut(&app_type)
+        .ok_or_else(|| format!("应用类型不存在: {:?}", app_type))?;
+
+    // Update sort_index for each provider
+    for update in updates {
+        if let Some(provider) = manager.providers.get_mut(&update.id) {
+            provider.sort_index = Some(update.sort_index);
+        }
+    }
+
+    drop(config);
+    state.save()?;
+
+    Ok(true)
+}

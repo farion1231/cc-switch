@@ -13,6 +13,7 @@ export interface Provider {
   // 新增：供应商分类（用于差异化提示/能力开关）
   category?: ProviderCategory;
   createdAt?: number; // 添加时间戳（毫秒）
+  sortIndex?: number; // 排序索引（用于自定义拖拽排序）
   // 可选：供应商元数据（仅存于 ~/.cc-switch/config.json，不写入 live 配置）
   meta?: ProviderMeta;
 }

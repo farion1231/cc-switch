@@ -63,7 +63,9 @@
     "configError": "Configuration Error",
     "notConfigured": "Not configured for official website",
     "applyToClaudePlugin": "Apply to Claude plugin",
-    "removeFromClaudePlugin": "Remove from Claude plugin"
+    "removeFromClaudePlugin": "Remove from Claude plugin",
+    "dragToReorder": "Drag to reorder",
+    "sortUpdateFailed": "Failed to update sort order"
   },
   "notifications": {
     "providerSaved": "Provider configuration saved",

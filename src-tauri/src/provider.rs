@@ -19,6 +19,9 @@ pub struct Provider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "createdAt")]
     pub created_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sortIndex")]
+    pub sort_index: Option<usize>,
     /// 供应商元数据（不写入 live 配置，仅存于 ~/.cc-switch/config.json）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<ProviderMeta>,
@@ -39,6 +42,7 @@ impl Provider {
             website_url,
             category: None,
             created_at: None,
+            sort_index: None,
             meta: None,
         }
     }
