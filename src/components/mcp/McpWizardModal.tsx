@@ -84,6 +84,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
   const [wizardCommand, setWizardCommand] = useState("");
   const [wizardArgs, setWizardArgs] = useState("");
   const [wizardEnv, setWizardEnv] = useState("");
+  const [wizardStartupTimeout, setWizardStartupTimeout] = useState("");
   // http 字段
   const [wizardUrl, setWizardUrl] = useState("");
   const [wizardHeaders, setWizardHeaders] = useState("");
@@ -110,6 +111,14 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
         const env = parseEnvText(wizardEnv);
         if (Object.keys(env).length > 0) {
           config.env = env;
+        }
+      }
+
+      const timeoutText = wizardStartupTimeout.trim();
+      if (timeoutText) {
+        const timeoutValue = Number(timeoutText);
+        if (Number.isInteger(timeoutValue) && timeoutValue >= 0) {
+          config.startup_timeout_ms = timeoutValue;
         }
       }
     } else {
@@ -154,6 +163,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
     setWizardCommand("");
     setWizardArgs("");
     setWizardEnv("");
+    setWizardStartupTimeout("");
     setWizardUrl("");
     setWizardHeaders("");
     onClose();
@@ -195,6 +205,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
       setWizardCommand("");
       setWizardArgs("");
       setWizardEnv("");
+      setWizardStartupTimeout("");
       return;
     }
 
@@ -210,6 +221,12 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
             .map(([k, v]) => `${k}=${v ?? ""}`)
             .join("\n")
         : "",
+    );
+    const startupTimeoutValue = initialServer?.startup_timeout_ms;
+    setWizardStartupTimeout(
+      typeof startupTimeoutValue === "number" && Number.isFinite(startupTimeoutValue)
+        ? String(startupTimeoutValue)
+        : ""
     );
     setWizardUrl("");
     setWizardHeaders("");
@@ -361,6 +378,25 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 resize-y"
                   />
                 </div>
+
+                {/* Startup Timeout */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-900 dark:text-gray-100">
+                    {t("mcp.wizard.startupTimeout")}
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={100}
+                    value={wizardStartupTimeout}
+                    onChange={(e) => setWizardStartupTimeout(e.target.value)}
+                    placeholder={t("mcp.wizard.startupTimeoutPlaceholder")}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {t("mcp.wizard.startupTimeoutHint")}
+                  </p>
+                </div>
               </>
             )}
 
@@ -404,6 +440,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
           {(wizardCommand ||
             wizardArgs ||
             wizardEnv ||
+            wizardStartupTimeout ||
             wizardUrl ||
             wizardHeaders) && (
             <div className="space-y-2 border-t border-gray-200 pt-4 dark:border-gray-700">

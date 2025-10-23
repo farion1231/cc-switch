@@ -408,6 +408,15 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       }
     }
 
+    if (serverSpec && serverSpec.startup_timeout_ms !== undefined) {
+      const timeout = Number(serverSpec.startup_timeout_ms);
+      if (!Number.isInteger(timeout) || timeout < 0) {
+        onNotify?.(t("mcp.wizard.startupTimeoutInvalid"), "error", 4000);
+        return;
+      }
+      serverSpec.startup_timeout_ms = timeout;
+    }
+
     // 前置必填校验
     if (serverSpec?.type === "stdio" && !serverSpec?.command?.trim()) {
       onNotify?.(t("mcp.error.commandRequired"), "error", 3000);

@@ -39,6 +39,10 @@ export const mcpServerToToml = (server: McpServerSpec): string => {
       obj.headers = server.headers;
   }
 
+  if (server.startup_timeout_ms !== undefined) {
+    obj.startup_timeout_ms = server.startup_timeout_ms;
+  }
+
   // 去除未定义字段，确保输出更干净
   for (const k of Object.keys(obj)) {
     if (obj[k] === undefined) delete obj[k];
@@ -70,7 +74,8 @@ export const tomlToMcpServer = (tomlText: string): McpServerSpec => {
     parsed.command ||
     parsed.url ||
     parsed.args ||
-    parsed.env
+    parsed.env ||
+    parsed.startup_timeout_ms
   ) {
     return normalizeServerConfig(parsed);
   }
@@ -135,6 +140,13 @@ function normalizeServerConfig(config: any): McpServerSpec {
     if (config.cwd && typeof config.cwd === "string") {
       server.cwd = config.cwd;
     }
+    if (config.startup_timeout_ms !== undefined) {
+      const timeout = Number(config.startup_timeout_ms);
+      if (!Number.isInteger(timeout) || timeout < 0) {
+        throw new Error("startup_timeout_ms 必须是非负整数");
+      }
+      server.startup_timeout_ms = timeout;
+    }
 
     return server;
   } else if (type === "http") {
@@ -154,6 +166,13 @@ function normalizeServerConfig(config: any): McpServerSpec {
         headers[k] = String(v);
       }
       server.headers = headers;
+    }
+    if (config.startup_timeout_ms !== undefined) {
+      const timeout = Number(config.startup_timeout_ms);
+      if (!Number.isInteger(timeout) || timeout < 0) {
+        throw new Error("startup_timeout_ms 必须是非负整数");
+      }
+      server.startup_timeout_ms = timeout;
     }
 
     return server;

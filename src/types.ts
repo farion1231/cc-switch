@@ -94,6 +94,7 @@ export interface McpServerSpec {
   args?: string[];
   env?: Record<string, string>;
   cwd?: string;
+  startup_timeout_ms?: number;
   // http 字段
   url?: string;
   headers?: Record<string, string>;
