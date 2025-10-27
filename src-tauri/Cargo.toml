@@ -36,6 +36,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 futures = "0.3"
 regex = "1.10"
 rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }
+url = "2.5"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
