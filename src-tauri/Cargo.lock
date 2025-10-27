@@ -587,6 +587,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "toml 0.8.2",
+ "url",
 ]
 
 [[package]]
