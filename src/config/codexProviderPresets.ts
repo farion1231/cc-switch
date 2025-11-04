@@ -71,6 +71,32 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     },
   },
   {
+    name: "Azure OpenAI (gpt-5-codex)",
+    websiteUrl:
+      "https://learn.microsoft.com/azure/ai-services/openai/how-to/overview",
+    category: "third_party",
+    isOfficial: true,
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "azure"
+model = "gpt-5-codex"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.azure]
+name = "Azure OpenAI (gpt-5-codex)"
+base_url = "https://YOUR_RESOURCE_NAME.openai.azure.com/openai"
+env_key = "OPENAI_API_KEY"
+query_params = { "api-version" = "2025-04-01-preview" }
+wire_api = "responses"
+requires_openai_auth = true`,
+    endpointCandidates: ["https://YOUR_RESOURCE_NAME.openai.azure.com/openai"],
+    theme: {
+      icon: "codex",
+      backgroundColor: "#0078D4",
+      textColor: "#FFFFFF",
+    },
+  },
+  {
     name: "AiHubMix",
     websiteUrl: "https://aihubmix.com",
     category: "aggregator",

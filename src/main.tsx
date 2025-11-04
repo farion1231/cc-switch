@@ -63,9 +63,9 @@ try {
 async function bootstrap() {
   // 启动早期主动查询后端初始化错误，避免事件竞态
   try {
-    const initError = (await invoke("get_init_error")) as
-      | ConfigLoadErrorPayload
-      | null;
+    const initError = (await invoke(
+      "get_init_error",
+    )) as ConfigLoadErrorPayload | null;
     if (initError && (initError.path || initError.error)) {
       await handleConfigLoadError(initError);
       // 注意：不会执行到这里，因为 exit(1) 会终止进程
