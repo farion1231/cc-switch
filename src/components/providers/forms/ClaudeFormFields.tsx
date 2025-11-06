@@ -19,6 +19,8 @@ interface ClaudeFormFieldsProps {
   category?: ProviderCategory;
   shouldShowApiKeyLink: boolean;
   websiteUrl: string;
+  isPartner?: boolean;
+  partnerPromotionKey?: string;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -61,6 +63,8 @@ export function ClaudeFormFields({
   category,
   shouldShowApiKeyLink,
   websiteUrl,
+  isPartner,
+  partnerPromotionKey,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -91,6 +95,8 @@ export function ClaudeFormFields({
           category={category}
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
+          isPartner={isPartner}
+          partnerPromotionKey={partnerPromotionKey}
         />
       )}
 

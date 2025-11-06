@@ -14,6 +14,8 @@ export interface Provider {
   category?: ProviderCategory;
   createdAt?: number; // 添加时间戳（毫秒）
   sortIndex?: number; // 排序索引（用于自定义拖拽排序）
+  // 新增：是否为商业合作伙伴
+  isPartner?: boolean;
   // 可选：供应商元数据（仅存于 ~/.cc-switch/config.json，不写入 live 配置）
   meta?: ProviderMeta;
 }

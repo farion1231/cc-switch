@@ -79,6 +79,7 @@ export function ProviderForm({
   const [activePreset, setActivePreset] = useState<{
     id: string;
     category?: ProviderCategory;
+    isPartner?: boolean;
   } | null>(null);
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
 
@@ -326,6 +327,10 @@ export function ProviderForm({
       if (activePreset.category) {
         payload.presetCategory = activePreset.category;
       }
+      // 继承合作伙伴标识
+      if (activePreset.isPartner) {
+        payload.isPartner = activePreset.isPartner;
+      }
     }
 
     // 处理 meta 字段：基于 draftCustomEndpoints 生成 custom_endpoints
@@ -399,6 +404,8 @@ export function ProviderForm({
   const {
     shouldShowApiKeyLink: shouldShowClaudeApiKeyLink,
     websiteUrl: claudeWebsiteUrl,
+    isPartner: isClaudePartner,
+    partnerPromotionKey: claudePartnerPromotionKey,
   } = useApiKeyLink({
     appId: "claude",
     category,
@@ -411,6 +418,8 @@ export function ProviderForm({
   const {
     shouldShowApiKeyLink: shouldShowCodexApiKeyLink,
     websiteUrl: codexWebsiteUrl,
+    isPartner: isCodexPartner,
+    partnerPromotionKey: codexPartnerPromotionKey,
   } = useApiKeyLink({
     appId: "codex",
     category,
@@ -450,6 +459,7 @@ export function ProviderForm({
     setActivePreset({
       id: value,
       category: entry.preset.category,
+      isPartner: entry.preset.isPartner,
     });
 
     if (appId === "codex") {
@@ -523,6 +533,8 @@ export function ProviderForm({
             category={category}
             shouldShowApiKeyLink={shouldShowClaudeApiKeyLink}
             websiteUrl={claudeWebsiteUrl}
+            isPartner={isClaudePartner}
+            partnerPromotionKey={claudePartnerPromotionKey}
             templateValueEntries={templateValueEntries}
             templateValues={templateValues}
             templatePresetName={templatePreset?.name || ""}
@@ -552,6 +564,8 @@ export function ProviderForm({
             category={category}
             shouldShowApiKeyLink={shouldShowCodexApiKeyLink}
             websiteUrl={codexWebsiteUrl}
+            isPartner={isCodexPartner}
+            partnerPromotionKey={codexPartnerPromotionKey}
             shouldShowSpeedTest={shouldShowSpeedTest}
             codexBaseUrl={codexBaseUrl}
             onBaseUrlChange={handleCodexBaseUrlChange}
@@ -612,5 +626,6 @@ export function ProviderForm({
 export type ProviderFormValues = ProviderFormData & {
   presetId?: string;
   presetCategory?: ProviderCategory;
+  isPartner?: boolean;
   meta?: ProviderMeta;
 };

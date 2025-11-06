@@ -29,6 +29,8 @@ export interface ProviderPreset {
   apiKeyUrl?: string;
   settingsConfig: object;
   isOfficial?: boolean; // 标识是否为官方预设
+  isPartner?: boolean; // 标识是否为商业合作伙伴
+  partnerPromotionKey?: string; // 合作伙伴促销信息的 i18n key
   category?: ProviderCategory; // 新增：分类
   // 新增：指定该预设所使用的 API Key 字段名（默认 ANTHROPIC_AUTH_TOKEN）
   apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
@@ -73,6 +75,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "Zhipu GLM",
     websiteUrl: "https://open.bigmodel.cn",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic",
@@ -84,6 +87,8 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    isPartner: true, // 商业合作伙伴
+    partnerPromotionKey: "zhipu", // 促销信息 i18n key
   },
   {
     name: "Qwen Coder",

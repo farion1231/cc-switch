@@ -238,6 +238,9 @@
     "customApiKeyHint": "💡 Custom configuration requires manually filling all necessary fields",
     "officialHint": "💡 Official provider uses browser login, no API Key needed",
     "getApiKey": "Get API Key",
+    "partnerPromotion": {
+      "zhipu": "Zhipu GLM is an official partner of CC Switch. Use this link to top up and get a 10% discount"
+    },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
     "mainModelPlaceholder": "e.g., GLM-4.6",

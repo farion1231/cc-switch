@@ -37,20 +37,34 @@ export function useApiKeyLink({
     );
   }, [category]);
 
+  // 获取当前预设条目
+  const currentPresetEntry = useMemo(() => {
+    if (selectedPresetId && selectedPresetId !== "custom") {
+      return presetEntries.find((item) => item.id === selectedPresetId);
+    }
+    return undefined;
+  }, [selectedPresetId, presetEntries]);
+
   // 获取当前供应商的网址（用于 API Key 链接）
   const getWebsiteUrl = useMemo(() => {
-    if (selectedPresetId && selectedPresetId !== "custom") {
-      const entry = presetEntries.find((item) => item.id === selectedPresetId);
-      if (entry) {
-        const preset = entry.preset;
-        // 第三方供应商优先使用 apiKeyUrl
-        return preset.category === "third_party"
-          ? preset.apiKeyUrl || preset.websiteUrl || ""
-          : preset.websiteUrl || "";
-      }
+    if (currentPresetEntry) {
+      const preset = currentPresetEntry.preset;
+      // 第三方供应商优先使用 apiKeyUrl
+      return preset.category === "third_party"
+        ? preset.apiKeyUrl || preset.websiteUrl || ""
+        : preset.websiteUrl || "";
     }
     return formWebsiteUrl || "";
-  }, [selectedPresetId, presetEntries, formWebsiteUrl]);
+  }, [currentPresetEntry, formWebsiteUrl]);
+
+  // 提取合作伙伴信息
+  const isPartner = useMemo(() => {
+    return currentPresetEntry?.preset.isPartner ?? false;
+  }, [currentPresetEntry]);
+
+  const partnerPromotionKey = useMemo(() => {
+    return currentPresetEntry?.preset.partnerPromotionKey;
+  }, [currentPresetEntry]);
 
   return {
     shouldShowApiKeyLink:
@@ -60,5 +74,7 @@ export function useApiKeyLink({
           ? shouldShowApiKeyLink
           : false,
     websiteUrl: getWebsiteUrl,
+    isPartner,
+    partnerPromotionKey,
   };
 }

@@ -238,6 +238,9 @@
     "customApiKeyHint": "💡 自定义配置需手动填写所有必要字段",
     "officialHint": "💡 官方供应商使用浏览器登录，无需配置 API Key",
     "getApiKey": "获取 API Key",
+    "partnerPromotion": {
+      "zhipu": "智谱 GLM 是 CC Switch 的官方合作伙伴，使用此链接充值可以获得9折优惠"
+    },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
     "mainModelPlaceholder": "例如: GLM-4.6",
