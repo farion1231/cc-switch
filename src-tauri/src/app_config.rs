@@ -127,14 +127,8 @@ impl MultiAppConfig {
         let value: serde_json::Value =
             serde_json::from_str(&content).map_err(|e| AppError::json(&config_path, e))?;
         let is_v1 = value.as_object().is_some_and(|map| {
-            let has_providers = map
-                .get("providers")
-                .map(|v| v.is_object())
-                .unwrap_or(false);
-            let has_current = map
-                .get("current")
-                .map(|v| v.is_string())
-                .unwrap_or(false);
+            let has_providers = map.get("providers").map(|v| v.is_object()).unwrap_or(false);
+            let has_current = map.get("current").map(|v| v.is_string()).unwrap_or(false);
             // v1 的充分必要条件：有 providers 和 current，且 apps 不存在（version/mcp 可能存在但不作为 v2 判据）
             let has_apps = map.contains_key("apps");
             has_providers && has_current && !has_apps

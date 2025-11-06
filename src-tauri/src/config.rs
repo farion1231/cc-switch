@@ -78,7 +78,6 @@ pub fn get_app_config_path() -> PathBuf {
     get_app_config_dir().join("config.json")
 }
 
-
 /// 清理供应商名称，确保文件名安全
 pub fn sanitize_provider_name(name: &str) -> String {
     name.chars()
