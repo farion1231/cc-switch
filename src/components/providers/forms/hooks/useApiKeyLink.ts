@@ -49,10 +49,15 @@ export function useApiKeyLink({
   const getWebsiteUrl = useMemo(() => {
     if (currentPresetEntry) {
       const preset = currentPresetEntry.preset;
-      // 第三方供应商优先使用 apiKeyUrl
-      return preset.category === "third_party"
-        ? preset.apiKeyUrl || preset.websiteUrl || ""
-        : preset.websiteUrl || "";
+      // 对于 cn_official、aggregator、third_party，优先使用 apiKeyUrl（可能包含推广参数）
+      if (
+        preset.category === "cn_official" ||
+        preset.category === "aggregator" ||
+        preset.category === "third_party"
+      ) {
+        return preset.apiKeyUrl || preset.websiteUrl || "";
+      }
+      return preset.websiteUrl || "";
     }
     return formWebsiteUrl || "";
   }, [currentPresetEntry, formWebsiteUrl]);

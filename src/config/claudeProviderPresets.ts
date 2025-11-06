@@ -87,7 +87,25 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true, // 商业合作伙伴
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "zhipu", // 促销信息 i18n key
+  },
+  {
+    name: "Z.ai GLM",
+    websiteUrl: "https://z.ai",
+    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "glm-4.6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.5-air",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-4.6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-4.6",
+      },
+    },
+    category: "cn_official",
+    isPartner: true, // 合作伙伴
     partnerPromotionKey: "zhipu", // 促销信息 i18n key
   },
   {
