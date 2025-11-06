@@ -34,49 +34,78 @@ export function DirectorySettings({
   const { t } = useTranslation();
 
   return (
-    <section className="space-y-4">
-      <header className="space-y-1">
-        <h3 className="text-sm font-medium">
-          {t("settings.configDirectoryOverride")}
-        </h3>
-        <p className="text-xs text-muted-foreground">
-          {t("settings.configDirectoryDescription")}
-        </p>
-      </header>
+    <>
+      {/* CC Switch 配置目录 - 独立区块 */}
+      <section className="space-y-4">
+        <header className="space-y-1">
+          <h3 className="text-sm font-medium">{t("settings.appConfigDir")}</h3>
+          <p className="text-xs text-muted-foreground">
+            {t("settings.appConfigDirDescription")}
+          </p>
+        </header>
 
-      <DirectoryInput
-        label={t("settings.appConfigDir")}
-        description={t("settings.appConfigDirDescription")}
-        value={appConfigDir}
-        resolvedValue={resolvedDirs.appConfig}
-        placeholder={t("settings.browsePlaceholderApp")}
-        onChange={onAppConfigChange}
-        onBrowse={onBrowseAppConfig}
-        onReset={onResetAppConfig}
-      />
+        <div className="flex items-center gap-2">
+          <Input
+            value={appConfigDir ?? resolvedDirs.appConfig ?? ""}
+            placeholder={t("settings.browsePlaceholderApp")}
+            className="font-mono text-xs"
+            onChange={(event) => onAppConfigChange(event.target.value)}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={onBrowseAppConfig}
+            title={t("settings.browseDirectory")}
+          >
+            <FolderSearch className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={onResetAppConfig}
+            title={t("settings.resetDefault")}
+          >
+            <Undo2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </section>
 
-      <DirectoryInput
-        label={t("settings.claudeConfigDir")}
-        description={t("settings.claudeConfigDirDescription")}
-        value={claudeDir}
-        resolvedValue={resolvedDirs.claude}
-        placeholder={t("settings.browsePlaceholderClaude")}
-        onChange={(val) => onDirectoryChange("claude", val)}
-        onBrowse={() => onBrowseDirectory("claude")}
-        onReset={() => onResetDirectory("claude")}
-      />
+      {/* Claude/Codex 配置目录 - 独立区块 */}
+      <section className="space-y-4">
+        <header className="space-y-1">
+          <h3 className="text-sm font-medium">
+            {t("settings.configDirectoryOverride")}
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            {t("settings.configDirectoryDescription")}
+          </p>
+        </header>
 
-      <DirectoryInput
-        label={t("settings.codexConfigDir")}
-        description={t("settings.codexConfigDirDescription")}
-        value={codexDir}
-        resolvedValue={resolvedDirs.codex}
-        placeholder={t("settings.browsePlaceholderCodex")}
-        onChange={(val) => onDirectoryChange("codex", val)}
-        onBrowse={() => onBrowseDirectory("codex")}
-        onReset={() => onResetDirectory("codex")}
-      />
-    </section>
+        <DirectoryInput
+          label={t("settings.claudeConfigDir")}
+          description={undefined}
+          value={claudeDir}
+          resolvedValue={resolvedDirs.claude}
+          placeholder={t("settings.browsePlaceholderClaude")}
+          onChange={(val) => onDirectoryChange("claude", val)}
+          onBrowse={() => onBrowseDirectory("claude")}
+          onReset={() => onResetDirectory("claude")}
+        />
+
+        <DirectoryInput
+          label={t("settings.codexConfigDir")}
+          description={undefined}
+          value={codexDir}
+          resolvedValue={resolvedDirs.codex}
+          placeholder={t("settings.browsePlaceholderCodex")}
+          onChange={(val) => onDirectoryChange("codex", val)}
+          onBrowse={() => onBrowseDirectory("codex")}
+          onReset={() => onResetDirectory("codex")}
+        />
+      </section>
+    </>
   );
 }
 
