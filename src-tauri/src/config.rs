@@ -78,54 +78,6 @@ pub fn get_app_config_path() -> PathBuf {
     get_app_config_dir().join("config.json")
 }
 
-/// 归档根目录 ~/.cc-switch/archive
-pub fn get_archive_root() -> PathBuf {
-    get_app_config_dir().join("archive")
-}
-
-fn ensure_unique_path(dest: PathBuf) -> PathBuf {
-    if !dest.exists() {
-        return dest;
-    }
-    let file_name = dest
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "file".into());
-    let ext = dest
-        .extension()
-        .map(|s| format!(".{}", s.to_string_lossy()))
-        .unwrap_or_default();
-    let parent = dest.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    for i in 2..1000 {
-        let mut candidate = parent.clone();
-        candidate.push(format!("{}-{}{}", file_name, i, ext));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    dest
-}
-
-/// 将现有文件归档到 `~/.cc-switch/archive/<ts>/<category>/` 下，返回归档路径
-pub fn archive_file(ts: u64, category: &str, src: &Path) -> Result<Option<PathBuf>, AppError> {
-    if !src.exists() {
-        return Ok(None);
-    }
-    let mut dest_dir = get_archive_root();
-    dest_dir.push(ts.to_string());
-    dest_dir.push(category);
-    fs::create_dir_all(&dest_dir).map_err(|e| AppError::io(&dest_dir, e))?;
-
-    let file_name = src
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "file".into());
-    let mut dest = dest_dir.join(file_name);
-    dest = ensure_unique_path(dest);
-
-    copy_file(src, &dest)?;
-    Ok(Some(dest))
-}
 
 /// 清理供应商名称，确保文件名安全
 pub fn sanitize_provider_name(name: &str) -> String {
@@ -304,5 +256,3 @@ pub fn get_claude_config_status() -> ConfigStatus {
         path: path.to_string_lossy().to_string(),
     }
 }
-
-//（移除未使用的备份/导入函数，避免 dead_code 告警）

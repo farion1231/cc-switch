@@ -56,8 +56,6 @@ pub fn delete_codex_provider_config(
     Ok(())
 }
 
-//（移除未使用的备份/保存/恢复/导入函数，避免 dead_code 告警）
-
 /// 原子写 Codex 的 `auth.json` 与 `config.toml`，在第二步失败时回滚第一步
 pub fn write_codex_live_atomic(
     auth: &Value,
@@ -118,15 +116,6 @@ pub fn read_codex_config_text() -> Result<String, AppError> {
     }
 }
 
-/// 从给定路径读取 config.toml 文本（路径存在时）；路径不存在则返回空字符串
-pub fn read_config_text_from_path(path: &Path) -> Result<String, AppError> {
-    if path.exists() {
-        std::fs::read_to_string(path).map_err(|e| AppError::io(path, e))
-    } else {
-        Ok(String::new())
-    }
-}
-
 /// 对非空的 TOML 文本进行语法校验
 pub fn validate_config_toml(text: &str) -> Result<(), AppError> {
     if text.trim().is_empty() {
@@ -140,13 +129,6 @@ pub fn validate_config_toml(text: &str) -> Result<(), AppError> {
 /// 读取并校验 `~/.codex/config.toml`，返回文本（可能为空）
 pub fn read_and_validate_codex_config_text() -> Result<String, AppError> {
     let s = read_codex_config_text()?;
-    validate_config_toml(&s)?;
-    Ok(s)
-}
-
-/// 从指定路径读取并校验 config.toml，返回文本（可能为空）
-pub fn read_and_validate_config_from_path(path: &Path) -> Result<String, AppError> {
-    let s = read_config_text_from_path(path)?;
     validate_config_toml(&s)?;
     Ok(s)
 }

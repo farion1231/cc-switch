@@ -126,7 +126,7 @@ impl MultiAppConfig {
         // 满足：顶层同时包含 providers(object) + current(string)，且不包含 version/apps/mcp 关键键，即视为 v1
         let value: serde_json::Value =
             serde_json::from_str(&content).map_err(|e| AppError::json(&config_path, e))?;
-        let is_v1 = value.as_object().map_or(false, |map| {
+        let is_v1 = value.as_object().is_some_and(|map| {
             let has_providers = map
                 .get("providers")
                 .map(|v| v.is_object())
