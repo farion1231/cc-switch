@@ -19,6 +19,22 @@ pub struct McpRoot {
     pub codex: McpConfig,
 }
 
+/// Prompt 配置：单客户端维度
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PromptConfig {
+    #[serde(default)]
+    pub prompts: HashMap<String, crate::prompt::Prompt>,
+}
+
+/// Prompt 根：按客户端分开维护
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PromptRoot {
+    #[serde(default)]
+    pub claude: PromptConfig,
+    #[serde(default)]
+    pub codex: PromptConfig,
+}
+
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
 use crate::error::AppError;
 use crate::provider::ProviderManager;
@@ -68,6 +84,9 @@ pub struct MultiAppConfig {
     /// MCP 配置（按客户端分治）
     #[serde(default)]
     pub mcp: McpRoot,
+    /// Prompt 配置（按客户端分治）
+    #[serde(default)]
+    pub prompts: PromptRoot,
 }
 
 fn default_version() -> u32 {
@@ -84,6 +103,7 @@ impl Default for MultiAppConfig {
             version: 2,
             apps,
             mcp: McpRoot::default(),
+            prompts: PromptRoot::default(),
         }
     }
 }

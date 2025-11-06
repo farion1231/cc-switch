@@ -8,6 +8,7 @@ mod config;
 mod error;
 mod init_status;
 mod mcp;
+mod prompt;
 mod provider;
 mod services;
 mod settings;
@@ -23,7 +24,9 @@ pub use mcp::{
     import_from_claude, import_from_codex, sync_enabled_to_claude, sync_enabled_to_codex,
 };
 pub use provider::Provider;
-pub use services::{ConfigService, EndpointLatency, McpService, ProviderService, SpeedtestService};
+pub use services::{
+    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, SpeedtestService,
+};
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
 
@@ -544,6 +547,13 @@ pub fn run() {
             commands::sync_enabled_mcp_to_codex,
             commands::import_mcp_from_claude,
             commands::import_mcp_from_codex,
+            // Prompt management
+            commands::get_prompts,
+            commands::upsert_prompt,
+            commands::delete_prompt,
+            commands::enable_prompt,
+            commands::import_prompt_from_file,
+            commands::get_current_prompt_file_content,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
             commands::get_custom_endpoints,

@@ -21,6 +21,7 @@ import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import McpPanel from "@/components/mcp/McpPanel";
+import PromptPanel from "@/components/prompts/PromptPanel";
 import { Button } from "@/components/ui/button";
 
 function App() {
@@ -31,6 +32,7 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isMcpOpen, setIsMcpOpen] = useState(false);
+  const [isPromptOpen, setIsPromptOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Provider | null>(null);
@@ -203,6 +205,13 @@ function App() {
           <div className="flex flex-wrap items-center gap-2">
             <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
             <Button
+              variant="outline"
+              onClick={() => setIsPromptOpen(true)}
+              className="min-w-[80px]"
+            >
+              {t("prompts.manage")}
+            </Button>
+            <Button
               variant="mcp"
               onClick={() => setIsMcpOpen(true)}
               className="min-w-[80px]"
@@ -285,6 +294,12 @@ function App() {
         open={isSettingsOpen}
         onOpenChange={setIsSettingsOpen}
         onImportSuccess={handleImportSuccess}
+      />
+
+      <PromptPanel
+        open={isPromptOpen}
+        onOpenChange={setIsPromptOpen}
+        appId={activeApp}
       />
 
       <McpPanel

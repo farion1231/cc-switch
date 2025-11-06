@@ -531,5 +531,41 @@
         "description": "Context7 documentation search tool providing latest library docs and code examples, with higher limits when configured with a key"
       }
     }
+  },
+  "prompts": {
+    "manage": "Prompt Management",
+    "claudeTitle": "Claude Prompt Management",
+    "codexTitle": "Codex Prompt Management",
+    "add": "Add Prompt",
+    "edit": "Edit Prompt",
+    "import": "Import Existing",
+    "count": "{{count}} prompts",
+    "enabled": "Enabled",
+    "enable": "Enable",
+    "enabledName": "Enabled: {{name}}",
+    "noneEnabled": "No prompt enabled",
+    "currentFile": "Current File Content",
+    "empty": "No prompts yet",
+    "emptyDescription": "Click the button above to add or import prompts",
+    "loading": "Loading...",
+    "name": "Name",
+    "namePlaceholder": "e.g., Default Project Prompt",
+    "description": "Description",
+    "descriptionPlaceholder": "Optional description",
+    "content": "Content",
+    "contentPlaceholder": "# CLAUDE.md\n\nEnter prompt content here...",
+    "loadFailed": "Failed to load prompts",
+    "saveSuccess": "Saved successfully",
+    "saveFailed": "Failed to save",
+    "deleteSuccess": "Deleted successfully",
+    "deleteFailed": "Failed to delete",
+    "enableSuccess": "Enabled successfully",
+    "enableFailed": "Failed to enable",
+    "importSuccess": "Imported successfully",
+    "importFailed": "Failed to import",
+    "confirm": {
+      "deleteTitle": "Confirm Delete",
+      "deleteMessage": "Are you sure you want to delete this prompt?"
+    }
   }
 }

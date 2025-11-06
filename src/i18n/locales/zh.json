@@ -531,5 +531,41 @@
         "description": "Context7 文档搜索工具，提供最新的库文档和代码示例，配置 key 会有更高限额"
       }
     }
+  },
+  "prompts": {
+    "manage": "提示词管理",
+    "claudeTitle": "Claude 提示词管理",
+    "codexTitle": "Codex 提示词管理",
+    "add": "添加提示词",
+    "edit": "编辑提示词",
+    "import": "导入现有",
+    "count": "共 {{count}} 个提示词",
+    "enabled": "已启用",
+    "enable": "启用",
+    "enabledName": "已启用: {{name}}",
+    "noneEnabled": "未启用任何提示词",
+    "currentFile": "当前文件内容",
+    "empty": "暂无提示词",
+    "emptyDescription": "点击右上角按钮添加或导入提示词",
+    "loading": "加载中...",
+    "name": "名称",
+    "namePlaceholder": "例如：项目默认提示词",
+    "description": "描述",
+    "descriptionPlaceholder": "可选的描述信息",
+    "content": "内容",
+    "contentPlaceholder": "# CLAUDE.md\n\n在此输入提示词内容...",
+    "loadFailed": "加载提示词失败",
+    "saveSuccess": "保存成功",
+    "saveFailed": "保存失败",
+    "deleteSuccess": "删除成功",
+    "deleteFailed": "删除失败",
+    "enableSuccess": "启用成功",
+    "enableFailed": "启用失败",
+    "importSuccess": "导入成功",
+    "importFailed": "导入失败",
+    "confirm": {
+      "deleteTitle": "确认删除",
+      "deleteMessage": "确定要删除此提示词吗？"
+    }
   }
 }
