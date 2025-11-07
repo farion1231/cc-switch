@@ -74,6 +74,8 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         await queryClient.invalidateQueries({
           queryKey: ["providers", appId],
         });
+        // 更新托盘菜单以反映新的排序
+        await providersApi.updateTrayMenu();
         toast.success(
           t("provider.sortUpdated", {
             defaultValue: "排序已更新",
