@@ -77,21 +77,26 @@ impl PromptService {
             if !has_enabled {
                 if let Ok(content) = std::fs::read_to_string(&target_path) {
                     if !content.trim().is_empty() {
-                        let timestamp = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs() as i64;
-                        let backup_id = format!("backup-{}", timestamp);
-                        let backup_prompt = Prompt {
-                            id: backup_id.clone(),
-                            name: format!("原始提示词 {}", chrono::Local::now().format("%Y-%m-%d %H:%M")),
-                            content,
-                            description: Some("自动备份的原始提示词".to_string()),
-                            enabled: false,
-                            created_at: Some(timestamp),
-                            updated_at: Some(timestamp),
-                        };
-                        prompts.insert(backup_id, backup_prompt);
+                        // 检查是否已存在相同内容的提示词，避免重复备份
+                        let content_exists = prompts.values().any(|p| p.content.trim() == content.trim());
+                        
+                        if !content_exists {
+                            let timestamp = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs() as i64;
+                            let backup_id = format!("backup-{}", timestamp);
+                            let backup_prompt = Prompt {
+                                id: backup_id.clone(),
+                                name: format!("原始提示词 {}", chrono::Local::now().format("%Y-%m-%d %H:%M")),
+                                content,
+                                description: Some("自动备份的原始提示词".to_string()),
+                                enabled: false,
+                                created_at: Some(timestamp),
+                                updated_at: Some(timestamp),
+                            };
+                            prompts.insert(backup_id, backup_prompt);
+                        }
                     }
                 }
             }

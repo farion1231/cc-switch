@@ -536,7 +536,7 @@
     }
   },
   "prompts": {
-    "manage": "Prompt Management",
+    "manage": "Prompts",
     "title": "{{appName}} Prompt Management",
     "claudeTitle": "Claude Prompt Management",
     "codexTitle": "Codex Prompt Management",
@@ -567,6 +567,8 @@
     "deleteFailed": "Failed to delete",
     "enableSuccess": "Enabled successfully",
     "enableFailed": "Failed to enable",
+    "disableSuccess": "Disabled successfully",
+    "disableFailed": "Failed to disable",
     "importSuccess": "Imported successfully",
     "importFailed": "Failed to import",
     "confirm": {

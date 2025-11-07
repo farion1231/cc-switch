@@ -536,7 +536,7 @@
     }
   },
   "prompts": {
-    "manage": "提示词管理",
+    "manage": "提示词",
     "title": "{{appName}} 提示词管理",
     "claudeTitle": "Claude 提示词管理",
     "codexTitle": "Codex 提示词管理",
@@ -567,6 +567,8 @@
     "deleteFailed": "删除失败",
     "enableSuccess": "启用成功",
     "enableFailed": "启用失败",
+    "disableSuccess": "禁用成功",
+    "disableFailed": "禁用失败",
     "importSuccess": "导入成功",
     "importFailed": "导入失败",
     "confirm": {

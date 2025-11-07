@@ -71,6 +71,51 @@ export function usePromptActions(appId: AppId) {
     [appId, reload, t]
   );
 
+  const toggleEnabled = useCallback(
+    async (id: string, enabled: boolean) => {
+      // Optimistic update
+      const previousPrompts = prompts;
+      
+      // 如果要启用当前提示词，先禁用其他所有提示词
+      if (enabled) {
+        const updatedPrompts = Object.keys(prompts).reduce((acc, key) => {
+          acc[key] = {
+            ...prompts[key],
+            enabled: key === id,
+          };
+          return acc;
+        }, {} as Record<string, Prompt>);
+        setPrompts(updatedPrompts);
+      } else {
+        setPrompts((prev) => ({
+          ...prev,
+          [id]: {
+            ...prev[id],
+            enabled: false,
+          },
+        }));
+      }
+
+      try {
+        if (enabled) {
+          await promptsApi.enablePrompt(appId, id);
+          toast.success(t("prompts.enableSuccess"));
+        } else {
+          // 禁用提示词 - 需要后端支持
+          await promptsApi.upsertPrompt(appId, id, { ...prompts[id], enabled: false });
+          toast.success(t("prompts.disableSuccess"));
+        }
+        await reload();
+      } catch (error) {
+        // Rollback on failure
+        setPrompts(previousPrompts);
+        toast.error(enabled ? t("prompts.enableFailed") : t("prompts.disableFailed"));
+        throw error;
+      }
+    },
+    [appId, prompts, reload, t]
+  );
+
   const importFromFile = useCallback(async () => {
     try {
       const id = await promptsApi.importFromFile(appId);
@@ -91,6 +136,7 @@ export function usePromptActions(appId: AppId) {
     savePrompt,
     deletePrompt,
     enablePrompt,
+    toggleEnabled,
     importFromFile,
   };
 }

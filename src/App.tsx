@@ -205,7 +205,7 @@ function App() {
           <div className="flex flex-wrap items-center gap-2">
             <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
             <Button
-              variant="outline"
+              variant="mcp"
               onClick={() => setIsPromptOpen(true)}
               className="min-w-[80px]"
             >

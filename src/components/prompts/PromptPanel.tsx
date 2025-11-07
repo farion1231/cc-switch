@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, FileText, Check, Download, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, FileText, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,7 +13,6 @@ import { type AppId } from "@/lib/api";
 import { usePromptActions } from "@/hooks/usePromptActions";
 import PromptListItem from "./PromptListItem";
 import PromptFormModal from "./PromptFormModal";
-import MarkdownEditor from "@/components/MarkdownEditor";
 import { ConfirmDialog } from "../ConfirmDialog";
 
 interface PromptPanelProps {
@@ -30,7 +29,6 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
   const { t } = useTranslation();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [showCurrentFile, setShowCurrentFile] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     titleKey: string;
@@ -38,34 +36,14 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
     messageParams?: Record<string, unknown>;
     onConfirm: () => void;
   } | null>(null);
-  const [isDarkMode, setIsDarkMode] = useState(false);
-
-  useEffect(() => {
-    // 检测初始暗色模式状态
-    setIsDarkMode(document.documentElement.classList.contains("dark"));
-
-    // 监听 html 元素的 class 变化以实时响应主题切换
-    const observer = new MutationObserver(() => {
-      setIsDarkMode(document.documentElement.classList.contains("dark"));
-    });
-
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-
-    return () => observer.disconnect();
-  }, []);
 
   const {
     prompts,
     loading,
-    currentFileContent,
     reload,
     savePrompt,
     deletePrompt,
-    enablePrompt,
-    importFromFile,
+    toggleEnabled,
   } = usePromptActions(appId);
 
   useEffect(() => {
@@ -100,9 +78,6 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
     });
   };
 
-  const handleImport = async () => {
-    await importFromFile();
-  };
 
   const promptEntries = useMemo(
     () => Object.entries(prompts),
@@ -113,7 +88,6 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
 
   const appName = t(`apps.${appId}`);
   const panelTitle = t("prompts.title", { appName });
-  const filename = appId === "claude" ? "CLAUDE.md" : "AGENTS.md";
 
   return (
     <>
@@ -122,21 +96,10 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
           <DialogHeader>
             <div className="flex items-center justify-between pr-8">
               <DialogTitle>{panelTitle}</DialogTitle>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleImport}
-                >
-                  <Download size={16} />
-                  {t("prompts.import")}
-                </Button>
-                <Button type="button" variant="mcp" onClick={handleAdd}>
-                  <Plus size={16} />
-                  {t("prompts.add")}
-                </Button>
-              </div>
+              <Button type="button" variant="mcp" onClick={handleAdd}>
+                <Plus size={16} />
+                {t("prompts.add")}
+              </Button>
             </div>
           </DialogHeader>
 
@@ -148,36 +111,6 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
                 : t("prompts.noneEnabled")}
             </div>
           </div>
-
-          {currentFileContent && (
-            <div className="flex-shrink-0 px-6 pb-4">
-              <div className="border rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-900">
-                <button
-                  onClick={() => setShowCurrentFile(!showCurrentFile)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                >
-                  <span>{t("prompts.currentFile", { filename })}</span>
-                  {showCurrentFile ? (
-                    <ChevronUp size={16} className="text-gray-500" />
-                  ) : (
-                    <ChevronDown size={16} className="text-gray-500" />
-                  )}
-                </button>
-                {showCurrentFile && (
-                  <div className="border-t border-gray-200 dark:border-gray-800">
-                    <MarkdownEditor
-                      value={currentFileContent}
-                      readOnly
-                      darkMode={isDarkMode}
-                      minHeight="150px"
-                      maxHeight="300px"
-                      className="border-0 rounded-none"
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
 
           <div className="flex-1 overflow-y-auto px-6 pb-4">
             {loading ? (
@@ -206,7 +139,7 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
                     key={id}
                     id={id}
                     prompt={prompt}
-                    onEnable={enablePrompt}
+                    onToggle={toggleEnabled}
                     onEdit={handleEdit}
                     onDelete={handleDelete}
                   />
