@@ -537,17 +537,20 @@
   },
   "prompts": {
     "manage": "Prompt Management",
+    "title": "{{appName}} Prompt Management",
     "claudeTitle": "Claude Prompt Management",
     "codexTitle": "Codex Prompt Management",
     "add": "Add Prompt",
     "edit": "Edit Prompt",
+    "addTitle": "Add {{appName}} Prompt",
+    "editTitle": "Edit {{appName}} Prompt",
     "import": "Import Existing",
     "count": "{{count}} prompts",
     "enabled": "Enabled",
     "enable": "Enable",
     "enabledName": "Enabled: {{name}}",
     "noneEnabled": "No prompt enabled",
-    "currentFile": "Current File Content",
+    "currentFile": "Current {{filename}} Content",
     "empty": "No prompts yet",
     "emptyDescription": "Click the button above to add or import prompts",
     "loading": "Loading...",
@@ -556,7 +559,7 @@
     "description": "Description",
     "descriptionPlaceholder": "Optional description",
     "content": "Content",
-    "contentPlaceholder": "# CLAUDE.md\n\nEnter prompt content here...",
+    "contentPlaceholder": "# {{filename}}\n\nEnter prompt content here...",
     "loadFailed": "Failed to load prompts",
     "saveSuccess": "Saved successfully",
     "saveFailed": "Failed to save",
@@ -568,7 +571,7 @@
     "importFailed": "Failed to import",
     "confirm": {
       "deleteTitle": "Confirm Delete",
-      "deleteMessage": "Are you sure you want to delete this prompt?"
+      "deleteMessage": "Are you sure you want to delete prompt \"{{name}}\"?"
     }
   }
 }

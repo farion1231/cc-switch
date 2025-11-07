@@ -130,7 +130,7 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       view.destroy();
       viewRef.current = null;
     };
-  }, [darkMode, readOnly, minHeight, maxHeight]); // 移除 onChange 和 placeholder 依赖，避免重建
+  }, [darkMode, readOnly, minHeight, maxHeight, placeholderText]); // 添加 placeholderText 依赖以支持国际化切换
 
   // 当 value 从外部改变时更新编辑器内容
   useEffect(() => {

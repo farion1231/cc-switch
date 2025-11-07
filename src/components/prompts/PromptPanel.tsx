@@ -33,8 +33,9 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
   const [showCurrentFile, setShowCurrentFile] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
-    title: string;
-    message: string;
+    titleKey: string;
+    messageKey: string;
+    messageParams?: Record<string, unknown>;
     onConfirm: () => void;
   } | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -82,10 +83,12 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
   };
 
   const handleDelete = (id: string) => {
+    const prompt = prompts[id];
     setConfirmDialog({
       isOpen: true,
-      title: t("prompts.confirm.deleteTitle"),
-      message: t("prompts.confirm.deleteMessage"),
+      titleKey: "prompts.confirm.deleteTitle",
+      messageKey: "prompts.confirm.deleteMessage",
+      messageParams: { name: prompt?.name },
       onConfirm: async () => {
         try {
           await deletePrompt(id);
@@ -108,8 +111,9 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
 
   const enabledPrompt = promptEntries.find(([_, p]) => p.enabled);
 
-  const panelTitle =
-    appId === "claude" ? t("prompts.claudeTitle") : t("prompts.codexTitle");
+  const appName = t(`apps.${appId}`);
+  const panelTitle = t("prompts.title", { appName });
+  const filename = appId === "claude" ? "CLAUDE.md" : "AGENTS.md";
 
   return (
     <>
@@ -152,7 +156,7 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
                   onClick={() => setShowCurrentFile(!showCurrentFile)}
                   className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                 >
-                  <span>{t("prompts.currentFile")}</span>
+                  <span>{t("prompts.currentFile", { filename })}</span>
                   {showCurrentFile ? (
                     <ChevronUp size={16} className="text-gray-500" />
                   ) : (
@@ -237,8 +241,8 @@ const PromptPanel: React.FC<PromptPanelProps> = ({
       {confirmDialog && (
         <ConfirmDialog
           isOpen={confirmDialog.isOpen}
-          title={confirmDialog.title}
-          message={confirmDialog.message}
+          title={t(confirmDialog.titleKey)}
+          message={t(confirmDialog.messageKey, confirmDialog.messageParams)}
           onConfirm={confirmDialog.onConfirm}
           onCancel={() => setConfirmDialog(null)}
         />

@@ -22,12 +22,15 @@ interface PromptFormModalProps {
 }
 
 const PromptFormModal: React.FC<PromptFormModalProps> = ({
+  appId,
   editingId,
   initialData,
   onSave,
   onClose,
 }) => {
   const { t } = useTranslation();
+  const appName = t(`apps.${appId}`);
+  const filename = appId === "claude" ? "CLAUDE.md" : "AGENTS.md";
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
@@ -91,7 +94,9 @@ const PromptFormModal: React.FC<PromptFormModalProps> = ({
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>
-            {editingId ? t("prompts.edit") : t("prompts.add")}
+            {editingId
+              ? t("prompts.editTitle", { appName })
+              : t("prompts.addTitle", { appName })}
           </DialogTitle>
         </DialogHeader>
 
@@ -123,7 +128,7 @@ const PromptFormModal: React.FC<PromptFormModalProps> = ({
             <MarkdownEditor
               value={content}
               onChange={setContent}
-              placeholder={t("prompts.contentPlaceholder")}
+              placeholder={t("prompts.contentPlaceholder", { filename })}
               darkMode={isDarkMode}
               minHeight="300px"
             />

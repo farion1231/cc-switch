@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use crate::app_config::AppType;
 use crate::config::write_text_file;
 use crate::error::AppError;
 use crate::prompt::Prompt;
-use crate::settings;
 use crate::store::AppState;
 
 pub struct PromptService;
