@@ -5,6 +5,114 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2025-11-07
+
+### ✨ New Features
+
+- **Provider Duplicate** - Quick duplicate existing provider configurations for easy variant creation
+- **Edit Mode Toggle** - Show/hide drag handles to optimize editing experience
+- **Custom Endpoint Management** - Support multi-endpoint configuration for aggregator providers
+- **Usage Query Enhancements**
+  - Auto-refresh interval: Support periodic automatic usage query
+  - Test Script API: Validate JavaScript scripts before execution
+  - Template system expansion: Custom blank template, support for access token and user ID parameters
+- **Configuration Editor Improvements**
+  - Add JSON format button
+  - Real-time TOML syntax validation for Codex configuration
+- **Auto-sync on Directory Change** - When switching Claude/Codex config directories (e.g., WSL environment), automatically sync current provider to new directory without manual operation
+- **Load Live Config When Editing Active Provider** - When editing the currently active provider, prioritize displaying the actual effective configuration to protect user manual modifications
+- **New Provider Presets** - DMXAPI, Azure Codex, AnyRouter, AiHubMix, MiniMax
+- **Partner Promotion Mechanism** - Support ecosystem partner promotion (e.g., Zhipu GLM Z.ai)
+
+### 🔧 Improvements
+
+- **Configuration Directory Switching**
+  - Introduced unified post-change sync utility (`postChangeSync.ts`)
+  - Auto-sync current providers to new directory when changing Claude/Codex config directories
+  - Perfect support for WSL environment switching
+  - Auto-sync after config import to ensure immediate effectiveness
+  - Use Result pattern for graceful error handling without blocking main flow
+  - Distinguish "fully successful" and "partially successful" states for precise user feedback
+- **UI/UX Enhancements**
+  - Provider cards: Unique icons and color identification
+  - Unified border design system across all components
+  - Drag interaction optimization: Push effect animation, improved handle icons
+  - Enhanced current provider visual feedback
+  - Dialog size standardization and layout consistency
+  - Form experience: Optimized model placeholders, simplified provider hints, category-specific hints
+- **Complete Internationalization Coverage**
+  - Error messages internationalization
+  - Tray menu internationalization
+  - All UI components internationalization
+- **Usage Display Moved Inline** - Usage display moved next to enable button
+
+### 🐛 Bug Fixes
+
+- **Configuration Sync**
+  - Fixed `apiKeyUrl` priority issue
+  - Fixed MCP sync-to-other-side functionality failure
+  - Fixed sync issues after config import
+  - Prevent silent fallback and data loss on config error
+- **Usage Query**
+  - Fixed auto-query interval timing issue
+  - Ensure refresh button shows loading animation on click
+- **UI Issues**
+  - Fixed name collision error (`get_init_error` command)
+  - Fixed language setting rollback after successful save
+  - Fixed language switch state reset (dependency cycle)
+  - Fixed edit mode button alignment
+- **Configuration Management**
+  - Fixed Codex API Key auto-sync
+  - Fixed endpoint speed test functionality
+  - Fixed provider duplicate insertion position (next to original provider)
+  - Fixed custom endpoint preservation in edit mode
+- **Startup Issues**
+  - Force exit on config error (no silent fallback)
+  - Eliminate code duplication causing initialization errors
+
+### 🏗️ Technical Improvements (For Developers)
+
+**Backend Refactoring (Rust)** - Completed 5-phase refactoring:
+- **Phase 1**: Unified error handling (`AppError` + i18n error messages)
+- **Phase 2**: Command layer split by domain (`commands/{provider,mcp,config,settings,plugin,misc}.rs`)
+- **Phase 3**: Integration tests and transaction mechanism (config snapshot + failure rollback)
+- **Phase 4**: Extracted Service layer (`services/{provider,mcp,config,speedtest}.rs`)
+- **Phase 5**: Concurrency optimization (`RwLock` instead of `Mutex`, scoped guard to avoid deadlock)
+
+**Frontend Refactoring (React + TypeScript)** - Completed 4-stage refactoring:
+- **Stage 1**: Test infrastructure (vitest + MSW + @testing-library/react)
+- **Stage 2**: Extracted custom hooks (`useProviderActions`, `useMcpActions`, `useSettings`, `useImportExport`, etc.)
+- **Stage 3**: Component splitting and business logic extraction
+- **Stage 4**: Code cleanup and formatting unification
+
+**Testing System**:
+- Hooks unit tests 100% coverage
+- Integration tests covering key processes (App, SettingsDialog, MCP Panel)
+- MSW mocking backend API to ensure test independence
+
+**Code Quality**:
+- Unified parameter format: All Tauri commands migrated to camelCase (Tauri 2 specification)
+- `AppType` renamed to `AppId`: Semantically clearer
+- Unified parsing with `FromStr` trait: Centralized `app` parameter parsing
+- Eliminate code duplication: DRY violations cleanup
+- Remove unused code: `missing_param` helper function, deprecated `tauri-api.ts`, redundant `KimiModelSelector` component
+
+**Internal Optimizations**:
+- **Removed Legacy Migration Logic**: v3.6 removed v1 config auto-migration and copy file scanning logic
+  - ✅ **Impact**: Improved startup performance, cleaner code
+  - ✅ **Compatibility**: v2 format configs fully compatible, no action required
+  - ⚠️ **Note**: Users upgrading from v3.1.0 or earlier should first upgrade to v3.2.x or v3.5.x for one-time migration, then upgrade to v3.6
+- **Command Parameter Standardization**: Backend unified to use `app` parameter (values: `claude` or `codex`)
+  - ✅ **Impact**: More standardized code, friendlier error prompts
+  - ✅ **Compatibility**: Frontend fully adapted, users don't need to care about this change
+
+### 📦 Dependencies
+
+- Updated to Tauri 2.8.x
+- Updated to TailwindCSS 4.x
+- Updated to TanStack Query v5.90.x
+- Maintained React 18.2.x and TypeScript 5.3.x
+
 ## [3.5.0] - 2025-01-15
 
 ### ⚠ Breaking Changes

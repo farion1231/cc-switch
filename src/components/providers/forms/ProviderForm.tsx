@@ -394,11 +394,8 @@ export function ProviderForm({
     );
   }, [groupedPresets]);
 
-  // 判断是否显示端点测速（聚合服务、第三方和自定义类别）
-  const shouldShowSpeedTest =
-    category === "aggregator" ||
-    category === "third_party" ||
-    category === "custom";
+  // 判断是否显示端点测速（仅官方类别不显示）
+  const shouldShowSpeedTest = category !== "official";
 
   // 使用 API Key 链接 hook (Claude)
   const {

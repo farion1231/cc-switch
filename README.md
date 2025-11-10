@@ -1,284 +1,529 @@
-# Claude Code & Codex 供应商切换器
+<div align="center">
 
-[![Version](https://img.shields.io/badge/version-3.5.1-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+# Claude Code & Codex Provider Switcher
+
+[![Version](https://img.shields.io/badge/version-3.6.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 
-一个用于管理和切换 Claude Code 与 Codex 不同供应商配置的桌面应用。
+English | [中文](README_ZH.md) | [Changelog](CHANGELOG.md)
 
-> v3.5.0 ：新增 **MCP 管理**、**配置导入/导出**、**端点速度测试**功能，完善国际化覆盖，新增 Longcat、kat-coder 预设，标准化发布文件命名规范。
+A desktop application for managing and switching between different provider configurations & MCP for Claude Code and Codex.
 
-> v3.4.0 ：新增 i18next 国际化（还有部分未完成）、对新模型（qwen-3-max, GLM-4.6, DeepSeek-V3.2-Exp）的支持、Claude 插件、单实例守护、托盘最小化及安装器优化等。
+</div>
 
-> v3.3.0 ：VS Code Codex 插件一键配置/移除（默认自动同步）、Codex 通用配置片段与自定义向导增强、WSL 环境支持、跨平台托盘与 UI 优化。（该 VS Code 写入功能已在 v3.4.x 停用）
+## ❤️ Sponsor
 
-> v3.2.0 ：全新 UI、macOS系统托盘、内置更新器、原子写入与回滚、改进暗色样式、单一事实源（SSOT）与一次性迁移/归档。
+![Zhipu GLM](assets/partners/banners/glm-en.jpg)
 
-> v3.1.0 ：新增 Codex 供应商管理与一键切换，支持导入当前 Codex 配置为默认供应商，并在内部配置从 v1 → v2 迁移前自动备份（详见下文“迁移与归档”）。
+This project is sponsored by Z.ai, supporting us with their GLM CODING PLAN.
 
-> v3.0.0 重大更新：从 Electron 完全迁移到 Tauri 2.0，应用体积显著降低、启动性能大幅提升。
+GLM CODING PLAN is a subscription service designed for AI coding, starting at just $3/month. It provides access to their flagship GLM-4.6 model across 10+ popular AI coding tools (Claude Code, Cline, Roo Code, etc.), offering developers top-tier, fast, and stable coding experiences.
 
-## 功能特性（v3.5.0）
+Get 10% OFF the GLM CODING PLAN with [this link](https://z.ai/subscribe?ic=8JVLJQFSKB)!
 
-- **MCP (Model Context Protocol) 管理**：完整的 MCP 服务器配置管理系统
-  - 支持 stdio 和 http 服务器类型，并提供命令校验
-  - 内置常用 MCP 服务器模板（如 mcp-fetch 等）
-  - 实时启用/禁用 MCP 服务器，原子文件写入防止配置损坏
-- **配置导入/导出**：备份和恢复你的供应商配置
-  - 一键导出所有配置到 JSON 文件
-  - 导入配置时自动验证并备份，自动轮换备份（保留最近 10 个）
-  - 带有详细状态反馈的进度模态框
-- **端点速度测试**：测试 API 端点响应时间
-  - 测量不同供应商端点的延迟，可视化连接质量指示器
-  - 帮助用户选择最快的供应商
-- **国际化与语言切换**：完整的 i18next 国际化覆盖，默认显示中文，可在设置中快速切换到英文，界面文案自动实时刷新。
-- **Claude 插件同步**：内置按钮可一键应用或恢复 Claude 插件配置，切换供应商后立即生效。
-- **供应商预设扩展**：新增 Longcat、kat-coder 等预设，更新 GLM 供应商配置至最新模型。
-- **系统托盘与窗口行为**：窗口关闭可最小化到托盘，macOS 支持托盘模式下隐藏/显示 Dock，托盘切换时同步 Claude/Codex/插件状态。
-- **单实例**：保证同一时间仅运行一个实例，避免多开冲突。
-- **标准化发布命名**：所有平台发布文件使用一致的版本标签命名（macOS: `.tar.gz` / `.zip`，Windows: `.msi` / `-Portable.zip`，Linux: `.AppImage` / `.deb`）。
+## Release Notes
 
-## 界面预览
+> **v3.6.0**: Added edit mode (provider duplication, manual sorting), custom endpoint management, usage query features. Optimized config directory switching experience (perfect WSL environment support). Added multiple provider presets (DMXAPI, Azure Codex, AnyRouter, AiHubMix, MiniMax). Completed full-stack architecture refactoring and testing infrastructure.
 
-### 主界面
+> v3.5.0: Added MCP management, config import/export, endpoint speed testing. Complete i18n coverage. Added Longcat and kat-coder presets. Standardized release file naming conventions.
 
-![主界面](screenshots/main.png)
+> v3.4.0: Added i18next internationalization, support for new models (qwen-3-max, GLM-4.6, DeepSeek-V3.2-Exp), Claude plugin, single-instance daemon, tray minimize, and installer optimizations.
 
-### 添加供应商
+> v3.3.0: One-click VS Code Codex plugin configuration/removal (auto-sync by default), Codex common config snippets, enhanced custom wizard, WSL environment support, cross-platform tray and UI optimizations. (VS Code write feature deprecated in v3.4.x)
 
-![添加供应商](screenshots/add.png)
+> v3.2.0: Brand new UI, macOS system tray, built-in updater, atomic write with rollback, improved dark mode, Single Source of Truth (SSOT) with one-time migration/archival.
 
-## 下载安装
+> v3.1.0: Added Codex provider management with one-click switching. Import current Codex config as default provider. Auto-backup before internal config v1 → v2 migration (see "Migration & Archival" below).
 
-### 系统要求
+> v3.0.0 Major Update: Complete migration from Electron to Tauri 2.0. Significantly reduced app size and greatly improved startup performance.
 
-- **Windows**: Windows 10 及以上
-- **macOS**: macOS 10.15 (Catalina) 及以上
-- **Linux**: Ubuntu 22.04+ / Debian 11+ / Fedora 34+ 等主流发行版
+## Features (v3.6.0)
 
-### Windows 用户
+### Core Features
 
-从 [Releases](../../releases) 页面下载最新版本的 `CC-Switch-v{版本号}-Windows.msi` 安装包或者 `CC-Switch-v{版本号}-Windows-Portable.zip` 绿色版。
+- **MCP (Model Context Protocol) Management**: Complete MCP server configuration management system
+  - Support for stdio and http server types with command validation
+  - Built-in templates for popular MCP servers (e.g., mcp-fetch)
+  - Real-time enable/disable MCP servers with atomic file writes to prevent configuration corruption
+- **Config Import/Export**: Backup and restore your provider configurations
+  - One-click export all configurations to JSON file
+  - Import configs with automatic validation and backup, auto-rotate backups (keep 10 most recent)
+  - Auto-sync to live config files after import to ensure immediate effect
+- **Endpoint Speed Testing**: Test API endpoint response times
+  - Measure latency to different provider endpoints with visual connection quality indicators
+  - Help users choose the fastest provider
+- **Internationalization & Language Switching**: Complete i18next i18n coverage (including error messages, tray menu, all UI components)
+- **Claude Plugin Sync**: Built-in button to apply or restore Claude plugin configurations with one click. Takes effect immediately after switching providers.
 
-### macOS 用户
+### v3.6 New Features
 
-**方式一：通过 Homebrew 安装（推荐）**
+- **Provider Duplication**: Quickly duplicate existing provider configs to easily create variants
+- **Manual Sorting**: Drag and drop to manually reorder providers
+- **Custom Endpoint Management**: Support multi-endpoint configuration for aggregator providers
+- **Custom Configuration Directory (Cloud Sync Support)**:
+  - Customize CC Switch's configuration storage location
+  - Point to cloud sync folders (Dropbox, OneDrive, iCloud, etc.) to enable automatic config synchronization across devices
+  - Supports independent management via Tauri Store
+- **Claude Configuration Data Structure Enhancements**
+  - **Granular Model Configuration**: Migrated from dual-key to quad-key system for better model tier differentiation
+    - New fields: `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_MODEL`
+    - Replaces legacy `ANTHROPIC_SMALL_FAST_MODEL` with automatic migration
+    - Backend normalizes old configs on first read/write with smart fallback chain
+    - UI expanded from 2 to 4 model input fields with intelligent defaults
+  - Support for `ANTHROPIC_API_KEY` field (in addition to `ANTHROPIC_AUTH_TOKEN`)
+  - Template variable system for dynamic configuration replacement (e.g., KAT-Coder's ENDPOINT_ID)
+  - Endpoint candidates list for speed testing and endpoint management
+  - Visual theme configuration (custom icons and colors for provider cards)
+  - Partner promotion mechanism with i18n support
+- **Updated Provider Models**
+  - Kimi: Updated to latest `kimi-k2-thinking` model
+- **Usage Query Features**
+  - Auto-refresh interval: Supports periodic automatic usage queries
+  - Test Script API: Validate JavaScript scripts before execution
+  - Template system expansion: Custom blank templates, support for access token and user ID parameters
+- **Config Editor Improvements**
+  - Added JSON format button
+  - Real-time TOML syntax validation (for Codex configs)
+- **Auto-sync on Directory Change**: When switching Claude/Codex config directories (e.g., switching to WSL environment), automatically sync current provider to new directory to avoid config file conflicts
+- **Load Live Config When Editing Active Provider**: When editing the currently active provider, prioritize displaying the actual effective configuration to protect user manual modifications
+- **New Provider Presets**: DMXAPI, Azure Codex, AnyRouter, AiHubMix, MiniMax
+- **Partner Promotion Mechanism**: Support ecosystem partner promotion (e.g., Zhipu GLM Z.ai)
+
+### v3.6 Architecture Improvements
+
+- **Backend Refactoring**: Completed 5-phase refactoring (unified error handling → command layer split → integration tests → Service layer extraction → concurrency optimization)
+- **Frontend Refactoring**: Completed 4-stage refactoring (test infrastructure → Hooks extraction → component splitting → code cleanup)
+- **Testing System**: 100% Hooks unit test coverage, integration tests covering critical flows (vitest + MSW + @testing-library/react)
+
+### System Features
+
+- **System Tray & Window Behavior**: Window can minimize to tray, macOS supports hide/show Dock in tray mode, tray switching syncs Claude/Codex/plugin status.
+- **Single Instance**: Ensures only one instance runs at a time to avoid multi-instance conflicts.
+- **Standardized Release Naming**: All platform release files use consistent version-tagged naming (macOS: `.tar.gz` / `.zip`, Windows: `.msi` / `-Portable.zip`, Linux: `.AppImage` / `.deb`).
+
+## Screenshots
+
+### Main Interface
+
+![Main Interface](assets/screenshots/main-en.png)
+
+### Add Provider
+
+![Add Provider](assets/screenshots/add-en.png)
+
+## Download & Installation
+
+### System Requirements
+
+- **Windows**: Windows 10 and above
+- **macOS**: macOS 10.15 (Catalina) and above
+- **Linux**: Ubuntu 22.04+ / Debian 11+ / Fedora 34+ and other mainstream distributions
+
+### Windows Users
+
+Download the latest `CC-Switch-v{version}-Windows.msi` installer or `CC-Switch-v{version}-Windows-Portable.zip` portable version from the [Releases](../../releases) page.
+
+### macOS Users
+
+**Method 1: Install via Homebrew (Recommended)**
 
 ```bash
 brew tap farion1231/ccswitch
 brew install --cask cc-switch
 ```
 
-更新：
+Update:
 
 ```bash
 brew upgrade --cask cc-switch
 ```
 
-**方式二：手动下载**
+**Method 2: Manual Download**
 
-从 [Releases](../../releases) 页面下载 `CC-Switch-v{版本号}-macOS.zip` 解压使用。
+Download `CC-Switch-v{version}-macOS.zip` from the [Releases](../../releases) page and extract to use.
 
-> **注意**：由于作者没有苹果开发者账号，首次打开可能出现"未知开发者"警告，请先关闭，然后前往"系统设置" → "隐私与安全性" → 点击"仍要打开"，之后便可以正常打开
+> **Note**: Since the author doesn't have an Apple Developer account, you may see an "unidentified developer" warning on first launch. Please close it first, then go to "System Settings" → "Privacy & Security" → click "Open Anyway", and you'll be able to open it normally afterwards.
 
-### Linux 用户
+### Linux Users
 
-从 [Releases](../../releases) 页面下载最新版本的 `CC-Switch-v{版本号}-Linux.deb` 包或者 `CC-Switch-v{版本号}-Linux.AppImage` 安装包。
+Download the latest `CC-Switch-v{version}-Linux.deb` package or `CC-Switch-v{version}-Linux.AppImage` from the [Releases](../../releases) page.
 
-## 使用说明
+## Usage Guide
 
-1. 点击"添加供应商"添加你的 API 配置
-2. 切换方式：
-   - 在主界面选择供应商后点击切换
-   - 或通过“系统托盘（菜单栏）”直接选择目标供应商，立即生效
-3. 切换会写入对应应用的“live 配置文件”（Claude：`settings.json`；Codex：`auth.json` + `config.toml`）
-4. 重启或新开终端以确保生效
-5. 若需切回官方登录，在预设中选择“官方登录”并切换即可；重启终端后按官方流程登录
+1. Click "Add Provider" to add your API configuration
+2. Switching methods:
+   - Select a provider on the main interface and click switch
+   - Or directly select target provider from "System Tray (Menu Bar)" for immediate effect
+3. Switching will write to the corresponding app's "live config file" (Claude: `settings.json`; Codex: `auth.json` + `config.toml`)
+4. Restart or open new terminal to ensure it takes effect
+5. To switch back to official login, select "Official Login" from presets and switch; after restarting terminal, follow the official login process
 
-### MCP 配置说明（v3.5.x）
+### MCP Configuration Guide (v3.5.x)
 
-- 管理位置：所有 MCP 服务器定义集中保存在 `~/.cc-switch/config.json`（按客户端 `claude` / `codex` 分类）
-- 同步机制：
-  - 启用的 Claude MCP 会投影到 `~/.claude.json`（路径可随覆盖目录而变化）
-  - 启用的 Codex MCP 会投影到 `~/.codex/config.toml`
-- 校验与归一化：新增/导入时自动校验字段合法性（stdio/http），并自动修复/填充 `id` 等键名
-- 导入来源：支持从 `~/.claude.json` 与 `~/.codex/config.toml` 导入；已存在条目只强制 `enabled=true`，不覆盖其他字段
+- Management Location: All MCP server definitions are centrally saved in `~/.cc-switch/config.json` (categorized by client `claude` / `codex`)
+- Sync Mechanism:
+  - Enabled Claude MCP servers are projected to `~/.claude.json` (path may vary with override directory)
+  - Enabled Codex MCP servers are projected to `~/.codex/config.toml`
+- Validation & Normalization: Auto-validate field legality (stdio/http) when adding/importing, and auto-fix/populate keys like `id`
+- Import Sources: Support importing from `~/.claude.json` and `~/.codex/config.toml`; existing entries only force `enabled=true`, don't override other fields
 
-### 检查更新
+### Check for Updates
 
-- 在“设置”中点击“检查更新”，若内置 Updater 配置可用将直接检测与下载；否则会回退打开 Releases 页面
+- Click "Check for Updates" in Settings. If built-in Updater config is available, it will detect and download directly; otherwise, it will fall back to opening the Releases page
 
-### Codex 说明（SSOT）
+### Codex Guide (SSOT)
 
-- 配置目录：`~/.codex/`
-  - live 主配置：`auth.json`（必需）、`config.toml`（可为空）
-- API Key 字段：`auth.json` 中使用 `OPENAI_API_KEY`
-- 切换行为（不再写“副本文件”）：
-  - 供应商配置统一保存在 `~/.cc-switch/config.json`
-  - 切换时将目标供应商写回 live 文件（`auth.json` + `config.toml`）
-  - 采用“原子写入 + 失败回滚”，避免半写状态；`config.toml` 可为空
-- 导入默认：当该应用无任何供应商时，从现有 live 主配置创建一条默认项并设为当前
-- 官方登录：可切换到预设“Codex 官方登录”，重启终端后按官方流程登录
+- Config Directory: `~/.codex/`
+  - Live main config: `auth.json` (required), `config.toml` (can be empty)
+- API Key Field: Uses `OPENAI_API_KEY` in `auth.json`
+- Switching Behavior (no longer writes "copy files"):
+  - Provider configs are uniformly saved in `~/.cc-switch/config.json`
+  - When switching, writes target provider back to live files (`auth.json` + `config.toml`)
+  - Uses "atomic write + rollback on failure" to avoid half-written state; `config.toml` can be empty
+- Import Default: When the app has no providers, creates a default entry from existing live main config and sets it as current
+- Official Login: Can switch to preset "Codex Official Login", restart terminal and follow official login process
 
-### Claude Code 说明（SSOT）
+### Claude Code Guide (SSOT)
 
-- 配置目录：`~/.claude/`
-  - live 主配置：`settings.json`（优先）或历史兼容 `claude.json`
-- API Key 字段：`env.ANTHROPIC_AUTH_TOKEN`
-- 切换行为（不再写“副本文件”）：
-  - 供应商配置统一保存在 `~/.cc-switch/config.json`
-  - 切换时将目标供应商 JSON 直接写入 live 文件（优先 `settings.json`）
-  - 编辑当前供应商时，先写 live 成功，再更新应用主配置，保证一致性
-- 导入默认：当该应用无任何供应商时，从现有 live 主配置创建一条默认项并设为当前
-- 官方登录：可切换到预设“Claude 官方登录”，重启终端后可使用 `/login` 完成登录
+- Config Directory: `~/.claude/`
+  - Live main config: `settings.json` (preferred) or legacy-compatible `claude.json`
+- API Key Field: `env.ANTHROPIC_AUTH_TOKEN`
+- Switching Behavior (no longer writes "copy files"):
+  - Provider configs are uniformly saved in `~/.cc-switch/config.json`
+  - When switching, writes target provider JSON directly to live file (preferring `settings.json`)
+  - When editing current provider, writes live first successfully, then updates app main config to ensure consistency
+- Import Default: When the app has no providers, creates a default entry from existing live main config and sets it as current
+- Official Login: Can switch to preset "Claude Official Login", restart terminal and use `/login` to complete login
 
-### 迁移与归档（自 v3.2.0 起）
+### Migration & Archival
 
-- 一次性迁移：首次启动 3.2.0 及以上版本会扫描旧的“副本文件”并合并到 `~/.cc-switch/config.json`
-  - Claude：`~/.claude/settings-*.json`（排除 `settings.json` / 历史 `claude.json`）
-  - Codex：`~/.codex/auth-*.json` 与 `config-*.toml`（按名称成对合并）
-- 去重与当前项：按“名称（忽略大小写）+ API Key”去重；若当前为空，将 live 合并项设为当前
-- 归档与清理：
-  - 归档目录：`~/.cc-switch/archive/<timestamp>/<category>/...`
-  - 归档成功后删除原副本；失败则保留原文件（保守策略）
-- v1 → v2 结构升级：会额外生成 `~/.cc-switch/config.v1.backup.<timestamp>.json` 以便回滚
-- 注意：迁移后不再持续归档日常切换/编辑操作，如需长期审计请自备备份方案
+#### v3.6 Technical Improvements
 
-## 架构总览（v3.5.x）
+**Internal Optimizations (User Transparent)**:
 
-- 前端（Renderer）
-  - 技术栈：TypeScript + React 18 + Vite + TailwindCSS
-  - 数据层：TanStack React Query 统一查询与变更（`@/lib/query`），Tauri API 统一封装（`@/lib/api`）
-  - 事件流：监听后端 `provider-switched` 事件，驱动 UI 刷新与托盘状态一致
-  - 组织结构：按领域拆分组件（providers/settings/mcp），动作逻辑下沉至 Hooks（如 `useProviderActions`）
+- **Removed Legacy Migration Logic**: v3.6 removed v1 config auto-migration and copy file scanning logic
+  - **Impact**: Improved startup performance, cleaner code
+  - **Compatibility**: v2 format configs are fully compatible, no action required
+  - ⚠️ **Note**: Users upgrading from v3.1.0 or earlier should first upgrade to v3.2.x or v3.5.x for one-time migration, then upgrade to v3.6
 
-- 后端（Tauri + Rust）
-  - Commands（接口层）：`src-tauri/src/commands/*` 按领域拆分（provider/config/mcp 等）
-  - Services（业务层）：`src-tauri/src/services/*` 承载核心逻辑（Provider/MCP/Config/Speedtest）
-  - 模型与状态：`provider.rs`（领域模型）+ `app_config.rs`（多应用配置）+ `store.rs`（全局 RwLock）
-  - 可靠性：
-    - 统一错误类型 `AppError`（包含本地化消息）
-    - 事务式变更（配置快照 + 失败回滚）与原子写入（避免半写入）
-    - 托盘菜单与事件：切换后重建菜单并向前端发射 `provider-switched` 事件
+- **Command Parameter Standardization**: Backend unified to use `app` parameter (values: `claude` or `codex`)
+  - **Impact**: More standardized code, friendlier error messages
+  - **Compatibility**: Frontend fully adapted, users don't need to care about this change
 
-- 设计要点（SSOT）
-  - 单一事实源：供应商配置集中存放于 `~/.cc-switch/config.json`
-  - 切换时仅写 live 配置（Claude: `settings.json`；Codex: `auth.json` + `config.toml`）
-  - 首次缺省导入：当某应用无任何供应商时，会从已有 live 配置生成默认项
+#### Startup Failure & Recovery
 
-- 兼容性与变更
-  - 命令参数统一：Tauri 命令仅接受 `app`（值为 `claude` / `codex`）
-  - 前端类型统一：使用 `AppId` 表达应用标识（替代历史 `AppType` 导出）
+- Trigger Conditions: Triggered when `~/.cc-switch/config.json` doesn't exist, is corrupted, or fails to parse.
+- User Action: Check JSON syntax according to popup prompt, or restore from backup files.
+- Backup Location & Rotation: `~/.cc-switch/backups/backup_YYYYMMDD_HHMMSS.json` (keep up to 10, see `src-tauri/src/services/config.rs`).
+- Exit Strategy: To protect data safety, the app will show a popup and force exit when the above errors occur; restart after fixing.
 
-## 开发
+#### Migration Mechanism (v3.2.0+)
 
-### 环境要求
+- One-time Migration: First launch of v3.2.0+ will scan old "copy files" and merge into `~/.cc-switch/config.json`
+  - Claude: `~/.claude/settings-*.json` (excluding `settings.json` / legacy `claude.json`)
+  - Codex: `~/.codex/auth-*.json` and `config-*.toml` (merged in pairs by name)
+- Deduplication & Current Item: Deduplicate by "name (case-insensitive) + API Key"; if current is empty, set live merged item as current
+- Archival & Cleanup:
+  - Archive directory: `~/.cc-switch/archive/<timestamp>/<category>/...`
+  - Delete original copies after successful archival; keep original files on failure (conservative strategy)
+- v1 → v2 Structure Upgrade: Additionally generates `~/.cc-switch/config.v1.backup.<timestamp>.json` for rollback
+- Note: After migration, daily switch/edit operations are no longer archived; prepare your own backup solution if long-term auditing is needed
+
+## Architecture Overview (v3.6)
+
+### Architecture Refactoring Highlights (v3.6)
+
+**Backend Refactoring (Rust)**: Completed 5-phase refactoring
+
+- **Phase 1**: Unified error handling (`AppError` + i18n error messages)
+- **Phase 2**: Command layer split by domain (`commands/{provider,mcp,config,settings,plugin,misc}.rs`)
+- **Phase 3**: Introduced integration tests and transaction mechanism (config snapshot + failure rollback)
+- **Phase 4**: Extracted Service layer (`services/{provider,mcp,config,speedtest}.rs`)
+- **Phase 5**: Concurrency optimization (`RwLock` instead of `Mutex`, scoped guard to avoid deadlock)
+
+**Frontend Refactoring (React + TypeScript)**: Completed 4-stage refactoring
+
+- **Stage 1**: Established test infrastructure (vitest + MSW + @testing-library/react)
+- **Stage 2**: Extracted custom hooks (`useProviderActions`, `useMcpActions`, `useSettings`, `useImportExport`, etc.)
+- **Stage 3**: Component splitting and business logic extraction
+- **Stage 4**: Code cleanup and formatting unification
+
+**Test Coverage**:
+
+- 100% Hooks unit test coverage
+- Integration tests covering critical flows (App, SettingsDialog, MCP Panel)
+- MSW mocking backend API to ensure test independence
+
+### Layered Architecture
+
+- **Frontend (Renderer)**
+  - Tech Stack: TypeScript + React 18 + Vite + TailwindCSS 4
+  - Data Layer: TanStack React Query unified queries and mutations (`@/lib/query`), Tauri API unified wrapper (`@/lib/api`)
+  - Business Logic Layer: Custom Hooks (`@/hooks`) carry domain logic, components stay simple
+  - Event Flow: Listen to backend `provider-switched` events, drive UI refresh and tray state consistency
+  - Organization: Components split by domain (`providers/settings/mcp/ui`)
+
+- **Backend (Tauri + Rust)**
+  - **Commands Layer** (Interface Layer): `src-tauri/src/commands/*` split by domain, only responsible for parameter parsing and permission validation
+  - **Services Layer** (Business Layer): `src-tauri/src/services/*` carry core logic, reusable and testable
+    - `ProviderService`: Provider CRUD, switch, backfill, sorting
+    - `McpService`: MCP server management, import/export, sync
+    - `ConfigService`: Config file import/export, backup/restore
+    - `SpeedtestService`: API endpoint latency testing
+  - **Models & State**:
+    - `provider.rs`: Domain models (`Provider`, `ProviderManager`, `ProviderMeta`)
+    - `app_config.rs`: Multi-app config (`MultiAppConfig`, `AppId`, `McpRoot`)
+    - `store.rs`: Global state (`AppState` + `RwLock<MultiAppConfig>`)
+  - **Reliability**:
+    - Unified error type `AppError` (with localized messages)
+    - Transactional changes (config snapshot + failure rollback)
+    - Atomic writes (temp file + rename, avoid half-writes)
+    - Tray menu & events: Rebuild menu after switch and emit `provider-switched` event to frontend
+
+- **Design Points (SSOT + Dual-way Sync)**
+  - **Single Source of Truth**: Provider configs centrally stored in `~/.cc-switch/config.json`
+  - **Write on Switch**: Write target provider config to live files (Claude: `settings.json`; Codex: `auth.json` + `config.toml`)
+  - **Backfill Mechanism**: Immediately read back live files after switch, update SSOT to protect user manual modifications
+  - **Directory Switch Sync**: Auto-sync current provider to new directory when changing config directories (perfect WSL environment support)
+  - **Prioritize Live When Editing**: When editing current provider, prioritize loading live config to ensure display of actually effective configuration
+
+- **Compatibility & Changes**
+  - Command Parameters Unified: Tauri commands only accept `app` (values: `claude` / `codex`)
+  - Frontend Types Unified: Use `AppId` to express app identifiers (replacing legacy `AppType` export)
+
+## Development
+
+### Environment Requirements
 
 - Node.js 18+
 - pnpm 8+
-- Rust 1.75+
-- Tauri CLI 2.0+
+- Rust 1.85+
+- Tauri CLI 2.8+
 
-### 开发命令
+### Development Commands
 
 ```bash
-# 安装依赖
+# Install dependencies
 pnpm install
 
-# 开发模式（热重载）
+# Dev mode (hot reload)
 pnpm dev
 
-# 类型检查
+# Type check
 pnpm typecheck
 
-# 代码格式化
+# Format code
 pnpm format
 
-# 检查代码格式
+# Check code format
 pnpm format:check
 
-# 运行前端单元测试
+# Run frontend unit tests
 pnpm test:unit
 
-# 监听模式运行测试
+# Run tests in watch mode (recommended for development)
 pnpm test:unit:watch
 
-# 构建应用
+# Build application
 pnpm build
 
-# 构建调试版本
+# Build debug version
 pnpm tauri build --debug
 ```
 
-### Rust 后端开发
+### Rust Backend Development
 
 ```bash
 cd src-tauri
 
-# 格式化 Rust 代码
+# Format Rust code
 cargo fmt
 
-# 运行 clippy 检查
+# Run clippy checks
 cargo clippy
 
-# 运行测试
+# Run backend tests
 cargo test
+
+# Run specific tests
+cargo test test_name
+
+# Run tests with test-hooks feature
+cargo test --features test-hooks
 ```
 
-## 技术栈
+### Testing Guide (v3.6 New)
 
-- **[Tauri 2](https://tauri.app/)** - 跨平台桌面应用框架（集成 updater/process/opener/log/tray-icon）
-- **[React 18](https://react.dev/)** - 用户界面库
-- **[TypeScript](https://www.typescriptlang.org/)** - 类型安全的 JavaScript
-- **[Vite](https://vitejs.dev/)** - 极速的前端构建工具
-- **[Rust](https://www.rust-lang.org/)** - 系统级编程语言（后端）
-- **[TanStack Query](https://tanstack.com/query/latest)** - 前端数据获取与缓存
-- **[i18next](https://www.i18next.com/)** - 国际化框架
+**Frontend Testing**:
 
-## 项目结构
+- Uses **vitest** as test framework
+- Uses **MSW (Mock Service Worker)** to mock Tauri API calls
+- Uses **@testing-library/react** for component testing
+
+**Test Coverage**:
+
+- ✅ Hooks unit tests (100% coverage)
+  - `useProviderActions` - Provider operations
+  - `useMcpActions` - MCP management
+  - `useSettings` series - Settings management
+  - `useImportExport` - Import/export
+- ✅ Integration tests
+  - App main application flow
+  - SettingsDialog complete interaction
+  - MCP panel functionality
+
+**Running Tests**:
+
+```bash
+# Run all tests
+pnpm test:unit
+
+# Watch mode (auto re-run)
+pnpm test:unit:watch
+
+# With coverage report
+pnpm test:unit --coverage
+```
+
+## Tech Stack
+
+### Frontend
+
+- **[React 18](https://react.dev/)** - User interface library
+- **[TypeScript](https://www.typescriptlang.org/)** - Type-safe JavaScript
+- **[Vite](https://vitejs.dev/)** - Lightning fast frontend build tool
+- **[TailwindCSS 4](https://tailwindcss.com/)** - Utility-first CSS framework
+- **[TanStack Query v5](https://tanstack.com/query/latest)** - Powerful data fetching and caching
+- **[react-i18next](https://react.i18next.com/)** - React internationalization framework
+- **[react-hook-form](https://react-hook-form.com/)** - High-performance forms library
+- **[zod](https://zod.dev/)** - TypeScript-first schema validation
+- **[shadcn/ui](https://ui.shadcn.com/)** - Reusable React components
+- **[@dnd-kit](https://dndkit.com/)** - Modern drag and drop toolkit
+
+### Backend
+
+- **[Tauri 2.8](https://tauri.app/)** - Cross-platform desktop app framework
+  - tauri-plugin-updater - Auto update
+  - tauri-plugin-process - Process management
+  - tauri-plugin-dialog - File dialogs
+  - tauri-plugin-store - Persistent storage
+  - tauri-plugin-log - Logging
+- **[Rust](https://www.rust-lang.org/)** - Systems programming language
+- **[serde](https://serde.rs/)** - Serialization/deserialization framework
+- **[tokio](https://tokio.rs/)** - Async runtime
+- **[thiserror](https://github.com/dtolnay/thiserror)** - Error handling derive macro
+
+### Testing Tools
+
+- **[vitest](https://vitest.dev/)** - Fast unit testing framework
+- **[MSW](https://mswjs.io/)** - API mocking tool
+- **[@testing-library/react](https://testing-library.com/react)** - React testing utilities
+
+## Project Structure
 
 ```
-├── src/                    # 前端代码 (React + TypeScript)
-│   ├── components/         # React 组件（providers/settings/mcp/ui 等）
-│   ├── hooks/              # 领域动作与状态（如 useProviderActions）
+├── src/                      # Frontend code (React + TypeScript)
+│   ├── components/           # React components
+│   │   ├── providers/        # Provider management components
+│   │   │   ├── forms/        # Form sub-components (Claude/Codex fields)
+│   │   │   ├── ProviderList.tsx
+│   │   │   ├── ProviderForm.tsx
+│   │   │   ├── AddProviderDialog.tsx
+│   │   │   └── EditProviderDialog.tsx
+│   │   ├── settings/         # Settings related components
+│   │   │   ├── SettingsDialog.tsx
+│   │   │   ├── DirectorySettings.tsx
+│   │   │   └── ImportExportSection.tsx
+│   │   ├── mcp/              # MCP management components
+│   │   │   ├── McpPanel.tsx
+│   │   │   ├── McpFormModal.tsx
+│   │   │   └── McpWizard.tsx
+│   │   └── ui/               # shadcn/ui base components
+│   ├── hooks/                # Custom Hooks (business logic layer)
+│   │   ├── useProviderActions.ts    # Provider operations
+│   │   ├── useMcpActions.ts         # MCP operations
+│   │   ├── useSettings.ts           # Settings management
+│   │   ├── useImportExport.ts       # Import/export
+│   │   └── useDirectorySettings.ts  # Directory config
 │   ├── lib/
-│   │   ├── api/            # Tauri API 封装（providers/settings/mcp 等）
-│   │   └── query/          # TanStack Query 查询/变更与 client
-│   ├── i18n/               # 国际化资源
-│   ├── config/             # 供应商/MCP 预设
-│   └── utils/              # 工具函数
-├── src-tauri/            # 后端代码 (Rust)
-│   ├── src/             # Rust 源代码
-│   │   ├── commands/    # Tauri 命令定义（按域拆分）
-│   │   ├── services/    # 领域服务（Provider/MCP/Speedtest 等）
-│   │   ├── mcp.rs       # MCP 同步与规范化
-│   │   ├── migration.rs # 配置迁移逻辑
-│   │   ├── config.rs    # 配置文件管理
-│   │   ├── provider.rs  # 供应商管理逻辑
-│   │   └── store.rs     # 状态管理
-│   ├── capabilities/    # 权限配置
-│   └── icons/           # 应用图标资源
-└── screenshots/          # 界面截图
+│   │   ├── api/              # Tauri API wrapper (type-safe)
+│   │   │   ├── providers.ts  # Provider API
+│   │   │   ├── settings.ts   # Settings API
+│   │   │   ├── mcp.ts        # MCP API
+│   │   │   └── usage.ts      # Usage query API
+│   │   └── query/            # TanStack Query config
+│   │       ├── queries.ts    # Query definitions
+│   │       ├── mutations.ts  # Mutation definitions
+│   │       └── queryClient.ts
+│   ├── i18n/                 # Internationalization resources
+│   │   └── locales/
+│   │       ├── zh/           # Chinese translations
+│   │       └── en/           # English translations
+│   ├── config/               # Config & presets
+│   │   ├── claudeProviderPresets.ts  # Claude provider presets
+│   │   ├── codexProviderPresets.ts   # Codex provider presets
+│   │   └── mcpPresets.ts             # MCP server templates
+│   ├── utils/                # Utility functions
+│   │   ├── postChangeSync.ts         # Config sync utility
+│   │   └── ...
+│   └── types/                # TypeScript type definitions
+├── src-tauri/                # Backend code (Rust)
+│   ├── src/
+│   │   ├── commands/         # Tauri command layer (split by domain)
+│   │   │   ├── provider.rs   # Provider commands
+│   │   │   ├── mcp.rs        # MCP commands
+│   │   │   ├── config.rs     # Config query commands
+│   │   │   ├── settings.rs   # Settings commands
+│   │   │   ├── plugin.rs     # Plugin commands
+│   │   │   ├── import_export.rs  # Import/export commands
+│   │   │   └── misc.rs       # Misc commands
+│   │   ├── services/         # Service layer (business logic)
+│   │   │   ├── provider.rs   # ProviderService
+│   │   │   ├── mcp.rs        # McpService
+│   │   │   ├── config.rs     # ConfigService
+│   │   │   └── speedtest.rs  # SpeedtestService
+│   │   ├── app_config.rs     # Config data models
+│   │   ├── provider.rs       # Provider domain models
+│   │   ├── store.rs          # Global state management
+│   │   ├── mcp.rs            # MCP sync & validation
+│   │   ├── error.rs          # Unified error type
+│   │   ├── usage_script.rs   # Usage script execution
+│   │   ├── claude_plugin.rs  # Claude plugin management
+│   │   └── lib.rs            # App entry point
+│   ├── capabilities/         # Tauri permission config
+│   └── icons/                # App icons
+├── tests/                    # Frontend tests (v3.6 new)
+│   ├── hooks/                # Hooks unit tests
+│   ├── components/           # Component integration tests
+│   └── setup.ts              # Test config
+└── assets/                   # Static resources
+    ├── screenshots/          # Interface screenshots
+    └── partners/             # Partner resources
+        ├── logos/            # Partner logos
+        └── banners/          # Partner banners/promotional images
 ```
 
-## 更新日志
+## Changelog
 
-查看 [CHANGELOG.md](CHANGELOG.md) 了解版本更新详情。
+See [CHANGELOG.md](CHANGELOG.md) for version update details.
 
-## Electron 旧版
+## Legacy Electron Version
 
-[Releases](../../releases) 里保留 v2.0.3 Electron 旧版
+[Releases](../../releases) retains v2.0.3 legacy Electron version
 
-如果需要旧版 Electron 代码，可以拉取 electron-legacy 分支
+If you need legacy Electron code, you can pull the electron-legacy branch
 
-## 贡献
+## Contributing
 
-欢迎提交 Issue 反馈问题和建议！
+Issues and suggestions are welcome!
 
-提交 PR 前请确保：
-- 通过类型检查：`pnpm typecheck`
-- 通过格式检查：`pnpm format:check`
-- 通过单元测试：`pnpm test:unit`
+Before submitting PRs, please ensure:
+
+- Pass type check: `pnpm typecheck`
+- Pass format check: `pnpm format:check`
+- Pass unit tests: `pnpm test:unit`
+- Functional PRs should be discussed in the issue area first
 
 ## Star History
 

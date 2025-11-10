@@ -103,6 +103,7 @@ export const useUsageQuery = (
       autoQueryInterval > 0
         ? Math.max(autoQueryInterval, 1) * 60 * 1000 // 最小1分钟
         : false,
+    refetchIntervalInBackground: true, // 后台也继续定时查询
     refetchOnWindowFocus: false,
     retry: false,
     staleTime: 0, // 不使用缓存策略，确保 refetchInterval 准确执行

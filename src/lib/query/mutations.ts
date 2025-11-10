@@ -20,7 +20,17 @@ export const useAddProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
-      await providersApi.updateTrayMenu();
+
+      // 更新托盘菜单（失败不影响主操作）
+      try {
+        await providersApi.updateTrayMenu();
+      } catch (trayError) {
+        console.error(
+          "Failed to update tray menu after adding provider",
+          trayError,
+        );
+      }
+
       toast.success(
         t("notifications.providerAdded", {
           defaultValue: "供应商已添加",
@@ -76,7 +86,17 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
-      await providersApi.updateTrayMenu();
+
+      // 更新托盘菜单（失败不影响主操作）
+      try {
+        await providersApi.updateTrayMenu();
+      } catch (trayError) {
+        console.error(
+          "Failed to update tray menu after deleting provider",
+          trayError,
+        );
+      }
+
       toast.success(
         t("notifications.deleteSuccess", {
           defaultValue: "供应商已删除",
@@ -104,7 +124,17 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
-      await providersApi.updateTrayMenu();
+
+      // 更新托盘菜单（失败不影响主操作）
+      try {
+        await providersApi.updateTrayMenu();
+      } catch (trayError) {
+        console.error(
+          "Failed to update tray menu after switching provider",
+          trayError,
+        );
+      }
+
       toast.success(
         t("notifications.switchSuccess", {
           defaultValue: "切换供应商成功",

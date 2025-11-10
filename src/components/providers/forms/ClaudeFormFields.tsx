@@ -179,7 +179,7 @@ export function ClaudeFormFields({
                   onModelChange("ANTHROPIC_MODEL", e.target.value)
                 }
                 placeholder={t("providerForm.modelPlaceholder", {
-                  defaultValue: "claude-3-7-sonnet-20250219",
+                  defaultValue: "",
                 })}
                 autoComplete="off"
               />
@@ -200,7 +200,7 @@ export function ClaudeFormFields({
                   onModelChange("ANTHROPIC_DEFAULT_HAIKU_MODEL", e.target.value)
                 }
                 placeholder={t("providerForm.haikuModelPlaceholder", {
-                  defaultValue: "GLM-4.5-Air",
+                  defaultValue: "",
                 })}
                 autoComplete="off"
               />
@@ -224,7 +224,7 @@ export function ClaudeFormFields({
                   )
                 }
                 placeholder={t("providerForm.modelPlaceholder", {
-                  defaultValue: "claude-3-7-sonnet-20250219",
+                  defaultValue: "",
                 })}
                 autoComplete="off"
               />
@@ -245,7 +245,7 @@ export function ClaudeFormFields({
                   onModelChange("ANTHROPIC_DEFAULT_OPUS_MODEL", e.target.value)
                 }
                 placeholder={t("providerForm.modelPlaceholder", {
-                  defaultValue: "claude-3-7-opus-20250219",
+                  defaultValue: "",
                 })}
                 autoComplete="off"
               />

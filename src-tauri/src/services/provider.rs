@@ -532,12 +532,13 @@ impl ProviderService {
             }
         };
 
-        let provider = Provider::with_id(
+        let mut provider = Provider::with_id(
             "default".to_string(),
             "default".to_string(),
             settings_config,
             None,
         );
+        provider.category = Some("custom".to_string());
 
         {
             let mut config = state.config.write().map_err(AppError::from)?;

@@ -246,7 +246,10 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             app.exit(0);
         }
         id if id.starts_with("claude_") => {
-            let provider_id = id.strip_prefix("claude_").unwrap();
+            let Some(provider_id) = id.strip_prefix("claude_") else {
+                log::error!("无效的 Claude 菜单项 ID: {}", id);
+                return;
+            };
             log::info!("切换到Claude供应商: {}", provider_id);
 
             // 执行切换
@@ -263,7 +266,10 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             });
         }
         id if id.starts_with("codex_") => {
-            let provider_id = id.strip_prefix("codex_").unwrap();
+            let Some(provider_id) = id.strip_prefix("codex_") else {
+                log::error!("无效的 Codex 菜单项 ID: {}", id);
+                return;
+            };
             log::info!("切换到Codex供应商: {}", provider_id);
 
             // 执行切换
