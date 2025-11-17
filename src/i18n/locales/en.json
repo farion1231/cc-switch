@@ -606,5 +606,44 @@
       "deleteTitle": "Confirm Delete",
       "deleteMessage": "Are you sure you want to delete prompt \"{{name}}\"?"
     }
+  },
+  "env": {
+    "warning": {
+      "title": "Environment Variable Conflicts Detected",
+      "description": "Found {{count}} environment variables that may override your configuration"
+    },
+    "actions": {
+      "expand": "View Details",
+      "collapse": "Collapse",
+      "selectAll": "Select All",
+      "clearSelection": "Clear Selection",
+      "deleteSelected": "Delete Selected ({{count}})",
+      "deleting": "Deleting..."
+    },
+    "field": {
+      "value": "Value",
+      "source": "Source"
+    },
+    "source": {
+      "userRegistry": "User Environment Variable (Registry)",
+      "systemRegistry": "System Environment Variable (Registry)",
+      "systemEnv": "System Environment Variable"
+    },
+    "delete": {
+      "success": "Environment variables deleted successfully",
+      "error": "Failed to delete environment variables"
+    },
+    "backup": {
+      "location": "Backup location: {{path}}"
+    },
+    "confirm": {
+      "title": "Confirm Delete Environment Variables",
+      "message": "Are you sure you want to delete {{count}} environment variable(s)?",
+      "backupNotice": "A backup will be created automatically before deletion. You can restore it later. Changes take effect after restarting the application or terminal.",
+      "confirm": "Confirm Delete"
+    },
+    "error": {
+      "noSelection": "Please select environment variables to delete"
+    }
   }
 }

@@ -606,5 +606,44 @@
       "deleteTitle": "确认删除",
       "deleteMessage": "确定要删除提示词 \"{{name}}\" 吗？"
     }
+  },
+  "env": {
+    "warning": {
+      "title": "检测到系统环境变量冲突",
+      "description": "发现 {{count}} 个环境变量可能会覆盖您的配置"
+    },
+    "actions": {
+      "expand": "查看详情",
+      "collapse": "收起",
+      "selectAll": "全选",
+      "clearSelection": "取消选择",
+      "deleteSelected": "删除选中 ({{count}})",
+      "deleting": "删除中..."
+    },
+    "field": {
+      "value": "值",
+      "source": "来源"
+    },
+    "source": {
+      "userRegistry": "用户环境变量 (注册表)",
+      "systemRegistry": "系统环境变量 (注册表)",
+      "systemEnv": "系统环境变量"
+    },
+    "delete": {
+      "success": "环境变量已成功删除",
+      "error": "删除环境变量失败"
+    },
+    "backup": {
+      "location": "备份位置: {{path}}"
+    },
+    "confirm": {
+      "title": "确认删除环境变量",
+      "message": "确定要删除 {{count}} 个环境变量吗？",
+      "backupNotice": "删除前将自动备份,您可以稍后恢复。删除后需要重启应用或终端才能生效。",
+      "confirm": "确认删除"
+    },
+    "error": {
+      "noSelection": "请选择要删除的环境变量"
+    }
   }
 }

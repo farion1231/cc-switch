@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Plus, Settings, Edit3 } from "lucide-react";
 import type { Provider } from "@/types";
+import type { EnvConflict } from "@/types/env";
 import { useProvidersQuery } from "@/lib/query";
 import {
   providersApi,
@@ -10,6 +11,7 @@ import {
   type AppId,
   type ProviderSwitchEvent,
 } from "@/lib/api";
+import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { AppSwitcher } from "@/components/AppSwitcher";
@@ -19,6 +21,7 @@ import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { UpdateBadge } from "@/components/UpdateBadge";
+import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
@@ -36,6 +39,8 @@ function App() {
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Provider | null>(null);
+  const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
+  const [showEnvBanner, setShowEnvBanner] = useState(false);
 
   const { data, isLoading, refetch } = useProvidersQuery(activeApp);
   const providers = useMemo(() => data?.providers ?? {}, [data]);
@@ -73,6 +78,52 @@ function App() {
       unsubscribe?.();
     };
   }, [activeApp, refetch]);
+
+  // 应用启动时检测所有应用的环境变量冲突
+  useEffect(() => {
+    const checkEnvOnStartup = async () => {
+      try {
+        const allConflicts = await checkAllEnvConflicts();
+        const flatConflicts = Object.values(allConflicts).flat();
+
+        if (flatConflicts.length > 0) {
+          setEnvConflicts(flatConflicts);
+          setShowEnvBanner(true);
+        }
+      } catch (error) {
+        console.error("[App] Failed to check environment conflicts on startup:", error);
+      }
+    };
+
+    checkEnvOnStartup();
+  }, []);
+
+  // 切换应用时检测当前应用的环境变量冲突
+  useEffect(() => {
+    const checkEnvOnSwitch = async () => {
+      try {
+        const conflicts = await checkEnvConflicts(activeApp);
+
+        if (conflicts.length > 0) {
+          // 合并新检测到的冲突
+          setEnvConflicts((prev) => {
+            const existingKeys = new Set(
+              prev.map((c) => `${c.varName}:${c.sourcePath}`)
+            );
+            const newConflicts = conflicts.filter(
+              (c) => !existingKeys.has(`${c.varName}:${c.sourcePath}`)
+            );
+            return [...prev, ...newConflicts];
+          });
+          setShowEnvBanner(true);
+        }
+      } catch (error) {
+        console.error("[App] Failed to check environment conflicts on app switch:", error);
+      }
+    };
+
+    checkEnvOnSwitch();
+  }, [activeApp]);
 
   // 打开网站链接
   const handleOpenWebsite = async (url: string) => {
@@ -164,6 +215,27 @@ function App() {
 
   return (
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-950">
+      {/* 环境变量警告横幅 */}
+      {showEnvBanner && envConflicts.length > 0 && (
+        <EnvWarningBanner
+          conflicts={envConflicts}
+          onDismiss={() => setShowEnvBanner(false)}
+          onDeleted={async () => {
+            // 删除后重新检测
+            try {
+              const allConflicts = await checkAllEnvConflicts();
+              const flatConflicts = Object.values(allConflicts).flat();
+              setEnvConflicts(flatConflicts);
+              if (flatConflicts.length === 0) {
+                setShowEnvBanner(false);
+              }
+            } catch (error) {
+              console.error("[App] Failed to re-check conflicts after deletion:", error);
+            }
+          }}
+        />
+      )}
+
       <header className="flex-shrink-0 border-b border-gray-200 bg-white px-6 py-4 dark:border-gray-800 dark:bg-gray-900">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1">
