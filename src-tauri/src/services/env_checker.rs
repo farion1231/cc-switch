@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -148,25 +146,6 @@ fn check_shell_configs(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
     }
 
     Ok(conflicts)
-}
-
-/// Get human-readable description for source
-pub fn get_source_description(conflict: &EnvConflict) -> String {
-    match conflict.source_type.as_str() {
-        "system" => {
-            if conflict.source_path.contains("HKEY_CURRENT_USER") {
-                "用户环境变量 (注册表)".to_string()
-            } else if conflict.source_path.contains("HKEY_LOCAL_MACHINE") {
-                "系统环境变量 (注册表)".to_string()
-            } else {
-                "系统环境变量".to_string()
-            }
-        }
-        "file" => {
-            format!("Shell 配置文件: {}", conflict.source_path)
-        }
-        _ => conflict.source_path.clone(),
-    }
 }
 
 #[cfg(test)]
