@@ -25,7 +25,15 @@ import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
+import { SkillsPage } from "@/components/skills/SkillsPage";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 
 function App() {
   const { t } = useTranslation();
@@ -36,6 +44,7 @@ function App() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isMcpOpen, setIsMcpOpen] = useState(false);
   const [isPromptOpen, setIsPromptOpen] = useState(false);
+  const [isSkillsOpen, setIsSkillsOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Provider | null>(null);
@@ -290,6 +299,13 @@ function App() {
             >
               MCP
             </Button>
+            <Button
+              variant="mcp"
+              onClick={() => setIsSkillsOpen(true)}
+              className="min-w-[80px]"
+            >
+              {t("skills.manage")}
+            </Button>
             <Button onClick={() => setIsAddOpen(true)}>
               <Plus className="h-4 w-4" />
               {t("header.addProvider")}
@@ -375,6 +391,17 @@ function App() {
       />
 
       <UnifiedMcpPanel open={isMcpOpen} onOpenChange={setIsMcpOpen} />
+
+      <Dialog open={isSkillsOpen} onOpenChange={setIsSkillsOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] min-h-[600px] flex flex-col p-0">
+          <DialogHeader className="sr-only">
+            <VisuallyHidden>
+              <DialogTitle>{t("skills.title")}</DialogTitle>
+            </VisuallyHidden>
+          </DialogHeader>
+          <SkillsPage onClose={() => setIsSkillsOpen(false)} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

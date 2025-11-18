@@ -9,6 +9,7 @@ mod plugin;
 mod prompt;
 mod provider;
 mod settings;
+pub mod skill;
 
 pub use config::*;
 pub use env::*;
@@ -19,3 +20,4 @@ pub use plugin::*;
 pub use prompt::*;
 pub use provider::*;
 pub use settings::*;
+pub use skill::*;

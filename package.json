@@ -54,6 +54,7 @@
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
+    "@radix-ui/react-visually-hidden": "^1.2.4",
     "@tailwindcss/vite": "^4.1.13",
     "@tanstack/react-query": "^5.90.3",
     "@tauri-apps/api": "^2.8.0",

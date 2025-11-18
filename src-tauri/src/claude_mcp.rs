@@ -139,13 +139,11 @@ pub fn upsert_mcp_server(id: &str, spec: Value) -> Result<bool, AppError> {
     if is_http || is_sse {
         let url = spec.get("url").and_then(|x| x.as_str()).unwrap_or("");
         if url.is_empty() {
-            return Err(AppError::McpValidation(
-                if is_http {
-                    "http 类型的 MCP 服务器缺少 url 字段".into()
-                } else {
-                    "sse 类型的 MCP 服务器缺少 url 字段".into()
-                },
-            ));
+            return Err(AppError::McpValidation(if is_http {
+                "http 类型的 MCP 服务器缺少 url 字段".into()
+            } else {
+                "sse 类型的 MCP 服务器缺少 url 字段".into()
+            }));
         }
     }
 

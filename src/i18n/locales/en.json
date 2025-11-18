@@ -26,7 +26,8 @@
     "format": "Format",
     "formatSuccess": "Formatted successfully",
     "formatError": "Format failed: {{error}}",
-    "copy": "Copy"
+    "copy": "Copy",
+    "view": "View"
   },
   "apiKeyInput": {
     "placeholder": "Enter API Key",
@@ -644,6 +645,48 @@
     },
     "error": {
       "noSelection": "Please select environment variables to delete"
+  "skills": {
+    "manage": "Skills",
+    "title": "Claude Skills Management",
+    "description": "Discover and install Claude skills from popular repositories to extend Claude Code/Codex capabilities",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing...",
+    "repoManager": "Repository Management",
+    "count": "{{count}} skills",
+    "empty": "No skills available",
+    "emptyDescription": "Add skill repositories to discover available skills",
+    "addRepo": "Add Skill Repository",
+    "loading": "Loading...",
+    "installed": "Installed",
+    "install": "Install",
+    "installing": "Installing...",
+    "uninstall": "Uninstall",
+    "uninstalling": "Uninstalling...",
+    "view": "View",
+    "noDescription": "No description",
+    "loadFailed": "Failed to load",
+    "installSuccess": "Skill {{name}} installed",
+    "installFailed": "Failed to install",
+    "uninstallSuccess": "Skill {{name}} uninstalled",
+    "uninstallFailed": "Failed to uninstall",
+    "repo": {
+      "title": "Manage Skill Repositories",
+      "description": "Add or remove GitHub skill repository sources",
+      "url": "Repository URL",
+      "urlPlaceholder": "owner/name or https://github.com/owner/name",
+      "branch": "Branch",
+      "branchPlaceholder": "main",
+      "path": "Skills Path",
+      "pathPlaceholder": "skills (optional, leave empty for root)",
+      "add": "Add Repository",
+      "list": "Added Repositories",
+      "empty": "No repositories",
+      "invalidUrl": "Invalid repository URL format",
+      "addSuccess": "Repository {{owner}}/{{name}} added, detected {{count}} skills",
+      "addFailed": "Failed to add",
+      "removeSuccess": "Repository {{owner}}/{{name}} removed",
+      "removeFailed": "Failed to remove",
+      "skillCount": "{{count}} skills detected"
     }
   }
 }

@@ -11,7 +11,6 @@ use crate::config::{
     write_json_file, write_text_file,
 };
 use crate::error::AppError;
-use crate::mcp;
 use crate::provider::{Provider, ProviderMeta, UsageData, UsageResult};
 use crate::settings::{self, CustomEndpoint};
 use crate::store::AppState;
@@ -547,11 +546,9 @@ impl ProviderService {
     fn apply_post_commit(state: &AppState, action: &PostCommitAction) -> Result<(), AppError> {
         Self::write_live_snapshot(&action.app_type, &action.provider)?;
         if action.sync_mcp {
-            let config_clone = {
-                let guard = state.config.read().map_err(AppError::from)?;
-                guard.clone()
-            };
-            mcp::sync_enabled_to_codex(&config_clone)?;
+            // 使用 v3.7.0 统一的 MCP 同步机制，支持所有应用
+            use crate::services::mcp::McpService;
+            McpService::sync_all_enabled(state)?;
         }
         if action.refresh_snapshot {
             Self::refresh_provider_snapshot(state, &action.app_type, &action.provider.id)?;
@@ -1248,7 +1245,7 @@ impl ProviderService {
                 app_type: app_type_clone.clone(),
                 provider,
                 backup,
-                sync_mcp: matches!(app_type_clone, AppType::Codex),
+                sync_mcp: true, // v3.7.0: 所有应用切换时都同步 MCP，防止配置丢失
                 refresh_snapshot: true,
             };
 

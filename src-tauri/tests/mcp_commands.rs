@@ -127,8 +127,14 @@ fn import_mcp_from_claude_creates_config_and_enables_servers() {
 
     let guard = state.config.read().expect("lock config");
     // v3.7.0: 检查统一结构
-    let servers = guard.mcp.servers.as_ref().expect("unified servers should exist");
-    let entry = servers.get("echo").expect("server imported into unified structure");
+    let servers = guard
+        .mcp
+        .servers
+        .as_ref()
+        .expect("unified servers should exist");
+    let entry = servers
+        .get("echo")
+        .expect("server imported into unified structure");
     assert!(
         entry.apps.claude,
         "imported server should have Claude app enabled"
@@ -182,10 +188,12 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
     // 创建 Codex 配置目录和文件
     let codex_dir = home.join(".codex");
     fs::create_dir_all(&codex_dir).expect("create codex dir");
-    fs::write(codex_dir.join("auth.json"), r#"{"OPENAI_API_KEY":"test-key"}"#)
-        .expect("create auth.json");
-    fs::write(codex_dir.join("config.toml"), "")
-        .expect("create empty config.toml");
+    fs::write(
+        codex_dir.join("auth.json"),
+        r#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .expect("create auth.json");
+    fs::write(codex_dir.join("config.toml"), "").expect("create empty config.toml");
 
     let mut config = MultiAppConfig::default();
     config.ensure_app(&AppType::Codex);
@@ -203,7 +211,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
             }),
             apps: McpApps {
                 claude: false,
-                codex: false,  // 初始未启用
+                codex: false, // 初始未启用
                 gemini: false,
             },
             description: None,

@@ -1,6 +1,6 @@
 /**
  * 格式化 JSON 字符串
- * @param value - 原始 JSON 字符串
+ * @param value - 原始 JSON 字符串（支持带键名包装的格式）
  * @returns 格式化后的 JSON 字符串（2 空格缩进）
  * @throws 如果 JSON 格式无效
  */
@@ -9,8 +9,60 @@ export function formatJSON(value: string): string {
   if (!trimmed) {
     return "";
   }
+  // 使用智能解析器来处理可能的片段格式
+  const result = parseSmartMcpJson(trimmed);
+  return result.formattedConfig;
+}
+
+/**
+ * 智能解析 MCP JSON 配置
+ * 支持两种格式：
+ * 1. 纯配置对象：{ "command": "npx", "args": [...], ... }
+ * 2. 带键名包装：  "server-name": { "command": "npx", ... }  或  { "server-name": {...} }
+ *
+ * @param jsonText - JSON 字符串
+ * @returns { id?: string, config: object, formattedConfig: string }
+ * @throws 如果 JSON 格式无效
+ */
+export function parseSmartMcpJson(jsonText: string): {
+  id?: string;
+  config: any;
+  formattedConfig: string;
+} {
+  let trimmed = jsonText.trim();
+  if (!trimmed) {
+    return { config: {}, formattedConfig: "" };
+  }
+
+  // 如果是键值对片段（"key": {...}），包装成完整对象
+  if (trimmed.startsWith('"') && !trimmed.startsWith('{')) {
+    trimmed = `{${trimmed}}`;
+  }
+
   const parsed = JSON.parse(trimmed);
-  return JSON.stringify(parsed, null, 2);
+
+  // 如果是单键对象且值是对象，提取键名和配置
+  const keys = Object.keys(parsed);
+  if (
+    keys.length === 1 &&
+    parsed[keys[0]] &&
+    typeof parsed[keys[0]] === "object" &&
+    !Array.isArray(parsed[keys[0]])
+  ) {
+    const id = keys[0];
+    const config = parsed[id];
+    return {
+      id,
+      config,
+      formattedConfig: JSON.stringify(config, null, 2),
+    };
+  }
+
+  // 否则直接使用
+  return {
+    config: parsed,
+    formattedConfig: JSON.stringify(parsed, null, 2),
+  };
 }
 
 /**

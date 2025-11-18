@@ -14,12 +14,13 @@
       {
         "label": "main",
         "title": "",
-        "width": 900,
+        "width": 1000,
         "height": 650,
-        "minWidth": 800,
+        "minWidth": 900,
         "minHeight": 600,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "center": true
       }
     ],
     "security": {

@@ -184,8 +184,7 @@ pub async fn get_common_config_snippet(
     use crate::app_config::AppType;
     use std::str::FromStr;
 
-    let app = AppType::from_str(&app_type)
-        .map_err(|e| format!("无效的应用类型: {}", e))?;
+    let app = AppType::from_str(&app_type).map_err(|e| format!("无效的应用类型: {}", e))?;
 
     let guard = state
         .config
@@ -205,8 +204,7 @@ pub async fn set_common_config_snippet(
     use crate::app_config::AppType;
     use std::str::FromStr;
 
-    let app = AppType::from_str(&app_type)
-        .map_err(|e| format!("无效的应用类型: {}", e))?;
+    let app = AppType::from_str(&app_type).map_err(|e| format!("无效的应用类型: {}", e))?;
 
     let mut guard = state
         .config

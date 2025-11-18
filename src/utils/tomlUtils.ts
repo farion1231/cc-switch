@@ -44,7 +44,8 @@ export const mcpServerToToml = (server: McpServerSpec): string => {
  * 将 TOML 文本转换为 McpServerSpec 对象（单个服务器配置）
  * 支持两种格式：
  * 1. 直接的服务器配置（type, command, args 等）
- * 2. [mcp.servers.<id>] 或 [mcp_servers.<id>] 格式（取第一个服务器）
+ * 2. [mcp_servers.<id>] 格式（推荐，取第一个服务器）
+ * 3. [mcp.servers.<id>] 错误格式（容错解析，同样取第一个服务器）
  * @param tomlText TOML 文本
  * @returns McpServer 对象
  * @throws 解析或转换失败时抛出错误
@@ -67,7 +68,16 @@ export const tomlToMcpServer = (tomlText: string): McpServerSpec => {
     return normalizeServerConfig(parsed);
   }
 
-  // 情况 2: [mcp.servers.<id>] 格式
+  // 情况 2: [mcp_servers.<id>] 格式（推荐）
+  if (parsed.mcp_servers && typeof parsed.mcp_servers === "object") {
+    const serverIds = Object.keys(parsed.mcp_servers);
+    if (serverIds.length > 0) {
+      const firstServer = (parsed.mcp_servers as any)[serverIds[0]];
+      return normalizeServerConfig(firstServer);
+    }
+  }
+
+  // 情况 3: [mcp.servers.<id>] 错误格式（容错解析）
   if (parsed.mcp && typeof parsed.mcp === "object") {
     const mcpObj = parsed.mcp as any;
     if (mcpObj.servers && typeof mcpObj.servers === "object") {
@@ -79,17 +89,8 @@ export const tomlToMcpServer = (tomlText: string): McpServerSpec => {
     }
   }
 
-  // 情况 3: [mcp_servers.<id>] 格式
-  if (parsed.mcp_servers && typeof parsed.mcp_servers === "object") {
-    const serverIds = Object.keys(parsed.mcp_servers);
-    if (serverIds.length > 0) {
-      const firstServer = (parsed.mcp_servers as any)[serverIds[0]];
-      return normalizeServerConfig(firstServer);
-    }
-  }
-
   throw new Error(
-    "无法识别的 TOML 格式。请提供单个 MCP 服务器配置，或使用 [mcp.servers.<id>] 格式",
+    "无法识别的 TOML 格式。请提供单个 MCP 服务器配置，或使用 [mcp_servers.<id>] 格式",
   );
 };
 
@@ -189,7 +190,14 @@ export const extractIdFromToml = (tomlText: string): string => {
   try {
     const parsed = parseToml(normalizeTomlText(tomlText));
 
-    // 尝试从 [mcp.servers.<id>] 或 [mcp_servers.<id>] 中提取 ID
+    // 尝试从 [mcp_servers.<id>] 或 [mcp.servers.<id>] 中提取 ID
+    if (parsed.mcp_servers && typeof parsed.mcp_servers === "object") {
+      const serverIds = Object.keys(parsed.mcp_servers);
+      if (serverIds.length > 0) {
+        return serverIds[0];
+      }
+    }
+
     if (parsed.mcp && typeof parsed.mcp === "object") {
       const mcpObj = parsed.mcp as any;
       if (mcpObj.servers && typeof mcpObj.servers === "object") {
@@ -197,13 +205,6 @@ export const extractIdFromToml = (tomlText: string): string => {
         if (serverIds.length > 0) {
           return serverIds[0];
         }
-      }
-    }
-
-    if (parsed.mcp_servers && typeof parsed.mcp_servers === "object") {
-      const serverIds = Object.keys(parsed.mcp_servers);
-      if (serverIds.length > 0) {
-        return serverIds[0];
       }
     }
 

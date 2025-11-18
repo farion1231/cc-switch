@@ -137,7 +137,7 @@ Download the latest `CC-Switch-v{version}-Linux.deb` package or `CC-Switch-v{ver
 
 - Live config: `~/.codex/auth.json` (required) + `config.toml` (optional)
 - API key field: `OPENAI_API_KEY` in `auth.json`
-- MCP servers: `~/.codex/config.toml` → `[mcp.servers]`
+- MCP servers: `~/.codex/config.toml` → `[mcp_servers]` tables
 
 **Gemini**
 

@@ -27,7 +27,7 @@ import {
   mcpServerToToml,
 } from "@/utils/tomlUtils";
 import { normalizeTomlText } from "@/utils/textNormalization";
-import { formatJSON } from "@/utils/formatters";
+import { formatJSON, parseSmartMcpJson } from "@/utils/formatters";
 import { useMcpValidation } from "./useMcpValidation";
 import { useUpsertMcpServer } from "@/hooks/useMcp";
 
@@ -241,15 +241,39 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         }
       }
     } else {
-      // JSON validation (use hook's complete validation)
-      const err = validateJsonConfig(value);
-      if (err) {
-        setConfigError(err);
-        return;
+      // JSON validation with smart parsing
+      try {
+        const result = parseSmartMcpJson(value);
+
+        // 验证解析后的配置对象
+        const configJson = JSON.stringify(result.config);
+        const validationErr = validateJsonConfig(configJson);
+
+        if (validationErr) {
+          setConfigError(validationErr);
+          return;
+        }
+
+        // 自动填充提取的 id（仅当表单 id 为空且不在编辑模式时）
+        if (result.id && !formId.trim() && !isEditing) {
+          const uniqueId = ensureUniqueId(result.id);
+          setFormId(uniqueId);
+
+          // 如果 name 也为空，同时填充 name
+          if (!formName.trim()) {
+            setFormName(result.id);
+          }
+        }
+
+        // 不在输入时自动格式化，保持用户输入的原样
+        // 格式清理将在提交时进行
+
+        setConfigError("");
+      } catch (err: any) {
+        const errorMessage = err?.message || String(err);
+        setConfigError(t("mcp.error.jsonInvalid") + ": " + errorMessage);
       }
     }
-
-    setConfigError("");
   };
 
   const handleFormatJson = () => {
@@ -335,13 +359,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       }
     } else {
       // JSON mode
-      const jsonError = validateJsonConfig(formConfig);
-      setConfigError(jsonError);
-      if (jsonError) {
-        toast.error(t("mcp.error.jsonInvalid"), { duration: 3000 });
-        return;
-      }
-
       if (!formConfig.trim()) {
         // Empty configuration
         serverSpec = {
@@ -351,9 +368,12 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         };
       } else {
         try {
-          serverSpec = JSON.parse(formConfig) as McpServerSpec;
+          // 使用智能解析器，支持带外层键的格式
+          const result = parseSmartMcpJson(formConfig);
+          serverSpec = result.config as McpServerSpec;
         } catch (e: any) {
-          setConfigError(t("mcp.error.jsonInvalid"));
+          const errorMessage = e?.message || String(e);
+          setConfigError(t("mcp.error.jsonInvalid") + ": " + errorMessage);
           toast.error(t("mcp.error.jsonInvalid"), { duration: 4000 });
           return;
         }

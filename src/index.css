@@ -153,3 +153,9 @@ html.dark ::-webkit-scrollbar-thumb:hover {
     border-color: hsl(var(--primary) / 0.6);
   }
 }
+
+/* 禁用 Edge / IE 的密码显示按钮 */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}

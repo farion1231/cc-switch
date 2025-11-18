@@ -48,8 +48,6 @@ pub fn read_mcp_json() -> Result<Option<String>, AppError> {
     Ok(Some(content))
 }
 
-
-
 /// 读取 Gemini settings.json 中的 mcpServers 映射
 pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>, AppError> {
     let path = user_config_path();

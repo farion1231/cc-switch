@@ -222,10 +222,13 @@ mode = "dev"
         text.contains("[profile]"),
         "non-MCP table should be preserved"
     );
-    // 新增的 mcp_servers/或 mcp.servers 应存在并包含 echo
     assert!(
-        text.contains("mcp_servers") || text.contains("[mcp.servers]"),
-        "one server table style should be present"
+        text.contains("mcp_servers"),
+        "mcp_servers table should be present"
+    );
+    assert!(
+        !text.contains("[mcp.servers]"),
+        "invalid [mcp.servers] table should not appear"
     );
     assert!(
         text.contains("echo") && text.contains("command = \"echo\""),
@@ -234,14 +237,14 @@ mode = "dev"
 }
 
 #[test]
-fn sync_enabled_to_codex_keeps_existing_style_mcp_dot_servers() {
+fn sync_enabled_to_codex_migrates_erroneous_mcp_dot_servers_to_mcp_servers() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let path = cc_switch_lib::get_codex_config_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create codex dir");
     }
-    // 预置 mcp.servers 风格
+    // 预置错误的 mcp.servers 风格（应迁移为顶层 mcp_servers）
     let seed = r#"[mcp]
   other = "keep"
   [mcp.servers]
@@ -260,14 +263,14 @@ fn sync_enabled_to_codex_keeps_existing_style_mcp_dot_servers() {
 
     cc_switch_lib::sync_enabled_to_codex(&config).expect("sync codex");
     let text = fs::read_to_string(&path).expect("read config.toml");
-    // 仍应采用 mcp.servers 风格
+    // 应迁移到顶层 mcp_servers，并移除错误的 mcp.servers 表
     assert!(
-        text.contains("[mcp.servers]"),
-        "should keep mcp.servers style"
+        text.contains("mcp_servers"),
+        "should migrate to mcp_servers table"
     );
     assert!(
-        !text.contains("mcp_servers"),
-        "should not switch to mcp_servers"
+        !text.contains("[mcp.servers]"),
+        "invalid [mcp.servers] table should be removed"
     );
 }
 
@@ -488,10 +491,17 @@ url = "https://example.com"
     assert!(changed >= 2, "should import both servers");
 
     // v3.7.0: 检查统一结构
-    let servers = config.mcp.servers.as_ref().expect("unified servers should exist");
+    let servers = config
+        .mcp
+        .servers
+        .as_ref()
+        .expect("unified servers should exist");
 
     let echo = servers.get("echo_server").expect("echo server");
-    assert_eq!(echo.apps.codex, true, "Codex app should be enabled for echo_server");
+    assert_eq!(
+        echo.apps.codex, true,
+        "Codex app should be enabled for echo_server"
+    );
     let server_spec = echo.server.as_object().expect("server spec");
     assert_eq!(
         server_spec
@@ -502,7 +512,10 @@ url = "https://example.com"
     );
 
     let http = servers.get("http_server").expect("http server");
-    assert_eq!(http.apps.codex, true, "Codex app should be enabled for http_server");
+    assert_eq!(
+        http.apps.codex, true,
+        "Codex app should be enabled for http_server"
+    );
     let http_spec = http.server.as_object().expect("http spec");
     assert_eq!(
         http_spec.get("url").and_then(|v| v.as_str()).unwrap_or(""),
@@ -541,7 +554,7 @@ command = "echo"
             }),
             apps: cc_switch_lib::McpApps {
                 claude: false,
-                codex: false,  // 初始未启用
+                codex: false, // 初始未启用
                 gemini: false,
             },
             description: None,
@@ -564,7 +577,10 @@ command = "echo"
         .expect("existing entry");
 
     // 验证 Codex 应用已启用
-    assert_eq!(entry.apps.codex, true, "Codex app should be enabled after import");
+    assert_eq!(
+        entry.apps.codex, true,
+        "Codex app should be enabled after import"
+    );
 
     // 验证现有配置被保留（server 不应被覆盖）
     let spec = entry.server.as_object().expect("server spec");
@@ -662,7 +678,7 @@ fn import_from_claude_merges_into_config() {
                 "command": "prev"
             }),
             apps: cc_switch_lib::McpApps {
-                claude: false,  // 初始未启用
+                claude: false, // 初始未启用
                 codex: false,
                 gemini: false,
             },
@@ -686,7 +702,10 @@ fn import_from_claude_merges_into_config() {
         .expect("entry exists");
 
     // 验证 Claude 应用已启用
-    assert_eq!(entry.apps.claude, true, "Claude app should be enabled after import");
+    assert_eq!(
+        entry.apps.claude, true,
+        "Claude app should be enabled after import"
+    );
 
     // 验证现有配置被保留（server 不应被覆盖）
     let server = entry.server.as_object().expect("server obj");

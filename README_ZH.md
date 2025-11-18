@@ -137,7 +137,7 @@ brew upgrade --cask cc-switch
 
 - Live 配置：`~/.codex/auth.json`（必需）+ `config.toml`（可选）
 - API key 字段：`auth.json` 中的 `OPENAI_API_KEY`
-- MCP 服务器：`~/.codex/config.toml` → `[mcp.servers]`
+- MCP 服务器：`~/.codex/config.toml` → `[mcp_servers]` 表
 
 **Gemini**
 

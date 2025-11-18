@@ -31,11 +31,13 @@ pub use mcp::{
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
-    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, SpeedtestService,
+    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, SkillService,
+    SpeedtestService,
 };
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
 
+use std::sync::Arc;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
@@ -495,6 +497,17 @@ pub fn run() {
             let _tray = tray_builder.build(app)?;
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+
+            // 初始化 SkillService
+            match SkillService::new() {
+                Ok(skill_service) => {
+                    app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
+                }
+                Err(e) => {
+                    log::warn!("初始化 SkillService 失败: {e}");
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -577,6 +590,13 @@ pub fn run() {
             commands::check_env_conflicts,
             commands::delete_env_vars,
             commands::restore_env_backup,
+            // Skill management
+            commands::get_skills,
+            commands::install_skill,
+            commands::uninstall_skill,
+            commands::get_skill_repos,
+            commands::add_skill_repo,
+            commands::remove_skill_repo,
         ]);
 
     let app = builder

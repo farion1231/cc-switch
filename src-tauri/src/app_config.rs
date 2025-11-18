@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
 
+use crate::services::skill::SkillStore;
+
 /// MCP 服务器应用状态（标记应用到哪些客户端）
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct McpApps {
@@ -221,6 +223,9 @@ pub struct MultiAppConfig {
     /// Prompt 配置（按客户端分治）
     #[serde(default)]
     pub prompts: PromptRoot,
+    /// Claude Skills 配置
+    #[serde(default)]
+    pub skills: SkillStore,
     /// 通用配置片段（按应用分治）
     #[serde(default)]
     pub common_config_snippets: CommonConfigSnippets,
@@ -245,6 +250,7 @@ impl Default for MultiAppConfig {
             apps,
             mcp: McpRoot::default(),
             prompts: PromptRoot::default(),
+            skills: SkillStore::default(),
             common_config_snippets: CommonConfigSnippets::default(),
             claude_common_config_snippet: None,
         }
@@ -288,10 +294,35 @@ impl MultiAppConfig {
             ));
         }
 
+        let has_skills_in_config = value
+            .as_object()
+            .is_some_and(|map| map.contains_key("skills"));
+
         // 解析 v2 结构
         let mut config: Self =
             serde_json::from_value(value).map_err(|e| AppError::json(&config_path, e))?;
         let mut updated = false;
+
+        if !has_skills_in_config {
+            let skills_path = get_app_config_dir().join("skills.json");
+            if skills_path.exists() {
+                match std::fs::read_to_string(&skills_path) {
+                    Ok(content) => match serde_json::from_str::<SkillStore>(&content) {
+                        Ok(store) => {
+                            config.skills = store;
+                            updated = true;
+                            log::info!("已从旧版 skills.json 导入 Claude Skills 配置");
+                        }
+                        Err(e) => {
+                            log::warn!("解析旧版 skills.json 失败: {e}");
+                        }
+                    },
+                    Err(e) => {
+                        log::warn!("读取旧版 skills.json 失败: {e}");
+                    }
+                }
+            }
+        }
 
         // 确保 gemini 应用存在（兼容旧配置文件）
         if !config.apps.contains_key("gemini") {
@@ -317,7 +348,9 @@ impl MultiAppConfig {
 
         // 迁移通用配置片段：claude_common_config_snippet → common_config_snippets.claude
         if let Some(old_claude_snippet) = config.claude_common_config_snippet.take() {
-            log::info!("迁移通用配置：claude_common_config_snippet → common_config_snippets.claude");
+            log::info!(
+                "迁移通用配置：claude_common_config_snippet → common_config_snippets.claude"
+            );
             config.common_config_snippets.claude = Some(old_claude_snippet);
             updated = true;
         }
@@ -414,9 +447,7 @@ impl MultiAppConfig {
             return Ok(false);
         }
 
-        log::info!(
-            "检测到已存在配置文件且 Prompt 列表为空，将尝试从现有提示词文件自动导入"
-        );
+        log::info!("检测到已存在配置文件且 Prompt 列表为空，将尝试从现有提示词文件自动导入");
 
         let mut imported = false;
         for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {

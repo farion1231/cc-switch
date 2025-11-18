@@ -26,7 +26,8 @@
     "format": "格式化",
     "formatSuccess": "格式化成功",
     "formatError": "格式化失败：{{error}}",
-    "copy": "复制"
+    "copy": "复制",
+    "view": "查看"
   },
   "apiKeyInput": {
     "placeholder": "请输入API Key",
@@ -644,6 +645,48 @@
     },
     "error": {
       "noSelection": "请选择要删除的环境变量"
+  "skills": {
+    "manage": "Skills",
+    "title": "Claude Skills 管理",
+    "description": "从流行的仓库发现并安装 Claude 技能，扩展 Claude Code/Codex 的能力",
+    "refresh": "刷新",
+    "refreshing": "刷新中...",
+    "repoManager": "仓库管理",
+    "count": "共 {{count}} 个技能",
+    "empty": "暂无可用技能",
+    "emptyDescription": "添加技能仓库以发现可用的技能",
+    "addRepo": "添加技能仓库",
+    "loading": "加载中...",
+    "installed": "已安装",
+    "install": "安装",
+    "installing": "安装中...",
+    "uninstall": "卸载",
+    "uninstalling": "卸载中...",
+    "view": "查看",
+    "noDescription": "暂无描述",
+    "loadFailed": "加载失败",
+    "installSuccess": "技能 {{name}} 已安装",
+    "installFailed": "安装失败",
+    "uninstallSuccess": "技能 {{name}} 已卸载",
+    "uninstallFailed": "卸载失败",
+    "repo": {
+      "title": "管理技能仓库",
+      "description": "添加或删除 GitHub 技能仓库源",
+      "url": "仓库 URL",
+      "urlPlaceholder": "owner/name 或 https://github.com/owner/name",
+      "branch": "分支",
+      "branchPlaceholder": "main",
+      "path": "技能路径",
+      "pathPlaceholder": "skills (可选，留空扫描根目录)",
+      "add": "添加仓库",
+      "list": "已添加的仓库",
+      "empty": "暂无仓库",
+      "invalidUrl": "无效的仓库 URL 格式",
+      "addSuccess": "仓库 {{owner}}/{{name}} 已添加，识别到 {{count}} 个技能",
+      "addFailed": "添加失败",
+      "removeSuccess": "仓库 {{owner}}/{{name}} 已删除",
+      "removeFailed": "删除失败",
+      "skillCount": "识别到 {{count}} 个技能"
     }
   }
 }
