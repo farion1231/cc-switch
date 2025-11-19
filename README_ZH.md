@@ -103,6 +103,14 @@ brew upgrade --cask cc-switch
 
 > **注意**：由于作者没有苹果开发者账号，首次打开可能出现"未知开发者"警告，请先关闭，然后前往"系统设置" → "隐私与安全性" → 点击"仍要打开"，之后便可以正常打开
 
+### ArchLinux 用户
+
+**通过 paru 安装（推荐）**
+
+```bash
+paru -S cc-switch-bin
+```
+
 ### Linux 用户
 
 从 [Releases](../../releases) 页面下载最新版本的 `CC-Switch-v{版本号}-Linux.deb` 包或者 `CC-Switch-v{版本号}-Linux.AppImage` 安装包。
