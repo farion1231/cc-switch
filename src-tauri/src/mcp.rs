@@ -449,7 +449,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
             // 核心字段（需要手动处理的字段）
             let core_fields = match typ {
                 "stdio" => vec!["type", "command", "args", "env", "cwd"],
-                "http" | "sse" => vec!["type", "url", "headers"],
+                "http" | "sse" => vec!["type", "url", "http_headers"],
                 _ => vec!["type"],
             };
 
@@ -490,7 +490,13 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                     if let Some(url) = entry_tbl.get("url").and_then(|v| v.as_str()) {
                         spec.insert("url".into(), json!(url));
                     }
-                    if let Some(headers_tbl) = entry_tbl.get("headers").and_then(|v| v.as_table()) {
+                    // Read from http_headers (correct Codex format) or headers (legacy) with priority to http_headers
+                    let headers_tbl = entry_tbl
+                        .get("http_headers")
+                        .and_then(|v| v.as_table())
+                        .or_else(|| entry_tbl.get("headers").and_then(|v| v.as_table()));
+
+                    if let Some(headers_tbl) = headers_tbl {
                         let mut headers_json = serde_json::Map::new();
                         for (k, v) in headers_tbl.iter() {
                             if let Some(sv) = v.as_str() {
@@ -910,7 +916,7 @@ fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError>
     // 定义核心字段（已在下方处理，跳过通用转换）
     let core_fields = match typ {
         "stdio" => vec!["type", "command", "args", "env", "cwd"],
-        "http" | "sse" => vec!["type", "url", "headers"],
+        "http" | "sse" => vec!["type", "url", "http_headers"],
         _ => vec!["type"],
     };
 
@@ -988,7 +994,7 @@ fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError>
                     }
                 }
                 if !h_tbl.is_empty() {
-                    t["headers"] = Item::Table(h_tbl);
+                    t["http_headers"] = Item::Table(h_tbl);
                 }
             }
         }
