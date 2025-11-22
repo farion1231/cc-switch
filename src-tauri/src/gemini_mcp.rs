@@ -96,7 +96,20 @@ pub fn set_mcp_servers_map(
             obj = server_obj;
         }
 
-        // 移除 UI 辅助字段
+        // Gemini CLI 格式转换：
+        // - Gemini 不使用 "type" 字段（从字段名推断传输类型）
+        // - HTTP 使用 "httpUrl" 字段，SSE 使用 "url" 字段
+        let transport_type = obj.get("type").and_then(|v| v.as_str());
+        if transport_type == Some("http") {
+            // HTTP streaming: 将 "url" 重命名为 "httpUrl"
+            if let Some(url_value) = obj.remove("url") {
+                obj.insert("httpUrl".to_string(), url_value);
+            }
+        }
+        // SSE 保持 "url" 字段不变
+
+        // 移除 UI 辅助字段和 type 字段（Gemini 不需要）
+        obj.remove("type");
         obj.remove("enabled");
         obj.remove("source");
         obj.remove("id");
