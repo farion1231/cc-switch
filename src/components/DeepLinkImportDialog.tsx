@@ -254,16 +254,65 @@ export function DeepLinkImportDialog() {
                 </div>
               </div>
 
-              {/* Model (if present) */}
-              {request.model && (
-                <div className="grid grid-cols-3 items-center gap-4">
-                  <div className="font-medium text-sm text-muted-foreground">
-                    {t("deeplink.model")}
-                  </div>
-                  <div className="col-span-2 text-sm font-mono">
-                    {request.model}
-                  </div>
-                </div>
+              {/* Model Fields - 根据应用类型显示不同的模型字段 */}
+              {request.app === "claude" ? (
+                <>
+                  {/* Claude 四种模型字段 */}
+                  {request.haikuModel && (
+                    <div className="grid grid-cols-3 items-center gap-4">
+                      <div className="font-medium text-sm text-muted-foreground">
+                        {t("deeplink.haikuModel")}
+                      </div>
+                      <div className="col-span-2 text-sm font-mono">
+                        {request.haikuModel}
+                      </div>
+                    </div>
+                  )}
+                  {request.sonnetModel && (
+                    <div className="grid grid-cols-3 items-center gap-4">
+                      <div className="font-medium text-sm text-muted-foreground">
+                        {t("deeplink.sonnetModel")}
+                      </div>
+                      <div className="col-span-2 text-sm font-mono">
+                        {request.sonnetModel}
+                      </div>
+                    </div>
+                  )}
+                  {request.opusModel && (
+                    <div className="grid grid-cols-3 items-center gap-4">
+                      <div className="font-medium text-sm text-muted-foreground">
+                        {t("deeplink.opusModel")}
+                      </div>
+                      <div className="col-span-2 text-sm font-mono">
+                        {request.opusModel}
+                      </div>
+                    </div>
+                  )}
+                  {request.model && (
+                    <div className="grid grid-cols-3 items-center gap-4">
+                      <div className="font-medium text-sm text-muted-foreground">
+                        {t("deeplink.multiModel")}
+                      </div>
+                      <div className="col-span-2 text-sm font-mono">
+                        {request.model}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* Codex 和 Gemini 使用通用 model 字段 */}
+                  {request.model && (
+                    <div className="grid grid-cols-3 items-center gap-4">
+                      <div className="font-medium text-sm text-muted-foreground">
+                        {t("deeplink.model")}
+                      </div>
+                      <div className="col-span-2 text-sm font-mono">
+                        {request.model}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
               {/* Notes (if present) */}
