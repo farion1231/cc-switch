@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
+use crate::database::Database;
 use crate::error::AppError;
 
 /// 自定义端点配置
@@ -90,8 +91,7 @@ impl Default for AppSettings {
 
 impl AppSettings {
     fn settings_path() -> PathBuf {
-        // settings.json 必须使用固定路径，不能被 app_config_dir 覆盖
-        // 否则会造成循环依赖：读取 settings 需要知道路径，但路径在 settings 中
+        // settings.json 保留用于旧版本迁移和无数据库场景
         dirs::home_dir()
             .expect("无法获取用户主目录")
             .join(".cc-switch")
@@ -128,7 +128,7 @@ impl AppSettings {
             .map(|s| s.to_string());
     }
 
-    pub fn load() -> Self {
+    fn load_from_file() -> Self {
         let path = Self::settings_path();
         if let Ok(content) = fs::read_to_string(&path) {
             match serde_json::from_str::<AppSettings>(&content) {
@@ -149,26 +149,80 @@ impl AppSettings {
             Self::default()
         }
     }
+}
 
-    pub fn save(&self) -> Result<(), AppError> {
-        let mut normalized = self.clone();
-        normalized.normalize_paths();
-        let path = Self::settings_path();
+fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
+    let mut normalized = settings.clone();
+    normalized.normalize_paths();
+    let path = AppSettings::settings_path();
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-        }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
 
-        let json = serde_json::to_string_pretty(&normalized)
-            .map_err(|e| AppError::JsonSerialize { source: e })?;
-        fs::write(&path, json).map_err(|e| AppError::io(&path, e))?;
-        Ok(())
+    let json = serde_json::to_string_pretty(&normalized)
+        .map_err(|e| AppError::JsonSerialize { source: e })?;
+    fs::write(&path, json).map_err(|e| AppError::io(&path, e))?;
+    Ok(())
+}
+
+static SETTINGS_STORE: OnceLock<RwLock<AppSettings>> = OnceLock::new();
+
+fn settings_store() -> &'static RwLock<AppSettings> {
+    SETTINGS_STORE.get_or_init(|| RwLock::new(load_initial_settings()))
+}
+
+static SETTINGS_DB: OnceLock<Arc<Database>> = OnceLock::new();
+const APP_SETTINGS_KEY: &str = "app_settings";
+
+pub fn bind_db(db: Arc<Database>) {
+    if SETTINGS_DB.set(db).is_err() {
+        return;
+    }
+
+    if let Some(store) = SETTINGS_STORE.get() {
+        let mut guard = store.write().expect("写入设置锁失败");
+        *guard = load_initial_settings();
     }
 }
 
-fn settings_store() -> &'static RwLock<AppSettings> {
-    static STORE: OnceLock<RwLock<AppSettings>> = OnceLock::new();
-    STORE.get_or_init(|| RwLock::new(AppSettings::load()))
+fn load_initial_settings() -> AppSettings {
+    if let Some(db) = SETTINGS_DB.get() {
+        if let Some(from_db) = load_from_db(db.as_ref()) {
+            return from_db;
+        }
+
+        // 从文件迁移一次并写入数据库
+        let file_settings = AppSettings::load_from_file();
+        if let Err(e) = save_to_db(db.as_ref(), &file_settings) {
+            log::warn!("迁移设置到数据库失败，将继续使用内存副本: {e}");
+        }
+        return file_settings;
+    }
+
+    AppSettings::load_from_file()
+}
+
+fn load_from_db(db: &Database) -> Option<AppSettings> {
+    let raw = db.get_setting(APP_SETTINGS_KEY).ok()??;
+    match serde_json::from_str::<AppSettings>(&raw) {
+        Ok(mut settings) => {
+            settings.normalize_paths();
+            Some(settings)
+        }
+        Err(err) => {
+            log::warn!("解析数据库中 app_settings 失败: {err}");
+            None
+        }
+    }
+}
+
+fn save_to_db(db: &Database, settings: &AppSettings) -> Result<(), AppError> {
+    let mut normalized = settings.clone();
+    normalized.normalize_paths();
+    let json =
+        serde_json::to_string(&normalized).map_err(|e| AppError::JsonSerialize { source: e })?;
+    db.set_setting(APP_SETTINGS_KEY, &json)
 }
 
 fn resolve_override_path(raw: &str) -> PathBuf {
@@ -195,7 +249,11 @@ pub fn get_settings() -> AppSettings {
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.normalize_paths();
-    new_settings.save()?;
+    if let Some(db) = SETTINGS_DB.get() {
+        save_to_db(db, &new_settings)?;
+    } else {
+        save_settings_file(&new_settings)?;
+    }
 
     let mut guard = settings_store().write().expect("写入设置锁失败");
     *guard = new_settings;
