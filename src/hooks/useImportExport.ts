@@ -78,7 +78,7 @@ export function useImportExport(
     if (!selectedFile) {
       toast.error(
         t("settings.selectFileFailed", {
-          defaultValue: "请选择有效的配置文件",
+          defaultValue: "请选择有效的 SQL 备份文件",
         }),
       );
       return;
@@ -97,7 +97,7 @@ export function useImportExport(
         const message =
           result.message ||
           t("settings.configCorrupted", {
-            defaultValue: "配置文件已损坏或格式不正确",
+            defaultValue: "SQL 文件已损坏或格式不正确",
           });
         setErrorMessage(message);
         toast.error(message);
@@ -150,14 +150,14 @@ export function useImportExport(
 
   const exportConfig = useCallback(async () => {
     try {
-      const defaultName = `cc-switch-config-${
-        new Date().toISOString().split("T")[0]
-      }.json`;
+      const now = new Date();
+      const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+      const defaultName = `cc-switch-export-${stamp}.sql`;
       const destination = await settingsApi.saveFileDialog(defaultName);
       if (!destination) {
         toast.error(
           t("settings.selectFileFailed", {
-            defaultValue: "选择保存位置失败",
+            defaultValue: "请选择 SQL 备份保存路径",
           }),
         );
         return;
