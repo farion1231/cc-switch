@@ -15,11 +15,32 @@ pub async fn get_skills(
 ) -> Result<Vec<Skill>, String> {
     let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
 
-    service
+    let skills = service
         .0
         .list_skills(repos)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // 自动同步本地已安装的 skills 到数据库
+    // 这样用户在首次运行时，已有的 skills 会被自动记录
+    let existing_states = app_state.db.get_skills().unwrap_or_default();
+
+    for skill in &skills {
+        if skill.installed && !existing_states.contains_key(&skill.directory) {
+            // 本地有该 skill，但数据库中没有记录，自动添加
+            if let Err(e) = app_state.db.update_skill_state(
+                &skill.directory,
+                &SkillState {
+                    installed: true,
+                    installed_at: Utc::now(),
+                },
+            ) {
+                log::warn!("同步本地 skill {} 状态到数据库失败: {}", skill.directory, e);
+            }
+        }
+    }
+
+    Ok(skills)
 }
 
 #[tauri::command]
