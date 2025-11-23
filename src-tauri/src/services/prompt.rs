@@ -7,6 +7,14 @@ use crate::prompt::Prompt;
 use crate::prompt_files::prompt_file_path;
 use crate::store::AppState;
 
+/// 安全地获取当前 Unix 时间戳
+fn get_unix_timestamp() -> Result<i64, AppError> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .map_err(|e| AppError::Message(format!("Failed to get system time: {e}")))
+}
+
 pub struct PromptService;
 
 impl PromptService {
@@ -64,10 +72,7 @@ impl PromptService {
                         .find(|(_, p)| p.enabled)
                         .map(|(id, p)| (id.clone(), p))
                     {
-                        let timestamp = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs() as i64;
+                        let timestamp = get_unix_timestamp()?;
                         enabled_prompt.content = live_content.clone();
                         enabled_prompt.updated_at = Some(timestamp);
                         log::info!("回填 live 提示词内容到已启用项: {enabled_id}");
@@ -135,10 +140,7 @@ impl PromptService {
 
         let content =
             std::fs::read_to_string(&file_path).map_err(|e| AppError::io(&file_path, e))?;
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let timestamp = get_unix_timestamp()?;
 
         let id = format!("imported-{timestamp}");
         let prompt = Prompt {
@@ -166,5 +168,57 @@ impl PromptService {
         let content =
             std::fs::read_to_string(&file_path).map_err(|e| AppError::io(&file_path, e))?;
         Ok(Some(content))
+    }
+
+    /// 首次启动时从现有提示词文件自动导入（如果存在）
+    /// 返回导入的数量
+    pub fn import_from_file_on_first_launch(
+        state: &AppState,
+        app: AppType,
+    ) -> Result<usize, AppError> {
+        let file_path = prompt_file_path(&app)?;
+
+        // 检查文件是否存在
+        if !file_path.exists() {
+            return Ok(0);
+        }
+
+        // 读取文件内容
+        let content = match std::fs::read_to_string(&file_path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("读取提示词文件失败: {file_path:?}, 错误: {e}");
+                return Ok(0);
+            }
+        };
+
+        // 检查内容是否为空
+        if content.trim().is_empty() {
+            return Ok(0);
+        }
+
+        log::info!("发现提示词文件，自动导入: {file_path:?}");
+
+        // 创建提示词对象
+        let timestamp = get_unix_timestamp()?;
+        let id = format!("auto-imported-{timestamp}");
+        let prompt = Prompt {
+            id: id.clone(),
+            name: format!(
+                "Auto-imported Prompt {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M")
+            ),
+            content,
+            description: Some("Automatically imported on first launch".to_string()),
+            enabled: true, // 首次导入时自动启用
+            created_at: Some(timestamp),
+            updated_at: Some(timestamp),
+        };
+
+        // 保存到数据库
+        state.db.save_prompt(app.as_str(), &prompt)?;
+
+        log::info!("自动导入完成: {}", app.as_str());
+        Ok(1)
     }
 }

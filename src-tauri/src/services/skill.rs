@@ -231,7 +231,12 @@ impl SkillService {
             // 解析技能元数据
             match self.parse_skill_metadata(&skill_md) {
                 Ok(meta) => {
-                    let directory = path.file_name().unwrap().to_string_lossy().to_string();
+                    // 安全地获取目录名
+                    let Some(dir_name) = path.file_name() else {
+                        log::warn!("Failed to get directory name from path: {path:?}");
+                        continue;
+                    };
+                    let directory = dir_name.to_string_lossy().to_string();
 
                     // 构建 README URL（考虑 skillsPath）
                     let readme_path = if let Some(ref skills_path) = repo.skills_path {
@@ -305,7 +310,12 @@ impl SkillService {
                 continue;
             }
 
-            let directory = path.file_name().unwrap().to_string_lossy().to_string();
+            // 安全地获取目录名
+            let Some(dir_name) = path.file_name() else {
+                log::warn!("Failed to get directory name from path: {path:?}");
+                continue;
+            };
+            let directory = dir_name.to_string_lossy().to_string();
 
             // 更新已安装状态
             let mut found = false;

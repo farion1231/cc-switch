@@ -424,9 +424,9 @@ impl ProviderService {
     /// 归一化 Claude 模型键：读旧键(ANTHROPIC_SMALL_FAST_MODEL)，写新键(DEFAULT_*), 并删除旧键
     fn normalize_claude_models_in_value(settings: &mut Value) -> bool {
         let mut changed = false;
-        let env = match settings.get_mut("env") {
-            Some(v) if v.is_object() => v.as_object_mut().unwrap(),
-            _ => return changed,
+        let env = match settings.get_mut("env").and_then(|v| v.as_object_mut()) {
+            Some(obj) => obj,
+            None => return changed,
         };
 
         let model = env

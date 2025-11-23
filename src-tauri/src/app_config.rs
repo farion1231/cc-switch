@@ -494,8 +494,11 @@ impl MultiAppConfig {
         // 创建提示词对象
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or_else(|_| {
+                log::warn!("Failed to get system time, using 0 as timestamp");
+                0
+            });
 
         let id = format!("auto-imported-{timestamp}");
         let prompt = crate::prompt::Prompt {

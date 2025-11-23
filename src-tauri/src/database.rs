@@ -6,8 +6,24 @@ use crate::provider::{Provider, ProviderMeta};
 use crate::services::skill::{SkillRepo, SkillState};
 use indexmap::IndexMap;
 use rusqlite::{params, Connection, Result};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
+
+/// 安全地序列化 JSON，避免 unwrap panic
+fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
+    serde_json::to_string(value)
+        .map_err(|e| AppError::Config(format!("JSON serialization failed: {e}")))
+}
+
+/// 安全地获取 Mutex 锁，避免 unwrap panic
+macro_rules! lock_conn {
+    ($mutex:expr) => {
+        $mutex
+            .lock()
+            .map_err(|e| AppError::Database(format!("Mutex lock failed: {}", e)))?
+    };
+}
 
 pub struct Database {
     // 使用 Mutex 包装 Connection 以支持在多线程环境（如 Tauri State）中共享
@@ -40,7 +56,7 @@ impl Database {
     }
 
     fn create_tables(&self) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
 
         // 1. Providers 表
         conn.execute(
@@ -152,7 +168,7 @@ impl Database {
 
     /// 从 MultiAppConfig 迁移数据
     pub fn migrate_from_json(&self, config: &MultiAppConfig) -> Result<(), AppError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -178,7 +194,7 @@ impl Database {
                         id,
                         app_type,
                         provider.name,
-                        serde_json::to_string(&provider.settings_config).unwrap(),
+                        to_json_string(&provider.settings_config)?,
                         provider.website_url,
                         provider.category,
                         provider.created_at,
@@ -186,7 +202,7 @@ impl Database {
                         provider.notes,
                         provider.icon,
                         provider.icon_color,
-                        serde_json::to_string(&meta_clone).unwrap(), // 不含 endpoints 的 meta
+                        to_json_string(&meta_clone)?, // 不含 endpoints 的 meta
                         is_current,
                     ],
                 )
@@ -215,11 +231,11 @@ impl Database {
                     params![
                         id,
                         server.name,
-                        serde_json::to_string(&server.server).unwrap(),
+                        to_json_string(&server.server)?,
                         server.description,
                         server.homepage,
                         server.docs,
-                        serde_json::to_string(&server.tags).unwrap(),
+                        to_json_string(&server.tags)?,
                         server.apps.claude,
                         server.apps.codex,
                         server.apps.gemini,
@@ -303,13 +319,42 @@ impl Database {
         Ok(())
     }
 
+    /// 检查数据库是否为空（需要首次导入）
+    /// 通过检查是否有任何 MCP 服务器、提示词、Skills 仓库或供应商来判断
+    pub fn is_empty_for_first_import(&self) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        // 检查是否有 MCP 服务器
+        let mcp_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM mcp_servers", [], |row| row.get(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 检查是否有提示词
+        let prompt_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM prompts", [], |row| row.get(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 检查是否有 Skills 仓库
+        let skill_repo_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM skill_repos", [], |row| row.get(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 检查是否有供应商
+        let provider_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 如果四者都为 0，说明是空数据库
+        Ok(mcp_count == 0 && prompt_count == 0 && skill_repo_count == 0 && provider_count == 0)
+    }
+
     // --- Providers DAO ---
 
     pub fn get_all_providers(
         &self,
         app_type: &str,
     ) -> Result<IndexMap<String, Provider>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
             "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta
              FROM providers WHERE app_type = ?1
@@ -396,7 +441,7 @@ impl Database {
     }
 
     pub fn get_current_provider(&self, app_type: &str) -> Result<Option<String>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare("SELECT id FROM providers WHERE app_type = ?1 AND is_current = 1 LIMIT 1")
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -415,7 +460,7 @@ impl Database {
     }
 
     pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<(), AppError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -477,7 +522,7 @@ impl Database {
     }
 
     pub fn delete_provider(&self, app_type: &str, id: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         conn.execute(
             "DELETE FROM providers WHERE id = ?1 AND app_type = ?2",
             params![id, app_type],
@@ -487,7 +532,7 @@ impl Database {
     }
 
     pub fn set_current_provider(&self, app_type: &str, id: &str) -> Result<(), AppError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -516,7 +561,7 @@ impl Database {
         provider_id: &str,
         url: &str,
     ) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         let added_at = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at) VALUES (?1, ?2, ?3, ?4)",
@@ -531,7 +576,7 @@ impl Database {
         provider_id: &str,
         url: &str,
     ) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         conn.execute(
             "DELETE FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 AND url = ?3",
             params![provider_id, app_type, url],
@@ -543,7 +588,7 @@ impl Database {
     // --- MCP Servers DAO ---
 
     pub fn get_all_mcp_servers(&self) -> Result<IndexMap<String, McpServer>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
             "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini
              FROM mcp_servers
@@ -595,7 +640,7 @@ impl Database {
     }
 
     pub fn save_mcp_server(&self, server: &McpServer) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
@@ -619,7 +664,7 @@ impl Database {
     }
 
     pub fn delete_mcp_server(&self, id: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         conn.execute("DELETE FROM mcp_servers WHERE id = ?1", params![id])
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
@@ -628,7 +673,7 @@ impl Database {
     // --- Prompts DAO ---
 
     pub fn get_prompts(&self, app_type: &str) -> Result<IndexMap<String, Prompt>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, content, description, enabled, created_at, updated_at
@@ -671,7 +716,7 @@ impl Database {
     }
 
     pub fn save_prompt(&self, app_type: &str, prompt: &Prompt) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT OR REPLACE INTO prompts (
                 id, app_type, name, content, description, enabled, created_at, updated_at
@@ -692,7 +737,7 @@ impl Database {
     }
 
     pub fn delete_prompt(&self, app_type: &str, id: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         conn.execute(
             "DELETE FROM prompts WHERE id = ?1 AND app_type = ?2",
             params![id, app_type],
@@ -704,7 +749,7 @@ impl Database {
     // --- Skills DAO ---
 
     pub fn get_skills(&self) -> Result<IndexMap<String, SkillState>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare("SELECT key, installed, installed_at FROM skills ORDER BY key ASC")
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -737,7 +782,7 @@ impl Database {
     }
 
     pub fn update_skill_state(&self, key: &str, state: &SkillState) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT OR REPLACE INTO skills (key, installed, installed_at) VALUES (?1, ?2, ?3)",
             params![key, state.installed, state.installed_at.timestamp()],
@@ -747,7 +792,7 @@ impl Database {
     }
 
     pub fn get_skill_repos(&self) -> Result<Vec<SkillRepo>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare("SELECT owner, name, branch, enabled, skills_path FROM skill_repos ORDER BY owner ASC, name ASC")
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -772,7 +817,7 @@ impl Database {
     }
 
     pub fn save_skill_repo(&self, repo: &SkillRepo) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled, skills_path) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![repo.owner, repo.name, repo.branch, repo.enabled, repo.skills_path],
@@ -781,7 +826,7 @@ impl Database {
     }
 
     pub fn delete_skill_repo(&self, owner: &str, name: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         conn.execute(
             "DELETE FROM skill_repos WHERE owner = ?1 AND name = ?2",
             params![owner, name],
@@ -790,10 +835,31 @@ impl Database {
         Ok(())
     }
 
+    /// 初始化默认的 Skill 仓库（首次启动时调用）
+    pub fn init_default_skill_repos(&self) -> Result<usize, AppError> {
+        // 检查是否已有仓库
+        let existing = self.get_skill_repos()?;
+        if !existing.is_empty() {
+            return Ok(0);
+        }
+
+        // 获取默认仓库列表
+        let default_store = crate::services::skill::SkillStore::default();
+        let mut count = 0;
+
+        for repo in &default_store.repos {
+            self.save_skill_repo(repo)?;
+            count += 1;
+        }
+
+        log::info!("初始化默认 Skill 仓库完成，共 {count} 个");
+        Ok(count)
+    }
+
     // --- Settings DAO ---
 
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare("SELECT value FROM settings WHERE key = ?1")
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -812,7 +878,7 @@ impl Database {
     }
 
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
             params![key, value],
@@ -837,7 +903,7 @@ impl Database {
             self.set_setting(&key, &value)
         } else {
             // Delete if None
-            let conn = self.conn.lock().unwrap();
+            let conn = lock_conn!(self.conn);
             conn.execute("DELETE FROM settings WHERE key = ?1", params![key])
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Ok(())

@@ -348,10 +348,7 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
     };
 
     // 确保新结构存在
-    if config.mcp.servers.is_none() {
-        config.mcp.servers = Some(HashMap::new());
-    }
-    let servers = config.mcp.servers.as_mut().unwrap();
+    let servers = config.mcp.servers.get_or_insert_with(HashMap::new);
 
     let mut changed = 0;
     let mut errors = Vec::new();
@@ -421,10 +418,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
         .map_err(|e| AppError::McpValidation(format!("解析 ~/.codex/config.toml 失败: {e}")))?;
 
     // 确保新结构存在
-    if config.mcp.servers.is_none() {
-        config.mcp.servers = Some(HashMap::new());
-    }
-    let servers = config.mcp.servers.as_mut().unwrap();
+    let servers = config.mcp.servers.get_or_insert_with(HashMap::new);
 
     let mut changed_total = 0usize;
 
@@ -724,10 +718,7 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
     };
 
     // 确保新结构存在
-    if config.mcp.servers.is_none() {
-        config.mcp.servers = Some(HashMap::new());
-    }
-    let servers = config.mcp.servers.as_mut().unwrap();
+    let servers = config.mcp.servers.get_or_insert_with(HashMap::new);
 
     let mut changed = 0;
     let mut errors = Vec::new();
@@ -852,8 +843,22 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
             for item in arr {
                 match item {
                     Value::String(s) => toml_arr.push(s.as_str()),
-                    Value::Number(n) if n.is_i64() => toml_arr.push(n.as_i64().unwrap()),
-                    Value::Number(n) if n.is_f64() => toml_arr.push(n.as_f64().unwrap()),
+                    Value::Number(n) if n.is_i64() => {
+                        if let Some(i) = n.as_i64() {
+                            toml_arr.push(i);
+                        } else {
+                            all_same_type = false;
+                            break;
+                        }
+                    }
+                    Value::Number(n) if n.is_f64() => {
+                        if let Some(f) = n.as_f64() {
+                            toml_arr.push(f);
+                        } else {
+                            all_same_type = false;
+                            break;
+                        }
+                    }
                     Value::Bool(b) => toml_arr.push(*b),
                     _ => {
                         all_same_type = false;
