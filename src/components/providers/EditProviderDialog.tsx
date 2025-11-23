@@ -78,6 +78,8 @@ export function EditProviderDialog({
     async (values: ProviderFormValues) => {
       if (!provider) return;
 
+      // 注意：values.settingsConfig 已经是最终的配置字符串
+      // ProviderForm 已经为不同的 app 类型（Claude/Codex/Gemini）正确组装了配置
       const parsedConfig = JSON.parse(values.settingsConfig) as Record<
         string,
         unknown
