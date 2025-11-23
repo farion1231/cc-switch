@@ -180,21 +180,68 @@ impl McpService {
     }
 
     /// 从 Claude 导入 MCP（v3.7.0 已更新为统一结构）
-    pub fn import_from_claude(_state: &AppState) -> Result<usize, AppError> {
-        // TODO: Implement import logic using database
-        // For now, return 0 as a placeholder
-        Ok(0)
+    pub fn import_from_claude(state: &AppState) -> Result<usize, AppError> {
+        // 创建临时 MultiAppConfig 用于导入
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+
+        // 调用原有的导入逻辑（从 mcp.rs）
+        let count = crate::mcp::import_from_claude(&mut temp_config)?;
+
+        // 如果有导入的服务器，保存到数据库
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                for server in servers.values() {
+                    state.db.save_mcp_server(server)?;
+                    // 同步到 Claude live 配置
+                    Self::sync_server_to_apps(state, server)?;
+                }
+            }
+        }
+
+        Ok(count)
     }
 
     /// 从 Codex 导入 MCP（v3.7.0 已更新为统一结构）
-    pub fn import_from_codex(_state: &AppState) -> Result<usize, AppError> {
-        // TODO: Implement import logic using database
-        Ok(0)
+    pub fn import_from_codex(state: &AppState) -> Result<usize, AppError> {
+        // 创建临时 MultiAppConfig 用于导入
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+
+        // 调用原有的导入逻辑（从 mcp.rs）
+        let count = crate::mcp::import_from_codex(&mut temp_config)?;
+
+        // 如果有导入的服务器，保存到数据库
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                for server in servers.values() {
+                    state.db.save_mcp_server(server)?;
+                    // 同步到 Codex live 配置
+                    Self::sync_server_to_apps(state, server)?;
+                }
+            }
+        }
+
+        Ok(count)
     }
 
     /// 从 Gemini 导入 MCP（v3.7.0 已更新为统一结构）
-    pub fn import_from_gemini(_state: &AppState) -> Result<usize, AppError> {
-        // TODO: Implement import logic using database
-        Ok(0)
+    pub fn import_from_gemini(state: &AppState) -> Result<usize, AppError> {
+        // 创建临时 MultiAppConfig 用于导入
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+
+        // 调用原有的导入逻辑（从 mcp.rs）
+        let count = crate::mcp::import_from_gemini(&mut temp_config)?;
+
+        // 如果有导入的服务器，保存到数据库
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                for server in servers.values() {
+                    state.db.save_mcp_server(server)?;
+                    // 同步到 Gemini live 配置
+                    Self::sync_server_to_apps(state, server)?;
+                }
+            }
+        }
+
+        Ok(count)
     }
 }
