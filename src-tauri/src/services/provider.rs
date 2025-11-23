@@ -12,6 +12,7 @@ use crate::config::{
 };
 use crate::error::AppError;
 use crate::provider::{Provider, UsageData, UsageResult};
+use crate::services::mcp::McpService;
 use crate::settings::{self, CustomEndpoint};
 use crate::store::AppState;
 use crate::usage_script;
@@ -547,6 +548,30 @@ impl ProviderService {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// 将数据库中的当前供应商同步到对应 live 配置
+    pub fn sync_current_from_db(state: &AppState) -> Result<(), AppError> {
+        for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+            let current_id = match state.db.get_current_provider(app_type.as_str())? {
+                Some(id) => id,
+                None => continue,
+            };
+            let providers = state.db.get_all_providers(app_type.as_str())?;
+            if let Some(provider) = providers.get(&current_id) {
+                Self::write_live_snapshot(&app_type, provider)?;
+            } else {
+                log::warn!(
+                    "无法同步 live 配置: 当前供应商 {} ({}) 未找到",
+                    current_id,
+                    app_type.as_str()
+                );
+            }
+        }
+
+        // MCP 同步
+        McpService::sync_all_enabled(state)?;
         Ok(())
     }
 

@@ -6,20 +6,22 @@ use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
 use crate::error::AppError;
-use crate::services::ConfigService;
+use crate::services::provider::ProviderService;
 use crate::store::AppState;
 
-/// 导出配置文件
+/// 导出数据库为 SQL 备份
 #[tauri::command]
 pub async fn export_config_to_file(
     #[allow(non_snake_case)] filePath: String,
+    state: State<'_, AppState>,
 ) -> Result<Value, String> {
+    let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let target_path = PathBuf::from(&filePath);
-        ConfigService::export_config_to_path(&target_path)?;
+        db.export_sql(&target_path)?;
         Ok::<_, AppError>(json!({
             "success": true,
-            "message": "Configuration exported successfully",
+            "message": "SQL exported successfully",
             "filePath": filePath
         }))
     })
@@ -28,65 +30,49 @@ pub async fn export_config_to_file(
     .map_err(|e: AppError| e.to_string())
 }
 
-/// 从文件导入配置
-/// TODO: 需要重构以使用数据库而不是 JSON 配置
+/// 从 SQL 备份导入数据库
 #[tauri::command]
 pub async fn import_config_from_file(
-    #[allow(non_snake_case)] _filePath: String,
-    _state: State<'_, AppState>,
+    #[allow(non_snake_case)] filePath: String,
+    state: State<'_, AppState>,
 ) -> Result<Value, String> {
-    // TODO: 实现基于数据库的导入逻辑
-    // 当前暂时禁用此功能
-    Err("配置导入功能正在重构中,暂时不可用".to_string())
-
-    /* 旧的实现,需要重构:
-    let (new_config, backup_id) = tauri::async_runtime::spawn_blocking(move || {
+    let db = state.db.clone();
+    let db_for_state = db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
         let path_buf = PathBuf::from(&filePath);
-        ConfigService::load_config_for_import(&path_buf)
+        let backup_id = db.import_sql(&path_buf)?;
+
+        // 导入后同步当前供应商到各自的 live 配置
+        let app_state = AppState::new(db_for_state);
+        if let Err(err) = ProviderService::sync_current_from_db(&app_state) {
+            log::warn!("导入后同步 live 配置失败: {err}");
+        }
+
+        Ok::<_, AppError>(json!({
+            "success": true,
+            "message": "SQL imported successfully",
+            "backupId": backup_id
+        }))
     })
     .await
     .map_err(|e| format!("导入配置失败: {e}"))?
-    .map_err(|e: AppError| e.to_string())?;
-
-    {
-        let mut guard = state
-            .config
-            .write()
-            .map_err(|e| AppError::from(e).to_string())?;
-        *guard = new_config;
-    }
-
-    Ok(json!({
-        "success": true,
-        "message": "Configuration imported successfully",
-        "backupId": backup_id
-    }))
-    */
+    .map_err(|e: AppError| e.to_string())
 }
 
-/// 同步当前供应商配置到对应的 live 文件
-/// TODO: 需要重构以使用数据库而不是 JSON 配置
 #[tauri::command]
-pub async fn sync_current_providers_live(_state: State<'_, AppState>) -> Result<Value, String> {
-    // TODO: 实现基于数据库的同步逻辑
-    // 当前暂时禁用此功能
-    Err("配置同步功能正在重构中,暂时不可用".to_string())
-
-    /* 旧的实现,需要重构:
-    {
-        let mut config_state = state
-            .config
-            .write()
-            .map_err(|e| AppError::from(e).to_string())?;
-        ConfigService::sync_current_providers_to_live(&mut config_state)
-            .map_err(|e| e.to_string())?;
-    }
-
-    Ok(json!({
-        "success": true,
-        "message": "Live configuration synchronized"
-    }))
-    */
+pub async fn sync_current_providers_live(state: State<'_, AppState>) -> Result<Value, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_state = AppState::new(db);
+        ProviderService::sync_current_from_db(&app_state)?;
+        Ok::<_, AppError>(json!({
+            "success": true,
+            "message": "Live configuration synchronized"
+        }))
+    })
+    .await
+    .map_err(|e| format!("同步当前供应商失败: {e}"))?
+    .map_err(|e: AppError| e.to_string())
 }
 
 /// 保存文件对话框
@@ -98,7 +84,7 @@ pub async fn save_file_dialog<R: tauri::Runtime>(
     let dialog = app.dialog();
     let result = dialog
         .file()
-        .add_filter("JSON", &["json"])
+        .add_filter("SQL", &["sql"])
         .set_file_name(&defaultName)
         .blocking_save_file();
 
@@ -113,7 +99,7 @@ pub async fn open_file_dialog<R: tauri::Runtime>(
     let dialog = app.dialog();
     let result = dialog
         .file()
-        .add_filter("JSON", &["json"])
+        .add_filter("SQL", &["sql"])
         .blocking_pick_file();
 
     Ok(result.map(|p| p.to_string()))
