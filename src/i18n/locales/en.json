@@ -738,6 +738,12 @@
     },
     "search": "Search Skills",
     "searchPlaceholder": "Search skill name or description...",
+    "filter": {
+      "placeholder": "Filter by status",
+      "all": "All",
+      "installed": "Installed",
+      "uninstalled": "Not installed"
+    },
     "noResults": "No matching skills found"
   },
   "deeplink": {
@@ -748,6 +754,7 @@
     "homepage": "Homepage",
     "endpoint": "API Endpoint",
     "apiKey": "API Key",
+    "icon": "Icon",
     "model": "Model",
     "haikuModel": "Haiku Model",
     "sonnetModel": "Sonnet Model",

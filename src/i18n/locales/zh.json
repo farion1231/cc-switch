@@ -738,6 +738,12 @@
     },
     "search": "搜索技能",
     "searchPlaceholder": "搜索技能名称或描述...",
+    "filter": {
+      "placeholder": "状态筛选",
+      "all": "全部",
+      "installed": "已安装",
+      "uninstalled": "未安装"
+    },
     "noResults": "未找到匹配的技能"
   },
   "deeplink": {
@@ -748,6 +754,7 @@
     "homepage": "官网地址",
     "endpoint": "API 端点",
     "apiKey": "API 密钥",
+    "icon": "图标",
     "model": "模型",
     "haikuModel": "Haiku 模型",
     "sonnetModel": "Sonnet 模型",
