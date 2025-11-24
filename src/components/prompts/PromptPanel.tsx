@@ -43,6 +43,22 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
       if (open) reload();
     }, [open, reload]);
 
+    // Listen for prompt import events from deep link
+    useEffect(() => {
+      const handlePromptImported = (event: Event) => {
+        const customEvent = event as CustomEvent;
+        // Reload if the import is for this app
+        if (customEvent.detail?.app === appId) {
+          reload();
+        }
+      };
+
+      window.addEventListener("prompt-imported", handlePromptImported);
+      return () => {
+        window.removeEventListener("prompt-imported", handlePromptImported);
+      };
+    }, [appId, reload]);
+
     const handleAdd = () => {
       setEditingId(null);
       setIsFormOpen(true);

@@ -8,6 +8,13 @@ import {
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { SkillCard } from "./SkillCard";
@@ -32,6 +39,9 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const [loading, setLoading] = useState(true);
     const [repoManagerOpen, setRepoManagerOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
+    const [filterStatus, setFilterStatus] = useState<
+      "all" | "installed" | "uninstalled"
+    >("all");
 
     const loadSkills = async (afterLoad?: (data: Skill[]) => void) => {
       try {
@@ -172,10 +182,16 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     // 过滤技能列表
     const filteredSkills = useMemo(() => {
-      if (!searchQuery.trim()) return skills;
+      const byStatus = skills.filter((skill) => {
+        if (filterStatus === "installed") return skill.installed;
+        if (filterStatus === "uninstalled") return !skill.installed;
+        return true;
+      });
+
+      if (!searchQuery.trim()) return byStatus;
 
       const query = searchQuery.toLowerCase();
-      return skills.filter((skill) => {
+      return byStatus.filter((skill) => {
         const name = skill.name?.toLowerCase() || "";
         const description = skill.description?.toLowerCase() || "";
         const directory = skill.directory?.toLowerCase() || "";
@@ -186,7 +202,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
           directory.includes(query)
         );
       });
-    }, [skills, searchQuery]);
+    }, [skills, searchQuery, filterStatus]);
 
     return (
       <div className="flex flex-col h-full min-h-0 bg-background/50">
@@ -218,16 +234,53 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
             ) : (
               <>
                 {/* 搜索框 */}
-                <div className="mb-6">
-                  <div className="relative">
+                <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
+                  <div className="relative flex-1 min-w-0">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       type="text"
                       placeholder={t("skills.searchPlaceholder")}
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-9"
+                      className="pl-9 pr-3"
                     />
+                  </div>
+                  <div className="w-full md:w-48">
+                    <Select
+                      value={filterStatus}
+                      onValueChange={(val) =>
+                        setFilterStatus(
+                          val as "all" | "installed" | "uninstalled",
+                        )
+                      }
+                    >
+                      <SelectTrigger className="bg-card border shadow-sm text-foreground">
+                        <SelectValue
+                          placeholder={t("skills.filter.placeholder")}
+                          className="text-left"
+                        />
+                      </SelectTrigger>
+                      <SelectContent className="bg-card text-foreground shadow-lg">
+                        <SelectItem
+                          value="all"
+                          className="text-left pr-3 [&[data-state=checked]>span]:hidden"
+                        >
+                          {t("skills.filter.all")}
+                        </SelectItem>
+                        <SelectItem
+                          value="installed"
+                          className="text-left pr-3 [&[data-state=checked]>span]:hidden"
+                        >
+                          {t("skills.filter.installed")}
+                        </SelectItem>
+                        <SelectItem
+                          value="uninstalled"
+                          className="text-left pr-3 [&[data-state=checked]>span]:hidden"
+                        >
+                          {t("skills.filter.uninstalled")}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   {searchQuery && (
                     <p className="mt-2 text-sm text-muted-foreground">
