@@ -1,24 +1,65 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export type ResourceType = "provider" | "prompt" | "mcp" | "skill";
+
 export interface DeepLinkImportRequest {
   version: string;
-  resource: string;
-  app: "claude" | "codex" | "gemini";
-  name: string;
-  homepage: string;
-  endpoint: string;
-  apiKey: string;
+  resource: ResourceType;
+
+  // Common fields
+  app?: "claude" | "codex" | "gemini";
+  name?: string;
+  enabled?: boolean;
+
+  // Provider fields
+  homepage?: string;
+  endpoint?: string;
+  apiKey?: string;
+  icon?: string;
   model?: string;
   notes?: string;
-  // Claude 专用模型字段 (v3.7.1+)
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
-  // 配置文件导入字段 (v3.8+)
-  config?: string; // Base64 编码的配置内容
-  configFormat?: string; // json/toml
-  configUrl?: string; // 远程配置 URL
+
+  // Prompt fields
+  content?: string;
+  description?: string;
+
+  // MCP fields
+  apps?: string; // "claude,codex,gemini"
+
+  // Skill fields
+  repo?: string;
+  directory?: string;
+  branch?: string;
+  skillsPath?: string;
+
+  // Config file fields
+  config?: string;
+  configFormat?: string;
+  configUrl?: string;
 }
+
+export interface McpImportResult {
+  importedCount: number;
+  importedIds: string[];
+  failed: Array<{
+    id: string;
+    error: string;
+  }>;
+}
+
+export type ImportResult =
+  | { type: "provider"; id: string }
+  | { type: "prompt"; id: string }
+  | {
+      type: "mcp";
+      importedCount: number;
+      importedIds: string[];
+      failed: Array<{ id: string; error: string }>;
+    }
+  | { type: "skill"; key: string };
 
 export const deeplinkApi = {
   /**
@@ -43,13 +84,13 @@ export const deeplinkApi = {
   },
 
   /**
-   * Import a provider from a deep link request
+   * Import a resource from a deep link request (unified handler)
    * @param request The deep link import request
-   * @returns The ID of the imported provider
+   * @returns Import result based on resource type
    */
   importFromDeeplink: async (
     request: DeepLinkImportRequest,
-  ): Promise<string> => {
-    return invoke("import_from_deeplink", { request });
+  ): Promise<ImportResult> => {
+    return invoke("import_from_deeplink_unified", { request });
   },
 };
