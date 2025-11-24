@@ -32,6 +32,9 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     return {
       width: sizeValue,
       height: sizeValue,
+      // 内嵌 SVG 使用 1em 作为尺寸基准，这里同步 fontSize 让图标实际跟随 size 放大
+      fontSize: sizeValue,
+      lineHeight: 1,
     };
   }, [size]);
 
@@ -57,6 +60,8 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
       .join("")
       .toUpperCase()
       .slice(0, 2);
+    const fallbackFontSize =
+      typeof size === "number" ? `${Math.max(size * 0.5, 12)}px` : "0.5em";
     return (
       <span
         className={cn(
@@ -68,7 +73,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
       >
         <span
           style={{
-            fontSize: `${typeof size === "number" ? size * 0.4 : 14}px`,
+            fontSize: fallbackFontSize,
           }}
         >
           {initials}

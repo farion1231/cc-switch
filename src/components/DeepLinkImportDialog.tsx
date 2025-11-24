@@ -338,7 +338,7 @@ export function DeepLinkImportDialog() {
                       <ProviderIcon
                         icon={request.icon}
                         name={request.name || request.icon}
-                        size={64}
+                        size={80}
                         className="drop-shadow-sm"
                       />
                     </div>

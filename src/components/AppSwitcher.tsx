@@ -1,5 +1,5 @@
 import type { AppId } from "@/lib/api";
-import { ClaudeIcon, CodexIcon, GeminiIcon } from "./BrandIcons";
+import { ProviderIcon } from "@/components/ProviderIcon";
 
 interface AppSwitcherProps {
   activeApp: AppId;
@@ -10,6 +10,17 @@ export function AppSwitcher({ activeApp, onSwitch }: AppSwitcherProps) {
   const handleSwitch = (app: AppId) => {
     if (app === activeApp) return;
     onSwitch(app);
+  };
+  const iconSize = 20;
+  const appIconName: Record<AppId, string> = {
+    claude: "claude",
+    codex: "openai",
+    gemini: "gemini",
+  };
+  const appDisplayName: Record<AppId, string> = {
+    claude: "Claude",
+    codex: "Codex",
+    gemini: "Gemini",
   };
 
   return (
@@ -23,15 +34,17 @@ export function AppSwitcher({ activeApp, onSwitch }: AppSwitcherProps) {
             : "text-gray-500 hover:text-gray-900 hover:bg-white/50 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800/60"
         }`}
       >
-        <ClaudeIcon
-          size={16}
+        <ProviderIcon
+          icon={appIconName.claude}
+          name={appDisplayName.claude}
+          size={iconSize}
           className={
             activeApp === "claude"
               ? "text-foreground"
               : "text-gray-500 dark:text-gray-400 group-hover:text-foreground transition-colors"
           }
         />
-        <span>Claude</span>
+        <span>{appDisplayName.claude}</span>
       </button>
 
       <button
@@ -43,15 +56,17 @@ export function AppSwitcher({ activeApp, onSwitch }: AppSwitcherProps) {
             : "text-gray-500 hover:text-gray-900 hover:bg-white/50 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800/60"
         }`}
       >
-        <CodexIcon
-          size={16}
+        <ProviderIcon
+          icon={appIconName.codex}
+          name={appDisplayName.codex}
+          size={iconSize}
           className={
             activeApp === "codex"
               ? "text-foreground"
               : "text-gray-500 dark:text-gray-400 group-hover:text-foreground transition-colors"
           }
         />
-        <span>Codex</span>
+        <span>{appDisplayName.codex}</span>
       </button>
 
       <button
@@ -63,15 +78,17 @@ export function AppSwitcher({ activeApp, onSwitch }: AppSwitcherProps) {
             : "text-gray-500 hover:text-gray-900 hover:bg-white/50 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800/60"
         }`}
       >
-        <GeminiIcon
-          size={16}
+        <ProviderIcon
+          icon={appIconName.gemini}
+          name={appDisplayName.gemini}
+          size={iconSize}
           className={
             activeApp === "gemini"
               ? "text-foreground"
               : "text-gray-500 dark:text-gray-400 group-hover:text-foreground transition-colors"
           }
         />
-        <span>Gemini</span>
+        <span>{appDisplayName.gemini}</span>
       </button>
     </div>
   );

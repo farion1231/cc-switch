@@ -141,12 +141,12 @@ export function ProviderCard({
           </button>
 
           {/* 供应商图标 */}
-          <div className="h-9 w-9 rounded-lg bg-white/5 flex items-center justify-center border border-gray-200 dark:border-white/10 group-hover:scale-105 transition-transform duration-300">
+          <div className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center border border-gray-200 dark:border-white/10 group-hover:scale-105 transition-transform duration-300">
             <ProviderIcon
               icon={provider.icon}
               name={provider.name}
               color={provider.iconColor}
-              size={26}
+              size={20}
             />
           </div>
 

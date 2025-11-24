@@ -84,7 +84,7 @@ export function BasicFormFields({ form }: BasicFormFieldsProps) {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto">
-                <div className="space-y-6 mx-auto max-w-[56rem] px-6 py-6 w-full">
+                <div className="space-y-2 mx-auto max-w-[56rem] px-6 py-6 w-full">
                   <IconPicker
                     value={currentIcon}
                     onValueChange={handleIconSelect}
