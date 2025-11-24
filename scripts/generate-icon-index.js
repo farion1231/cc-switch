@@ -24,6 +24,7 @@ const KNOWN_METADATA = {
   microsoft: { name: 'microsoft', displayName: 'Microsoft', category: 'ai-provider', keywords: ['copilot', 'azure'], defaultColor: '#00A4EF' },
   cohere: { name: 'cohere', displayName: 'Cohere', category: 'ai-provider', keywords: ['cohere'], defaultColor: '#39594D' },
   perplexity: { name: 'perplexity', displayName: 'Perplexity', category: 'ai-provider', keywords: ['perplexity'], defaultColor: '#20808D' },
+  packycode: { name: 'packycode', displayName: 'PackyCode', category: 'ai-provider', keywords: ['packycode', 'packy', 'packyapi'], defaultColor: 'currentColor' },
   mistral: { name: 'mistral', displayName: 'Mistral', category: 'ai-provider', keywords: ['mistral'], defaultColor: '#FF7000' },
   huggingface: { name: 'huggingface', displayName: 'Hugging Face', category: 'ai-provider', keywords: ['huggingface', 'hf'], defaultColor: '#FFD21E' },
   aws: { name: 'aws', displayName: 'AWS', category: 'cloud', keywords: ['amazon', 'cloud'], defaultColor: '#FF9900' },

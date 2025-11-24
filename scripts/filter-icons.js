@@ -14,6 +14,7 @@ const KEEP_LIST = [
     'zhipu', 'chatglm', 'glm', 'minimax', 'mistral', 'cohere',
     'perplexity', 'huggingface', 'midjourney', 'stability',
     'xai', 'grok', 'yi', 'zeroone', 'ollama',
+    'packycode',
 
     // Cloud/Tools
     'aws', 'googlecloud', 'huawei', 'cloudflare',
