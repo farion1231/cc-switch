@@ -1,13 +1,19 @@
+use crate::app_config::{McpApps, McpServer};
 /// Deep link import functionality for CC Switch
 ///
 /// This module implements the ccswitch:// protocol for importing provider configurations
 /// via deep links. See docs/ccswitch-deeplink-design.md for detailed design.
 use crate::error::AppError;
+use crate::prompt::Prompt;
 use crate::provider::Provider;
+use crate::services::skill::SkillRepo;
 use crate::services::ProviderService;
 use crate::store::AppState;
 use crate::AppType;
+use base64::prelude::*;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::str::FromStr;
 use url::Url;
@@ -19,18 +25,33 @@ use url::Url;
 pub struct DeepLinkImportRequest {
     /// Protocol version (e.g., "v1")
     pub version: String,
-    /// Resource type to import (e.g., "provider")
+    /// Resource type to import: "provider" | "prompt" | "mcp" | "skill"
     pub resource: String,
-    /// Target application (claude/codex/gemini)
-    pub app: String,
-    /// Provider name
-    pub name: String,
+
+    // ============ Common fields ============
+    /// Target application (claude/codex/gemini) - for provider, prompt, skill
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    /// Resource name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Whether to enable after import (default: false)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+
+    // ============ Provider-specific fields (existing) ============
     /// Provider homepage URL
-    pub homepage: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
     /// API endpoint/base URL
-    pub endpoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
     /// API key
-    pub api_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// Optional provider icon name (maps to built-in SVG)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     /// Optional model name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -46,21 +67,72 @@ pub struct DeepLinkImportRequest {
     /// Optional Opus model (Claude only, v3.7.1+)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opus_model: Option<String>,
-    /// Optional Base64 encoded config content (v3.8+)
+
+    // ============ Prompt-specific fields ============
+    /// Base64 encoded Markdown content
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// Prompt description
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    // ============ MCP-specific fields ============
+    /// Target applications for MCP (comma-separated: "claude,codex,gemini")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apps: Option<String>,
+
+    // ============ Skill-specific fields ============
+    /// GitHub repository (format: "owner/name")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// Skill directory name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directory: Option<String>,
+    /// Repository branch (default: "main")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Skills subdirectory path (e.g., "skills")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills_path: Option<String>,
+
+    // ============ Config file fields (v3.8+) ============
+    /// Base64 encoded config content
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<String>,
-    /// Optional config format (json/toml, v3.8+)
+    /// Config format (json/toml)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_format: Option<String>,
-    /// Optional remote config URL (v3.8+)
+    /// Remote config URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_url: Option<String>,
+}
+
+/// MCP import result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportResult {
+    /// Number of successfully imported MCP servers
+    pub imported_count: usize,
+    /// IDs of successfully imported MCP servers
+    pub imported_ids: Vec<String>,
+    /// Failed imports with error messages
+    pub failed: Vec<McpImportError>,
+}
+
+/// MCP import error
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportError {
+    /// MCP server ID
+    pub id: String,
+    /// Error message
+    pub error: String,
 }
 
 /// Parse a ccswitch:// URL into a DeepLinkImportRequest
 ///
 /// Expected format:
-/// ccswitch://v1/import?resource=provider&app=claude&name=...&homepage=...&endpoint=...&apiKey=...
+/// ccswitch://v1/import?resource={type}&...
 pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppError> {
     // Parse URL
     let url = Url::parse(url_str)
@@ -104,13 +176,24 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
         .ok_or_else(|| AppError::InvalidInput("Missing 'resource' parameter".to_string()))?
         .clone();
 
-    if resource != "provider" {
-        return Err(AppError::InvalidInput(format!(
+    // Dispatch to appropriate parser based on resource type
+    match resource.as_str() {
+        "provider" => parse_provider_deeplink(&params, version, resource),
+        "prompt" => parse_prompt_deeplink(&params, version, resource),
+        "mcp" => parse_mcp_deeplink(&params, version, resource),
+        "skill" => parse_skill_deeplink(&params, version, resource),
+        _ => Err(AppError::InvalidInput(format!(
             "Unsupported resource type: {resource}"
-        )));
+        ))),
     }
+}
 
-    // Extract required fields
+/// Parse provider deep link parameters
+fn parse_provider_deeplink(
+    params: &HashMap<String, String>,
+    version: String,
+    resource: String,
+) -> Result<DeepLinkImportRequest, AppError> {
     let app = params
         .get("app")
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' parameter".to_string()))?
@@ -129,48 +212,233 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
         .clone();
 
     // Make these optional for config file auto-fill (v3.8+)
-    let homepage = params.get("homepage").cloned().unwrap_or_default();
-    let endpoint = params.get("endpoint").cloned().unwrap_or_default();
-    let api_key = params.get("apiKey").cloned().unwrap_or_default();
+    let homepage = params.get("homepage").cloned();
+    let endpoint = params.get("endpoint").cloned();
+    let api_key = params.get("apiKey").cloned();
 
     // Validate URLs only if provided
-    if !homepage.is_empty() {
-        validate_url(&homepage, "homepage")?;
+    if let Some(ref hp) = homepage {
+        if !hp.is_empty() {
+            validate_url(hp, "homepage")?;
+        }
     }
-    if !endpoint.is_empty() {
-        validate_url(&endpoint, "endpoint")?;
+    if let Some(ref ep) = endpoint {
+        if !ep.is_empty() {
+            validate_url(ep, "endpoint")?;
+        }
     }
 
     // Extract optional fields
     let model = params.get("model").cloned();
     let notes = params.get("notes").cloned();
-
-    // Extract Claude-specific optional model fields (v3.7.1+)
     let haiku_model = params.get("haikuModel").cloned();
     let sonnet_model = params.get("sonnetModel").cloned();
     let opus_model = params.get("opusModel").cloned();
-
-    // Extract optional config fields (v3.8+)
+    let icon = params
+        .get("icon")
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty());
     let config = params.get("config").cloned();
     let config_format = params.get("configFormat").cloned();
     let config_url = params.get("configUrl").cloned();
+    let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
 
     Ok(DeepLinkImportRequest {
         version,
         resource,
-        app,
-        name,
+        app: Some(app),
+        name: Some(name),
+        enabled,
         homepage,
         endpoint,
         api_key,
+        icon,
         model,
         notes,
         haiku_model,
         sonnet_model,
         opus_model,
+        content: None,
+        description: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        skills_path: None,
         config,
         config_format,
         config_url,
+    })
+}
+
+/// Parse prompt deep link parameters
+fn parse_prompt_deeplink(
+    params: &HashMap<String, String>,
+    version: String,
+    resource: String,
+) -> Result<DeepLinkImportRequest, AppError> {
+    let app = params
+        .get("app")
+        .ok_or_else(|| AppError::InvalidInput("Missing 'app' parameter for prompt".to_string()))?
+        .clone();
+
+    // Validate app type
+    if app != "claude" && app != "codex" && app != "gemini" {
+        return Err(AppError::InvalidInput(format!(
+            "Invalid app type: must be 'claude', 'codex', or 'gemini', got '{app}'"
+        )));
+    }
+
+    let name = params
+        .get("name")
+        .ok_or_else(|| AppError::InvalidInput("Missing 'name' parameter for prompt".to_string()))?
+        .clone();
+
+    let content = params
+        .get("content")
+        .ok_or_else(|| {
+            AppError::InvalidInput("Missing 'content' parameter for prompt".to_string())
+        })?
+        .clone();
+
+    let description = params.get("description").cloned();
+    let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
+
+    Ok(DeepLinkImportRequest {
+        version,
+        resource,
+        app: Some(app),
+        name: Some(name),
+        enabled,
+        content: Some(content),
+        description,
+        icon: None,
+        homepage: None,
+        endpoint: None,
+        api_key: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        skills_path: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+    })
+}
+
+/// Parse MCP deep link parameters
+fn parse_mcp_deeplink(
+    params: &HashMap<String, String>,
+    version: String,
+    resource: String,
+) -> Result<DeepLinkImportRequest, AppError> {
+    let apps = params
+        .get("apps")
+        .ok_or_else(|| AppError::InvalidInput("Missing 'apps' parameter for MCP".to_string()))?
+        .clone();
+
+    // Validate apps format
+    for app in apps.split(',') {
+        let trimmed = app.trim();
+        if trimmed != "claude" && trimmed != "codex" && trimmed != "gemini" {
+            return Err(AppError::InvalidInput(format!(
+                "Invalid app in 'apps': must be 'claude', 'codex', or 'gemini', got '{trimmed}'"
+            )));
+        }
+    }
+
+    let config = params
+        .get("config")
+        .ok_or_else(|| AppError::InvalidInput("Missing 'config' parameter for MCP".to_string()))?
+        .clone();
+
+    let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
+
+    Ok(DeepLinkImportRequest {
+        version,
+        resource,
+        apps: Some(apps),
+        enabled,
+        config: Some(config),
+        config_format: Some("json".to_string()), // MCP config is always JSON
+        app: None,
+        name: None,
+        icon: None,
+        homepage: None,
+        endpoint: None,
+        api_key: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        content: None,
+        description: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        skills_path: None,
+        config_url: None,
+    })
+}
+
+/// Parse skill deep link parameters
+fn parse_skill_deeplink(
+    params: &HashMap<String, String>,
+    version: String,
+    resource: String,
+) -> Result<DeepLinkImportRequest, AppError> {
+    let repo = params
+        .get("repo")
+        .ok_or_else(|| AppError::InvalidInput("Missing 'repo' parameter for skill".to_string()))?
+        .clone();
+
+    // Validate repo format (should be "owner/name")
+    if !repo.contains('/') || repo.split('/').count() != 2 {
+        return Err(AppError::InvalidInput(format!(
+            "Invalid repo format: expected 'owner/name', got '{repo}'"
+        )));
+    }
+
+    let directory = params.get("directory").cloned();
+
+    let branch = params.get("branch").cloned();
+    let skills_path = params
+        .get("skills_path")
+        .or_else(|| params.get("skillsPath"))
+        .cloned();
+
+    Ok(DeepLinkImportRequest {
+        version,
+        resource,
+        repo: Some(repo),
+        directory,
+        branch,
+        skills_path,
+        icon: None,
+        app: Some("claude".to_string()), // Skills are Claude-only
+        name: None,
+        enabled: None,
+        homepage: None,
+        endpoint: None,
+        api_key: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        content: None,
+        description: None,
+        apps: None,
+        config: None,
+        config_format: None,
+        config_url: None,
     })
 }
 
@@ -196,33 +464,66 @@ fn validate_url(url_str: &str, field_name: &str) -> Result<(), AppError> {
 /// 2. Merges config file if provided (v3.8+)
 /// 3. Converts it to a Provider structure
 /// 4. Delegates to ProviderService for actual import
+/// 5. Optionally sets as current provider if enabled=true
 pub fn import_provider_from_deeplink(
     state: &AppState,
     request: DeepLinkImportRequest,
 ) -> Result<String, AppError> {
+    // Verify this is a provider request
+    if request.resource != "provider" {
+        return Err(AppError::InvalidInput(format!(
+            "Expected provider resource, got '{}'",
+            request.resource
+        )));
+    }
+
     // Step 1: Merge config file if provided (v3.8+)
     let merged_request = parse_and_merge_config(&request)?;
 
-    // Step 2: Validate required fields after merge
-    if merged_request.api_key.is_empty() {
+    // Extract required fields (now as Option)
+    let app_str = merged_request
+        .app
+        .as_ref()
+        .ok_or_else(|| AppError::InvalidInput("Missing 'app' field for provider".to_string()))?;
+
+    let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
+        AppError::InvalidInput("API key is required (either in URL or config file)".to_string())
+    })?;
+
+    if api_key.is_empty() {
         return Err(AppError::InvalidInput(
-            "API key is required (either in URL or config file)".to_string(),
-        ));
-    }
-    if merged_request.endpoint.is_empty() {
-        return Err(AppError::InvalidInput(
-            "Endpoint is required (either in URL or config file)".to_string(),
-        ));
-    }
-    if merged_request.homepage.is_empty() {
-        return Err(AppError::InvalidInput(
-            "Homepage is required (either in URL or config file)".to_string(),
+            "API key cannot be empty".to_string(),
         ));
     }
 
+    let endpoint = merged_request.endpoint.as_ref().ok_or_else(|| {
+        AppError::InvalidInput("Endpoint is required (either in URL or config file)".to_string())
+    })?;
+
+    if endpoint.is_empty() {
+        return Err(AppError::InvalidInput(
+            "Endpoint cannot be empty".to_string(),
+        ));
+    }
+
+    let homepage = merged_request.homepage.as_ref().ok_or_else(|| {
+        AppError::InvalidInput("Homepage is required (either in URL or config file)".to_string())
+    })?;
+
+    if homepage.is_empty() {
+        return Err(AppError::InvalidInput(
+            "Homepage cannot be empty".to_string(),
+        ));
+    }
+
+    let name = merged_request
+        .name
+        .as_ref()
+        .ok_or_else(|| AppError::InvalidInput("Missing 'name' field for provider".to_string()))?;
+
     // Parse app type
-    let app_type = AppType::from_str(&merged_request.app)
-        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {}", merged_request.app)))?;
+    let app_type = AppType::from_str(app_str)
+        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
 
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
@@ -230,8 +531,7 @@ pub fn import_provider_from_deeplink(
     // Generate a unique ID for the provider using timestamp + sanitized name
     // This is similar to how frontend generates IDs
     let timestamp = chrono::Utc::now().timestamp_millis();
-    let sanitized_name = merged_request
-        .name
+    let sanitized_name = name
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
         .collect::<String>()
@@ -241,7 +541,14 @@ pub fn import_provider_from_deeplink(
     let provider_id = provider.id.clone();
 
     // Use ProviderService to add the provider
-    ProviderService::add(state, app_type, provider)?;
+    ProviderService::add(state, app_type.clone(), provider)?;
+
+    // If enabled=true, set as current provider
+    if merged_request.enabled.unwrap_or(false) {
+        // Use ProviderService::switch to set as current and sync to live config
+        ProviderService::switch(state, app_type.clone(), &provider_id)?;
+        log::info!("Provider '{provider_id}' set as current for {app_type:?}");
+    }
 
     Ok(provider_id)
 }
@@ -257,8 +564,14 @@ fn build_provider_from_request(
         AppType::Claude => {
             // Claude configuration structure
             let mut env = serde_json::Map::new();
-            env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), json!(request.api_key));
-            env.insert("ANTHROPIC_BASE_URL".to_string(), json!(request.endpoint));
+            env.insert(
+                "ANTHROPIC_AUTH_TOKEN".to_string(),
+                json!(request.api_key.clone().unwrap_or_default()),
+            );
+            env.insert(
+                "ANTHROPIC_BASE_URL".to_string(),
+                json!(request.endpoint.clone().unwrap_or_default()),
+            );
 
             // Add default model if provided
             if let Some(model) = &request.model {
@@ -302,7 +615,13 @@ fn build_provider_from_request(
             //    - 去掉首尾下划线
             //    - 若结果为空，则使用 "custom"
             let clean_provider_name = {
-                let raw: String = request.name.chars().filter(|c| !c.is_control()).collect();
+                let raw: String = request
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| "custom".to_string())
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .collect();
                 let lower = raw.to_lowercase();
                 let mut key: String = lower
                     .chars()
@@ -335,7 +654,13 @@ fn build_provider_from_request(
                 .to_string();
 
             // 3. 端点：与 UI 中 Base URL 处理方式保持一致，去掉结尾多余的斜杠
-            let endpoint = request.endpoint.trim().trim_end_matches('/').to_string();
+            let endpoint = request
+                .endpoint
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .trim_end_matches('/')
+                .to_string();
 
             // 4. 组装 config.toml 内容
             // 使用 Rust 1.58+ 的内联格式化语法，避免 clippy::uninlined_format_args 警告
@@ -380,15 +705,15 @@ requires_openai_auth = true
 
     let provider = Provider {
         id: String::new(), // Will be generated by ProviderService
-        name: request.name.clone(),
+        name: request.name.clone().unwrap_or_default(),
         settings_config,
-        website_url: Some(request.homepage.clone()),
+        website_url: request.homepage.clone(),
         category: None,
         created_at: None,
         sort_index: None,
         notes: request.notes.clone(),
         meta: None,
-        icon: None,
+        icon: request.icon.clone(),
         icon_color: None,
     };
 
@@ -401,8 +726,6 @@ requires_openai_auth = true
 pub fn parse_and_merge_config(
     request: &DeepLinkImportRequest,
 ) -> Result<DeepLinkImportRequest, AppError> {
-    use base64::prelude::*;
-
     // If no config provided, return original request
     if request.config.is_none() && request.config_url.is_none() {
         return Ok(request.clone());
@@ -411,9 +734,7 @@ pub fn parse_and_merge_config(
     // Step 1: Get config content
     let config_content = if let Some(config_b64) = &request.config {
         // Decode Base64 inline config
-        let decoded = BASE64_STANDARD
-            .decode(config_b64)
-            .map_err(|e| AppError::InvalidInput(format!("Invalid Base64 encoding: {e}")))?;
+        let decoded = decode_base64_param("config", config_b64)?;
         String::from_utf8(decoded)
             .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in config: {e}")))?
     } else if let Some(_config_url) = &request.config_url {
@@ -447,13 +768,23 @@ pub fn parse_and_merge_config(
     // Step 3: Extract values from config based on app type and merge with URL params
     let mut merged = request.clone();
 
-    match request.app.as_str() {
+    // MCP, Skill and other resource types don't need config merging (they use config directly)
+    // Only provider resource type needs merging
+    if request.resource != "provider" {
+        return Ok(merged);
+    }
+
+    match request.app.as_deref().unwrap_or("") {
         "claude" => merge_claude_config(&mut merged, &config_value)?,
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
+        "" => {
+            // No app specified, skip merging (this is valid for MCP imports)
+            return Ok(merged);
+        }
         _ => {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app type: {}",
+                "Invalid app type: {:?}",
                 request.app
             )))
         }
@@ -477,23 +808,28 @@ fn merge_claude_config(
         })?;
 
     // Auto-fill API key if not provided in URL
-    if request.api_key.is_empty() {
+    if request.api_key.is_none() || request.api_key.as_ref().unwrap().is_empty() {
         if let Some(token) = env.get("ANTHROPIC_AUTH_TOKEN").and_then(|v| v.as_str()) {
-            request.api_key = token.to_string();
+            request.api_key = Some(token.to_string());
         }
     }
 
     // Auto-fill endpoint if not provided in URL
-    if request.endpoint.is_empty() {
+    if request.endpoint.is_none() || request.endpoint.as_ref().unwrap().is_empty() {
         if let Some(base_url) = env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
-            request.endpoint = base_url.to_string();
+            request.endpoint = Some(base_url.to_string());
         }
     }
 
     // Auto-fill homepage from endpoint if not provided
-    if request.homepage.is_empty() && !request.endpoint.is_empty() {
-        request.homepage = infer_homepage_from_endpoint(&request.endpoint)
-            .unwrap_or_else(|| "https://anthropic.com".to_string());
+    if (request.homepage.is_none() || request.homepage.as_ref().unwrap().is_empty())
+        && request.endpoint.is_some()
+        && !request.endpoint.as_ref().unwrap().is_empty()
+    {
+        request.homepage = infer_homepage_from_endpoint(request.endpoint.as_ref().unwrap());
+        if request.homepage.is_none() {
+            request.homepage = Some("https://anthropic.com".to_string());
+        }
     }
 
     // Auto-fill model fields (URL params take priority)
@@ -531,13 +867,13 @@ fn merge_codex_config(
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
     // Auto-fill API key from auth.OPENAI_API_KEY
-    if request.api_key.is_empty() {
+    if request.api_key.is_none() || request.api_key.as_ref().unwrap().is_empty() {
         if let Some(api_key) = config
             .get("auth")
             .and_then(|v| v.get("OPENAI_API_KEY"))
             .and_then(|v| v.as_str())
         {
-            request.api_key = api_key.to_string();
+            request.api_key = Some(api_key.to_string());
         }
     }
 
@@ -546,9 +882,9 @@ fn merge_codex_config(
         // Parse TOML config string to extract base_url and model
         if let Ok(toml_value) = toml::from_str::<toml::Value>(config_str) {
             // Extract base_url from model_providers section
-            if request.endpoint.is_empty() {
+            if request.endpoint.is_none() || request.endpoint.as_ref().unwrap().is_empty() {
                 if let Some(base_url) = extract_codex_base_url(&toml_value) {
-                    request.endpoint = base_url;
+                    request.endpoint = Some(base_url);
                 }
             }
 
@@ -562,9 +898,14 @@ fn merge_codex_config(
     }
 
     // Auto-fill homepage from endpoint
-    if request.homepage.is_empty() && !request.endpoint.is_empty() {
-        request.homepage = infer_homepage_from_endpoint(&request.endpoint)
-            .unwrap_or_else(|| "https://openai.com".to_string());
+    if (request.homepage.is_none() || request.homepage.as_ref().unwrap().is_empty())
+        && request.endpoint.is_some()
+        && !request.endpoint.as_ref().unwrap().is_empty()
+    {
+        request.homepage = infer_homepage_from_endpoint(request.endpoint.as_ref().unwrap());
+        if request.homepage.is_none() {
+            request.homepage = Some("https://openai.com".to_string());
+        }
     }
 
     Ok(())
@@ -576,15 +917,15 @@ fn merge_gemini_config(
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
     // Gemini uses flat env structure
-    if request.api_key.is_empty() {
+    if request.api_key.is_none() || request.api_key.as_ref().unwrap().is_empty() {
         if let Some(api_key) = config.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
-            request.api_key = api_key.to_string();
+            request.api_key = Some(api_key.to_string());
         }
     }
 
-    if request.endpoint.is_empty() {
+    if request.endpoint.is_none() || request.endpoint.as_ref().unwrap().is_empty() {
         if let Some(base_url) = config.get("GEMINI_BASE_URL").and_then(|v| v.as_str()) {
-            request.endpoint = base_url.to_string();
+            request.endpoint = Some(base_url.to_string());
         }
     }
 
@@ -596,9 +937,14 @@ fn merge_gemini_config(
     }
 
     // Auto-fill homepage from endpoint
-    if request.homepage.is_empty() && !request.endpoint.is_empty() {
-        request.homepage = infer_homepage_from_endpoint(&request.endpoint)
-            .unwrap_or_else(|| "https://ai.google.dev".to_string());
+    if (request.homepage.is_none() || request.homepage.as_ref().unwrap().is_empty())
+        && request.endpoint.is_some()
+        && !request.endpoint.as_ref().unwrap().is_empty()
+    {
+        request.homepage = infer_homepage_from_endpoint(request.endpoint.as_ref().unwrap());
+        if request.homepage.is_none() {
+            request.homepage = Some("https://ai.google.dev".to_string());
+        }
     }
 
     Ok(())
@@ -636,23 +982,82 @@ fn infer_homepage_from_endpoint(endpoint: &str) -> Option<String> {
     Some(format!("https://{clean_host}"))
 }
 
+/// 解码 deeplink 里的 Base64 参数，容忍 `+` 被解析为空格、缺少 padding 等常见问题
+fn decode_base64_param(field: &str, raw: &str) -> Result<Vec<u8>, AppError> {
+    let mut candidates: Vec<String> = Vec::new();
+    // 保留空格（用于还原 `+`），但去掉换行符避免复制/粘贴带来的污染
+    let trimmed = raw.trim_matches(|c| c == '\r' || c == '\n');
+
+    // 优先尝试将空格还原成 "+"，避免直接解码时被忽略导致内容缺失
+    if trimmed.contains(' ') {
+        let replaced = trimmed.replace(' ', "+");
+        if !replaced.is_empty() && !candidates.contains(&replaced) {
+            candidates.push(replaced);
+        }
+    }
+
+    // 原始值（放在替换版本之后）
+    if !trimmed.is_empty() && !candidates.contains(&trimmed.to_string()) {
+        candidates.push(trimmed.to_string());
+    }
+
+    // 补齐 padding，避免前端去掉结尾 `=`
+    let existing = candidates.clone();
+    for candidate in existing {
+        let mut padded = candidate.clone();
+        let remainder = padded.len() % 4;
+        if remainder != 0 {
+            padded.extend(std::iter::repeat_n('=', 4 - remainder));
+        }
+        if !candidates.contains(&padded) {
+            candidates.push(padded);
+        }
+    }
+
+    let mut last_error: Option<String> = None;
+    for candidate in candidates {
+        for engine in [
+            &BASE64_STANDARD,
+            &BASE64_STANDARD_NO_PAD,
+            &BASE64_URL_SAFE,
+            &BASE64_URL_SAFE_NO_PAD,
+        ] {
+            match engine.decode(&candidate) {
+                Ok(bytes) => return Ok(bytes),
+                Err(err) => last_error = Some(err.to_string()),
+            }
+        }
+    }
+
+    Err(AppError::InvalidInput(format!(
+        "{field} 参数 Base64 解码失败：{}。请确认链接参数已用 Base64 编码并经过 URL 转义（尤其是将 '+' 编码为 %2B，或使用 URL-safe Base64）。",
+        last_error.unwrap_or_else(|| "未知错误".to_string())
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{store::AppState, Database};
+    use std::sync::Arc;
 
     #[test]
     fn test_parse_valid_claude_deeplink() {
-        let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test%20Provider&homepage=https%3A%2F%2Fexample.com&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test-123";
+        let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test%20Provider&homepage=https%3A%2F%2Fexample.com&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test-123&icon=claude";
 
         let request = parse_deeplink_url(url).unwrap();
 
         assert_eq!(request.version, "v1");
         assert_eq!(request.resource, "provider");
-        assert_eq!(request.app, "claude");
-        assert_eq!(request.name, "Test Provider");
-        assert_eq!(request.homepage, "https://example.com");
-        assert_eq!(request.endpoint, "https://api.example.com");
-        assert_eq!(request.api_key, "sk-test-123");
+        assert_eq!(request.app, Some("claude".to_string()));
+        assert_eq!(request.name, Some("Test Provider".to_string()));
+        assert_eq!(request.homepage, Some("https://example.com".to_string()));
+        assert_eq!(
+            request.endpoint,
+            Some("https://api.example.com".to_string())
+        );
+        assert_eq!(request.api_key, Some("sk-test-123".to_string()));
+        assert_eq!(request.icon, Some("claude".to_string()));
     }
 
     #[test]
@@ -719,11 +1124,12 @@ mod tests {
         let request = DeepLinkImportRequest {
             version: "v1".to_string(),
             resource: "provider".to_string(),
-            app: "gemini".to_string(),
-            name: "Test Gemini".to_string(),
-            homepage: "https://example.com".to_string(),
-            endpoint: "https://api.example.com".to_string(),
-            api_key: "test-api-key".to_string(),
+            app: Some("gemini".to_string()),
+            name: Some("Test Gemini".to_string()),
+            homepage: Some("https://example.com".to_string()),
+            endpoint: Some("https://api.example.com".to_string()),
+            api_key: Some("test-api-key".to_string()),
+            icon: None,
             model: Some("gemini-2.0-flash".to_string()),
             notes: None,
             haiku_model: None,
@@ -732,6 +1138,14 @@ mod tests {
             config: None,
             config_format: None,
             config_url: None,
+            apps: None,
+            repo: None,
+            directory: None,
+            branch: None,
+            skills_path: None,
+            content: None,
+            description: None,
+            enabled: None,
         };
 
         let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
@@ -755,11 +1169,12 @@ mod tests {
         let request = DeepLinkImportRequest {
             version: "v1".to_string(),
             resource: "provider".to_string(),
-            app: "gemini".to_string(),
-            name: "Test Gemini".to_string(),
-            homepage: "https://example.com".to_string(),
-            endpoint: "https://api.example.com".to_string(),
-            api_key: "test-api-key".to_string(),
+            app: Some("gemini".to_string()),
+            name: Some("Test Gemini".to_string()),
+            homepage: Some("https://example.com".to_string()),
+            endpoint: Some("https://api.example.com".to_string()),
+            api_key: Some("test-api-key".to_string()),
+            icon: None,
             model: None,
             notes: None,
             haiku_model: None,
@@ -768,6 +1183,14 @@ mod tests {
             config: None,
             config_format: None,
             config_url: None,
+            apps: None,
+            repo: None,
+            directory: None,
+            branch: None,
+            skills_path: None,
+            content: None,
+            description: None,
+            enabled: None,
         };
 
         let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
@@ -807,11 +1230,12 @@ mod tests {
         let request = DeepLinkImportRequest {
             version: "v1".to_string(),
             resource: "provider".to_string(),
-            app: "claude".to_string(),
-            name: "Test".to_string(),
-            homepage: String::new(),
-            endpoint: String::new(),
-            api_key: String::new(),
+            app: Some("claude".to_string()),
+            name: Some("Test".to_string()),
+            homepage: None,
+            endpoint: None,
+            api_key: None,
+            icon: None,
             model: None,
             notes: None,
             haiku_model: None,
@@ -820,14 +1244,25 @@ mod tests {
             config: Some(config_b64),
             config_format: Some("json".to_string()),
             config_url: None,
+            apps: None,
+            repo: None,
+            directory: None,
+            branch: None,
+            skills_path: None,
+            content: None,
+            description: None,
+            enabled: None,
         };
 
         let merged = parse_and_merge_config(&request).unwrap();
 
         // Should auto-fill from config
-        assert_eq!(merged.api_key, "sk-ant-xxx");
-        assert_eq!(merged.endpoint, "https://api.anthropic.com/v1");
-        assert_eq!(merged.homepage, "https://anthropic.com");
+        assert_eq!(merged.api_key, Some("sk-ant-xxx".to_string()));
+        assert_eq!(
+            merged.endpoint,
+            Some("https://api.anthropic.com/v1".to_string())
+        );
+        assert_eq!(merged.homepage, Some("https://anthropic.com".to_string()));
         assert_eq!(merged.model, Some("claude-sonnet-4.5".to_string()));
     }
 
@@ -841,11 +1276,12 @@ mod tests {
         let request = DeepLinkImportRequest {
             version: "v1".to_string(),
             resource: "provider".to_string(),
-            app: "claude".to_string(),
-            name: "Test".to_string(),
-            homepage: String::new(),
-            endpoint: String::new(),
-            api_key: "sk-new".to_string(), // URL param should override
+            app: Some("claude".to_string()),
+            name: Some("Test".to_string()),
+            homepage: None,
+            endpoint: None,
+            api_key: Some("sk-new".to_string()), // URL param should override
+            icon: None,
             model: None,
             notes: None,
             haiku_model: None,
@@ -854,13 +1290,402 @@ mod tests {
             config: Some(config_b64),
             config_format: Some("json".to_string()),
             config_url: None,
+            apps: None,
+            repo: None,
+            directory: None,
+            branch: None,
+            skills_path: None,
+            content: None,
+            description: None,
+            enabled: None,
         };
 
         let merged = parse_and_merge_config(&request).unwrap();
 
         // URL param should take priority
-        assert_eq!(merged.api_key, "sk-new");
+        assert_eq!(merged.api_key, Some("sk-new".to_string()));
         // Config file value should be used
-        assert_eq!(merged.endpoint, "https://api.anthropic.com/v1");
+        assert_eq!(
+            merged.endpoint,
+            Some("https://api.anthropic.com/v1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_import_prompt_allows_space_in_base64_content() {
+        let url = "ccswitch://v1/import?resource=prompt&app=codex&name=PromptPlus&content=Pj4+";
+        let request = parse_deeplink_url(url).unwrap();
+
+        // URL 解码后 content 中的 "+" 会变成空格，确保解码逻辑可以恢复
+        assert_eq!(request.content.as_deref(), Some("Pj4 "));
+
+        let db = Arc::new(Database::memory().expect("create memory db"));
+        let state = AppState::new(db.clone());
+
+        let prompt_id =
+            import_prompt_from_deeplink(&state, request.clone()).expect("import prompt");
+
+        let prompts = state.db.get_prompts("codex").expect("get prompts");
+        let prompt = prompts.get(&prompt_id).expect("prompt saved");
+
+        assert_eq!(prompt.content, ">>>");
+        assert_eq!(prompt.name, request.name.unwrap());
+    }
+}
+
+// ============================================
+// MCP Server Import Implementation
+// ============================================
+
+/// Import MCP servers from deep link request
+///
+/// This function handles batch import of MCP servers from standard MCP JSON format
+pub fn import_mcp_from_deeplink(
+    state: &AppState,
+    request: DeepLinkImportRequest,
+) -> Result<McpImportResult, AppError> {
+    // Verify this is an MCP request
+    if request.resource != "mcp" {
+        return Err(AppError::InvalidInput(format!(
+            "Expected mcp resource, got '{}'",
+            request.resource
+        )));
+    }
+
+    // Extract and validate apps parameter
+    let apps_str = request
+        .apps
+        .as_ref()
+        .ok_or_else(|| AppError::InvalidInput("Missing 'apps' parameter for MCP".to_string()))?;
+
+    // Parse apps into McpApps struct
+    let target_apps = parse_mcp_apps(apps_str)?;
+
+    // Extract config
+    let config_b64 = request
+        .config
+        .as_ref()
+        .ok_or_else(|| AppError::InvalidInput("Missing 'config' parameter for MCP".to_string()))?;
+
+    // Decode Base64 config
+    let decoded = decode_base64_param("config", config_b64)?;
+
+    let config_str = String::from_utf8(decoded)
+        .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in config: {e}")))?;
+
+    // Parse JSON
+    let config_json: Value = serde_json::from_str(&config_str)
+        .map_err(|e| AppError::InvalidInput(format!("Invalid JSON in MCP config: {e}")))?;
+
+    // Extract mcpServers object
+    let mcp_servers = config_json
+        .get("mcpServers")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| {
+            AppError::InvalidInput("MCP config must contain 'mcpServers' object".to_string())
+        })?;
+
+    if mcp_servers.is_empty() {
+        return Err(AppError::InvalidInput(
+            "No MCP servers found in config".to_string(),
+        ));
+    }
+
+    // Get existing servers to check for duplicates
+    let existing_servers = state.db.get_all_mcp_servers()?;
+
+    // Import each MCP server
+    let mut imported_ids = Vec::new();
+    let mut failed = Vec::new();
+
+    use crate::services::McpService;
+
+    for (id, server_spec) in mcp_servers.iter() {
+        // Check if server already exists
+        let server = if let Some(existing) = existing_servers.get(id) {
+            // Server exists - merge apps only, keep other fields unchanged
+            log::info!("MCP server '{id}' already exists, merging apps only");
+
+            let mut merged_apps = existing.apps.clone();
+            // Merge new apps into existing apps
+            if target_apps.claude {
+                merged_apps.claude = true;
+            }
+            if target_apps.codex {
+                merged_apps.codex = true;
+            }
+            if target_apps.gemini {
+                merged_apps.gemini = true;
+            }
+
+            McpServer {
+                id: existing.id.clone(),
+                name: existing.name.clone(),
+                server: existing.server.clone(), // Keep existing server config
+                apps: merged_apps,               // Merged apps
+                description: existing.description.clone(),
+                homepage: existing.homepage.clone(),
+                docs: existing.docs.clone(),
+                tags: existing.tags.clone(),
+            }
+        } else {
+            // New server - create with provided config
+            log::info!("Creating new MCP server: {id}");
+            McpServer {
+                id: id.clone(),
+                name: id.clone(),
+                server: server_spec.clone(),
+                apps: target_apps.clone(),
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: vec!["imported".to_string()],
+            }
+        };
+
+        match McpService::upsert_server(state, server) {
+            Ok(_) => {
+                imported_ids.push(id.clone());
+                log::info!("Successfully imported/updated MCP server: {id}");
+            }
+            Err(e) => {
+                failed.push(McpImportError {
+                    id: id.clone(),
+                    error: format!("{e}"),
+                });
+                log::warn!("Failed to import MCP server '{id}': {e}");
+            }
+        }
+    }
+
+    Ok(McpImportResult {
+        imported_count: imported_ids.len(),
+        imported_ids,
+        failed,
+    })
+}
+
+/// Parse apps string into McpApps struct
+fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
+    let mut apps = McpApps {
+        claude: false,
+        codex: false,
+        gemini: false,
+    };
+
+    for app in apps_str.split(',') {
+        match app.trim() {
+            "claude" => apps.claude = true,
+            "codex" => apps.codex = true,
+            "gemini" => apps.gemini = true,
+            other => {
+                return Err(AppError::InvalidInput(format!(
+                    "Invalid app in 'apps': {other}"
+                )))
+            }
+        }
+    }
+
+    if apps.is_empty() {
+        return Err(AppError::InvalidInput(
+            "At least one app must be specified in 'apps'".to_string(),
+        ));
+    }
+
+    Ok(apps)
+}
+
+// ============================================
+// Prompt Import Implementation
+// ============================================
+
+/// Import a prompt from deep link request
+pub fn import_prompt_from_deeplink(
+    state: &AppState,
+    request: DeepLinkImportRequest,
+) -> Result<String, AppError> {
+    // Verify this is a prompt request
+    if request.resource != "prompt" {
+        return Err(AppError::InvalidInput(format!(
+            "Expected prompt resource, got '{}'",
+            request.resource
+        )));
+    }
+
+    // Extract required fields
+    let app_str = request
+        .app
+        .as_ref()
+        .ok_or_else(|| AppError::InvalidInput("Missing 'app' field for prompt".to_string()))?;
+
+    let name = request
+        .name
+        .ok_or_else(|| AppError::InvalidInput("Missing 'name' field for prompt".to_string()))?;
+
+    // Parse app type
+    let app_type = AppType::from_str(app_str)
+        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
+
+    // Decode content
+    let content_b64 = request
+        .content
+        .as_ref()
+        .ok_or_else(|| AppError::InvalidInput("Missing 'content' field for prompt".to_string()))?;
+
+    let content = decode_base64_param("content", content_b64)?;
+    let content = String::from_utf8(content)
+        .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in content: {e}")))?;
+
+    // Generate ID
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let sanitized_name = name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+        .collect::<String>()
+        .to_lowercase();
+    let id = format!("{sanitized_name}-{timestamp}");
+
+    // Check if we should enable this prompt
+    let should_enable = request.enabled.unwrap_or(false);
+
+    // Create Prompt (initially disabled)
+    let prompt = Prompt {
+        id: id.clone(),
+        name: name.clone(),
+        content,
+        description: request.description,
+        enabled: false, // Always start as disabled, will be enabled later if needed
+        created_at: Some(timestamp),
+        updated_at: Some(timestamp),
+    };
+
+    // Save using PromptService
+    use crate::services::PromptService;
+    PromptService::upsert_prompt(state, app_type.clone(), &id, prompt)?;
+
+    // If enabled flag is set, enable this prompt (which will disable others)
+    if should_enable {
+        PromptService::enable_prompt(state, app_type, &id)?;
+        log::info!("Successfully imported and enabled prompt '{name}' for {app_str}");
+    } else {
+        log::info!("Successfully imported prompt '{name}' for {app_str} (disabled)");
+    }
+
+    Ok(id)
+}
+
+// ============================================
+// Skill Import Implementation
+// ============================================
+
+/// Import a skill from deep link request
+pub fn import_skill_from_deeplink(
+    state: &AppState,
+    request: DeepLinkImportRequest,
+) -> Result<String, AppError> {
+    // Verify this is a skill request
+    if request.resource != "skill" {
+        return Err(AppError::InvalidInput(format!(
+            "Expected skill resource, got '{}'",
+            request.resource
+        )));
+    }
+
+    // Parse repo
+    let repo_str = request
+        .repo
+        .ok_or_else(|| AppError::InvalidInput("Missing 'repo' field for skill".to_string()))?;
+
+    let parts: Vec<&str> = repo_str.split('/').collect();
+    if parts.len() != 2 {
+        return Err(AppError::InvalidInput(format!(
+            "Invalid repo format: expected 'owner/name', got '{repo_str}'"
+        )));
+    }
+    let owner = parts[0].to_string();
+    let name = parts[1].to_string();
+
+    // Create SkillRepo
+    let repo = SkillRepo {
+        owner: owner.clone(),
+        name: name.clone(),
+        branch: request.branch.unwrap_or_else(|| "main".to_string()),
+        enabled: request.enabled.unwrap_or(true),
+        skills_path: request.skills_path,
+    };
+
+    // Save using Database
+    state.db.save_skill_repo(&repo)?;
+
+    log::info!("Successfully added skill repo '{owner}/{name}'");
+
+    Ok(format!("{owner}/{name}"))
+}
+
+#[cfg(test)]
+mod tests_imports {
+    use super::*;
+    use base64::Engine;
+
+    #[test]
+    fn test_parse_mcp_apps() {
+        let apps = parse_mcp_apps("claude,codex").unwrap();
+        assert!(apps.claude);
+        assert!(apps.codex);
+        assert!(!apps.gemini);
+
+        let apps = parse_mcp_apps("gemini").unwrap();
+        assert!(!apps.claude);
+        assert!(!apps.codex);
+        assert!(apps.gemini);
+
+        let err = parse_mcp_apps("invalid").unwrap_err();
+        assert!(err.to_string().contains("Invalid app"));
+    }
+
+    #[test]
+    fn test_parse_prompt_deeplink() {
+        let content = "Hello World";
+        let content_b64 = BASE64_STANDARD.encode(content);
+        let url = format!(
+            "ccswitch://v1/import?resource=prompt&app=claude&name=test&content={}&description=desc&enabled=true",
+            content_b64
+        );
+
+        let request = parse_deeplink_url(&url).unwrap();
+        assert_eq!(request.resource, "prompt");
+        assert_eq!(request.app.unwrap(), "claude");
+        assert_eq!(request.name.unwrap(), "test");
+        assert_eq!(request.content.unwrap(), content_b64);
+        assert_eq!(request.description.unwrap(), "desc");
+        assert_eq!(request.enabled.unwrap(), true);
+    }
+
+    #[test]
+    fn test_parse_mcp_deeplink() {
+        let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
+        let config_b64 = BASE64_STANDARD.encode(config);
+        let url = format!(
+            "ccswitch://v1/import?resource=mcp&apps=claude,codex&config={}&enabled=true",
+            config_b64
+        );
+
+        let request = parse_deeplink_url(&url).unwrap();
+        assert_eq!(request.resource, "mcp");
+        assert_eq!(request.apps.unwrap(), "claude,codex");
+        assert_eq!(request.config.unwrap(), config_b64);
+        assert_eq!(request.enabled.unwrap(), true);
+    }
+
+    #[test]
+    fn test_parse_skill_deeplink() {
+        let url = "ccswitch://v1/import?resource=skill&repo=owner/repo&directory=skills&branch=dev&skills_path=src";
+        let request = parse_deeplink_url(&url).unwrap();
+
+        assert_eq!(request.resource, "skill");
+        assert_eq!(request.repo.unwrap(), "owner/repo");
+        assert_eq!(request.directory.unwrap(), "skills");
+        assert_eq!(request.branch.unwrap(), "dev");
+        assert_eq!(request.skills_path.unwrap(), "src");
     }
 }
