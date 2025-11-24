@@ -26,6 +26,7 @@ pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
+pub use database::Database;
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use mcp::{
@@ -314,7 +315,7 @@ fn handle_deeplink_url(
     match crate::deeplink::parse_deeplink_url(url_str) {
         Ok(request) => {
             log::info!(
-                "✓ Successfully parsed deep link: resource={}, app={}, name={}",
+                "✓ Successfully parsed deep link: resource={}, app={:?}, name={:?}",
                 request.resource,
                 request.app,
                 request.name
@@ -840,6 +841,7 @@ pub fn run() {
             commands::parse_deeplink,
             commands::merge_deeplink_config,
             commands::import_from_deeplink,
+            commands::import_from_deeplink_unified,
             update_tray_menu,
             // Environment variable management
             commands::check_env_conflicts,
@@ -889,7 +891,7 @@ pub fn run() {
                             match crate::deeplink::parse_deeplink_url(&url_str) {
                                 Ok(request) => {
                                     log::info!(
-                                        "Successfully parsed deep link from RunEvent::Opened: resource={}, app={}",
+                                        "Successfully parsed deep link from RunEvent::Opened: resource={}, app={:?}",
                                         request.resource,
                                         request.app
                                     );

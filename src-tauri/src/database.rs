@@ -63,6 +63,22 @@ impl Database {
         Ok(db)
     }
 
+    /// 创建内存数据库（用于测试）
+    pub fn memory() -> Result<Self, AppError> {
+        let conn = Connection::open_in_memory().map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 启用外键约束
+        conn.execute("PRAGMA foreign_keys = ON;", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
+        db.create_tables()?;
+
+        Ok(db)
+    }
+
     fn create_tables(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         Self::create_tables_on_conn(&conn)
