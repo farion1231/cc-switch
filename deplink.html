@@ -923,6 +923,696 @@
                 </div>
             </div>
 
+            <!-- 供应商导入示例 -->
+            <div class="section">
+                <h2>🏢 供应商导入 <span class="version-badge">v3.8+</span></h2>
+
+                <div class="link-card">
+                    <h3>OpenAI 供应商导入 - 导入并立即切换</h3>
+                    <p class="description">
+                        导入 OpenAI 供应商配置，并立即设为当前供应商。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> resource=provider, app, name, endpoint, homepage, apiKey<br>
+                        <span class="param-tag optional">可选</span> model, notes, enabled
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=provider&app=claude&name=OpenAI&endpoint=https://api.openai.com/v1/chat/completions&homepage=https://openai.com&apiKey=sk-your-key-here&model=gpt-4&enabled=true"
+                            class="deep-link">📥 导入 OpenAI (立即切换)</a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=provider&app=claude&name=OpenAI&endpoint=https://api.openai.com/v1/chat/completions&homepage=https://openai.com&apiKey=sk-your-key-here&model=gpt-4&enabled=true', this)">📋
+                            复制</button>
+                    </div>
+
+                    <!-- 内容解释 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">🏢 将导入以下供应商配置:</div>
+                        <div style="color: #52c41a; margin-bottom: 4px;">• <strong>供应商名称</strong>: OpenAI
+                        </div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>目标应用</strong>: Claude</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>API Endpoint</strong>:
+                            https://api.openai.com/v1/chat/completions</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>主页</strong>: https://openai.com
+                        </div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>默认模型</strong>: gpt-4</div>
+                        <div style="color: #ffa07a; margin-bottom: 4px;">• <strong>enabled=true</strong>:
+                            导入后立即设为当前供应商</div>
+                        <div style="color: #95a5a6; margin-top: 12px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            💡 <strong>说明</strong>: 导入后会自动切换到此供应商，并同步到 Claude live 配置。<br>
+                            🔄 <strong>效果</strong>: Claude 将立即使用新导入的供应商进行对话。<br>
+                            ⚠️ <strong>注意</strong>: 请将 <code>sk-your-key-here</code> 替换为您的真实 API Key。
+                        </div>
+                    </div>
+                </div>
+
+                <div class="link-card">
+                    <h3>备用供应商导入 - 仅添加不切换</h3>
+                    <p class="description">
+                        导入备用供应商配置，但不立即切换，保留当前供应商。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> resource=provider, app, name, endpoint, homepage, apiKey<br>
+                        <span class="param-tag optional">可选</span> model, notes, enabled
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=provider&app=claude&name=Backup Provider&endpoint=https://api.backup.com/v1/chat/completions&homepage=https://backup.com&apiKey=sk-backup-key&notes=备用账号&enabled=false"
+                            class="deep-link">📥 导入备用供应商 (不切换)</a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=provider&app=claude&name=Backup Provider&endpoint=https://api.backup.com/v1/chat/completions&homepage=https://backup.com&apiKey=sk-backup-key&notes=备用账号&enabled=false', this)">📋
+                            复制</button>
+                    </div>
+
+                    <!-- 内容解释 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">🏢 将导入以下供应商配置:</div>
+                        <div style="color: #52c41a; margin-bottom: 4px;">• <strong>供应商名称</strong>: Backup Provider
+                        </div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>目标应用</strong>: Claude</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>API Endpoint</strong>:
+                            https://api.backup.com/v1/chat/completions</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>备注</strong>: 备用账号</div>
+                        <div style="color: #87ceeb; margin-bottom: 4px;">• <strong>enabled=false</strong>:
+                            仅添加到列表，不切换</div>
+                        <div style="color: #95a5a6; margin-top: 12px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            💡 <strong>说明</strong>: 供应商会添加到列表中，但不会影响当前正在使用的供应商。<br>
+                            🔄 <strong>效果</strong>: Claude 继续使用原有供应商，新供应商可在需要时手动切换。<br>
+                            📋 <strong>用途</strong>: 适合添加备用供应商、测试新配置等场景。
+                        </div>
+                    </div>
+                </div>
+
+                <div class="link-card">
+                    <h3>enabled 参数对比</h3>
+                    <p class="description">
+                        enabled 参数控制导入后是否立即切换到新供应商。
+                    </p>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+                        <div style="background: #e8f5e9; padding: 16px; border-radius: 8px; border: 2px solid #4caf50;">
+                            <h4 style="color: #2e7d32; margin-top: 0;">enabled=true ✅</h4>
+                            <ul style="margin: 8px 0; padding-left: 20px; color: #2c3e50;">
+                                <li>立即设为当前供应商</li>
+                                <li>同步到 live 配置</li>
+                                <li>同步 MCP 服务器</li>
+                                <li>Claude 立即使用新供应商</li>
+                            </ul>
+                            <div
+                                style="margin-top: 12px; padding: 8px; background: #fff; border-radius: 4px; font-size: 11px;">
+                                <strong>适用场景：</strong><br>
+                                • 首次安装主要供应商<br>
+                                • 从旧设备迁移配置<br>
+                                • 快速切换到新供应商
+                            </div>
+                        </div>
+
+                        <div style="background: #fff3e0; padding: 16px; border-radius: 8px; border: 2px solid #ff9800;">
+                            <h4 style="color: #e65100; margin-top: 0;">enabled=false 或省略 ⏸️</h4>
+                            <ul style="margin: 8px 0; padding-left: 20px; color: #2c3e50;">
+                                <li>仅添加到供应商列表</li>
+                                <li>不改变当前供应商</li>
+                                <li>不影响 live 配置</li>
+                                <li>可随时手动切换</li>
+                            </ul>
+                            <div
+                                style="margin-top: 12px; padding: 8px; background: #fff; border-radius: 4px; font-size: 11px;">
+                                <strong>适用场景：</strong><br>
+                                • 添加备用供应商<br>
+                                • 批量导入多个配置<br>
+                                • 测试新供应商设置
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MCP、Prompt、Skill 示例 -->
+            <div class="section">
+                <h2>🔌 MCP Servers 导入 <span class="version-badge">v3.8+</span></h2>
+
+                <div class="link-card">
+                    <h3>批量导入 - Sequential Thinking MCP Server</h3>
+                    <p class="description">
+                        导入 Sequential Thinking MCP 服务器，支持结构化思维推理。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> resource=mcp, apps, config (Base64)<br>
+                        <span class="param-tag optional">可选</span> enabled
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=mcp&apps=claude,codex&config=eyJtY3BTZXJ2ZXJzIjp7InNlcXVlbnRpYWwtdGhpbmtpbmciOnsiY29tbWFuZCI6Im5weCIsImFyZ3MiOlsiLXkiLCJAbW9kZWxjb250ZXh0cHJvdG9jb2wvc2VydmVyLXNlcXVlbnRpYWwtdGhpbmtpbmciXSwidHlwZSI6InN0ZGlvIn19fQ==&enabled=true"
+                            class="deep-link">📥 导入到 Claude & Codex</a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=mcp&apps=claude,codex&config=eyJtY3BTZXJ2ZXJzIjp7InNlcXVlbnRpYWwtdGhpbmtpbmciOnsiY29tbWFuZCI6Im5weCIsImFyZ3MiOlsiLXkiLCJAbW9kZWxjb250ZXh0cHJvdG9jb2wvc2VydmVyLXNlcXVlbnRpYWwtdGhpbmtpbmciXSwidHlwZSI6InN0ZGlvIn19fQ==&enabled=true', this)">📋
+                            复制</button>
+                    </div>
+
+                    <!-- 内容解释 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">📦 将导入以下 MCP 服务器配置:</div>
+                        <div style="color: #52c41a; margin-bottom: 4px;">• <strong>服务器名称</strong>: sequential-thinking
+                        </div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>命令</strong>: npx -y
+                            @modelcontextprotocol/server-sequential-thinking</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>类型</strong>: stdio (标准输入输出)</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>目标应用</strong>: Claude, Codex</div>
+                        <div style="color: #95a5a6; margin-top: 8px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            💡 <strong>功能说明</strong>: 该 MCP 服务器提供结构化的思维链推理能力，帮助 AI 进行逐步分析和推理。<br>
+                            🔄 <strong>智能合并</strong>: 如果该 MCP 服务器已存在，导入时将只启用对应应用的开关，不会修改服务器的其他配置。
+                        </div>
+                    </div>
+                </div>
+
+                <div class="link-card">
+                    <h3>导入到单个应用</h3>
+                    <p class="description">仅导入到指定的单个应用。</p>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=mcp&apps=claude&config=eyJtY3BTZXJ2ZXJzIjp7InNlcXVlbnRpYWwtdGhpbmtpbmciOnsiY29tbWFuZCI6Im5weCIsImFyZ3MiOlsiLXkiLCJAbW9kZWxjb250ZXh0cHJvdG9jb2wvc2VydmVyLXNlcXVlbnRpYWwtdGhpbmtpbmciXSwidHlwZSI6InN0ZGlvIn19fQ==&enabled=true"
+                            class="deep-link">📥 Claude Only</a>
+                        <a href="ccswitch://v1/import?resource=mcp&apps=codex&config=eyJtY3BTZXJ2ZXJzIjp7InNlcXVlbnRpYWwtdGhpbmtpbmciOnsiY29tbWFuZCI6Im5weCIsImFyZ3MiOlsiLXkiLCJAbW9kZWxjb250ZXh0cHJvdG9jb2wvc2VydmVyLXNlcXVlbnRpYWwtdGhpbmtpbmciXSwidHlwZSI6InN0ZGlvIn19fQ==&enabled=true"
+                            class="deep-link">📥 Codex Only</a>
+                        <a href="ccswitch://v1/import?resource=mcp&apps=gemini&config=eyJtY3BTZXJ2ZXJzIjp7InNlcXVlbnRpYWwtdGhpbmtpbmciOnsiY29tbWFuZCI6Im5weCIsImFyZ3MiOlsiLXkiLCJAbW9kZWxjb250ZXh0cHJvdG9jb2wvc2VydmVyLXNlcXVlbnRpYWwtdGhpbmtpbmciXSwidHlwZSI6InN0ZGlvIn19fQ==&enabled=true"
+                            class="deep-link">📥 Gemini Only</a>
+                    </div>
+                </div>
+
+                <div class="link-card">
+                    <h3>📦 JSON 配置示例 - 单个 MCP Server</h3>
+                    <p class="description">
+                        使用 JSON 配置导入单个 MCP 服务器 (Context7)。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> resource=mcp, apps, config (Base64)<br>
+                        <span class="param-tag optional">可选</span> enabled
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=mcp&apps=claude&config=eyJtY3BTZXJ2ZXJzIjp7ImNvbnRleHQ3Ijp7ImNvbW1hbmQiOiJidW54IiwiYXJncyI6WyIteSIsIkB1cHN0YXNoL2NvbnRleHQ3LW1jcCIsIi0tYXBpLWtleSIsImN0eDdzay00ZGRkNGY2Ni1lNzUyLTQwMjItYjFmNi1jOGNmNjI3OWI4MGQiXSwiZW52Ijp7fX19fQ==&enabled=true"
+                            class="deep-link">📥 导入 Context7</a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=mcp&apps=claude&config=eyJtY3BTZXJ2ZXJzIjp7ImNvbnRleHQ3Ijp7ImNvbW1hbmQiOiJidW54IiwiYXJncyI6WyIteSIsIkB1cHN0YXNoL2NvbnRleHQ3LW1jcCIsIi0tYXBpLWtleSIsImN0eDdzay00ZGRkNGY2Ni1lNzUyLTQwMjItYjFmNi1jOGNmNjI3OWI4MGQiXSwiZW52Ijp7fX19fQ==&enabled=true', this)">📋
+                            复制</button>
+                    </div>
+
+                    <!-- JSON 配置展示 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">📦 MCP 配置 JSON:</div>
+                        <pre style="margin: 0; color: #a8d08d; line-height: 1.6;">{
+  "mcpServers": {
+    "context7": {
+      "command": "bunx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp",
+        "--api-key",
+        "ctx7sk-4ddd4f66-e752-4022-b1f6-c8cf6279b80d"
+      ],
+      "env": {}
+    }
+  }
+}</pre>
+                        <div style="color: #95a5a6; margin-top: 8px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            💡 <strong>说明</strong>: Context7 是一个 MCP 服务器，需要 API Key。<br>
+                            🔧 <strong>命令</strong>: 使用 bunx 运行 @upstash/context7-mcp<br>
+                            🎯 <strong>目标应用</strong>: Claude
+                        </div>
+                    </div>
+                </div>
+
+                <div class="link-card">
+                    <h3>📦📦 JSON 配置示例 - 批量导入多个 MCP Servers</h3>
+                    <p class="description">
+                        一次性导入多个 MCP 服务器 (Context7 + Sequential-thinking)。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> resource=mcp, apps, config (Base64)<br>
+                        <span class="param-tag optional">可选</span> enabled
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=mcp&apps=claude,codex&config=eyJtY3BTZXJ2ZXJzIjp7ImNvbnRleHQ3Ijp7ImNvbW1hbmQiOiJidW54IiwiYXJncyI6WyIteSIsIkB1cHN0YXNoL2NvbnRleHQ3LW1jcCIsIi0tYXBpLWtleSIsImN0eDdzay00ZGRkNGY2Ni1lNzUyLTQwMjItYjFmNi1jOGNmNjI3OWI4MGQiXSwiZW52Ijp7fX0sInNlcXVlbnRpYWwtdGhpbmtpbmciOnsiY29tbWFuZCI6Im5weCIsImFyZ3MiOlsiLXkiLCJAbW9kZWxjb250ZXh0cHJvdG9jb2wvc2VydmVyLXNlcXVlbnRpYWwtdGhpbmtpbmciXSwiZW52Ijp7fX19fQ==&enabled=true"
+                            class="deep-link">📥 批量导入 2 个 MCP Servers</a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=mcp&apps=claude,codex&config=eyJtY3BTZXJ2ZXJzIjp7ImNvbnRleHQ3Ijp7ImNvbW1hbmQiOiJidW54IiwiYXJncyI6WyIteSIsIkB1cHN0YXNoL2NvbnRleHQ3LW1jcCIsIi0tYXBpLWtleSIsImN0eDdzay00ZGRkNGY2Ni1lNzUyLTQwMjItYjFmNi1jOGNmNjI3OWI4MGQiXSwiZW52Ijp7fX0sInNlcXVlbnRpYWwtdGhpbmtpbmciOnsiY29tbWFuZCI6Im5weCIsImFyZ3MiOlsiLXkiLCJAbW9kZWxjb250ZXh0cHJvdG9jb2wvc2VydmVyLXNlcXVlbnRpYWwtdGhpbmtpbmciXSwiZW52Ijp7fX19fQ==&enabled=true', this)">📋
+                            复制</button>
+                    </div>
+
+                    <!-- JSON 配置展示 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">📦 批量 MCP 配置 JSON:</div>
+                        <pre style="margin: 0; color: #a8d08d; line-height: 1.6;">{
+  "mcpServers": {
+    "context7": {
+      "command": "bunx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp",
+        "--api-key",
+        "ctx7sk-4ddd4f66-e752-4022-b1f6-c8cf6279b80d"
+      ],
+      "env": {}
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "env": {}
+    }
+  }
+}</pre>
+                        <div style="color: #95a5a6; margin-top: 8px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            💡 <strong>批量导入说明</strong>: 一次性导入 2 个 MCP 服务器<br>
+                            📦 <strong>服务器 1</strong>: context7 - Upstash Context7 MCP 服务器<br>
+                            📦 <strong>服务器 2</strong>: sequential-thinking - 结构化思维推理服务器<br>
+                            🎯 <strong>目标应用</strong>: Claude 和 Codex<br>
+                            🔄 <strong>智能合并</strong>: 如果服务器已存在，只更新应用启用状态，不覆盖配置
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Prompt 导入示例 -->
+            <div class="section">
+                <h2>💬 Prompt 导入 <span class="version-badge">v3.8+</span></h2>
+
+                <div class="link-card">
+                    <h3><span class="app-badge badge-claude">Claude</span> 代码审查专家</h3>
+                    <p class="description">为 Claude 导入代码审查提示词。</p>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=prompt&app=claude&name=代码审查专家&content=IyDku6PnoIHlrqHmn6XkuJPlrrYKCuS9oOaYr+S4gOS9jeaciee7j+mqjOeahOS7o+eggeWuoeafpeWRmO+8jOivt+WcqOS7o+eggeWuoeafpeWbnuWkjeeahOaXtuWAmeWBmuWQr+S4i+OAgg==&description=专注代码质量&enabled=true"
+                            class="deep-link">📥 导入</a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=prompt&app=claude&name=代码审查专家&content=IyDku6PnoIHlrqHmn6XkuJPlrrYKCuS9oOaYr+S4gOS9jeaciee7j+mqjOeahOS7o+eggeWuoeafpeWRmO+8jOivt+WcqOS7o+eggeWuoeafpeWbnuWkjeeahOaXtuWAmeWBmuWQr+S4i+OAgg==&description=专注代码质量&enabled=true', this)">📋
+                            复制</button>
+                    </div>
+
+                    <!-- 内容解释 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">📝 Prompt 内容:</div>
+                        <div style="color: #a8d08d; white-space: pre-wrap; line-height: 1.6;"># 代码审查专家
+
+                            你是一位有经验的代码审查员，请在代码审查回复的时候做启下。</div>
+                        <div style="color: #95a5a6; margin-top: 12px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            • <strong>应用</strong>: Claude<br>
+                            • <strong>描述</strong>: 专注代码质量<br>
+                            • <strong>状态</strong>: 导入后立即启用
+                        </div>
+                    </div>
+                </div>
+
+                <div class="link-card">
+                    <h3><span class="app-badge badge-codex">Codex</span> 代码优化助手</h3>
+                    <p class="description">为 Codex 导入代码优化提示词。</p>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=prompt&app=codex&name=代码优化助手&content=IyDku6PnoIHkvJjljJbliqnmiYsKCuS9oOaYr+S4gOS9jeS7o+eggeS8mOWMluS4k+S4mueahOWKqeaJi+OAgg==&description=提升代码性能&enabled=true"
+                            class="deep-link">📥 导入</a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=prompt&app=codex&name=代码优化助手&content=IyDku6PnoIHkvJjljJbliqnmiYsKCuS9oOaYr+S4gOS9jeS7o+eggeS8mOWMluS4k+S4mueahOWKqeaJi+OAgg==&description=提升代码性能&enabled=true', this)">📋
+                            复制</button>
+                    </div>
+
+                    <!-- 内容解释 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">📝 Prompt 内容:</div>
+                        <div style="color: #a8d08d; white-space: pre-wrap; line-height: 1.6;"># 代码优化助手
+
+                            你是一位代码优化专业的助手。</div>
+                        <div style="color: #95a5a6; margin-top: 12px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            • <strong>应用</strong>: Codex<br>
+                            • <strong>描述</strong>: 提升代码性能<br>
+                            • <strong>状态</strong>: 导入后立即启用
+                        </div>
+                    </div>
+                </div>
+
+                <div class="link-card">
+                    <h3><span class="app-badge badge-gemini">Gemini</span> 架构设计师</h3>
+                    <p class="description">为 Gemini 导入架构设计提示词。</p>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=prompt&app=gemini&name=架构设计师&content=IyDmnrbmnoTorr7orqHluIgKCuS9oOaYr+S4k+S4muaetuaehOiuvuiuoeS4k+S4mueahOS4k+WutuOAgg==&description=系统架构专家&enabled=true"
+                            class="deep-link">📥 导入</a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=prompt&app=gemini&name=架构设计师&content=IyDmnrbmnoTorr7orqHluIgKCuS9oOaYr+S4k+S4muaetuaehOiuvuiuoeS4k+S4mueahOS4k+WutuOAgg==&description=系统架构专家&enabled=true', this)">📋
+                            复制</button>
+                    </div>
+
+                    <!-- 内容解释 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">📝 Prompt 内容:</div>
+                        <div style="color: #a8d08d; white-space: pre-wrap; line-height: 1.6;"># 架构设计师
+
+                            你是专业架构设计专业的专家。</div>
+                        <div style="color: #95a5a6; margin-top: 12px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            • <strong>应用</strong>: Gemini<br>
+                            • <strong>描述</strong>: 系统架构专家<br>
+                            • <strong>状态</strong>: 导入后立即启用
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Skill 导入示例 -->
+            <div class="section">
+                <h2>🛠️ Skill 仓库导入 <span class="version-badge">v3.8+</span></h2>
+
+                <div class="link-card">
+                    <h3>添加 Claude Skill 仓库</h3>
+                    <p class="description">
+                        从 GitHub 仓库导入 Claude Skills，支持指定分支和子目录路径。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> resource=skill, repo (owner/name)<br>
+                        <span class="param-tag optional">可选</span> branch, skills_path, directory
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=skill&repo=example/claude-skills&branch=main&skills_path=skills&directory=my-skills"
+                            class="deep-link">
+                            📥 导入 Skill 仓库示例
+                        </a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=skill&repo=example/claude-skills&branch=main&skills_path=skills&directory=my-skills', this)">
+                            📋 复制链接
+                        </button>
+                    </div>
+
+                    <!-- 内容解释 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">🗂️ 将添加以下 Skill 仓库:</div>
+                        <div style="color: #52c41a; margin-bottom: 4px;">• <strong>GitHub 仓库</strong>:
+                            example/claude-skills</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>分支</strong>: main (默认分支)</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>Skills 路径</strong>: skills
+                            (仓库中技能文件所在的子目录)</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>本地目录</strong>: my-skills (克隆到本地的目录名)
+                        </div>
+                        <div style="color: #95a5a6; margin-top: 12px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            💡 <strong>说明</strong>: 此操作会把仓库添加到 Skill 列表中。添加后，您可以在 Skills 管理界面选择安装具体的技能文件。<br>
+                            🔧 <strong>应用</strong>: Claude (Skills 功能仅支持 Claude)
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!--  深链接生成器 -->
+            <div class="section">
+                <h2>🚀 深链接生成器</h2>
+                <p style="color: #7f8c8d; margin-bottom: 24px;">
+                    填写参数信息，自动生成深链接并导入到 CC Switch
+                </p>
+
+                <!-- 供应商生成器 -->
+                <div class="generator-section">
+                    <h3 style="color: #2c3e50; margin-bottom: 16px;">🏢 供应商导入生成器</h3>
+
+                    <div class="form-group">
+                        <label>目标应用 *</label>
+                        <select id="providerApp">
+                            <option value="claude">Claude</option>
+                            <option value="codex">Codex</option>
+                            <option value="gemini">Gemini</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>供应商名称 *</label>
+                        <input type="text" id="providerName" placeholder="例如: OpenAI" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>API Key *</label>
+                        <input type="text" id="providerApiKey" placeholder="sk-..." />
+                        <small style="color: #7f8c8d;">您的 API 密钥</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>API Endpoint *</label>
+                        <input type="text" id="providerEndpoint"
+                            placeholder="https://api.openai.com/v1/chat/completions" />
+                        <small style="color: #7f8c8d;">完整的 API 端点 URL</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>主页链接 *</label>
+                        <input type="text" id="providerHomepage" placeholder="https://openai.com" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>默认模型</label>
+                        <input type="text" id="providerModel" placeholder="gpt-4" />
+                        <small style="color: #7f8c8d;">可选，留空使用系统默认</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>备注</label>
+                        <input type="text" id="providerNotes" placeholder="例如: 个人账号" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>导入后是否设为当前供应商</label>
+                        <select id="providerEnabled">
+                            <option value="true">是 (立即切换到此供应商)</option>
+                            <option value="false">否 (仅添加，不切换)</option>
+                        </select>
+                    </div>
+
+                    <button class="btn" onclick="generateProviderLink()">🎯 生成供应商深链接</button>
+
+                    <div id="providerResult" class="result-section" style="display: none;">
+                        <label>生成的深链接：</label>
+                        <div class="result-url" id="providerUrl" onclick="selectText(this)"></div>
+                        <div style="display: flex; gap: 10px; margin-top: 12px;">
+                            <button class="btn" onclick="copyGeneratedLink('providerUrl')">📋 复制链接</button>
+                            <a id="providerImportBtn" class="btn"
+                                style="background: linear-gradient(135deg, #27ae60 0%, #229954 100%); text-decoration: none;">
+                                📥 立即导入
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MCP Servers 生成器 -->
+                <div class="generator-section">
+                    <h3 style="color: #2c3e50; margin-bottom: 16px;">🔌 MCP Servers 导入生成器</h3>
+
+                    <div class="form-group">
+                        <label>目标应用 *</label>
+                        <input type="text" id="mcpApps" placeholder="例如: claude,codex,gemini 或 claude" />
+                        <small style="color: #7f8c8d;">多个应用用逗号分隔</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>MCP 配置 (JSON) *</label>
+                        <textarea id="mcpConfig" rows="8" placeholder='{
+  "mcpServers": {
+    "server-name": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-xxx"],
+      "type": "stdio"
+    }
+  }
+}'></textarea>
+                        <small style="color: #7f8c8d;">完整的 MCP 配置 JSON</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>是否启用</label>
+                        <select id="mcpEnabled">
+                            <option value="true">是 (enabled=true)</option>
+                            <option value="false">否 (enabled=false)</option>
+                        </select>
+                    </div>
+
+                    <button class="btn" onclick="generateMcpLink()">🎯 生成 MCP 深链接</button>
+
+                    <div id="mcpResult" class="result-section" style="display: none;">
+                        <label>生成的深链接：</label>
+                        <div class="result-url" id="mcpUrl" onclick="selectText(this)"></div>
+                        <div style="display: flex; gap: 10px; margin-top: 12px;">
+                            <button class="btn" onclick="copyGeneratedLink('mcpUrl')">📋 复制链接</button>
+                            <a id="mcpImportBtn" class="btn"
+                                style="background: linear-gradient(135deg, #27ae60 0%, #229954 100%); text-decoration: none;">
+                                📥 立即导入
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Prompt 生成器 -->
+                <div class="generator-section">
+                    <h3 style="color: #2c3e50; margin-bottom: 16px;">💬 Prompt 导入生成器</h3>
+
+                    <div class="form-group">
+                        <label>目标应用 *</label>
+                        <select id="promptApp">
+                            <option value="claude">Claude</option>
+                            <option value="codex">Codex</option>
+                            <option value="gemini">Gemini</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>提示词名称 *</label>
+                        <input type="text" id="promptName" placeholder="例如: 代码审查专家" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>提示词内容 *</label>
+                        <textarea id="promptContent" rows="6" placeholder="# 角色定义
+
+你是一位专业的..."></textarea>
+                        <small style="color: #7f8c8d;">支持 Markdown 格式，自动 Base64 编码</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>描述</label>
+                        <input type="text" id="promptDescription" placeholder="例如: 专注代码质量" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>导入后是否启用</label>
+                        <select id="promptEnabled">
+                            <option value="true">是 (将禁用其他提示词)</option>
+                            <option value="false">否 (保持禁用状态)</option>
+                        </select>
+                    </div>
+
+                    <button class="btn" onclick="generatePromptLink()">🎯 生成 Prompt 深链接</button>
+
+                    <div id="promptResult" class="result-section" style="display: none;">
+                        <label>生成的深链接：</label>
+                        <div class="result-url" id="promptUrl" onclick="selectText(this)"></div>
+                        <div style="display: flex; gap: 10px; margin-top: 12px;">
+                            <button class="btn" onclick="copyGeneratedLink('promptUrl')">📋 复制链接</button>
+                            <a id="promptImportBtn" class="btn"
+                                style="background: linear-gradient(135deg, #27ae60 0%, #229954 100%); text-decoration: none;">
+                                📥 立即导入
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Skill 生成器 -->
+                <div class="generator-section">
+                    <h3 style="color: #2c3e50; margin-bottom: 16px;">🛠️ Skill 仓库导入生成器</h3>
+
+                    <div class="form-group">
+                        <label>GitHub 仓库 *</label>
+                        <input type="text" id="skillRepo" placeholder="例如: owner/repo-name" />
+                        <small style="color: #7f8c8d;">格式: 所有者/仓库名</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>分支</label>
+                        <input type="text" id="skillBranch" placeholder="main" value="main" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>Skills 路径</label>
+                        <input type="text" id="skillPath" placeholder="skills" value="skills" />
+                        <small style="color: #7f8c8d;">仓库中技能文件所在的子目录</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>本地目录名</label>
+                        <input type="text" id="skillDirectory" placeholder="my-skills" />
+                        <small style="color: #7f8c8d;">克隆到本地的目录名（可选）</small>
+                    </div>
+
+                    <button class="btn" onclick="generateSkillLink()">🎯 生成 Skill 深链接</button>
+
+                    <div id="skillResult" class="result-section" style="display: none;">
+                        <label>生成的深链接：</label>
+                        <div class="result-url" id="skillUrl" onclick="selectText(this)"></div>
+                        <div style="display: flex; gap: 10px; margin-top: 12px;">
+                            <button class="btn" onclick="copyGeneratedLink('skillUrl')">📋 复制链接</button>
+                            <a id="skillImportBtn" class="btn"
+                                style="background: linear-gradient(135deg, #27ae60 0%, #229954 100%); text-decoration: none;">
+                                📥 立即导入
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Base64 编解码器 -->
+            <div class="section">
+                <h2>🔐 Base64 编解码器</h2>
+
+                <div class="generator-section" style="background: #f5f5f5; border: 2px solid #95a5a6;">
+                    <h3 style="color: #2c3e50; margin-bottom: 16px;">编码器 (UTF-8 → Base64)</h3>
+                    <div class="form-group">
+                        <label>原始内容（UTF-8 文本）</label>
+                        <textarea id="encodeInput" rows="6" placeholder="输入要编码的文本...&#10;支持中文、JSON、TOML 等所有 UTF-8 字符"
+                            style="font-family: monospace; font-size: 13px;"></textarea>
+                    </div>
+                    <button class="btn" style="background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);"
+                        onclick="encodeToBase64()">
+                        🔒 编码为 Base64
+                    </button>
+                    <div id="encodeResult" style="display: none;" class="result-box">
+                        <strong>✅ 编码结果：</strong>
+                        <div class="result-text" id="encodeOutput"></div>
+                        <button class="btn btn-copy" onclick="copyEncoded()">📋 复制结果</button>
+                        <small style="color: #7f8c8d; display: block; margin-top: 8px;">
+                            💡 可直接用于深链接的 config 或 content 参数
+                        </small>
+                    </div>
+                </div>
+
+                <div class="generator-section"
+                    style="background: #f0f9ff; border: 2px solid #3498db; margin-top: 24px;">
+                    <h3 style="color: #2c3e50; margin-bottom: 16px;">解码器 (Base64 → UTF-8)</h3>
+                    <div class="form-group">
+                        <label>Base64 编码内容</label>
+                        <textarea id="decodeInput" rows="6"
+                            placeholder="粘贴 Base64 编码的文本...&#10;例如: eyJlbnYiOnsiaGVsbG8iOiJ3b3JsZCJ9fQ=="
+                            style="font-family: monospace; font-size: 13px;"></textarea>
+                    </div>
+                    <button class="btn" style="background: linear-gradient(135deg, #27ae60 0%, #229954 100%);"
+                        onclick="decodeFromBase64()">
+                        🔓 解码为文本
+                    </button>
+                    <div id="decodeResult" style="display: none;" class="result-box">
+                        <strong>✅ 解码结果：</strong>
+                        <div class="result-text" id="decodeOutput" style="white-space: pre-wrap;"></div>
+                        <button class="btn btn-copy" onclick="copyDecoded()">📋 复制结果</button>
+                        <div id="jsonFormat" style="display: none; margin-top: 12px;">
+                            <button class="btn" style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);"
+                                onclick="formatJson()">
+                                ✨ 格式化 JSON
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="info-box" style="margin-top: 24px; background: #e8f4f8; border-left: 4px solid #3498db;">
+                    <h4 style="color: #2c3e50;">💡 使用建议</h4>
+                    <ul style="color: #2c3e50;">
+                        <li><strong>编码配置文件</strong>：将 JSON 或 TOML 内容编码后用于 config 参数</li>
+                        <li><strong>编码 Prompt</strong>：将 Markdown 提示词内容编码后用于 content 参数</li>
+                        <li><strong>验证深链接</strong>：解码验证深链接中的配置内容是否正确</li>
+                        <li><strong>UTF-8 支持</strong>：完整支持中文及其他 Unicode 字符</li>
+                    </ul>
+                </div>
+            </div>
+
             <!-- 注意事项 -->
             <div class="info-box">
                 <h4>⚠️ 使用注意事项</h4>
@@ -1110,6 +1800,22 @@
                 </div>
 
                 <div class="form-group">
+                    <label>图标（可选）</label>
+                    <input type="text" id="icon" placeholder="例如: openai, anthropic, google">
+                    <small style="color: #7f8c8d; font-size: 12px; display: block; margin-top: 4px;">
+                        图标名称，用于在界面中显示
+                    </small>
+                </div>
+
+                <div class="form-group">
+                    <label>导入后是否设为当前供应商</label>
+                    <select id="enabled">
+                        <option value="true">是 (立即切换到此供应商)</option>
+                        <option value="false">否 (仅添加，不切换)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
                     <label>备注（可选）</label>
                     <textarea id="notes" rows="2" placeholder="例如: 公司专用账号"></textarea>
                 </div>
@@ -1274,6 +1980,8 @@ requires_openai_auth = true`;
                 const endpoint = document.getElementById('endpoint').value.trim();
                 const apiKey = document.getElementById('apiKey').value.trim();
                 const model = document.getElementById('model').value.trim();
+                const icon = document.getElementById('icon').value.trim();
+                const enabled = document.getElementById('enabled').value;
                 const notes = document.getElementById('notes').value.trim();
 
                 // Claude 专用字段
@@ -1309,6 +2017,8 @@ requires_openai_auth = true`;
                 params.append('endpoint', endpoint);
                 params.append('apiKey', apiKey);
                 if (model) params.append('model', model);
+                if (icon) params.append('icon', icon);
+                if (enabled) params.append('enabled', enabled);
                 if (notes) params.append('notes', notes);
 
                 // 添加 Claude 专用模型字段
@@ -1366,6 +2076,8 @@ requires_openai_auth = true`;
                 const overrideApiKey = document.getElementById('overrideApiKey').value.trim();
                 const overrideEndpoint = document.getElementById('overrideEndpoint').value.trim();
                 const model = document.getElementById('model').value.trim();
+                const icon = document.getElementById('icon').value.trim();
+                const enabled = document.getElementById('enabled').value;
                 const notes = document.getElementById('notes').value.trim();
 
                 // Claude 专用字段
@@ -1391,6 +2103,8 @@ requires_openai_auth = true`;
                 }
 
                 if (model) params.append('model', model);
+                if (icon) params.append('icon', icon);
+                if (enabled) params.append('enabled', enabled);
                 if (notes) params.append('notes', notes);
 
                 // 添加 Claude 专用模型字段
@@ -1668,6 +2382,333 @@ requires_openai_auth = true`;
             // 初始化显示 Claude 字段
             updateModelFields();
         });
+
+        // Base64 编码功能
+        function encodeToBase64() {
+            const input = document.getElementById('encodeInput').value;
+
+            if (!input.trim()) {
+                alert('❌ 请输入要编码的内容！');
+                return;
+            }
+
+            try {
+                const encoded = utf8_to_b64(input);
+                document.getElementById('encodeOutput').textContent = encoded;
+                document.getElementById('encodeResult').style.display = 'block';
+
+                // 滚动到结果
+                document.getElementById('encodeResult').scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'nearest'
+                });
+            } catch (e) {
+                alert('❌ 编码失败：' + e.message);
+                console.error('Encode error:', e);
+            }
+        }
+
+        // Base64 解码功能
+        function decodeFromBase64() {
+            const input = document.getElementById('decodeInput').value.trim();
+
+            if (!input) {
+                alert('❌ 请输入要解码的 Base64 内容！');
+                return;
+            }
+
+            try {
+                const decoded = b64_to_utf8(input);
+                document.getElementById('decodeOutput').textContent = decoded;
+                document.getElementById('decodeResult').style.display = 'block';
+
+                // 检查是否是 JSON，如果是则显示格式化按钮
+                try {
+                    JSON.parse(decoded);
+                    document.getElementById('jsonFormat').style.display = 'block';
+                } catch {
+                    document.getElementById('jsonFormat').style.display = 'none';
+                }
+
+                // 滚动到结果
+                document.getElementById('decodeResult').scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'nearest'
+                });
+            } catch (e) {
+                alert('❌ 解码失败：' + e.message + '\n\n请确保输入的是有效的 Base64 编码');
+                console.error('Decode error:', e);
+            }
+        }
+
+        // 格式化 JSON
+        function formatJson() {
+            try {
+                const text = document.getElementById('decodeOutput').textContent;
+                const obj = JSON.parse(text);
+                const formatted = JSON.stringify(obj, null, 2);
+                document.getElementById('decodeOutput').textContent = formatted;
+            } catch (e) {
+                alert('❌ JSON 格式化失败：' + e.message);
+            }
+        }
+
+        // 复制编码结果
+        function copyEncoded() {
+            const text = document.getElementById('encodeOutput').textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ 已复制！';
+                btn.style.background = 'linear-gradient(135deg, #27ae60 0%, #229954 100%)';
+
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '';
+                }, 2000);
+            }).catch(err => {
+                console.error('复制失败:', err);
+                alert('❌ 复制失败，请手动复制');
+            });
+        }
+
+        // 复制解码结果
+        function copyDecoded() {
+            const text = document.getElementById('decodeOutput').textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ 已复制！';
+                btn.style.background = 'linear-gradient(135deg, #27ae60 0%, #229954 100%)';
+
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '';
+                }, 2000);
+            }).catch(err => {
+                console.error('复制失败:', err);
+                alert('❌ 复制失败，请手动复制');
+            });
+        }
+
+        // ==================== 深链接生成器函数 ====================
+
+        // 生成供应商深链接
+        function generateProviderLink() {
+            const app = document.getElementById('providerApp').value;
+            const name = document.getElementById('providerName').value.trim();
+            const apiKey = document.getElementById('providerApiKey').value.trim();
+            const endpoint = document.getElementById('providerEndpoint').value.trim();
+            const homepage = document.getElementById('providerHomepage').value.trim();
+            const model = document.getElementById('providerModel').value.trim();
+            const notes = document.getElementById('providerNotes').value.trim();
+            const enabled = document.getElementById('providerEnabled').value;
+
+            // 验证必填字段
+            if (!name) {
+                alert('❌ 请填写供应商名称');
+                return;
+            }
+
+            if (!apiKey) {
+                alert('❌ 请填写 API Key');
+                return;
+            }
+
+            if (!endpoint) {
+                alert('❌ 请填写 API Endpoint');
+                return;
+            }
+
+            if (!homepage) {
+                alert('❌ 请填写主页链接');
+                return;
+            }
+
+            // 构建深链接
+            let url = `ccswitch://v1/import?resource=provider&app=${app}&name=${encodeURIComponent(name)}&endpoint=${encodeURIComponent(endpoint)}&homepage=${encodeURIComponent(homepage)}&apiKey=${encodeURIComponent(apiKey)}`;
+
+            if (model) {
+                url += `&model=${encodeURIComponent(model)}`;
+            }
+
+            if (notes) {
+                url += `&notes=${encodeURIComponent(notes)}`;
+            }
+
+            if (enabled === 'true') {
+                url += '&enabled=true';
+            }
+
+            // 显示结果
+            document.getElementById('providerUrl').textContent = url;
+            document.getElementById('providerImportBtn').href = url;
+            document.getElementById('providerResult').style.display = 'block';
+
+            // 滚动到结果
+            document.getElementById('providerResult').scrollIntoView({
+                behavior: 'smooth',
+                block: 'nearest'
+            });
+        }
+
+        // 生成 MCP 深链接
+        function generateMcpLink() {
+            const apps = document.getElementById('mcpApps').value.trim();
+            const config = document.getElementById('mcpConfig').value.trim();
+            const enabled = document.getElementById('mcpEnabled').value;
+
+            if (!apps) {
+                alert('❌ 请填写目标应用');
+                return;
+            }
+
+            if (!config) {
+                alert('❌ 请填写 MCP 配置');
+                return;
+            }
+
+            try {
+                // 验证 JSON 格式
+                const jsonObj = JSON.parse(config);
+                if (!jsonObj.mcpServers) {
+                    alert('❌ 配置必须包含 mcpServers 字段');
+                    return;
+                }
+
+                // Base64 编码配置
+                const configB64 = utf8_to_b64(config);
+
+                // 构建深链接
+                let url = `ccswitch://v1/import?resource=mcp&apps=${encodeURIComponent(apps)}&config=${encodeURIComponent(configB64)}`;
+
+                if (enabled === 'true') {
+                    url += '&enabled=true';
+                }
+
+                // 显示结果
+                document.getElementById('mcpUrl').textContent = url;
+                document.getElementById('mcpImportBtn').href = url;
+                document.getElementById('mcpResult').style.display = 'block';
+
+                // 滚动到结果
+                document.getElementById('mcpResult').scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'nearest'
+                });
+            } catch (e) {
+                alert('❌ JSON 格式错误：' + e.message);
+            }
+        }
+
+        // 生成 Prompt 深链接
+        function generatePromptLink() {
+            const app = document.getElementById('promptApp').value;
+            const name = document.getElementById('promptName').value.trim();
+            const content = document.getElementById('promptContent').value.trim();
+            const description = document.getElementById('promptDescription').value.trim();
+            const enabled = document.getElementById('promptEnabled').value;
+
+            if (!name) {
+                alert('❌ 请填写提示词名称');
+                return;
+            }
+
+            if (!content) {
+                alert('❌ 请填写提示词内容');
+                return;
+            }
+
+            // Base64 编码内容
+            const contentB64 = utf8_to_b64(content);
+
+            // 构建深链接
+            let url = `ccswitch://v1/import?resource=prompt&app=${app}&name=${encodeURIComponent(name)}&content=${encodeURIComponent(contentB64)}`;
+
+            if (description) {
+                url += `&description=${encodeURIComponent(description)}`;
+            }
+
+            if (enabled === 'true') {
+                url += '&enabled=true';
+            }
+
+            // 显示结果
+            document.getElementById('promptUrl').textContent = url;
+            document.getElementById('promptImportBtn').href = url;
+            document.getElementById('promptResult').style.display = 'block';
+
+            // 滚动到结果
+            document.getElementById('promptResult').scrollIntoView({
+                behavior: 'smooth',
+                block: 'nearest'
+            });
+        }
+
+        // 生成 Skill 深链接
+        function generateSkillLink() {
+            const repo = document.getElementById('skillRepo').value.trim();
+            const branch = document.getElementById('skillBranch').value.trim() || 'main';
+            const skillsPath = document.getElementById('skillPath').value.trim() || 'skills';
+            const directory = document.getElementById('skillDirectory').value.trim();
+
+            if (!repo) {
+                alert('❌ 请填写 GitHub 仓库');
+                return;
+            }
+
+            // 验证仓库格式
+            if (!repo.includes('/')) {
+                alert('❌ 仓库格式应为: owner/repo-name');
+                return;
+            }
+
+            // 构建深链接
+            let url = `ccswitch://v1/import?resource=skill&repo=${encodeURIComponent(repo)}&branch=${encodeURIComponent(branch)}&skills_path=${encodeURIComponent(skillsPath)}`;
+
+            if (directory) {
+                url += `&directory=${encodeURIComponent(directory)}`;
+            }
+
+            // 显示结果
+            document.getElementById('skillUrl').textContent = url;
+            document.getElementById('skillImportBtn').href = url;
+            document.getElementById('skillResult').style.display = 'block';
+
+            // 滚动到结果
+            document.getElementById('skillResult').scrollIntoView({
+                behavior: 'smooth',
+                block: 'nearest'
+            });
+        }
+
+        // 复制生成的链接
+        function copyGeneratedLink(elementId) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ 已复制！';
+                btn.style.background = 'linear-gradient(135deg, #27ae60 0%, #229954 100%)';
+
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '';
+                }, 2000);
+            }).catch(err => {
+                console.error('复制失败:', err);
+                alert('❌ 复制失败，请手动复制');
+            });
+        }
+
+        // 选中文本（点击 URL 时）
+        function selectText(element) {
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
     </script>
 </body>
 
