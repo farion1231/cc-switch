@@ -389,8 +389,8 @@ impl Database {
         // 导出 schema
         let mut stmt = conn
             .prepare(
-                "SELECT type, name, tbl_name, sql 
-                 FROM sqlite_master 
+                "SELECT type, name, tbl_name, sql
+                 FROM sqlite_master
                  WHERE sql NOT NULL AND type IN ('table','index','trigger','view')
                  ORDER BY type='table' DESC, name",
             )
@@ -516,7 +516,7 @@ impl Database {
 
                 tx.execute(
                     "INSERT OR REPLACE INTO providers (
-                        id, app_type, name, settings_config, website_url, category, 
+                        id, app_type, name, settings_config, website_url, category,
                         created_at, sort_index, notes, icon, icon_color, meta, is_current
                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     params![
@@ -809,7 +809,7 @@ impl Database {
 
         tx.execute(
             "INSERT OR REPLACE INTO providers (
-                id, app_type, name, settings_config, website_url, category, 
+                id, app_type, name, settings_config, website_url, category,
                 created_at, sort_index, notes, icon, icon_color, meta, is_current
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
