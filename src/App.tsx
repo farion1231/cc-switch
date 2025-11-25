@@ -217,6 +217,8 @@ function App() {
       meta: provider.meta
         ? JSON.parse(JSON.stringify(provider.meta))
         : undefined, // 深拷贝
+      icon: provider.icon,
+      iconColor: provider.iconColor,
     };
 
     // 2️⃣ 如果原供应商有 sortIndex，需要将后续所有供应商的 sortIndex +1
