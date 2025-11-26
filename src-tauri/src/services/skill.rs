@@ -353,11 +353,13 @@ impl SkillService {
     }
 
     /// 去重技能列表
+    /// 使用完整的 key (owner/name:directory) 来区分不同仓库的同名技能
     fn deduplicate_skills(skills: &mut Vec<Skill>) {
         let mut seen = HashMap::new();
         skills.retain(|skill| {
-            let key = skill.directory.to_lowercase();
-            if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(key) {
+            // 使用完整 key 而非仅 directory，允许不同仓库的同名技能共存
+            let unique_key = skill.key.to_lowercase();
+            if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(unique_key) {
                 e.insert(true);
                 true
             } else {
