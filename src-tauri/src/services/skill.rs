@@ -214,61 +214,97 @@ impl SkillService {
             temp_dir.clone()
         };
 
-        // 遍历目标目录
-        for entry in fs::read_dir(&scan_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if !path.is_dir() {
-                continue;
-            }
-
-            let skill_md = path.join("SKILL.md");
-            if !skill_md.exists() {
-                continue;
-            }
-
-            // 解析技能元数据
-            match self.parse_skill_metadata(&skill_md) {
-                Ok(meta) => {
-                    // 安全地获取目录名
-                    let Some(dir_name) = path.file_name() else {
-                        log::warn!("Failed to get directory name from path: {path:?}");
-                        continue;
-                    };
-                    let directory = dir_name.to_string_lossy().to_string();
-
-                    // 构建 README URL（考虑 skillsPath）
-                    let readme_path = if let Some(ref skills_path) = repo.skills_path {
-                        format!("{}/{}", skills_path.trim_matches('/'), directory)
-                    } else {
-                        directory.clone()
-                    };
-
-                    skills.push(Skill {
-                        key: format!("{}/{}:{}", repo.owner, repo.name, directory),
-                        name: meta.name.unwrap_or_else(|| directory.clone()),
-                        description: meta.description.unwrap_or_default(),
-                        directory,
-                        readme_url: Some(format!(
-                            "https://github.com/{}/{}/tree/{}/{}",
-                            repo.owner, repo.name, repo.branch, readme_path
-                        )),
-                        installed: false,
-                        repo_owner: Some(repo.owner.clone()),
-                        repo_name: Some(repo.name.clone()),
-                        repo_branch: Some(repo.branch.clone()),
-                        skills_path: repo.skills_path.clone(),
-                    });
-                }
-                Err(e) => log::warn!("解析 {} 元数据失败: {}", skill_md.display(), e),
-            }
-        }
+        // 递归扫描目录查找所有技能
+        self.scan_dir_recursive(&scan_dir, &scan_dir, repo, &mut skills)?;
 
         // 清理临时目录
         let _ = fs::remove_dir_all(&temp_dir);
 
         Ok(skills)
+    }
+
+    /// 递归扫描目录查找 SKILL.md
+    ///
+    /// 规则：
+    /// 1. 如果当前目录存在 SKILL.md，则识别为技能，停止扫描其子目录（子目录视为功能文件夹）
+    /// 2. 如果当前目录不存在 SKILL.md，则递归扫描所有子目录
+    fn scan_dir_recursive(
+        &self,
+        current_dir: &Path,
+        base_dir: &Path,
+        repo: &SkillRepo,
+        skills: &mut Vec<Skill>,
+    ) -> Result<()> {
+        // 检查当前目录是否包含 SKILL.md
+        let skill_md = current_dir.join("SKILL.md");
+
+        if skill_md.exists() {
+            // 发现技能！获取相对路径作为目录名
+            let directory = if current_dir == base_dir {
+                // 根目录的 SKILL.md，使用仓库名
+                repo.name.clone()
+            } else {
+                // 子目录的 SKILL.md，使用相对路径
+                current_dir
+                    .strip_prefix(base_dir)
+                    .unwrap_or(current_dir)
+                    .to_string_lossy()
+                    .to_string()
+            };
+
+            if let Ok(skill) = self.build_skill_from_metadata(&skill_md, &directory, repo) {
+                skills.push(skill);
+            }
+
+            // 停止扫描此目录的子目录（同级目录都是功能文件夹）
+            return Ok(());
+        }
+
+        // 未发现 SKILL.md，继续递归扫描所有子目录
+        for entry in fs::read_dir(current_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            // 只处理目录
+            if path.is_dir() {
+                self.scan_dir_recursive(&path, base_dir, repo, skills)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 从 SKILL.md 构建技能对象
+    fn build_skill_from_metadata(
+        &self,
+        skill_md: &Path,
+        directory: &str,
+        repo: &SkillRepo,
+    ) -> Result<Skill> {
+        let meta = self.parse_skill_metadata(skill_md)?;
+
+        // 构建 README URL
+        let readme_path = if let Some(ref skills_path) = repo.skills_path {
+            format!("{}/{}", skills_path.trim_matches('/'), directory)
+        } else {
+            directory.to_string()
+        };
+
+        Ok(Skill {
+            key: format!("{}/{}:{}", repo.owner, repo.name, directory),
+            name: meta.name.unwrap_or_else(|| directory.to_string()),
+            description: meta.description.unwrap_or_default(),
+            directory: directory.to_string(),
+            readme_url: Some(format!(
+                "https://github.com/{}/{}/tree/{}/{}",
+                repo.owner, repo.name, repo.branch, readme_path
+            )),
+            installed: false,
+            repo_owner: Some(repo.owner.clone()),
+            repo_name: Some(repo.name.clone()),
+            repo_branch: Some(repo.branch.clone()),
+            skills_path: repo.skills_path.clone(),
+        })
     }
 
     /// 解析技能元数据
@@ -302,25 +338,18 @@ impl SkillService {
             return Ok(());
         }
 
-        for entry in fs::read_dir(&self.install_dir)? {
-            let entry = entry?;
-            let path = entry.path();
+        // 收集所有本地技能
+        let mut local_skills = Vec::new();
+        self.scan_local_dir_recursive(&self.install_dir, &self.install_dir, &mut local_skills)?;
 
-            if !path.is_dir() {
-                continue;
-            }
+        // 处理找到的本地技能
+        for local_skill in local_skills {
+            let directory = &local_skill.directory;
 
-            // 安全地获取目录名
-            let Some(dir_name) = path.file_name() else {
-                log::warn!("Failed to get directory name from path: {path:?}");
-                continue;
-            };
-            let directory = dir_name.to_string_lossy().to_string();
-
-            // 更新已安装状态
+            // 更新已安装状态（匹配远程技能）
             let mut found = false;
             for skill in skills.iter_mut() {
-                if skill.directory.eq_ignore_ascii_case(&directory) {
+                if skill.directory.eq_ignore_ascii_case(directory) {
                     skill.installed = true;
                     found = true;
                     break;
@@ -329,23 +358,69 @@ impl SkillService {
 
             // 添加本地独有的技能（仅当在仓库中未找到时）
             if !found {
-                let skill_md = path.join("SKILL.md");
-                if skill_md.exists() {
-                    if let Ok(meta) = self.parse_skill_metadata(&skill_md) {
-                        skills.push(Skill {
-                            key: format!("local:{directory}"),
-                            name: meta.name.unwrap_or_else(|| directory.clone()),
-                            description: meta.description.unwrap_or_default(),
-                            directory: directory.clone(),
-                            readme_url: None,
-                            installed: true,
-                            repo_owner: None,
-                            repo_name: None,
-                            repo_branch: None,
-                            skills_path: None,
-                        });
-                    }
-                }
+                skills.push(local_skill);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 递归扫描本地目录查找 SKILL.md
+    fn scan_local_dir_recursive(
+        &self,
+        current_dir: &Path,
+        base_dir: &Path,
+        skills: &mut Vec<Skill>,
+    ) -> Result<()> {
+        // 检查当前目录是否包含 SKILL.md
+        let skill_md = current_dir.join("SKILL.md");
+
+        if skill_md.exists() {
+            // 发现技能！获取相对路径作为目录名
+            let directory = if current_dir == base_dir {
+                // 如果是 install_dir 本身，使用最后一段路径名
+                current_dir
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                // 使用相对于 install_dir 的路径
+                current_dir
+                    .strip_prefix(base_dir)
+                    .unwrap_or(current_dir)
+                    .to_string_lossy()
+                    .to_string()
+            };
+
+            // 解析元数据并创建本地技能对象
+            if let Ok(meta) = self.parse_skill_metadata(&skill_md) {
+                skills.push(Skill {
+                    key: format!("local:{directory}"),
+                    name: meta.name.unwrap_or_else(|| directory.clone()),
+                    description: meta.description.unwrap_or_default(),
+                    directory: directory.clone(),
+                    readme_url: None,
+                    installed: true,
+                    repo_owner: None,
+                    repo_name: None,
+                    repo_branch: None,
+                    skills_path: None,
+                });
+            }
+
+            // 停止扫描此目录的子目录（同级目录都是功能文件夹）
+            return Ok(());
+        }
+
+        // 未发现 SKILL.md，继续递归扫描所有子目录
+        for entry in fs::read_dir(current_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            // 只处理目录
+            if path.is_dir() {
+                self.scan_local_dir_recursive(&path, base_dir, skills)?;
             }
         }
 

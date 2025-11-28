@@ -226,13 +226,13 @@ impl Database {
         Self::add_column_if_missing(conn, "skills", "installed_at", "INTEGER NOT NULL DEFAULT 0")?;
 
         // skill_repos 表
-        Self::add_column_if_missing(conn, "skill_repos", "branch", "TEXT NOT NULL DEFAULT 'main'")?;
         Self::add_column_if_missing(
             conn,
             "skill_repos",
-            "enabled",
-            "BOOLEAN NOT NULL DEFAULT 1",
+            "branch",
+            "TEXT NOT NULL DEFAULT 'main'",
         )?;
+        Self::add_column_if_missing(conn, "skill_repos", "enabled", "BOOLEAN NOT NULL DEFAULT 1")?;
         Self::add_column_if_missing(conn, "skill_repos", "skills_path", "TEXT")?;
 
         Ok(())
@@ -247,9 +247,7 @@ impl Database {
 
     pub(crate) fn set_user_version(conn: &Connection, version: i32) -> Result<(), AppError> {
         if version < 0 {
-            return Err(AppError::Database(
-                "user_version 不能为负数".to_string(),
-            ));
+            return Err(AppError::Database("user_version 不能为负数".to_string()));
         }
         let sql = format!("PRAGMA user_version = {version};");
         conn.execute(&sql, [])
@@ -261,10 +259,7 @@ impl Database {
         if s.is_empty() {
             return Err(AppError::Database(format!("{kind} 不能为空")));
         }
-        if !s
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
+        if !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(AppError::Database(format!(
                 "非法{kind}: {s}，仅允许字母、数字和下划线"
             )));
@@ -292,7 +287,11 @@ impl Database {
         Ok(false)
     }
 
-    pub(crate) fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, AppError> {
+    pub(crate) fn has_column(
+        conn: &Connection,
+        table: &str,
+        column: &str,
+    ) -> Result<bool, AppError> {
         Self::validate_identifier(table, "表名")?;
         Self::validate_identifier(column, "列名")?;
 

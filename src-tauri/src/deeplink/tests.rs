@@ -307,8 +307,7 @@ fn test_import_prompt_allows_space_in_base64_content() {
     let db = Arc::new(Database::memory().expect("create memory db"));
     let state = AppState::new(db.clone());
 
-    let prompt_id =
-        import_prompt_from_deeplink(&state, request.clone()).expect("import prompt");
+    let prompt_id = import_prompt_from_deeplink(&state, request.clone()).expect("import prompt");
 
     let prompts = state.db.get_prompts("codex").expect("get prompts");
     let prompt = prompts.get(&prompt_id).expect("prompt saved");

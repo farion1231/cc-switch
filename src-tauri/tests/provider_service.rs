@@ -1,13 +1,15 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType,
-    McpApps, McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
+    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
+    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
 };
 
 #[path = "support.rs"]
 mod support;
-use support::{create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex};
+use support::{
+    create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
+};
 
 fn sanitize_provider_name(name: &str) -> String {
     name.chars()
@@ -69,7 +71,10 @@ command = "say"
     }
 
     // 使用新的统一 MCP 结构（v3.7.0+）
-    let servers = initial_config.mcp.servers.get_or_insert_with(Default::default);
+    let servers = initial_config
+        .mcp
+        .servers
+        .get_or_insert_with(Default::default);
     servers.insert(
         "echo-server".into(),
         McpServer {
@@ -111,16 +116,22 @@ command = "say"
         "config.toml should contain synced MCP servers"
     );
 
-    let current_id = state.db.get_current_provider(AppType::Codex.as_str())
+    let current_id = state
+        .db
+        .get_current_provider(AppType::Codex.as_str())
         .expect("read current provider after switch");
-    assert_eq!(current_id.as_deref(), Some("new-provider"), "current provider updated");
+    assert_eq!(
+        current_id.as_deref(),
+        Some("new-provider"),
+        "current provider updated"
+    );
 
-    let providers = state.db.get_all_providers(AppType::Codex.as_str())
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
         .expect("read providers after switch");
 
-    let new_provider = providers
-        .get("new-provider")
-        .expect("new provider exists");
+    let new_provider = providers.get("new-provider").expect("new provider exists");
     let new_config_text = new_provider
         .settings_config
         .get("config")
@@ -385,11 +396,19 @@ fn provider_service_switch_claude_updates_live_and_state() {
         "live settings.json should reflect new provider auth"
     );
 
-    let providers = state.db.get_all_providers(AppType::Claude.as_str())
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
         .expect("get all providers");
-    let current_id = state.db.get_current_provider(AppType::Claude.as_str())
+    let current_id = state
+        .db
+        .get_current_provider(AppType::Claude.as_str())
         .expect("get current provider");
-    assert_eq!(current_id.as_deref(), Some("new-provider"), "current provider updated");
+    assert_eq!(
+        current_id.as_deref(),
+        Some("new-provider"),
+        "current provider updated"
+    );
 
     let legacy_provider = providers
         .get("old-provider")
@@ -509,7 +528,9 @@ fn provider_service_delete_codex_removes_provider_and_files() {
     ProviderService::delete(&app_state, AppType::Codex, "to-delete")
         .expect("delete provider should succeed");
 
-    let providers = app_state.db.get_all_providers(AppType::Codex.as_str())
+    let providers = app_state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
         .expect("get all providers");
     assert!(
         !providers.contains_key("to-delete"),
@@ -567,7 +588,9 @@ fn provider_service_delete_claude_removes_provider_files() {
 
     ProviderService::delete(&app_state, AppType::Claude, "delete").expect("delete claude provider");
 
-    let providers = app_state.db.get_all_providers(AppType::Claude.as_str())
+    let providers = app_state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
         .expect("get all providers");
     assert!(
         !providers.contains_key("delete"),
@@ -608,15 +631,18 @@ fn provider_service_delete_current_provider_returns_error() {
         .expect_err("deleting current provider should fail");
     match err {
         AppError::Localized { zh, .. } => assert!(
-            zh.contains("不能删除当前正在使用的供应商") || zh.contains("无法删除当前正在使用的供应商"),
+            zh.contains("不能删除当前正在使用的供应商")
+                || zh.contains("无法删除当前正在使用的供应商"),
             "unexpected message: {zh}"
         ),
         AppError::Config(msg) => assert!(
-            msg.contains("不能删除当前正在使用的供应商") || msg.contains("无法删除当前正在使用的供应商"),
+            msg.contains("不能删除当前正在使用的供应商")
+                || msg.contains("无法删除当前正在使用的供应商"),
             "unexpected message: {msg}"
         ),
         AppError::Message(msg) => assert!(
-            msg.contains("不能删除当前正在使用的供应商") || msg.contains("无法删除当前正在使用的供应商"),
+            msg.contains("不能删除当前正在使用的供应商")
+                || msg.contains("无法删除当前正在使用的供应商"),
             "unexpected message: {msg}"
         ),
         other => panic!("expected Config/Message error, got {other:?}"),

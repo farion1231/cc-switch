@@ -223,11 +223,9 @@ fn create_tray_menu(
         let providers = app_state.db.get_all_providers(app_type_str)?;
 
         // 使用有效的当前供应商 ID（验证存在性，自动清理失效 ID）
-        let current_id = crate::settings::get_effective_current_provider(
-            &app_state.db,
-            &section.app_type,
-        )?
-        .unwrap_or_default();
+        let current_id =
+            crate::settings::get_effective_current_provider(&app_state.db, &section.app_type)?
+                .unwrap_or_default();
 
         let manager = crate::provider::ProviderManager {
             providers,
@@ -1033,21 +1031,19 @@ fn show_migration_error_dialog(app: &tauri::AppHandle, error: &str) -> bool {
 
     let message = if is_chinese_locale() {
         format!(
-            "从旧版本迁移配置时发生错误：\n\n{}\n\n\
+            "从旧版本迁移配置时发生错误：\n\n{error}\n\n\
             您的数据尚未丢失，旧配置文件仍然保留。\n\
             建议回退到旧版本 CC Switch 以保护数据。\n\n\
             点击「重试」重新尝试迁移\n\
-            点击「退出」关闭程序（可回退版本后重新打开）",
-            error
+            点击「退出」关闭程序（可回退版本后重新打开）"
         )
     } else {
         format!(
-            "An error occurred while migrating configuration:\n\n{}\n\n\
+            "An error occurred while migrating configuration:\n\n{error}\n\n\
             Your data is NOT lost - the old config file is still preserved.\n\
             Consider rolling back to an older CC Switch version.\n\n\
             Click 'Retry' to attempt migration again\n\
-            Click 'Exit' to close the program",
-            error
+            Click 'Exit' to close the program"
         )
     };
 

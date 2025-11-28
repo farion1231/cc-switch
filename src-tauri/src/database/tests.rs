@@ -108,8 +108,8 @@ fn migration_rejects_future_version() {
     Database::create_tables_on_conn(&conn).expect("create tables");
     Database::set_user_version(&conn, SCHEMA_VERSION + 1).expect("set future version");
 
-    let err = Database::apply_schema_migrations_on_conn(&conn)
-        .expect_err("should reject higher version");
+    let err =
+        Database::apply_schema_migrations_on_conn(&conn).expect_err("should reject higher version");
     assert!(
         err.to_string().contains("数据库版本过新"),
         "unexpected error: {err}"
@@ -168,10 +168,7 @@ fn migration_aligns_column_defaults_and_types() {
     let is_current = get_column_info(&conn, "providers", "is_current");
     assert_eq!(is_current.r#type, "BOOLEAN");
     assert_eq!(is_current.notnull, 1);
-    assert_eq!(
-        normalize_default(&is_current.default).as_deref(),
-        Some("0")
-    );
+    assert_eq!(normalize_default(&is_current.default).as_deref(), Some("0"));
 
     let tags = get_column_info(&conn, "mcp_servers", "tags");
     assert_eq!(tags.r#type, "TEXT");
@@ -181,10 +178,7 @@ fn migration_aligns_column_defaults_and_types() {
     let enabled = get_column_info(&conn, "prompts", "enabled");
     assert_eq!(enabled.r#type, "BOOLEAN");
     assert_eq!(enabled.notnull, 1);
-    assert_eq!(
-        normalize_default(&enabled.default).as_deref(),
-        Some("1")
-    );
+    assert_eq!(normalize_default(&enabled.default).as_deref(), Some("1"));
 
     let installed_at = get_column_info(&conn, "skills", "installed_at");
     assert_eq!(installed_at.r#type, "INTEGER");

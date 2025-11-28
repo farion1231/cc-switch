@@ -100,12 +100,13 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             write_json_file(&path, &provider.settings_config)?;
         }
         AppType::Codex => {
-            let obj = provider.settings_config.as_object().ok_or_else(|| {
-                AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string())
-            })?;
-            let auth = obj.get("auth").ok_or_else(|| {
-                AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string())
-            })?;
+            let obj = provider
+                .settings_config
+                .as_object()
+                .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
+            let auth = obj
+                .get("auth")
+                .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
             let config_str = obj.get("config").and_then(|v| v.as_str()).ok_or_else(|| {
                 AppError::Config("Codex 供应商配置缺少 'config' 字段或不是字符串".to_string())
             })?;
@@ -113,8 +114,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let auth_path = get_codex_auth_path();
             write_json_file(&auth_path, auth)?;
             let config_path = get_codex_config_path();
-            std::fs::write(&config_path, config_str)
-                .map_err(|e| AppError::io(&config_path, e))?;
+            std::fs::write(&config_path, config_str).map_err(|e| AppError::io(&config_path, e))?;
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
@@ -132,11 +132,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
         // Use validated effective current provider
-        let current_id = match crate::settings::get_effective_current_provider(&state.db, &app_type)?
-        {
-            Some(id) => id,
-            None => continue,
-        };
+        let current_id =
+            match crate::settings::get_effective_current_provider(&state.db, &app_type)? {
+                Some(id) => id,
+                None => continue,
+            };
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {

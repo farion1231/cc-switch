@@ -7,8 +7,8 @@ use cc_switch_lib::{
 
 #[path = "support.rs"]
 mod support;
-use support::{create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex};
 use std::collections::HashMap;
+use support::{create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex};
 
 #[test]
 fn switch_provider_updates_codex_live_and_state() {
@@ -104,16 +104,22 @@ command = "say"
         "config.toml should contain synced MCP servers"
     );
 
-    let current_id = app_state.db.get_current_provider(AppType::Codex.as_str())
+    let current_id = app_state
+        .db
+        .get_current_provider(AppType::Codex.as_str())
         .expect("get current provider");
-    assert_eq!(current_id.as_deref(), Some("new-provider"), "current provider updated");
+    assert_eq!(
+        current_id.as_deref(),
+        Some("new-provider"),
+        "current provider updated"
+    );
 
-    let providers = app_state.db.get_all_providers(AppType::Codex.as_str())
+    let providers = app_state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
         .expect("get all providers");
 
-    let new_provider = providers
-        .get("new-provider")
-        .expect("new provider exists");
+    let new_provider = providers.get("new-provider").expect("new provider exists");
     let new_config_text = new_provider
         .settings_config
         .get("config")
@@ -165,7 +171,9 @@ fn switch_provider_missing_provider_returns_error() {
 
     let err_str = err.to_string();
     assert!(
-        err_str.contains("供应商不存在") || err_str.contains("Provider not found") || err_str.contains("missing-provider"),
+        err_str.contains("供应商不存在")
+            || err_str.contains("Provider not found")
+            || err_str.contains("missing-provider"),
         "error message should mention missing provider, got: {err_str}"
     );
 }
@@ -241,11 +249,19 @@ fn switch_provider_updates_claude_live_and_state() {
         "live settings.json should reflect new provider auth"
     );
 
-    let current_id = app_state.db.get_current_provider(AppType::Claude.as_str())
+    let current_id = app_state
+        .db
+        .get_current_provider(AppType::Claude.as_str())
         .expect("get current provider");
-    assert_eq!(current_id.as_deref(), Some("new-provider"), "current provider updated");
+    assert_eq!(
+        current_id.as_deref(),
+        Some("new-provider"),
+        "current provider updated"
+    );
 
-    let providers = app_state.db.get_all_providers(AppType::Claude.as_str())
+    let providers = app_state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
         .expect("get all providers");
 
     let legacy_provider = providers
@@ -258,9 +274,7 @@ fn switch_provider_updates_claude_live_and_state() {
         "previous provider should be backfilled with live config"
     );
 
-    let new_provider = providers
-        .get("new-provider")
-        .expect("new provider exists");
+    let new_provider = providers.get("new-provider").expect("new provider exists");
     assert_eq!(
         new_provider
             .settings_config
@@ -283,7 +297,9 @@ fn switch_provider_updates_claude_live_and_state() {
     );
 
     // 验证当前供应商已更新
-    let current_id = app_state.db.get_current_provider(AppType::Claude.as_str())
+    let current_id = app_state
+        .db
+        .get_current_provider(AppType::Claude.as_str())
         .expect("get current provider");
     assert_eq!(
         current_id.as_deref(),
@@ -328,7 +344,9 @@ fn switch_provider_codex_missing_auth_returns_error_and_keeps_state() {
         other => panic!("expected config error, got {other:?}"),
     }
 
-    let current_id = app_state.db.get_current_provider(AppType::Codex.as_str())
+    let current_id = app_state
+        .db
+        .get_current_provider(AppType::Codex.as_str())
         .expect("get current provider");
     // 切换失败后，由于数据库操作是先设置再验证，current 可能已被设为 "invalid"
     // 但由于 live 配置写入失败，状态应该回滚

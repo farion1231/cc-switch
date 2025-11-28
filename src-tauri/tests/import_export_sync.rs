@@ -3,13 +3,15 @@ use std::fs;
 use std::path::PathBuf;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, AppError, AppType, ConfigService,
-    MultiAppConfig, Provider, ProviderMeta,
+    get_claude_settings_path, read_json_file, AppError, AppType, ConfigService, MultiAppConfig,
+    Provider, ProviderMeta,
 };
 
 #[path = "support.rs"]
 mod support;
-use support::{create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex};
+use support::{
+    create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
+};
 
 #[test]
 fn sync_claude_provider_writes_live_settings() {

@@ -42,9 +42,13 @@ fn import_default_config_claude_persists_provider() {
         .expect("import default config succeeds");
 
     // 验证内存状态
-    let providers = state.db.get_all_providers(AppType::Claude.as_str())
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
         .expect("get all providers");
-    let current_id = state.db.get_current_provider(AppType::Claude.as_str())
+    let current_id = state
+        .db
+        .get_current_provider(AppType::Claude.as_str())
         .expect("get current provider");
     assert_eq!(current_id.as_deref(), Some("default"));
     let default_provider = providers.get("default").expect("default provider");
@@ -87,7 +91,9 @@ fn import_default_config_without_live_file_returns_error() {
 
     // 使用数据库架构，不再检查 config.json
     // 失败的导入不应该向数据库写入任何供应商
-    let providers = state.db.get_all_providers(AppType::Claude.as_str())
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
         .expect("get all providers");
     assert!(
         providers.is_empty(),
@@ -125,8 +131,7 @@ fn import_mcp_from_claude_creates_config_and_enables_servers() {
         "import should report inserted or normalized entries"
     );
 
-    let servers = state.db.get_all_mcp_servers()
-        .expect("get all mcp servers");
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
     let entry = servers
         .get("echo")
         .expect("server imported into unified structure");
@@ -168,8 +173,7 @@ fn import_mcp_from_claude_invalid_json_preserves_state() {
     }
 
     // 使用数据库架构，检查 MCP 服务器未被写入
-    let servers = state.db.get_all_mcp_servers()
-        .expect("get all mcp servers");
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
     assert!(
         servers.is_empty(),
         "failed import should not persist any MCP servers to database"
@@ -224,11 +228,8 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
     McpService::toggle_app(&state, "codex-server", AppType::Codex, true)
         .expect("toggle_app should succeed");
 
-    let servers = state.db.get_all_mcp_servers()
-        .expect("get all mcp servers");
-    let entry = servers
-        .get("codex-server")
-        .expect("codex server exists");
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers.get("codex-server").expect("codex server exists");
     assert!(
         entry.apps.codex,
         "server should have Codex app enabled after toggle"

@@ -153,12 +153,14 @@ impl Database {
         tx: &rusqlite::Transaction<'_>,
         config: &MultiAppConfig,
     ) -> Result<(), AppError> {
-        let migrate_app_prompts =
-            |prompts_map: &std::collections::HashMap<String, crate::prompt::Prompt>,
-             app_type: &str|
-             -> Result<(), AppError> {
-                for (id, prompt) in prompts_map {
-                    tx.execute(
+        let migrate_app_prompts = |prompts_map: &std::collections::HashMap<
+            String,
+            crate::prompt::Prompt,
+        >,
+                                   app_type: &str|
+         -> Result<(), AppError> {
+            for (id, prompt) in prompts_map {
+                tx.execute(
                         "INSERT OR REPLACE INTO prompts (
                             id, app_type, name, content, description, enabled, created_at, updated_at
                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -174,9 +176,9 @@ impl Database {
                         ],
                     )
                     .map_err(|e| AppError::Database(format!("Migrate prompt failed: {e}")))?;
-                }
-                Ok(())
-            };
+            }
+            Ok(())
+        };
 
         migrate_app_prompts(&config.prompts.claude.prompts, "claude")?;
         migrate_app_prompts(&config.prompts.codex.prompts, "codex")?;
