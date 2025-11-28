@@ -34,9 +34,6 @@ pub struct Skill {
     /// 分支名称
     #[serde(rename = "repoBranch")]
     pub repo_branch: Option<String>,
-    /// 技能所在的子目录路径 (可选, 如 "skills")
-    #[serde(rename = "skillsPath")]
-    pub skills_path: Option<String>,
 }
 
 /// 仓库配置
@@ -50,9 +47,6 @@ pub struct SkillRepo {
     pub branch: String,
     /// 是否启用
     pub enabled: bool,
-    /// 技能所在的子目录路径 (可选, 如 "skills", "my-skills/subdir")
-    #[serde(rename = "skillsPath")]
-    pub skills_path: Option<String>,
 }
 
 /// 技能安装状态
@@ -84,21 +78,18 @@ impl Default for SkillStore {
                     name: "awesome-claude-skills".to_string(),
                     branch: "main".to_string(),
                     enabled: true,
-                    skills_path: None, // 扫描根目录
                 },
                 SkillRepo {
                     owner: "anthropics".to_string(),
                     name: "skills".to_string(),
                     branch: "main".to_string(),
                     enabled: true,
-                    skills_path: None, // 扫描根目录
                 },
                 SkillRepo {
                     owner: "cexll".to_string(),
                     name: "myclaude".to_string(),
                     branch: "master".to_string(),
                     enabled: true,
-                    skills_path: Some("skills".to_string()), // 扫描 skills 子目录
                 },
             ],
         }
@@ -194,25 +185,8 @@ impl SkillService {
             })??;
         let mut skills = Vec::new();
 
-        // 确定要扫描的目录路径
-        let scan_dir = if let Some(ref skills_path) = repo.skills_path {
-            // 如果指定了 skillsPath，则扫描该子目录
-            let subdir = temp_dir.join(skills_path.trim_matches('/'));
-            if !subdir.exists() {
-                log::warn!(
-                    "仓库 {}/{} 中指定的技能路径 '{}' 不存在",
-                    repo.owner,
-                    repo.name,
-                    skills_path
-                );
-                let _ = fs::remove_dir_all(&temp_dir);
-                return Ok(skills);
-            }
-            subdir
-        } else {
-            // 否则扫描仓库根目录
-            temp_dir.clone()
-        };
+        // 扫描仓库根目录（支持全仓库递归扫描）
+        let scan_dir = temp_dir.clone();
 
         // 递归扫描目录查找所有技能
         self.scan_dir_recursive(&scan_dir, &scan_dir, repo, &mut skills)?;
@@ -284,11 +258,7 @@ impl SkillService {
         let meta = self.parse_skill_metadata(skill_md)?;
 
         // 构建 README URL
-        let readme_path = if let Some(ref skills_path) = repo.skills_path {
-            format!("{}/{}", skills_path.trim_matches('/'), directory)
-        } else {
-            directory.to_string()
-        };
+        let readme_path = directory.to_string();
 
         Ok(Skill {
             key: format!("{}/{}:{}", repo.owner, repo.name, directory),
@@ -303,7 +273,6 @@ impl SkillService {
             repo_owner: Some(repo.owner.clone()),
             repo_name: Some(repo.name.clone()),
             repo_branch: Some(repo.branch.clone()),
-            skills_path: repo.skills_path.clone(),
         })
     }
 
@@ -405,7 +374,6 @@ impl SkillService {
                     repo_owner: None,
                     repo_name: None,
                     repo_branch: None,
-                    skills_path: None,
                 });
             }
 
@@ -574,16 +542,8 @@ impl SkillService {
             ))
         })??;
 
-        // 根据 skills_path 确定源目录路径
-        let source = if let Some(ref skills_path) = repo.skills_path {
-            // 如果指定了 skills_path，源路径为: temp_dir/skills_path/directory
-            temp_dir
-                .join(skills_path.trim_matches('/'))
-                .join(&directory)
-        } else {
-            // 否则源路径为: temp_dir/directory
-            temp_dir.join(&directory)
-        };
+        // 确定源目录路径（技能相对于仓库根目录的路径）
+        let source = temp_dir.join(&directory);
 
         if !source.exists() {
             let _ = fs::remove_dir_all(&temp_dir);

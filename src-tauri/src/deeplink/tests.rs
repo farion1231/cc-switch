@@ -142,7 +142,6 @@ fn test_build_gemini_provider_with_model() {
         repo: None,
         directory: None,
         branch: None,
-        skills_path: None,
         content: None,
         description: None,
         enabled: None,
@@ -189,7 +188,6 @@ fn test_build_gemini_provider_without_model() {
         repo: None,
         directory: None,
         branch: None,
-        skills_path: None,
         content: None,
         description: None,
         enabled: None,
@@ -231,7 +229,6 @@ fn test_parse_and_merge_config_claude() {
         repo: None,
         directory: None,
         branch: None,
-        skills_path: None,
         content: None,
         description: None,
         enabled: None,
@@ -275,7 +272,6 @@ fn test_parse_and_merge_config_url_override() {
         repo: None,
         directory: None,
         branch: None,
-        skills_path: None,
         content: None,
         description: None,
         enabled: None,
@@ -372,12 +368,11 @@ fn test_parse_mcp_deeplink() {
 
 #[test]
 fn test_parse_skill_deeplink() {
-    let url = "ccswitch://v1/import?resource=skill&repo=owner/repo&directory=skills&branch=dev&skills_path=src";
+    let url = "ccswitch://v1/import?resource=skill&repo=owner/repo&directory=skills&branch=dev";
     let request = parse_deeplink_url(&url).unwrap();
 
     assert_eq!(request.resource, "skill");
     assert_eq!(request.repo.unwrap(), "owner/repo");
     assert_eq!(request.directory.unwrap(), "skills");
     assert_eq!(request.branch.unwrap(), "dev");
-    assert_eq!(request.skills_path.unwrap(), "src");
 }

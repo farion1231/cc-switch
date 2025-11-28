@@ -26,7 +26,6 @@ export function RepoManagerPanel({
   const { t } = useTranslation();
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
-  const [skillsPath, setSkillsPath] = useState("");
   const [error, setError] = useState("");
 
   const getSkillCount = (repo: SkillRepo) =>
@@ -67,12 +66,10 @@ export function RepoManagerPanel({
         name: parsed.name,
         branch: branch || "main",
         enabled: true,
-        skillsPath: skillsPath.trim() || undefined,
       });
 
       setRepoUrl("");
       setBranch("");
-      setSkillsPath("");
     } catch (e) {
       setError(e instanceof Error ? e.message : t("skills.repo.addFailed"));
     }
@@ -110,31 +107,17 @@ export function RepoManagerPanel({
               className="mt-2"
             />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="branch" className="text-foreground">
-                {t("skills.repo.branch")}
-              </Label>
-              <Input
-                id="branch"
-                placeholder={t("skills.repo.branchPlaceholder")}
-                value={branch}
-                onChange={(e) => setBranch(e.target.value)}
-                className="mt-2"
-              />
-            </div>
-            <div>
-              <Label htmlFor="skills-path" className="text-foreground">
-                {t("skills.repo.path")}
-              </Label>
-              <Input
-                id="skills-path"
-                placeholder={t("skills.repo.pathPlaceholder")}
-                value={skillsPath}
-                onChange={(e) => setSkillsPath(e.target.value)}
-                className="mt-2"
-              />
-            </div>
+          <div>
+            <Label htmlFor="branch" className="text-foreground">
+              {t("skills.repo.branch")}
+            </Label>
+            <Input
+              id="branch"
+              placeholder={t("skills.repo.branchPlaceholder")}
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+              className="mt-2"
+            />
           </div>
           {error && (
             <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
@@ -174,12 +157,6 @@ export function RepoManagerPanel({
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
                     {t("skills.repo.branch")}: {repo.branch || "main"}
-                    {repo.skillsPath && (
-                      <>
-                        <span className="mx-2">•</span>
-                        {t("skills.repo.path")}: {repo.skillsPath}
-                      </>
-                    )}
                     <span className="ml-3 inline-flex items-center rounded-full border border-border-default px-2 py-0.5 text-[11px]">
                       {t("skills.repo.skillCount", {
                         count: getSkillCount(repo),

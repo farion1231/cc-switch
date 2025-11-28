@@ -58,7 +58,9 @@ impl Database {
     pub fn get_skill_repos(&self) -> Result<Vec<SkillRepo>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
-            .prepare("SELECT owner, name, branch, enabled, skills_path FROM skill_repos ORDER BY owner ASC, name ASC")
+            .prepare(
+                "SELECT owner, name, branch, enabled FROM skill_repos ORDER BY owner ASC, name ASC",
+            )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let repo_iter = stmt
@@ -68,7 +70,6 @@ impl Database {
                     name: row.get(1)?,
                     branch: row.get(2)?,
                     enabled: row.get(3)?,
-                    skills_path: row.get(4)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -84,8 +85,8 @@ impl Database {
     pub fn save_skill_repo(&self, repo: &SkillRepo) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled, skills_path) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![repo.owner, repo.name, repo.branch, repo.enabled, repo.skills_path],
+            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled) VALUES (?1, ?2, ?3, ?4)",
+            params![repo.owner, repo.name, repo.branch, repo.enabled],
         ).map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }

@@ -104,7 +104,6 @@ impl Database {
                 name TEXT NOT NULL,
                 branch TEXT NOT NULL DEFAULT 'main',
                 enabled BOOLEAN NOT NULL DEFAULT 1,
-                skills_path TEXT,
                 PRIMARY KEY (owner, name)
             )",
             [],
@@ -233,7 +232,7 @@ impl Database {
             "TEXT NOT NULL DEFAULT 'main'",
         )?;
         Self::add_column_if_missing(conn, "skill_repos", "enabled", "BOOLEAN NOT NULL DEFAULT 1")?;
-        Self::add_column_if_missing(conn, "skill_repos", "skills_path", "TEXT")?;
+        // 注意: skills_path 字段已被移除，因为现在支持全仓库递归扫描
 
         Ok(())
     }

@@ -33,7 +33,6 @@ export interface DeepLinkImportRequest {
   repo?: string;
   directory?: string;
   branch?: string;
-  skillsPath?: string;
 
   // Config file fields
   config?: string;

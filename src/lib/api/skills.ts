@@ -10,7 +10,6 @@ export interface Skill {
   repoOwner?: string;
   repoName?: string;
   repoBranch?: string;
-  skillsPath?: string; // 技能所在的子目录路径，如 "skills"
 }
 
 export interface SkillRepo {
@@ -18,7 +17,6 @@ export interface SkillRepo {
   name: string;
   branch: string;
   enabled: boolean;
-  skillsPath?: string; // 可选：技能所在的子目录路径，如 "skills"
 }
 
 export const skillsApi = {

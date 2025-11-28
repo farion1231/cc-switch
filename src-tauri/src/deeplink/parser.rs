@@ -143,7 +143,6 @@ fn parse_provider_deeplink(
         repo: None,
         directory: None,
         branch: None,
-        skills_path: None,
         config,
         config_format,
         config_url,
@@ -204,7 +203,6 @@ fn parse_prompt_deeplink(
         repo: None,
         directory: None,
         branch: None,
-        skills_path: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -262,7 +260,6 @@ fn parse_mcp_deeplink(
         repo: None,
         directory: None,
         branch: None,
-        skills_path: None,
         config_url: None,
     })
 }
@@ -287,10 +284,6 @@ fn parse_skill_deeplink(
 
     let directory = params.get("directory").cloned();
     let branch = params.get("branch").cloned();
-    let skills_path = params
-        .get("skills_path")
-        .or_else(|| params.get("skillsPath"))
-        .cloned();
 
     Ok(DeepLinkImportRequest {
         version,
@@ -298,7 +291,6 @@ fn parse_skill_deeplink(
         repo: Some(repo),
         directory,
         branch,
-        skills_path,
         icon: None,
         app: Some("claude".to_string()), // Skills are Claude-only
         name: None,

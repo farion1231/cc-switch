@@ -100,12 +100,8 @@ pub struct DeepLinkImportRequest {
     /// Skill directory name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub directory: Option<String>,
-    /// Repository branch (default: "main")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
-    /// Skills subdirectory path (e.g., "skills")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub skills_path: Option<String>,
 
     // ============ Config file fields (v3.8+) ============
     /// Base64 encoded config content

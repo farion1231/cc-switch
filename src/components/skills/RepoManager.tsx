@@ -34,7 +34,6 @@ export function RepoManager({
   const { t } = useTranslation();
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
-  const [skillsPath, setSkillsPath] = useState("");
   const [error, setError] = useState("");
 
   const getSkillCount = (repo: SkillRepo) =>
@@ -80,12 +79,10 @@ export function RepoManager({
         name: parsed.name,
         branch: branch || "main",
         enabled: true,
-        skillsPath: skillsPath.trim() || undefined, // 仅在有值时传递
       });
 
       setRepoUrl("");
       setBranch("");
-      setSkillsPath("");
     } catch (e) {
       setError(e instanceof Error ? e.message : t("skills.repo.addFailed"));
     }
@@ -130,13 +127,6 @@ export function RepoManager({
                     onChange={(e) => setBranch(e.target.value)}
                     className="flex-1"
                   />
-                  <Input
-                    id="skills-path"
-                    placeholder={t("skills.repo.pathPlaceholder")}
-                    value={skillsPath}
-                    onChange={(e) => setSkillsPath(e.target.value)}
-                    className="flex-1"
-                  />
                   <Button
                     onClick={handleAdd}
                     className="w-full sm:w-auto sm:px-4"
@@ -171,12 +161,6 @@ export function RepoManager({
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {t("skills.repo.branch")}: {repo.branch || "main"}
-                          {repo.skillsPath && (
-                            <>
-                              <span className="mx-2">•</span>
-                              {t("skills.repo.path")}: {repo.skillsPath}
-                            </>
-                          )}
                           <span className="ml-3 inline-flex items-center rounded-full border border-border-default px-2 py-0.5 text-[11px]">
                             {t("skills.repo.skillCount", {
                               count: getSkillCount(repo),

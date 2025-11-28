@@ -30,22 +30,11 @@ export function SkillConfirmation({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-muted-foreground">
-            {t("deeplink.skill.branch")}
-          </label>
-          <div className="mt-1 text-sm">{request.branch || "main"}</div>
-        </div>
-
-        {request.skillsPath && (
-          <div>
-            <label className="block text-sm font-medium text-muted-foreground">
-              {t("deeplink.skill.skillsPath")}
-            </label>
-            <div className="mt-1 text-sm">{request.skillsPath}</div>
-          </div>
-        )}
+      <div>
+        <label className="block text-sm font-medium text-muted-foreground">
+          {t("deeplink.skill.branch")}
+        </label>
+        <div className="mt-1 text-sm">{request.branch || "main"}</div>
       </div>
 
       <div className="text-blue-600 dark:text-blue-400 text-sm bg-blue-50 dark:bg-blue-950/30 p-3 rounded border border-blue-200 dark:border-blue-800">
