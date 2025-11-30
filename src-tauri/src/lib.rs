@@ -17,6 +17,7 @@ mod prompt;
 mod prompt_files;
 mod provider;
 mod provider_defaults;
+mod proxy;
 mod services;
 mod settings;
 mod store;
@@ -521,6 +522,28 @@ pub fn run() {
                 }
             }
 
+            // 自动启动代理服务器
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app_handle.state::<AppState>();
+                match state.db.get_proxy_config().await {
+                    Ok(config) => {
+                        if config.enabled {
+                            log::info!("代理服务配置为启用，正在启动...");
+                            match state.proxy_service.start().await {
+                                Ok(info) => log::info!(
+                                    "代理服务器自动启动成功: {}:{}",
+                                    info.address,
+                                    info.port
+                                ),
+                                Err(e) => log::error!("代理服务器自动启动失败: {e}"),
+                            }
+                        }
+                    }
+                    Err(e) => log::error!("启动时获取代理配置失败: {e}"),
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -530,6 +553,7 @@ pub fn run() {
             commands::update_provider,
             commands::delete_provider,
             commands::switch_provider,
+            commands::set_proxy_target_provider,
             commands::import_default_config,
             commands::get_claude_config_status,
             commands::get_config_status,
@@ -619,6 +643,13 @@ pub fn run() {
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,
+            // Proxy server management
+            commands::start_proxy_server,
+            commands::stop_proxy_server,
+            commands::get_proxy_status,
+            commands::get_proxy_config,
+            commands::update_proxy_config,
+            commands::is_proxy_running,
         ]);
 
     let app = builder

@@ -86,6 +86,19 @@ pub fn switch_provider(
         .map_err(|e| e.to_string())
 }
 
+/// 设置代理目标供应商
+#[tauri::command]
+pub fn set_proxy_target_provider(
+    state: State<'_, AppState>,
+    app: String,
+    id: String,
+) -> Result<bool, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    ProviderService::set_proxy_target(state.inner(), app_type, &id)
+        .map(|_| true)
+        .map_err(|e| e.to_string())
+}
+
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
     ProviderService::import_default_config(state, app_type)
 }

@@ -9,6 +9,7 @@ mod misc;
 mod plugin;
 mod prompt;
 mod provider;
+mod proxy;
 mod settings;
 pub mod skill;
 
@@ -21,5 +22,6 @@ pub use misc::*;
 pub use plugin::*;
 pub use prompt::*;
 pub use provider::*;
+pub use proxy::*;
 pub use settings::*;
 pub use skill::*;

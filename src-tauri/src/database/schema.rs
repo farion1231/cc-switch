@@ -31,11 +31,18 @@ impl Database {
                 icon_color TEXT,
                 meta TEXT NOT NULL DEFAULT '{}',
                 is_current BOOLEAN NOT NULL DEFAULT 0,
+                is_proxy_target BOOLEAN NOT NULL DEFAULT 0,
                 PRIMARY KEY (id, app_type)
             )",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 尝试添加 is_proxy_target 列（如果表已存在但缺少该列）
+        let _ = conn.execute(
+            "ALTER TABLE providers ADD COLUMN is_proxy_target BOOLEAN NOT NULL DEFAULT 0",
+            [],
+        );
 
         // 2. Provider Endpoints 表
         conn.execute(
@@ -116,6 +123,83 @@ impl Database {
                 key TEXT PRIMARY KEY,
                 value TEXT
             )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 8. Proxy Config 表 (代理服务器配置)
+        // 代理配置表（单例）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS proxy_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 5000,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                request_timeout INTEGER NOT NULL DEFAULT 300,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                target_app TEXT NOT NULL DEFAULT 'claude',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 尝试添加 target_app 列（如果表已存在但缺少该列）
+        // 忽略 "duplicate column name" 错误
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN target_app TEXT NOT NULL DEFAULT 'claude'",
+            [],
+        );
+
+        // 9. Provider Health 表 (Provider健康状态)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS provider_health (
+                provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                is_healthy INTEGER NOT NULL DEFAULT 1,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                last_success_at TEXT,
+                last_failure_at TEXT,
+                last_error TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (provider_id, app_type),
+                FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 10. Proxy Usage 表 (代理使用统计，可选)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS proxy_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                request_tokens INTEGER,
+                response_tokens INTEGER,
+                status_code INTEGER NOT NULL,
+                latency_ms INTEGER NOT NULL,
+                error TEXT,
+                timestamp TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 为 proxy_usage 创建索引
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_proxy_usage_timestamp
+             ON proxy_usage(timestamp)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_proxy_usage_provider
+             ON proxy_usage(provider_id, app_type)",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

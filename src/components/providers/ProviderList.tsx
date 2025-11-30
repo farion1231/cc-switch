@@ -24,6 +24,7 @@ interface ProviderListProps {
   onOpenWebsite: (url: string) => void;
   onCreate?: () => void;
   isLoading?: boolean;
+  onSetProxyTarget: (provider: Provider) => void;
 }
 
 export function ProviderList({
@@ -38,6 +39,7 @@ export function ProviderList({
   onOpenWebsite,
   onCreate,
   isLoading = false,
+  onSetProxyTarget,
 }: ProviderListProps) {
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
@@ -87,6 +89,7 @@ export function ProviderList({
               onDuplicate={onDuplicate}
               onConfigureUsage={onConfigureUsage}
               onOpenWebsite={onOpenWebsite}
+              onSetProxyTarget={onSetProxyTarget}
             />
           ))}
         </div>
@@ -105,6 +108,7 @@ interface SortableProviderCardProps {
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
+  onSetProxyTarget: (provider: Provider) => void;
 }
 
 function SortableProviderCard({
@@ -117,6 +121,7 @@ function SortableProviderCard({
   onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
+  onSetProxyTarget,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -146,6 +151,7 @@ function SortableProviderCard({
           onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
         }
         onOpenWebsite={onOpenWebsite}
+        onSetProxyTarget={onSetProxyTarget}
         dragHandleProps={{
           attributes,
           listeners,

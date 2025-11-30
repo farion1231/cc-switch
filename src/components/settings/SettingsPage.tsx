@@ -17,6 +17,7 @@ import { WindowSettings } from "@/components/settings/WindowSettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { AboutSection } from "@/components/settings/AboutSection";
+import { ProxyPanel } from "@/components/proxy";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
 import { useTranslation } from "react-i18next";
@@ -205,6 +206,10 @@ export function SettingsPage({
                     onBrowseDirectory={browseDirectory}
                     onResetDirectory={resetDirectory}
                   />
+
+                  {/* 代理服务面板 */}
+                  <ProxyPanel />
+
                   <ImportExportSection
                     status={importStatus}
                     selectedFile={selectedFile}

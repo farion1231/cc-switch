@@ -217,6 +217,18 @@ impl ProviderService {
         Ok(())
     }
 
+    /// Set proxy target provider
+    pub fn set_proxy_target(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+        // Check if provider exists
+        let providers = state.db.get_all_providers(app_type.as_str())?;
+        if !providers.contains_key(id) {
+            return Err(AppError::Message(format!("供应商 {id} 不存在")));
+        }
+
+        state.db.set_proxy_target_provider(app_type.as_str(), id)?;
+        Ok(())
+    }
+
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)

@@ -9,6 +9,7 @@ import {
   useUpdateProviderMutation,
   useDeleteProviderMutation,
   useSwitchProviderMutation,
+  useSetProxyTargetMutation,
 } from "@/lib/query";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
@@ -24,6 +25,7 @@ export function useProviderActions(activeApp: AppId) {
   const updateProviderMutation = useUpdateProviderMutation(activeApp);
   const deleteProviderMutation = useDeleteProviderMutation(activeApp);
   const switchProviderMutation = useSwitchProviderMutation(activeApp);
+  const setProxyTargetMutation = useSetProxyTargetMutation(activeApp);
 
   // Claude 插件同步逻辑
   const syncClaudePlugin = useCallback(
@@ -91,6 +93,14 @@ export function useProviderActions(activeApp: AppId) {
     [switchProviderMutation, syncClaudePlugin],
   );
 
+  // 设置代理目标
+  const setProxyTarget = useCallback(
+    async (provider: Provider) => {
+      await setProxyTargetMutation.mutateAsync(provider.id);
+    },
+    [setProxyTargetMutation],
+  );
+
   // 删除供应商
   const deleteProvider = useCallback(
     async (id: string) => {
@@ -136,12 +146,14 @@ export function useProviderActions(activeApp: AppId) {
     addProvider,
     updateProvider,
     switchProvider,
+    setProxyTarget,
     deleteProvider,
     saveUsageScript,
     isLoading:
       addProviderMutation.isPending ||
       updateProviderMutation.isPending ||
       deleteProviderMutation.isPending ||
-      switchProviderMutation.isPending,
+      switchProviderMutation.isPending ||
+      setProxyTargetMutation.isPending,
   };
 }

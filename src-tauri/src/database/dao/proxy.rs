@@ -1,0 +1,242 @@
+//! 代理功能数据访问层
+//!
+//! 处理代理配置、Provider健康状态和使用统计的数据库操作
+
+use crate::error::AppError;
+use crate::proxy::types::*;
+
+use super::super::{lock_conn, Database};
+
+impl Database {
+    // ==================== Proxy Config ====================
+
+    /// 获取代理配置
+    pub async fn get_proxy_config(&self) -> Result<ProxyConfig, AppError> {
+        // 在一个作用域内获取锁并查询，确保锁在await之前释放
+        let result = {
+            let conn = lock_conn!(self.conn);
+            conn.query_row(
+                "SELECT enabled, listen_address, listen_port, max_retries,
+                        request_timeout, enable_logging
+                 FROM proxy_config WHERE id = 1",
+                [],
+                |row| {
+                    Ok(ProxyConfig {
+                        enabled: row.get::<_, i32>(0)? != 0,
+                        listen_address: row.get(1)?,
+                        listen_port: row.get::<_, i32>(2)? as u16,
+                        max_retries: row.get::<_, i32>(3)? as u8,
+                        request_timeout: row.get::<_, i32>(4)? as u64,
+                        enable_logging: row.get::<_, i32>(5)? != 0,
+                    })
+                },
+            )
+        }; // conn锁在这里释放
+
+        match result {
+            Ok(config) => Ok(config),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                // 如果不存在，插入默认配置
+                let default_config = ProxyConfig::default();
+                self.update_proxy_config(default_config.clone()).await?;
+                Ok(default_config)
+            }
+            Err(e) => Err(AppError::Database(e.to_string())),
+        }
+    }
+
+    /// 更新代理配置
+    pub async fn update_proxy_config(&self, config: ProxyConfig) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+
+        conn.execute(
+            "INSERT OR REPLACE INTO proxy_config 
+             (id, enabled, listen_address, listen_port, max_retries, request_timeout, enable_logging, target_app, updated_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))",
+            rusqlite::params![
+                if config.enabled { 1 } else { 0 },
+                config.listen_address,
+                config.listen_port as i32,
+                config.max_retries as i32,
+                config.request_timeout as i32,
+                if config.enable_logging { 1 } else { 0 },
+                "claude", // 兼容旧字段，写入默认值
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    // ==================== Provider Health ====================
+
+    /// 获取Provider健康状态
+    pub async fn get_provider_health(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<ProviderHealth, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        conn.query_row(
+            "SELECT provider_id, app_type, is_healthy, consecutive_failures,
+                    last_success_at, last_failure_at, last_error, updated_at
+             FROM provider_health
+             WHERE provider_id = ?1 AND app_type = ?2",
+            rusqlite::params![provider_id, app_type],
+            |row| {
+                Ok(ProviderHealth {
+                    provider_id: row.get(0)?,
+                    app_type: row.get(1)?,
+                    is_healthy: row.get::<_, i64>(2)? != 0,
+                    consecutive_failures: row.get::<_, i64>(3)? as u32,
+                    last_success_at: row.get(4)?,
+                    last_failure_at: row.get(5)?,
+                    last_error: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            },
+        )
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    /// 更新Provider健康状态
+    pub async fn update_provider_health(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        success: bool,
+        error_msg: Option<String>,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // 先查询当前状态
+        let current = conn.query_row(
+            "SELECT consecutive_failures FROM provider_health 
+             WHERE provider_id = ?1 AND app_type = ?2",
+            rusqlite::params![provider_id, app_type],
+            |row| Ok(row.get::<_, i64>(0)? as u32),
+        );
+
+        let (is_healthy, consecutive_failures) = if success {
+            // 成功：重置失败计数
+            (1, 0)
+        } else {
+            // 失败：增加失败计数
+            let failures = current.unwrap_or(0) + 1;
+            let healthy = if failures >= 3 { 0 } else { 1 };
+            (healthy, failures)
+        };
+
+        let (last_success_at, last_failure_at) = if success {
+            (Some(now.clone()), None)
+        } else {
+            (None, Some(now.clone()))
+        };
+
+        // UPSERT
+        conn.execute(
+            "INSERT OR REPLACE INTO provider_health
+             (provider_id, app_type, is_healthy, consecutive_failures,
+              last_success_at, last_failure_at, last_error, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 
+                     COALESCE(?5, (SELECT last_success_at FROM provider_health 
+                                   WHERE provider_id = ?1 AND app_type = ?2)),
+                     COALESCE(?6, (SELECT last_failure_at FROM provider_health 
+                                   WHERE provider_id = ?1 AND app_type = ?2)),
+                     ?7, ?8)",
+            rusqlite::params![
+                provider_id,
+                app_type,
+                is_healthy,
+                consecutive_failures as i64,
+                last_success_at,
+                last_failure_at,
+                error_msg,
+                &now,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    // ==================== Proxy Usage (可选) ====================
+
+    /// 记录代理使用统计
+    #[allow(dead_code)]
+    pub async fn record_proxy_usage(&self, record: &ProxyUsageRecord) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+
+        conn.execute(
+            "INSERT INTO proxy_usage 
+             (provider_id, app_type, endpoint, request_tokens, response_tokens,
+              status_code, latency_ms, error, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![
+                &record.provider_id,
+                &record.app_type,
+                &record.endpoint,
+                record.request_tokens,
+                record.response_tokens,
+                record.status_code as i64,
+                record.latency_ms as i64,
+                &record.error,
+                &record.timestamp,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// 查询最近的使用统计
+    #[allow(dead_code)]
+    pub async fn get_recent_usage(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        limit: usize,
+    ) -> Result<Vec<ProxyUsageRecord>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT provider_id, app_type, endpoint, request_tokens, response_tokens,
+                        status_code, latency_ms, error, timestamp
+                 FROM proxy_usage
+                 WHERE provider_id = ?1 AND app_type = ?2
+                 ORDER BY timestamp DESC
+                 LIMIT ?3",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(
+                rusqlite::params![provider_id, app_type, limit as i64],
+                |row| {
+                    Ok(ProxyUsageRecord {
+                        provider_id: row.get(0)?,
+                        app_type: row.get(1)?,
+                        endpoint: row.get(2)?,
+                        request_tokens: row.get(3)?,
+                        response_tokens: row.get(4)?,
+                        status_code: row.get::<_, i64>(5)? as u16,
+                        latency_ms: row.get::<_, i64>(6)? as u64,
+                        error: row.get(7)?,
+                        timestamp: row.get(8)?,
+                    })
+                },
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row.map_err(|e| AppError::Database(e.to_string()))?);
+        }
+
+        Ok(records)
+    }
+}

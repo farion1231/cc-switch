@@ -125,6 +125,7 @@ describe("ProviderList Component", () => {
         onDelete={vi.fn()}
         onDuplicate={vi.fn()}
         onOpenWebsite={vi.fn()}
+        onSetProxyTarget={vi.fn()}
         isLoading
       />,
     );
@@ -153,6 +154,7 @@ describe("ProviderList Component", () => {
         onDelete={vi.fn()}
         onDuplicate={vi.fn()}
         onOpenWebsite={vi.fn()}
+        onSetProxyTarget={vi.fn()}
         onCreate={handleCreate}
       />,
     );
@@ -193,6 +195,7 @@ describe("ProviderList Component", () => {
         onDuplicate={handleDuplicate}
         onConfigureUsage={handleUsage}
         onOpenWebsite={handleOpenWebsite}
+        onSetProxyTarget={vi.fn()}
       />,
     );
 
@@ -207,12 +210,12 @@ describe("ProviderList Component", () => {
     // Drag attributes from useSortable
     expect(
       providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-        "data-dnd-id"
+      "data-dnd-id"
       ],
     ).toBe("b");
     expect(
       providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-        "data-dnd-id"
+      "data-dnd-id"
       ],
     ).toBe("a");
 

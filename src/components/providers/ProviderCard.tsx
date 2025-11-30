@@ -11,6 +11,8 @@ import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -28,6 +30,7 @@ interface ProviderCardProps {
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
+  onSetProxyTarget: (provider: Provider) => void;
   dragHandleProps?: DragHandleProps;
 }
 
@@ -76,6 +79,7 @@ export function ProviderCard({
   onConfigureUsage,
   onOpenWebsite,
   onDuplicate,
+  onSetProxyTarget,
   dragHandleProps,
 }: ProviderCardProps) {
   const { t } = useTranslation();
@@ -164,14 +168,42 @@ export function ProviderCard({
                     ⭐
                   </span>
                 )}
-              <span
-                className={cn(
-                  "rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-500 dark:text-green-400 transition-opacity duration-200",
-                  isCurrent ? "opacity-100" : "opacity-0 pointer-events-none",
-                )}
+
+              {/* 代理目标开关 */}
+              <div
+                className="flex items-center gap-2 ml-2"
+                onClick={(e) => e.stopPropagation()}
               >
-                {t("provider.currentlyUsing")}
-              </span>
+                <Switch
+                  id={`proxy-target-switch-${provider.id}`}
+                  checked={provider.isProxyTarget || false}
+                  onCheckedChange={(checked) => {
+                    if (checked && !provider.isProxyTarget) {
+                      onSetProxyTarget(provider);
+                    }
+                  }}
+                  disabled={provider.isProxyTarget}
+                  className="scale-75 data-[state=checked]:bg-purple-500"
+                />
+                {provider.isProxyTarget && (
+                  <Label
+                    htmlFor={`proxy-target-switch-${provider.id}`}
+                    className="text-xs font-medium text-purple-500 dark:text-purple-400 cursor-pointer"
+                  >
+                    {t("provider.proxyTarget", { defaultValue: "代理目标" })}
+                  </Label>
+                )}
+                {!provider.isProxyTarget && (
+                  <Label
+                    htmlFor={`proxy-target-switch-${provider.id}`}
+                    className="text-xs text-muted-foreground cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    {t("provider.setAsProxyTarget", {
+                      defaultValue: "设为代理",
+                    })}
+                  </Label>
+                )}
+              </div>
             </div>
 
             {displayUrl && (

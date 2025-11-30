@@ -129,6 +129,7 @@ pub(crate) fn build_provider_from_request(
         meta: None,
         icon: request.icon.clone(),
         icon_color: None,
+        is_proxy_target: None,
     };
 
     Ok(provider)
