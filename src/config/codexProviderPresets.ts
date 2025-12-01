@@ -40,7 +40,7 @@ export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
 export function generateThirdPartyConfig(
   providerName: string,
   baseUrl: string,
-  modelName = "gpt-5-codex",
+  modelName = "gpt-5.1-codex",
 ): string {
   // 清理供应商名称，确保符合TOML键名规范
   const cleanProviderName =
@@ -85,7 +85,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     isOfficial: true,
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "azure"
-model = "gpt-5-codex"
+model = "gpt-5.1-codex"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
@@ -113,7 +113,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "aihubmix",
       "https://aihubmix.com/v1",
-      "gpt-5-codex",
+      "gpt-5.1-codex",
     ),
     endpointCandidates: [
       "https://aihubmix.com/v1",
@@ -128,7 +128,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "dmxapi",
       "https://www.dmxapi.cn/v1",
-      "gpt-5-codex",
+      "gpt-5.1-codex",
     ),
     endpointCandidates: ["https://www.dmxapi.cn/v1"],
   },
@@ -141,7 +141,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "packycode",
       "https://www.packyapi.com/v1",
-      "gpt-5-codex",
+      "gpt-5.1-codex",
     ),
     endpointCandidates: [
       "https://www.packyapi.com/v1",
