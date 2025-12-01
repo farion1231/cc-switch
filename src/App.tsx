@@ -315,13 +315,14 @@ function App() {
                   isLoading={isLoading}
                   onSwitch={switchProvider}
                   onSetProxyTarget={setProxyTarget}
-              onEdit={setEditingProvider}
-              onDelete={setConfirmDelete}
-              onDuplicate={handleDuplicateProvider}
-              onConfigureUsage={setUsageProvider}
-              onOpenWebsite={handleOpenWebsite}
-              onCreate={() => setIsAddOpen(true)}
-            /></div>
+                  onEdit={setEditingProvider}
+                  onDelete={setConfirmDelete}
+                  onDuplicate={handleDuplicateProvider}
+                  onConfigureUsage={setUsageProvider}
+                  onOpenWebsite={handleOpenWebsite}
+                  onCreate={() => setIsAddOpen(true)}
+                />
+              </div>
             </div>
           </div>
         );

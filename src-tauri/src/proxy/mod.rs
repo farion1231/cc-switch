@@ -6,6 +6,7 @@ pub mod error;
 mod forwarder;
 mod handlers;
 mod health;
+pub mod providers;
 mod router;
 pub(crate) mod server;
 pub(crate) mod types;
