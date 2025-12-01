@@ -304,9 +304,9 @@ function App() {
         return <AgentsPanel onOpenChange={() => setCurrentView("providers")} />;
       default:
         return (
-          <div className="mx-auto max-w-[56rem] px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
+          <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
             {/* 独立滚动容器 - 解决 Linux/Ubuntu 下 DndContext 与滚轮事件冲突 */}
-            <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
               <div className="space-y-4">
                 <ProviderList
                   providers={providers}
