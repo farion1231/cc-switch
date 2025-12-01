@@ -148,22 +148,9 @@ impl ProxyServer {
             .route("/status", get(handlers::get_status))
             // Claude API
             .route("/v1/messages", post(handlers::handle_messages))
-            .route(
-                "/v1/messages/count_tokens",
-                post(handlers::handle_count_tokens),
-            )
             // OpenAI Responses API (Codex CLI)
             .route("/v1/responses", post(handlers::handle_responses))
-            .route(
-                "/v1/responses/:response_id",
-                get(handlers::handle_get_response).delete(handlers::handle_delete_response),
-            )
-            .route(
-                "/v1/responses/:response_id/input_items",
-                get(handlers::handle_get_response_input_items),
-            )
-            // Gemini API (通配符路由)
-            .route("/v1/*path", post(handlers::handle_gemini))
+            // Gemini API
             .route("/v1beta/*path", post(handlers::handle_gemini))
             .layer(cors)
             .with_state(self.state.clone())

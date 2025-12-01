@@ -64,35 +64,6 @@ pub async fn handle_messages(
     Ok(builder.body(body).unwrap())
 }
 
-/// 处理 /v1/messages/count_tokens 请求（透传）
-pub async fn handle_count_tokens(
-    State(state): State<ProxyState>,
-    headers: axum::http::HeaderMap,
-    Json(body): Json<Value>,
-) -> Result<axum::response::Response, ProxyError> {
-    let config = state.config.read().await.clone();
-    let forwarder = RequestForwarder::new(
-        state.db.clone(),
-        config.request_timeout,
-        config.max_retries,
-        state.status.clone(),
-    );
-
-    let response = forwarder
-        .forward_with_retry(&AppType::Claude, "/v1/messages/count_tokens", body, headers)
-        .await?;
-
-    // 透传响应
-    let mut builder = axum::response::Response::builder().status(response.status());
-
-    for (key, value) in response.headers() {
-        builder = builder.header(key, value);
-    }
-
-    let body = axum::body::Body::from_stream(response.bytes_stream());
-    Ok(builder.body(body).unwrap())
-}
-
 /// 处理 Gemini API 请求（透传，包括查询参数）
 pub async fn handle_gemini(
     State(state): State<ProxyState>,
@@ -150,96 +121,6 @@ pub async fn handle_responses(
         .await?;
 
     // 透传响应（包括流式和非流式）
-    let mut builder = axum::response::Response::builder().status(response.status());
-
-    for (key, value) in response.headers() {
-        builder = builder.header(key, value);
-    }
-
-    let body = axum::body::Body::from_stream(response.bytes_stream());
-    Ok(builder.body(body).unwrap())
-}
-
-/// 获取单个 Response（GET /v1/responses/:response_id 透传）
-pub async fn handle_get_response(
-    State(state): State<ProxyState>,
-    axum::extract::Path(response_id): axum::extract::Path<String>,
-    headers: axum::http::HeaderMap,
-) -> Result<axum::response::Response, ProxyError> {
-    let config = state.config.read().await.clone();
-    let forwarder = RequestForwarder::new(
-        state.db.clone(),
-        config.request_timeout,
-        config.max_retries,
-        state.status.clone(),
-    );
-
-    let endpoint = format!("/v1/responses/{response_id}");
-    let response = forwarder
-        .forward_get_request(&AppType::Codex, &endpoint, headers)
-        .await?;
-
-    // 透传响应
-    let mut builder = axum::response::Response::builder().status(response.status());
-
-    for (key, value) in response.headers() {
-        builder = builder.header(key, value);
-    }
-
-    let body = axum::body::Body::from_stream(response.bytes_stream());
-    Ok(builder.body(body).unwrap())
-}
-
-/// 删除 Response（DELETE /v1/responses/:response_id 透传）
-pub async fn handle_delete_response(
-    State(state): State<ProxyState>,
-    axum::extract::Path(response_id): axum::extract::Path<String>,
-    headers: axum::http::HeaderMap,
-) -> Result<axum::response::Response, ProxyError> {
-    let config = state.config.read().await.clone();
-    let forwarder = RequestForwarder::new(
-        state.db.clone(),
-        config.request_timeout,
-        config.max_retries,
-        state.status.clone(),
-    );
-
-    let endpoint = format!("/v1/responses/{response_id}");
-    let response = forwarder
-        .forward_delete_request(&AppType::Codex, &endpoint, headers)
-        .await?;
-
-    // 透传响应
-    let mut builder = axum::response::Response::builder().status(response.status());
-
-    for (key, value) in response.headers() {
-        builder = builder.header(key, value);
-    }
-
-    let body = axum::body::Body::from_stream(response.bytes_stream());
-    Ok(builder.body(body).unwrap())
-}
-
-/// 获取 Response 的输入项（GET /v1/responses/:response_id/input_items 透传）
-pub async fn handle_get_response_input_items(
-    State(state): State<ProxyState>,
-    axum::extract::Path(response_id): axum::extract::Path<String>,
-    headers: axum::http::HeaderMap,
-) -> Result<axum::response::Response, ProxyError> {
-    let config = state.config.read().await.clone();
-    let forwarder = RequestForwarder::new(
-        state.db.clone(),
-        config.request_timeout,
-        config.max_retries,
-        state.status.clone(),
-    );
-
-    let endpoint = format!("/v1/responses/{response_id}/input_items");
-    let response = forwarder
-        .forward_get_request(&AppType::Codex, &endpoint, headers)
-        .await?;
-
-    // 透传响应
     let mut builder = axum::response::Response::builder().status(response.status());
 
     for (key, value) in response.headers() {
