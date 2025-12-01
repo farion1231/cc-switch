@@ -304,21 +304,25 @@ function App() {
         return <AgentsPanel onOpenChange={() => setCurrentView("providers")} />;
       default:
         return (
-          <div className="mx-auto max-w-[56rem] px-6 space-y-4">
-            <ProviderList
-              providers={providers}
-              currentProviderId={currentProviderId}
-              appId={activeApp}
-              isLoading={isLoading}
-              onSwitch={switchProvider}
-              onSetProxyTarget={setProxyTarget}
+          <div className="mx-auto max-w-[56rem] px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
+            {/* 独立滚动容器 - 解决 Linux/Ubuntu 下 DndContext 与滚轮事件冲突 */}
+            <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12">
+              <div className="space-y-4">
+                <ProviderList
+                  providers={providers}
+                  currentProviderId={currentProviderId}
+                  appId={activeApp}
+                  isLoading={isLoading}
+                  onSwitch={switchProvider}
+                  onSetProxyTarget={setProxyTarget}
               onEdit={setEditingProvider}
               onDelete={setConfirmDelete}
               onDuplicate={handleDuplicateProvider}
               onConfigureUsage={setUsageProvider}
               onOpenWebsite={handleOpenWebsite}
               onCreate={() => setIsAddOpen(true)}
-            />
+            /></div>
+            </div>
           </div>
         );
     }
