@@ -40,6 +40,8 @@ toml_edit = "0.22"
 reqwest = { version = "0.12", features = ["rustls-tls", "json", "stream"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 futures = "0.3"
+async-stream = "0.3"
+bytes = "1.5"
 axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }

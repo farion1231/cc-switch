@@ -8,14 +8,31 @@ use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
 /// 从 Provider 配置中获取模型映射
-fn get_model_from_provider(model: &str, provider: &Provider) -> String {
+fn get_model_from_provider(model: &str, provider: &Provider, body: &Value) -> String {
     let env = provider.settings_config.get("env");
-
-    // 根据请求的模型类型选择对应的配置模型
     let model_lower = model.to_lowercase();
 
+    // 检测 thinking 参数
+    let has_thinking = body
+        .get("thinking")
+        .and_then(|v| v.as_object())
+        .and_then(|o| o.get("type"))
+        .and_then(|t| t.as_str())
+        == Some("enabled");
+
     if let Some(env) = env {
-        // 检查是否是 haiku 模型
+        // 如果启用 thinking，优先使用推理模型
+        if has_thinking {
+            if let Some(m) = env
+                .get("ANTHROPIC_REASONING_MODEL")
+                .and_then(|v| v.as_str())
+            {
+                log::debug!("[Transform] 使用推理模型: {m}");
+                return m.to_string();
+            }
+        }
+
+        // 根据模型类型选择配置模型
         if model_lower.contains("haiku") {
             if let Some(m) = env
                 .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
@@ -24,7 +41,6 @@ fn get_model_from_provider(model: &str, provider: &Provider) -> String {
                 return m.to_string();
             }
         }
-        // 检查是否是 opus 模型
         if model_lower.contains("opus") {
             if let Some(m) = env
                 .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
@@ -33,7 +49,6 @@ fn get_model_from_provider(model: &str, provider: &Provider) -> String {
                 return m.to_string();
             }
         }
-        // 检查是否是 sonnet 模型
         if model_lower.contains("sonnet") {
             if let Some(m) = env
                 .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
@@ -48,7 +63,6 @@ fn get_model_from_provider(model: &str, provider: &Provider) -> String {
         }
     }
 
-    // 如果没有配置，返回原始模型名
     model.to_string()
 }
 
@@ -56,9 +70,9 @@ fn get_model_from_provider(model: &str, provider: &Provider) -> String {
 pub fn anthropic_to_openai(body: Value, provider: &Provider) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
-    // 模型映射：使用 Provider 配置中的模型
+    // 模型映射：使用 Provider 配置中的模型（支持 thinking 参数）
     if let Some(model) = body.get("model").and_then(|m| m.as_str()) {
-        let mapped_model = get_model_from_provider(model, provider);
+        let mapped_model = get_model_from_provider(model, provider, &body);
         result["model"] = json!(mapped_model);
     }
 
@@ -551,22 +565,23 @@ mod tests {
     #[test]
     fn test_model_mapping_from_provider() {
         let provider = create_openrouter_provider();
+        let body = json!({"model": "test"});
 
         // sonnet 模型
         assert_eq!(
-            get_model_from_provider("claude-sonnet-4-5-20250929", &provider),
+            get_model_from_provider("claude-sonnet-4-5-20250929", &provider, &body),
             "anthropic/claude-sonnet-4.5"
         );
 
         // haiku 模型
         assert_eq!(
-            get_model_from_provider("claude-haiku-4-5-20250929", &provider),
+            get_model_from_provider("claude-haiku-4-5-20250929", &provider, &body),
             "anthropic/claude-haiku-4.5"
         );
 
         // opus 模型
         assert_eq!(
-            get_model_from_provider("claude-opus-4-5", &provider),
+            get_model_from_provider("claude-opus-4-5", &provider, &body),
             "anthropic/claude-opus-4.5"
         );
     }
@@ -581,6 +596,45 @@ mod tests {
         });
 
         let result = anthropic_to_openai(input, &provider).unwrap();
+        assert_eq!(result["model"], "anthropic/claude-sonnet-4.5");
+    }
+
+    #[test]
+    fn test_thinking_parameter_detection() {
+        let mut provider = create_openrouter_provider();
+        // 添加推理模型配置
+        if let Some(env) = provider.settings_config.get_mut("env") {
+            env["ANTHROPIC_REASONING_MODEL"] = json!("anthropic/claude-sonnet-4.5:extended");
+        }
+
+        let input = json!({
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 1024,
+            "thinking": {"type": "enabled"},
+            "messages": [{"role": "user", "content": "Solve this problem"}]
+        });
+
+        let result = anthropic_to_openai(input, &provider).unwrap();
+        // 应该使用推理模型
+        assert_eq!(result["model"], "anthropic/claude-sonnet-4.5:extended");
+    }
+
+    #[test]
+    fn test_thinking_parameter_disabled() {
+        let mut provider = create_openrouter_provider();
+        if let Some(env) = provider.settings_config.get_mut("env") {
+            env["ANTHROPIC_REASONING_MODEL"] = json!("anthropic/claude-sonnet-4.5:extended");
+        }
+
+        let input = json!({
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 1024,
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input, &provider).unwrap();
+        // 应该使用普通模型
         assert_eq!(result["model"], "anthropic/claude-sonnet-4.5");
     }
 }
