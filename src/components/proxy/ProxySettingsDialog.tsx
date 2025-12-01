@@ -26,7 +26,8 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import type { ProxyConfig } from "@/types/proxy";
 
-type ProxyConfigForm = ProxyConfig;
+// 表单数据类型（不包含 enabled 字段，该字段由后端自动管理）
+type ProxyConfigForm = Omit<ProxyConfig, "enabled">;
 
 const createProxyConfigSchema = (t: TFunction) => {
   const requestTimeoutSchema = z
@@ -50,7 +51,6 @@ const createProxyConfigSchema = (t: TFunction) => {
     });
 
   return z.object({
-    enabled: z.boolean(),
     listen_address: z.string().regex(
       /^(\d{1,3}\.){3}\d{1,3}$/,
       t("proxy.settings.validation.addressInvalid", {
@@ -108,7 +108,6 @@ export function ProxySettingsDialog({
   const form = useForm<ProxyConfigForm>({
     resolver: zodResolver(schema),
     defaultValues: {
-      enabled: false,
       listen_address: "127.0.0.1",
       listen_port: 5000,
       max_retries: 3,
@@ -128,7 +127,12 @@ export function ProxySettingsDialog({
 
   const onSubmit = async (data: ProxyConfigForm) => {
     try {
-      await updateConfig(data);
+      // 添加 enabled 字段（从当前配置中获取，保持不变）
+      const configToSave: ProxyConfig = {
+        ...data,
+        enabled: config?.enabled ?? true,
+      };
+      await updateConfig(configToSave);
       closePanel();
     } catch (error) {
       console.error("Save config failed:", error);
@@ -196,37 +200,10 @@ export function ProxySettingsDialog({
                 </h3>
                 <p className="text-sm text-muted-foreground">
                   {t("proxy.settings.basic.description", {
-                    defaultValue: "控制代理服务是否启用以及监听的地址与端口。",
+                    defaultValue: "配置代理服务监听的地址与端口。",
                   })}
                 </p>
               </div>
-
-              <FormField
-                control={form.control}
-                name="enabled"
-                render={({ field }) => (
-                  <FormItem className="flex items-center justify-between rounded-lg border border-white/10 bg-background/60 p-4">
-                    <div className="space-y-1">
-                      <FormLabel>
-                        {t("proxy.settings.fields.enabled.label", {
-                          defaultValue: "启用代理服务",
-                        })}
-                      </FormLabel>
-                      <FormDescription>
-                        {t("proxy.settings.fields.enabled.description", {
-                          defaultValue: "开启后可以从命令或 UI 启动代理服务器",
-                        })}
-                      </FormDescription>
-                    </div>
-                    <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
 
               <div className="grid gap-4 md:grid-cols-2">
                 <FormField

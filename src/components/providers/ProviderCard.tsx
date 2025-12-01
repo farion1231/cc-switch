@@ -31,6 +31,7 @@ interface ProviderCardProps {
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
   onSetProxyTarget: (provider: Provider) => void;
+  isProxyRunning: boolean;
   dragHandleProps?: DragHandleProps;
 }
 
@@ -80,6 +81,7 @@ export function ProviderCard({
   onOpenWebsite,
   onDuplicate,
   onSetProxyTarget,
+  isProxyRunning,
   dragHandleProps,
 }: ProviderCardProps) {
   const { t } = useTranslation();
@@ -169,41 +171,43 @@ export function ProviderCard({
                   </span>
                 )}
 
-              {/* 代理目标开关 */}
-              <div
-                className="flex items-center gap-2 ml-2"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Switch
-                  id={`proxy-target-switch-${provider.id}`}
-                  checked={provider.isProxyTarget || false}
-                  onCheckedChange={(checked) => {
-                    if (checked && !provider.isProxyTarget) {
-                      onSetProxyTarget(provider);
-                    }
-                  }}
-                  disabled={provider.isProxyTarget}
-                  className="scale-75 data-[state=checked]:bg-purple-500"
-                />
-                {provider.isProxyTarget && (
-                  <Label
-                    htmlFor={`proxy-target-switch-${provider.id}`}
-                    className="text-xs font-medium text-purple-500 dark:text-purple-400 cursor-pointer"
-                  >
-                    {t("provider.proxyTarget", { defaultValue: "代理目标" })}
-                  </Label>
-                )}
-                {!provider.isProxyTarget && (
-                  <Label
-                    htmlFor={`proxy-target-switch-${provider.id}`}
-                    className="text-xs text-muted-foreground cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    {t("provider.setAsProxyTarget", {
-                      defaultValue: "设为代理",
-                    })}
-                  </Label>
-                )}
-              </div>
+              {/* 代理目标开关 - 仅在代理服务运行时显示 */}
+              {isProxyRunning && (
+                <div
+                  className="flex items-center gap-2 ml-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Switch
+                    id={`proxy-target-switch-${provider.id}`}
+                    checked={provider.isProxyTarget || false}
+                    onCheckedChange={(checked) => {
+                      if (checked && !provider.isProxyTarget) {
+                        onSetProxyTarget(provider);
+                      }
+                    }}
+                    disabled={provider.isProxyTarget}
+                    className="scale-75 data-[state=checked]:bg-purple-500"
+                  />
+                  {provider.isProxyTarget && (
+                    <Label
+                      htmlFor={`proxy-target-switch-${provider.id}`}
+                      className="text-xs font-medium text-purple-500 dark:text-purple-400 cursor-pointer"
+                    >
+                      {t("provider.proxyTarget", { defaultValue: "代理目标" })}
+                    </Label>
+                  )}
+                  {!provider.isProxyTarget && (
+                    <Label
+                      htmlFor={`proxy-target-switch-${provider.id}`}
+                      className="text-xs text-muted-foreground cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      {t("provider.setAsProxyTarget", {
+                        defaultValue: "设为代理",
+                      })}
+                    </Label>
+                  )}
+                </div>
+              )}
             </div>
 
             {displayUrl && (

@@ -25,16 +25,14 @@ impl ProxyService {
     /// 启动代理服务器
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
         // 1. 获取配置
-        let config = self
+        let mut config = self
             .db
             .get_proxy_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
-        // 2. 检查是否启用
-        if !config.enabled {
-            return Err("代理服务未启用，请先在设置中启用".to_string());
-        }
+        // 2. 确保配置启用（用户通过UI启动即表示希望启用）
+        config.enabled = true;
 
         // 3. 检查是否已在运行
         if self.server.read().await.is_some() {
@@ -42,7 +40,7 @@ impl ProxyService {
         }
 
         // 4. 创建并启动服务器
-        let server = ProxyServer::new(config, self.db.clone());
+        let server = ProxyServer::new(config.clone(), self.db.clone());
         let info = server
             .start()
             .await
@@ -50,6 +48,12 @@ impl ProxyService {
 
         // 5. 保存服务器实例
         *self.server.write().await = Some(server);
+
+        // 6. 持久化 enabled 状态
+        self.db
+            .update_proxy_config(config)
+            .await
+            .map_err(|e| format!("保存代理配置失败: {e}"))?;
 
         log::info!("代理服务器已启动: {}:{}", info.address, info.port);
         Ok(info)
@@ -99,9 +103,12 @@ impl ProxyService {
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
-        // 保存到数据库
+        // 保存到数据库（保持 enabled 状态不变）
+        let mut new_config = config.clone();
+        new_config.enabled = previous.enabled;
+
         self.db
-            .update_proxy_config(config.clone())
+            .update_proxy_config(new_config.clone())
             .await
             .map_err(|e| format!("保存代理配置失败: {e}"))?;
 
@@ -111,20 +118,9 @@ impl ProxyService {
             return Ok(());
         }
 
-        // 如果关闭代理，直接停止
-        if !config.enabled {
-            if let Some(server) = server_guard.take() {
-                server
-                    .stop()
-                    .await
-                    .map_err(|e| format!("停止代理服务器失败: {e}"))?;
-                log::info!("代理配置禁用了服务，已自动停止代理服务器");
-            }
-            return Ok(());
-        }
-
-        let require_restart = config.listen_address != previous.listen_address
-            || config.listen_port != previous.listen_port;
+        // 判断是否需要重启（地址或端口变更）
+        let require_restart = new_config.listen_address != previous.listen_address
+            || new_config.listen_port != previous.listen_port;
 
         if require_restart {
             if let Some(server) = server_guard.take() {
@@ -134,7 +130,7 @@ impl ProxyService {
                     .map_err(|e| format!("重启前停止代理服务器失败: {e}"))?;
             }
 
-            let new_server = ProxyServer::new(config.clone(), self.db.clone());
+            let new_server = ProxyServer::new(new_config, self.db.clone());
             new_server
                 .start()
                 .await
@@ -143,7 +139,7 @@ impl ProxyService {
             *server_guard = Some(new_server);
             log::info!("代理配置已更新，服务器已自动重启应用最新配置");
         } else if let Some(server) = server_guard.as_ref() {
-            server.apply_runtime_config(config).await;
+            server.apply_runtime_config(&new_config).await;
             log::info!("代理配置已实时应用，无需重启代理服务器");
         }
 

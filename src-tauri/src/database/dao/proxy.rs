@@ -50,9 +50,11 @@ impl Database {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
-            "INSERT OR REPLACE INTO proxy_config 
-             (id, enabled, listen_address, listen_port, max_retries, request_timeout, enable_logging, target_app, updated_at)
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))",
+            "INSERT OR REPLACE INTO proxy_config
+             (id, enabled, listen_address, listen_port, max_retries, request_timeout, enable_logging, target_app, created_at, updated_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                     COALESCE((SELECT created_at FROM proxy_config WHERE id = 1), datetime('now')),
+                     datetime('now'))",
             rusqlite::params![
                 if config.enabled { 1 } else { 0 },
                 config.listen_address,

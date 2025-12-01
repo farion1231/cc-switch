@@ -9,6 +9,7 @@ import type { CSSProperties } from "react";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { useDragSort } from "@/hooks/useDragSort";
+import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 
@@ -45,6 +46,9 @@ export function ProviderList({
     providers,
     appId,
   );
+
+  // 获取代理服务运行状态
+  const { isRunning: isProxyRunning } = useProxyStatus();
 
   if (isLoading) {
     return (
@@ -90,6 +94,7 @@ export function ProviderList({
               onConfigureUsage={onConfigureUsage}
               onOpenWebsite={onOpenWebsite}
               onSetProxyTarget={onSetProxyTarget}
+              isProxyRunning={isProxyRunning}
             />
           ))}
         </div>
@@ -109,6 +114,7 @@ interface SortableProviderCardProps {
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onSetProxyTarget: (provider: Provider) => void;
+  isProxyRunning: boolean;
 }
 
 function SortableProviderCard({
@@ -122,6 +128,7 @@ function SortableProviderCard({
   onConfigureUsage,
   onOpenWebsite,
   onSetProxyTarget,
+  isProxyRunning,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -152,6 +159,7 @@ function SortableProviderCard({
         }
         onOpenWebsite={onOpenWebsite}
         onSetProxyTarget={onSetProxyTarget}
+        isProxyRunning={isProxyRunning}
         dragHandleProps={{
           attributes,
           listeners,
