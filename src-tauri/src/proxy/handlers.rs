@@ -93,10 +93,10 @@ pub async fn handle_count_tokens(
     Ok(builder.body(body).unwrap())
 }
 
-/// 处理 Gemini API 请求（透传）
+/// 处理 Gemini API 请求（透传，包括查询参数）
 pub async fn handle_gemini(
     State(state): State<ProxyState>,
-    axum::extract::Path(path): axum::extract::Path<String>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
@@ -108,9 +108,16 @@ pub async fn handle_gemini(
         state.status.clone(),
     );
 
-    let endpoint = format!("/{path}");
+    // 提取完整的路径和查询参数
+    let endpoint = uri
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or(uri.path());
+
+    log::debug!("Gemini request endpoint (with query): {endpoint}");
+
     let response = forwarder
-        .forward_with_retry(&AppType::Gemini, &endpoint, body, headers)
+        .forward_with_retry(&AppType::Gemini, endpoint, body, headers)
         .await?;
 
     // 透传响应

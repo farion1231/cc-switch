@@ -179,12 +179,8 @@ impl RequestForwarder {
         // 提取 base_url
         let base_url = self.extract_base_url(provider)?;
 
-        // 智能拼接 URL，避免重复的 /v1
-        let url = if base_url.ends_with("/v1") && endpoint.starts_with("/v1") {
-            format!("{}{}", base_url.trim_end_matches("/v1"), endpoint)
-        } else {
-            format!("{base_url}{endpoint}")
-        };
+        // 使用辅助函数构建完整 URL（自动去重版本路径）
+        let url = self.build_full_url(&base_url, endpoint);
 
         // 构建请求
         let mut request = self.client.post(&url);
@@ -275,6 +271,28 @@ impl RequestForwarder {
         }
 
         Ok(request)
+    }
+
+    /// 构建完整 URL（智能去重版本路径）
+    fn build_full_url(&self, base_url: &str, endpoint: &str) -> String {
+        let base_trimmed = base_url.trim_end_matches('/');
+        let endpoint_trimmed = endpoint.trim_start_matches('/');
+
+        // 检查是否存在版本路径重复
+        let version_patterns = ["/v1beta", "/v1"];
+        let mut final_url = format!("{base_trimmed}/{endpoint_trimmed}");
+
+        for pattern in &version_patterns {
+            let duplicate_pattern = format!("{pattern}{pattern}");
+            if final_url.contains(&duplicate_pattern) {
+                final_url = final_url.replace(&duplicate_pattern, pattern);
+                log::debug!(
+                    "URL 去重: 移除重复的 {pattern} (base: {base_url}, endpoint: {endpoint})"
+                );
+            }
+        }
+
+        final_url
     }
 
     /// 从 Provider 配置中提取 base_url
@@ -370,8 +388,12 @@ impl RequestForwarder {
                 return Some((key.to_string(), AuthType::Anthropic));
             }
 
-            // Gemini
-            if let Some(key) = env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
+            // Gemini (支持两种字段名，优先使用标准的 GOOGLE_GEMINI_API_KEY)
+            if let Some(key) = env
+                .get("GOOGLE_GEMINI_API_KEY")
+                .or_else(|| env.get("GEMINI_API_KEY"))
+                .and_then(|v| v.as_str())
+            {
                 return Some((key.to_string(), AuthType::Gemini));
             }
 
@@ -540,11 +562,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
     ) -> Result<Response, ProxyError> {
         let base_url = self.extract_base_url(provider)?;
-        let url = if base_url.ends_with("/v1") && endpoint.starts_with("/v1") {
-            format!("{}{}", base_url.trim_end_matches("/v1"), endpoint)
-        } else {
-            format!("{base_url}{endpoint}")
-        };
+        let url = self.build_full_url(&base_url, endpoint);
 
         log::info!("Proxy GET Request URL: {url}");
 
@@ -599,11 +617,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
     ) -> Result<Response, ProxyError> {
         let base_url = self.extract_base_url(provider)?;
-        let url = if base_url.ends_with("/v1") && endpoint.starts_with("/v1") {
-            format!("{}{}", base_url.trim_end_matches("/v1"), endpoint)
-        } else {
-            format!("{base_url}{endpoint}")
-        };
+        let url = self.build_full_url(&base_url, endpoint);
 
         log::info!("Proxy DELETE Request URL: {url}");
 

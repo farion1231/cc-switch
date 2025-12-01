@@ -245,7 +245,7 @@ fn dry_run_validates_schema_compatibility() {
             meta: None,
             icon: None,
             icon_color: None,
-            is_proxy_target: false,
+            is_proxy_target: Some(false),
         },
     );
 

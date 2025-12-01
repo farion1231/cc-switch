@@ -22,7 +22,7 @@ impl Default for ProxyConfig {
         Self {
             enabled: false,
             listen_address: "127.0.0.1".to_string(),
-            listen_port: 5000,
+            listen_port: 15721, // 使用较少占用的高位端口
             max_retries: 3,
             request_timeout: 300,
             enable_logging: true,
