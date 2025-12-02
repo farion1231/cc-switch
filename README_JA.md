@@ -2,7 +2,7 @@
 
 # Claude Code / Codex / Gemini CLI オールインワン・アシスタント
 
-[![Version](https://img.shields.io/badge/version-3.8.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.8.2-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Trending](https://img.shields.io/badge/🔥_TypeScript_Trending-Daily%20%7C%20Weekly%20%7C%20Monthly-ff6b6b.svg)](https://github.com/trending/typescript)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
@@ -51,7 +51,7 @@ GLM CODING PLAN は AI コーディング向けのサブスクリプションで
 
 ## 特長
 
-### 現在のバージョン：v3.8.0 | [完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-note-v3.8.0-en.md)
+### 現在のバージョン：v3.8.2 | [完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-note-v3.8.0-en.md)
 
 **v3.8.0 メジャーアップデート (2025-11-28)**
 

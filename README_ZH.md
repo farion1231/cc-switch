@@ -2,7 +2,7 @@
 
 # Claude Code / Codex / Gemini CLI 全方位辅助工具
 
-[![Version](https://img.shields.io/badge/version-3.8.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.8.2-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Trending](https://img.shields.io/badge/🔥_TypeScript_Trending-Daily%20%7C%20Weekly%20%7C%20Monthly-ff6b6b.svg)](https://github.com/trending/typescript)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
@@ -51,7 +51,7 @@ CC Switch 已经预设了智谱GLM，只需要填写 key 即可一键导入编�
 
 ## 功能特性
 
-### 当前版本：v3.8.0 | [完整更新日志](CHANGELOG.md)
+### 当前版本：v3.8.2 | [完整更新日志](CHANGELOG.md)
 
 **v3.8.0 重大更新（2025-11-28）**
 
