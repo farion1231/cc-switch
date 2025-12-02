@@ -650,6 +650,17 @@ pub fn run() {
             commands::get_proxy_config,
             commands::update_proxy_config,
             commands::is_proxy_running,
+            // Usage statistics
+            commands::get_usage_summary,
+            commands::get_usage_trends,
+            commands::get_provider_stats,
+            commands::get_model_stats,
+            commands::get_request_logs,
+            commands::get_request_detail,
+            commands::get_model_pricing,
+            commands::update_model_pricing,
+            commands::delete_model_pricing,
+            commands::check_provider_limits,
         ]);
 
     let app = builder

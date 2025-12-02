@@ -12,6 +12,7 @@ mod provider;
 mod proxy;
 mod settings;
 pub mod skill;
+mod usage;
 
 pub use config::*;
 pub use deeplink::*;
@@ -25,3 +26,4 @@ pub use provider::*;
 pub use proxy::*;
 pub use settings::*;
 pub use skill::*;
+pub use usage::*;
