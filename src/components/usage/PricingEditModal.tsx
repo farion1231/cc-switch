@@ -1,30 +1,35 @@
-import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { useUpdateModelPricing } from '@/lib/query/usage';
-import { useToast } from '@/hooks/use-toast';
-import type { ModelPricing } from '@/types/usage';
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useUpdateModelPricing } from "@/lib/query/usage";
+import type { ModelPricing } from "@/types/usage";
 
 interface PricingEditModalProps {
   model: ModelPricing;
+  isNew?: boolean;
   onClose: () => void;
 }
 
-export function PricingEditModal({ model, onClose }: PricingEditModalProps) {
+export function PricingEditModal({
+  model,
+  isNew = false,
+  onClose,
+}: PricingEditModalProps) {
   const { t } = useTranslation();
-  const { toast } = useToast();
   const updatePricing = useUpdateModelPricing();
 
   const [formData, setFormData] = useState({
+    modelId: model.modelId,
     displayName: model.displayName,
     inputCost: model.inputCostPerMillion,
     outputCost: model.outputCostPerMillion,
@@ -34,6 +39,12 @@ export function PricingEditModal({ model, onClose }: PricingEditModalProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 验证模型 ID
+    if (isNew && !formData.modelId.trim()) {
+      toast.error(t("usage.modelIdRequired", "模型 ID 不能为空"));
+      return;
+    }
 
     // 验证非负数
     const values = [
@@ -46,18 +57,14 @@ export function PricingEditModal({ model, onClose }: PricingEditModalProps) {
     for (const value of values) {
       const num = parseFloat(value);
       if (isNaN(num) || num < 0) {
-        toast({
-          title: t('common.error', '错误'),
-          description: t('usage.invalidPrice', '价格必须为非负数'),
-          variant: 'destructive',
-        });
+        toast.error(t("usage.invalidPrice", "价格必须为非负数"));
         return;
       }
     }
 
     try {
       await updatePricing.mutateAsync({
-        modelId: model.modelId,
+        modelId: isNew ? formData.modelId : model.modelId,
         displayName: formData.displayName,
         inputCost: formData.inputCost,
         outputCost: formData.outputCost,
@@ -65,18 +72,15 @@ export function PricingEditModal({ model, onClose }: PricingEditModalProps) {
         cacheCreationCost: formData.cacheCreationCost,
       });
 
-      toast({
-        title: t('common.success', '成功'),
-        description: t('usage.pricingUpdated', '定价已更新'),
-      });
+      toast.success(
+        isNew
+          ? t("usage.pricingAdded", "定价已添加")
+          : t("usage.pricingUpdated", "定价已更新"),
+      );
 
       onClose();
     } catch (error) {
-      toast({
-        title: t('common.error', '错误'),
-        description: String(error),
-        variant: 'destructive',
-      });
+      toast.error(String(error));
     }
   };
 
@@ -85,24 +89,46 @@ export function PricingEditModal({ model, onClose }: PricingEditModalProps) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {t('usage.editPricing', '编辑定价')} - {model.modelId}
+            {isNew
+              ? t("usage.addPricing", "新增定价")
+              : `${t("usage.editPricing", "编辑定价")} - ${model.modelId}`}
           </DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {isNew && (
+            <div className="space-y-2">
+              <Label htmlFor="modelId">{t("usage.modelId", "模型 ID")}</Label>
+              <Input
+                id="modelId"
+                value={formData.modelId}
+                onChange={(e) =>
+                  setFormData({ ...formData, modelId: e.target.value })
+                }
+                placeholder="例如: claude-3-5-sonnet-20241022"
+                required
+              />
+            </div>
+          )}
+
           <div className="space-y-2">
-            <Label htmlFor="displayName">{t('usage.displayName', '显示名称')}</Label>
+            <Label htmlFor="displayName">
+              {t("usage.displayName", "显示名称")}
+            </Label>
             <Input
               id="displayName"
               value={formData.displayName}
-              onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, displayName: e.target.value })
+              }
+              placeholder="例如: Claude 3.5 Sonnet"
               required
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="inputCost">
-              {t('usage.inputCostPerMillion', '输入成本 (每百万 tokens, USD)')}
+              {t("usage.inputCostPerMillion", "输入成本 (每百万 tokens, USD)")}
             </Label>
             <Input
               id="inputCost"
@@ -110,14 +136,16 @@ export function PricingEditModal({ model, onClose }: PricingEditModalProps) {
               step="0.01"
               min="0"
               value={formData.inputCost}
-              onChange={(e) => setFormData({ ...formData, inputCost: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, inputCost: e.target.value })
+              }
               required
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="outputCost">
-              {t('usage.outputCostPerMillion', '输出成本 (每百万 tokens, USD)')}
+              {t("usage.outputCostPerMillion", "输出成本 (每百万 tokens, USD)")}
             </Label>
             <Input
               id="outputCost"
@@ -125,14 +153,19 @@ export function PricingEditModal({ model, onClose }: PricingEditModalProps) {
               step="0.01"
               min="0"
               value={formData.outputCost}
-              onChange={(e) => setFormData({ ...formData, outputCost: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, outputCost: e.target.value })
+              }
               required
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="cacheReadCost">
-              {t('usage.cacheReadCostPerMillion', '缓存读取成本 (每百万 tokens, USD)')}
+              {t(
+                "usage.cacheReadCostPerMillion",
+                "缓存读取成本 (每百万 tokens, USD)",
+              )}
             </Label>
             <Input
               id="cacheReadCost"
@@ -140,14 +173,19 @@ export function PricingEditModal({ model, onClose }: PricingEditModalProps) {
               step="0.01"
               min="0"
               value={formData.cacheReadCost}
-              onChange={(e) => setFormData({ ...formData, cacheReadCost: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, cacheReadCost: e.target.value })
+              }
               required
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="cacheCreationCost">
-              {t('usage.cacheCreationCostPerMillion', '缓存写入成本 (每百万 tokens, USD)')}
+              {t(
+                "usage.cacheCreationCostPerMillion",
+                "缓存写入成本 (每百万 tokens, USD)",
+              )}
             </Label>
             <Input
               id="cacheCreationCost"
@@ -155,17 +193,23 @@ export function PricingEditModal({ model, onClose }: PricingEditModalProps) {
               step="0.01"
               min="0"
               value={formData.cacheCreationCost}
-              onChange={(e) => setFormData({ ...formData, cacheCreationCost: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, cacheCreationCost: e.target.value })
+              }
               required
             />
           </div>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
-              {t('common.cancel', '取消')}
+              {t("common.cancel", "取消")}
             </Button>
             <Button type="submit" disabled={updatePricing.isPending}>
-              {updatePricing.isPending ? t('common.saving', '保存中...') : t('common.save', '保存')}
+              {updatePricing.isPending
+                ? t("common.saving", "保存中...")
+                : isNew
+                  ? t("common.add", "新增")
+                  : t("common.save", "保存")}
             </Button>
           </DialogFooter>
         </form>

@@ -1,69 +1,289 @@
-import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
-import { useModelPricing } from '@/lib/query/usage';
-import { PricingEditModal } from './PricingEditModal';
-import type { ModelPricing } from '@/types/usage';
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useModelPricing, useDeleteModelPricing } from "@/lib/query/usage";
+import { PricingEditModal } from "./PricingEditModal";
+import type { ModelPricing } from "@/types/usage";
+import { Plus, Pencil, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 
 export function PricingConfigPanel() {
   const { t } = useTranslation();
-  const { data: pricing, isLoading } = useModelPricing();
+  const { data: pricing, isLoading, error } = useModelPricing();
+  const deleteMutation = useDeleteModelPricing();
   const [editingModel, setEditingModel] = useState<ModelPricing | null>(null);
+  const [isAddingNew, setIsAddingNew] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const handleDelete = (modelId: string) => {
+    deleteMutation.mutate(modelId, {
+      onSuccess: () => {
+        setDeleteConfirm(null);
+      },
+    });
+  };
+
+  const handleAddNew = () => {
+    setIsAddingNew(true);
+    setEditingModel({
+      modelId: "",
+      displayName: "",
+      inputCostPerMillion: "0",
+      outputCostPerMillion: "0",
+      cacheReadCostPerMillion: "0",
+      cacheCreationCostPerMillion: "0",
+    });
+  };
 
   if (isLoading) {
-    return <div className="h-[400px] animate-pulse rounded bg-gray-100" />;
+    return (
+      <Card className="border-none bg-transparent p-0 shadow-none">
+        <CardHeader
+          className="cursor-pointer"
+          onClick={() => setIsExpanded(!isExpanded)}
+        >
+          <div className="flex items-center gap-2">
+            <ChevronRight className="h-4 w-4" />
+            <CardTitle className="text-base">
+              {t("usage.modelPricing", "模型定价")}
+            </CardTitle>
+          </div>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="border-none bg-transparent p-0 shadow-none">
+        <CardHeader
+          className="cursor-pointer"
+          onClick={() => setIsExpanded(!isExpanded)}
+        >
+          <div className="flex items-center gap-2">
+            {isExpanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+            <CardTitle className="text-base">
+              {t("usage.modelPricing", "模型定价")}
+            </CardTitle>
+          </div>
+        </CardHeader>
+        {isExpanded && (
+          <CardContent>
+            <Alert variant="destructive">
+              <AlertDescription>
+                {t("usage.loadPricingError", "加载定价数据失败")}:{" "}
+                {String(error)}
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        )}
+      </Card>
+    );
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{t('usage.modelPricing', '模型定价')}</h2>
-      </div>
+    <Card className="border-none bg-transparent shadow-none">
+      <CardHeader
+        className="cursor-pointer select-none"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {isExpanded ? (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            )}
+            <div>
+              <CardTitle className="text-base">
+                {t("usage.modelPricing", "模型定价")}
+                {pricing && pricing.length > 0 && (
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">
+                    ({pricing.length})
+                  </span>
+                )}
+              </CardTitle>
+              {!isExpanded && (
+                <CardDescription className="mt-1">
+                  {t(
+                    "usage.modelPricingDesc",
+                    "配置各模型的 Token 成本（每百万 tokens 的 USD 价格，支持 * 与 ? 通配）",
+                  )}
+                </CardDescription>
+              )}
+            </div>
+          </div>
+          <Button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAddNew();
+            }}
+            size="sm"
+          >
+            <Plus className="mr-1 h-4 w-4" />
+            {t("common.add", "新增")}
+          </Button>
+        </div>
+      </CardHeader>
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('usage.model', '模型')}</TableHead>
-              <TableHead>{t('usage.displayName', '显示名称')}</TableHead>
-              <TableHead className="text-right">{t('usage.inputCost', '输入成本')}</TableHead>
-              <TableHead className="text-right">{t('usage.outputCost', '输出成本')}</TableHead>
-              <TableHead className="text-right">{t('usage.cacheReadCost', '缓存读取')}</TableHead>
-              <TableHead className="text-right">{t('usage.cacheWriteCost', '缓存写入')}</TableHead>
-              <TableHead className="text-right">{t('common.actions', '操作')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {pricing?.map((model) => (
-              <TableRow key={model.modelId}>
-                <TableCell className="font-mono text-sm">{model.modelId}</TableCell>
-                <TableCell>{model.displayName}</TableCell>
-                <TableCell className="text-right">${model.inputCostPerMillion}</TableCell>
-                <TableCell className="text-right">${model.outputCostPerMillion}</TableCell>
-                <TableCell className="text-right">${model.cacheReadCostPerMillion}</TableCell>
-                <TableCell className="text-right">${model.cacheCreationCostPerMillion}</TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setEditingModel(model)}
-                  >
-                    {t('common.edit', '编辑')}
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      {isExpanded && (
+        <CardContent>
+          {!pricing || pricing.length === 0 ? (
+            <Alert>
+              <AlertDescription>
+                {t(
+                  "usage.noPricingData",
+                  '暂无定价数据。点击"新增"添加模型定价配置。',
+                )}
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <div className="rounded-md bg-card/60 shadow-sm">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t("usage.model", "模型")}</TableHead>
+                    <TableHead>{t("usage.displayName", "显示名称")}</TableHead>
+                    <TableHead className="text-right">
+                      {t("usage.inputCost", "输入成本")}
+                    </TableHead>
+                    <TableHead className="text-right">
+                      {t("usage.outputCost", "输出成本")}
+                    </TableHead>
+                    <TableHead className="text-right">
+                      {t("usage.cacheReadCost", "缓存读取")}
+                    </TableHead>
+                    <TableHead className="text-right">
+                      {t("usage.cacheWriteCost", "缓存写入")}
+                    </TableHead>
+                    <TableHead className="text-right">
+                      {t("common.actions", "操作")}
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pricing.map((model) => (
+                    <TableRow key={model.modelId}>
+                      <TableCell className="font-mono text-sm">
+                        {model.modelId}
+                      </TableCell>
+                      <TableCell>{model.displayName}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        ${model.inputCostPerMillion}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        ${model.outputCostPerMillion}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        ${model.cacheReadCostPerMillion}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        ${model.cacheCreationCostPerMillion}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setIsAddingNew(false);
+                              setEditingModel(model);
+                            }}
+                            title={t("common.edit", "编辑")}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setDeleteConfirm(model.modelId)}
+                            title={t("common.delete", "删除")}
+                            className="text-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      )}
 
       {editingModel && (
         <PricingEditModal
           model={editingModel}
-          onClose={() => setEditingModel(null)}
+          isNew={isAddingNew}
+          onClose={() => {
+            setEditingModel(null);
+            setIsAddingNew(false);
+          }}
         />
       )}
-    </div>
+
+      <Dialog
+        open={!!deleteConfirm}
+        onOpenChange={() => setDeleteConfirm(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {t("usage.deleteConfirmTitle", "确认删除")}
+            </DialogTitle>
+            <DialogDescription>
+              {t(
+                "usage.deleteConfirmDesc",
+                "确定要删除此模型定价配置吗？此操作无法撤销。",
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirm(null)}>
+              {t("common.cancel", "取消")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteConfirm && handleDelete(deleteConfirm)}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending
+                ? t("common.deleting", "删除中...")
+                : t("common.delete", "删除")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
   );
 }
