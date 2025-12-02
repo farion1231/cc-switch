@@ -123,6 +123,57 @@ impl Database {
         }
     }
 
+    /// 根据 ID 获取单个供应商
+    pub fn get_provider_by_id(
+        &self,
+        id: &str,
+        app_type: &str,
+    ) -> Result<Option<Provider>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let result = conn.query_row(
+            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, is_proxy_target
+             FROM providers WHERE id = ?1 AND app_type = ?2",
+            params![id, app_type],
+            |row| {
+                let name: String = row.get(0)?;
+                let settings_config_str: String = row.get(1)?;
+                let website_url: Option<String> = row.get(2)?;
+                let category: Option<String> = row.get(3)?;
+                let created_at: Option<i64> = row.get(4)?;
+                let sort_index: Option<usize> = row.get(5)?;
+                let notes: Option<String> = row.get(6)?;
+                let icon: Option<String> = row.get(7)?;
+                let icon_color: Option<String> = row.get(8)?;
+                let meta_str: String = row.get(9)?;
+                let is_proxy_target: bool = row.get(10)?;
+
+                let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
+                let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
+
+                Ok(Provider {
+                    id: id.to_string(),
+                    name,
+                    settings_config,
+                    website_url,
+                    category,
+                    created_at,
+                    sort_index,
+                    notes,
+                    meta: Some(meta),
+                    icon,
+                    icon_color,
+                    is_proxy_target: Some(is_proxy_target),
+                })
+            },
+        );
+
+        match result {
+            Ok(provider) => Ok(Some(provider)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(AppError::Database(e.to_string())),
+        }
+    }
+
     /// 获取代理目标供应商 ID
     pub fn get_proxy_target_provider(&self, app_type: &str) -> Result<Option<String>, AppError> {
         let conn = lock_conn!(self.conn);

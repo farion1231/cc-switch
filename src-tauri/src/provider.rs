@@ -156,6 +156,15 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub partner_promotion_key: Option<String>,
+    /// 成本倍数（用于计算实际成本）
+    #[serde(rename = "costMultiplier", skip_serializing_if = "Option::is_none")]
+    pub cost_multiplier: Option<String>,
+    /// 每日消费限额（USD）
+    #[serde(rename = "limitDailyUsd", skip_serializing_if = "Option::is_none")]
+    pub limit_daily_usd: Option<String>,
+    /// 每月消费限额（USD）
+    #[serde(rename = "limitMonthlyUsd", skip_serializing_if = "Option::is_none")]
+    pub limit_monthly_usd: Option<String>,
 }
 
 impl ProviderManager {
