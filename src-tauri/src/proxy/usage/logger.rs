@@ -4,6 +4,7 @@ use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
 use super::parser::TokenUsage;
 use crate::database::Database;
 use crate::error::AppError;
+use crate::services::usage_stats::find_model_pricing_row;
 use rust_decimal::Decimal;
 use std::time::SystemTime;
 
@@ -94,6 +95,7 @@ impl<'a> UsageLogger<'a> {
     }
 
     /// 记录失败的请求
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub fn log_error(
         &self,
         request_id: String,
@@ -123,31 +125,19 @@ impl<'a> UsageLogger<'a> {
     /// 获取模型定价
     pub fn get_model_pricing(&self, model_id: &str) -> Result<Option<ModelPricing>, AppError> {
         let conn = crate::database::lock_conn!(self.db.conn);
-
-        let result = conn.query_row(
-            "SELECT input_cost_per_million, output_cost_per_million,
-                    cache_read_cost_per_million, cache_creation_cost_per_million
-             FROM model_pricing WHERE model_id = ?1",
-            [model_id],
-            |row| {
-                Ok(ModelPricing::from_strings(
-                    &row.get::<_, String>(0)?,
-                    &row.get::<_, String>(1)?,
-                    &row.get::<_, String>(2)?,
-                    &row.get::<_, String>(3)?,
-                ))
-            },
-        );
-
-        match result {
-            Ok(Ok(pricing)) => Ok(Some(pricing)),
-            Ok(Err(e)) => Err(AppError::Database(format!("解析定价数据失败: {e}"))),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(AppError::Database(format!("查询定价失败: {e}"))),
+        let row = find_model_pricing_row(&conn, model_id)?;
+        match row {
+            Some((input, output, cache_read, cache_creation)) => {
+                ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation)
+                    .map(Some)
+                    .map_err(|e| AppError::Database(format!("解析定价数据失败: {e}")))
+            }
+            None => Ok(None),
         }
     }
 
     /// 计算并记录请求
+    #[allow(clippy::too_many_arguments)]
     pub fn log_with_calculation(
         &self,
         request_id: String,
@@ -163,7 +153,7 @@ impl<'a> UsageLogger<'a> {
         let pricing = self.get_model_pricing(&model)?;
 
         if pricing.is_none() {
-            log::warn!("模型 {} 的定价信息未找到，成本将记录为 0", model);
+            log::warn!("模型 {model} 的定价信息未找到，成本将记录为 0");
         }
 
         let cost = CostCalculator::try_calculate(&usage, pricing.as_ref(), cost_multiplier);
@@ -213,18 +203,17 @@ mod tests {
             cache_creation_tokens: 0,
         };
 
-        logger
-            .log_with_calculation(
-                "req-123".to_string(),
-                "provider-1".to_string(),
-                "claude".to_string(),
-                "test-model".to_string(),
-                usage,
-                Decimal::from(1),
-                100,
-                200,
-                None,
-            )?;
+        logger.log_with_calculation(
+            "req-123".to_string(),
+            "provider-1".to_string(),
+            "claude".to_string(),
+            "test-model".to_string(),
+            usage,
+            Decimal::from(1),
+            100,
+            200,
+            None,
+        )?;
 
         // 验证记录已插入
         let conn = crate::database::lock_conn!(db.conn);
@@ -244,16 +233,15 @@ mod tests {
         let db = Database::memory()?;
         let logger = UsageLogger::new(&db);
 
-        logger
-            .log_error(
-                "req-error".to_string(),
-                "provider-1".to_string(),
-                "claude".to_string(),
-                "unknown-model".to_string(),
-                500,
-                "Internal Server Error".to_string(),
-                50,
-            )?;
+        logger.log_error(
+            "req-error".to_string(),
+            "provider-1".to_string(),
+            "claude".to_string(),
+            "unknown-model".to_string(),
+            500,
+            "Internal Server Error".to_string(),
+            50,
+        )?;
 
         // 验证错误记录已插入
         let conn = crate::database::lock_conn!(db.conn);

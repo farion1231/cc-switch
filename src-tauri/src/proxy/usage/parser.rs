@@ -20,6 +20,7 @@ pub struct TokenUsage {
 
 /// API 类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ApiType {
     Claude,
     OpenRouter,
@@ -46,6 +47,7 @@ impl TokenUsage {
     }
 
     /// 从 Claude API 流式响应解析
+    #[allow(dead_code)]
     pub fn from_claude_stream_events(events: &[Value]) -> Option<Self> {
         let mut usage = Self::default();
 
@@ -53,18 +55,18 @@ impl TokenUsage {
             if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
                 match event_type {
                     "message_start" => {
-                        if let Some(msg_usage) = event.get("message").and_then(|m| m.get("usage"))
-                        {
-                            usage.input_tokens =
-                                msg_usage.get("input_tokens")?.as_u64()? as u32;
+                        if let Some(msg_usage) = event.get("message").and_then(|m| m.get("usage")) {
+                            usage.input_tokens = msg_usage.get("input_tokens")?.as_u64()? as u32;
                             usage.cache_read_tokens = msg_usage
                                 .get("cache_read_input_tokens")
                                 .and_then(|v| v.as_u64())
-                                .unwrap_or(0) as u32;
+                                .unwrap_or(0)
+                                as u32;
                             usage.cache_creation_tokens = msg_usage
                                 .get("cache_creation_input_tokens")
                                 .and_then(|v| v.as_u64())
-                                .unwrap_or(0) as u32;
+                                .unwrap_or(0)
+                                as u32;
                         }
                     }
                     "message_delta" => {
@@ -86,6 +88,7 @@ impl TokenUsage {
     }
 
     /// 从 OpenRouter 响应解析 (OpenAI 格式)
+    #[allow(dead_code)]
     pub fn from_openrouter_response(body: &Value) -> Option<Self> {
         let usage = body.get("usage")?;
         Some(Self {
@@ -114,6 +117,7 @@ impl TokenUsage {
     }
 
     /// 从 Codex API 流式响应解析
+    #[allow(dead_code)]
     pub fn from_codex_stream_events(events: &[Value]) -> Option<Self> {
         for event in events {
             if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
@@ -142,6 +146,7 @@ impl TokenUsage {
     }
 
     /// 从 Gemini API 流式响应解析
+    #[allow(dead_code)]
     pub fn from_gemini_stream_chunks(chunks: &[Value]) -> Option<Self> {
         let mut total_input = 0u32;
         let mut total_output = 0u32;

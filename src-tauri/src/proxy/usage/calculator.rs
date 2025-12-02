@@ -48,10 +48,9 @@ impl CostCalculator {
         let output_cost = Decimal::from(usage.output_tokens) * pricing.output_cost_per_million
             / million
             * cost_multiplier;
-        let cache_read_cost = Decimal::from(usage.cache_read_tokens)
-            * pricing.cache_read_cost_per_million
-            / million
-            * cost_multiplier;
+        let cache_read_cost =
+            Decimal::from(usage.cache_read_tokens) * pricing.cache_read_cost_per_million / million
+                * cost_multiplier;
         let cache_creation_cost = Decimal::from(usage.cache_creation_tokens)
             * pricing.cache_creation_cost_per_million
             / million
