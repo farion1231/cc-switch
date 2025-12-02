@@ -199,12 +199,19 @@ impl RequestForwarder {
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
 
+        // 记录原始请求 JSON
+        log::info!(
+            "[{}] ====== 请求开始 ======\n>>> 原始请求 JSON:\n{}",
+            adapter.name(),
+            serde_json::to_string_pretty(body).unwrap_or_else(|_| body.to_string())
+        );
+
         // 转换请求体（如果需要）
         let request_body = if needs_transform {
             log::info!("[{}] 转换请求格式 (Anthropic → OpenAI)", adapter.name());
             let transformed = adapter.transform_request(body.clone(), provider)?;
-            log::debug!(
-                "[{}] 转换后的请求: {}",
+            log::info!(
+                "[{}] >>> 转换后的请求 JSON:\n{}",
                 adapter.name(),
                 serde_json::to_string_pretty(&transformed).unwrap_or_default()
             );

@@ -10,6 +10,7 @@ pub mod providers;
 mod router;
 pub(crate) mod server;
 pub(crate) mod types;
+pub mod usage;
 
 // 公开导出给外部使用（commands, services等模块需要）
 #[allow(unused_imports)]
