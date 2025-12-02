@@ -18,6 +18,8 @@ import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { ProxyPanel } from "@/components/proxy";
+import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
+import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
 import { useTranslation } from "react-i18next";
@@ -163,12 +165,15 @@ export function SettingsPage({
           onValueChange={setActiveTab}
           className="flex flex-col h-full"
         >
-          <TabsList className="grid w-full grid-cols-3 mb-6 glass rounded-xl">
+          <TabsList className="grid w-full grid-cols-4 mb-6 glass rounded-xl">
             <TabsTrigger value="general">
               {t("settings.tabGeneral")}
             </TabsTrigger>
             <TabsTrigger value="advanced">
               {t("settings.tabAdvanced")}
+            </TabsTrigger>
+            <TabsTrigger value="usage">
+              {t("usage.title", "使用统计")}
             </TabsTrigger>
             <TabsTrigger value="about">{t("common.about")}</TabsTrigger>
           </TabsList>
@@ -210,6 +215,9 @@ export function SettingsPage({
                   {/* 代理服务面板 */}
                   <ProxyPanel />
 
+                  {/* 模型定价配置 */}
+                  <PricingConfigPanel />
+
                   <ImportExportSection
                     status={importStatus}
                     selectedFile={selectedFile}
@@ -246,6 +254,10 @@ export function SettingsPage({
 
             <TabsContent value="about" className="mt-0">
               <AboutSection isPortable={isPortable} />
+            </TabsContent>
+
+            <TabsContent value="usage" className="mt-0">
+              <UsageDashboard />
             </TabsContent>
           </div>
         </Tabs>

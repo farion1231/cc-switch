@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Play, Wand2, Eye, EyeOff, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { Provider, UsageScript } from "@/types";
+import { Provider, UsageScript, UsageData } from "@/types";
 import { usageApi, type AppId } from "@/lib/api";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
@@ -220,7 +220,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
-          .map((plan) => {
+          .map((plan: UsageData) => {
             const planInfo = plan.planName ? `[${plan.planName}]` : "";
             return `${planInfo} ${t("usage.remaining")} ${plan.remaining} ${plan.unit}`;
           })
