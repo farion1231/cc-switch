@@ -10,6 +10,7 @@ export interface TokenUsage {
 export interface RequestLog {
   requestId: string;
   providerId: string;
+  providerName?: string;
   appType: string;
   model: string;
   inputTokens: number;
@@ -41,6 +42,8 @@ export interface UsageSummary {
   totalCost: string;
   totalInputTokens: number;
   totalOutputTokens: number;
+  totalCacheCreationTokens: number;
+  totalCacheReadTokens: number;
   successRate: number;
 }
 
@@ -49,6 +52,10 @@ export interface DailyStats {
   requestCount: number;
   totalCost: string;
   totalTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationTokens: number;
+  totalCacheReadTokens: number;
 }
 
 export interface ProviderStats {
@@ -87,7 +94,7 @@ export interface ProviderLimitStatus {
   monthlyExceeded: boolean;
 }
 
-export type TimeRange = '7d' | '30d' | '90d';
+export type TimeRange = "1d" | "7d" | "30d";
 
 export interface StatsFilters {
   timeRange: TimeRange;

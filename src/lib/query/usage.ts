@@ -1,22 +1,22 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { usageApi } from '@/lib/api/usage';
-import type { LogFilters } from '@/types/usage';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { usageApi } from "@/lib/api/usage";
+import type { LogFilters } from "@/types/usage";
 
 // Query keys
 export const usageKeys = {
-  all: ['usage'] as const,
+  all: ["usage"] as const,
   summary: (startDate?: number, endDate?: number) =>
-    [...usageKeys.all, 'summary', startDate, endDate] as const,
-  trends: (days: number) => [...usageKeys.all, 'trends', days] as const,
-  providerStats: () => [...usageKeys.all, 'provider-stats'] as const,
-  modelStats: () => [...usageKeys.all, 'model-stats'] as const,
+    [...usageKeys.all, "summary", startDate, endDate] as const,
+  trends: (days: number) => [...usageKeys.all, "trends", days] as const,
+  providerStats: () => [...usageKeys.all, "provider-stats"] as const,
+  modelStats: () => [...usageKeys.all, "model-stats"] as const,
   logs: (filters: LogFilters, limit: number, offset: number) =>
-    [...usageKeys.all, 'logs', filters, limit, offset] as const,
+    [...usageKeys.all, "logs", filters, limit, offset] as const,
   detail: (requestId: string) =>
-    [...usageKeys.all, 'detail', requestId] as const,
-  pricing: () => [...usageKeys.all, 'pricing'] as const,
+    [...usageKeys.all, "detail", requestId] as const,
+  pricing: () => [...usageKeys.all, "pricing"] as const,
   limits: (providerId: string, appType: string) =>
-    [...usageKeys.all, 'limits', providerId, appType] as const,
+    [...usageKeys.all, "limits", providerId, appType] as const,
 };
 
 // Hooks
@@ -51,7 +51,7 @@ export function useModelStats() {
 export function useRequestLogs(
   filters: LogFilters,
   limit: number = 50,
-  offset: number = 0
+  offset: number = 0,
 ) {
   return useQuery({
     queryKey: usageKeys.logs(filters, limit, offset),
@@ -100,8 +100,19 @@ export function useUpdateModelPricing() {
         params.inputCost,
         params.outputCost,
         params.cacheReadCost,
-        params.cacheCreationCost
+        params.cacheCreationCost,
       ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: usageKeys.pricing() });
+    },
+  });
+}
+
+export function useDeleteModelPricing() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (modelId: string) => usageApi.deleteModelPricing(modelId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: usageKeys.pricing() });
     },
