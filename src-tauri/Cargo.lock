@@ -716,6 +716,7 @@ dependencies = [
  "reqwest",
  "rquickjs",
  "rusqlite",
+ "rust_decimal",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -738,6 +739,7 @@ dependencies = [
  "tower 0.4.13",
  "tower-http 0.5.2",
  "url",
+ "uuid",
  "winreg 0.52.0",
  "zip 2.4.2",
 ]
