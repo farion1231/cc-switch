@@ -1,11 +1,21 @@
 //! Codex (OpenAI) Provider Adapter
 //!
 //! 仅透传模式，支持直连 OpenAI API
+//!
+//! ## 客户端检测
+//! 支持检测官方 Codex 客户端 (codex_vscode, codex_cli_rs)
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use regex::Regex;
 use reqwest::RequestBuilder;
+use std::sync::LazyLock;
+
+/// 官方 Codex 客户端 User-Agent 正则
+#[allow(dead_code)]
+static CODEX_CLIENT_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(codex_vscode|codex_cli_rs)/[\d.]+").unwrap());
 
 /// Codex 适配器
 pub struct CodexAdapter;
@@ -13,6 +23,14 @@ pub struct CodexAdapter;
 impl CodexAdapter {
     pub fn new() -> Self {
         Self
+    }
+
+    /// 检测是否为官方 Codex 客户端
+    ///
+    /// 匹配 User-Agent 模式: `^(codex_vscode|codex_cli_rs)/[\d.]+`
+    #[allow(dead_code)]
+    pub fn is_official_client(user_agent: &str) -> bool {
+        CODEX_CLIENT_REGEX.is_match(user_agent)
     }
 
     /// 从 Provider 配置中提取 API Key
@@ -211,5 +229,37 @@ mod tests {
         // base_url 已包含 /v1，endpoint 也包含 /v1
         let url = adapter.build_url("https://www.packyapi.com/v1", "/v1/responses");
         assert_eq!(url, "https://www.packyapi.com/v1/responses");
+    }
+
+    // 官方客户端检测测试
+    #[test]
+    fn test_is_official_client_vscode() {
+        assert!(CodexAdapter::is_official_client("codex_vscode/1.0.0"));
+        assert!(CodexAdapter::is_official_client("codex_vscode/2.3.4"));
+        assert!(CodexAdapter::is_official_client("codex_vscode/0.1"));
+    }
+
+    #[test]
+    fn test_is_official_client_cli() {
+        assert!(CodexAdapter::is_official_client("codex_cli_rs/1.0.0"));
+        assert!(CodexAdapter::is_official_client("codex_cli_rs/0.5.2"));
+    }
+
+    #[test]
+    fn test_is_not_official_client() {
+        assert!(!CodexAdapter::is_official_client("Mozilla/5.0"));
+        assert!(!CodexAdapter::is_official_client("curl/7.68.0"));
+        assert!(!CodexAdapter::is_official_client("python-requests/2.25.1"));
+        assert!(!CodexAdapter::is_official_client("codex_other/1.0.0"));
+        assert!(!CodexAdapter::is_official_client(""));
+    }
+
+    #[test]
+    fn test_is_official_client_partial_match() {
+        // 必须从开头匹配
+        assert!(!CodexAdapter::is_official_client("some codex_vscode/1.0.0"));
+        assert!(!CodexAdapter::is_official_client(
+            "prefix_codex_cli_rs/1.0.0"
+        ));
     }
 }

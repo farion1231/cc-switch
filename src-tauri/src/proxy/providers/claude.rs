@@ -1,8 +1,13 @@
 //! Claude (Anthropic) Provider Adapter
 //!
 //! 支持透传模式和 OpenRouter 兼容模式
+//!
+//! ## 认证模式
+//! - **Claude**: Anthropic 官方 API (x-api-key + anthropic-version)
+//! - **ClaudeAuth**: 中转服务 (仅 Bearer 认证，无 x-api-key)
+//! - **OpenRouter**: 需要 Anthropic ↔ OpenAI 格式转换
 
-use super::{AuthInfo, AuthStrategy, ProviderAdapter};
+use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use reqwest::RequestBuilder;
@@ -15,11 +20,58 @@ impl ClaudeAdapter {
         Self
     }
 
+    /// 获取供应商类型
+    ///
+    /// 根据 base_url 和 auth_mode 检测具体的供应商类型：
+    /// - OpenRouter: base_url 包含 openrouter.ai
+    /// - ClaudeAuth: auth_mode 为 bearer_only
+    /// - Claude: 默认 Anthropic 官方
+    pub fn provider_type(&self, provider: &Provider) -> ProviderType {
+        // 检测 OpenRouter
+        if let Ok(base_url) = self.extract_base_url(provider) {
+            if base_url.contains("openrouter.ai") {
+                return ProviderType::OpenRouter;
+            }
+        }
+
+        // 检测 ClaudeAuth (仅 Bearer 认证)
+        if self.is_bearer_only_mode(provider) {
+            return ProviderType::ClaudeAuth;
+        }
+
+        ProviderType::Claude
+    }
+
     /// 检测是否使用 OpenRouter
     fn is_openrouter(&self, provider: &Provider) -> bool {
         if let Ok(base_url) = self.extract_base_url(provider) {
             return base_url.contains("openrouter.ai");
         }
+        false
+    }
+
+    /// 检测是否为仅 Bearer 认证模式
+    fn is_bearer_only_mode(&self, provider: &Provider) -> bool {
+        // 检查 settings_config 中的 auth_mode
+        if let Some(auth_mode) = provider
+            .settings_config
+            .get("auth_mode")
+            .and_then(|v| v.as_str())
+        {
+            if auth_mode == "bearer_only" {
+                return true;
+            }
+        }
+
+        // 检查 env 中的 AUTH_MODE
+        if let Some(env) = provider.settings_config.get("env") {
+            if let Some(auth_mode) = env.get("AUTH_MODE").and_then(|v| v.as_str()) {
+                if auth_mode == "bearer_only" {
+                    return true;
+                }
+            }
+        }
+
         false
     }
 
@@ -122,11 +174,11 @@ impl ProviderAdapter for ClaudeAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
-        let is_openrouter = self.is_openrouter(provider);
-        let strategy = if is_openrouter {
-            AuthStrategy::Bearer
-        } else {
-            AuthStrategy::Anthropic
+        let provider_type = self.provider_type(provider);
+        let strategy = match provider_type {
+            ProviderType::OpenRouter => AuthStrategy::Bearer,
+            ProviderType::ClaudeAuth => AuthStrategy::ClaudeAuth,
+            _ => AuthStrategy::Anthropic,
         };
 
         self.extract_key(provider)
@@ -149,9 +201,16 @@ impl ProviderAdapter for ClaudeAdapter {
 
     fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
         match auth.strategy {
+            // Anthropic 官方: Authorization Bearer + x-api-key + anthropic-version
             AuthStrategy::Anthropic => request
+                .header("Authorization", format!("Bearer {}", auth.api_key))
                 .header("x-api-key", &auth.api_key)
                 .header("anthropic-version", "2023-06-01"),
+            // ClaudeAuth 中转服务: 仅 Bearer，无 x-api-key
+            AuthStrategy::ClaudeAuth => {
+                request.header("Authorization", format!("Bearer {}", auth.api_key))
+            }
+            // OpenRouter: Bearer
             AuthStrategy::Bearer => {
                 request.header("Authorization", format!("Bearer {}", auth.api_key))
             }
@@ -239,6 +298,74 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-or-test-key");
         assert_eq!(auth.strategy, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_extract_auth_claude_auth_mode() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://some-proxy.com",
+                "ANTHROPIC_AUTH_TOKEN": "sk-proxy-key"
+            },
+            "auth_mode": "bearer_only"
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-proxy-key");
+        assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
+    }
+
+    #[test]
+    fn test_extract_auth_claude_auth_env_mode() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://some-proxy.com",
+                "ANTHROPIC_AUTH_TOKEN": "sk-proxy-key",
+                "AUTH_MODE": "bearer_only"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-proxy-key");
+        assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
+    }
+
+    #[test]
+    fn test_provider_type_detection() {
+        let adapter = ClaudeAdapter::new();
+
+        // Anthropic 官方
+        let anthropic = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_AUTH_TOKEN": "sk-ant-test"
+            }
+        }));
+        assert_eq!(adapter.provider_type(&anthropic), ProviderType::Claude);
+
+        // OpenRouter
+        let openrouter = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                "OPENROUTER_API_KEY": "sk-or-test"
+            }
+        }));
+        assert_eq!(adapter.provider_type(&openrouter), ProviderType::OpenRouter);
+
+        // ClaudeAuth
+        let claude_auth = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://some-proxy.com",
+                "ANTHROPIC_AUTH_TOKEN": "sk-test"
+            },
+            "auth_mode": "bearer_only"
+        }));
+        assert_eq!(
+            adapter.provider_type(&claude_auth),
+            ProviderType::ClaudeAuth
+        );
     }
 
     #[test]
