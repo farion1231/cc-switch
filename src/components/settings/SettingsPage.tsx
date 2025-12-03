@@ -19,6 +19,7 @@ import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { ProxyPanel } from "@/components/proxy";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
+import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
@@ -217,6 +218,9 @@ export function SettingsPage({
 
                   {/* 模型定价配置 */}
                   <PricingConfigPanel />
+
+                  {/* 模型测试配置 */}
+                  <ModelTestConfigPanel />
 
                   <ImportExportSection
                     status={importStatus}

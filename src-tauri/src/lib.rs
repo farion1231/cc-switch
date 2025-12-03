@@ -661,6 +661,13 @@ pub fn run() {
             commands::update_model_pricing,
             commands::delete_model_pricing,
             commands::check_provider_limits,
+            // Model testing
+            commands::test_provider_model,
+            commands::test_all_providers_model,
+            commands::get_model_test_config,
+            commands::save_model_test_config,
+            commands::get_model_test_logs,
+            commands::cleanup_model_test_logs,
         ]);
 
     let app = builder

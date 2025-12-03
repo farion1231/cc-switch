@@ -10,6 +10,7 @@ import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { useDragSort } from "@/hooks/useDragSort";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
+import { useModelTest } from "@/hooks/useModelTest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 
@@ -49,6 +50,13 @@ export function ProviderList({
 
   // 获取代理服务运行状态
   const { isRunning: isProxyRunning } = useProxyStatus();
+
+  // 模型测试
+  const { testProvider, isTesting } = useModelTest(appId);
+
+  const handleTest = (provider: Provider) => {
+    testProvider(provider.id, provider.name);
+  };
 
   if (isLoading) {
     return (
@@ -93,6 +101,8 @@ export function ProviderList({
               onDuplicate={onDuplicate}
               onConfigureUsage={onConfigureUsage}
               onOpenWebsite={onOpenWebsite}
+              onTest={handleTest}
+              isTesting={isTesting(provider.id)}
               onSetProxyTarget={onSetProxyTarget}
               isProxyRunning={isProxyRunning}
             />
@@ -113,6 +123,8 @@ interface SortableProviderCardProps {
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
+  onTest: (provider: Provider) => void;
+  isTesting: boolean;
   onSetProxyTarget: (provider: Provider) => void;
   isProxyRunning: boolean;
 }
@@ -127,6 +139,8 @@ function SortableProviderCard({
   onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
+  onTest,
+  isTesting,
   onSetProxyTarget,
   isProxyRunning,
 }: SortableProviderCardProps) {
@@ -158,6 +172,8 @@ function SortableProviderCard({
           onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
         }
         onOpenWebsite={onOpenWebsite}
+        onTest={onTest}
+        isTesting={isTesting}
         onSetProxyTarget={onSetProxyTarget}
         isProxyRunning={isProxyRunning}
         dragHandleProps={{
