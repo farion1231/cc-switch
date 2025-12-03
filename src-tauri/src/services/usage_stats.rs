@@ -5,7 +5,6 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use chrono::{Duration, Utc};
-use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -67,11 +66,22 @@ pub struct ModelStats {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogFilters {
-    pub provider_id: Option<String>,
+    pub app_type: Option<String>,
+    pub provider_name: Option<String>,
     pub model: Option<String>,
     pub status_code: Option<u16>,
     pub start_date: Option<i64>,
     pub end_date: Option<i64>,
+}
+
+/// 分页请求日志响应
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaginatedLogs {
+    pub data: Vec<RequestLogDetail>,
+    pub total: u32,
+    pub page: u32,
+    pub page_size: u32,
 }
 
 /// 请求日志详情
@@ -93,7 +103,10 @@ pub struct RequestLogDetail {
     pub cache_read_cost_usd: String,
     pub cache_creation_cost_usd: String,
     pub total_cost_usd: String,
+    pub is_streaming: bool,
     pub latency_ms: u64,
+    pub first_token_ms: Option<u64>,
+    pub duration_ms: Option<u64>,
     pub status_code: u16,
     pub error_message: Option<String>,
     pub created_at: i64,
@@ -381,36 +394,40 @@ impl Database {
         Ok(stats)
     }
 
-    /// 获取请求日志列表
+    /// 获取请求日志列表（分页）
     pub fn get_request_logs(
         &self,
         filters: &LogFilters,
-        limit: u32,
-        offset: u32,
-    ) -> Result<Vec<RequestLogDetail>, AppError> {
+        page: u32,
+        page_size: u32,
+    ) -> Result<PaginatedLogs, AppError> {
         let conn = lock_conn!(self.conn);
 
         let mut conditions = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if let Some(ref provider_id) = filters.provider_id {
-            conditions.push("provider_id = ?");
-            params.push(Box::new(provider_id.clone()));
+        if let Some(ref app_type) = filters.app_type {
+            conditions.push("l.app_type = ?");
+            params.push(Box::new(app_type.clone()));
+        }
+        if let Some(ref provider_name) = filters.provider_name {
+            conditions.push("p.name LIKE ?");
+            params.push(Box::new(format!("%{provider_name}%")));
         }
         if let Some(ref model) = filters.model {
-            conditions.push("model = ?");
-            params.push(Box::new(model.clone()));
+            conditions.push("l.model LIKE ?");
+            params.push(Box::new(format!("%{model}%")));
         }
         if let Some(status) = filters.status_code {
-            conditions.push("status_code = ?");
+            conditions.push("l.status_code = ?");
             params.push(Box::new(status as i64));
         }
         if let Some(start) = filters.start_date {
-            conditions.push("created_at >= ?");
+            conditions.push("l.created_at >= ?");
             params.push(Box::new(start));
         }
         if let Some(end) = filters.end_date {
-            conditions.push("created_at <= ?");
+            conditions.push("l.created_at <= ?");
             params.push(Box::new(end));
         }
 
@@ -420,14 +437,28 @@ impl Database {
             format!("WHERE {}", conditions.join(" AND "))
         };
 
-        params.push(Box::new(limit as i64));
+        // 获取总数
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM proxy_request_logs l 
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             {where_clause}"
+        );
+        let count_params: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let total: u32 = conn.query_row(&count_sql, count_params.as_slice(), |row| {
+            row.get::<_, i64>(0).map(|v| v as u32)
+        })?;
+
+        // 获取数据
+        let offset = page * page_size;
+        params.push(Box::new(page_size as i64));
         params.push(Box::new(offset as i64));
 
         let sql = format!(
             "SELECT l.request_id, l.provider_id, p.name as provider_name, l.app_type, l.model,
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
-                    l.latency_ms, l.status_code, l.error_message, l.created_at
+                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
+                    l.status_code, l.error_message, l.created_at
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -453,10 +484,13 @@ impl Database {
                 cache_read_cost_usd: row.get(11)?,
                 cache_creation_cost_usd: row.get(12)?,
                 total_cost_usd: row.get(13)?,
-                latency_ms: row.get::<_, i64>(14)? as u64,
-                status_code: row.get::<_, i64>(15)? as u16,
-                error_message: row.get(16)?,
-                created_at: row.get(17)?,
+                is_streaming: row.get::<_, i64>(14)? != 0,
+                latency_ms: row.get::<_, i64>(15)? as u64,
+                first_token_ms: row.get::<_, Option<i64>>(16)?.map(|v| v as u64),
+                duration_ms: row.get::<_, Option<i64>>(17)?.map(|v| v as u64),
+                status_code: row.get::<_, i64>(18)? as u16,
+                error_message: row.get(19)?,
+                created_at: row.get(20)?,
             })
         })?;
 
@@ -475,7 +509,12 @@ impl Database {
             logs.push(log);
         }
 
-        Ok(logs)
+        Ok(PaginatedLogs {
+            data: logs,
+            total,
+            page,
+            page_size,
+        })
     }
 
     /// 获取单个请求详情
@@ -489,7 +528,8 @@ impl Database {
             "SELECT l.request_id, l.provider_id, p.name as provider_name, l.app_type, l.model,
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-                    latency_ms, status_code, error_message, created_at
+                    is_streaming, latency_ms, first_token_ms, duration_ms,
+                    status_code, error_message, created_at
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?",
@@ -510,10 +550,13 @@ impl Database {
                     cache_read_cost_usd: row.get(11)?,
                     cache_creation_cost_usd: row.get(12)?,
                     total_cost_usd: row.get(13)?,
-                    latency_ms: row.get::<_, i64>(14)? as u64,
-                    status_code: row.get::<_, i64>(15)? as u16,
-                    error_message: row.get(16)?,
-                    created_at: row.get(17)?,
+                    is_streaming: row.get::<_, i64>(14)? != 0,
+                    latency_ms: row.get::<_, i64>(15)? as u64,
+                    first_token_ms: row.get::<_, Option<i64>>(16)?.map(|v| v as u64),
+                    duration_ms: row.get::<_, Option<i64>>(17)?.map(|v| v as u64),
+                    status_code: row.get::<_, i64>(18)? as u16,
+                    error_message: row.get(19)?,
+                    created_at: row.get(20)?,
                 })
             },
         );
@@ -608,6 +651,56 @@ impl Database {
             monthly_limit: limit_monthly.map(|l| format!("{l:.2}")),
             monthly_exceeded,
         })
+    }
+
+    /// 更新每日统计聚合
+    ///
+    /// 在请求完成后调用，更新 usage_daily_stats 表
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_daily_stats(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+        total_cost: &str,
+        is_success: bool,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let date = Utc::now().format("%Y-%m-%d").to_string();
+
+        // 使用 UPSERT 更新或插入统计
+        conn.execute(
+            "INSERT INTO usage_daily_stats (
+                date, provider_id, app_type, model,
+                request_count, total_input_tokens, total_output_tokens,
+                total_cost_usd, success_count, error_count
+            ) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(date, provider_id, app_type, model) DO UPDATE SET
+                request_count = request_count + 1,
+                total_input_tokens = total_input_tokens + ?5,
+                total_output_tokens = total_output_tokens + ?6,
+                total_cost_usd = CAST(
+                    CAST(total_cost_usd AS REAL) + CAST(?7 AS REAL) AS TEXT
+                ),
+                success_count = success_count + ?8,
+                error_count = error_count + ?9",
+            params![
+                date,
+                provider_id,
+                app_type,
+                model,
+                input_tokens,
+                output_tokens,
+                total_cost,
+                if is_success { 1 } else { 0 },
+                if is_success { 0 } else { 1 },
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("更新每日统计失败: {e}")))?;
+
+        Ok(())
     }
 }
 
@@ -774,6 +867,7 @@ pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
 ) -> Result<Option<(String, String, String, String)>, AppError> {
+    // 1. 精确匹配
     let exact = conn
         .query_row(
             "SELECT input_cost_per_million, output_cost_per_million,
@@ -797,57 +891,37 @@ pub(crate) fn find_model_pricing_row(
         return Ok(exact);
     }
 
-    let mut stmt = conn.prepare(
-        "SELECT model_id, input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing
-         WHERE model_id LIKE '%*%' OR model_id LIKE '%?%'
-         ORDER BY LENGTH(model_id) DESC",
-    )?;
+    // 2. 逐步删除后缀匹配（claude-sonnet-4-5-20250929 → claude-sonnet-4-5 → claude-sonnet-4 → claude-sonnet）
+    let mut current = model_id.to_string();
+    while let Some(pos) = current.rfind('-') {
+        current = current[..pos].to_string();
 
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-            ))
-        })?
-        .filter_map(|res| res.ok());
+        let result = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing
+                 WHERE model_id = ?1",
+                [&current],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| AppError::Database(format!("查询模型定价失败: {e}")))?;
 
-    for (pattern, input, output, cache_read, cache_creation) in rows {
-        if matches_model_pattern(&pattern, model_id) {
-            return Ok(Some((input, output, cache_read, cache_creation)));
+        if result.is_some() {
+            log::info!("模型 {model_id} 通过删除后缀匹配到: {current}");
+            return Ok(result);
         }
     }
 
     Ok(None)
-}
-
-fn matches_model_pattern(pattern: &str, model_id: &str) -> bool {
-    if pattern == model_id {
-        return true;
-    }
-
-    if !pattern.contains('*') && !pattern.contains('?') {
-        return false;
-    }
-
-    let mut regex_pattern = String::from("^");
-    for ch in pattern.chars() {
-        match ch {
-            '*' => regex_pattern.push_str(".*"),
-            '?' => regex_pattern.push('.'),
-            _ => regex_pattern.push_str(&regex::escape(&ch.to_string())),
-        }
-    }
-    regex_pattern.push('$');
-
-    Regex::new(&regex_pattern)
-        .map(|re| re.is_match(model_id))
-        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -918,6 +992,57 @@ mod tests {
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].model, "claude-3-sonnet");
         assert_eq!(stats[0].request_count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_model_pricing_matching() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+
+        // 测试精确匹配
+        let result = find_model_pricing_row(&conn, "claude-4.1-sonnet")?;
+        assert!(result.is_some(), "应该能精确匹配 claude-4.1-sonnet");
+
+        // 测试逐步删除后缀匹配 - 日期后缀
+        let result = find_model_pricing_row(&conn, "claude-4.1-sonnet-20241022")?;
+        assert!(
+            result.is_some(),
+            "应该能通过删除后缀匹配 claude-4.1-sonnet-20241022"
+        );
+
+        // 测试逐步删除后缀匹配 - 多个后缀
+        let result = find_model_pricing_row(&conn, "claude-4.5-haiku-20240229-preview")?;
+        assert!(
+            result.is_some(),
+            "应该能通过删除后缀匹配 claude-4.5-haiku-20240229-preview"
+        );
+
+        // 测试 GPT 模型
+        let result = find_model_pricing_row(&conn, "gpt-5.0-2024-11-20")?;
+        assert!(
+            result.is_some(),
+            "应该能通过删除后缀匹配 gpt-5.0-2024-11-20"
+        );
+
+        // 测试 Gemini 模型
+        let result = find_model_pricing_row(&conn, "gemini-2.5-flash-exp")?;
+        assert!(
+            result.is_some(),
+            "应该能通过删除后缀匹配 gemini-2.5-flash-exp"
+        );
+
+        // 测试 claude-sonnet-4-5 命名格式
+        let result = find_model_pricing_row(&conn, "claude-sonnet-4-5-20250929")?;
+        assert!(
+            result.is_some(),
+            "应该能通过删除后缀匹配 claude-sonnet-4-5-20250929"
+        );
+
+        // 测试不存在的模型
+        let result = find_model_pricing_row(&conn, "unknown-model-123")?;
+        assert!(result.is_none(), "不应该匹配不存在的模型");
 
         Ok(())
     }

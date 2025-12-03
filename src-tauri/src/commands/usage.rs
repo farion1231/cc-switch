@@ -41,10 +41,10 @@ pub fn get_model_stats(state: State<'_, AppState>) -> Result<Vec<ModelStats>, Ap
 pub fn get_request_logs(
     state: State<'_, AppState>,
     filters: LogFilters,
-    limit: u32,
-    offset: u32,
-) -> Result<Vec<RequestLogDetail>, AppError> {
-    state.db.get_request_logs(&filters, limit, offset)
+    page: u32,
+    page_size: u32,
+) -> Result<PaginatedLogs, AppError> {
+    state.db.get_request_logs(&filters, page, page_size)
 }
 
 /// 获取单个请求详情

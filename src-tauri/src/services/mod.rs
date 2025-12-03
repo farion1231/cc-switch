@@ -18,6 +18,6 @@ pub use skill::{Skill, SkillRepo, SkillService};
 pub use speedtest::{EndpointLatency, SpeedtestService};
 #[allow(unused_imports)]
 pub use usage_stats::{
-    DailyStats, LogFilters, ModelStats, ProviderLimitStatus, ProviderStats, RequestLogDetail,
-    UsageSummary,
+    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
+    RequestLogDetail, UsageSummary,
 };
