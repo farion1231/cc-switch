@@ -4,8 +4,9 @@
 
 use super::{
     forwarder::RequestForwarder,
-    providers::{get_adapter, transform},
+    providers::{get_adapter, transform, ProviderType},
     server::ProxyState,
+    session::ProxySession,
     types::*,
     usage::{logger::UsageLogger, parser::TokenUsage},
     ProxyError,
@@ -25,7 +26,63 @@ use std::{
 };
 use tokio::sync::Mutex;
 
-/// 记录请求使用量
+/// 记录请求使用量（带 ProxySession 支持）
+#[allow(dead_code, clippy::too_many_arguments)]
+async fn log_usage_with_session(
+    state: &ProxyState,
+    session: &ProxySession,
+    provider_id: &str,
+    app_type: &str,
+    usage: TokenUsage,
+    latency_ms: u64,
+    first_token_ms: Option<u64>,
+    status_code: u16,
+    provider_type: Option<&ProviderType>,
+) {
+    let logger = UsageLogger::new(&state.db);
+
+    // 获取 provider 的 cost_multiplier
+    let multiplier = match state.db.get_provider_by_id(provider_id, app_type) {
+        Ok(Some(p)) => {
+            if let Some(meta) = p.meta {
+                if let Some(cm) = meta.cost_multiplier {
+                    Decimal::from_str(&cm).unwrap_or(Decimal::from(1))
+                } else {
+                    Decimal::from(1)
+                }
+            } else {
+                Decimal::from(1)
+            }
+        }
+        _ => Decimal::from(1),
+    };
+
+    let model = session
+        .model
+        .clone()
+        .unwrap_or_else(|| "unknown".to_string());
+    let provider_type_str = provider_type.map(|pt| pt.as_str().to_string());
+
+    if let Err(e) = logger.log_with_calculation(
+        session.session_id.clone(),
+        provider_id.to_string(),
+        app_type.to_string(),
+        model,
+        usage,
+        multiplier,
+        latency_ms,
+        first_token_ms,
+        status_code,
+        Some(session.session_id.clone()),
+        provider_type_str,
+        session.is_streaming,
+    ) {
+        log::warn!("记录使用量失败: {e}");
+    }
+}
+
+/// 记录请求使用量（兼容旧接口）
+#[allow(clippy::too_many_arguments)]
 async fn log_usage(
     state: &ProxyState,
     provider_id: &str,
@@ -33,6 +90,8 @@ async fn log_usage(
     model: &str,
     usage: TokenUsage,
     latency_ms: u64,
+    first_token_ms: Option<u64>,
+    is_streaming: bool,
     status_code: u16,
 ) {
     let logger = UsageLogger::new(&state.db);
@@ -63,14 +122,17 @@ async fn log_usage(
         usage,
         multiplier,
         latency_ms,
+        first_token_ms,
         status_code,
         None,
+        None, // provider_type
+        is_streaming,
     ) {
         log::warn!("记录使用量失败: {e}");
     }
 }
 
-type UsageCallback = Arc<dyn Fn(Vec<Value>) + Send + Sync + 'static>;
+type UsageCallbackWithTiming = Arc<dyn Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static>;
 
 #[derive(Clone)]
 struct SseUsageCollector {
@@ -79,16 +141,23 @@ struct SseUsageCollector {
 
 struct SseUsageCollectorInner {
     events: Mutex<Vec<Value>>,
-    on_complete: UsageCallback,
+    first_event_time: Mutex<Option<std::time::Instant>>,
+    start_time: std::time::Instant,
+    on_complete: UsageCallbackWithTiming,
     finished: AtomicBool,
 }
 
 impl SseUsageCollector {
-    fn new(callback: impl Fn(Vec<Value>) + Send + Sync + 'static) -> Self {
-        let on_complete: UsageCallback = Arc::new(callback);
+    fn new(
+        start_time: std::time::Instant,
+        callback: impl Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static,
+    ) -> Self {
+        let on_complete: UsageCallbackWithTiming = Arc::new(callback);
         Self {
             inner: Arc::new(SseUsageCollectorInner {
                 events: Mutex::new(Vec::new()),
+                first_event_time: Mutex::new(None),
+                start_time,
                 on_complete,
                 finished: AtomicBool::new(false),
             }),
@@ -96,6 +165,13 @@ impl SseUsageCollector {
     }
 
     async fn push(&self, event: Value) {
+        // 记录首个事件时间
+        {
+            let mut first_time = self.inner.first_event_time.lock().await;
+            if first_time.is_none() {
+                *first_time = Some(std::time::Instant::now());
+            }
+        }
         let mut events = self.inner.events.lock().await;
         events.push(event);
     }
@@ -110,7 +186,12 @@ impl SseUsageCollector {
             std::mem::take(&mut *guard)
         };
 
-        (self.inner.on_complete)(events);
+        let first_token_ms = {
+            let first_time = self.inner.first_event_time.lock().await;
+            first_time.map(|t| (t - self.inner.start_time).as_millis() as u64)
+        };
+
+        (self.inner.on_complete)(events, first_token_ms);
     }
 }
 
@@ -203,6 +284,8 @@ pub async fn handle_messages(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
+    let start_time = std::time::Instant::now();
+
     let config = state.config.read().await.clone();
     let request_model = body
         .get("model")
@@ -262,8 +345,10 @@ pub async fn handle_messages(
                 let provider_id = provider.id.clone();
                 let model = request_model.clone();
                 let status_code = status.as_u16();
-                SseUsageCollector::new(move |events| {
+                let start_time_clone = start_time;
+                SseUsageCollector::new(start_time, move |events, first_token_ms| {
                     if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
+                        let latency_ms = start_time_clone.elapsed().as_millis() as u64;
                         let state = state.clone();
                         let provider_id = provider_id.clone();
                         let model = model.clone();
@@ -274,7 +359,9 @@ pub async fn handle_messages(
                                 "claude",
                                 &model,
                                 usage,
-                                0,
+                                latency_ms,
+                                first_token_ms,
+                                true, // is_streaming
                                 status_code,
                             )
                             .await;
@@ -354,6 +441,7 @@ pub async fn handle_messages(
                     .get("model")
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown");
+                let latency_ms = start_time.elapsed().as_millis() as u64;
 
                 tokio::spawn({
                     let state = state.clone();
@@ -366,7 +454,9 @@ pub async fn handle_messages(
                             "claude",
                             &model,
                             usage,
-                            0,
+                            latency_ms,
+                            None,
+                            false,
                             status.as_u16(),
                         )
                         .await;
@@ -433,8 +523,10 @@ pub async fn handle_messages(
             let provider_id = provider.id.clone();
             let model = request_model.clone();
             let status_code = status.as_u16();
-            SseUsageCollector::new(move |events| {
+            let start_time_clone = start_time;
+            SseUsageCollector::new(start_time, move |events, first_token_ms| {
                 if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
+                    let latency_ms = start_time_clone.elapsed().as_millis() as u64;
                     let state = state.clone();
                     let provider_id = provider_id.clone();
                     let model = model.clone();
@@ -445,7 +537,9 @@ pub async fn handle_messages(
                             "claude",
                             &model,
                             usage,
-                            0,
+                            latency_ms,
+                            first_token_ms,
+                            true,
                             status_code,
                         )
                         .await;
@@ -484,6 +578,7 @@ pub async fn handle_messages(
                     .get("model")
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown");
+                let latency_ms = start_time.elapsed().as_millis() as u64;
 
                 tokio::spawn({
                     let state = state.clone();
@@ -496,7 +591,9 @@ pub async fn handle_messages(
                             "claude",
                             &model,
                             usage,
-                            0,
+                            latency_ms,
+                            None,
+                            false,
                             status.as_u16(),
                         )
                         .await;
@@ -528,6 +625,8 @@ pub async fn handle_gemini(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
+    let start_time = std::time::Instant::now();
+
     let config = state.config.read().await.clone();
 
     // 选择目标 Provider
@@ -553,6 +652,7 @@ pub async fn handle_gemini(
         .split('/')
         .find(|s| s.starts_with("models/"))
         .and_then(|s| s.strip_prefix("models/"))
+        .map(|s| s.split(':').next().unwrap_or(s))
         .unwrap_or("unknown")
         .to_string();
 
@@ -588,13 +688,19 @@ pub async fn handle_gemini(
         let usage_collector = {
             let state = state.clone();
             let provider_id = provider.id.clone();
-            let model = gemini_model.clone();
+            let fallback_model = gemini_model.clone();
             let status_code = status.as_u16();
-            SseUsageCollector::new(move |events| {
+            let start_time_clone = start_time;
+            SseUsageCollector::new(start_time, move |events, first_token_ms| {
                 if let Some(usage) = TokenUsage::from_gemini_stream_chunks(&events) {
+                    // 优先使用响应中的实际模型名称，否则使用从 URI 提取的模型名称
+                    let model = usage
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| fallback_model.clone());
+                    let latency_ms = start_time_clone.elapsed().as_millis() as u64;
                     let state = state.clone();
                     let provider_id = provider_id.clone();
-                    let model = model.clone();
                     tokio::spawn(async move {
                         log_usage(
                             &state,
@@ -602,7 +708,9 @@ pub async fn handle_gemini(
                             "gemini",
                             &model,
                             usage,
-                            0,
+                            latency_ms,
+                            first_token_ms,
+                            true,
                             status_code,
                         )
                         .await;
@@ -636,7 +744,9 @@ pub async fn handle_gemini(
 
             // 记录使用量
             if let Some(usage) = TokenUsage::from_gemini_response(&json_value) {
-                let model = gemini_model.clone();
+                // 优先使用响应中的实际模型名称，否则使用从 URI 提取的模型名称
+                let model = usage.model.clone().unwrap_or_else(|| gemini_model.clone());
+                let latency_ms = start_time.elapsed().as_millis() as u64;
                 tokio::spawn({
                     let state = state.clone();
                     let provider_id = provider.id.clone();
@@ -647,7 +757,9 @@ pub async fn handle_gemini(
                             "gemini",
                             &model,
                             usage,
-                            0,
+                            latency_ms,
+                            None,
+                            false,
                             status.as_u16(),
                         )
                         .await;
@@ -675,6 +787,8 @@ pub async fn handle_responses(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
+    let start_time = std::time::Instant::now();
+
     let config = state.config.read().await.clone();
     let request_model = body
         .get("model")
@@ -724,16 +838,40 @@ pub async fn handle_responses(
         let usage_collector = {
             let state = state.clone();
             let provider_id = provider.id.clone();
-            let model = request_model.clone();
+            let request_model = request_model.clone();
             let status_code = status.as_u16();
-            SseUsageCollector::new(move |events| {
+            let start_time_clone = start_time;
+            SseUsageCollector::new(start_time, move |events, first_token_ms| {
                 if let Some(usage) = TokenUsage::from_codex_stream_events(&events) {
+                    // 尝试从事件中提取模型，回退到请求模型
+                    let model = events
+                        .iter()
+                        .find_map(|e| {
+                            if e.get("type")?.as_str()? == "response.completed" {
+                                e.get("response")?.get("model")?.as_str()
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(&request_model)
+                        .to_string();
+                    let latency_ms = start_time_clone.elapsed().as_millis() as u64;
+
                     let state = state.clone();
                     let provider_id = provider_id.clone();
-                    let model = model.clone();
                     tokio::spawn(async move {
-                        log_usage(&state, &provider_id, "codex", &model, usage, 0, status_code)
-                            .await;
+                        log_usage(
+                            &state,
+                            &provider_id,
+                            "codex",
+                            &model,
+                            usage,
+                            latency_ms,
+                            first_token_ms,
+                            true,
+                            status_code,
+                        )
+                        .await;
                     });
                 } else {
                     log::debug!("[Codex] 流式响应缺少 usage 统计，跳过消费记录");
@@ -768,6 +906,13 @@ pub async fn handle_responses(
                     .get("model")
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown");
+                let latency_ms = start_time.elapsed().as_millis() as u64;
+
+                log::info!(
+                    "[Codex] 解析到 usage: input={}, output={}",
+                    usage.input_tokens,
+                    usage.output_tokens
+                );
 
                 tokio::spawn({
                     let state = state.clone();
@@ -780,12 +925,189 @@ pub async fn handle_responses(
                             "codex",
                             &model,
                             usage,
-                            0,
+                            latency_ms,
+                            None,
+                            false,
                             status.as_u16(),
                         )
                         .await;
                     }
                 });
+            } else {
+                log::warn!("[Codex] 未能解析 usage 信息，跳过记录");
+            }
+        } else {
+            log::info!("[Codex] <<< 响应 (非 JSON): {} bytes", body_bytes.len());
+        }
+        log::info!("[Codex] ====== 请求结束 ======");
+
+        let mut builder = axum::response::Response::builder().status(status);
+        for (key, value) in response_headers.iter() {
+            builder = builder.header(key, value);
+        }
+
+        let body = axum::body::Body::from(body_bytes);
+        Ok(builder.body(body).unwrap())
+    }
+}
+
+/// 处理 /v1/chat/completions 请求（OpenAI Chat Completions API - Codex CLI）
+pub async fn handle_chat_completions(
+    State(state): State<ProxyState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<axum::response::Response, ProxyError> {
+    let start_time = std::time::Instant::now();
+    log::info!("[Codex] ====== /v1/chat/completions 请求开始 ======");
+
+    let config = state.config.read().await.clone();
+    let request_model = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let is_stream = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    log::info!("[Codex] 请求模型: {request_model}, 流式: {is_stream}");
+
+    // 选择目标 Provider
+    let router = super::router::ProviderRouter::new(state.db.clone());
+    let failed_ids = Vec::new();
+    let provider = router.select_provider(&AppType::Codex, &failed_ids).await?;
+
+    log::info!("[Codex] 选择 Provider: {}", provider.id);
+
+    let forwarder = RequestForwarder::new(
+        state.db.clone(),
+        config.request_timeout,
+        config.max_retries,
+        state.status.clone(),
+    );
+
+    let response = forwarder
+        .forward_with_retry(&AppType::Codex, "/v1/chat/completions", body, headers)
+        .await?;
+
+    let status = response.status();
+    log::info!("[Codex] 上游响应状态: {status}");
+
+    // 检查是否流式响应
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let is_sse = content_type.contains("text/event-stream");
+
+    if is_sse {
+        // 流式透传
+        log::info!("[Codex] 流式透传响应 (SSE)");
+        let mut builder = axum::response::Response::builder().status(status);
+
+        for (key, value) in response.headers() {
+            builder = builder.header(key, value);
+        }
+
+        let stream = response
+            .bytes_stream()
+            .map(|chunk| chunk.map_err(|e| std::io::Error::other(e.to_string())));
+
+        let usage_collector = {
+            let state = state.clone();
+            let provider_id = provider.id.clone();
+            let request_model = request_model.clone();
+            let status_code = status.as_u16();
+            let start_time_clone = start_time;
+            SseUsageCollector::new(start_time, move |events, first_token_ms| {
+                if let Some(usage) = TokenUsage::from_openai_stream_events(&events) {
+                    let model = events
+                        .iter()
+                        .find_map(|e| e.get("model")?.as_str())
+                        .unwrap_or(&request_model)
+                        .to_string();
+                    let latency_ms = start_time_clone.elapsed().as_millis() as u64;
+
+                    let state = state.clone();
+                    let provider_id = provider_id.clone();
+                    tokio::spawn(async move {
+                        log_usage(
+                            &state,
+                            &provider_id,
+                            "codex",
+                            &model,
+                            usage,
+                            latency_ms,
+                            first_token_ms,
+                            true,
+                            status_code,
+                        )
+                        .await;
+                    });
+                } else {
+                    log::debug!("[Codex] 流式响应缺少 usage 统计，跳过消费记录");
+                }
+            })
+        };
+        let logged_stream =
+            create_logged_passthrough_stream(stream, "Codex", Some(usage_collector));
+
+        let body = axum::body::Body::from_stream(logged_stream);
+        Ok(builder.body(body).unwrap())
+    } else {
+        // 非流式透传
+        let response_headers = response.headers().clone();
+        let status = response.status();
+
+        let body_bytes = response.bytes().await.map_err(|e| {
+            log::error!("[Codex] 读取响应失败: {e}");
+            ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
+        })?;
+
+        // 记录响应 JSON
+        if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
+            log::info!(
+                "[Codex] <<< 响应 JSON:\n{}",
+                serde_json::to_string_pretty(&json_value).unwrap_or_default()
+            );
+
+            // 记录使用量 (OpenAI 格式: prompt_tokens, completion_tokens)
+            if let Some(usage) = TokenUsage::from_openai_response(&json_value) {
+                let model = json_value
+                    .get("model")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown");
+                let latency_ms = start_time.elapsed().as_millis() as u64;
+
+                log::info!(
+                    "[Codex] 解析到 usage: input={}, output={}",
+                    usage.input_tokens,
+                    usage.output_tokens
+                );
+
+                tokio::spawn({
+                    let state = state.clone();
+                    let provider_id = provider.id.clone();
+                    let model = model.to_string();
+                    async move {
+                        log_usage(
+                            &state,
+                            &provider_id,
+                            "codex",
+                            &model,
+                            usage,
+                            latency_ms,
+                            None,
+                            false,
+                            status.as_u16(),
+                        )
+                        .await;
+                    }
+                });
+            } else {
+                log::warn!("[Codex] 未能解析 usage 信息，跳过记录");
             }
         } else {
             log::info!("[Codex] <<< 响应 (非 JSON): {} bytes", body_bytes.len());

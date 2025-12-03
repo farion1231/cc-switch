@@ -50,6 +50,16 @@ pub enum ProxyError {
     #[error("超时: {0}")]
     Timeout(String),
 
+    /// 流式响应空闲超时
+    #[allow(dead_code)]
+    #[error("流式响应空闲超时: {0}秒无数据")]
+    StreamIdleTimeout(u64),
+
+    /// 认证错误
+    #[allow(dead_code)]
+    #[error("认证失败: {0}")]
+    AuthError(String),
+
     #[allow(dead_code)]
     #[error("内部错误: {0}")]
     Internal(String),
@@ -116,6 +126,10 @@ impl IntoResponse for ProxyError {
                     }
                     ProxyError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
                     ProxyError::Timeout(_) => (StatusCode::GATEWAY_TIMEOUT, self.to_string()),
+                    ProxyError::StreamIdleTimeout(_) => {
+                        (StatusCode::GATEWAY_TIMEOUT, self.to_string())
+                    }
+                    ProxyError::AuthError(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
                     ProxyError::Internal(_) => {
                         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
                     }

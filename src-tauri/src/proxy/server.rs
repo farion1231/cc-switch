@@ -148,6 +148,11 @@ impl ProxyServer {
             .route("/status", get(handlers::get_status))
             // Claude API
             .route("/v1/messages", post(handlers::handle_messages))
+            // OpenAI Chat Completions API (Codex CLI)
+            .route(
+                "/v1/chat/completions",
+                post(handlers::handle_chat_completions),
+            )
             // OpenAI Responses API (Codex CLI)
             .route("/v1/responses", post(handlers::handle_responses))
             // Gemini API
