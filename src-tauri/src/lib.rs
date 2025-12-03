@@ -694,6 +694,12 @@ pub fn run() {
             commands::get_stream_check_config,
             commands::save_stream_check_config,
             commands::get_tool_versions,
+            // Universal Provider management
+            commands::get_universal_providers,
+            commands::get_universal_provider,
+            commands::upsert_universal_provider,
+            commands::delete_universal_provider,
+            commands::sync_universal_provider,
         ]);
 
     let app = builder

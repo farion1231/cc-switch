@@ -1,5 +1,5 @@
 export type { AppId } from "./types";
-export { providersApi } from "./providers";
+export { providersApi, universalProvidersApi } from "./providers";
 export { settingsApi } from "./settings";
 export { mcpApi } from "./mcp";
 export { promptsApi } from "./prompts";

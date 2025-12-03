@@ -198,6 +198,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["mistral"],
     defaultColor: "#FF7000",
   },
+  newapi: {
+    name: "newapi",
+    displayName: "newapi",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
   notion: {
     name: "notion",
     displayName: "notion",

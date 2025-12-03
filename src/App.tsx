@@ -13,6 +13,7 @@ import {
   Wrench,
   Server,
   RefreshCw,
+  Layers,
 } from "lucide-react";
 import type { Provider } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -43,9 +44,17 @@ import PromptPanel from "@/components/prompts/PromptPanel";
 import { SkillsPage } from "@/components/skills/SkillsPage";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
+import { UniversalProviderPanel } from "@/components/universal";
 import { Button } from "@/components/ui/button";
 
-type View = "providers" | "settings" | "prompts" | "skills" | "mcp" | "agents";
+type View =
+  | "providers"
+  | "settings"
+  | "prompts"
+  | "skills"
+  | "mcp"
+  | "agents"
+  | "universal";
 
 const DRAG_BAR_HEIGHT = 28; // px
 const HEADER_HEIGHT = 64; // px
@@ -144,6 +153,38 @@ function App() {
       unsubscribe?.();
     };
   }, [activeApp, refetch]);
+
+  // 监听统一供应商同步事件，刷新所有应用的供应商列表
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
+    const setupListener = async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unsubscribe = await listen("universal-provider-synced", async () => {
+          // 统一供应商同步后刷新所有应用的供应商列表
+          // 使用 invalidateQueries 使所有 providers 查询失效
+          await queryClient.invalidateQueries({ queryKey: ["providers"] });
+          // 同时更新托盘菜单
+          try {
+            await providersApi.updateTrayMenu();
+          } catch (error) {
+            console.error("[App] Failed to update tray menu", error);
+          }
+        });
+      } catch (error) {
+        console.error(
+          "[App] Failed to subscribe universal-provider-synced event",
+          error,
+        );
+      }
+    };
+
+    setupListener();
+    return () => {
+      unsubscribe?.();
+    };
+  }, [queryClient]);
 
   // 应用启动时检测所有应用的环境变量冲突
   useEffect(() => {
@@ -364,6 +405,12 @@ function App() {
           return (
             <AgentsPanel onOpenChange={() => setCurrentView("providers")} />
           );
+        case "universal":
+          return (
+            <div className="mx-auto max-w-[56rem] px-5 pt-4">
+              <UniversalProviderPanel />
+            </div>
+          );
         default:
           return (
             <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
@@ -494,6 +541,10 @@ function App() {
                   {currentView === "skills" && t("skills.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
                   {currentView === "agents" && t("agents.title")}
+                  {currentView === "universal" &&
+                    t("universalProvider.title", {
+                      defaultValue: "统一供应商",
+                    })}
                 </h1>
               </div>
             ) : (
@@ -580,6 +631,17 @@ function App() {
                 <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
 
                 <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCurrentView("universal")}
+                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                    title={t("universalProvider.title", {
+                      defaultValue: "统一供应商",
+                    })}
+                  >
+                    <Layers className="h-4 w-4" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
