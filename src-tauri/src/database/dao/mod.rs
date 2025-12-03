@@ -7,5 +7,6 @@ mod prompts;
 mod providers;
 mod settings;
 mod skills;
+mod universal_providers;
 
 // 所有 DAO 方法都通过 Database impl 提供，无需单独导出

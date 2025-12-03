@@ -840,5 +840,37 @@
   },
   "agents": {
     "title": "エージェント"
+  },
+  "universalProvider": {
+    "title": "統合プロバイダー",
+    "description": "統合プロバイダーは Claude、Codex、Gemini の設定を同時に管理します。変更は有効なすべてのアプリに自動的に同期されます。",
+    "add": "統合プロバイダーを追加",
+    "edit": "統合プロバイダーを編集",
+    "empty": "統合プロバイダーがありません",
+    "emptyHint": "上の追加ボタンをクリックして作成してください",
+    "selectPreset": "プリセットタイプを選択",
+    "name": "名前",
+    "namePlaceholder": "例：私の NewAPI",
+    "baseUrl": "API URL",
+    "apiKey": "API キー",
+    "websiteUrl": "ウェブサイト URL",
+    "websiteUrlPlaceholder": "https://example.com（オプション、リストに表示されます）",
+    "notes": "メモ",
+    "notesPlaceholder": "オプション：メモを追加",
+    "enabledApps": "有効なアプリ",
+    "modelConfig": "モデル設定",
+    "model": "モデル",
+    "sync": "アプリに同期",
+    "synced": "すべてのアプリに同期しました",
+    "syncError": "同期に失敗しました",
+    "noAppsEnabled": "有効なアプリがありません",
+    "added": "統合プロバイダーを追加しました",
+    "updated": "統合プロバイダーを更新しました",
+    "deleted": "統合プロバイダーを削除しました",
+    "loadError": "統合プロバイダーの読み込みに失敗しました",
+    "saveError": "統合プロバイダーの保存に失敗しました",
+    "deleteError": "統合プロバイダーの削除に失敗しました",
+    "deleteConfirmTitle": "統合プロバイダーを削除",
+    "deleteConfirmDescription": "「{{name}}」を削除してもよろしいですか？各アプリで生成されたプロバイダー設定も削除されます。"
   }
 }

@@ -6,16 +6,19 @@ export type McpPreset = Omit<McpServer, "enabled" | "description">;
 // 创建跨平台 npx 命令配置
 // Windows 需要使用 cmd /c wrapper 来执行 npx.cmd
 // Mac/Linux 可以直接执行 npx
-const createNpxCommand = (packageName: string, extraArgs: string[] = []): { command: string; args: string[] } => {
+const createNpxCommand = (
+  packageName: string,
+  extraArgs: string[] = [],
+): { command: string; args: string[] } => {
   if (isWindows()) {
     return {
-      command: 'cmd',
-      args: ['/c', 'npx', ...extraArgs, packageName]
+      command: "cmd",
+      args: ["/c", "npx", ...extraArgs, packageName],
     };
   } else {
     return {
-      command: 'npx',
-      args: [...extraArgs, packageName]
+      command: "npx",
+      args: [...extraArgs, packageName],
     };
   }
 };
@@ -66,7 +69,9 @@ export const mcpPresets: McpPreset[] = [
     tags: ["stdio", "thinking", "reasoning"],
     server: {
       type: "stdio",
-      ...createNpxCommand("@modelcontextprotocol/server-sequential-thinking", ["-y"]),
+      ...createNpxCommand("@modelcontextprotocol/server-sequential-thinking", [
+        "-y",
+      ]),
     } as McpServerSpec,
     homepage: "https://github.com/modelcontextprotocol/servers",
     docs: "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking",
