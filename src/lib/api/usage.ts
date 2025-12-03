@@ -8,6 +8,7 @@ import type {
   LogFilters,
   ModelPricing,
   ProviderLimitStatus,
+  PaginatedLogs,
 } from "@/types/usage";
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
@@ -62,17 +63,13 @@ export const usageApi = {
 
   getRequestLogs: async (
     filters: LogFilters,
-    limit: number = 50,
-    offset: number = 0,
-  ): Promise<RequestLog[]> => {
+    page: number = 0,
+    pageSize: number = 20,
+  ): Promise<PaginatedLogs> => {
     return invoke("get_request_logs", {
-      providerId: filters.providerId,
-      model: filters.model,
-      statusCode: filters.statusCode,
-      startDate: filters.startDate,
-      endDate: filters.endDate,
-      limit,
-      offset,
+      filters,
+      page,
+      pageSize,
     });
   },
 

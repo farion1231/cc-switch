@@ -22,10 +22,20 @@ export interface RequestLog {
   cacheReadCostUsd: string;
   cacheCreationCostUsd: string;
   totalCostUsd: string;
+  isStreaming: boolean;
   latencyMs: number;
+  firstTokenMs?: number;
+  durationMs?: number;
   statusCode: number;
   errorMessage?: string;
   createdAt: number;
+}
+
+export interface PaginatedLogs {
+  data: RequestLog[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export interface ModelPricing {
@@ -77,7 +87,8 @@ export interface ModelStats {
 }
 
 export interface LogFilters {
-  providerId?: string;
+  appType?: string;
+  providerName?: string;
   model?: string;
   statusCode?: number;
   startDate?: number;

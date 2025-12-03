@@ -10,8 +10,8 @@ export const usageKeys = {
   trends: (days: number) => [...usageKeys.all, "trends", days] as const,
   providerStats: () => [...usageKeys.all, "provider-stats"] as const,
   modelStats: () => [...usageKeys.all, "model-stats"] as const,
-  logs: (filters: LogFilters, limit: number, offset: number) =>
-    [...usageKeys.all, "logs", filters, limit, offset] as const,
+  logs: (filters: LogFilters, page: number, pageSize: number) =>
+    [...usageKeys.all, "logs", filters, page, pageSize] as const,
   detail: (requestId: string) =>
     [...usageKeys.all, "detail", requestId] as const,
   pricing: () => [...usageKeys.all, "pricing"] as const,
@@ -50,12 +50,12 @@ export function useModelStats() {
 
 export function useRequestLogs(
   filters: LogFilters,
-  limit: number = 50,
-  offset: number = 0,
+  page: number = 0,
+  pageSize: number = 20,
 ) {
   return useQuery({
-    queryKey: usageKeys.logs(filters, limit, offset),
-    queryFn: () => usageApi.getRequestLogs(filters, limit, offset),
+    queryKey: usageKeys.logs(filters, page, pageSize),
+    queryFn: () => usageApi.getRequestLogs(filters, page, pageSize),
   });
 }
 
