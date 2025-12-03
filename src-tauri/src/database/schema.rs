@@ -221,9 +221,14 @@ impl Database {
                 cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 latency_ms INTEGER NOT NULL,
+                first_token_ms INTEGER,
+                duration_ms INTEGER,
                 status_code INTEGER NOT NULL,
                 error_message TEXT,
                 session_id TEXT,
+                provider_type TEXT,
+                is_streaming INTEGER NOT NULL DEFAULT 0,
+                cost_multiplier TEXT NOT NULL DEFAULT '1.0',
                 created_at INTEGER NOT NULL
             )",
             [],
@@ -331,7 +336,7 @@ impl Database {
                         Self::set_user_version(conn, 1)?;
                     }
                     1 => {
-                        log::info!("迁移数据库从 v1 到 v2（添加使用统计表和 provider 限制字段）");
+                        log::info!("迁移数据库从 v1 到 v2（添加使用统计表和完整字段）");
                         Self::migrate_v1_to_v2(conn)?;
                         Self::set_user_version(conn, 2)?;
                     }
@@ -420,9 +425,9 @@ impl Database {
         Ok(())
     }
 
-    /// v1 -> v2 迁移：添加使用统计表和 provider 限制字段
+    /// v1 -> v2 迁移：添加使用统计表和完整字段
     fn migrate_v1_to_v2(conn: &Connection) -> Result<(), AppError> {
-        // 为 providers 表添加成本倍数和限制字段
+        // providers 表字段
         Self::add_column_if_missing(
             conn,
             "providers",
@@ -431,8 +436,9 @@ impl Database {
         )?;
         Self::add_column_if_missing(conn, "providers", "limit_daily_usd", "TEXT")?;
         Self::add_column_if_missing(conn, "providers", "limit_monthly_usd", "TEXT")?;
+        Self::add_column_if_missing(conn, "providers", "provider_type", "TEXT")?;
 
-        // 创建新表(如果不存在)
+        // proxy_request_logs 表（包含所有字段）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS proxy_request_logs (
                 request_id TEXT PRIMARY KEY,
@@ -449,14 +455,37 @@ impl Database {
                 cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 latency_ms INTEGER NOT NULL,
+                first_token_ms INTEGER,
+                duration_ms INTEGER,
                 status_code INTEGER NOT NULL,
                 error_message TEXT,
                 session_id TEXT,
+                provider_type TEXT,
+                is_streaming INTEGER NOT NULL DEFAULT 0,
+                cost_multiplier TEXT NOT NULL DEFAULT '1.0',
                 created_at INTEGER NOT NULL
             )",
             [],
         )?;
 
+        // 为已存在的表添加新字段
+        Self::add_column_if_missing(conn, "proxy_request_logs", "provider_type", "TEXT")?;
+        Self::add_column_if_missing(
+            conn,
+            "proxy_request_logs",
+            "is_streaming",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "proxy_request_logs",
+            "cost_multiplier",
+            "TEXT NOT NULL DEFAULT '1.0'",
+        )?;
+        Self::add_column_if_missing(conn, "proxy_request_logs", "first_token_ms", "INTEGER")?;
+        Self::add_column_if_missing(conn, "proxy_request_logs", "duration_ms", "INTEGER")?;
+
+        // model_pricing 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS model_pricing (
                 model_id TEXT PRIMARY KEY,
@@ -469,6 +498,7 @@ impl Database {
             [],
         )?;
 
+        // usage_daily_stats 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS usage_daily_stats (
                 date TEXT NOT NULL,
@@ -486,91 +516,120 @@ impl Database {
             [],
         )?;
 
-        // 插入默认模型定价数据
+        // 清空并重新插入模型定价
+        conn.execute("DELETE FROM model_pricing", [])
+            .map_err(|e| AppError::Database(format!("清空模型定价失败: {e}")))?;
         Self::seed_model_pricing(conn)?;
 
         Ok(())
     }
 
     /// 插入默认模型定价数据
+    /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
     fn seed_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_data = [
-            // Claude 4.x series
+            // Claude 4.5 系列
             (
-                "claude-4.1-sonnet",
-                "Claude 4.1 Sonnet",
-                "3.0",
-                "15.0",
-                "0.3",
+                "claude-opus-4-5",
+                "Claude Opus 4.5",
+                "5",
+                "25",
+                "0.50",
+                "6.25",
+            ),
+            (
+                "claude-sonnet-4-5",
+                "Claude Sonnet 4.5",
+                "3",
+                "15",
+                "0.30",
                 "3.75",
             ),
             (
-                "claude-4.1-haiku",
-                "Claude 4.1 Haiku",
-                "1.0",
-                "5.0",
-                "0.1",
+                "claude-haiku-4-5",
+                "Claude Haiku 4.5",
+                "1",
+                "5",
+                "0.10",
                 "1.25",
             ),
+            // Claude 4.1 系列
             (
-                "claude-4.5-sonnet",
-                "Claude 4.5 Sonnet",
-                "3.5",
-                "17.5",
-                "0.35",
-                "4.0",
+                "claude-opus-4-1",
+                "Claude Opus 4.1",
+                "15",
+                "75",
+                "1.50",
+                "18.75",
             ),
             (
-                "claude-4.5-haiku",
-                "Claude 4.5 Haiku",
-                "1.2",
-                "6.0",
-                "0.12",
-                "1.5",
+                "claude-sonnet-4-1",
+                "Claude Sonnet 4.1",
+                "3",
+                "15",
+                "0.30",
+                "3.75",
             ),
-            // GPT 5.x series
-            ("gpt-5.0", "GPT-5.0", "4.0", "16.0", "0", "0"),
-            ("gpt-5.0-mini", "GPT-5.0 Mini", "0.3", "1.2", "0", "0"),
-            ("gpt-5.1", "GPT-5.1", "4.5", "18.0", "0", "0"),
-            ("gpt-5.1-mini", "GPT-5.1 Mini", "0.4", "1.5", "0", "0"),
-            // Gemini 2.5 / 3.x
+            // Claude 3.7 系列
+            (
+                "claude-sonnet-3-7",
+                "Claude Sonnet 3.7",
+                "3",
+                "15",
+                "0.30",
+                "3.75",
+            ),
+            // Claude 3.5 系列
+            (
+                "claude-sonnet-3-5",
+                "Claude Sonnet 3.5",
+                "3",
+                "15",
+                "0.30",
+                "3.75",
+            ),
+            (
+                "claude-haiku-3-5",
+                "Claude Haiku 3.5",
+                "0.80",
+                "4",
+                "0.08",
+                "1",
+            ),
+            // GPT-5 系列
+            ("gpt-5", "GPT-5", "1.25", "10", "0.125", "0"),
+            ("gpt-5.1", "GPT-5.1", "1.25", "10", "0.125", "0"),
+            // Gemini 3 系列
+            (
+                "gemini-3-pro-preview",
+                "Gemini 3 Pro Preview",
+                "2",
+                "12",
+                "0",
+                "0",
+            ),
+            // Gemini 2.5 系列
             (
                 "gemini-2.5-pro",
                 "Gemini 2.5 Pro",
-                "1.5",
-                "6.0",
-                "0.35",
-                "1.5",
+                "1.25",
+                "10",
+                "0.125",
+                "0",
             ),
             (
                 "gemini-2.5-flash",
                 "Gemini 2.5 Flash",
-                "0.12",
-                "0.5",
+                "0.3",
+                "2.5",
                 "0.03",
-                "0.12",
-            ),
-            (
-                "gemini-3.0-pro",
-                "Gemini 3.0 Pro",
-                "2.0",
-                "8.0",
-                "0.4",
-                "2.0",
-            ),
-            (
-                "gemini-3.0-flash",
-                "Gemini 3.0 Flash",
-                "0.2",
-                "0.8",
-                "0.05",
-                "0.2",
+                "0",
             ),
         ];
 
         for (model_id, display_name, input, output, cache_read, cache_creation) in pricing_data {
             conn.execute(
-                "INSERT OR IGNORE INTO model_pricing (
+                "INSERT OR REPLACE INTO model_pricing (
                     model_id, display_name, input_cost_per_million, output_cost_per_million,
                     cache_read_cost_per_million, cache_creation_cost_per_million
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",

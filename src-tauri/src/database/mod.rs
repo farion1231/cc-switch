@@ -95,6 +95,7 @@ impl Database {
         };
         db.create_tables()?;
         db.apply_schema_migrations()?;
+        db.ensure_model_pricing_seeded()?;
 
         Ok(db)
     }
@@ -111,6 +112,7 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.create_tables()?;
+        db.ensure_model_pricing_seeded()?;
 
         Ok(db)
     }
