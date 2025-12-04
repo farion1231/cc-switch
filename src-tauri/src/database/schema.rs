@@ -633,6 +633,8 @@ impl Database {
             // GPT-5 系列（model_id 使用短横线格式）
             ("gpt-5", "GPT-5", "1.25", "10", "0.125", "0"),
             ("gpt-5-1", "GPT-5.1", "1.25", "10", "0.125", "0"),
+            ("gpt-5-codex", "GPT-5 Codex", "1.25", "10", "0.125", "0"),
+            ("gpt-5-1-codex", "GPT-5.1 Codex", "1.25", "10", "0.125", "0"),
             // Gemini 3 系列
             (
                 "gemini-3-pro-preview",
