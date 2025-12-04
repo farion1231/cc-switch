@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import type { Provider, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { generateUUID } from "@/utils/uuid";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -13,7 +14,7 @@ export const useAddProviderMutation = (appId: AppId) => {
     mutationFn: async (providerInput: Omit<Provider, "id">) => {
       const newProvider: Provider = {
         ...providerInput,
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         createdAt: Date.now(),
       };
       await providersApi.add(newProvider, appId);
@@ -35,7 +36,9 @@ export const useAddProviderMutation = (appId: AppId) => {
       toast.success(
         t("notifications.providerAdded", {
           defaultValue: "供应商已添加",
-        }),
+        }), {
+          closeButton: true
+        }
       );
     },
     onError: (error: Error) => {
@@ -63,7 +66,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
-        }),
+        }), {
+          closeButton: true
+        }
       );
     },
     onError: (error: Error) => {
@@ -101,7 +106,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       toast.success(
         t("notifications.deleteSuccess", {
           defaultValue: "供应商已删除",
-        }),
+        }), {
+          closeButton: true
+        }
       );
     },
     onError: (error: Error) => {
@@ -140,7 +147,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         t("notifications.switchSuccess", {
           defaultValue: "切换供应商成功",
           appName: t(`apps.${appId}`, { defaultValue: appId }),
-        }),
+        }), {
+          closeButton: true
+        }
       );
     },
     onError: (error: Error) => {
