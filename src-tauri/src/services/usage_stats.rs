@@ -863,36 +863,59 @@ impl Database {
     }
 }
 
+/// 标准化模型名称：去除供应商前缀并将点号替换为短横线
+/// 例如：anthropic/claude-haiku-4.5 → claude-haiku-4-5
+fn normalize_model_id(model_id: &str) -> String {
+    // 1. 去除供应商前缀（如 anthropic/、openai/）
+    let stripped = if let Some(pos) = model_id.find('/') {
+        &model_id[pos + 1..]
+    } else {
+        model_id
+    };
+    // 2. 将点号替换为短横线（如 claude-haiku-4.5 → claude-haiku-4-5）
+    stripped.replace('.', "-")
+}
+
 pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
 ) -> Result<Option<(String, String, String, String)>, AppError> {
-    // 1. 精确匹配
-    let exact = conn
-        .query_row(
-            "SELECT input_cost_per_million, output_cost_per_million,
-                    cache_read_cost_per_million, cache_creation_cost_per_million
-             FROM model_pricing
-             WHERE model_id = ?1",
-            [model_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(|e| AppError::Database(format!("查询模型定价失败: {e}")))?;
+    // 0. 标准化模型名称（去除前缀 + 点号转短横线）
+    // 例如：anthropic/claude-haiku-4.5 → claude-haiku-4-5
+    let normalized = normalize_model_id(model_id);
+    
+    // 1. 精确匹配（先尝试原始名称，再尝试标准化后的名称）
+    for id in [model_id, normalized.as_str()] {
+        let exact = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing
+                 WHERE model_id = ?1",
+                [id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| AppError::Database(format!("查询模型定价失败: {e}")))?;
 
-    if exact.is_some() {
-        return Ok(exact);
+        if exact.is_some() {
+            if id != model_id {
+                log::info!("模型 {model_id} 标准化后精确匹配到: {id}");
+            }
+            return Ok(exact);
+        }
     }
 
-    // 2. 逐步删除后缀匹配（claude-sonnet-4-5-20250929 → claude-sonnet-4-5 → claude-sonnet-4 → claude-sonnet）
-    let mut current = model_id.to_string();
+    // 2. 逐步删除后缀匹配（claude-haiku-4-5-20250929 → claude-haiku-4-5 → claude-haiku-4 → claude-haiku）
+    // 使用标准化后的名称进行后缀匹配
+    let mut current = normalized;
     while let Some(pos) = current.rfind('-') {
         current = current[..pos].to_string();
 
@@ -921,6 +944,7 @@ pub(crate) fn find_model_pricing_row(
         }
     }
 
+    log::warn!("模型 {model_id} 未找到定价信息，成本将记录为 0");
     Ok(None)
 }
 
@@ -1002,28 +1026,42 @@ mod tests {
         let conn = lock_conn!(db.conn);
 
         // 测试精确匹配
-        let result = find_model_pricing_row(&conn, "claude-4.1-sonnet")?;
-        assert!(result.is_some(), "应该能精确匹配 claude-4.1-sonnet");
+        let result = find_model_pricing_row(&conn, "claude-sonnet-4-5")?;
+        assert!(result.is_some(), "应该能精确匹配 claude-sonnet-4-5");
 
-        // 测试逐步删除后缀匹配 - 日期后缀
-        let result = find_model_pricing_row(&conn, "claude-4.1-sonnet-20241022")?;
+        // 测试带供应商前缀的模型名称（anthropic/claude-haiku-4.5 → claude-haiku-4-5）
+        let result = find_model_pricing_row(&conn, "anthropic/claude-haiku-4.5")?;
         assert!(
             result.is_some(),
-            "应该能通过删除后缀匹配 claude-4.1-sonnet-20241022"
+            "应该能匹配带前缀的模型 anthropic/claude-haiku-4.5"
+        );
+
+        // 测试带供应商前缀 + 点号的模型名称
+        let result = find_model_pricing_row(&conn, "anthropic/claude-sonnet-4.5")?;
+        assert!(
+            result.is_some(),
+            "应该能匹配带前缀的模型 anthropic/claude-sonnet-4.5"
+        );
+
+        // 测试逐步删除后缀匹配 - 日期后缀
+        let result = find_model_pricing_row(&conn, "claude-sonnet-4-5-20241022")?;
+        assert!(
+            result.is_some(),
+            "应该能通过删除后缀匹配 claude-sonnet-4-5-20241022"
         );
 
         // 测试逐步删除后缀匹配 - 多个后缀
-        let result = find_model_pricing_row(&conn, "claude-4.5-haiku-20240229-preview")?;
+        let result = find_model_pricing_row(&conn, "claude-haiku-4-5-20240229-preview")?;
         assert!(
             result.is_some(),
-            "应该能通过删除后缀匹配 claude-4.5-haiku-20240229-preview"
+            "应该能通过删除后缀匹配 claude-haiku-4-5-20240229-preview"
         );
 
         // 测试 GPT 模型
-        let result = find_model_pricing_row(&conn, "gpt-5.0-2024-11-20")?;
+        let result = find_model_pricing_row(&conn, "gpt-5-2024-11-20")?;
         assert!(
             result.is_some(),
-            "应该能通过删除后缀匹配 gpt-5.0-2024-11-20"
+            "应该能通过删除后缀匹配 gpt-5-2024-11-20"
         );
 
         // 测试 Gemini 模型

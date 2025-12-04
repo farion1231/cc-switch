@@ -559,6 +559,7 @@ impl Database {
 
     /// 插入默认模型定价数据
     /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
+    /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
     fn seed_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_data = [
             // Claude 4.5 系列
@@ -629,9 +630,9 @@ impl Database {
                 "0.08",
                 "1",
             ),
-            // GPT-5 系列
+            // GPT-5 系列（model_id 使用短横线格式）
             ("gpt-5", "GPT-5", "1.25", "10", "0.125", "0"),
-            ("gpt-5.1", "GPT-5.1", "1.25", "10", "0.125", "0"),
+            ("gpt-5-1", "GPT-5.1", "1.25", "10", "0.125", "0"),
             // Gemini 3 系列
             (
                 "gemini-3-pro-preview",
@@ -641,9 +642,9 @@ impl Database {
                 "0",
                 "0",
             ),
-            // Gemini 2.5 系列
+            // Gemini 2.5 系列（model_id 使用短横线格式）
             (
-                "gemini-2.5-pro",
+                "gemini-2-5-pro",
                 "Gemini 2.5 Pro",
                 "1.25",
                 "10",
@@ -651,7 +652,7 @@ impl Database {
                 "0",
             ),
             (
-                "gemini-2.5-flash",
+                "gemini-2-5-flash",
                 "Gemini 2.5 Flash",
                 "0.3",
                 "2.5",
