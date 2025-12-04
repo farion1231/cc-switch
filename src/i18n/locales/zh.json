@@ -840,5 +840,37 @@
   },
   "agents": {
     "title": "智能体"
+  },
+  "universalProvider": {
+    "title": "统一供应商",
+    "description": "统一供应商可以同时管理 Claude、Codex 和 Gemini 的配置。修改后会自动同步到所有启用的应用。",
+    "add": "添加统一供应商",
+    "edit": "编辑统一供应商",
+    "empty": "还没有统一供应商",
+    "emptyHint": "点击上方「添加」按钮创建一个",
+    "selectPreset": "选择预设类型",
+    "name": "名称",
+    "namePlaceholder": "例如：我的 NewAPI",
+    "baseUrl": "API 地址",
+    "apiKey": "API Key",
+    "websiteUrl": "官网地址",
+    "websiteUrlPlaceholder": "https://example.com（可选，用于在列表中显示）",
+    "notes": "备注",
+    "notesPlaceholder": "可选：添加备注信息",
+    "enabledApps": "启用的应用",
+    "modelConfig": "模型配置",
+    "model": "模型",
+    "sync": "同步到应用",
+    "synced": "已同步到所有应用",
+    "syncError": "同步失败",
+    "noAppsEnabled": "未启用任何应用",
+    "added": "统一供应商已添加",
+    "updated": "统一供应商已更新",
+    "deleted": "统一供应商已删除",
+    "loadError": "加载统一供应商失败",
+    "saveError": "保存统一供应商失败",
+    "deleteError": "删除统一供应商失败",
+    "deleteConfirmTitle": "删除统一供应商",
+    "deleteConfirmDescription": "确定要删除 \"{{name}}\" 吗？这将同时删除它在各应用中生成的供应商配置。"
   }
 }

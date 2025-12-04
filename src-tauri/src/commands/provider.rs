@@ -229,3 +229,97 @@ pub fn update_providers_sort_order(
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::update_sort_order(state.inner(), app_type, updates).map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// 统一供应商（Universal Provider）命令
+// ============================================================================
+
+use crate::provider::UniversalProvider;
+use std::collections::HashMap;
+use tauri::{AppHandle, Emitter};
+
+/// 统一供应商同步完成事件的 payload
+#[derive(Clone, serde::Serialize)]
+pub struct UniversalProviderSyncedEvent {
+    /// 操作类型: "upsert" | "delete" | "sync"
+    pub action: String,
+    /// 统一供应商 ID
+    pub id: String,
+}
+
+/// 发送统一供应商同步事件，通知前端刷新供应商列表
+fn emit_universal_provider_synced(app: &AppHandle, action: &str, id: &str) {
+    let _ = app.emit(
+        "universal-provider-synced",
+        UniversalProviderSyncedEvent {
+            action: action.to_string(),
+            id: id.to_string(),
+        },
+    );
+}
+
+/// 获取所有统一供应商
+#[tauri::command]
+pub fn get_universal_providers(
+    state: State<'_, AppState>,
+) -> Result<HashMap<String, UniversalProvider>, String> {
+    ProviderService::list_universal(state.inner()).map_err(|e| e.to_string())
+}
+
+/// 获取单个统一供应商
+#[tauri::command]
+pub fn get_universal_provider(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<UniversalProvider>, String> {
+    ProviderService::get_universal(state.inner(), &id).map_err(|e| e.to_string())
+}
+
+/// 添加或更新统一供应商
+#[tauri::command]
+pub fn upsert_universal_provider(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: UniversalProvider,
+) -> Result<bool, String> {
+    let id = provider.id.clone();
+    let result =
+        ProviderService::upsert_universal(state.inner(), provider).map_err(|e| e.to_string())?;
+
+    // 发送事件通知前端刷新
+    emit_universal_provider_synced(&app, "upsert", &id);
+
+    Ok(result)
+}
+
+/// 删除统一供应商
+#[tauri::command]
+pub fn delete_universal_provider(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
+    let result =
+        ProviderService::delete_universal(state.inner(), &id).map_err(|e| e.to_string())?;
+
+    // 发送事件通知前端刷新
+    emit_universal_provider_synced(&app, "delete", &id);
+
+    Ok(result)
+}
+
+/// 同步统一供应商到各应用（手动触发）
+#[tauri::command]
+pub fn sync_universal_provider(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
+    let result =
+        ProviderService::sync_universal_to_apps(state.inner(), &id).map_err(|e| e.to_string())?;
+
+    // 发送事件通知前端刷新
+    emit_universal_provider_synced(&app, "sync", &id);
+
+    Ok(result)
+}

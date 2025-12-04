@@ -840,5 +840,37 @@
   },
   "agents": {
     "title": "Agents"
+  },
+  "universalProvider": {
+    "title": "Universal Provider",
+    "description": "Universal providers manage Claude, Codex, and Gemini configurations simultaneously. Changes are automatically synced to all enabled apps.",
+    "add": "Add Universal Provider",
+    "edit": "Edit Universal Provider",
+    "empty": "No universal providers yet",
+    "emptyHint": "Click the Add button above to create one",
+    "selectPreset": "Select Preset Type",
+    "name": "Name",
+    "namePlaceholder": "e.g., My NewAPI",
+    "baseUrl": "API URL",
+    "apiKey": "API Key",
+    "websiteUrl": "Website URL",
+    "websiteUrlPlaceholder": "https://example.com (optional, displayed in the list)",
+    "notes": "Notes",
+    "notesPlaceholder": "Optional: Add notes",
+    "enabledApps": "Enabled Apps",
+    "modelConfig": "Model Configuration",
+    "model": "Model",
+    "sync": "Sync to Apps",
+    "synced": "Synced to all apps",
+    "syncError": "Sync failed",
+    "noAppsEnabled": "No apps enabled",
+    "added": "Universal provider added",
+    "updated": "Universal provider updated",
+    "deleted": "Universal provider deleted",
+    "loadError": "Failed to load universal providers",
+    "saveError": "Failed to save universal provider",
+    "deleteError": "Failed to delete universal provider",
+    "deleteConfirmTitle": "Delete Universal Provider",
+    "deleteConfirmDescription": "Are you sure you want to delete \"{{name}}\"? This will also delete its generated provider configurations in each app."
   }
 }
