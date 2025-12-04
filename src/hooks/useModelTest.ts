@@ -9,7 +9,10 @@ export function useModelTest(appId: AppId) {
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set());
 
   const testProvider = useCallback(
-    async (providerId: string, providerName: string): Promise<ModelTestResult | null> => {
+    async (
+      providerId: string,
+      providerName: string,
+    ): Promise<ModelTestResult | null> => {
       setTestingIds((prev) => new Set(prev).add(providerId));
 
       try {

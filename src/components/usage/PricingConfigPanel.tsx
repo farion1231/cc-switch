@@ -61,7 +61,7 @@ export function PricingConfigPanel() {
 
   if (isLoading) {
     return (
-      <Card className="border-none bg-transparent p-0 shadow-none">
+      <Card className="border rounded-lg">
         <CardHeader
           className="cursor-pointer"
           onClick={() => setIsExpanded(!isExpanded)}
@@ -79,7 +79,7 @@ export function PricingConfigPanel() {
 
   if (error) {
     return (
-      <Card className="border-none bg-transparent p-0 shadow-none">
+      <Card className="border rounded-lg">
         <CardHeader
           className="cursor-pointer"
           onClick={() => setIsExpanded(!isExpanded)}
@@ -110,7 +110,7 @@ export function PricingConfigPanel() {
   }
 
   return (
-    <Card className="border-none bg-transparent shadow-none">
+    <Card className="border rounded-lg">
       <CardHeader
         className="cursor-pointer select-none"
         onClick={() => setIsExpanded(!isExpanded)}

@@ -56,7 +56,9 @@ export function ModelTestConfigPanel() {
       await saveModelTestConfig(config);
       toast.success(t("modelTest.configSaved", "模型测试配置已保存"));
     } catch (e) {
-      toast.error(t("modelTest.configSaveFailed", "保存失败") + ": " + String(e));
+      toast.error(
+        t("modelTest.configSaveFailed", "保存失败") + ": " + String(e),
+      );
     } finally {
       setIsSaving(false);
     }
@@ -64,7 +66,7 @@ export function ModelTestConfigPanel() {
 
   if (isLoading) {
     return (
-      <Card className="border-none bg-transparent p-0 shadow-none">
+      <Card className="border rounded-lg">
         <CardHeader
           className="cursor-pointer"
           onClick={() => setIsExpanded(!isExpanded)}
@@ -81,7 +83,7 @@ export function ModelTestConfigPanel() {
   }
 
   return (
-    <Card className="border-none bg-transparent shadow-none">
+    <Card className="border rounded-lg">
       <CardHeader
         className="cursor-pointer select-none"
         onClick={() => setIsExpanded(!isExpanded)}

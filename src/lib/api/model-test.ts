@@ -82,6 +82,8 @@ export async function getModelTestLogs(
 /**
  * 清理旧的测试日志
  */
-export async function cleanupModelTestLogs(keepCount?: number): Promise<number> {
+export async function cleanupModelTestLogs(
+  keepCount?: number,
+): Promise<number> {
   return invoke("cleanup_model_test_logs", { keepCount });
 }
