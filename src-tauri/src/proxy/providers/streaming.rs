@@ -53,8 +53,12 @@ struct DeltaFunction {
     arguments: Option<String>,
 }
 
+/// OpenAI 流式响应的 usage 信息（完整版）
 #[derive(Debug, Deserialize)]
 struct Usage {
+    #[serde(default)]
+    prompt_tokens: u32,
+    #[serde(default)]
     completion_tokens: u32,
 }
 
@@ -278,15 +282,18 @@ pub fn create_anthropic_sse_stream(
                                             }
 
                                             let stop_reason = map_stop_reason(Some(finish_reason));
+                                            // 构建 usage 信息，包含 input_tokens 和 output_tokens
+                                            let usage_json = chunk.usage.as_ref().map(|u| json!({
+                                                "input_tokens": u.prompt_tokens,
+                                                "output_tokens": u.completion_tokens
+                                            }));
                                             let event = json!({
                                                 "type": "message_delta",
                                                 "delta": {
                                                     "stop_reason": stop_reason,
                                                     "stop_sequence": null
                                                 },
-                                                "usage": chunk.usage.as_ref().map(|u| json!({
-                                                    "output_tokens": u.completion_tokens
-                                                }))
+                                                "usage": usage_json
                                             });
                                             let sse_data = format!("event: message_delta\ndata: {}\n\n",
                                                 serde_json::to_string(&event).unwrap_or_default());

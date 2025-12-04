@@ -235,6 +235,7 @@ mod tests {
             usage,
             Decimal::from(1),
             100,
+            None,
             200,
             None,
             Some("claude".to_string()),
