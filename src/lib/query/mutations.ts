@@ -35,7 +35,9 @@ export const useAddProviderMutation = (appId: AppId) => {
       toast.success(
         t("notifications.providerAdded", {
           defaultValue: "供应商已添加",
-        }),
+        }), {
+          closeButton: true
+        }
       );
     },
     onError: (error: Error) => {
@@ -63,7 +65,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
-        }),
+        }), {
+          closeButton: true
+        }
       );
     },
     onError: (error: Error) => {
@@ -101,7 +105,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       toast.success(
         t("notifications.deleteSuccess", {
           defaultValue: "供应商已删除",
-        }),
+        }), {
+          closeButton: true
+        }
       );
     },
     onError: (error: Error) => {
@@ -140,7 +146,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         t("notifications.switchSuccess", {
           defaultValue: "切换供应商成功",
           appName: t(`apps.${appId}`, { defaultValue: appId }),
-        }),
+        }), {
+          closeButton: true
+        }
       );
     },
     onError: (error: Error) => {
