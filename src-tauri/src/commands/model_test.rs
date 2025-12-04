@@ -2,7 +2,9 @@
 
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::services::model_test::{ModelTestConfig, ModelTestLog, ModelTestResult, ModelTestService};
+use crate::services::model_test::{
+    ModelTestConfig, ModelTestLog, ModelTestResult, ModelTestService,
+};
 use crate::store::AppState;
 use tauri::State;
 
@@ -20,7 +22,7 @@ pub async fn test_provider_model(
     let providers = state.db.get_all_providers(app_type.as_str())?;
     let provider = providers
         .get(&provider_id)
-        .ok_or_else(|| AppError::Message(format!("供应商 {} 不存在", provider_id)))?;
+        .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
 
     // 执行测试
     let result = ModelTestService::test_provider(&app_type, provider, &config).await?;

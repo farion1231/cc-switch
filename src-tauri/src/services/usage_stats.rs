@@ -883,7 +883,7 @@ pub(crate) fn find_model_pricing_row(
     // 0. 标准化模型名称（去除前缀 + 点号转短横线）
     // 例如：anthropic/claude-haiku-4.5 → claude-haiku-4-5
     let normalized = normalize_model_id(model_id);
-    
+
     // 1. 精确匹配（先尝试原始名称，再尝试标准化后的名称）
     for id in [model_id, normalized.as_str()] {
         let exact = conn
@@ -1059,10 +1059,7 @@ mod tests {
 
         // 测试 GPT 模型
         let result = find_model_pricing_row(&conn, "gpt-5-2024-11-20")?;
-        assert!(
-            result.is_some(),
-            "应该能通过删除后缀匹配 gpt-5-2024-11-20"
-        );
+        assert!(result.is_some(), "应该能通过删除后缀匹配 gpt-5-2024-11-20");
 
         // 测试 Gemini 模型
         let result = find_model_pricing_row(&conn, "gemini-2.5-flash-exp")?;

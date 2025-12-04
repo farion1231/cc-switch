@@ -98,16 +98,34 @@ impl ModelTestService {
 
         let result = match app_type {
             AppType::Claude => {
-                Self::test_claude(&client, provider, adapter.as_ref(), model, &config.test_prompt)
-                    .await
+                Self::test_claude(
+                    &client,
+                    provider,
+                    adapter.as_ref(),
+                    model,
+                    &config.test_prompt,
+                )
+                .await
             }
             AppType::Codex => {
-                Self::test_codex(&client, provider, adapter.as_ref(), model, &config.test_prompt)
-                    .await
+                Self::test_codex(
+                    &client,
+                    provider,
+                    adapter.as_ref(),
+                    model,
+                    &config.test_prompt,
+                )
+                .await
             }
             AppType::Gemini => {
-                Self::test_gemini(&client, provider, adapter.as_ref(), model, &config.test_prompt)
-                    .await
+                Self::test_gemini(
+                    &client,
+                    provider,
+                    adapter.as_ref(),
+                    model,
+                    &config.test_prompt,
+                )
+                .await
             }
         };
 
@@ -142,20 +160,20 @@ impl ModelTestService {
         model: &str,
         prompt: &str,
     ) -> Result<(u16, String), AppError> {
-        let base_url = adapter.extract_base_url(provider).map_err(|e| {
-            AppError::Message(format!("提取 base_url 失败: {e}"))
-        })?;
+        let base_url = adapter
+            .extract_base_url(provider)
+            .map_err(|e| AppError::Message(format!("提取 base_url 失败: {e}")))?;
 
-        let auth = adapter.extract_auth(provider).ok_or_else(|| {
-            AppError::Message("未找到 API Key".to_string())
-        })?;
+        let auth = adapter
+            .extract_auth(provider)
+            .ok_or_else(|| AppError::Message("未找到 API Key".to_string()))?;
 
         // 智能拼接 URL，避免重复 /v1
         let base = base_url.trim_end_matches('/');
         let url = if base.ends_with("/v1") {
-            format!("{}/messages", base)
+            format!("{base}/messages")
         } else {
-            format!("{}/v1/messages", base)
+            format!("{base}/v1/messages")
         };
 
         let body = json!({
@@ -185,19 +203,22 @@ impl ModelTestService {
         if response.status().is_success() {
             // 先获取文本，再尝试解析 JSON（兼容流式响应）
             let text = response.text().await.unwrap_or_default();
-            
+
             // 尝试解析 JSON
             if let Ok(data) = serde_json::from_str::<Value>(&text) {
-                if data.get("type").is_some() || data.get("content").is_some() || data.get("id").is_some() {
+                if data.get("type").is_some()
+                    || data.get("content").is_some()
+                    || data.get("id").is_some()
+                {
                     return Ok((status, "模型测试成功".to_string()));
                 }
             }
-            
+
             // 即使无法解析 JSON，只要状态码是 200 就认为成功
             Ok((status, "模型测试成功".to_string()))
         } else {
             let error_text = response.text().await.unwrap_or_default();
-            Err(AppError::Message(format!("HTTP {}: {}", status, error_text)))
+            Err(AppError::Message(format!("HTTP {status}: {error_text}")))
         }
     }
 
@@ -209,20 +230,20 @@ impl ModelTestService {
         model: &str,
         prompt: &str,
     ) -> Result<(u16, String), AppError> {
-        let base_url = adapter.extract_base_url(provider).map_err(|e| {
-            AppError::Message(format!("提取 base_url 失败: {e}"))
-        })?;
+        let base_url = adapter
+            .extract_base_url(provider)
+            .map_err(|e| AppError::Message(format!("提取 base_url 失败: {e}")))?;
 
-        let auth = adapter.extract_auth(provider).ok_or_else(|| {
-            AppError::Message("未找到 API Key".to_string())
-        })?;
+        let auth = adapter
+            .extract_auth(provider)
+            .ok_or_else(|| AppError::Message("未找到 API Key".to_string()))?;
 
         // 智能拼接 URL，避免重复 /v1
         let base = base_url.trim_end_matches('/');
         let url = if base.ends_with("/v1") {
-            format!("{}/chat/completions", base)
+            format!("{base}/chat/completions")
         } else {
-            format!("{}/v1/chat/completions", base)
+            format!("{base}/v1/chat/completions")
         };
 
         let body = json!({
@@ -256,18 +277,18 @@ impl ModelTestService {
         if response.status().is_success() {
             // 先获取文本，再尝试解析 JSON
             let text = response.text().await.unwrap_or_default();
-            
+
             if let Ok(data) = serde_json::from_str::<Value>(&text) {
                 if data.get("choices").is_some() || data.get("id").is_some() {
                     return Ok((status, "模型测试成功".to_string()));
                 }
             }
-            
+
             // 即使无法解析 JSON，只要状态码是 200 就认为成功
             Ok((status, "模型测试成功".to_string()))
         } else {
             let error_text = response.text().await.unwrap_or_default();
-            Err(AppError::Message(format!("HTTP {}: {}", status, error_text)))
+            Err(AppError::Message(format!("HTTP {status}: {error_text}")))
         }
     }
 
@@ -279,13 +300,13 @@ impl ModelTestService {
         model: &str,
         prompt: &str,
     ) -> Result<(u16, String), AppError> {
-        let base_url = adapter.extract_base_url(provider).map_err(|e| {
-            AppError::Message(format!("提取 base_url 失败: {e}"))
-        })?;
+        let base_url = adapter
+            .extract_base_url(provider)
+            .map_err(|e| AppError::Message(format!("提取 base_url 失败: {e}")))?;
 
-        let auth = adapter.extract_auth(provider).ok_or_else(|| {
-            AppError::Message("未找到 API Key".to_string())
-        })?;
+        let auth = adapter
+            .extract_auth(provider)
+            .ok_or_else(|| AppError::Message("未找到 API Key".to_string()))?;
 
         let url = format!(
             "{}/v1beta/models/{}:generateContent?key={}",
@@ -323,9 +344,10 @@ impl ModelTestService {
         let status = response.status().as_u16();
 
         if response.status().is_success() {
-            let data: Value = response.json().await.map_err(|e| {
-                AppError::Message(format!("解析响应失败: {e}"))
-            })?;
+            let data: Value = response
+                .json()
+                .await
+                .map_err(|e| AppError::Message(format!("解析响应失败: {e}")))?;
 
             if data.get("candidates").is_some() {
                 Ok((status, "模型测试成功".to_string()))
@@ -334,12 +356,15 @@ impl ModelTestService {
             }
         } else {
             let error_text = response.text().await.unwrap_or_default();
-            Err(AppError::Message(format!("HTTP {}: {}", status, error_text)))
+            Err(AppError::Message(format!("HTTP {status}: {error_text}")))
         }
     }
 
     /// 添加 Claude 认证头
-    fn add_claude_auth(request: reqwest::RequestBuilder, auth: &AuthInfo) -> reqwest::RequestBuilder {
+    fn add_claude_auth(
+        request: reqwest::RequestBuilder,
+        auth: &AuthInfo,
+    ) -> reqwest::RequestBuilder {
         request
             .header("x-api-key", &auth.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -360,9 +385,10 @@ impl Database {
         prompt: &str,
         result: &ModelTestResult,
     ) -> Result<i64, AppError> {
-        let conn = self.conn.lock().map_err(|e| {
-            AppError::Database(format!("获取数据库连接失败: {e}"))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(format!("获取数据库连接失败: {e}")))?;
 
         conn.execute(
             "INSERT INTO model_test_logs 
@@ -393,9 +419,10 @@ impl Database {
         provider_id: Option<&str>,
         limit: u32,
     ) -> Result<Vec<ModelTestLog>, AppError> {
-        let conn = self.conn.lock().map_err(|e| {
-            AppError::Database(format!("获取数据库连接失败: {e}"))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(format!("获取数据库连接失败: {e}")))?;
 
         let mut sql = String::from(
             "SELECT id, provider_id, provider_name, app_type, model, prompt, success, message, response_time_ms, http_status, tested_at
@@ -419,7 +446,9 @@ impl Database {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-        let mut stmt = conn.prepare(&sql).map_err(|e| AppError::Database(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         let logs = stmt
             .query_map(params_refs.as_slice(), |row| {
@@ -447,34 +476,34 @@ impl Database {
     /// 获取模型测试配置
     pub fn get_model_test_config(&self) -> Result<ModelTestConfig, AppError> {
         match self.get_setting("model_test_config")? {
-            Some(json) => serde_json::from_str(&json).map_err(|e| {
-                AppError::Message(format!("解析模型测试配置失败: {e}"))
-            }),
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Message(format!("解析模型测试配置失败: {e}"))),
             None => Ok(ModelTestConfig::default()),
         }
     }
 
     /// 保存模型测试配置
     pub fn save_model_test_config(&self, config: &ModelTestConfig) -> Result<(), AppError> {
-        let json = serde_json::to_string(config).map_err(|e| {
-            AppError::Message(format!("序列化模型测试配置失败: {e}"))
-        })?;
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Message(format!("序列化模型测试配置失败: {e}")))?;
         self.set_setting("model_test_config", &json)
     }
 
     /// 清理旧的测试日志（保留最近 N 条）
     pub fn cleanup_model_test_logs(&self, keep_count: u32) -> Result<u64, AppError> {
-        let conn = self.conn.lock().map_err(|e| {
-            AppError::Database(format!("获取数据库连接失败: {e}"))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Database(format!("获取数据库连接失败: {e}")))?;
 
-        let deleted = conn.execute(
-            "DELETE FROM model_test_logs WHERE id NOT IN (
+        let deleted = conn
+            .execute(
+                "DELETE FROM model_test_logs WHERE id NOT IN (
                 SELECT id FROM model_test_logs ORDER BY tested_at DESC LIMIT ?
             )",
-            rusqlite::params![keep_count as i64],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+                rusqlite::params![keep_count as i64],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(deleted as u64)
     }

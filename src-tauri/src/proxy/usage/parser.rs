@@ -60,7 +60,9 @@ impl TokenUsage {
                     "message_start" => {
                         if let Some(msg_usage) = event.get("message").and_then(|m| m.get("usage")) {
                             // 从 message_start 获取 input_tokens（原生 Claude API）
-                            if let Some(input) = msg_usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                            if let Some(input) =
+                                msg_usage.get("input_tokens").and_then(|v| v.as_u64())
+                            {
                                 usage.input_tokens = input as u32;
                             }
                             usage.cache_read_tokens = msg_usage
@@ -78,13 +80,17 @@ impl TokenUsage {
                     "message_delta" => {
                         if let Some(delta_usage) = event.get("usage") {
                             // 从 message_delta 获取 output_tokens
-                            if let Some(output) = delta_usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                            if let Some(output) =
+                                delta_usage.get("output_tokens").and_then(|v| v.as_u64())
+                            {
                                 usage.output_tokens = output as u32;
                             }
                             // OpenRouter 转换后的流式响应：input_tokens 也在 message_delta 中
                             // 如果 message_start 中没有 input_tokens，则从 message_delta 获取
                             if usage.input_tokens == 0 {
-                                if let Some(input) = delta_usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                                if let Some(input) =
+                                    delta_usage.get("input_tokens").and_then(|v| v.as_u64())
+                                {
                                     usage.input_tokens = input as u32;
                                 }
                             }
