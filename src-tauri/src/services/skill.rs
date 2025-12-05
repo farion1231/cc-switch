@@ -316,9 +316,20 @@ impl SkillService {
             let directory = &local_skill.directory;
 
             // 更新已安装状态（匹配远程技能）
+            // 使用目录最后一段进行比较，因为安装时只使用最后一段作为目录名
             let mut found = false;
+            let local_install_name = Path::new(directory)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| directory.clone());
+
             for skill in skills.iter_mut() {
-                if skill.directory.eq_ignore_ascii_case(directory) {
+                let remote_install_name = Path::new(&skill.directory)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| skill.directory.clone());
+
+                if remote_install_name.eq_ignore_ascii_case(&local_install_name) {
                     skill.installed = true;
                     found = true;
                     break;
@@ -517,7 +528,14 @@ impl SkillService {
 
     /// 安装技能（仅负责下载和文件操作，状态更新由上层负责）
     pub async fn install_skill(&self, directory: String, repo: SkillRepo) -> Result<()> {
-        let dest = self.install_dir.join(&directory);
+        // 使用技能目录的最后一段作为安装目录名，避免嵌套路径问题
+        // 例如: "skills/codex" -> "codex"
+        let install_name = Path::new(&directory)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| directory.clone());
+
+        let dest = self.install_dir.join(&install_name);
 
         // 若目标目录已存在，则视为已安装，避免重复下载
         if dest.exists() {
@@ -589,7 +607,13 @@ impl SkillService {
 
     /// 卸载技能（仅负责文件操作，状态更新由上层负责）
     pub fn uninstall_skill(&self, directory: String) -> Result<()> {
-        let dest = self.install_dir.join(&directory);
+        // 使用技能目录的最后一段作为安装目录名，与 install_skill 保持一致
+        let install_name = Path::new(&directory)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| directory.clone());
+
+        let dest = self.install_dir.join(&install_name);
 
         if dest.exists() {
             fs::remove_dir_all(&dest)?;
