@@ -79,6 +79,34 @@ pub(crate) async fn execute_and_format_usage_result(
     }
 }
 
+/// Extract API key from provider configuration
+fn extract_api_key_from_provider(provider: &crate::provider::Provider) -> Option<String> {
+    if let Some(env) = provider.settings_config.get("env") {
+        // Try multiple possible API key fields
+        env.get("ANTHROPIC_AUTH_TOKEN")
+            .or_else(|| env.get("ANTHROPIC_API_KEY"))
+            .or_else(|| env.get("OPENROUTER_API_KEY"))
+            .or_else(|| env.get("GOOGLE_API_KEY"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract base URL from provider configuration
+fn extract_base_url_from_provider(provider: &crate::provider::Provider) -> Option<String> {
+    if let Some(env) = provider.settings_config.get("env") {
+        // Try multiple possible base URL fields
+        env.get("ANTHROPIC_BASE_URL")
+            .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim_end_matches('/').to_string())
+    } else {
+        None
+    }
+}
+
 /// Query provider usage (using saved script configuration)
 pub async fn query_usage(
     state: &AppState,
@@ -114,12 +142,26 @@ pub async fn query_usage(
             ));
         }
 
-        // Get credentials directly from UsageScript, no longer extract from provider config
+        // Get credentials: prioritize UsageScript values, fallback to provider config
+        let api_key = usage_script
+            .api_key
+            .clone()
+            .filter(|k| !k.is_empty())
+            .or_else(|| extract_api_key_from_provider(provider))
+            .unwrap_or_default();
+
+        let base_url = usage_script
+            .base_url
+            .clone()
+            .filter(|u| !u.is_empty())
+            .or_else(|| extract_base_url_from_provider(provider))
+            .unwrap_or_default();
+
         (
             usage_script.code.clone(),
             usage_script.timeout.unwrap_or(10),
-            usage_script.api_key.clone().unwrap_or_default(),
-            usage_script.base_url.clone().unwrap_or_default(),
+            api_key,
+            base_url,
             usage_script.access_token.clone(),
             usage_script.user_id.clone(),
         )

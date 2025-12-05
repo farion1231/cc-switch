@@ -365,7 +365,10 @@
     "justNow": "Just now",
     "minutesAgo": "{{count}} min ago",
     "hoursAgo": "{{count}} hr ago",
-    "daysAgo": "{{count}} day ago"
+    "daysAgo": "{{count}} day ago",
+    "multiplePlans": "{{count}} plans",
+    "expand": "Expand",
+    "collapse": "Collapse"
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -378,6 +381,10 @@
     "templateGeneral": "General",
     "templateNewAPI": "NewAPI",
     "credentialsConfig": "Credentials",
+    "credentialsHint": "Leave empty to use provider config",
+    "optional": "optional",
+    "apiKeyPlaceholder": "Leave empty to use provider's API Key",
+    "baseUrlPlaceholder": "Leave empty to use provider's base URL",
     "baseUrl": "Base URL",
     "accessToken": "Access Token",
     "accessTokenPlaceholder": "Generate in 'Security Settings'",
