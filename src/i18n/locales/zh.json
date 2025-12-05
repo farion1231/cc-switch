@@ -365,7 +365,10 @@
     "justNow": "刚刚",
     "minutesAgo": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
-    "daysAgo": "{{count}} 天前"
+    "daysAgo": "{{count}} 天前",
+    "multiplePlans": "{{count}} 个套餐",
+    "expand": "展开",
+    "collapse": "收起"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -378,6 +381,10 @@
     "templateGeneral": "通用模板",
     "templateNewAPI": "NewAPI",
     "credentialsConfig": "凭证配置",
+    "credentialsHint": "留空则自动使用供应商配置",
+    "optional": "可选",
+    "apiKeyPlaceholder": "留空则使用供应商的 API Key",
+    "baseUrlPlaceholder": "留空则使用供应商的请求地址",
     "baseUrl": "请求地址",
     "accessToken": "访问令牌（在个人安全设置里获取）",
     "accessTokenPlaceholder": "在'安全设置'里生成",

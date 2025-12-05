@@ -365,7 +365,10 @@
     "justNow": "たった今",
     "minutesAgo": "{{count}} 分前",
     "hoursAgo": "{{count}} 時間前",
-    "daysAgo": "{{count}} 日前"
+    "daysAgo": "{{count}} 日前",
+    "multiplePlans": "{{count}} プラン",
+    "expand": "展開",
+    "collapse": "折りたたむ"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -378,6 +381,10 @@
     "templateGeneral": "General",
     "templateNewAPI": "NewAPI",
     "credentialsConfig": "認証情報",
+    "credentialsHint": "空欄の場合はプロバイダー設定を使用",
+    "optional": "オプション",
+    "apiKeyPlaceholder": "空欄の場合はプロバイダーの API Key を使用",
+    "baseUrlPlaceholder": "空欄の場合はプロバイダーの Base URL を使用",
     "baseUrl": "Base URL",
     "accessToken": "Access Token",
     "accessTokenPlaceholder": "「Security Settings」で生成",

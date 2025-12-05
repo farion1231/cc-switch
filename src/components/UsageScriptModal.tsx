@@ -400,15 +400,25 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {/* 凭证配置 */}
             {shouldShowCredentialsConfig && (
               <div className="space-y-4">
-                <h4 className="text-sm font-medium text-foreground">
-                  {t("usageScript.credentialsConfig")}
-                </h4>
+                <div className="flex items-start justify-between">
+                  <h4 className="text-sm font-medium text-foreground">
+                    {t("usageScript.credentialsConfig")}
+                  </h4>
+                  <p className="text-xs text-muted-foreground">
+                    {t("usageScript.credentialsHint")}
+                  </p>
+                </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
                   {selectedTemplate === TEMPLATE_KEYS.GENERAL && (
                     <>
                       <div className="space-y-2">
-                        <Label htmlFor="usage-api-key">API Key</Label>
+                        <Label htmlFor="usage-api-key">
+                          API Key{" "}
+                          <span className="text-xs text-muted-foreground font-normal">
+                            ({t("usageScript.optional")})
+                          </span>
+                        </Label>
                         <div className="relative">
                           <Input
                             id="usage-api-key"
@@ -417,7 +427,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                             onChange={(e) =>
                               setScript({ ...script, apiKey: e.target.value })
                             }
-                            placeholder="sk-xxxxx"
+                            placeholder={t("usageScript.apiKeyPlaceholder")}
                             autoComplete="off"
                             className="border-white/10"
                           />
@@ -444,7 +454,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
                       <div className="space-y-2">
                         <Label htmlFor="usage-base-url">
-                          {t("usageScript.baseUrl")}
+                          {t("usageScript.baseUrl")}{" "}
+                          <span className="text-xs text-muted-foreground font-normal">
+                            ({t("usageScript.optional")})
+                          </span>
                         </Label>
                         <Input
                           id="usage-base-url"
@@ -453,7 +466,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           onChange={(e) =>
                             setScript({ ...script, baseUrl: e.target.value })
                           }
-                          placeholder="https://api.example.com"
+                          placeholder={t("usageScript.baseUrlPlaceholder")}
                           autoComplete="off"
                           className="border-white/10"
                         />
