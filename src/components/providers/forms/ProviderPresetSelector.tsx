@@ -173,46 +173,50 @@ export function ProviderPresetSelector({
           });
         })}
 
-        {/* 统一供应商预设（显示分隔线） */}
-        {onUniversalPresetSelect && universalProviderPresets.length > 0 && (
-          <>
-            <div className="w-px h-6 bg-border/50 mx-1" />
-            {universalProviderPresets.map((preset) => (
-              <button
-                key={`universal-${preset.providerType}`}
-                type="button"
-                onClick={() => onUniversalPresetSelect(preset)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 relative"
-                title={t("universalProvider.title", {
-                  defaultValue: "统一供应商",
-                })}
-              >
-                <ProviderIcon icon={preset.icon} name={preset.name} size={14} />
-                {preset.name}
-                <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
-                  <Layers className="h-2.5 w-2.5" />
-                </span>
-              </button>
-            ))}
-            {/* 管理统一供应商按钮 */}
-            {onManageUniversalProviders && (
-              <button
-                type="button"
-                onClick={onManageUniversalProviders}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/80"
-                title={t("universalProvider.manage", {
-                  defaultValue: "管理统一供应商",
-                })}
-              >
-                <Settings2 className="h-3.5 w-3.5" />
-                {t("universalProvider.manage", {
-                  defaultValue: "管理",
-                })}
-              </button>
-            )}
-          </>
-        )}
       </div>
+
+      {/* 统一供应商预设（新的一行） */}
+      {onUniversalPresetSelect && universalProviderPresets.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/30">
+          <span className="text-xs text-muted-foreground mr-1">
+            {t("universalProvider.title", { defaultValue: "统一供应商" })}:
+          </span>
+          {universalProviderPresets.map((preset) => (
+            <button
+              key={`universal-${preset.providerType}`}
+              type="button"
+              onClick={() => onUniversalPresetSelect(preset)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 relative"
+              title={t("universalProvider.title", {
+                defaultValue: "统一供应商",
+              })}
+            >
+              <ProviderIcon icon={preset.icon} name={preset.name} size={14} />
+              {preset.name}
+              <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
+                <Layers className="h-2.5 w-2.5" />
+              </span>
+            </button>
+          ))}
+          {/* 管理统一供应商按钮 */}
+          {onManageUniversalProviders && (
+            <button
+              type="button"
+              onClick={onManageUniversalProviders}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/80"
+              title={t("universalProvider.manage", {
+                defaultValue: "管理统一供应商",
+              })}
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              {t("universalProvider.manage", {
+                defaultValue: "管理",
+              })}
+            </button>
+          )}
+        </div>
+      )}
+
       <p className="text-xs text-muted-foreground">{getCategoryHint()}</p>
     </div>
   );
