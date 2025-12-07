@@ -13,17 +13,21 @@ impl Database {
     pub fn get_skills(&self) -> Result<IndexMap<String, SkillState>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
-            .prepare("SELECT key, installed, installed_at FROM skills ORDER BY key ASC")
+            .prepare("SELECT directory, app_type, installed, installed_at FROM skills ORDER BY directory ASC, app_type ASC")
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let skill_iter = stmt
             .query_map([], |row| {
-                let key: String = row.get(0)?;
-                let installed: bool = row.get(1)?;
-                let installed_at_ts: i64 = row.get(2)?;
+                let directory: String = row.get(0)?;
+                let app_type: String = row.get(1)?;
+                let installed: bool = row.get(2)?;
+                let installed_at_ts: i64 = row.get(3)?;
 
                 let installed_at =
                     chrono::DateTime::from_timestamp(installed_at_ts, 0).unwrap_or_default();
+
+                // 构建复合 key："app_type:directory"
+                let key = format!("{app_type}:{directory}");
 
                 Ok((
                     key,
@@ -44,11 +48,21 @@ impl Database {
     }
 
     /// 更新 Skill 状态
+    /// key 格式为 "app_type:directory"
     pub fn update_skill_state(&self, key: &str, state: &SkillState) -> Result<(), AppError> {
+        // 解析 key
+        let (app_type, directory) = if let Some(idx) = key.find(':') {
+            let (app, dir) = key.split_at(idx);
+            (app, &dir[1..]) // 跳过冒号
+        } else {
+            // 向后兼容：如果没有前缀，默认为 claude
+            ("claude", key)
+        };
+
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "INSERT OR REPLACE INTO skills (key, installed, installed_at) VALUES (?1, ?2, ?3)",
-            params![key, state.installed, state.installed_at.timestamp()],
+            "INSERT OR REPLACE INTO skills (directory, app_type, installed, installed_at) VALUES (?1, ?2, ?3, ?4)",
+            params![directory, app_type, state.installed, state.installed_at.timestamp()],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())

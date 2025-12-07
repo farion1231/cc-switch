@@ -635,8 +635,11 @@ pub fn run() {
             commands::restore_env_backup,
             // Skill management
             commands::get_skills,
+            commands::get_skills_for_app,
             commands::install_skill,
+            commands::install_skill_for_app,
             commands::uninstall_skill,
+            commands::uninstall_skill_for_app,
             commands::get_skill_repos,
             commands::add_skill_repo,
             commands::remove_skill_repo,

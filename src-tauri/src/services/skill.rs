@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tokio::time::timeout;
 
+use crate::app_config::AppType;
 use crate::error::format_skill_error;
 
 /// 技能对象
@@ -106,11 +107,16 @@ pub struct SkillMetadata {
 pub struct SkillService {
     http_client: Client,
     install_dir: PathBuf,
+    app_type: AppType,
 }
 
 impl SkillService {
     pub fn new() -> Result<Self> {
-        let install_dir = Self::get_install_dir()?;
+        Self::new_for_app(AppType::Claude)
+    }
+
+    pub fn new_for_app(app_type: AppType) -> Result<Self> {
+        let install_dir = Self::get_install_dir_for_app(&app_type)?;
 
         // 确保目录存在
         fs::create_dir_all(&install_dir)?;
@@ -122,16 +128,38 @@ impl SkillService {
                 .timeout(std::time::Duration::from_secs(10))
                 .build()?,
             install_dir,
+            app_type,
         })
     }
 
-    fn get_install_dir() -> Result<PathBuf> {
+    fn get_install_dir_for_app(app_type: &AppType) -> Result<PathBuf> {
         let home = dirs::home_dir().context(format_skill_error(
             "GET_HOME_DIR_FAILED",
             &[],
             Some("checkPermission"),
         ))?;
-        Ok(home.join(".claude").join("skills"))
+
+        let dir = match app_type {
+            AppType::Claude => home.join(".claude").join("skills"),
+            AppType::Codex => {
+                // 检查是否有自定义 Codex 配置目录
+                if let Some(custom) = crate::settings::get_codex_override_dir() {
+                    custom.join("skills")
+                } else {
+                    home.join(".codex").join("skills")
+                }
+            }
+            AppType::Gemini => {
+                // 为 Gemini 预留，暂时使用默认路径
+                home.join(".gemini").join("skills")
+            }
+        };
+
+        Ok(dir)
+    }
+
+    pub fn app_type(&self) -> &AppType {
+        &self.app_type
     }
 }
 

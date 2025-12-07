@@ -19,17 +19,31 @@ export interface SkillRepo {
   enabled: boolean;
 }
 
+export type AppType = "claude" | "codex" | "gemini";
+
 export const skillsApi = {
-  async getAll(): Promise<Skill[]> {
-    return await invoke("get_skills");
+  async getAll(app: AppType = "claude"): Promise<Skill[]> {
+    if (app === "claude") {
+      return await invoke("get_skills");
+    }
+    return await invoke("get_skills_for_app", { app });
   },
 
-  async install(directory: string): Promise<boolean> {
-    return await invoke("install_skill", { directory });
+  async install(directory: string, app: AppType = "claude"): Promise<boolean> {
+    if (app === "claude") {
+      return await invoke("install_skill", { directory });
+    }
+    return await invoke("install_skill_for_app", { app, directory });
   },
 
-  async uninstall(directory: string): Promise<boolean> {
-    return await invoke("uninstall_skill", { directory });
+  async uninstall(
+    directory: string,
+    app: AppType = "claude",
+  ): Promise<boolean> {
+    if (app === "claude") {
+      return await invoke("uninstall_skill", { directory });
+    }
+    return await invoke("uninstall_skill_for_app", { app, directory });
   },
 
   async getRepos(): Promise<SkillRepo[]> {

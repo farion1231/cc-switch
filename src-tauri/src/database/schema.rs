@@ -96,9 +96,11 @@ impl Database {
         // 5. Skills 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skills (
-                key TEXT PRIMARY KEY,
+                directory TEXT NOT NULL,
+                app_type TEXT NOT NULL,
                 installed BOOLEAN NOT NULL DEFAULT 0,
-                installed_at INTEGER NOT NULL DEFAULT 0
+                installed_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (directory, app_type)
             )",
             [],
         )
@@ -369,7 +371,9 @@ impl Database {
                         Self::set_user_version(conn, 1)?;
                     }
                     1 => {
-                        log::info!("迁移数据库从 v1 到 v2（添加使用统计表和完整字段）");
+                        log::info!(
+                            "迁移数据库从 v1 到 v2（添加使用统计表和完整字段，重构 skills 表）"
+                        );
                         Self::migrate_v1_to_v2(conn)?;
                         Self::set_user_version(conn, 2)?;
                     }
@@ -458,7 +462,7 @@ impl Database {
         Ok(())
     }
 
-    /// v1 -> v2 迁移：添加使用统计表和完整字段
+    /// v1 -> v2 迁移：添加使用统计表和完整字段，重构 skills 表
     fn migrate_v1_to_v2(conn: &Connection) -> Result<(), AppError> {
         // providers 表字段
         Self::add_column_if_missing(
@@ -554,6 +558,82 @@ impl Database {
             .map_err(|e| AppError::Database(format!("清空模型定价失败: {e}")))?;
         Self::seed_model_pricing(conn)?;
 
+        // 重构 skills 表（添加 app_type 字段）
+        Self::migrate_skills_table(conn)?;
+
+        Ok(())
+    }
+
+    /// 迁移 skills 表：从单 key 主键改为 (directory, app_type) 复合主键
+    fn migrate_skills_table(conn: &Connection) -> Result<(), AppError> {
+        // 检查是否已经是新表结构
+        if Self::has_column(conn, "skills", "app_type")? {
+            log::info!("skills 表已经包含 app_type 字段，跳过迁移");
+            return Ok(());
+        }
+
+        log::info!("开始迁移 skills 表...");
+
+        // 1. 重命名旧表
+        conn.execute("ALTER TABLE skills RENAME TO skills_old", [])
+            .map_err(|e| AppError::Database(format!("重命名旧 skills 表失败: {e}")))?;
+
+        // 2. 创建新表
+        conn.execute(
+            "CREATE TABLE skills (
+                directory TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                installed BOOLEAN NOT NULL DEFAULT 0,
+                installed_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (directory, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建新 skills 表失败: {e}")))?;
+
+        // 3. 迁移数据：解析 key 格式（如 "claude:my-skill" 或 "codex:foo"）
+        //    旧数据如果没有前缀，默认为 claude
+        let mut stmt = conn
+            .prepare("SELECT key, installed, installed_at FROM skills_old")
+            .map_err(|e| AppError::Database(format!("查询旧 skills 数据失败: {e}")))?;
+
+        let old_skills: Vec<(String, bool, i64)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, bool>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(format!("读取旧 skills 数据失败: {e}")))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(format!("解析旧 skills 数据失败: {e}")))?;
+
+        let count = old_skills.len();
+
+        for (key, installed, installed_at) in old_skills {
+            // 解析 key: "app:directory" 或 "directory"（默认 claude）
+            let (app_type, directory) = if let Some(idx) = key.find(':') {
+                let (app, dir) = key.split_at(idx);
+                (app.to_string(), dir[1..].to_string()) // 跳过冒号
+            } else {
+                ("claude".to_string(), key.clone())
+            };
+
+            conn.execute(
+                "INSERT INTO skills (directory, app_type, installed, installed_at) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![directory, app_type, installed, installed_at],
+            )
+            .map_err(|e| {
+                AppError::Database(format!("迁移 skill {key} 到新表失败: {e}"))
+            })?;
+        }
+
+        // 4. 删除旧表
+        conn.execute("DROP TABLE skills_old", [])
+            .map_err(|e| AppError::Database(format!("删除旧 skills 表失败: {e}")))?;
+
+        log::info!("skills 表迁移完成，共迁移 {count} 条记录");
         Ok(())
     }
 
