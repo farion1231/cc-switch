@@ -1,11 +1,16 @@
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
-import { Zap, Star } from "lucide-react";
+import { Zap, Star, Layers } from "lucide-react";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
 import type { ProviderCategory } from "@/types";
+import {
+  universalProviderPresets,
+  type UniversalProviderPreset,
+} from "@/config/universalProviderPresets";
+import { ProviderIcon } from "@/components/ProviderIcon";
 
 type PresetEntry = {
   id: string;
@@ -18,6 +23,7 @@ interface ProviderPresetSelectorProps {
   categoryKeys: string[];
   presetCategoryLabels: Record<string, string>;
   onPresetChange: (value: string) => void;
+  onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   category?: ProviderCategory; // 当前选中的分类
 }
 
@@ -27,6 +33,7 @@ export function ProviderPresetSelector({
   categoryKeys,
   presetCategoryLabels,
   onPresetChange,
+  onUniversalPresetSelect,
   category,
 }: ProviderPresetSelectorProps) {
   const { t } = useTranslation();
@@ -163,6 +170,30 @@ export function ProviderPresetSelector({
             );
           });
         })}
+
+        {/* 统一供应商预设（显示分隔线） */}
+        {onUniversalPresetSelect && universalProviderPresets.length > 0 && (
+          <>
+            <div className="w-px h-6 bg-border/50 mx-1" />
+            {universalProviderPresets.map((preset) => (
+              <button
+                key={`universal-${preset.providerType}`}
+                type="button"
+                onClick={() => onUniversalPresetSelect(preset)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 relative"
+                title={t("universalProvider.title", {
+                  defaultValue: "统一供应商",
+                })}
+              >
+                <ProviderIcon icon={preset.icon} name={preset.name} size={14} />
+                {preset.name}
+                <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
+                  <Layers className="h-2.5 w-2.5" />
+                </span>
+              </button>
+            ))}
+          </>
+        )}
       </div>
       <p className="text-xs text-muted-foreground">{getCategoryHint()}</p>
     </div>

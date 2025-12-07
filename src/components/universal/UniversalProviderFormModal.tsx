@@ -19,6 +19,7 @@ interface UniversalProviderFormModalProps {
   onClose: () => void;
   onSave: (provider: UniversalProvider) => void;
   editingProvider?: UniversalProvider | null;
+  initialPreset?: UniversalProviderPreset | null;
 }
 
 export function UniversalProviderFormModal({
@@ -26,6 +27,7 @@ export function UniversalProviderFormModal({
   onClose,
   onSave,
   editingProvider,
+  initialPreset,
 }: UniversalProviderFormModalProps) {
   const { t } = useTranslation();
   const isEditMode = !!editingProvider;
@@ -68,20 +70,20 @@ export function UniversalProviderFormModal({
       );
       setSelectedPreset(preset || null);
     } else {
-      // 新建模式：默认选择第一个预设
-      const defaultPreset = universalProviderPresets[0];
+      // 新建模式：使用传入的预设或默认选择第一个预设
+      const defaultPreset = initialPreset || universalProviderPresets[0];
       setSelectedPreset(defaultPreset);
       setName(defaultPreset.name);
       setBaseUrl("");
       setApiKey("");
-      setWebsiteUrl("");
+      setWebsiteUrl(defaultPreset.websiteUrl || "");
       setNotes("");
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
       setModels(JSON.parse(JSON.stringify(defaultPreset.defaultModels)));
     }
-  }, [editingProvider, isOpen]);
+  }, [editingProvider, initialPreset, isOpen]);
 
   // 选择预设
   const handlePresetSelect = useCallback(

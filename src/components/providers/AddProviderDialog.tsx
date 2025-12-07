@@ -1,17 +1,21 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
-import type { Provider, CustomEndpoint } from "@/types";
+import type { Provider, CustomEndpoint, UniversalProvider } from "@/types";
 import type { AppId } from "@/lib/api";
+import { universalProvidersApi } from "@/lib/api";
 import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
+import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
+import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 
 interface AddProviderDialogProps {
   open: boolean;
@@ -27,6 +31,49 @@ export function AddProviderDialog({
   onSubmit,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
+  const [universalFormOpen, setUniversalFormOpen] = useState(false);
+  const [selectedUniversalPreset, setSelectedUniversalPreset] =
+    useState<UniversalProviderPreset | null>(null);
+
+  // Handle universal preset selection
+  const handleUniversalPresetSelect = useCallback(
+    (preset: UniversalProviderPreset) => {
+      setSelectedUniversalPreset(preset);
+      setUniversalFormOpen(true);
+    },
+    [],
+  );
+
+  // Handle universal provider save
+  const handleUniversalProviderSave = useCallback(
+    async (provider: UniversalProvider) => {
+      try {
+        await universalProvidersApi.upsert(provider);
+        toast.success(
+          t("universalProvider.addSuccess", {
+            defaultValue: "统一供应商添加成功",
+          }),
+        );
+        setUniversalFormOpen(false);
+        setSelectedUniversalPreset(null);
+        onOpenChange(false);
+      } catch (error) {
+        console.error("[AddProviderDialog] Failed to save universal provider", error);
+        toast.error(
+          t("universalProvider.addFailed", {
+            defaultValue: "统一供应商添加失败",
+          }),
+        );
+      }
+    },
+    [t, onOpenChange],
+  );
+
+  // Close universal form and return to main dialog
+  const handleUniversalFormClose = useCallback(() => {
+    setUniversalFormOpen(false);
+    setSelectedUniversalPreset(null);
+  }, []);
 
   const handleSubmit = useCallback(
     async (values: ProviderFormValues) => {
@@ -195,7 +242,16 @@ export function AddProviderDialog({
         submitLabel={t("common.add")}
         onSubmit={handleSubmit}
         onCancel={() => onOpenChange(false)}
+        onUniversalPresetSelect={handleUniversalPresetSelect}
         showButtons={false}
+      />
+
+      {/* Universal Provider Form Modal */}
+      <UniversalProviderFormModal
+        isOpen={universalFormOpen}
+        onClose={handleUniversalFormClose}
+        onSave={handleUniversalProviderSave}
+        initialPreset={selectedUniversalPreset}
       />
     </FullScreenPanel>
   );

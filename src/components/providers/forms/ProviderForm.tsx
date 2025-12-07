@@ -20,6 +20,7 @@ import {
   geminiProviderPresets,
   type GeminiProviderPreset,
 } from "@/config/geminiProviderPresets";
+import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import { applyTemplateValues } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
@@ -72,6 +73,7 @@ interface ProviderFormProps {
   submitLabel: string;
   onSubmit: (values: ProviderFormValues) => void;
   onCancel: () => void;
+  onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   initialData?: {
     name?: string;
     websiteUrl?: string;
@@ -91,6 +93,7 @@ export function ProviderForm({
   submitLabel,
   onSubmit,
   onCancel,
+  onUniversalPresetSelect,
   initialData,
   showButtons = true,
 }: ProviderFormProps) {
@@ -803,6 +806,7 @@ export function ProviderForm({
             categoryKeys={categoryKeys}
             presetCategoryLabels={presetCategoryLabels}
             onPresetChange={handlePresetChange}
+            onUniversalPresetSelect={onUniversalPresetSelect}
             category={category}
           />
         )}
