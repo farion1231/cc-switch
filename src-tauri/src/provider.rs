@@ -446,4 +446,3 @@ requires_openai_auth = true"#,
         })
     }
 }
-

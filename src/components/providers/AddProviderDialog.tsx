@@ -70,7 +70,10 @@ export function AddProviderDialog({
         setSelectedUniversalPreset(null);
         onOpenChange(false);
       } catch (error) {
-        console.error("[AddProviderDialog] Failed to save universal provider", error);
+        console.error(
+          "[AddProviderDialog] Failed to save universal provider",
+          error,
+        );
         toast.error(
           t("universalProvider.addFailed", {
             defaultValue: "统一供应商添加失败",
