@@ -1164,6 +1164,7 @@
     "deleted": "Universal provider deleted",
     "addSuccess": "Universal provider added successfully",
     "addFailed": "Failed to add universal provider",
+    "manage": "Manage",
     "loadError": "Failed to load universal providers",
     "saveError": "Failed to save universal provider",
     "deleteError": "Failed to delete universal provider",

@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
-import { Zap, Star, Layers } from "lucide-react";
+import { Zap, Star, Layers, Settings2 } from "lucide-react";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
@@ -24,6 +24,7 @@ interface ProviderPresetSelectorProps {
   presetCategoryLabels: Record<string, string>;
   onPresetChange: (value: string) => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
+  onManageUniversalProviders?: () => void;
   category?: ProviderCategory; // 当前选中的分类
 }
 
@@ -34,6 +35,7 @@ export function ProviderPresetSelector({
   presetCategoryLabels,
   onPresetChange,
   onUniversalPresetSelect,
+  onManageUniversalProviders,
   category,
 }: ProviderPresetSelectorProps) {
   const { t } = useTranslation();
@@ -192,6 +194,22 @@ export function ProviderPresetSelector({
                 </span>
               </button>
             ))}
+            {/* 管理统一供应商按钮 */}
+            {onManageUniversalProviders && (
+              <button
+                type="button"
+                onClick={onManageUniversalProviders}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/80"
+                title={t("universalProvider.manage", {
+                  defaultValue: "管理统一供应商",
+                })}
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+                {t("universalProvider.manage", {
+                  defaultValue: "管理",
+                })}
+              </button>
+            )}
           </>
         )}
       </div>

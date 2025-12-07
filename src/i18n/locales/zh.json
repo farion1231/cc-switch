@@ -1164,6 +1164,7 @@
     "deleted": "统一供应商已删除",
     "addSuccess": "统一供应商添加成功",
     "addFailed": "统一供应商添加失败",
+    "manage": "管理",
     "loadError": "加载统一供应商失败",
     "saveError": "保存统一供应商失败",
     "deleteError": "删除统一供应商失败",

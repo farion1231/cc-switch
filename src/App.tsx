@@ -13,7 +13,6 @@ import {
   Wrench,
   Server,
   RefreshCw,
-  Layers,
 } from "lucide-react";
 import type { Provider } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -631,17 +630,6 @@ function App() {
                 <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
 
                 <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setCurrentView("universal")}
-                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                    title={t("universalProvider.title", {
-                      defaultValue: "统一供应商",
-                    })}
-                  >
-                    <Layers className="h-4 w-4" />
-                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"

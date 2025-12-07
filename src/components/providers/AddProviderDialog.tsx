@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Plus, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
@@ -12,6 +12,7 @@ import {
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
 import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
+import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
@@ -32,8 +33,19 @@ export function AddProviderDialog({
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
   const [universalFormOpen, setUniversalFormOpen] = useState(false);
+  const [universalPanelOpen, setUniversalPanelOpen] = useState(false);
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
+
+  // Handle manage universal providers
+  const handleManageUniversalProviders = useCallback(() => {
+    setUniversalPanelOpen(true);
+  }, []);
+
+  // Close universal panel and return to main dialog
+  const handleUniversalPanelClose = useCallback(() => {
+    setUniversalPanelOpen(false);
+  }, []);
 
   // Handle universal preset selection
   const handleUniversalPresetSelect = useCallback(
@@ -243,6 +255,7 @@ export function AddProviderDialog({
         onSubmit={handleSubmit}
         onCancel={() => onOpenChange(false)}
         onUniversalPresetSelect={handleUniversalPresetSelect}
+        onManageUniversalProviders={handleManageUniversalProviders}
         showButtons={false}
       />
 
@@ -253,6 +266,21 @@ export function AddProviderDialog({
         onSave={handleUniversalProviderSave}
         initialPreset={selectedUniversalPreset}
       />
+
+      {/* Universal Provider Management Panel */}
+      <FullScreenPanel
+        isOpen={universalPanelOpen}
+        title={t("universalProvider.title", { defaultValue: "统一供应商" })}
+        onClose={handleUniversalPanelClose}
+        footer={
+          <Button variant="outline" onClick={handleUniversalPanelClose}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            {t("common.back", { defaultValue: "返回" })}
+          </Button>
+        }
+      >
+        <UniversalProviderPanel />
+      </FullScreenPanel>
     </FullScreenPanel>
   );
 }
