@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useUsageSummary } from "@/lib/query/usage";
@@ -8,8 +9,13 @@ interface UsageSummaryCardsProps {
 
 export function UsageSummaryCards({ days }: UsageSummaryCardsProps) {
   const { t } = useTranslation();
-  const endDate = Math.floor(Date.now() / 1000);
-  const startDate = endDate - days * 24 * 60 * 60;
+
+  // 使用 useMemo 稳定时间戳，只在 days 变化时重新计算
+  const { startDate, endDate } = useMemo(() => {
+    const end = Math.floor(Date.now() / 1000);
+    const start = end - days * 24 * 60 * 60;
+    return { startDate: start, endDate: end };
+  }, [days]);
 
   const { data: summary, isLoading } = useUsageSummary(startDate, endDate);
   const totalRequests = summary?.totalRequests ?? 0;
