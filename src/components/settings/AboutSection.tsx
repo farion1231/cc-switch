@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { Download, ExternalLink, Info, Loader2, RefreshCw } from "lucide-react";
+import {
+  Download,
+  ExternalLink,
+  Info,
+  Loader2,
+  RefreshCw,
+  Terminal,
+  CheckCircle2,
+  AlertCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -7,16 +16,27 @@ import { getVersion } from "@tauri-apps/api/app";
 import { settingsApi } from "@/lib/api";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { relaunchApp } from "@/lib/updater";
+import { Badge } from "@/components/ui/badge";
 
 interface AboutSectionProps {
   isPortable: boolean;
 }
 
+interface ToolVersion {
+  name: string;
+  version: string | null;
+  latest_version: string | null;
+  error: string | null;
+}
+
 export function AboutSection({ isPortable }: AboutSectionProps) {
+  // ... (use hooks as before) ...
   const { t } = useTranslation();
   const [version, setVersion] = useState<string | null>(null);
   const [isLoadingVersion, setIsLoadingVersion] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [toolVersions, setToolVersions] = useState<ToolVersion[]>([]);
+  const [isLoadingTools, setIsLoadingTools] = useState(true);
 
   const {
     hasUpdate,
@@ -31,18 +51,24 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     let active = true;
     const load = async () => {
       try {
-        const loaded = await getVersion();
+        const [appVersion, tools] = await Promise.all([
+          getVersion(),
+          settingsApi.getToolVersions(),
+        ]);
+
         if (active) {
-          setVersion(loaded);
+          setVersion(appVersion);
+          setToolVersions(tools);
         }
       } catch (error) {
-        console.error("[AboutSection] Failed to get version", error);
+        console.error("[AboutSection] Failed to load info", error);
         if (active) {
           setVersion(null);
         }
       } finally {
         if (active) {
           setIsLoadingVersion(false);
+          setIsLoadingTools(false);
         }
       }
     };
@@ -52,6 +78,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       active = false;
     };
   }, []);
+
+  // ... (handlers like handleOpenReleaseNotes, handleCheckUpdate) ...
 
   const handleOpenReleaseNotes = useCallback(async () => {
     try {
@@ -125,7 +153,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const displayVersion = version ?? t("common.unknown");
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-6">
       <header className="space-y-1">
         <h3 className="text-sm font-medium">{t("common.about")}</h3>
         <p className="text-xs text-muted-foreground">
@@ -133,24 +161,28 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         </p>
       </header>
 
-      <div className="space-y-4 rounded-lg border border-border-default p-4">
+      <div className="rounded-xl border border-border bg-card/50 p-6 space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-foreground">CC Switch</p>
-            <p className="text-xs text-muted-foreground">
-              {t("common.version")}{" "}
-              {isLoadingVersion ? (
-                <Loader2 className="inline h-3 w-3 animate-spin" />
-              ) : (
-                `v${displayVersion}`
+          <div className="space-y-2">
+            <h4 className="text-lg font-semibold text-foreground">CC Switch</h4>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="gap-1.5 bg-background">
+                <span className="text-muted-foreground">
+                  {t("common.version")}
+                </span>
+                {isLoadingVersion ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <span className="font-medium">{`v${displayVersion}`}</span>
+                )}
+              </Badge>
+              {isPortable && (
+                <Badge variant="secondary" className="gap-1.5">
+                  <Info className="h-3 w-3" />
+                  {t("settings.portableMode")}
+                </Badge>
               )}
-            </p>
-            {isPortable ? (
-              <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                <Info className="h-3 w-3" />
-                {t("settings.portableMode")}
-              </p>
-            ) : null}
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -159,6 +191,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               variant="outline"
               size="sm"
               onClick={handleOpenReleaseNotes}
+              className="h-9"
             >
               <ExternalLink className="mr-2 h-4 w-4" />
               {t("settings.releaseNotes")}
@@ -168,7 +201,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               size="sm"
               onClick={handleCheckUpdate}
               disabled={isChecking || isDownloading}
-              className="min-w-[140px]"
+              className="min-w-[140px] h-9"
             >
               {isDownloading ? (
                 <span className="inline-flex items-center gap-2">
@@ -194,18 +227,71 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           </div>
         </div>
 
-        {hasUpdate && updateInfo ? (
-          <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-            <p>
+        {hasUpdate && updateInfo && (
+          <div className="rounded-lg bg-primary/10 border border-primary/20 px-4 py-3 text-sm">
+            <p className="font-medium text-primary mb-1">
               {t("settings.updateAvailable", {
                 version: updateInfo.availableVersion,
               })}
             </p>
-            {updateInfo.notes ? (
-              <p className="mt-1 line-clamp-3">{updateInfo.notes}</p>
-            ) : null}
+            {updateInfo.notes && (
+              <p className="text-muted-foreground line-clamp-3 leading-relaxed">
+                {updateInfo.notes}
+              </p>
+            )}
           </div>
-        ) : null}
+        )}
+      </div>
+
+      <div className="space-y-3">
+        <h4 className="text-sm font-medium text-muted-foreground px-1">
+          本地环境检查
+        </h4>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {isLoadingTools
+            ? Array.from({ length: 3 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="h-20 rounded-xl border border-border bg-card/50 animate-pulse"
+                />
+              ))
+            : toolVersions.map((tool) => (
+                <div
+                  key={tool.name}
+                  className="flex flex-col gap-2 rounded-xl border border-border bg-card/50 p-4 transition-colors hover:bg-muted/50"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Terminal className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium capitalize">
+                        {tool.name}
+                      </span>
+                    </div>
+                    {tool.version ? (
+                      <div className="flex items-center gap-1.5">
+                        {tool.latest_version &&
+                          tool.version !== tool.latest_version && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20">
+                              Update: {tool.latest_version}
+                            </span>
+                          )}
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      </div>
+                    ) : (
+                      <AlertCircle className="h-4 w-4 text-yellow-500" />
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <div
+                      className="text-xs font-mono truncate"
+                      title={tool.version || tool.error || "Unknown"}
+                    >
+                      {tool.version ? tool.version : tool.error || "未安装"}
+                    </div>
+                  </div>
+                </div>
+              ))}
+        </div>
       </div>
     </section>
   );

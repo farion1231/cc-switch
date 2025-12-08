@@ -50,7 +50,7 @@ export function DirectorySettings({
           <Input
             value={appConfigDir ?? resolvedDirs.appConfig ?? ""}
             placeholder={t("settings.browsePlaceholderApp")}
-            className="font-mono text-xs"
+            className="text-xs"
             onChange={(event) => onAppConfigChange(event.target.value)}
           />
           <Button
@@ -161,7 +161,7 @@ function DirectoryInput({
         <Input
           value={displayValue}
           placeholder={placeholder}
-          className="font-mono text-xs"
+          className="text-xs"
           onChange={(event) => onChange(event.target.value)}
         />
         <Button

@@ -1,6 +1,7 @@
 import { Switch } from "@/components/ui/switch";
 import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
+import { AppWindow, MonitorUp, Power } from "lucide-react";
 
 interface WindowSettingsProps {
   settings: SettingsFormState;
@@ -12,40 +13,46 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
 
   return (
     <section className="space-y-4">
-      <header className="space-y-1">
+      <div className="flex items-center gap-2 pb-2 border-b border-border/40">
+        <AppWindow className="h-4 w-4 text-primary" />
         <h3 className="text-sm font-medium">{t("settings.windowBehavior")}</h3>
-        <p className="text-xs text-muted-foreground">
-          {t("settings.windowBehaviorHint")}
-        </p>
-      </header>
+      </div>
 
-      <ToggleRow
-        title={t("settings.launchOnStartup")}
-        description={t("settings.launchOnStartupDescription")}
-        checked={!!settings.launchOnStartup}
-        onCheckedChange={(value) => onChange({ launchOnStartup: value })}
-      />
+      <div className="space-y-3">
+        <ToggleRow
+          icon={<Power className="h-4 w-4 text-orange-500" />}
+          title={t("settings.launchOnStartup")}
+          description={t("settings.launchOnStartupDescription")}
+          checked={!!settings.launchOnStartup}
+          onCheckedChange={(value) => onChange({ launchOnStartup: value })}
+        />
 
-      <ToggleRow
-        title={t("settings.minimizeToTray")}
-        description={t("settings.minimizeToTrayDescription")}
-        checked={settings.minimizeToTrayOnClose}
-        onCheckedChange={(value) => onChange({ minimizeToTrayOnClose: value })}
-      />
+        <ToggleRow
+          icon={<AppWindow className="h-4 w-4 text-blue-500" />}
+          title={t("settings.minimizeToTray")}
+          description={t("settings.minimizeToTrayDescription")}
+          checked={settings.minimizeToTrayOnClose}
+          onCheckedChange={(value) =>
+            onChange({ minimizeToTrayOnClose: value })
+          }
+        />
 
-      <ToggleRow
-        title={t("settings.enableClaudePluginIntegration")}
-        description={t("settings.enableClaudePluginIntegrationDescription")}
-        checked={!!settings.enableClaudePluginIntegration}
-        onCheckedChange={(value) =>
-          onChange({ enableClaudePluginIntegration: value })
-        }
-      />
+        <ToggleRow
+          icon={<MonitorUp className="h-4 w-4 text-purple-500" />}
+          title={t("settings.enableClaudePluginIntegration")}
+          description={t("settings.enableClaudePluginIntegrationDescription")}
+          checked={!!settings.enableClaudePluginIntegration}
+          onCheckedChange={(value) =>
+            onChange({ enableClaudePluginIntegration: value })
+          }
+        />
+      </div>
     </section>
   );
 }
 
 interface ToggleRowProps {
+  icon: React.ReactNode;
   title: string;
   description?: string;
   checked: boolean;
@@ -53,18 +60,24 @@ interface ToggleRowProps {
 }
 
 function ToggleRow({
+  icon,
   title,
   description,
   checked,
   onCheckedChange,
 }: ToggleRowProps) {
   return (
-    <div className="flex items-start justify-between gap-4 rounded-lg border border-border-default p-4">
-      <div className="space-y-1">
-        <p className="text-sm font-medium leading-none">{title}</p>
-        {description ? (
-          <p className="text-xs text-muted-foreground">{description}</p>
-        ) : null}
+    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card/50 p-4 transition-colors hover:bg-muted/50">
+      <div className="flex items-center gap-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-background ring-1 ring-border">
+          {icon}
+        </div>
+        <div className="space-y-1">
+          <p className="text-sm font-medium leading-none">{title}</p>
+          {description ? (
+            <p className="text-xs text-muted-foreground">{description}</p>
+          ) : null}
+        </div>
       </div>
       <Switch
         checked={checked}
