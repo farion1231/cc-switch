@@ -20,6 +20,8 @@ pub struct ProxyState {
     pub config: Arc<RwLock<ProxyConfig>>,
     pub status: Arc<RwLock<ProxyStatus>>,
     pub start_time: Arc<RwLock<Option<std::time::Instant>>>,
+    /// 每个应用类型当前使用的 provider (app_type -> (provider_id, provider_name))
+    pub current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
 }
 
 /// 代理HTTP服务器
@@ -36,6 +38,7 @@ impl ProxyServer {
             config: Arc::new(RwLock::new(config.clone())),
             status: Arc::new(RwLock::new(ProxyStatus::default())),
             start_time: Arc::new(RwLock::new(None)),
+            current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
         };
 
         Self {
@@ -121,17 +124,16 @@ impl ProxyServer {
             status.uptime_seconds = start.elapsed().as_secs();
         }
 
-        // 获取所有活跃的代理目标
-        if let Ok(targets) = self.state.db.get_all_proxy_targets() {
-            status.active_targets = targets
-                .into_iter()
-                .map(|(app_type, name, id)| ActiveTarget {
-                    app_type,
-                    provider_name: name,
-                    provider_id: id,
-                })
-                .collect();
-        }
+        // 从 current_providers HashMap 获取每个应用类型当前正在使用的 provider
+        let current_providers = self.state.current_providers.read().await;
+        status.active_targets = current_providers
+            .iter()
+            .map(|(app_type, (provider_id, provider_name))| ActiveTarget {
+                app_type: app_type.clone(),
+                provider_id: provider_id.clone(),
+                provider_name: provider_name.clone(),
+            })
+            .collect();
 
         status
     }

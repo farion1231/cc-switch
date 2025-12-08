@@ -57,6 +57,7 @@ impl ProviderRouter {
     }
 
     /// 更新Provider健康状态（保留接口但不影响选择）
+    #[allow(dead_code)]
     pub async fn update_health(
         &self,
         _provider: &Provider,

@@ -650,6 +650,14 @@ pub fn run() {
             commands::get_proxy_config,
             commands::update_proxy_config,
             commands::is_proxy_running,
+            // Proxy failover commands
+            commands::get_proxy_targets,
+            commands::set_proxy_target,
+            commands::get_provider_health,
+            commands::reset_circuit_breaker,
+            commands::get_circuit_breaker_config,
+            commands::update_circuit_breaker_config,
+            commands::get_circuit_breaker_stats,
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_trends,

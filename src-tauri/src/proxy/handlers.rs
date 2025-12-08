@@ -322,6 +322,7 @@ pub async fn handle_messages(
         config.request_timeout,
         config.max_retries,
         state.status.clone(),
+        state.current_providers.clone(),
     );
 
     let response = forwarder
@@ -641,6 +642,7 @@ pub async fn handle_gemini(
         config.request_timeout,
         config.max_retries,
         state.status.clone(),
+        state.current_providers.clone(),
     );
 
     // 提取完整的路径和查询参数
@@ -806,6 +808,7 @@ pub async fn handle_responses(
         config.request_timeout,
         config.max_retries,
         state.status.clone(),
+        state.current_providers.clone(),
     );
 
     let response = forwarder
@@ -985,6 +988,7 @@ pub async fn handle_chat_completions(
         config.request_timeout,
         config.max_retries,
         state.status.clone(),
+        state.current_providers.clone(),
     );
 
     let response = forwarder

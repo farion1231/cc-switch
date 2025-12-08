@@ -4,8 +4,8 @@
 
 use super::{
     error::*,
+    provider_router::ProviderRouter as NewProviderRouter,
     providers::{get_adapter, ProviderAdapter},
-    router::ProviderRouter,
     types::ProxyStatus,
     ProxyError,
 };
@@ -18,9 +18,11 @@ use tokio::sync::RwLock;
 
 pub struct RequestForwarder {
     client: Client,
-    router: ProviderRouter,
+    router: Arc<NewProviderRouter>,
+    #[allow(dead_code)]
     max_retries: u8,
     status: Arc<RwLock<ProxyStatus>>,
+    current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
 }
 
 impl RequestForwarder {
@@ -29,6 +31,7 @@ impl RequestForwarder {
         timeout_secs: u64,
         max_retries: u8,
         status: Arc<RwLock<ProxyStatus>>,
+        current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     ) -> Self {
         let mut client_builder = Client::builder();
         if timeout_secs > 0 {
@@ -41,13 +44,14 @@ impl RequestForwarder {
 
         Self {
             client,
-            router: ProviderRouter::new(db),
+            router: Arc::new(NewProviderRouter::new(db)),
             max_retries,
             status,
+            current_providers,
         }
     }
 
-    /// 转发请求（带重试和故障转移）
+    /// 转发请求（带故障转移）
     pub async fn forward_with_retry(
         &self,
         app_type: &AppType,
@@ -55,21 +59,39 @@ impl RequestForwarder {
         body: Value,
         headers: axum::http::HeaderMap,
     ) -> Result<Response, ProxyError> {
-        let mut failed_ids = Vec::new();
-        let mut failover_happened = false;
-
         // 获取适配器
         let adapter = get_adapter(app_type);
+        let app_type_str = app_type.as_str();
 
-        for attempt in 0..self.max_retries {
-            // 选择Provider
-            let provider = self.router.select_provider(app_type, &failed_ids).await?;
+        // 使用新的 ProviderRouter 选择所有可用供应商
+        let providers = self
+            .router
+            .select_providers(app_type_str)
+            .await
+            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
-            log::debug!(
-                "尝试 {} - 使用Provider: {} ({})",
+        if providers.is_empty() {
+            return Err(ProxyError::NoAvailableProvider);
+        }
+
+        log::info!(
+            "[{}] 故障转移链: {} 个可用供应商",
+            app_type_str,
+            providers.len()
+        );
+
+        let mut last_error = None;
+        let mut failover_happened = false;
+
+        // 依次尝试每个供应商
+        for (attempt, provider) in providers.iter().enumerate() {
+            log::info!(
+                "[{}] 尝试 {}/{} - 使用Provider: {} (sort_index: {})",
+                app_type_str,
                 attempt + 1,
+                providers.len(),
                 provider.name,
-                provider.id
+                provider.sort_index.unwrap_or(999999)
             );
 
             // 更新状态中的当前Provider信息
@@ -88,16 +110,29 @@ impl RequestForwarder {
 
             // 转发请求
             match self
-                .forward(&provider, endpoint, &body, &headers, adapter.as_ref())
+                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
                 .await
             {
                 Ok(response) => {
-                    let _latency = start.elapsed().as_millis() as u64;
+                    let latency = start.elapsed().as_millis() as u64;
 
-                    // 成功：更新健康状态
-                    self.router
-                        .update_health(&provider, app_type, true, None)
-                        .await;
+                    // 成功：记录成功并更新熔断器
+                    if let Err(e) = self
+                        .router
+                        .record_result(&provider.id, app_type_str, true, None)
+                        .await
+                    {
+                        log::warn!("Failed to record success: {e}");
+                    }
+
+                    // 更新当前应用类型使用的 provider
+                    {
+                        let mut current_providers = self.current_providers.write().await;
+                        current_providers.insert(
+                            app_type_str.to_string(),
+                            (provider.id.clone(), provider.name.clone()),
+                        );
+                    }
 
                     // 更新成功统计
                     {
@@ -106,6 +141,12 @@ impl RequestForwarder {
                         status.last_error = None;
                         if failover_happened {
                             status.failover_count += 1;
+                            log::info!(
+                                "[{}] 故障转移成功！切换到 Provider: {} (耗时: {}ms)",
+                                app_type_str,
+                                provider.name,
+                                latency
+                            );
                         }
                         // 重新计算成功率
                         if status.total_requests > 0 {
@@ -115,23 +156,33 @@ impl RequestForwarder {
                         }
                     }
 
+                    log::info!(
+                        "[{}] 请求成功 - Provider: {} - {}ms",
+                        app_type_str,
+                        provider.name,
+                        latency
+                    );
+
                     return Ok(response);
                 }
                 Err(e) => {
                     let latency = start.elapsed().as_millis() as u64;
 
-                    // 失败：分类错误
+                    // 失败：记录失败并更新熔断器
+                    if let Err(record_err) = self
+                        .router
+                        .record_result(&provider.id, app_type_str, false, Some(e.to_string()))
+                        .await
+                    {
+                        log::warn!("Failed to record failure: {record_err}");
+                    }
+
+                    // 分类错误
                     let category = self.categorize_proxy_error(&e);
 
                     match category {
                         ErrorCategory::Retryable => {
-                            // 可重试：更新健康状态，添加到失败列表
-                            self.router
-                                .update_health(&provider, app_type, false, Some(e.to_string()))
-                                .await;
-                            failed_ids.push(provider.id.clone());
-
-                            // 更新错误信息
+                            // 可重试：更新错误信息，继续尝试下一个供应商
                             {
                                 let mut status = self.status.write().await;
                                 status.last_error =
@@ -139,15 +190,19 @@ impl RequestForwarder {
                             }
 
                             log::warn!(
-                                "请求失败（可重试）: Provider {} - {} - {}ms",
+                                "[{}] Provider {} 失败（可重试）: {} - {}ms",
+                                app_type_str,
                                 provider.name,
                                 e,
                                 latency
                             );
+
+                            last_error = Some(e);
+                            // 继续尝试下一个供应商
                             continue;
                         }
                         ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
-                            // 不可重试：更新失败统计并返回
+                            // 不可重试：直接返回错误
                             {
                                 let mut status = self.status.write().await;
                                 status.failed_requests += 1;
@@ -158,7 +213,12 @@ impl RequestForwarder {
                                         * 100.0;
                                 }
                             }
-                            log::error!("请求失败（不可重试）: {e}");
+                            log::error!(
+                                "[{}] Provider {} 失败（不可重试）: {}",
+                                app_type_str,
+                                provider.name,
+                                e
+                            );
                             return Err(e);
                         }
                     }
@@ -166,18 +226,24 @@ impl RequestForwarder {
             }
         }
 
-        // 所有重试都失败
+        // 所有供应商都失败了
         {
             let mut status = self.status.write().await;
             status.failed_requests += 1;
-            status.last_error = Some("已达到最大重试次数".to_string());
+            status.last_error = Some("所有供应商都失败".to_string());
             if status.total_requests > 0 {
                 status.success_rate =
                     (status.success_requests as f32 / status.total_requests as f32) * 100.0;
             }
         }
 
-        Err(ProxyError::MaxRetriesExceeded)
+        log::error!(
+            "[{}] 所有 {} 个供应商都失败了",
+            app_type_str,
+            providers.len()
+        );
+
+        Err(last_error.unwrap_or(ProxyError::MaxRetriesExceeded))
     }
 
     /// 转发单个请求（使用适配器）
