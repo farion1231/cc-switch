@@ -374,7 +374,7 @@ function App() {
       )}
 
       <header
-        className="glass-header fixed top-0 z-50 w-full py-3 transition-all duration-300"
+        className="fixed top-0 z-50 w-full py-3 bg-background/80 backdrop-blur-md transition-all duration-300"
         data-tauri-drag-region
         style={{ WebkitAppRegion: "drag" } as any}
       >
@@ -483,7 +483,7 @@ function App() {
               <>
                 <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
 
-                <div className="glass p-1 rounded-xl flex items-center gap-1">
+                <div className="bg-muted p-1 rounded-xl flex items-center gap-1">
                   <Button
                     variant="ghost"
                     size="sm"
