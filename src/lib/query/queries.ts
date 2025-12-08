@@ -34,12 +34,22 @@ export interface ProvidersQueryData {
   currentProviderId: string;
 }
 
+export interface UseProvidersQueryOptions {
+  isProxyRunning?: boolean; // 代理服务是否运行中
+}
+
 export const useProvidersQuery = (
   appId: AppId,
+  options?: UseProvidersQueryOptions,
 ): UseQueryResult<ProvidersQueryData> => {
+  const { isProxyRunning = false } = options || {};
+
   return useQuery({
     queryKey: ["providers", appId],
     placeholderData: keepPreviousData,
+    // 当代理服务运行时，每 10 秒刷新一次供应商列表
+    // 这样可以自动反映后端熔断器自动禁用代理目标的变更
+    refetchInterval: isProxyRunning ? 10000 : false,
     queryFn: async () => {
       let providers: Record<string, Provider> = {};
       let currentProviderId = "";
