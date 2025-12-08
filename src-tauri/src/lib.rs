@@ -671,6 +671,12 @@ pub fn run() {
             commands::save_model_test_config,
             commands::get_model_test_logs,
             commands::cleanup_model_test_logs,
+            // Universal Provider management
+            commands::get_universal_providers,
+            commands::get_universal_provider,
+            commands::upsert_universal_provider,
+            commands::delete_universal_provider,
+            commands::sync_universal_provider,
         ]);
 
     let app = builder

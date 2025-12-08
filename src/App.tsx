@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -38,12 +39,21 @@ import PromptPanel from "@/components/prompts/PromptPanel";
 import { SkillsPage } from "@/components/skills/SkillsPage";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
+import { UniversalProviderPanel } from "@/components/universal";
 import { Button } from "@/components/ui/button";
 
-type View = "providers" | "settings" | "prompts" | "skills" | "mcp" | "agents";
+type View =
+  | "providers"
+  | "settings"
+  | "prompts"
+  | "skills"
+  | "mcp"
+  | "agents"
+  | "universal";
 
 function App() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   const [activeApp, setActiveApp] = useState<AppId>("claude");
   const [currentView, setCurrentView] = useState<View>("providers");
@@ -100,6 +110,38 @@ function App() {
       unsubscribe?.();
     };
   }, [activeApp, refetch]);
+
+  // 监听统一供应商同步事件，刷新所有应用的供应商列表
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
+    const setupListener = async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unsubscribe = await listen("universal-provider-synced", async () => {
+          // 统一供应商同步后刷新所有应用的供应商列表
+          // 使用 invalidateQueries 使所有 providers 查询失效
+          await queryClient.invalidateQueries({ queryKey: ["providers"] });
+          // 同时更新托盘菜单
+          try {
+            await providersApi.updateTrayMenu();
+          } catch (error) {
+            console.error("[App] Failed to update tray menu", error);
+          }
+        });
+      } catch (error) {
+        console.error(
+          "[App] Failed to subscribe universal-provider-synced event",
+          error,
+        );
+      }
+    };
+
+    setupListener();
+    return () => {
+      unsubscribe?.();
+    };
+  }, [queryClient]);
 
   // 应用启动时检测所有应用的环境变量冲突
   useEffect(() => {
@@ -303,6 +345,12 @@ function App() {
         );
       case "agents":
         return <AgentsPanel onOpenChange={() => setCurrentView("providers")} />;
+      case "universal":
+        return (
+          <div className="mx-auto max-w-[56rem] px-5 pt-4">
+            <UniversalProviderPanel />
+          </div>
+        );
       default:
         return (
           <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
@@ -400,6 +448,10 @@ function App() {
                   {currentView === "skills" && t("skills.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
                   {currentView === "agents" && t("agents.title")}
+                  {currentView === "universal" &&
+                    t("universalProvider.title", {
+                      defaultValue: "统一供应商",
+                    })}
                 </h1>
               </div>
             ) : (

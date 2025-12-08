@@ -619,3 +619,105 @@ pub struct ProviderSortUpdate {
     #[serde(rename = "sortIndex")]
     pub sort_index: usize,
 }
+
+// ============================================================================
+// 统一供应商（Universal Provider）服务方法
+// ============================================================================
+
+use crate::provider::UniversalProvider;
+use std::collections::HashMap;
+
+impl ProviderService {
+    /// 获取所有统一供应商
+    pub fn list_universal(
+        state: &AppState,
+    ) -> Result<HashMap<String, UniversalProvider>, AppError> {
+        state.db.get_all_universal_providers()
+    }
+
+    /// 获取单个统一供应商
+    pub fn get_universal(
+        state: &AppState,
+        id: &str,
+    ) -> Result<Option<UniversalProvider>, AppError> {
+        state.db.get_universal_provider(id)
+    }
+
+    /// 添加或更新统一供应商
+    pub fn upsert_universal(
+        state: &AppState,
+        provider: UniversalProvider,
+    ) -> Result<bool, AppError> {
+        let id = provider.id.clone();
+
+        // 保存统一供应商
+        state.db.save_universal_provider(&provider)?;
+
+        // 同步到各应用
+        Self::sync_universal_to_apps(state, &id)?;
+
+        Ok(true)
+    }
+
+    /// 删除统一供应商
+    pub fn delete_universal(state: &AppState, id: &str) -> Result<bool, AppError> {
+        // 获取统一供应商（用于删除生成的子供应商）
+        let provider = state.db.get_universal_provider(id)?;
+
+        // 删除统一供应商
+        state.db.delete_universal_provider(id)?;
+
+        // 删除生成的子供应商
+        if let Some(p) = provider {
+            if p.apps.claude {
+                let claude_id = format!("universal-claude-{}", id);
+                let _ = state.db.delete_provider("claude", &claude_id);
+            }
+            if p.apps.codex {
+                let codex_id = format!("universal-codex-{}", id);
+                let _ = state.db.delete_provider("codex", &codex_id);
+            }
+            if p.apps.gemini {
+                let gemini_id = format!("universal-gemini-{}", id);
+                let _ = state.db.delete_provider("gemini", &gemini_id);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// 同步统一供应商到各应用
+    pub fn sync_universal_to_apps(state: &AppState, id: &str) -> Result<bool, AppError> {
+        let provider = state
+            .db
+            .get_universal_provider(id)?
+            .ok_or_else(|| AppError::Message(format!("统一供应商 {} 不存在", id)))?;
+
+        // 同步到 Claude
+        if let Some(claude_provider) = provider.to_claude_provider() {
+            state.db.save_provider("claude", &claude_provider)?;
+        } else {
+            // 如果禁用了 Claude，删除对应的子供应商
+            let claude_id = format!("universal-claude-{}", id);
+            let _ = state.db.delete_provider("claude", &claude_id);
+        }
+
+        // 同步到 Codex
+        if let Some(codex_provider) = provider.to_codex_provider() {
+            state.db.save_provider("codex", &codex_provider)?;
+        } else {
+            let codex_id = format!("universal-codex-{}", id);
+            let _ = state.db.delete_provider("codex", &codex_id);
+        }
+
+        // 同步到 Gemini
+        if let Some(gemini_provider) = provider.to_gemini_provider() {
+            state.db.save_provider("gemini", &gemini_provider)?;
+        } else {
+            let gemini_id = format!("universal-gemini-{}", id);
+            let _ = state.db.delete_provider("gemini", &gemini_id);
+        }
+
+        Ok(true)
+    }
+}

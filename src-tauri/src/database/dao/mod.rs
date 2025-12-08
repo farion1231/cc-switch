@@ -8,5 +8,6 @@ pub mod providers;
 pub mod proxy;
 pub mod settings;
 pub mod skills;
+pub mod universal_providers;
 
 // 所有 DAO 方法都通过 Database impl 提供，无需单独导出
