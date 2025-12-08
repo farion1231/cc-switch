@@ -229,9 +229,9 @@ export function ProviderCard({
   return (
     <div
       className={cn(
-        "glass-card relative overflow-hidden rounded-xl p-4 transition-all duration-300",
-        "group hover:bg-black/[0.02] dark:hover:bg-white/[0.02] hover:border-primary/50",
-        isCurrent ? "glass-card-active" : "hover:scale-[1.01]",
+        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
+        "bg-card text-card-foreground group hover:border-border-active",
+        isCurrent ? "border-primary/50 shadow-sm" : "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
@@ -254,7 +254,7 @@ export function ProviderCard({
           </button>
 
           {/* 供应商图标 */}
-          <div className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center border border-gray-200 dark:border-white/10 group-hover:scale-105 transition-transform duration-300">
+          <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
             <ProviderIcon
               icon={provider.icon}
               name={provider.name}
@@ -316,12 +316,12 @@ export function ProviderCard({
                       handleSetProxyTarget(checked);
                     }}
                     disabled={setProxyTargetMutation.isPending}
-                    className="scale-75 data-[state=checked]:bg-purple-500"
+                    className="scale-75 data-[state=checked]:bg-green-500"
                   />
                   {provider.isProxyTarget && (
                     <Label
                       htmlFor={`proxy-target-switch-${provider.id}`}
-                      className="text-xs font-medium text-purple-500 dark:text-purple-400 cursor-pointer"
+                      className="text-xs font-medium text-green-600 dark:text-green-400 cursor-pointer"
                     >
                       {t("provider.proxyTarget", { defaultValue: "代理目标" })}
                     </Label>
