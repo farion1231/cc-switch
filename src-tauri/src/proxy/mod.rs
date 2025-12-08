@@ -2,10 +2,12 @@
 //!
 //! 提供本地HTTP代理服务，支持多Provider故障转移和请求透传
 
+pub mod circuit_breaker;
 pub mod error;
 mod forwarder;
 mod handlers;
 mod health;
+pub mod provider_router;
 pub mod providers;
 pub mod response_handler;
 mod router;
@@ -16,7 +18,13 @@ pub mod usage;
 
 // 公开导出给外部使用（commands, services等模块需要）
 #[allow(unused_imports)]
+pub use circuit_breaker::{
+    CircuitBreaker, CircuitBreakerConfig, CircuitBreakerStats, CircuitState,
+};
+#[allow(unused_imports)]
 pub use error::ProxyError;
+#[allow(unused_imports)]
+pub use provider_router::ProviderRouter;
 #[allow(unused_imports)]
 pub use response_handler::{NonStreamHandler, ResponseType, StreamHandler};
 #[allow(unused_imports)]
