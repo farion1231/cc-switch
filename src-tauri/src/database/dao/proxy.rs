@@ -165,6 +165,25 @@ impl Database {
         Ok(())
     }
 
+    /// 重置Provider健康状态
+    pub async fn reset_provider_health(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+
+        conn.execute(
+            "DELETE FROM provider_health WHERE provider_id = ?1 AND app_type = ?2",
+            rusqlite::params![provider_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        log::debug!("Reset health status for provider {provider_id} (app: {app_type})");
+
+        Ok(())
+    }
+
     // ==================== Proxy Usage (可选) ====================
 
     /// 记录代理使用统计
@@ -240,5 +259,63 @@ impl Database {
         }
 
         Ok(records)
+    }
+
+    // ==================== Circuit Breaker Config ====================
+
+    /// 获取熔断器配置
+    pub async fn get_circuit_breaker_config(
+        &self,
+    ) -> Result<crate::proxy::circuit_breaker::CircuitBreakerConfig, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let config = conn
+            .query_row(
+                "SELECT failure_threshold, success_threshold, timeout_seconds,
+                        error_rate_threshold, min_requests
+                 FROM circuit_breaker_config WHERE id = 1",
+                [],
+                |row| {
+                    Ok(crate::proxy::circuit_breaker::CircuitBreakerConfig {
+                        failure_threshold: row.get::<_, i32>(0)? as u32,
+                        success_threshold: row.get::<_, i32>(1)? as u32,
+                        timeout_seconds: row.get::<_, i64>(2)? as u64,
+                        error_rate_threshold: row.get(3)?,
+                        min_requests: row.get::<_, i32>(4)? as u32,
+                    })
+                },
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(config)
+    }
+
+    /// 更新熔断器配置
+    pub async fn update_circuit_breaker_config(
+        &self,
+        config: &crate::proxy::circuit_breaker::CircuitBreakerConfig,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+
+        conn.execute(
+            "UPDATE circuit_breaker_config
+             SET failure_threshold = ?1,
+                 success_threshold = ?2,
+                 timeout_seconds = ?3,
+                 error_rate_threshold = ?4,
+                 min_requests = ?5,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = 1",
+            rusqlite::params![
+                config.failure_threshold as i32,
+                config.success_threshold as i32,
+                config.timeout_seconds as i64,
+                config.error_rate_threshold,
+                config.min_requests as i32,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
     }
 }

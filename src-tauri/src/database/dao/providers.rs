@@ -357,6 +357,116 @@ impl Database {
         Ok(())
     }
 
+    /// 设置单个供应商的代理目标状态（支持多个代理目标）
+    pub async fn set_proxy_target(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET is_proxy_target = ?1
+             WHERE id = ?2 AND app_type = ?3",
+            params![if enabled { 1 } else { 0 }, provider_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// 获取指定应用类型的所有代理目标供应商（按 sort_index 排序）
+    pub async fn get_proxy_targets(
+        &self,
+        app_type: &str,
+    ) -> Result<IndexMap<String, Provider>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn.prepare(
+            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, is_proxy_target
+             FROM providers WHERE app_type = ?1 AND is_proxy_target = 1
+             ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
+        ).map_err(|e| AppError::Database(e.to_string()))?;
+
+        let provider_iter = stmt
+            .query_map(params![app_type], |row| {
+                let id: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let settings_config_str: String = row.get(2)?;
+                let website_url: Option<String> = row.get(3)?;
+                let category: Option<String> = row.get(4)?;
+                let created_at: Option<i64> = row.get(5)?;
+                let sort_index: Option<usize> = row.get(6)?;
+                let notes: Option<String> = row.get(7)?;
+                let icon: Option<String> = row.get(8)?;
+                let icon_color: Option<String> = row.get(9)?;
+                let meta_str: String = row.get(10)?;
+                let is_proxy_target: bool = row.get(11)?;
+
+                let settings_config =
+                    serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
+                let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
+
+                Ok((
+                    id,
+                    Provider {
+                        id: "".to_string(),
+                        name,
+                        settings_config,
+                        website_url,
+                        category,
+                        created_at,
+                        sort_index,
+                        notes,
+                        meta: Some(meta),
+                        icon,
+                        icon_color,
+                        is_proxy_target: Some(is_proxy_target),
+                    },
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut providers = IndexMap::new();
+        for provider_res in provider_iter {
+            let (id, mut provider) = provider_res.map_err(|e| AppError::Database(e.to_string()))?;
+            provider.id = id.clone();
+
+            // 加载 endpoints
+            let mut stmt_endpoints = conn.prepare(
+                "SELECT url, added_at FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 ORDER BY added_at ASC, url ASC"
+            ).map_err(|e| AppError::Database(e.to_string()))?;
+
+            let endpoints_iter = stmt_endpoints
+                .query_map(params![id, app_type], |row| {
+                    let url: String = row.get(0)?;
+                    let added_at: Option<i64> = row.get(1)?;
+                    Ok((
+                        url,
+                        crate::settings::CustomEndpoint {
+                            url: "".to_string(),
+                            added_at: added_at.unwrap_or(0),
+                            last_used: None,
+                        },
+                    ))
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?;
+
+            let mut custom_endpoints = HashMap::new();
+            for ep_res in endpoints_iter {
+                let (url, mut ep) = ep_res.map_err(|e| AppError::Database(e.to_string()))?;
+                ep.url = url.clone();
+                custom_endpoints.insert(url, ep);
+            }
+
+            if let Some(meta) = &mut provider.meta {
+                meta.custom_endpoints = custom_endpoints;
+            }
+
+            providers.insert(id, provider);
+        }
+
+        Ok(providers)
+    }
+
     /// 获取所有活跃的代理目标
     pub fn get_all_proxy_targets(&self) -> Result<Vec<(String, String, String)>, AppError> {
         let conn = lock_conn!(self.conn);

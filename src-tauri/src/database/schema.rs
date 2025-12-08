@@ -336,6 +336,28 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 15. Circuit Breaker Config 表 (熔断器配置)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS circuit_breaker_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                failure_threshold INTEGER NOT NULL DEFAULT 5,
+                success_threshold INTEGER NOT NULL DEFAULT 2,
+                timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                error_rate_threshold REAL NOT NULL DEFAULT 0.5,
+                min_requests INTEGER NOT NULL DEFAULT 10,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 插入默认熔断器配置
+        conn.execute(
+            "INSERT OR IGNORE INTO circuit_breaker_config (id) VALUES (1)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(())
     }
 
