@@ -1,16 +1,7 @@
 import { useState } from "react";
-import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
+import { Activity, Clock, TrendingUp, Server, ListOrdered } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
-import {
-  Settings,
-  Activity,
-  Clock,
-  TrendingUp,
-  Server,
-  ListOrdered,
-} from "lucide-react";
 import { ProxySettingsDialog } from "./ProxySettingsDialog";
 import { toast } from "sonner";
 import { useProxyTargets } from "@/lib/query/failover";
@@ -19,25 +10,13 @@ import { useProviderHealth } from "@/lib/query/failover";
 import type { ProxyStatus } from "@/types/proxy";
 
 export function ProxyPanel() {
-  const { status, isRunning, start, stop, isPending } = useProxyStatus();
+  const { status, isRunning } = useProxyStatus();
   const [showSettings, setShowSettings] = useState(false);
 
   // 获取所有三个应用类型的代理目标列表
   const { data: claudeTargets = [] } = useProxyTargets("claude");
   const { data: codexTargets = [] } = useProxyTargets("codex");
   const { data: geminiTargets = [] } = useProxyTargets("gemini");
-
-  const handleToggle = async () => {
-    try {
-      if (isRunning) {
-        await stop();
-      } else {
-        await start();
-      }
-    } catch (error) {
-      console.error("Toggle proxy failed:", error);
-    }
-  };
 
   const formatUptime = (seconds: number): string => {
     const hours = Math.floor(seconds / 3600);
@@ -55,58 +34,12 @@ export function ProxyPanel() {
 
   return (
     <>
-      <section className="space-y-6 rounded-xl border border-white/10 glass-card p-6">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary/10 text-primary">
-              <Server className="h-5 w-5" />
-            </div>
-            <div>
-              <h3 className="text-base font-semibold text-foreground">
-                本地代理服务
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {isRunning
-                  ? `运行中 · ${status?.address}:${status?.port}`
-                  : "已停止"}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <Badge
-              variant={isRunning ? "default" : "secondary"}
-              className="gap-1.5"
-            >
-              <Activity
-                className={`h-3 w-3 ${isRunning ? "animate-pulse" : ""}`}
-              />
-              {isRunning ? "运行中" : "已停止"}
-            </Badge>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowSettings(true)}
-              disabled={isPending}
-              aria-label="打开代理设置"
-            >
-              <Settings className="h-4 w-4" />
-            </Button>
-            <Switch
-              checked={isRunning}
-              onCheckedChange={handleToggle}
-              disabled={isPending}
-              aria-label={isRunning ? "停止代理服务" : "启动代理服务"}
-            />
-          </div>
-        </div>
-
+      <section className="space-y-6">
         {isRunning && status ? (
           <div className="space-y-6">
-            <div className="rounded-lg border border-white/10 bg-muted/40 p-4 space-y-4">
+            <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-4">
               <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  服务地址
-                </p>
+                <p className="text-xs text-muted-foreground">服务地址</p>
                 <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                   <code className="flex-1 text-sm bg-background px-3 py-2 rounded border border-border/60">
                     http://{status.address}:{status.port}
@@ -126,16 +59,14 @@ export function ProxyPanel() {
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-white/10 space-y-2">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  使用中
-                </p>
+              <div className="pt-3 border-t border-border space-y-2">
+                <p className="text-xs text-muted-foreground">使用中</p>
                 {status.active_targets && status.active_targets.length > 0 ? (
                   <div className="grid gap-2 sm:grid-cols-2">
                     {status.active_targets.map((target) => (
                       <div
                         key={target.app_type}
-                        className="flex items-center justify-between rounded-md border border-white/10 bg-background/60 px-2 py-1.5 text-xs"
+                        className="flex items-center justify-between rounded-md border border-border bg-background/60 px-2 py-1.5 text-xs"
                       >
                         <span className="text-muted-foreground">
                           {target.app_type}
@@ -167,10 +98,10 @@ export function ProxyPanel() {
               {(claudeTargets.length > 0 ||
                 codexTargets.length > 0 ||
                 geminiTargets.length > 0) && (
-                <div className="pt-3 border-t border-white/10 space-y-3">
+                <div className="pt-3 border-t border-border space-y-3">
                   <div className="flex items-center gap-2">
                     <ListOrdered className="h-3.5 w-3.5 text-muted-foreground" />
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    <p className="text-xs text-muted-foreground">
                       故障转移队列
                     </p>
                   </div>
@@ -268,13 +199,11 @@ function StatCard({ icon, label, value, variant = "default" }: StatCardProps) {
 
   return (
     <div
-      className={`rounded-lg border border-white/10 bg-white/70 p-4 text-sm text-muted-foreground dark:bg-white/5 ${variantStyles[variant]}`}
+      className={`rounded-lg border border-border bg-card/60 p-4 text-sm text-muted-foreground ${variantStyles[variant]}`}
     >
       <div className="flex items-center gap-2 text-muted-foreground mb-2">
         {icon}
-        <span className="text-xs font-medium uppercase tracking-wide">
-          {label}
-        </span>
+        <span className="text-xs">{label}</span>
       </div>
       <p className="text-xl font-semibold text-foreground">{value}</p>
     </div>
@@ -351,7 +280,7 @@ function ProviderQueueItem({
       className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors ${
         isCurrent
           ? "border-primary/40 bg-primary/10 text-primary font-medium"
-          : "border-white/10 bg-background/60"
+          : "border-border bg-background/60"
       }`}
     >
       <div className="flex items-center gap-2">
