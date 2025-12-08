@@ -58,3 +58,116 @@ pub async fn get_init_error() -> Result<Option<InitErrorPayload>, String> {
 pub async fn get_migration_result() -> Result<bool, String> {
     Ok(crate::init_status::take_migration_success())
 }
+
+#[derive(serde::Serialize)]
+pub struct ToolVersion {
+    name: String,
+    version: Option<String>,
+    latest_version: Option<String>, // 新增字段：最新版本
+    error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_tool_versions() -> Result<Vec<ToolVersion>, String> {
+    use std::process::Command;
+
+    let tools = vec!["claude", "codex", "gemini"];
+    let mut results = Vec::new();
+
+    // 用于获取远程版本的 client
+    let client = reqwest::Client::builder()
+        .user_agent("cc-switch/1.0")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    for tool in tools {
+        // 1. 获取本地版本 (保持不变)
+        let (local_version, local_error) = {
+            let output = if cfg!(target_os = "windows") {
+                Command::new("cmd")
+                    .args(["/C", &format!("{tool} --version")])
+                    .output()
+            } else {
+                Command::new("sh")
+                    .arg("-c")
+                    .arg(format!("{tool} --version"))
+                    .output()
+            };
+
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        (
+                            Some(String::from_utf8_lossy(&out.stdout).trim().to_string()),
+                            None,
+                        )
+                    } else {
+                        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                        (
+                            None,
+                            Some(if err.is_empty() {
+                                "未安装或无法执行".to_string()
+                            } else {
+                                err
+                            }),
+                        )
+                    }
+                }
+                Err(e) => (None, Some(e.to_string())),
+            }
+        };
+
+        // 2. 获取远程最新版本
+        let latest_version = match tool {
+            "claude" => fetch_npm_latest_version(&client, "@anthropic-ai/claude-code").await,
+            "codex" => fetch_github_latest_release(&client, "openai/openai-python").await,
+            "gemini" => fetch_npm_latest_version(&client, "@google/gemini-cli").await, // 修正：使用 npm 官方包 @google/gemini-cli
+            _ => None,
+        };
+
+        results.push(ToolVersion {
+            name: tool.to_string(),
+            version: local_version,
+            latest_version,
+            error: local_error,
+        });
+    }
+
+    Ok(results)
+}
+
+/// Helper function to fetch latest version from GitHub Release
+async fn fetch_github_latest_release(client: &reqwest::Client, repo: &str) -> Option<String> {
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    // GitHub API 需要 user-agent
+    match client.get(&url).send().await {
+        Ok(resp) => {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                json.get("tag_name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+/// Helper function to fetch latest version from npm registry
+async fn fetch_npm_latest_version(client: &reqwest::Client, package: &str) -> Option<String> {
+    let url = format!("https://registry.npmjs.org/{package}");
+    match client.get(&url).send().await {
+        Ok(resp) => {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                json.get("dist-tags")
+                    .and_then(|tags| tags.get("latest"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    }
+}

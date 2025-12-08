@@ -676,6 +676,7 @@ pub fn run() {
             commands::save_model_test_config,
             commands::get_model_test_logs,
             commands::cleanup_model_test_logs,
+            commands::get_tool_versions,
         ]);
 
     let app = builder
