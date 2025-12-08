@@ -25,7 +25,6 @@ import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { extractErrorMessage } from "@/utils/errorUtils";
-import { cn } from "@/lib/utils";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
@@ -72,7 +71,8 @@ function App() {
   });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
-  const isClaudeApp = activeApp === "claude";
+  // Skills 功能仅支持 Claude 和 Codex
+  const hasSkillsSupport = activeApp === "claude" || activeApp === "codex";
 
   // 🎯 使用 useProviderActions Hook 统一管理所有 Provider 操作
   const {
@@ -297,6 +297,7 @@ function App() {
           <SkillsPage
             ref={skillsPageRef}
             onClose={() => setCurrentView("providers")}
+            initialApp={activeApp}
           />
         );
       case "mcp":
@@ -484,21 +485,17 @@ function App() {
                 <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
 
                 <div className="bg-muted p-1 rounded-xl flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setCurrentView("skills")}
-                    className={cn(
-                      "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
-                      "transition-all duration-200 ease-in-out overflow-hidden",
-                      isClaudeApp
-                        ? "opacity-100 w-8 scale-100 px-2"
-                        : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
-                    )}
-                    title={t("skills.manage")}
-                  >
-                    <Wrench className="h-4 w-4 flex-shrink-0" />
-                  </Button>
+                  {hasSkillsSupport && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCurrentView("skills")}
+                      className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                      title={t("skills.manage")}
+                    >
+                      <Wrench className="h-4 w-4" />
+                    </Button>
+                  )}
                   {/* TODO: Agents 功能开发中，暂时隐藏入口 */}
                   {/* {isClaudeApp && (
                     <Button
