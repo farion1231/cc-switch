@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card } from "@/components/ui/card";
 import { UsageSummaryCards } from "./UsageSummaryCards";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
 import type { TimeRange } from "@/types/usage";
+import { motion } from "framer-motion";
+import { BarChart3, ListFilter, Activity } from "lucide-react";
 
 export function UsageDashboard() {
   const { t } = useTranslation();
@@ -16,50 +17,90 @@ export function UsageDashboard() {
   const days = timeRange === "1d" ? 1 : timeRange === "7d" ? 7 : 30;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-end">
-        <select
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4 }}
+      className="space-y-8 pb-8"
+    >
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-2xl font-bold">{t("usage.title", "使用统计")}</h2>
+          <p className="text-sm text-muted-foreground">
+            {t("usage.subtitle", "查看 AI 模型的使用情况和成本统计")}
+          </p>
+        </div>
+
+        <Tabs
           value={timeRange}
-          onChange={(e) => setTimeRange(e.target.value as TimeRange)}
-          className="rounded-md border px-3 py-1.5 text-sm"
+          onValueChange={(v) => setTimeRange(v as TimeRange)}
+          className="w-full sm:w-auto"
         >
-          <option value="1d">{t("usage.today", "今天")}</option>
-          <option value="7d">{t("usage.last7days", "过去 7 天")}</option>
-          <option value="30d">{t("usage.last30days", "过去 30 天")}</option>
-        </select>
+          <TabsList className="flex w-full sm:w-auto bg-card/60 border border-border/50 backdrop-blur-sm shadow-sm h-10 p-1">
+            <TabsTrigger
+              value="1d"
+              className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
+            >
+              {t("usage.today", "24小时")}
+            </TabsTrigger>
+            <TabsTrigger
+              value="7d"
+              className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
+            >
+              {t("usage.last7days", "7天")}
+            </TabsTrigger>
+            <TabsTrigger
+              value="30d"
+              className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
+            >
+              {t("usage.last30days", "30天")}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
 
       <UsageSummaryCards days={days} />
 
-      <Card className="border-none bg-transparent p-0 shadow-none">
-        <UsageTrendChart days={days} />
-      </Card>
+      <UsageTrendChart days={days} />
 
-      <Tabs defaultValue="logs" className="w-full">
-        <TabsList>
-          <TabsTrigger value="logs">
-            {t("usage.requestLogs", "请求日志")}
-          </TabsTrigger>
-          <TabsTrigger value="providers">
-            {t("usage.providerStats", "Provider 统计")}
-          </TabsTrigger>
-          <TabsTrigger value="models">
-            {t("usage.modelStats", "模型统计")}
-          </TabsTrigger>
-        </TabsList>
+      <div className="space-y-4">
+        <Tabs defaultValue="logs" className="w-full">
+          <div className="flex items-center justify-between mb-4">
+            <TabsList className="bg-muted/50">
+              <TabsTrigger value="logs" className="gap-2">
+                <ListFilter className="h-4 w-4" />
+                {t("usage.requestLogs", "请求日志")}
+              </TabsTrigger>
+              <TabsTrigger value="providers" className="gap-2">
+                <Activity className="h-4 w-4" />
+                {t("usage.providerStats", "Provider 统计")}
+              </TabsTrigger>
+              <TabsTrigger value="models" className="gap-2">
+                <BarChart3 className="h-4 w-4" />
+                {t("usage.modelStats", "模型统计")}
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
-        <TabsContent value="logs" className="mt-4">
-          <RequestLogTable />
-        </TabsContent>
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            <TabsContent value="logs" className="mt-0">
+              <RequestLogTable />
+            </TabsContent>
 
-        <TabsContent value="providers" className="mt-4">
-          <ProviderStatsTable />
-        </TabsContent>
+            <TabsContent value="providers" className="mt-0">
+              <ProviderStatsTable />
+            </TabsContent>
 
-        <TabsContent value="models" className="mt-4">
-          <ModelStatsTable />
-        </TabsContent>
-      </Tabs>
-    </div>
+            <TabsContent value="models" className="mt-0">
+              <ModelStatsTable />
+            </TabsContent>
+          </motion.div>
+        </Tabs>
+      </div>
+    </motion.div>
   );
 }

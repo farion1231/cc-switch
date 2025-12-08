@@ -65,123 +65,151 @@ export function RequestLogTable() {
   return (
     <div className="space-y-4">
       {/* 筛选栏 */}
-      <div className="flex flex-wrap items-center gap-2 rounded-md bg-card/60 p-3 shadow-sm">
-        <Select
-          value={tempFilters.appType || "all"}
-          onValueChange={(v) =>
-            setTempFilters({
-              ...tempFilters,
-              appType: v === "all" ? undefined : v,
-            })
-          }
-        >
-          <SelectTrigger className="w-[120px]">
-            <SelectValue placeholder={t("usage.endpoint", "端点")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t("common.all", "全部")}</SelectItem>
-            <SelectItem value="claude">Claude</SelectItem>
-            <SelectItem value="codex">Codex</SelectItem>
-            <SelectItem value="gemini">Gemini</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="flex flex-col gap-4 rounded-lg border bg-card/50 p-4 backdrop-blur-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <Select
+            value={tempFilters.appType || "all"}
+            onValueChange={(v) =>
+              setTempFilters({
+                ...tempFilters,
+                appType: v === "all" ? undefined : v,
+              })
+            }
+          >
+            <SelectTrigger className="w-[130px] bg-background">
+              <SelectValue placeholder={t("usage.endpoint", "端点")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("common.all", "全部端点")}</SelectItem>
+              <SelectItem value="claude">Claude</SelectItem>
+              <SelectItem value="codex">Codex</SelectItem>
+              <SelectItem value="gemini">Gemini</SelectItem>
+            </SelectContent>
+          </Select>
 
-        <Select
-          value={tempFilters.statusCode?.toString() || "all"}
-          onValueChange={(v) =>
-            setTempFilters({
-              ...tempFilters,
-              statusCode: v === "all" ? undefined : parseInt(v),
-            })
-          }
-        >
-          <SelectTrigger className="w-[120px]">
-            <SelectValue placeholder={t("usage.status", "状态码")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t("common.all", "全部")}</SelectItem>
-            <SelectItem value="200">200</SelectItem>
-            <SelectItem value="400">400</SelectItem>
-            <SelectItem value="401">401</SelectItem>
-            <SelectItem value="429">429</SelectItem>
-            <SelectItem value="500">500</SelectItem>
-          </SelectContent>
-        </Select>
+          <Select
+            value={tempFilters.statusCode?.toString() || "all"}
+            onValueChange={(v) =>
+              setTempFilters({
+                ...tempFilters,
+                statusCode: v === "all" ? undefined : parseInt(v),
+              })
+            }
+          >
+            <SelectTrigger className="w-[130px] bg-background">
+              <SelectValue placeholder={t("usage.status", "状态码")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("common.all", "全部状态")}</SelectItem>
+              <SelectItem value="200">200 OK</SelectItem>
+              <SelectItem value="400">400 Bad Request</SelectItem>
+              <SelectItem value="401">401 Unauthorized</SelectItem>
+              <SelectItem value="429">429 Rate Limit</SelectItem>
+              <SelectItem value="500">500 Server Error</SelectItem>
+            </SelectContent>
+          </Select>
 
-        <Input
-          placeholder={t("usage.provider", "供应商名称")}
-          className="w-[140px]"
-          value={tempFilters.providerName || ""}
-          onChange={(e) =>
-            setTempFilters({
-              ...tempFilters,
-              providerName: e.target.value || undefined,
-            })
-          }
-        />
+          <div className="flex items-center gap-2 flex-1 min-w-[300px]">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder={t("usage.provider", "搜索供应商...")}
+                className="pl-9 bg-background"
+                value={tempFilters.providerName || ""}
+                onChange={(e) =>
+                  setTempFilters({
+                    ...tempFilters,
+                    providerName: e.target.value || undefined,
+                  })
+                }
+              />
+            </div>
+            <Input
+              placeholder={t("usage.model", "搜索模型...")}
+              className="w-[180px] bg-background"
+              value={tempFilters.model || ""}
+              onChange={(e) =>
+                setTempFilters({
+                  ...tempFilters,
+                  model: e.target.value || undefined,
+                })
+              }
+            />
+          </div>
+        </div>
 
-        <Input
-          placeholder={t("usage.model", "模型名称")}
-          className="w-[140px]"
-          value={tempFilters.model || ""}
-          onChange={(e) =>
-            setTempFilters({
-              ...tempFilters,
-              model: e.target.value || undefined,
-            })
-          }
-        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span className="whitespace-nowrap">时间范围:</span>
+            <Input
+              type="datetime-local"
+              className="h-8 w-[200px] bg-background"
+              value={
+                tempFilters.startDate
+                  ? new Date(tempFilters.startDate * 1000)
+                      .toISOString()
+                      .slice(0, 16)
+                  : ""
+              }
+              onChange={(e) =>
+                setTempFilters({
+                  ...tempFilters,
+                  startDate: e.target.value
+                    ? Math.floor(new Date(e.target.value).getTime() / 1000)
+                    : undefined,
+                })
+              }
+            />
+            <span>-</span>
+            <Input
+              type="datetime-local"
+              className="h-8 w-[200px] bg-background"
+              value={
+                tempFilters.endDate
+                  ? new Date(tempFilters.endDate * 1000)
+                      .toISOString()
+                      .slice(0, 16)
+                  : ""
+              }
+              onChange={(e) =>
+                setTempFilters({
+                  ...tempFilters,
+                  endDate: e.target.value
+                    ? Math.floor(new Date(e.target.value).getTime() / 1000)
+                    : undefined,
+                })
+              }
+            />
+          </div>
 
-        <Input
-          type="datetime-local"
-          className="w-[180px]"
-          value={
-            tempFilters.startDate
-              ? new Date(tempFilters.startDate * 1000)
-                  .toISOString()
-                  .slice(0, 16)
-              : ""
-          }
-          onChange={(e) =>
-            setTempFilters({
-              ...tempFilters,
-              startDate: e.target.value
-                ? Math.floor(new Date(e.target.value).getTime() / 1000)
-                : undefined,
-            })
-          }
-        />
-
-        <Input
-          type="datetime-local"
-          className="w-[180px]"
-          value={
-            tempFilters.endDate
-              ? new Date(tempFilters.endDate * 1000).toISOString().slice(0, 16)
-              : ""
-          }
-          onChange={(e) =>
-            setTempFilters({
-              ...tempFilters,
-              endDate: e.target.value
-                ? Math.floor(new Date(e.target.value).getTime() / 1000)
-                : undefined,
-            })
-          }
-        />
-
-        <div className="ml-auto flex gap-2">
-          <Button size="sm" onClick={handleSearch}>
-            <Search className="mr-1 h-4 w-4" />
-            {t("common.search", "查询")}
-          </Button>
-          <Button size="sm" variant="outline" onClick={handleReset}>
-            <X className="mr-1 h-4 w-4" />
-            {t("common.reset", "重置")}
-          </Button>
-          <Button size="sm" variant="outline" onClick={handleRefresh}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-2 ml-auto">
+            <Button
+              size="sm"
+              variant="default"
+              onClick={handleSearch}
+              className="h-8"
+            >
+              <Search className="mr-2 h-3.5 w-3.5" />
+              {t("common.search", "查询")}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleReset}
+              className="h-8"
+            >
+              <X className="mr-2 h-3.5 w-3.5" />
+              {t("common.reset", "重置")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleRefresh}
+              className="h-8 px-2"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -189,7 +217,7 @@ export function RequestLogTable() {
         <div className="h-[400px] animate-pulse rounded bg-gray-100" />
       ) : (
         <>
-          <div className="rounded-md bg-card/60 shadow-sm overflow-x-auto">
+          <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>

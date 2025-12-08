@@ -18,7 +18,7 @@ export function ProviderStatsTable() {
   }
 
   return (
-    <div className="rounded-md bg-card/60 shadow-sm">
+    <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow>

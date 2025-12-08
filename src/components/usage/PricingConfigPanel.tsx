@@ -1,12 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -110,136 +104,107 @@ export function PricingConfigPanel() {
   }
 
   return (
-    <Card className="border rounded-lg">
-      <CardHeader
-        className="cursor-pointer select-none"
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {isExpanded ? (
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            ) : (
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
-            )}
-            <div>
-              <CardTitle className="text-base">
-                {t("usage.modelPricing", "模型定价")}
-                {pricing && pricing.length > 0 && (
-                  <span className="ml-2 text-sm font-normal text-muted-foreground">
-                    ({pricing.length})
-                  </span>
-                )}
-              </CardTitle>
-              {!isExpanded && (
-                <CardDescription className="mt-1">
-                  {t(
-                    "usage.modelPricingDesc",
-                    "配置各模型的 Token 成本（每百万 tokens 的 USD 价格，支持 * 与 ? 通配）",
-                  )}
-                </CardDescription>
-              )}
-            </div>
-          </div>
-          <Button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleAddNew();
-            }}
-            size="sm"
-          >
-            <Plus className="mr-1 h-4 w-4" />
-            {t("common.add", "新增")}
-          </Button>
-        </div>
-      </CardHeader>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between mb-4">
+        <h4 className="text-sm font-medium text-muted-foreground">
+          {t("usage.modelPricingDesc", "配置各模型的 Token 成本")} (每百万)
+        </h4>
+        <Button
+          onClick={(e) => {
+            e.stopPropagation();
+            handleAddNew();
+          }}
+          size="sm"
+        >
+          <Plus className="mr-1 h-4 w-4" />
+          {t("common.add", "新增")}
+        </Button>
+      </div>
 
-      {isExpanded && (
-        <CardContent>
-          {!pricing || pricing.length === 0 ? (
-            <Alert>
-              <AlertDescription>
-                {t(
-                  "usage.noPricingData",
-                  '暂无定价数据。点击"新增"添加模型定价配置。',
-                )}
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <div className="rounded-md bg-card/60 shadow-sm">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t("usage.model", "模型")}</TableHead>
-                    <TableHead>{t("usage.displayName", "显示名称")}</TableHead>
-                    <TableHead className="text-right">
-                      {t("usage.inputCost", "输入成本")}
-                    </TableHead>
-                    <TableHead className="text-right">
-                      {t("usage.outputCost", "输出成本")}
-                    </TableHead>
-                    <TableHead className="text-right">
-                      {t("usage.cacheReadCost", "缓存读取")}
-                    </TableHead>
-                    <TableHead className="text-right">
-                      {t("usage.cacheWriteCost", "缓存写入")}
-                    </TableHead>
-                    <TableHead className="text-right">
-                      {t("common.actions", "操作")}
-                    </TableHead>
+      <div className="space-y-4">
+        {!pricing || pricing.length === 0 ? (
+          <Alert>
+            <AlertDescription>
+              {t(
+                "usage.noPricingData",
+                '暂无定价数据。点击"新增"添加模型定价配置。',
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <div className="rounded-md bg-card/60 shadow-sm">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("usage.model", "模型")}</TableHead>
+                  <TableHead>{t("usage.displayName", "显示名称")}</TableHead>
+                  <TableHead className="text-right">
+                    {t("usage.inputCost", "输入成本")}
+                  </TableHead>
+                  <TableHead className="text-right">
+                    {t("usage.outputCost", "输出成本")}
+                  </TableHead>
+                  <TableHead className="text-right">
+                    {t("usage.cacheReadCost", "缓存读取")}
+                  </TableHead>
+                  <TableHead className="text-right">
+                    {t("usage.cacheWriteCost", "缓存写入")}
+                  </TableHead>
+                  <TableHead className="text-right">
+                    {t("common.actions", "操作")}
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pricing.map((model) => (
+                  <TableRow key={model.modelId}>
+                    <TableCell className="font-mono text-sm">
+                      {model.modelId}
+                    </TableCell>
+                    <TableCell>{model.displayName}</TableCell>
+                    <TableCell className="text-right font-mono text-sm">
+                      ${model.inputCostPerMillion}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm">
+                      ${model.outputCostPerMillion}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm">
+                      ${model.cacheReadCostPerMillion}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm">
+                      ${model.cacheCreationCostPerMillion}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setIsAddingNew(false);
+                            setEditingModel(model);
+                          }}
+                          title={t("common.edit", "编辑")}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDeleteConfirm(model.modelId)}
+                          title={t("common.delete", "删除")}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pricing.map((model) => (
-                    <TableRow key={model.modelId}>
-                      <TableCell className="font-mono text-sm">
-                        {model.modelId}
-                      </TableCell>
-                      <TableCell>{model.displayName}</TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        ${model.inputCostPerMillion}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        ${model.outputCostPerMillion}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        ${model.cacheReadCostPerMillion}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        ${model.cacheCreationCostPerMillion}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              setIsAddingNew(false);
-                              setEditingModel(model);
-                            }}
-                            title={t("common.edit", "编辑")}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setDeleteConfirm(model.modelId)}
-                            title={t("common.delete", "删除")}
-                            className="text-destructive hover:text-destructive"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      )}
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
 
       {editingModel && (
         <PricingEditModal
@@ -284,6 +249,6 @@ export function PricingConfigPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </div>
   );
 }
