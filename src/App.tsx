@@ -23,6 +23,7 @@ import {
 } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
+import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import { AppSwitcher } from "@/components/AppSwitcher";
@@ -62,7 +63,13 @@ function App() {
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
-  const { data, isLoading, refetch } = useProvidersQuery(activeApp);
+  // 获取代理服务状态
+  const { isRunning: isProxyRunning } = useProxyStatus();
+
+  // 获取供应商列表，当代理服务运行时自动刷新
+  const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
+    isProxyRunning,
+  });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
   const isClaudeApp = activeApp === "claude";
@@ -74,7 +81,6 @@ function App() {
     switchProvider,
     deleteProvider,
     saveUsageScript,
-    setProxyTarget,
   } = useProviderActions(activeApp);
 
   // 监听来自托盘菜单的切换事件
@@ -313,8 +319,8 @@ function App() {
                   currentProviderId={currentProviderId}
                   appId={activeApp}
                   isLoading={isLoading}
+                  isProxyRunning={isProxyRunning}
                   onSwitch={switchProvider}
-                  onSetProxyTarget={setProxyTarget}
                   onEdit={setEditingProvider}
                   onDelete={setConfirmDelete}
                   onDuplicate={handleDuplicateProvider}

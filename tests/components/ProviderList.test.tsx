@@ -125,7 +125,6 @@ describe("ProviderList Component", () => {
         onDelete={vi.fn()}
         onDuplicate={vi.fn()}
         onOpenWebsite={vi.fn()}
-        onSetProxyTarget={vi.fn()}
         isLoading
       />,
     );
@@ -154,7 +153,6 @@ describe("ProviderList Component", () => {
         onDelete={vi.fn()}
         onDuplicate={vi.fn()}
         onOpenWebsite={vi.fn()}
-        onSetProxyTarget={vi.fn()}
         onCreate={handleCreate}
       />,
     );
@@ -195,7 +193,6 @@ describe("ProviderList Component", () => {
         onDuplicate={handleDuplicate}
         onConfigureUsage={handleUsage}
         onOpenWebsite={handleOpenWebsite}
-        onSetProxyTarget={vi.fn()}
       />,
     );
 

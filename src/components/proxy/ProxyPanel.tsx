@@ -3,13 +3,29 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
-import { Settings, Activity, Clock, TrendingUp, Server } from "lucide-react";
+import {
+  Settings,
+  Activity,
+  Clock,
+  TrendingUp,
+  Server,
+  ListOrdered,
+} from "lucide-react";
 import { ProxySettingsDialog } from "./ProxySettingsDialog";
 import { toast } from "sonner";
+import { useProxyTargets } from "@/lib/query/failover";
+import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
+import { useProviderHealth } from "@/lib/query/failover";
+import type { ProxyStatus } from "@/types/proxy";
 
 export function ProxyPanel() {
   const { status, isRunning, start, stop, isPending } = useProxyStatus();
   const [showSettings, setShowSettings] = useState(false);
+
+  // 获取所有三个应用类型的代理目标列表
+  const { data: claudeTargets = [] } = useProxyTargets("claude");
+  const { data: codexTargets = [] } = useProxyTargets("codex");
+  const { data: geminiTargets = [] } = useProxyTargets("gemini");
 
   const handleToggle = async () => {
     try {
@@ -112,7 +128,7 @@ export function ProxyPanel() {
 
               <div className="pt-3 border-t border-white/10 space-y-2">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  当前代理
+                  使用中
                 </p>
                 {status.active_targets && status.active_targets.length > 0 ? (
                   <div className="grid gap-2 sm:grid-cols-2">
@@ -146,6 +162,50 @@ export function ProxyPanel() {
                   </p>
                 )}
               </div>
+
+              {/* 供应商队列 - 按应用类型分组展示 */}
+              {(claudeTargets.length > 0 ||
+                codexTargets.length > 0 ||
+                geminiTargets.length > 0) && (
+                <div className="pt-3 border-t border-white/10 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <ListOrdered className="h-3.5 w-3.5 text-muted-foreground" />
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                      故障转移队列
+                    </p>
+                  </div>
+
+                  {/* Claude 队列 */}
+                  {claudeTargets.length > 0 && (
+                    <ProviderQueueGroup
+                      appType="claude"
+                      appLabel="Claude"
+                      targets={claudeTargets}
+                      status={status}
+                    />
+                  )}
+
+                  {/* Codex 队列 */}
+                  {codexTargets.length > 0 && (
+                    <ProviderQueueGroup
+                      appType="codex"
+                      appLabel="Codex"
+                      targets={codexTargets}
+                      status={status}
+                    />
+                  )}
+
+                  {/* Gemini 队列 */}
+                  {geminiTargets.length > 0 && (
+                    <ProviderQueueGroup
+                      appType="gemini"
+                      appLabel="Gemini"
+                      targets={geminiTargets}
+                      status={status}
+                    />
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="grid gap-3 md:grid-cols-4">
@@ -217,6 +277,107 @@ function StatCard({ icon, label, value, variant = "default" }: StatCardProps) {
         </span>
       </div>
       <p className="text-xl font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
+interface ProviderQueueGroupProps {
+  appType: string;
+  appLabel: string;
+  targets: Array<{
+    id: string;
+    name: string;
+  }>;
+  status: ProxyStatus;
+}
+
+function ProviderQueueGroup({
+  appType,
+  appLabel,
+  targets,
+  status,
+}: ProviderQueueGroupProps) {
+  // 查找该应用类型的当前活跃目标
+  const activeTarget = status.active_targets?.find(
+    (t) => t.app_type === appType,
+  );
+
+  return (
+    <div className="space-y-2">
+      {/* 应用类型标题 */}
+      <div className="flex items-center gap-2 px-2">
+        <span className="text-xs font-semibold text-foreground/80">
+          {appLabel}
+        </span>
+        <div className="flex-1 h-px bg-border/50" />
+      </div>
+
+      {/* 供应商列表 */}
+      <div className="space-y-1.5">
+        {targets.map((target, index) => (
+          <ProviderQueueItem
+            key={target.id}
+            provider={target}
+            priority={index + 1}
+            appType={appType}
+            isCurrent={activeTarget?.provider_id === target.id}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface ProviderQueueItemProps {
+  provider: {
+    id: string;
+    name: string;
+  };
+  priority: number;
+  appType: string;
+  isCurrent: boolean;
+}
+
+function ProviderQueueItem({
+  provider,
+  priority,
+  appType,
+  isCurrent,
+}: ProviderQueueItemProps) {
+  const { data: health } = useProviderHealth(provider.id, appType);
+
+  return (
+    <div
+      className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors ${
+        isCurrent
+          ? "border-primary/40 bg-primary/10 text-primary font-medium"
+          : "border-white/10 bg-background/60"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className={`flex-shrink-0 flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold ${
+            isCurrent
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-muted-foreground"
+          }`}
+        >
+          {priority}
+        </span>
+        <span className={isCurrent ? "" : "text-foreground"}>
+          {provider.name}
+        </span>
+        {isCurrent && (
+          <span className="text-xs px-1.5 py-0.5 rounded bg-primary/20 text-primary">
+            使用中
+          </span>
+        )}
+      </div>
+      {/* 健康徽章：队列中的代理目标始终显示，没有健康数据时默认为正常 */}
+      <ProviderHealthBadge
+        consecutiveFailures={health?.consecutive_failures ?? 0}
+        isProxyTarget={true}
+      />
     </div>
   );
 }

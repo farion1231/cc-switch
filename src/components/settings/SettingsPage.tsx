@@ -20,6 +20,7 @@ import { AboutSection } from "@/components/settings/AboutSection";
 import { ProxyPanel } from "@/components/proxy";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
 import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
+import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
@@ -221,6 +222,9 @@ export function SettingsPage({
 
                   {/* 模型测试配置 */}
                   <ModelTestConfigPanel />
+
+                  {/* 自动故障转移配置 */}
+                  <AutoFailoverConfigPanel />
 
                   <ImportExportSection
                     status={importStatus}

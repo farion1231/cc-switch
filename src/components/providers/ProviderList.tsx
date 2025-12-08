@@ -5,11 +5,11 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useMemo } from "react";
 import type { CSSProperties } from "react";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { useDragSort } from "@/hooks/useDragSort";
-import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useModelTest } from "@/hooks/useModelTest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -26,7 +26,7 @@ interface ProviderListProps {
   onOpenWebsite: (url: string) => void;
   onCreate?: () => void;
   isLoading?: boolean;
-  onSetProxyTarget: (provider: Provider) => void;
+  isProxyRunning?: boolean; // 代理服务运行状态
 }
 
 export function ProviderList({
@@ -41,18 +41,36 @@ export function ProviderList({
   onOpenWebsite,
   onCreate,
   isLoading = false,
-  onSetProxyTarget,
+  isProxyRunning = false, // 默认值为 false
 }: ProviderListProps) {
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
     appId,
   );
 
-  // 获取代理服务运行状态
-  const { isRunning: isProxyRunning } = useProxyStatus();
-
   // 模型测试
   const { testProvider, isTesting } = useModelTest(appId);
+
+  // 计算代理目标的实际优先级映射 (P1, P2, P3...)
+  const proxyPriorityMap = useMemo(() => {
+    // 获取所有启用代理目标的供应商
+    const proxyTargets = sortedProviders.filter((p) => p.isProxyTarget);
+
+    // 按 sortIndex 排序
+    const sortedTargets = proxyTargets.sort((a, b) => {
+      const indexA = a.sortIndex ?? Number.MAX_SAFE_INTEGER;
+      const indexB = b.sortIndex ?? Number.MAX_SAFE_INTEGER;
+      return indexA - indexB;
+    });
+
+    // 创建优先级映射
+    const map = new Map<string, number>();
+    sortedTargets.forEach((provider, index) => {
+      map.set(provider.id, index + 1); // P1, P2, P3...
+    });
+
+    return map;
+  }, [sortedProviders]);
 
   const handleTest = (provider: Provider) => {
     testProvider(provider.id, provider.name);
@@ -103,8 +121,9 @@ export function ProviderList({
               onOpenWebsite={onOpenWebsite}
               onTest={handleTest}
               isTesting={isTesting(provider.id)}
-              onSetProxyTarget={onSetProxyTarget}
               isProxyRunning={isProxyRunning}
+              proxyPriority={proxyPriorityMap.get(provider.id)}
+              allProviders={sortedProviders}
             />
           ))}
         </div>
@@ -125,8 +144,9 @@ interface SortableProviderCardProps {
   onOpenWebsite: (url: string) => void;
   onTest: (provider: Provider) => void;
   isTesting: boolean;
-  onSetProxyTarget: (provider: Provider) => void;
   isProxyRunning: boolean;
+  proxyPriority?: number; // 代理目标的实际优先级 (1, 2, 3...)
+  allProviders?: Provider[]; // 所有供应商列表
 }
 
 function SortableProviderCard({
@@ -141,8 +161,9 @@ function SortableProviderCard({
   onOpenWebsite,
   onTest,
   isTesting,
-  onSetProxyTarget,
   isProxyRunning,
+  proxyPriority,
+  allProviders,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -174,8 +195,9 @@ function SortableProviderCard({
         onOpenWebsite={onOpenWebsite}
         onTest={onTest}
         isTesting={isTesting}
-        onSetProxyTarget={onSetProxyTarget}
         isProxyRunning={isProxyRunning}
+        proxyPriority={proxyPriority}
+        allProviders={allProviders}
         dragHandleProps={{
           attributes,
           listeners,
