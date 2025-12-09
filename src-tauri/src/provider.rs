@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -22,9 +23,23 @@ pub struct Provider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "sortIndex")]
     pub sort_index: Option<usize>,
+    /// 备注信息
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
     /// 供应商元数据（不写入 live 配置，仅存于 ~/.cc-switch/config.json）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<ProviderMeta>,
+    /// 图标名称（如 "openai", "anthropic"）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// 图标颜色（Hex 格式，如 "#00A67E"）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "iconColor")]
+    pub icon_color: Option<String>,
+    /// 是否为代理目标（数据库专用字段，不写入配置文件）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "isProxyTarget")]
+    pub is_proxy_target: Option<bool>,
 }
 
 impl Provider {
@@ -43,7 +58,11 @@ impl Provider {
             category: None,
             created_at: None,
             sort_index: None,
+            notes: None,
             meta: None,
+            icon: None,
+            icon_color: None,
+            is_proxy_target: None,
         }
     }
 }
@@ -51,7 +70,7 @@ impl Provider {
 /// 供应商管理器
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderManager {
-    pub providers: HashMap<String, Provider>,
+    pub providers: IndexMap<String, Provider>,
     pub current: String,
 }
 
@@ -63,6 +82,26 @@ pub struct UsageScript {
     pub code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout: Option<u64>,
+    /// 用量查询专用的 API Key（通用模板使用）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "apiKey")]
+    pub api_key: Option<String>,
+    /// 用量查询专用的 Base URL（通用和 NewAPI 模板使用）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "baseUrl")]
+    pub base_url: Option<String>,
+    /// 访问令牌（用于需要登录的接口，NewAPI 模板使用）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "accessToken")]
+    pub access_token: Option<String>,
+    /// 用户ID（用于需要用户标识的接口，NewAPI 模板使用）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "userId")]
+    pub user_id: Option<String>,
+    /// 自动查询间隔（单位：分钟，0 表示禁用自动查询）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "autoQueryInterval")]
+    pub auto_query_interval: Option<u64>,
 }
 
 /// 用量数据
@@ -108,11 +147,29 @@ pub struct ProviderMeta {
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,
+    /// 合作伙伴标记（前端使用 isPartner，保持字段名一致）
+    #[serde(rename = "isPartner", skip_serializing_if = "Option::is_none")]
+    pub is_partner: Option<bool>,
+    /// 合作伙伴促销 key，用于识别 PackyCode 等特殊供应商
+    #[serde(
+        rename = "partnerPromotionKey",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub partner_promotion_key: Option<String>,
+    /// 成本倍数（用于计算实际成本）
+    #[serde(rename = "costMultiplier", skip_serializing_if = "Option::is_none")]
+    pub cost_multiplier: Option<String>,
+    /// 每日消费限额（USD）
+    #[serde(rename = "limitDailyUsd", skip_serializing_if = "Option::is_none")]
+    pub limit_daily_usd: Option<String>,
+    /// 每月消费限额（USD）
+    #[serde(rename = "limitMonthlyUsd", skip_serializing_if = "Option::is_none")]
+    pub limit_monthly_usd: Option<String>,
 }
 
 impl ProviderManager {
     /// 获取所有供应商
-    pub fn get_all_providers(&self) -> &HashMap<String, Provider> {
+    pub fn get_all_providers(&self) -> &IndexMap<String, Provider> {
         &self.providers
     }
 }

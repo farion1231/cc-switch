@@ -1,12 +1,150 @@
-/* 引入 Tailwind v4 内建样式与工具 */
-@import "tailwindcss";
+/* Tailwind CSS v3 指令 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-/* 覆盖 Tailwind v4 默认的 dark 变体为“类选择器”模式 */
-@custom-variant dark (&:where(.dark, .dark *));
+/* shadcn/ui 主题变量 - 蓝色主题 */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    /* 主色调：macOS 风格系统蓝 */
+    --primary: 210 100% 56%;
+    --primary-foreground: 0 0% 100%;
+
+    /* 次要色：淡蓝灰 */
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+
+    /* 强调色 */
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+
+    /* 危险色：红色 */
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    /* 边框和输入框 */
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 210 100% 56%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* 背景与卡片：接近 macOS 深色 systemBackground / windowBackground */
+    --background: 240 5% 12%;
+    --foreground: 0 0% 98%;
+    --card: 240 5% 16%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 5% 16%;
+    --popover-foreground: 0 0% 98%;
+
+    /* 暗色模式主色调：macOS 风格系统蓝（略微降低亮度） */
+    --primary: 210 100% 54%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 5% 18%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 5% 18%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 5% 18%;
+    --accent-foreground: 0 0% 98%;
+
+    /* 暗色模式危险色 */
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 5% 24%;
+    --input: 240 5% 24%;
+    --ring: 210 100% 54%;
+  }
+}
+
+/* Glassmorphism Utilities */
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.dark .glass {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.dark .glass-card {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.01) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+/* 供应商卡片选中状态 */
+.glass-card-active {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+}
+
+.dark .glass-card-active {
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  box-shadow: 0 0 24px rgba(59, 130, 246, 0.2);
+}
+
+.glass-header {
+  background: hsl(var(--background));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: none;
+  border-top: 2px solid hsl(var(--border));
+}
+
+.dark .glass-header {
+  background: hsl(var(--background));
+  border: none;
+  border-top: 2px solid hsl(var(--border));
+}
+
+/* Tauri 拖拽区域 */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+}
+
+[data-tauri-no-drag],
+[data-tauri-drag-region] .no-drag {
+  -webkit-app-region: no-drag;
+}
 
 /* 全局基础样式 */
 * {
   box-sizing: border-box;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE 10+ */
 }
 
 html {
@@ -14,10 +152,14 @@ html {
   line-height: 1.5;
   /* 让原生控件与滚动条随主题切换配色 */
   color-scheme: light;
+  /* 禁用 overscroll 回弹效果，防止下拉时顶部边框被拉下来 */
+  overscroll-behavior: none;
 }
 
 body {
-  @apply m-0 p-0 bg-gray-50 text-gray-900 text-sm dark:bg-gray-950 dark:text-gray-100;
+  @apply m-0 p-0 text-sm;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 /* 暗色模式下启用暗色原生控件/滚动条配色 */
@@ -25,32 +167,56 @@ html.dark {
   color-scheme: dark;
 }
 
-/* 滚动条样式（避免在伪元素中使用自定义 dark 变体，消除构建警告） */
+/* 滚动条样式 - 完全隐藏（支持所有浏览器） */
 ::-webkit-scrollbar {
-  width: 0.375rem;
-  height: 0.375rem;
-}
-::-webkit-scrollbar-track {
-  background-color: #f4f4f5;
-}
-html.dark ::-webkit-scrollbar-track {
-  background-color: #27272a;
-}
-::-webkit-scrollbar-thumb {
-  background-color: #d4d4d8;
-  border-radius: 0.25rem;
-}
-html.dark ::-webkit-scrollbar-thumb {
-  background-color: #52525b;
-}
-::-webkit-scrollbar-thumb:hover {
-  background-color: #a1a1aa;
-}
-html.dark ::-webkit-scrollbar-thumb:hover {
-  background-color: #71717a;
+  display: none;
 }
 
 /* 焦点样式 */
 *:focus-visible {
   @apply outline-2 outline-blue-500 outline-offset-2;
+}
+
+/* 统一边框设计系统 - 使用工具类定义 */
+@layer utilities {
+  /* 让滚动条悬浮于内容之上，避免出现/消失时挤压布局 */
+  .scroll-overlay {
+    scrollbar-gutter: stable both-edges;
+    padding-right: 0.5rem;
+    margin-right: -0.5rem;
+    overflow-x: hidden;
+  }
+
+  /* 默认边框：1px，使用主题边框颜色 */
+  .border-default {
+    border-width: 1px;
+    border-color: hsl(var(--border));
+  }
+
+  /* 激活边框：2px，使用主色 */
+  .border-active {
+    border-width: 2px;
+  }
+
+  .border-border-default {
+    border-color: hsl(var(--border));
+  }
+
+  .border-border-active {
+    border-color: hsl(var(--primary));
+  }
+
+  .border-border-hover {
+    border-color: hsl(var(--primary) / 0.4);
+  }
+
+  .border-border-dragging {
+    border-color: hsl(var(--primary) / 0.6);
+  }
+}
+
+/* 禁用 Edge / IE 的密码显示按钮 */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
 }

@@ -3,7 +3,8 @@
 - mcp 管理器 ✅
 - i18n ✅
 - gemini cli
-- homebrew 支持
+- homebrew 支持 ✅
 - memory 管理
 - codex 更多预设供应商
 - 云同步
+- 本地代理

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CC Switch",
-  "version": "3.5.1",
+  "version": "3.8.2",
   "identifier": "com.ccswitch.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -14,17 +14,22 @@
       {
         "label": "main",
         "title": "",
-        "width": 900,
+        "titleBarStyle": "Overlay",
+        "width": 1000,
         "height": 650,
-        "minWidth": 800,
+        "minWidth": 900,
         "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
-        "titleBarStyle": "Transparent"
+        "center": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https: http:"
+      "csp": "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https: http:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
     }
   },
   "bundle": {
@@ -42,9 +47,17 @@
       "wix": {
         "template": "wix/per-user-main.wxs"
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["ccswitch"]
+      }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4MDI4QzlBNTczOTI4RTMKUldUaktEbFhtb3dDeUM5US9kT0FmdGR5Ti9vQzcwa2dTMlpibDVDUmQ2M0VGTzVOWnd0SGpFVlEK",
       "endpoints": [

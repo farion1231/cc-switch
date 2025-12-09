@@ -1,5 +1,5 @@
 import { X, Download } from "lucide-react";
-import { useUpdate } from "../contexts/UpdateContext";
+import { useUpdate } from "@/contexts/UpdateContext";
 import { useTranslation } from "react-i18next";
 
 interface UpdateBadgeProps {
@@ -21,7 +21,7 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
       className={`
         flex items-center gap-1.5 px-2.5 py-1
         bg-white dark:bg-gray-800
-        border border-gray-200 dark:border-gray-700
+        border border-border-default 
         rounded-lg text-xs
         shadow-sm
         transition-all duration-200

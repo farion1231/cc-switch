@@ -1,0 +1,322 @@
+// Icon metadata for search and categorization
+import { IconMetadata } from "@/types/icon";
+
+export const iconMetadata: Record<string, IconMetadata> = {
+  alibaba: {
+    name: "alibaba",
+    displayName: "Alibaba",
+    category: "ai-provider",
+    keywords: ["qwen", "tongyi"],
+    defaultColor: "#FF6A00",
+  },
+  anthropic: {
+    name: "anthropic",
+    displayName: "Anthropic",
+    category: "ai-provider",
+    keywords: ["claude"],
+    defaultColor: "#D4915D",
+  },
+  aws: {
+    name: "aws",
+    displayName: "AWS",
+    category: "cloud",
+    keywords: ["amazon", "cloud"],
+    defaultColor: "#FF9900",
+  },
+  azure: {
+    name: "azure",
+    displayName: "Azure",
+    category: "cloud",
+    keywords: ["microsoft", "cloud"],
+    defaultColor: "#0078D4",
+  },
+  baidu: {
+    name: "baidu",
+    displayName: "Baidu",
+    category: "ai-provider",
+    keywords: ["ernie", "wenxin"],
+    defaultColor: "#2932E1",
+  },
+  bytedance: {
+    name: "bytedance",
+    displayName: "bytedance",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  chatglm: {
+    name: "chatglm",
+    displayName: "chatglm",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  claude: {
+    name: "claude",
+    displayName: "Claude",
+    category: "ai-provider",
+    keywords: ["anthropic"],
+    defaultColor: "#D4915D",
+  },
+  cloudflare: {
+    name: "cloudflare",
+    displayName: "Cloudflare",
+    category: "cloud",
+    keywords: ["cloudflare", "cdn"],
+    defaultColor: "#F38020",
+  },
+  cohere: {
+    name: "cohere",
+    displayName: "Cohere",
+    category: "ai-provider",
+    keywords: ["cohere"],
+    defaultColor: "#39594D",
+  },
+  copilot: {
+    name: "copilot",
+    displayName: "copilot",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  deepseek: {
+    name: "deepseek",
+    displayName: "DeepSeek",
+    category: "ai-provider",
+    keywords: ["deep", "seek"],
+    defaultColor: "#1E88E5",
+  },
+  doubao: {
+    name: "doubao",
+    displayName: "doubao",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  gemini: {
+    name: "gemini",
+    displayName: "Gemini",
+    category: "ai-provider",
+    keywords: ["google"],
+    defaultColor: "#4285F4",
+  },
+  gemma: {
+    name: "gemma",
+    displayName: "gemma",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  github: {
+    name: "github",
+    displayName: "GitHub",
+    category: "tool",
+    keywords: ["git", "version control"],
+    defaultColor: "#181717",
+  },
+  githubcopilot: {
+    name: "githubcopilot",
+    displayName: "githubcopilot",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  google: {
+    name: "google",
+    displayName: "Google",
+    category: "ai-provider",
+    keywords: ["gemini", "bard"],
+    defaultColor: "#4285F4",
+  },
+  googlecloud: {
+    name: "googlecloud",
+    displayName: "googlecloud",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  grok: {
+    name: "grok",
+    displayName: "grok",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  huawei: {
+    name: "huawei",
+    displayName: "Huawei",
+    category: "cloud",
+    keywords: ["huawei", "cloud"],
+    defaultColor: "#FF0000",
+  },
+  huggingface: {
+    name: "huggingface",
+    displayName: "Hugging Face",
+    category: "ai-provider",
+    keywords: ["huggingface", "hf"],
+    defaultColor: "#FFD21E",
+  },
+  hunyuan: {
+    name: "hunyuan",
+    displayName: "hunyuan",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  kimi: {
+    name: "kimi",
+    displayName: "Kimi",
+    category: "ai-provider",
+    keywords: ["moonshot"],
+    defaultColor: "#6366F1",
+  },
+  meta: {
+    name: "meta",
+    displayName: "Meta",
+    category: "ai-provider",
+    keywords: ["facebook", "llama"],
+    defaultColor: "#0081FB",
+  },
+  midjourney: {
+    name: "midjourney",
+    displayName: "midjourney",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  minimax: {
+    name: "minimax",
+    displayName: "MiniMax",
+    category: "ai-provider",
+    keywords: ["minimax"],
+    defaultColor: "#FF6B6B",
+  },
+  mistral: {
+    name: "mistral",
+    displayName: "Mistral",
+    category: "ai-provider",
+    keywords: ["mistral"],
+    defaultColor: "#FF7000",
+  },
+  notion: {
+    name: "notion",
+    displayName: "notion",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  ollama: {
+    name: "ollama",
+    displayName: "ollama",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  openai: {
+    name: "openai",
+    displayName: "OpenAI",
+    category: "ai-provider",
+    keywords: ["gpt", "chatgpt"],
+    defaultColor: "#00A67E",
+  },
+  packycode: {
+    name: "packycode",
+    displayName: "PackyCode",
+    category: "ai-provider",
+    keywords: ["packycode", "packy", "packyapi"],
+    defaultColor: "currentColor",
+  },
+  palm: {
+    name: "palm",
+    displayName: "palm",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  perplexity: {
+    name: "perplexity",
+    displayName: "Perplexity",
+    category: "ai-provider",
+    keywords: ["perplexity"],
+    defaultColor: "#20808D",
+  },
+  qwen: {
+    name: "qwen",
+    displayName: "qwen",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  stability: {
+    name: "stability",
+    displayName: "stability",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  tencent: {
+    name: "tencent",
+    displayName: "Tencent",
+    category: "ai-provider",
+    keywords: ["hunyuan"],
+    defaultColor: "#00A4FF",
+  },
+  vercel: {
+    name: "vercel",
+    displayName: "vercel",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  wenxin: {
+    name: "wenxin",
+    displayName: "wenxin",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  xai: {
+    name: "xai",
+    displayName: "xai",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  yi: {
+    name: "yi",
+    displayName: "yi",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  zeroone: {
+    name: "zeroone",
+    displayName: "zeroone",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
+  zhipu: {
+    name: "zhipu",
+    displayName: "Zhipu AI",
+    category: "ai-provider",
+    keywords: ["chatglm", "glm"],
+    defaultColor: "#0F62FE",
+  },
+};
+
+export function getIconMetadata(name: string): IconMetadata | undefined {
+  return iconMetadata[name.toLowerCase()];
+}
+
+export function searchIcons(query: string): string[] {
+  const lowerQuery = query.toLowerCase();
+  return Object.values(iconMetadata)
+    .filter(
+      (meta) =>
+        meta.name.includes(lowerQuery) ||
+        meta.displayName.toLowerCase().includes(lowerQuery) ||
+        meta.keywords.some((k) => k.includes(lowerQuery)),
+    )
+    .map((meta) => meta.name);
+}

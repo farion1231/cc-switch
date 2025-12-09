@@ -1,7 +1,7 @@
 [package]
 name = "cc-switch"
-version = "3.5.1"
-description = "Claude Code & Codex 供应商配置管理工具"
+version = "3.8.2"
+description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
 repository = "https://github.com/farion1231/cc-switch"
@@ -14,6 +14,10 @@ rust-version = "1.85.0"
 name = "cc_switch_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+test-hooks = []
+
 [build-dependencies]
 tauri-build = { version = "2.4.0", features = [] }
 
@@ -21,25 +25,48 @@ tauri-build = { version = "2.4.0", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-chrono = "0.4"
-tauri = { version = "2.8.2", features = ["tray-icon"] }
+chrono = { version = "0.4", features = ["serde"] }
+tauri = { version = "2.8.2", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
+tauri-plugin-deep-link = "2"
 dirs = "5.0"
 toml = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+toml_edit = "0.22"
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "stream"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 futures = "0.3"
+async-stream = "0.3"
+bytes = "1.5"
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+hyper = { version = "1.0", features = ["full"] }
 regex = "1.10"
 rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }
+thiserror = "2.0"
+anyhow = "1.0"
+zip = "2.2"
+serde_yaml = "0.9"
+tempfile = "3"
 url = "2.5"
+auto-launch = "0.5"
+once_cell = "1.21.3"
+base64 = "0.22"
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
+indexmap = { version = "2", features = ["serde"] }
+rust_decimal = "1.33"
+uuid = { version = "1.11", features = ["v4"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.52"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
@@ -52,3 +79,7 @@ lto = "thin"
 opt-level = "s"
 panic = "abort"
 strip = "symbols"
+
+[dev-dependencies]
+serial_test = "3"
+tempfile = "3"

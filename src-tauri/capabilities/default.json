@@ -10,6 +10,7 @@
     "opener:default",
     "updater:default",
     "core:window:allow-set-skip-taskbar",
+    "core:window:allow-start-dragging",
     "process:allow-restart",
     "dialog:default"
   ]

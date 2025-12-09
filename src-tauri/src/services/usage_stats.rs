@@ -1,0 +1,1084 @@
+//! 使用统计服务
+//!
+//! 提供使用量数据的聚合查询功能
+
+use crate::database::{lock_conn, Database};
+use crate::error::AppError;
+use chrono::{Duration, Utc};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
+use std::str::FromStr;
+
+/// 使用量汇总
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSummary {
+    pub total_requests: u64,
+    pub total_cost: String,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub success_rate: f32,
+}
+
+/// 每日统计
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyStats {
+    pub date: String,
+    pub request_count: u64,
+    pub total_cost: String,
+    pub total_tokens: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+}
+
+/// Provider 统计
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderStats {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub request_count: u64,
+    pub total_tokens: u64,
+    pub total_cost: String,
+    pub success_rate: f32,
+    pub avg_latency_ms: u64,
+}
+
+/// 模型统计
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelStats {
+    pub model: String,
+    pub request_count: u64,
+    pub total_tokens: u64,
+    pub total_cost: String,
+    pub avg_cost_per_request: String,
+}
+
+/// 请求日志过滤器
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogFilters {
+    pub app_type: Option<String>,
+    pub provider_name: Option<String>,
+    pub model: Option<String>,
+    pub status_code: Option<u16>,
+    pub start_date: Option<i64>,
+    pub end_date: Option<i64>,
+}
+
+/// 分页请求日志响应
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaginatedLogs {
+    pub data: Vec<RequestLogDetail>,
+    pub total: u32,
+    pub page: u32,
+    pub page_size: u32,
+}
+
+/// 请求日志详情
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestLogDetail {
+    pub request_id: String,
+    pub provider_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_name: Option<String>,
+    pub app_type: String,
+    pub model: String,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cache_read_tokens: u32,
+    pub cache_creation_tokens: u32,
+    pub input_cost_usd: String,
+    pub output_cost_usd: String,
+    pub cache_read_cost_usd: String,
+    pub cache_creation_cost_usd: String,
+    pub total_cost_usd: String,
+    pub is_streaming: bool,
+    pub latency_ms: u64,
+    pub first_token_ms: Option<u64>,
+    pub duration_ms: Option<u64>,
+    pub status_code: u16,
+    pub error_message: Option<String>,
+    pub created_at: i64,
+}
+
+impl Database {
+    /// 获取使用量汇总
+    pub fn get_usage_summary(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<UsageSummary, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let (where_clause, params_vec) = if start_date.is_some() || end_date.is_some() {
+            let mut conditions = Vec::new();
+            let mut params = Vec::new();
+
+            if let Some(start) = start_date {
+                conditions.push("created_at >= ?");
+                params.push(start);
+            }
+            if let Some(end) = end_date {
+                conditions.push("created_at <= ?");
+                params.push(end);
+            }
+
+            (format!("WHERE {}", conditions.join(" AND ")), params)
+        } else {
+            (String::new(), Vec::new())
+        };
+
+        let sql = format!(
+            "SELECT 
+                COUNT(*) as total_requests,
+                COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
+                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
+                COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END), 0) as success_count
+             FROM proxy_request_logs
+             {where_clause}"
+        );
+
+        let result = conn.query_row(&sql, rusqlite::params_from_iter(params_vec), |row| {
+            let total_requests: i64 = row.get(0)?;
+            let total_cost: f64 = row.get(1)?;
+            let total_input_tokens: i64 = row.get(2)?;
+            let total_output_tokens: i64 = row.get(3)?;
+            let total_cache_creation_tokens: i64 = row.get(4)?;
+            let total_cache_read_tokens: i64 = row.get(5)?;
+            let success_count: i64 = row.get(6)?;
+
+            let success_rate = if total_requests > 0 {
+                (success_count as f32 / total_requests as f32) * 100.0
+            } else {
+                0.0
+            };
+
+            Ok(UsageSummary {
+                total_requests: total_requests as u64,
+                total_cost: format!("{total_cost:.6}"),
+                total_input_tokens: total_input_tokens as u64,
+                total_output_tokens: total_output_tokens as u64,
+                total_cache_creation_tokens: total_cache_creation_tokens as u64,
+                total_cache_read_tokens: total_cache_read_tokens as u64,
+                success_rate,
+            })
+        })?;
+
+        Ok(result)
+    }
+
+    /// 获取每日趋势
+    pub fn get_daily_trends(&self, days: u32) -> Result<Vec<DailyStats>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        if days <= 1 {
+            let sql = "SELECT 
+                    strftime('%Y-%m-%dT%H:00:00Z', datetime(created_at, 'unixepoch')) as bucket,
+                    COUNT(*) as request_count,
+                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
+                    COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
+                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                    COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
+                    COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens
+                 FROM proxy_request_logs
+                 WHERE created_at >= strftime('%s', 'now', '-1 day')
+                 GROUP BY bucket
+                 ORDER BY bucket ASC";
+
+            let mut stmt = conn.prepare(sql)?;
+            let rows = stmt.query_map([], |row| {
+                Ok(DailyStats {
+                    date: row.get(0)?,
+                    request_count: row.get::<_, i64>(1)? as u64,
+                    total_cost: format!("{:.6}", row.get::<_, f64>(2)?),
+                    total_tokens: row.get::<_, i64>(3)? as u64,
+                    total_input_tokens: row.get::<_, i64>(4)? as u64,
+                    total_output_tokens: row.get::<_, i64>(5)? as u64,
+                    total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
+                    total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
+                })
+            })?;
+
+            let mut buckets: HashMap<String, DailyStats> = HashMap::new();
+            for row in rows {
+                let stat = row?;
+                buckets.insert(stat.date.clone(), stat);
+            }
+
+            let mut stats = Vec::new();
+            let today = Utc::now().date_naive();
+            for hour in 0..24 {
+                let bucket = today
+                    .and_hms_opt(hour, 0, 0)
+                    .unwrap()
+                    .format("%Y-%m-%dT%H:00:00Z")
+                    .to_string();
+
+                if let Some(stat) = buckets.remove(&bucket) {
+                    stats.push(stat);
+                } else {
+                    stats.push(DailyStats {
+                        date: bucket,
+                        request_count: 0,
+                        total_cost: "0.000000".to_string(),
+                        total_tokens: 0,
+                        total_input_tokens: 0,
+                        total_output_tokens: 0,
+                        total_cache_creation_tokens: 0,
+                        total_cache_read_tokens: 0,
+                    });
+                }
+            }
+            Ok(stats)
+        } else {
+            let sql = "SELECT 
+                    date(created_at, 'unixepoch') as bucket,
+                    COUNT(*) as request_count,
+                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
+                    COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
+                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                    COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
+                    COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens
+                 FROM proxy_request_logs
+                 WHERE created_at >= strftime('%s', 'now', ?)
+                 GROUP BY bucket
+                 ORDER BY bucket ASC";
+
+            let mut stmt = conn.prepare(sql)?;
+            let rows = stmt.query_map([format!("-{days} days")], |row| {
+                Ok(DailyStats {
+                    date: row.get(0)?,
+                    request_count: row.get::<_, i64>(1)? as u64,
+                    total_cost: format!("{:.6}", row.get::<_, f64>(2)?),
+                    total_tokens: row.get::<_, i64>(3)? as u64,
+                    total_input_tokens: row.get::<_, i64>(4)? as u64,
+                    total_output_tokens: row.get::<_, i64>(5)? as u64,
+                    total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
+                    total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
+                })
+            })?;
+
+            let mut map = HashMap::new();
+            for row in rows {
+                let stat = row?;
+                map.insert(stat.date.clone(), stat);
+            }
+
+            let mut stats = Vec::new();
+            let start_day =
+                Utc::now().date_naive() - Duration::days((days.saturating_sub(1)) as i64);
+
+            for i in 0..days {
+                let day = start_day + Duration::days(i as i64);
+                let key = day.format("%Y-%m-%d").to_string();
+                if let Some(stat) = map.remove(&key) {
+                    stats.push(stat);
+                } else {
+                    stats.push(DailyStats {
+                        date: key,
+                        request_count: 0,
+                        total_cost: "0.000000".to_string(),
+                        total_tokens: 0,
+                        total_input_tokens: 0,
+                        total_output_tokens: 0,
+                        total_cache_creation_tokens: 0,
+                        total_cache_read_tokens: 0,
+                    });
+                }
+            }
+            Ok(stats)
+        }
+    }
+
+    /// 获取 Provider 统计
+    pub fn get_provider_stats(&self) -> Result<Vec<ProviderStats>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let sql = "SELECT 
+                l.provider_id,
+                p.name as provider_name,
+                COUNT(*) as request_count,
+                COALESCE(SUM(l.input_tokens + l.output_tokens), 0) as total_tokens,
+                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
+                COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
+                COALESCE(AVG(l.latency_ms), 0) as avg_latency
+             FROM proxy_request_logs l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             GROUP BY l.provider_id, l.app_type
+             ORDER BY total_cost DESC";
+
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map([], |row| {
+            let request_count: i64 = row.get(2)?;
+            let success_count: i64 = row.get(5)?;
+            let success_rate = if request_count > 0 {
+                (success_count as f32 / request_count as f32) * 100.0
+            } else {
+                0.0
+            };
+
+            Ok(ProviderStats {
+                provider_id: row.get(0)?,
+                provider_name: row
+                    .get::<_, Option<String>>(1)?
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                request_count: request_count as u64,
+                total_tokens: row.get::<_, i64>(3)? as u64,
+                total_cost: format!("{:.6}", row.get::<_, f64>(4)?),
+                success_rate,
+                avg_latency_ms: row.get::<_, f64>(6)? as u64,
+            })
+        })?;
+
+        let mut stats = Vec::new();
+        for row in rows {
+            stats.push(row?);
+        }
+
+        Ok(stats)
+    }
+
+    /// 获取模型统计
+    pub fn get_model_stats(&self) -> Result<Vec<ModelStats>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let sql = "SELECT 
+                model,
+                COUNT(*) as request_count,
+                COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
+                COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost
+             FROM proxy_request_logs
+             GROUP BY model
+             ORDER BY total_cost DESC";
+
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map([], |row| {
+            let request_count: i64 = row.get(1)?;
+            let total_cost: f64 = row.get(3)?;
+            let avg_cost = if request_count > 0 {
+                total_cost / request_count as f64
+            } else {
+                0.0
+            };
+
+            Ok(ModelStats {
+                model: row.get(0)?,
+                request_count: request_count as u64,
+                total_tokens: row.get::<_, i64>(2)? as u64,
+                total_cost: format!("{total_cost:.6}"),
+                avg_cost_per_request: format!("{avg_cost:.6}"),
+            })
+        })?;
+
+        let mut stats = Vec::new();
+        for row in rows {
+            stats.push(row?);
+        }
+
+        Ok(stats)
+    }
+
+    /// 获取请求日志列表（分页）
+    pub fn get_request_logs(
+        &self,
+        filters: &LogFilters,
+        page: u32,
+        page_size: u32,
+    ) -> Result<PaginatedLogs, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(ref app_type) = filters.app_type {
+            conditions.push("l.app_type = ?");
+            params.push(Box::new(app_type.clone()));
+        }
+        if let Some(ref provider_name) = filters.provider_name {
+            conditions.push("p.name LIKE ?");
+            params.push(Box::new(format!("%{provider_name}%")));
+        }
+        if let Some(ref model) = filters.model {
+            conditions.push("l.model LIKE ?");
+            params.push(Box::new(format!("%{model}%")));
+        }
+        if let Some(status) = filters.status_code {
+            conditions.push("l.status_code = ?");
+            params.push(Box::new(status as i64));
+        }
+        if let Some(start) = filters.start_date {
+            conditions.push("l.created_at >= ?");
+            params.push(Box::new(start));
+        }
+        if let Some(end) = filters.end_date {
+            conditions.push("l.created_at <= ?");
+            params.push(Box::new(end));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        // 获取总数
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM proxy_request_logs l 
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             {where_clause}"
+        );
+        let count_params: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let total: u32 = conn.query_row(&count_sql, count_params.as_slice(), |row| {
+            row.get::<_, i64>(0).map(|v| v as u32)
+        })?;
+
+        // 获取数据
+        let offset = page * page_size;
+        params.push(Box::new(page_size as i64));
+        params.push(Box::new(offset as i64));
+
+        let sql = format!(
+            "SELECT l.request_id, l.provider_id, p.name as provider_name, l.app_type, l.model,
+                    l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
+                    l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
+                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
+                    l.status_code, l.error_message, l.created_at
+             FROM proxy_request_logs l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             {where_clause}
+             ORDER BY l.created_at DESC
+             LIMIT ? OFFSET ?"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            Ok(RequestLogDetail {
+                request_id: row.get(0)?,
+                provider_id: row.get(1)?,
+                provider_name: row.get(2)?,
+                app_type: row.get(3)?,
+                model: row.get(4)?,
+                input_tokens: row.get::<_, i64>(5)? as u32,
+                output_tokens: row.get::<_, i64>(6)? as u32,
+                cache_read_tokens: row.get::<_, i64>(7)? as u32,
+                cache_creation_tokens: row.get::<_, i64>(8)? as u32,
+                input_cost_usd: row.get(9)?,
+                output_cost_usd: row.get(10)?,
+                cache_read_cost_usd: row.get(11)?,
+                cache_creation_cost_usd: row.get(12)?,
+                total_cost_usd: row.get(13)?,
+                is_streaming: row.get::<_, i64>(14)? != 0,
+                latency_ms: row.get::<_, i64>(15)? as u64,
+                first_token_ms: row.get::<_, Option<i64>>(16)?.map(|v| v as u64),
+                duration_ms: row.get::<_, Option<i64>>(17)?.map(|v| v as u64),
+                status_code: row.get::<_, i64>(18)? as u16,
+                error_message: row.get(19)?,
+                created_at: row.get(20)?,
+            })
+        })?;
+
+        let mut logs = Vec::new();
+        let mut provider_cache = HashMap::new();
+        let mut pricing_cache = HashMap::new();
+
+        for row in rows {
+            let mut log = row?;
+            Self::maybe_backfill_log_costs(
+                &conn,
+                &mut log,
+                &mut provider_cache,
+                &mut pricing_cache,
+            )?;
+            logs.push(log);
+        }
+
+        Ok(PaginatedLogs {
+            data: logs,
+            total,
+            page,
+            page_size,
+        })
+    }
+
+    /// 获取单个请求详情
+    pub fn get_request_detail(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<RequestLogDetail>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let result = conn.query_row(
+            "SELECT l.request_id, l.provider_id, p.name as provider_name, l.app_type, l.model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                    is_streaming, latency_ms, first_token_ms, duration_ms,
+                    status_code, error_message, created_at
+             FROM proxy_request_logs l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             WHERE l.request_id = ?",
+            [request_id],
+            |row| {
+                Ok(RequestLogDetail {
+                    request_id: row.get(0)?,
+                    provider_id: row.get(1)?,
+                    provider_name: row.get(2)?,
+                    app_type: row.get(3)?,
+                    model: row.get(4)?,
+                    input_tokens: row.get::<_, i64>(5)? as u32,
+                    output_tokens: row.get::<_, i64>(6)? as u32,
+                    cache_read_tokens: row.get::<_, i64>(7)? as u32,
+                    cache_creation_tokens: row.get::<_, i64>(8)? as u32,
+                    input_cost_usd: row.get(9)?,
+                    output_cost_usd: row.get(10)?,
+                    cache_read_cost_usd: row.get(11)?,
+                    cache_creation_cost_usd: row.get(12)?,
+                    total_cost_usd: row.get(13)?,
+                    is_streaming: row.get::<_, i64>(14)? != 0,
+                    latency_ms: row.get::<_, i64>(15)? as u64,
+                    first_token_ms: row.get::<_, Option<i64>>(16)?.map(|v| v as u64),
+                    duration_ms: row.get::<_, Option<i64>>(17)?.map(|v| v as u64),
+                    status_code: row.get::<_, i64>(18)? as u16,
+                    error_message: row.get(19)?,
+                    created_at: row.get(20)?,
+                })
+            },
+        );
+
+        match result {
+            Ok(mut detail) => {
+                let mut provider_cache = HashMap::new();
+                let mut pricing_cache = HashMap::new();
+                Self::maybe_backfill_log_costs(
+                    &conn,
+                    &mut detail,
+                    &mut provider_cache,
+                    &mut pricing_cache,
+                )?;
+                Ok(Some(detail))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(AppError::Database(e.to_string())),
+        }
+    }
+
+    /// 检查 Provider 使用限额
+    pub fn check_provider_limits(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<ProviderLimitStatus, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        // 获取 provider 的限额设置
+        let (limit_daily, limit_monthly) = conn
+            .query_row(
+                "SELECT meta FROM providers WHERE id = ? AND app_type = ?",
+                params![provider_id, app_type],
+                |row| {
+                    let meta_str: String = row.get(0)?;
+                    Ok(meta_str)
+                },
+            )
+            .ok()
+            .and_then(|meta_str| serde_json::from_str::<serde_json::Value>(&meta_str).ok())
+            .map(|meta| {
+                let daily = meta
+                    .get("limitDailyUsd")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<f64>().ok());
+                let monthly = meta
+                    .get("limitMonthlyUsd")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<f64>().ok());
+                (daily, monthly)
+            })
+            .unwrap_or((None, None));
+
+        // 计算今日使用量
+        let daily_usage: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
+             FROM proxy_request_logs
+             WHERE provider_id = ? AND app_type = ?
+               AND date(created_at, 'unixepoch') = date('now')",
+                params![provider_id, app_type],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+
+        // 计算本月使用量
+        let monthly_usage: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
+             FROM proxy_request_logs
+             WHERE provider_id = ? AND app_type = ?
+               AND strftime('%Y-%m', created_at, 'unixepoch') = strftime('%Y-%m', 'now')",
+                params![provider_id, app_type],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+
+        let daily_exceeded = limit_daily
+            .map(|limit| daily_usage >= limit)
+            .unwrap_or(false);
+        let monthly_exceeded = limit_monthly
+            .map(|limit| monthly_usage >= limit)
+            .unwrap_or(false);
+
+        Ok(ProviderLimitStatus {
+            provider_id: provider_id.to_string(),
+            daily_usage: format!("{daily_usage:.6}"),
+            daily_limit: limit_daily.map(|l| format!("{l:.2}")),
+            daily_exceeded,
+            monthly_usage: format!("{monthly_usage:.6}"),
+            monthly_limit: limit_monthly.map(|l| format!("{l:.2}")),
+            monthly_exceeded,
+        })
+    }
+
+    /// 更新每日统计聚合
+    ///
+    /// 在请求完成后调用，更新 usage_daily_stats 表
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_daily_stats(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+        total_cost: &str,
+        is_success: bool,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let date = Utc::now().format("%Y-%m-%d").to_string();
+
+        // 使用 UPSERT 更新或插入统计
+        conn.execute(
+            "INSERT INTO usage_daily_stats (
+                date, provider_id, app_type, model,
+                request_count, total_input_tokens, total_output_tokens,
+                total_cost_usd, success_count, error_count
+            ) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(date, provider_id, app_type, model) DO UPDATE SET
+                request_count = request_count + 1,
+                total_input_tokens = total_input_tokens + ?5,
+                total_output_tokens = total_output_tokens + ?6,
+                total_cost_usd = CAST(
+                    CAST(total_cost_usd AS REAL) + CAST(?7 AS REAL) AS TEXT
+                ),
+                success_count = success_count + ?8,
+                error_count = error_count + ?9",
+            params![
+                date,
+                provider_id,
+                app_type,
+                model,
+                input_tokens,
+                output_tokens,
+                total_cost,
+                if is_success { 1 } else { 0 },
+                if is_success { 0 } else { 1 },
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("更新每日统计失败: {e}")))?;
+
+        Ok(())
+    }
+}
+
+/// Provider 限额状态
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLimitStatus {
+    pub provider_id: String,
+    pub daily_usage: String,
+    pub daily_limit: Option<String>,
+    pub daily_exceeded: bool,
+    pub monthly_usage: String,
+    pub monthly_limit: Option<String>,
+    pub monthly_exceeded: bool,
+}
+
+#[derive(Clone)]
+struct PricingInfo {
+    input: rust_decimal::Decimal,
+    output: rust_decimal::Decimal,
+    cache_read: rust_decimal::Decimal,
+    cache_creation: rust_decimal::Decimal,
+}
+
+impl Database {
+    fn maybe_backfill_log_costs(
+        conn: &Connection,
+        log: &mut RequestLogDetail,
+        provider_cache: &mut HashMap<(String, String), rust_decimal::Decimal>,
+        pricing_cache: &mut HashMap<String, PricingInfo>,
+    ) -> Result<(), AppError> {
+        let total_cost = rust_decimal::Decimal::from_str(&log.total_cost_usd)
+            .unwrap_or(rust_decimal::Decimal::ZERO);
+        let has_cost = total_cost > rust_decimal::Decimal::ZERO;
+        let has_usage = log.input_tokens > 0
+            || log.output_tokens > 0
+            || log.cache_read_tokens > 0
+            || log.cache_creation_tokens > 0;
+
+        if has_cost || !has_usage {
+            return Ok(());
+        }
+
+        let pricing = match Self::get_model_pricing_cached(conn, pricing_cache, &log.model)? {
+            Some(info) => info,
+            None => return Ok(()),
+        };
+        let multiplier = Self::get_cost_multiplier_cached(
+            conn,
+            provider_cache,
+            &log.provider_id,
+            &log.app_type,
+        )?;
+
+        let million = rust_decimal::Decimal::from(1_000_000u64);
+        let input_cost = rust_decimal::Decimal::from(log.input_tokens as u64) * pricing.input
+            / million
+            * multiplier;
+        let output_cost = rust_decimal::Decimal::from(log.output_tokens as u64) * pricing.output
+            / million
+            * multiplier;
+        let cache_read_cost = rust_decimal::Decimal::from(log.cache_read_tokens as u64)
+            * pricing.cache_read
+            / million
+            * multiplier;
+        let cache_creation_cost = rust_decimal::Decimal::from(log.cache_creation_tokens as u64)
+            * pricing.cache_creation
+            / million
+            * multiplier;
+        let total_cost = input_cost + output_cost + cache_read_cost + cache_creation_cost;
+
+        log.input_cost_usd = format!("{input_cost:.6}");
+        log.output_cost_usd = format!("{output_cost:.6}");
+        log.cache_read_cost_usd = format!("{cache_read_cost:.6}");
+        log.cache_creation_cost_usd = format!("{cache_creation_cost:.6}");
+        log.total_cost_usd = format!("{total_cost:.6}");
+
+        conn.execute(
+            "UPDATE proxy_request_logs
+             SET input_cost_usd = ?1,
+                 output_cost_usd = ?2,
+                 cache_read_cost_usd = ?3,
+                 cache_creation_cost_usd = ?4,
+                 total_cost_usd = ?5
+             WHERE request_id = ?6",
+            params![
+                log.input_cost_usd,
+                log.output_cost_usd,
+                log.cache_read_cost_usd,
+                log.cache_creation_cost_usd,
+                log.total_cost_usd,
+                log.request_id
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("更新请求成本失败: {e}")))?;
+
+        Ok(())
+    }
+
+    fn get_cost_multiplier_cached(
+        conn: &Connection,
+        cache: &mut HashMap<(String, String), rust_decimal::Decimal>,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<rust_decimal::Decimal, AppError> {
+        let key = (provider_id.to_string(), app_type.to_string());
+        if let Some(multiplier) = cache.get(&key) {
+            return Ok(*multiplier);
+        }
+
+        let meta_json: Option<String> = conn
+            .query_row(
+                "SELECT meta FROM providers WHERE id = ? AND app_type = ?",
+                params![provider_id, app_type],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(format!("查询 provider meta 失败: {e}")))?;
+
+        let multiplier = meta_json
+            .and_then(|meta| serde_json::from_str::<Value>(&meta).ok())
+            .and_then(|value| value.get("costMultiplier").cloned())
+            .and_then(|val| {
+                val.as_str()
+                    .and_then(|s| rust_decimal::Decimal::from_str(s).ok())
+            })
+            .unwrap_or(rust_decimal::Decimal::ONE);
+
+        cache.insert(key, multiplier);
+        Ok(multiplier)
+    }
+
+    fn get_model_pricing_cached(
+        conn: &Connection,
+        cache: &mut HashMap<String, PricingInfo>,
+        model: &str,
+    ) -> Result<Option<PricingInfo>, AppError> {
+        if let Some(info) = cache.get(model) {
+            return Ok(Some(info.clone()));
+        }
+
+        let row = find_model_pricing_row(conn, model)?;
+        let Some((input, output, cache_read, cache_creation)) = row else {
+            return Ok(None);
+        };
+
+        let pricing = PricingInfo {
+            input: rust_decimal::Decimal::from_str(&input)
+                .map_err(|e| AppError::Database(format!("解析输入价格失败: {e}")))?,
+            output: rust_decimal::Decimal::from_str(&output)
+                .map_err(|e| AppError::Database(format!("解析输出价格失败: {e}")))?,
+            cache_read: rust_decimal::Decimal::from_str(&cache_read)
+                .map_err(|e| AppError::Database(format!("解析缓存读取价格失败: {e}")))?,
+            cache_creation: rust_decimal::Decimal::from_str(&cache_creation)
+                .map_err(|e| AppError::Database(format!("解析缓存写入价格失败: {e}")))?,
+        };
+
+        cache.insert(model.to_string(), pricing.clone());
+        Ok(Some(pricing))
+    }
+}
+
+/// 标准化模型名称：去除供应商前缀并将点号替换为短横线
+/// 例如：anthropic/claude-haiku-4.5 → claude-haiku-4-5
+fn normalize_model_id(model_id: &str) -> String {
+    // 1. 去除供应商前缀（如 anthropic/、openai/）
+    let stripped = if let Some(pos) = model_id.find('/') {
+        &model_id[pos + 1..]
+    } else {
+        model_id
+    };
+    // 2. 将点号替换为短横线（如 claude-haiku-4.5 → claude-haiku-4-5）
+    stripped.replace('.', "-")
+}
+
+pub(crate) fn find_model_pricing_row(
+    conn: &Connection,
+    model_id: &str,
+) -> Result<Option<(String, String, String, String)>, AppError> {
+    // 0. 标准化模型名称（去除前缀 + 点号转短横线）
+    // 例如：anthropic/claude-haiku-4.5 → claude-haiku-4-5
+    let normalized = normalize_model_id(model_id);
+
+    // 1. 精确匹配（先尝试原始名称，再尝试标准化后的名称）
+    for id in [model_id, normalized.as_str()] {
+        let exact = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing
+                 WHERE model_id = ?1",
+                [id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| AppError::Database(format!("查询模型定价失败: {e}")))?;
+
+        if exact.is_some() {
+            if id != model_id {
+                log::info!("模型 {model_id} 标准化后精确匹配到: {id}");
+            }
+            return Ok(exact);
+        }
+    }
+
+    // 2. 逐步删除后缀匹配（claude-haiku-4-5-20250929 → claude-haiku-4-5 → claude-haiku-4 → claude-haiku）
+    // 使用标准化后的名称进行后缀匹配
+    let mut current = normalized;
+    while let Some(pos) = current.rfind('-') {
+        current = current[..pos].to_string();
+
+        let result = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing
+                 WHERE model_id = ?1",
+                [&current],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| AppError::Database(format!("查询模型定价失败: {e}")))?;
+
+        if result.is_some() {
+            log::info!("模型 {model_id} 通过删除后缀匹配到: {current}");
+            return Ok(result);
+        }
+    }
+
+    log::warn!("模型 {model_id} 未找到定价信息，成本将记录为 0");
+    Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_usage_summary() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        // 插入测试数据
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params!["req1", "p1", "claude", "claude-3", 100, 50, "0.01", 100, 200, 1000],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params!["req2", "p1", "claude", "claude-3", 200, 100, "0.02", 150, 200, 2000],
+            )?;
+        }
+
+        let summary = db.get_usage_summary(None, None)?;
+        assert_eq!(summary.total_requests, 2);
+        assert_eq!(summary.success_rate, 100.0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_model_stats() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        // 插入测试数据
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req1",
+                    "p1",
+                    "claude",
+                    "claude-3-sonnet",
+                    100,
+                    50,
+                    "0.01",
+                    100,
+                    200,
+                    1000
+                ],
+            )?;
+        }
+
+        let stats = db.get_model_stats()?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].model, "claude-3-sonnet");
+        assert_eq!(stats[0].request_count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_model_pricing_matching() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+
+        // 测试精确匹配
+        let result = find_model_pricing_row(&conn, "claude-sonnet-4-5")?;
+        assert!(result.is_some(), "应该能精确匹配 claude-sonnet-4-5");
+
+        // 测试带供应商前缀的模型名称（anthropic/claude-haiku-4.5 → claude-haiku-4-5）
+        let result = find_model_pricing_row(&conn, "anthropic/claude-haiku-4.5")?;
+        assert!(
+            result.is_some(),
+            "应该能匹配带前缀的模型 anthropic/claude-haiku-4.5"
+        );
+
+        // 测试带供应商前缀 + 点号的模型名称
+        let result = find_model_pricing_row(&conn, "anthropic/claude-sonnet-4.5")?;
+        assert!(
+            result.is_some(),
+            "应该能匹配带前缀的模型 anthropic/claude-sonnet-4.5"
+        );
+
+        // 测试逐步删除后缀匹配 - 日期后缀
+        let result = find_model_pricing_row(&conn, "claude-sonnet-4-5-20241022")?;
+        assert!(
+            result.is_some(),
+            "应该能通过删除后缀匹配 claude-sonnet-4-5-20241022"
+        );
+
+        // 测试逐步删除后缀匹配 - 多个后缀
+        let result = find_model_pricing_row(&conn, "claude-haiku-4-5-20240229-preview")?;
+        assert!(
+            result.is_some(),
+            "应该能通过删除后缀匹配 claude-haiku-4-5-20240229-preview"
+        );
+
+        // 测试 GPT 模型
+        let result = find_model_pricing_row(&conn, "gpt-5-2024-11-20")?;
+        assert!(result.is_some(), "应该能通过删除后缀匹配 gpt-5-2024-11-20");
+
+        // 测试 Gemini 模型
+        let result = find_model_pricing_row(&conn, "gemini-2.5-flash-exp")?;
+        assert!(
+            result.is_some(),
+            "应该能通过删除后缀匹配 gemini-2.5-flash-exp"
+        );
+
+        // 测试 claude-sonnet-4-5 命名格式
+        let result = find_model_pricing_row(&conn, "claude-sonnet-4-5-20250929")?;
+        assert!(
+            result.is_some(),
+            "应该能通过删除后缀匹配 claude-sonnet-4-5-20250929"
+        );
+
+        // 测试不存在的模型
+        let result = find_model_pricing_row(&conn, "unknown-model-123")?;
+        assert!(result.is_none(), "不应该匹配不存在的模型");
+
+        Ok(())
+    }
+}

@@ -9,5 +9,12 @@ release/
 .npmrc
 CLAUDE.md
 AGENTS.md
+GEMINI.md
 /.claude
+/.codex
+/.gemini
+/.cc-switch
+/.idea
 /.vscode
+vitest-report.json
+nul

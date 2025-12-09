@@ -1,50 +1,94 @@
-import { AppType } from "../lib/tauri-api";
-import { ClaudeIcon, CodexIcon } from "./BrandIcons";
+import type { AppId } from "@/lib/api";
+import { ProviderIcon } from "@/components/ProviderIcon";
 
 interface AppSwitcherProps {
-  activeApp: AppType;
-  onSwitch: (app: AppType) => void;
+  activeApp: AppId;
+  onSwitch: (app: AppId) => void;
 }
 
 export function AppSwitcher({ activeApp, onSwitch }: AppSwitcherProps) {
-  const handleSwitch = (app: AppType) => {
+  const handleSwitch = (app: AppId) => {
     if (app === activeApp) return;
     onSwitch(app);
   };
+  const iconSize = 20;
+  const appIconName: Record<AppId, string> = {
+    claude: "claude",
+    codex: "openai",
+    gemini: "gemini",
+  };
+  const appDisplayName: Record<AppId, string> = {
+    claude: "Claude",
+    codex: "Codex",
+    gemini: "Gemini",
+  };
 
   return (
-    <div className="inline-flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1 gap-1 border border-transparent dark:border-gray-700">
+    <div className="inline-flex bg-muted rounded-lg p-1 gap-1">
       <button
         type="button"
         onClick={() => handleSwitch("claude")}
         className={`group inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
           activeApp === "claude"
-            ? "bg-white text-gray-900 shadow-sm dark:bg-gray-900 dark:text-gray-100 dark:shadow-none"
-            : "text-gray-500 hover:text-gray-900 hover:bg-white/50 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800/60"
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground hover:bg-background/50"
         }`}
       >
-        <ClaudeIcon
-          size={16}
+        <ProviderIcon
+          icon={appIconName.claude}
+          name={appDisplayName.claude}
+          size={iconSize}
           className={
             activeApp === "claude"
-              ? "text-[#D97757] dark:text-[#D97757] transition-colors duration-200"
-              : "text-gray-500 dark:text-gray-400 group-hover:text-[#D97757] dark:group-hover:text-[#D97757] transition-colors duration-200"
+              ? "text-foreground"
+              : "text-muted-foreground group-hover:text-foreground transition-colors"
           }
         />
-        <span>Claude</span>
+        <span>{appDisplayName.claude}</span>
       </button>
 
       <button
         type="button"
         onClick={() => handleSwitch("codex")}
-        className={`inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
+        className={`group inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
           activeApp === "codex"
-            ? "bg-white text-gray-900 shadow-sm dark:bg-gray-900 dark:text-gray-100 dark:shadow-none"
-            : "text-gray-500 hover:text-gray-900 hover:bg-white/50 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800/60"
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground hover:bg-background/50"
         }`}
       >
-        <CodexIcon size={16} />
-        <span>Codex</span>
+        <ProviderIcon
+          icon={appIconName.codex}
+          name={appDisplayName.codex}
+          size={iconSize}
+          className={
+            activeApp === "codex"
+              ? "text-foreground"
+              : "text-muted-foreground group-hover:text-foreground transition-colors"
+          }
+        />
+        <span>{appDisplayName.codex}</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={() => handleSwitch("gemini")}
+        className={`group inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
+          activeApp === "gemini"
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground hover:bg-background/50"
+        }`}
+      >
+        <ProviderIcon
+          icon={appIconName.gemini}
+          name={appDisplayName.gemini}
+          size={iconSize}
+          className={
+            activeApp === "gemini"
+              ? "text-foreground"
+              : "text-muted-foreground group-hover:text-foreground transition-colors"
+          }
+        />
+        <span>{appDisplayName.gemini}</span>
       </button>
     </div>
   );

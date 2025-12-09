@@ -2,6 +2,7 @@
  * Codex 预设供应商配置模板
  */
 import { ProviderCategory } from "../types";
+import type { PresetTheme } from "./claudeProviderPresets";
 
 export interface CodexProviderPreset {
   name: string;
@@ -11,10 +12,17 @@ export interface CodexProviderPreset {
   auth: Record<string, any>; // 将写入 ~/.codex/auth.json
   config: string; // 将写入 ~/.codex/config.toml（TOML 字符串）
   isOfficial?: boolean; // 标识是否为官方预设
+  isPartner?: boolean; // 标识是否为商业合作伙伴
+  partnerPromotionKey?: string; // 合作伙伴促销信息的 i18n key
   category?: ProviderCategory; // 新增：分类
   isCustomTemplate?: boolean; // 标识是否为自定义模板
   // 新增：请求地址候选列表（用于地址管理/测速）
   endpointCandidates?: string[];
+  // 新增：视觉主题配置
+  theme?: PresetTheme;
+  // 图标配置
+  icon?: string; // 图标名称
+  iconColor?: string; // 图标颜色
 }
 
 /**
@@ -22,7 +30,7 @@ export interface CodexProviderPreset {
  */
 export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
   return {
-    OPENAI_API_KEY: apiKey || "sk-your-api-key-here",
+    OPENAI_API_KEY: apiKey || "",
   };
 }
 
@@ -32,7 +40,7 @@ export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
 export function generateThirdPartyConfig(
   providerName: string,
   baseUrl: string,
-  modelName = "gpt-5-codex",
+  modelName = "gpt-5.1-codex",
 ): string {
   // 清理供应商名称，确保符合TOML键名规范
   const cleanProviderName =
@@ -55,30 +63,92 @@ requires_openai_auth = true`;
 
 export const codexProviderPresets: CodexProviderPreset[] = [
   {
-    name: "Codex Official",
+    name: "OpenAI Official",
     websiteUrl: "https://chatgpt.com/codex",
     isOfficial: true,
     category: "official",
-    auth: {
-      OPENAI_API_KEY: null,
-    },
+    auth: {},
     config: ``,
+    theme: {
+      icon: "codex",
+      backgroundColor: "#1F2937", // gray-800
+      textColor: "#FFFFFF",
+    },
+    icon: "openai",
+    iconColor: "#00A67E",
+  },
+  {
+    name: "Azure OpenAI",
+    websiteUrl:
+      "https://learn.microsoft.com/azure/ai-services/openai/how-to/overview",
+    category: "third_party",
+    isOfficial: true,
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "azure"
+model = "gpt-5.1-codex"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.azure]
+name = "Azure OpenAI"
+base_url = "https://YOUR_RESOURCE_NAME.openai.azure.com/openai"
+env_key = "OPENAI_API_KEY"
+query_params = { "api-version" = "2025-04-01-preview" }
+wire_api = "responses"
+requires_openai_auth = true`,
+    endpointCandidates: ["https://YOUR_RESOURCE_NAME.openai.azure.com/openai"],
+    theme: {
+      icon: "codex",
+      backgroundColor: "#0078D4",
+      textColor: "#FFFFFF",
+    },
+    icon: "azure",
+    iconColor: "#0078D4",
+  },
+  {
+    name: "AiHubMix",
+    websiteUrl: "https://aihubmix.com",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "aihubmix",
+      "https://aihubmix.com/v1",
+      "gpt-5.1-codex",
+    ),
+    endpointCandidates: [
+      "https://aihubmix.com/v1",
+      "https://api.aihubmix.com/v1",
+    ],
+  },
+  {
+    name: "DMXAPI",
+    websiteUrl: "https://www.dmxapi.cn",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "dmxapi",
+      "https://www.dmxapi.cn/v1",
+      "gpt-5.1-codex",
+    ),
+    endpointCandidates: ["https://www.dmxapi.cn/v1"],
   },
   {
     name: "PackyCode",
-    websiteUrl: "https://codex.packycode.com/",
+    websiteUrl: "https://www.packyapi.com",
+    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
     category: "third_party",
-    auth: generateThirdPartyAuth("sk-your-api-key-here"),
+    auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "packycode",
-      "https://codex-api.packycode.com/v1",
-      "gpt-5-codex",
+      "https://www.packyapi.com/v1",
+      "gpt-5.1-codex",
     ),
-    // Codex 请求地址候选（用于地址管理/测速）
     endpointCandidates: [
-      "https://codex-api.packycode.com/v1",
-      "https://codex-api-hk-cn2.packycode.com/v1",
-      "https://codex-api-hk-cdn.packycode.com/v1",
+      "https://www.packyapi.com/v1",
+      "https://api-slb.packyapi.com/v1",
     ],
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "packycode", // 促销信息 i18n key
+    icon: "packycode",
   },
 ];

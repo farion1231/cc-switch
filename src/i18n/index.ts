@@ -2,15 +2,18 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 
 import en from "./locales/en.json";
+import ja from "./locales/ja.json";
 import zh from "./locales/zh.json";
 
-const DEFAULT_LANGUAGE: "zh" | "en" = "zh";
+type Language = "zh" | "en" | "ja";
 
-const getInitialLanguage = (): "zh" | "en" => {
+const DEFAULT_LANGUAGE: Language = "zh";
+
+const getInitialLanguage = (): Language => {
   if (typeof window !== "undefined") {
     try {
       const stored = window.localStorage.getItem("language");
-      if (stored === "zh" || stored === "en") {
+      if (stored === "zh" || stored === "en" || stored === "ja") {
         return stored;
       }
     } catch (error) {
@@ -28,6 +31,10 @@ const getInitialLanguage = (): "zh" | "en" => {
     return "zh";
   }
 
+  if (navigatorLang?.startsWith("ja")) {
+    return "ja";
+  }
+
   if (navigatorLang?.startsWith("en")) {
     return "en";
   }
@@ -38,6 +45,9 @@ const getInitialLanguage = (): "zh" | "en" => {
 const resources = {
   en: {
     translation: en,
+  },
+  ja: {
+    translation: ja,
   },
   zh: {
     translation: zh,

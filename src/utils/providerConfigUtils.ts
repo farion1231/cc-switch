@@ -1,6 +1,7 @@
 // 供应商配置处理工具函数
 
-import type { TemplateValueConfig } from "../config/providerPresets";
+import type { TemplateValueConfig } from "../config/claudeProviderPresets";
+import { normalizeQuotes } from "@/utils/textNormalization";
 
 const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
@@ -164,12 +165,39 @@ export const hasCommonConfigSnippet = (
   }
 };
 
-// 读取配置中的 API Key（env.ANTHROPIC_AUTH_TOKEN）
-export const getApiKeyFromConfig = (jsonString: string): string => {
+// 读取配置中的 API Key（支持 Claude, Codex, Gemini）
+export const getApiKeyFromConfig = (
+  jsonString: string,
+  appType?: string,
+): string => {
   try {
     const config = JSON.parse(jsonString);
-    const key = config?.env?.ANTHROPIC_AUTH_TOKEN;
-    return typeof key === "string" ? key : "";
+    const env = config?.env;
+
+    if (!env) return "";
+
+    // Gemini API Key
+    if (appType === "gemini") {
+      const geminiKey = env.GEMINI_API_KEY;
+      return typeof geminiKey === "string" ? geminiKey : "";
+    }
+
+    // Codex API Key
+    if (appType === "codex") {
+      const codexKey = env.CODEX_API_KEY;
+      return typeof codexKey === "string" ? codexKey : "";
+    }
+
+    // Claude API Key (优先 ANTHROPIC_AUTH_TOKEN，其次 ANTHROPIC_API_KEY)
+    const token = env.ANTHROPIC_AUTH_TOKEN;
+    const apiKey = env.ANTHROPIC_API_KEY;
+    const value =
+      typeof token === "string"
+        ? token
+        : typeof apiKey === "string"
+          ? apiKey
+          : "";
+    return value;
   } catch (err) {
     return "";
   }
@@ -221,12 +249,25 @@ export const applyTemplateValues = (
 };
 
 // 判断配置中是否存在 API Key 字段
-export const hasApiKeyField = (jsonString: string): boolean => {
+export const hasApiKeyField = (
+  jsonString: string,
+  appType?: string,
+): boolean => {
   try {
     const config = JSON.parse(jsonString);
-    return Object.prototype.hasOwnProperty.call(
-      config?.env ?? {},
-      "ANTHROPIC_AUTH_TOKEN",
+    const env = config?.env ?? {};
+
+    if (appType === "gemini") {
+      return Object.prototype.hasOwnProperty.call(env, "GEMINI_API_KEY");
+    }
+
+    if (appType === "codex") {
+      return Object.prototype.hasOwnProperty.call(env, "CODEX_API_KEY");
+    }
+
+    return (
+      Object.prototype.hasOwnProperty.call(env, "ANTHROPIC_AUTH_TOKEN") ||
+      Object.prototype.hasOwnProperty.call(env, "ANTHROPIC_API_KEY")
     );
   } catch (err) {
     return false;
@@ -237,19 +278,51 @@ export const hasApiKeyField = (jsonString: string): boolean => {
 export const setApiKeyInConfig = (
   jsonString: string,
   apiKey: string,
-  options: { createIfMissing?: boolean } = {},
+  options: { createIfMissing?: boolean; appType?: string } = {},
 ): string => {
-  const { createIfMissing = false } = options;
+  const { createIfMissing = false, appType } = options;
   try {
     const config = JSON.parse(jsonString);
     if (!config.env) {
       if (!createIfMissing) return jsonString;
       config.env = {};
     }
-    if (!("ANTHROPIC_AUTH_TOKEN" in config.env) && !createIfMissing) {
+    const env = config.env as Record<string, any>;
+
+    // Gemini API Key
+    if (appType === "gemini") {
+      if ("GEMINI_API_KEY" in env) {
+        env.GEMINI_API_KEY = apiKey;
+      } else if (createIfMissing) {
+        env.GEMINI_API_KEY = apiKey;
+      } else {
+        return jsonString;
+      }
+      return JSON.stringify(config, null, 2);
+    }
+
+    // Codex API Key
+    if (appType === "codex") {
+      if ("CODEX_API_KEY" in env) {
+        env.CODEX_API_KEY = apiKey;
+      } else if (createIfMissing) {
+        env.CODEX_API_KEY = apiKey;
+      } else {
+        return jsonString;
+      }
+      return JSON.stringify(config, null, 2);
+    }
+
+    // Claude API Key (优先写入已存在的字段；若两者均不存在且允许创建，则默认创建 AUTH_TOKEN 字段)
+    if ("ANTHROPIC_AUTH_TOKEN" in env) {
+      env.ANTHROPIC_AUTH_TOKEN = apiKey;
+    } else if ("ANTHROPIC_API_KEY" in env) {
+      env.ANTHROPIC_API_KEY = apiKey;
+    } else if (createIfMissing) {
+      env.ANTHROPIC_AUTH_TOKEN = apiKey;
+    } else {
       return jsonString;
     }
-    config.env.ANTHROPIC_AUTH_TOKEN = apiKey;
     return JSON.stringify(config, null, 2);
   } catch (err) {
     return jsonString;
@@ -342,7 +415,9 @@ export const extractCodexBaseUrl = (
   configText: string | undefined | null,
 ): string | undefined => {
   try {
-    const text = typeof configText === "string" ? configText : "";
+    const raw = typeof configText === "string" ? configText : "";
+    // 归一化中文/全角引号，避免正则提取失败
+    const text = normalizeQuotes(raw);
     if (!text) return undefined;
     const m = text.match(/base_url\s*=\s*(['"])([^'\"]+)\1/);
     return m && m[2] ? m[2] : undefined;
@@ -375,16 +450,83 @@ export const setCodexBaseUrl = (
   if (!trimmed) {
     return configText;
   }
+  // 归一化原文本中的引号（既能匹配，也能输出稳定格式）
+  const normalizedText = normalizeQuotes(configText);
 
-  const normalizedUrl = trimmed.replace(/\s+/g, "").replace(/\/+$/, "");
+  const normalizedUrl = trimmed.replace(/\s+/g, "");
   const replacementLine = `base_url = "${normalizedUrl}"`;
   const pattern = /base_url\s*=\s*(["'])([^"']+)\1/;
 
-  if (pattern.test(configText)) {
-    return configText.replace(pattern, replacementLine);
+  if (pattern.test(normalizedText)) {
+    return normalizedText.replace(pattern, replacementLine);
   }
 
   const prefix =
-    configText && !configText.endsWith("\n") ? `${configText}\n` : configText;
+    normalizedText && !normalizedText.endsWith("\n")
+      ? `${normalizedText}\n`
+      : normalizedText;
   return `${prefix}${replacementLine}\n`;
+};
+
+// ========== Codex model name utils ==========
+
+// 从 Codex 的 TOML 配置文本中提取 model 字段（支持单/双引号）
+export const extractCodexModelName = (
+  configText: string | undefined | null,
+): string | undefined => {
+  try {
+    const raw = typeof configText === "string" ? configText : "";
+    // 归一化中文/全角引号，避免正则提取失败
+    const text = normalizeQuotes(raw);
+    if (!text) return undefined;
+
+    // 匹配 model = "xxx" 或 model = 'xxx'
+    const m = text.match(/^model\s*=\s*(['"])([^'"]+)\1/m);
+    return m && m[2] ? m[2] : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+// 在 Codex 的 TOML 配置文本中写入或更新 model 字段
+export const setCodexModelName = (
+  configText: string,
+  modelName: string,
+): string => {
+  const trimmed = modelName.trim();
+  if (!trimmed) {
+    return configText;
+  }
+
+  // 归一化原文本中的引号（既能匹配，也能输出稳定格式）
+  const normalizedText = normalizeQuotes(configText);
+
+  const replacementLine = `model = "${trimmed}"`;
+  const pattern = /^model\s*=\s*["']([^"']+)["']/m;
+
+  if (pattern.test(normalizedText)) {
+    return normalizedText.replace(pattern, replacementLine);
+  }
+
+  // 如果不存在 model 字段，尝试在 model_provider 之后插入
+  // 如果 model_provider 也不存在，则插入到开头
+  const providerPattern = /^model_provider\s*=\s*["'][^"']+["']/m;
+  const match = normalizedText.match(providerPattern);
+
+  if (match && match.index !== undefined) {
+    // 在 model_provider 行之后插入
+    const endOfLine = normalizedText.indexOf("\n", match.index);
+    if (endOfLine !== -1) {
+      return (
+        normalizedText.slice(0, endOfLine + 1) +
+        replacementLine +
+        "\n" +
+        normalizedText.slice(endOfLine + 1)
+      );
+    }
+  }
+
+  // 在文件开头插入
+  const lines = normalizedText.split("\n");
+  return `${replacementLine}\n${lines.join("\n")}`;
 };

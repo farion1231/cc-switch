@@ -1,27 +1,54 @@
 import React, { useState } from "react";
-import { X, Play, Wand2 } from "lucide-react";
-import { Provider, UsageScript } from "../types";
-import { AppType } from "../lib/tauri-api";
+import { Play, Wand2, Eye, EyeOff, Save } from "lucide-react";
+import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
+import { Provider, UsageScript, UsageData } from "@/types";
+import { usageApi, type AppId } from "@/lib/api";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
 import * as parserBabel from "prettier/parser-babel";
 import * as pluginEstree from "prettier/plugins/estree";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { cn } from "@/lib/utils";
 
 interface UsageScriptModalProps {
   provider: Provider;
-  appType: AppType;
+  appId: AppId;
+  isOpen: boolean;
   onClose: () => void;
   onSave: (script: UsageScript) => void;
-  onNotify?: (
-    message: string,
-    type: "success" | "error",
-    duration?: number
-  ) => void;
 }
 
-// 预设模板（JS 对象字面量格式）
-const PRESET_TEMPLATES: Record<string, string> = {
-  通用模板: `({
+// 预设模板键名（用于国际化）
+const TEMPLATE_KEYS = {
+  CUSTOM: "custom",
+  GENERAL: "general",
+  NEW_API: "newapi",
+} as const;
+
+// 生成预设模板的函数（支持国际化）
+const generatePresetTemplates = (
+  t: (key: string) => string,
+): Record<string, string> => ({
+  [TEMPLATE_KEYS.CUSTOM]: `({
+  request: {
+    url: "",
+    method: "GET",
+    headers: {}
+  },
+  extractor: function(response) {
+    return {
+      remaining: 0,
+      unit: "USD"
+    };
+  }
+})`,
+
+  [TEMPLATE_KEYS.GENERAL]: `({
   request: {
     url: "{{baseUrl}}/user/balance",
     method: "GET",
@@ -39,56 +66,59 @@ const PRESET_TEMPLATES: Record<string, string> = {
   }
 })`,
 
-  NewAPI: `({
+  [TEMPLATE_KEYS.NEW_API]: `({
   request: {
-    url: "{{baseUrl}}/api/usage/token",
+    url: "{{baseUrl}}/api/user/self",
     method: "GET",
     headers: {
-      Authorization: "Bearer {{apiKey}}",
+      "Content-Type": "application/json",
+      "Authorization": "Bearer {{accessToken}}",
+      "New-Api-User": "{{userId}}"
     },
   },
   extractor: function (response) {
-    if (response.code) {
-      if (response.data.unlimited_quota) {
-        return {
-          planName: response.data.name,
-          total: -1,
-          used: response.data.total_used / 500000,
-          unit: "USD",
-        };
-      }
+    if (response.success && response.data) {
       return {
-        isValid: true,
-        planName: response.data.name,
-        total: response.data.total_granted / 500000,
-        used: response.data.total_used / 500000,
-        remaining: response.data.total_available / 500000,
+        planName: response.data.group || "${t("usageScript.defaultPlan")}",
+        remaining: response.data.quota / 500000,
+        used: response.data.used_quota / 500000,
+        total: (response.data.quota + response.data.used_quota) / 500000,
         unit: "USD",
       };
     }
-    if (response.error) {
-      return {
-        isValid: false,
-        invalidMessage: response.error.message,
-      };
-    }
+    return {
+      isValid: false,
+      invalidMessage: response.message || "${t("usageScript.queryFailedMessage")}"
+    };
   },
 })`,
+});
+
+// 模板名称国际化键映射
+const TEMPLATE_NAME_KEYS: Record<string, string> = {
+  [TEMPLATE_KEYS.CUSTOM]: "usageScript.templateCustom",
+  [TEMPLATE_KEYS.GENERAL]: "usageScript.templateGeneral",
+  [TEMPLATE_KEYS.NEW_API]: "usageScript.templateNewAPI",
 };
 
 const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   provider,
-  appType,
+  appId,
+  isOpen,
   onClose,
   onSave,
-  onNotify,
 }) => {
+  const { t } = useTranslation();
+
+  // 生成带国际化的预设模板
+  const PRESET_TEMPLATES = generatePresetTemplates(t);
+
   const [script, setScript] = useState<UsageScript>(() => {
     return (
       provider.meta?.usage_script || {
         enabled: false,
         language: "javascript",
-        code: PRESET_TEMPLATES["通用模板"],
+        code: PRESET_TEMPLATES[TEMPLATE_KEYS.GENERAL],
         timeout: 10,
       }
     );
@@ -96,45 +126,123 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const [testing, setTesting] = useState(false);
 
+  // 🔧 失焦时的验证（严格）- 仅确保有效整数
+  const validateTimeout = (value: string): number => {
+    const num = Number(value);
+    if (isNaN(num) || value.trim() === "") {
+      return 10;
+    }
+    if (!Number.isInteger(num)) {
+      toast.warning(
+        t("usageScript.timeoutMustBeInteger") || "超时时间必须为整数",
+      );
+    }
+    if (num < 0) {
+      toast.error(
+        t("usageScript.timeoutCannotBeNegative") || "超时时间不能为负数",
+      );
+      return 10;
+    }
+    return Math.floor(num);
+  };
+
+  // 🔧 失焦时的验证（严格）- 自动查询间隔
+  const validateAndClampInterval = (value: string): number => {
+    const num = Number(value);
+    if (isNaN(num) || value.trim() === "") {
+      return 0;
+    }
+    if (!Number.isInteger(num)) {
+      toast.warning(
+        t("usageScript.intervalMustBeInteger") || "自动查询间隔必须为整数",
+      );
+    }
+    if (num < 0) {
+      toast.error(
+        t("usageScript.intervalCannotBeNegative") || "自动查询间隔不能为负数",
+      );
+      return 0;
+    }
+    const clamped = Math.max(0, Math.min(1440, Math.floor(num)));
+    if (clamped !== num && num > 0) {
+      toast.info(
+        t("usageScript.intervalAdjusted", { value: clamped }) ||
+          `自动查询间隔已调整为 ${clamped} 分钟`,
+      );
+    }
+    return clamped;
+  };
+
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(
+    () => {
+      const existingScript = provider.meta?.usage_script;
+      // 检测 NEW_API 模板（有 accessToken 或 userId）
+      if (existingScript?.accessToken || existingScript?.userId) {
+        return TEMPLATE_KEYS.NEW_API;
+      }
+      // 检测 GENERAL 模板（有 apiKey 或 baseUrl）
+      if (existingScript?.apiKey || existingScript?.baseUrl) {
+        return TEMPLATE_KEYS.GENERAL;
+      }
+      // 新配置或无凭证：默认使用 GENERAL（与默认代码模板一致）
+      return TEMPLATE_KEYS.GENERAL;
+    },
+  );
+
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [showAccessToken, setShowAccessToken] = useState(false);
+
   const handleSave = () => {
-    // 验证脚本格式
     if (script.enabled && !script.code.trim()) {
-      onNotify?.("脚本配置不能为空", "error");
+      toast.error(t("usageScript.scriptEmpty"));
       return;
     }
-
-    // 基本的 JS 语法检查（检查是否包含 return 语句）
     if (script.enabled && !script.code.includes("return")) {
-      onNotify?.("脚本必须包含 return 语句", "error", 5000);
+      toast.error(t("usageScript.mustHaveReturn"), { duration: 5000 });
       return;
     }
-
     onSave(script);
     onClose();
-    onNotify?.("用量查询配置已保存", "success", 2000);
   };
 
   const handleTest = async () => {
     setTesting(true);
     try {
-      const result = await window.api.queryProviderUsage(
+      const result = await usageApi.testScript(
         provider.id,
-        appType
+        appId,
+        script.code,
+        script.timeout,
+        script.apiKey,
+        script.baseUrl,
+        script.accessToken,
+        script.userId,
       );
       if (result.success && result.data && result.data.length > 0) {
-        // 显示所有套餐数据
         const summary = result.data
-          .map((plan) => {
+          .map((plan: UsageData) => {
             const planInfo = plan.planName ? `[${plan.planName}]` : "";
-            return `${planInfo} 剩余: ${plan.remaining} ${plan.unit}`;
+            return `${planInfo} ${t("usage.remaining")} ${plan.remaining} ${plan.unit}`;
           })
           .join(", ");
-        onNotify?.(`测试成功！${summary}`, "success", 3000);
+        toast.success(`${t("usageScript.testSuccess")}${summary}`, {
+          duration: 3000,
+        });
       } else {
-        onNotify?.(`测试失败: ${result.error || "无数据返回"}`, "error", 5000);
+        toast.error(
+          `${t("usageScript.testFailed")}: ${result.error || t("endpointTest.noResult")}`,
+          {
+            duration: 5000,
+          },
+        );
       }
     } catch (error: any) {
-      onNotify?.(`测试失败: ${error?.message || "未知错误"}`, "error", 5000);
+      toast.error(
+        `${t("usageScript.testFailed")}: ${error?.message || t("common.unknown")}`,
+        {
+          duration: 5000,
+        },
+      );
     } finally {
       setTesting(false);
     }
@@ -151,127 +259,391 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         printWidth: 80,
       });
       setScript({ ...script, code: formatted.trim() });
-      onNotify?.("格式化成功", "success", 1000);
+      toast.success(t("usageScript.formatSuccess"), { duration: 1000 });
     } catch (error: any) {
-      onNotify?.(`格式化失败: ${error?.message || "语法错误"}`, "error", 3000);
+      toast.error(
+        `${t("usageScript.formatFailed")}: ${error?.message || t("jsonEditor.invalidJson")}`,
+        {
+          duration: 3000,
+        },
+      );
     }
   };
 
   const handleUsePreset = (presetName: string) => {
     const preset = PRESET_TEMPLATES[presetName];
     if (preset) {
-      setScript({ ...script, code: preset });
+      if (presetName === TEMPLATE_KEYS.CUSTOM) {
+        setScript({
+          ...script,
+          code: preset,
+          apiKey: undefined,
+          baseUrl: undefined,
+          accessToken: undefined,
+          userId: undefined,
+        });
+      } else if (presetName === TEMPLATE_KEYS.GENERAL) {
+        setScript({
+          ...script,
+          code: preset,
+          accessToken: undefined,
+          userId: undefined,
+        });
+      } else if (presetName === TEMPLATE_KEYS.NEW_API) {
+        setScript({
+          ...script,
+          code: preset,
+          apiKey: undefined,
+        });
+      }
+      setSelectedTemplate(presetName);
     }
   };
 
+  const shouldShowCredentialsConfig =
+    selectedTemplate === TEMPLATE_KEYS.GENERAL ||
+    selectedTemplate === TEMPLATE_KEYS.NEW_API;
+
+  const footer = (
+    <>
+      <div className="flex gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleTest}
+          disabled={!script.enabled || testing}
+        >
+          <Play size={14} className="mr-1" />
+          {testing ? t("usageScript.testing") : t("usageScript.testScript")}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleFormat}
+          disabled={!script.enabled}
+          title={t("usageScript.format")}
+        >
+          <Wand2 size={14} className="mr-1" />
+          {t("usageScript.format")}
+        </Button>
+      </div>
+
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          onClick={onClose}
+          className="border-border/20 hover:bg-accent hover:text-accent-foreground"
+        >
+          {t("common.cancel")}
+        </Button>
+        <Button
+          onClick={handleSave}
+          className="bg-primary text-primary-foreground hover:bg-primary/90"
+        >
+          <Save size={16} className="mr-2" />
+          {t("usageScript.saveConfig")}
+        </Button>
+      </div>
+    </>
+  );
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-            配置用量查询 - {provider.name}
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-          >
-            <X size={20} />
-          </button>
-        </div>
+    <FullScreenPanel
+      isOpen={isOpen}
+      title={`${t("usageScript.title")} - ${provider.name}`}
+      onClose={onClose}
+      footer={footer}
+    >
+      <div className="glass rounded-xl border border-white/10 px-6 py-4 flex items-center justify-between gap-4">
+        <p className="text-base font-medium leading-none text-foreground">
+          {t("usageScript.enableUsageQuery")}
+        </p>
+        <Switch
+          checked={script.enabled}
+          onCheckedChange={(checked) =>
+            setScript({ ...script, enabled: checked })
+          }
+          aria-label={t("usageScript.enableUsageQuery")}
+        />
+      </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-          {/* 启用开关 */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={script.enabled}
-              onChange={(e) =>
-                setScript({ ...script, enabled: e.target.checked })
-              }
-              className="w-4 h-4"
-            />
-            <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-              启用用量查询
-            </span>
-          </label>
+      {script.enabled && (
+        <div className="space-y-6">
+          {/* 预设模板选择 */}
+          <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
+            <Label className="text-base font-medium">
+              {t("usageScript.presetTemplate")}
+            </Label>
+            <div className="flex gap-2 flex-wrap">
+              {Object.keys(PRESET_TEMPLATES).map((name) => {
+                const isSelected = selectedTemplate === name;
+                return (
+                  <Button
+                    key={name}
+                    type="button"
+                    variant={isSelected ? "default" : "outline"}
+                    size="sm"
+                    className={cn(
+                      "rounded-lg border",
+                      isSelected
+                        ? "shadow-sm"
+                        : "bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                    )}
+                    onClick={() => handleUsePreset(name)}
+                  >
+                    {t(TEMPLATE_NAME_KEYS[name])}
+                  </Button>
+                );
+              })}
+            </div>
 
-          {script.enabled && (
-            <>
-              {/* 预设模板选择 */}
-              <div>
-                <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                  预设模板
-                </label>
-                <div className="flex gap-2">
-                  {Object.keys(PRESET_TEMPLATES).map((name) => (
-                    <button
-                      key={name}
-                      onClick={() => handleUsePreset(name)}
-                      className="px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
-                    >
-                      {name}
-                    </button>
-                  ))}
+            {/* 凭证配置 */}
+            {shouldShowCredentialsConfig && (
+              <div className="space-y-4">
+                <h4 className="text-sm font-medium text-foreground">
+                  {t("usageScript.credentialsConfig")}
+                </h4>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  {selectedTemplate === TEMPLATE_KEYS.GENERAL && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="usage-api-key">API Key</Label>
+                        <div className="relative">
+                          <Input
+                            id="usage-api-key"
+                            type={showApiKey ? "text" : "password"}
+                            value={script.apiKey || ""}
+                            onChange={(e) =>
+                              setScript({ ...script, apiKey: e.target.value })
+                            }
+                            placeholder="sk-xxxxx"
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                          {script.apiKey && (
+                            <button
+                              type="button"
+                              onClick={() => setShowApiKey(!showApiKey)}
+                              className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                              aria-label={
+                                showApiKey
+                                  ? t("apiKeyInput.hide")
+                                  : t("apiKeyInput.show")
+                              }
+                            >
+                              {showApiKey ? (
+                                <EyeOff size={16} />
+                              ) : (
+                                <Eye size={16} />
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="usage-base-url">
+                          {t("usageScript.baseUrl")}
+                        </Label>
+                        <Input
+                          id="usage-base-url"
+                          type="text"
+                          value={script.baseUrl || ""}
+                          onChange={(e) =>
+                            setScript({ ...script, baseUrl: e.target.value })
+                          }
+                          placeholder="https://api.example.com"
+                          autoComplete="off"
+                          className="border-white/10"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedTemplate === TEMPLATE_KEYS.NEW_API && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="usage-newapi-base-url">
+                          {t("usageScript.baseUrl")}
+                        </Label>
+                        <Input
+                          id="usage-newapi-base-url"
+                          type="text"
+                          value={script.baseUrl || ""}
+                          onChange={(e) =>
+                            setScript({ ...script, baseUrl: e.target.value })
+                          }
+                          placeholder="https://api.newapi.com"
+                          autoComplete="off"
+                          className="border-white/10"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="usage-access-token">
+                          {t("usageScript.accessToken")}
+                        </Label>
+                        <div className="relative">
+                          <Input
+                            id="usage-access-token"
+                            type={showAccessToken ? "text" : "password"}
+                            value={script.accessToken || ""}
+                            onChange={(e) =>
+                              setScript({
+                                ...script,
+                                accessToken: e.target.value,
+                              })
+                            }
+                            placeholder={t(
+                              "usageScript.accessTokenPlaceholder",
+                            )}
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                          {script.accessToken && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setShowAccessToken(!showAccessToken)
+                              }
+                              className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                              aria-label={
+                                showAccessToken
+                                  ? t("apiKeyInput.hide")
+                                  : t("apiKeyInput.show")
+                              }
+                            >
+                              {showAccessToken ? (
+                                <EyeOff size={16} />
+                              ) : (
+                                <Eye size={16} />
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="usage-user-id">
+                          {t("usageScript.userId")}
+                        </Label>
+                        <Input
+                          id="usage-user-id"
+                          type="text"
+                          value={script.userId || ""}
+                          onChange={(e) =>
+                            setScript({ ...script, userId: e.target.value })
+                          }
+                          placeholder={t("usageScript.userIdPlaceholder")}
+                          autoComplete="off"
+                          className="border-white/10"
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
+            )}
 
-              {/* 脚本编辑器 */}
-              <div>
-                <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                  查询脚本（JavaScript）
-                </label>
-                <JsonEditor
-                  value={script.code}
-                  onChange={(code) => setScript({ ...script, code })}
-                  height="300px"
-                  language="javascript"
+            {/* 通用配置（始终显示） */}
+            <div className="grid gap-4 md:grid-cols-2 pt-4 border-t border-white/10">
+              {/* 超时时间 */}
+              <div className="space-y-2">
+                <Label htmlFor="usage-timeout">
+                  {t("usageScript.timeoutSeconds")}
+                </Label>
+                <Input
+                  id="usage-timeout"
+                  type="number"
+                  min={0}
+                  value={script.timeout ?? 10}
+                  onChange={(e) =>
+                    setScript({
+                      ...script,
+                      timeout: validateTimeout(e.target.value),
+                    })
+                  }
+                  onBlur={(e) =>
+                    setScript({
+                      ...script,
+                      timeout: validateTimeout(e.target.value),
+                    })
+                  }
+                  className="border-white/10"
                 />
-                <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                  支持变量: <code>{"{{apiKey}}"}</code>,{" "}
-                  <code>{"{{baseUrl}}"}</code> | extractor 函数接收 API 响应的 JSON 对象
-                </p>
               </div>
 
-              {/* 配置选项 */}
-              <div className="grid grid-cols-2 gap-4">
-                <label className="block">
-                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                    超时时间（秒）
-                  </span>
-                  <input
-                    type="number"
-                    min="2"
-                    max="30"
-                    value={script.timeout || 10}
-                    onChange={(e) =>
-                      setScript({ ...script, timeout: parseInt(e.target.value) })
-                    }
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-                  />
-                </label>
+              {/* 自动查询间隔 */}
+              <div className="space-y-2">
+                <Label htmlFor="usage-interval">
+                  {t("usageScript.autoIntervalMinutes")}
+                </Label>
+                <Input
+                  id="usage-interval"
+                  type="number"
+                  min={0}
+                  max={1440}
+                  value={script.autoIntervalMinutes ?? 0}
+                  onChange={(e) =>
+                    setScript({
+                      ...script,
+                      autoIntervalMinutes: validateAndClampInterval(
+                        e.target.value,
+                      ),
+                    })
+                  }
+                  onBlur={(e) =>
+                    setScript({
+                      ...script,
+                      autoIntervalMinutes: validateAndClampInterval(
+                        e.target.value,
+                      ),
+                    })
+                  }
+                  className="border-white/10"
+                />
               </div>
+            </div>
+          </div>
 
-              {/* 脚本说明 */}
-              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-sm text-gray-700 dark:text-gray-300">
-                <h4 className="font-medium mb-2">脚本编写说明：</h4>
-                <div className="space-y-3 text-xs">
-                  <div>
-                    <strong>配置格式：</strong>
-                    <pre className="mt-1 p-2 bg-white/50 dark:bg-black/20 rounded text-[10px] overflow-x-auto">
-{`({
+          {/* 提取器代码 */}
+          <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
+            <div className="flex items-center justify-between">
+              <Label className="text-base font-medium">
+                {t("usageScript.extractorCode")}
+              </Label>
+              <div className="text-xs text-muted-foreground">
+                {t("usageScript.extractorHint")}
+              </div>
+            </div>
+            <JsonEditor
+              id="usage-code"
+              value={script.code || ""}
+              onChange={(value) => setScript({ ...script, code: value })}
+              height={480}
+              language="javascript"
+              showMinimap={false}
+            />
+          </div>
+
+          {/* 帮助信息 */}
+          <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
+            <h4 className="font-medium mb-2">{t("usageScript.scriptHelp")}</h4>
+            <div className="space-y-3 text-xs">
+              <div>
+                <strong>{t("usageScript.configFormat")}</strong>
+                <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
+                  {`({
   request: {
     url: "{{baseUrl}}/api/usage",
     method: "POST",
     headers: {
       "Authorization": "Bearer {{apiKey}}",
       "User-Agent": "cc-switch/1.0"
-    },
-    body: JSON.stringify({ key: "value" })  // 可选
+    }
   },
   extractor: function(response) {
-    // response 是 API 返回的 JSON 数据
     return {
       isValid: !response.error,
       remaining: response.balance,
@@ -279,76 +651,41 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     };
   }
 })`}
-                    </pre>
-                  </div>
-
-                  <div>
-                    <strong>extractor 返回格式（所有字段均为可选）：</strong>
-                    <ul className="mt-1 space-y-0.5 ml-2">
-                      <li>• <code>isValid</code>: 布尔值，套餐是否有效</li>
-                      <li>• <code>invalidMessage</code>: 字符串，失效原因说明（当 isValid 为 false 时显示）</li>
-                      <li>• <code>remaining</code>: 数字，剩余额度</li>
-                      <li>• <code>unit</code>: 字符串，单位（如 "USD"）</li>
-                      <li>• <code>planName</code>: 字符串，套餐名称</li>
-                      <li>• <code>total</code>: 数字，总额度</li>
-                      <li>• <code>used</code>: 数字，已用额度</li>
-                      <li>• <code>extra</code>: 字符串，扩展字段，可自由补充需要展示的文本</li>
-                    </ul>
-                  </div>
-
-                  <div className="text-gray-600 dark:text-gray-400">
-                    <strong>💡 提示：</strong>
-                    <ul className="mt-1 space-y-0.5 ml-2">
-                      <li>• 变量 <code>{"{{apiKey}}"}</code> 和 <code>{"{{baseUrl}}"}</code> 会自动替换</li>
-                      <li>• extractor 函数在沙箱环境中执行，支持 ES2020+ 语法</li>
-                      <li>• 整个配置必须用 <code>()</code> 包裹，形成对象字面量表达式</li>
-                    </ul>
-                  </div>
-                </div>
+                </pre>
               </div>
-            </>
-          )}
-        </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 dark:border-gray-700">
-          <div className="flex gap-2">
-            <button
-              onClick={handleTest}
-              disabled={!script.enabled || testing}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Play size={14} />
-              {testing ? "测试中..." : "测试脚本"}
-            </button>
-            <button
-              onClick={handleFormat}
-              disabled={!script.enabled}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="格式化代码 (Prettier)"
-            >
-              <Wand2 size={14} />
-              格式化
-            </button>
-          </div>
+              <div>
+                <strong>{t("usageScript.extractorFormat")}</strong>
+                <ul className="mt-1 space-y-0.5 ml-2">
+                  <li>{t("usageScript.fieldIsValid")}</li>
+                  <li>{t("usageScript.fieldInvalidMessage")}</li>
+                  <li>{t("usageScript.fieldRemaining")}</li>
+                  <li>{t("usageScript.fieldUnit")}</li>
+                  <li>{t("usageScript.fieldPlanName")}</li>
+                  <li>{t("usageScript.fieldTotal")}</li>
+                  <li>{t("usageScript.fieldUsed")}</li>
+                  <li>{t("usageScript.fieldExtra")}</li>
+                </ul>
+              </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={handleSave}
-              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
-            >
-              保存配置
-            </button>
+              <div className="text-muted-foreground">
+                <strong>{t("usageScript.tips")}</strong>
+                <ul className="mt-1 space-y-0.5 ml-2">
+                  <li>
+                    {t("usageScript.tip1", {
+                      apiKey: "{{apiKey}}",
+                      baseUrl: "{{baseUrl}}",
+                    })}
+                  </li>
+                  <li>{t("usageScript.tip2")}</li>
+                  <li>{t("usageScript.tip3")}</li>
+                </ul>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
+      )}
+    </FullScreenPanel>
   );
 };
 

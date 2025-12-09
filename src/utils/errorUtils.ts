@@ -84,6 +84,7 @@ export const translateMcpBackendError = (
   }
   if (
     msg.includes("http 类型的 MCP 服务器缺少 url 字段") ||
+    msg.includes("sse 类型的 MCP 服务器缺少 url 字段") ||
     msg.includes("必须包含 url 字段") ||
     msg === "URL 不能为空"
   ) {
