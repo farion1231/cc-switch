@@ -3,7 +3,7 @@ use rquickjs::{Context, Function, Runtime};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
-use url::Url;
+use url::{Host, Url};
 
 use crate::error::AppError;
 
@@ -434,16 +434,15 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
         )
     })?;
 
+    let is_loopback = is_loopback_host(&parsed_url);
+
     // 必须是 HTTPS（允许 localhost 用于开发）
-    if parsed_url.scheme() != "https" {
-        let hostname = parsed_url.host_str().unwrap_or("unknown");
-        if hostname != "localhost" && !hostname.starts_with("127.0.0.1") && !hostname.starts_with("::1") {
-            return Err(AppError::localized(
-                "usage_script.base_url_https_required",
-                "base_url 必须使用 HTTPS 协议（localhost 除外）",
-                "base_url must use HTTPS (localhost allowed)",
-            ));
-        }
+    if parsed_url.scheme() != "https" && !is_loopback {
+        return Err(AppError::localized(
+            "usage_script.base_url_https_required",
+            "base_url 必须使用 HTTPS 协议（localhost 除外）",
+            "base_url must use HTTPS (localhost allowed)",
+        ));
     }
 
     // 检查主机名格式有效性
@@ -496,16 +495,15 @@ fn validate_request_url(request_url: &str, base_url: &str) -> Result<(), AppErro
         )
     })?;
 
+    let is_request_loopback = is_loopback_host(&parsed_request);
+
     // 必须使用 HTTPS（允许 localhost 用于开发）
-    if parsed_request.scheme() != "https" {
-        let hostname = parsed_request.host_str().unwrap_or("unknown");
-        if hostname != "localhost" && !hostname.starts_with("127.0.0.1") && !hostname.starts_with("::1") {
-            return Err(AppError::localized(
-                "usage_script.request_https_required",
-                "请求 URL 必须使用 HTTPS 协议（localhost 除外）",
-                "Request URL must use HTTPS (localhost allowed)",
-            ));
-        }
+    if parsed_request.scheme() != "https" && !is_request_loopback {
+        return Err(AppError::localized(
+            "usage_script.request_https_required",
+            "请求 URL 必须使用 HTTPS 协议（localhost 除外）",
+            "Request URL must use HTTPS (localhost allowed)",
+        ));
     }
 
     // 核心安全检查：必须与 base_url 同源（相同域名和端口）
@@ -576,7 +574,7 @@ fn validate_request_url(request_url: &str, base_url: &str) -> Result<(), AppErro
 /// 检查是否为私有 IP 地址
 fn is_private_ip(host: &str) -> bool {
     // localhost 检查
-    if host == "localhost" || host.starts_with("127.") {
+    if host.eq_ignore_ascii_case("localhost") {
         return true;
     }
 
@@ -593,30 +591,37 @@ fn is_private_ip(host: &str) -> bool {
 fn is_private_ip_addr(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(ipv4) => {
+            let octets = ipv4.octets();
+
+            // 0.0.0.0/8 (包括未指定地址)
+            if octets[0] == 0 {
+                return true;
+            }
+
             // RFC1918 私有地址范围
             // 10.0.0.0/8
-            if ipv4.octets()[0] == 10 {
+            if octets[0] == 10 {
                 return true;
             }
 
             // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
-            if ipv4.octets()[0] == 172 && ipv4.octets()[1] >= 16 && ipv4.octets()[1] <= 31 {
+            if octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31 {
                 return true;
             }
 
             // 192.168.0.0/16
-            if ipv4.octets()[0] == 192 && ipv4.octets()[1] == 168 {
+            if octets[0] == 192 && octets[1] == 168 {
                 return true;
             }
 
             // 其他特殊地址
             // 169.254.0.0/16 (链路本地地址)
-            if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
+            if octets[0] == 169 && octets[1] == 254 {
                 return true;
             }
 
             // 127.0.0.0/8 (环回地址)
-            if ipv4.octets()[0] == 127 {
+            if octets[0] == 127 {
                 return true;
             }
 
@@ -678,6 +683,16 @@ fn is_suspicious_hostname(hostname: &str) -> bool {
     }
 
     false
+}
+
+/// 判断 URL 是否指向本机（localhost / loopback）
+fn is_loopback_host(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -743,6 +758,23 @@ mod tests {
         // 测试包含 ::1 子串但不是环回地址的公网地址
         assert!(!is_private_ip("2001:db8::1abc")); // 包含 ::1abc 但不是环回
         assert!(!is_private_ip("2606:4700::1")); // 包含 ::1 但不是环回
+    }
+
+    #[test]
+    fn test_hostname_bypass_prevention() {
+        // 看起来像本地，但实际是域名
+        assert!(!is_private_ip("127.0.0.1.evil.com"));
+        assert!(!is_private_ip("localhost.evil.com"));
+
+        // 0.0.0.0 应该被视为本地/阻断
+        assert!(is_private_ip("0.0.0.0"));
+    }
+
+    #[test]
+    fn test_https_bypass_prevention() {
+        // 非本地域名的 HTTP 应该被拒绝
+        let result = validate_base_url("http://127.0.0.1.evil.com/api");
+        assert!(result.is_err(), "Should reject HTTP for non-localhost domains");
     }
 
     #[test]
