@@ -221,30 +221,36 @@ export function RequestLogTable() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{t("usage.time", "时间")}</TableHead>
-                  <TableHead>{t("usage.provider", "供应商")}</TableHead>
-                  <TableHead className="min-w-[280px]">
+                  <TableHead className="whitespace-nowrap">
+                    {t("usage.time", "时间")}
+                  </TableHead>
+                  <TableHead className="whitespace-nowrap">
+                    {t("usage.provider", "供应商")}
+                  </TableHead>
+                  <TableHead className="min-w-[280px] whitespace-nowrap">
                     {t("usage.billingModel", "计费模型")}
                   </TableHead>
-                  <TableHead className="text-right">
+                  <TableHead className="text-right whitespace-nowrap">
                     {t("usage.inputTokens", "输入")}
                   </TableHead>
-                  <TableHead className="text-right">
+                  <TableHead className="text-right whitespace-nowrap">
                     {t("usage.outputTokens", "输出")}
                   </TableHead>
-                  <TableHead className="text-right min-w-[90px]">
-                    {t("usage.cacheCreationTokens", "缓存写入")}
-                  </TableHead>
-                  <TableHead className="text-right min-w-[90px]">
+                  <TableHead className="text-right min-w-[90px] whitespace-nowrap">
                     {t("usage.cacheReadTokens", "缓存读取")}
                   </TableHead>
-                  <TableHead className="text-right">
+                  <TableHead className="text-right min-w-[90px] whitespace-nowrap">
+                    {t("usage.cacheCreationTokens", "缓存写入")}
+                  </TableHead>
+                  <TableHead className="text-right whitespace-nowrap">
                     {t("usage.totalCost", "成本")}
                   </TableHead>
-                  <TableHead className="text-center min-w-[140px]">
+                  <TableHead className="text-center min-w-[140px] whitespace-nowrap">
                     {t("usage.timingInfo", "用时/首字")}
                   </TableHead>
-                  <TableHead>{t("usage.status", "状态")}</TableHead>
+                  <TableHead className="whitespace-nowrap">
+                    {t("usage.status", "状态")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -280,10 +286,10 @@ export function RequestLogTable() {
                         {log.outputTokens.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-right">
-                        {log.cacheCreationTokens.toLocaleString()}
+                        {log.cacheReadTokens.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-right">
-                        {log.cacheReadTokens.toLocaleString()}
+                        {log.cacheCreationTokens.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-right">
                         ${parseFloat(log.totalCostUsd).toFixed(6)}
