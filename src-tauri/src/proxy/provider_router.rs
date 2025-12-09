@@ -206,7 +206,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_provider_router_creation() {
-        let db = Arc::new(Database::new_in_memory().unwrap());
+        let db = Arc::new(Database::memory().unwrap());
         let router = ProviderRouter::new(db);
 
         // 测试创建熔断器
