@@ -25,12 +25,10 @@ pub async fn stream_check_provider(
     let result = StreamCheckService::check_with_retry(&app_type, provider, &config).await?;
 
     // 记录日志
-    let _ = state.db.save_stream_check_log(
-        &provider_id,
-        &provider.name,
-        app_type.as_str(),
-        &result,
-    );
+    let _ =
+        state
+            .db
+            .save_stream_check_log(&provider_id, &provider.name, app_type.as_str(), &result);
 
     Ok(result)
 }
@@ -65,12 +63,9 @@ pub async fn stream_check_all_providers(
                 retry_count: 0,
             });
 
-        let _ = state.db.save_stream_check_log(
-            &id,
-            &provider.name,
-            app_type.as_str(),
-            &result,
-        );
+        let _ = state
+            .db
+            .save_stream_check_log(&id, &provider.name, app_type.as_str(), &result);
 
         results.push((id, result));
     }
