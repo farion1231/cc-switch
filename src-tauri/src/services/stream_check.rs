@@ -29,6 +29,12 @@ pub struct StreamCheckConfig {
     pub timeout_secs: u64,
     pub max_retries: u32,
     pub degraded_threshold_ms: u64,
+    /// Claude 测试模型
+    pub claude_model: String,
+    /// Codex 测试模型
+    pub codex_model: String,
+    /// Gemini 测试模型
+    pub gemini_model: String,
 }
 
 impl Default for StreamCheckConfig {
@@ -37,6 +43,9 @@ impl Default for StreamCheckConfig {
             timeout_secs: 45,
             max_retries: 2,
             degraded_threshold_ms: 6000,
+            claude_model: "claude-haiku-4-5-20251001".to_string(),
+            codex_model: "gpt-5.1-codex@low".to_string(),
+            gemini_model: "gemini-3-pro-preview".to_string(),
         }
     }
 }
@@ -133,9 +142,15 @@ impl StreamCheckService {
             .map_err(|e| AppError::Message(format!("创建客户端失败: {e}")))?;
 
         let result = match app_type {
-            AppType::Claude => Self::check_claude_stream(&client, &base_url, &auth).await,
-            AppType::Codex => Self::check_codex_stream(&client, &base_url, &auth).await,
-            AppType::Gemini => Self::check_gemini_stream(&client, &base_url, &auth).await,
+            AppType::Claude => {
+                Self::check_claude_stream(&client, &base_url, &auth, &config.claude_model).await
+            }
+            AppType::Codex => {
+                Self::check_codex_stream(&client, &base_url, &auth, &config.codex_model).await
+            }
+            AppType::Gemini => {
+                Self::check_gemini_stream(&client, &base_url, &auth, &config.gemini_model).await
+            }
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -174,6 +189,7 @@ impl StreamCheckService {
         client: &Client,
         base_url: &str,
         auth: &AuthInfo,
+        model: &str,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
         let url = if base.ends_with("/v1") {
@@ -181,8 +197,6 @@ impl StreamCheckService {
         } else {
             format!("{base}/v1/messages")
         };
-
-        let model = "claude-3-5-haiku-latest";
 
         let body = json!({
             "model": model,
@@ -225,6 +239,7 @@ impl StreamCheckService {
         client: &Client,
         base_url: &str,
         auth: &AuthInfo,
+        model: &str,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
         let url = if base.ends_with("/v1") {
@@ -233,10 +248,11 @@ impl StreamCheckService {
             format!("{base}/v1/chat/completions")
         };
 
-        let model = "gpt-4o-mini";
+        // 解析模型名和推理等级 (支持 model@level 或 model#level 格式)
+        let (actual_model, reasoning_effort) = Self::parse_model_with_effort(model);
 
-        let body = json!({
-            "model": model,
+        let mut body = json!({
+            "model": actual_model,
             "messages": [
                 { "role": "system", "content": "" },
                 { "role": "assistant", "content": "" },
@@ -246,6 +262,11 @@ impl StreamCheckService {
             "temperature": 0,
             "stream": true
         });
+
+        // 如果是推理模型，添加 reasoning_effort
+        if let Some(effort) = reasoning_effort {
+            body["reasoning_effort"] = json!(effort);
+        }
 
         let response = client
             .post(&url)
@@ -279,11 +300,10 @@ impl StreamCheckService {
         client: &Client,
         base_url: &str,
         auth: &AuthInfo,
+        model: &str,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
         let url = format!("{base}/v1/chat/completions");
-
-        let model = "gemini-1.5-flash";
 
         let body = json!({
             "model": model,
@@ -326,6 +346,20 @@ impl StreamCheckService {
         } else {
             HealthStatus::Degraded
         }
+    }
+
+    /// 解析模型名和推理等级 (支持 model@level 或 model#level 格式)
+    /// 返回 (实际模型名, Option<推理等级>)
+    fn parse_model_with_effort(model: &str) -> (String, Option<String>) {
+        // 查找 @ 或 # 分隔符
+        if let Some(pos) = model.find('@').or_else(|| model.find('#')) {
+            let actual_model = model[..pos].to_string();
+            let effort = model[pos + 1..].to_string();
+            if !effort.is_empty() {
+                return (actual_model, Some(effort));
+            }
+        }
+        (model.to_string(), None)
     }
 
     fn should_retry(msg: &str) -> bool {
@@ -380,5 +414,23 @@ mod tests {
         assert_eq!(config.timeout_secs, 45);
         assert_eq!(config.max_retries, 2);
         assert_eq!(config.degraded_threshold_ms, 6000);
+    }
+
+    #[test]
+    fn test_parse_model_with_effort() {
+        // 带 @ 分隔符
+        let (model, effort) = StreamCheckService::parse_model_with_effort("gpt-5.1-codex@low");
+        assert_eq!(model, "gpt-5.1-codex");
+        assert_eq!(effort, Some("low".to_string()));
+
+        // 带 # 分隔符
+        let (model, effort) = StreamCheckService::parse_model_with_effort("o1-preview#high");
+        assert_eq!(model, "o1-preview");
+        assert_eq!(effort, Some("high".to_string()));
+
+        // 无分隔符
+        let (model, effort) = StreamCheckService::parse_model_with_effort("gpt-4o-mini");
+        assert_eq!(model, "gpt-4o-mini");
+        assert_eq!(effort, None);
     }
 }
