@@ -7,9 +7,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Save, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  getModelTestConfig,
-  saveModelTestConfig,
-  type ModelTestConfig,
+  getStreamCheckConfig,
+  saveStreamCheckConfig,
+  type StreamCheckConfig,
 } from "@/lib/api/model-test";
 
 export function ModelTestConfigPanel() {
@@ -17,12 +17,13 @@ export function ModelTestConfigPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [config, setConfig] = useState<ModelTestConfig>({
+  const [config, setConfig] = useState<StreamCheckConfig>({
+    timeoutSecs: 45,
+    maxRetries: 2,
+    degradedThresholdMs: 6000,
     claudeModel: "claude-haiku-4-5-20251001",
-    codexModel: "gpt-5.1-low",
-    geminiModel: "gemini-3-pro-low",
-    testPrompt: "ping",
-    timeoutSecs: 15,
+    codexModel: "gpt-5.1-codex@low",
+    geminiModel: "gemini-3-pro-preview",
   });
 
   useEffect(() => {
@@ -33,7 +34,7 @@ export function ModelTestConfigPanel() {
     try {
       setIsLoading(true);
       setError(null);
-      const data = await getModelTestConfig();
+      const data = await getStreamCheckConfig();
       setConfig(data);
     } catch (e) {
       setError(String(e));
@@ -45,11 +46,11 @@ export function ModelTestConfigPanel() {
   async function handleSave() {
     try {
       setIsSaving(true);
-      await saveModelTestConfig(config);
-      toast.success(t("modelTest.configSaved", "模型测试配置已保存"));
+      await saveStreamCheckConfig(config);
+      toast.success(t("streamCheck.configSaved", "健康检查配置已保存"));
     } catch (e) {
       toast.error(
-        t("modelTest.configSaveFailed", "保存失败") + ": " + String(e),
+        t("streamCheck.configSaveFailed", "保存失败") + ": " + String(e),
       );
     } finally {
       setIsSaving(false);
@@ -65,95 +66,126 @@ export function ModelTestConfigPanel() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="claudeModel">
-            {t("modelTest.claudeModel", "Claude 测试模型")}
-          </Label>
-          <Input
-            id="claudeModel"
-            value={config.claudeModel}
-            onChange={(e) =>
-              setConfig({ ...config, claudeModel: e.target.value })
-            }
-            placeholder="claude-haiku-4-5-20251001"
-          />
-        </div>
+      {/* 测试模型配置 */}
+      <div className="space-y-4">
+        <h4 className="text-sm font-medium text-muted-foreground">
+          {t("streamCheck.testModels", "测试模型")}
+        </h4>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="claudeModel">
+              {t("streamCheck.claudeModel", "Claude 模型")}
+            </Label>
+            <Input
+              id="claudeModel"
+              value={config.claudeModel}
+              onChange={(e) =>
+                setConfig({ ...config, claudeModel: e.target.value })
+              }
+              placeholder="claude-3-5-haiku-latest"
+            />
+          </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="codexModel">
-            {t("modelTest.codexModel", "Codex 测试模型")}
-          </Label>
-          <Input
-            id="codexModel"
-            value={config.codexModel}
-            onChange={(e) =>
-              setConfig({ ...config, codexModel: e.target.value })
-            }
-            placeholder="gpt-5.1-low"
-          />
-        </div>
+          <div className="space-y-2">
+            <Label htmlFor="codexModel">
+              {t("streamCheck.codexModel", "Codex 模型")}
+            </Label>
+            <Input
+              id="codexModel"
+              value={config.codexModel}
+              onChange={(e) =>
+                setConfig({ ...config, codexModel: e.target.value })
+              }
+              placeholder="gpt-4o-mini"
+            />
+          </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="geminiModel">
-            {t("modelTest.geminiModel", "Gemini 测试模型")}
-          </Label>
-          <Input
-            id="geminiModel"
-            value={config.geminiModel}
-            onChange={(e) =>
-              setConfig({ ...config, geminiModel: e.target.value })
-            }
-            placeholder="gemini-3-pro-low"
-          />
+          <div className="space-y-2">
+            <Label htmlFor="geminiModel">
+              {t("streamCheck.geminiModel", "Gemini 模型")}
+            </Label>
+            <Input
+              id="geminiModel"
+              value={config.geminiModel}
+              onChange={(e) =>
+                setConfig({ ...config, geminiModel: e.target.value })
+              }
+              placeholder="gemini-1.5-flash"
+            />
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="testPrompt">
-            {t("modelTest.testPrompt", "测试提示词")}
-          </Label>
-          <Input
-            id="testPrompt"
-            value={config.testPrompt}
-            onChange={(e) =>
-              setConfig({ ...config, testPrompt: e.target.value })
-            }
-            placeholder="ping"
-          />
-          <p className="text-xs text-muted-foreground">
-            {t(
-              "modelTest.testPromptHint",
-              "发送给模型的测试消息，建议使用简短内容以减少 token 消耗",
-            )}
-          </p>
-        </div>
+      {/* 检查参数配置 */}
+      <div className="space-y-4">
+        <h4 className="text-sm font-medium text-muted-foreground">
+          {t("streamCheck.checkParams", "检查参数")}
+        </h4>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="timeoutSecs">
+              {t("streamCheck.timeout", "超时时间（秒）")}
+            </Label>
+            <Input
+              id="timeoutSecs"
+              type="number"
+              min={10}
+              max={120}
+              value={config.timeoutSecs}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  timeoutSecs: parseInt(e.target.value) || 45,
+                })
+              }
+            />
+          </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="timeoutSecs">
-            {t("modelTest.timeout", "超时时间（秒）")}
-          </Label>
-          <Input
-            id="timeoutSecs"
-            type="number"
-            min={5}
-            max={60}
-            value={config.timeoutSecs}
-            onChange={(e) =>
-              setConfig({
-                ...config,
-                timeoutSecs: parseInt(e.target.value) || 15,
-              })
-            }
-          />
+          <div className="space-y-2">
+            <Label htmlFor="maxRetries">
+              {t("streamCheck.maxRetries", "最大重试次数")}
+            </Label>
+            <Input
+              id="maxRetries"
+              type="number"
+              min={0}
+              max={5}
+              value={config.maxRetries}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  maxRetries: parseInt(e.target.value) || 2,
+                })
+              }
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="degradedThresholdMs">
+              {t("streamCheck.degradedThreshold", "降级阈值（毫秒）")}
+            </Label>
+            <Input
+              id="degradedThresholdMs"
+              type="number"
+              min={1000}
+              max={30000}
+              step={1000}
+              value={config.degradedThresholdMs}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  degradedThresholdMs: parseInt(e.target.value) || 6000,
+                })
+              }
+            />
+          </div>
         </div>
       </div>
 

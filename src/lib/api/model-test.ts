@@ -1,89 +1,64 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AppId } from "./types";
 
-export interface ModelTestConfig {
+// ===== 流式健康检查类型 =====
+
+export type HealthStatus = "operational" | "degraded" | "failed";
+
+export interface StreamCheckConfig {
+  timeoutSecs: number;
+  maxRetries: number;
+  degradedThresholdMs: number;
   claudeModel: string;
   codexModel: string;
   geminiModel: string;
-  testPrompt: string;
-  timeoutSecs: number;
 }
 
-export interface ModelTestResult {
+export interface StreamCheckResult {
+  status: HealthStatus;
   success: boolean;
   message: string;
   responseTimeMs?: number;
   httpStatus?: number;
   modelUsed: string;
   testedAt: number;
+  retryCount: number;
 }
 
-export interface ModelTestLog {
-  id: number;
-  providerId: string;
-  providerName: string;
-  appType: string;
-  model: string;
-  prompt: string;
-  success: boolean;
-  message: string;
-  responseTimeMs?: number;
-  httpStatus?: number;
-  testedAt: number;
-}
+// ===== 流式健康检查 API =====
 
 /**
- * 测试单个供应商的模型可用性
+ * 流式健康检查（单个供应商）
  */
-export async function testProviderModel(
+export async function streamCheckProvider(
   appType: AppId,
   providerId: string,
-): Promise<ModelTestResult> {
-  return invoke("test_provider_model", { appType, providerId });
+): Promise<StreamCheckResult> {
+  return invoke("stream_check_provider", { appType, providerId });
 }
 
 /**
- * 批量测试所有供应商
+ * 批量流式健康检查
  */
-export async function testAllProvidersModel(
+export async function streamCheckAllProviders(
   appType: AppId,
   proxyTargetsOnly: boolean = false,
-): Promise<Array<[string, ModelTestResult]>> {
-  return invoke("test_all_providers_model", { appType, proxyTargetsOnly });
+): Promise<Array<[string, StreamCheckResult]>> {
+  return invoke("stream_check_all_providers", { appType, proxyTargetsOnly });
 }
 
 /**
- * 获取模型测试配置
+ * 获取流式检查配置
  */
-export async function getModelTestConfig(): Promise<ModelTestConfig> {
-  return invoke("get_model_test_config");
+export async function getStreamCheckConfig(): Promise<StreamCheckConfig> {
+  return invoke("get_stream_check_config");
 }
 
 /**
- * 保存模型测试配置
+ * 保存流式检查配置
  */
-export async function saveModelTestConfig(
-  config: ModelTestConfig,
+export async function saveStreamCheckConfig(
+  config: StreamCheckConfig,
 ): Promise<void> {
-  return invoke("save_model_test_config", { config });
-}
-
-/**
- * 获取模型测试日志
- */
-export async function getModelTestLogs(
-  appType?: string,
-  providerId?: string,
-  limit?: number,
-): Promise<ModelTestLog[]> {
-  return invoke("get_model_test_logs", { appType, providerId, limit });
-}
-
-/**
- * 清理旧的测试日志
- */
-export async function cleanupModelTestLogs(
-  keepCount?: number,
-): Promise<number> {
-  return invoke("cleanup_model_test_logs", { keepCount });
+  return invoke("save_stream_check_config", { config });
 }
