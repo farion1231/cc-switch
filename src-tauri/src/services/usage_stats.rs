@@ -652,56 +652,6 @@ impl Database {
             monthly_exceeded,
         })
     }
-
-    /// 更新每日统计聚合
-    ///
-    /// 在请求完成后调用，更新 usage_daily_stats 表
-    #[allow(clippy::too_many_arguments)]
-    pub fn update_daily_stats(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-        model: &str,
-        input_tokens: u32,
-        output_tokens: u32,
-        total_cost: &str,
-        is_success: bool,
-    ) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-        let date = Utc::now().format("%Y-%m-%d").to_string();
-
-        // 使用 UPSERT 更新或插入统计
-        conn.execute(
-            "INSERT INTO usage_daily_stats (
-                date, provider_id, app_type, model,
-                request_count, total_input_tokens, total_output_tokens,
-                total_cost_usd, success_count, error_count
-            ) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9)
-            ON CONFLICT(date, provider_id, app_type, model) DO UPDATE SET
-                request_count = request_count + 1,
-                total_input_tokens = total_input_tokens + ?5,
-                total_output_tokens = total_output_tokens + ?6,
-                total_cost_usd = CAST(
-                    CAST(total_cost_usd AS REAL) + CAST(?7 AS REAL) AS TEXT
-                ),
-                success_count = success_count + ?8,
-                error_count = error_count + ?9",
-            params![
-                date,
-                provider_id,
-                app_type,
-                model,
-                input_tokens,
-                output_tokens,
-                total_cost,
-                if is_success { 1 } else { 0 },
-                if is_success { 0 } else { 1 },
-            ],
-        )
-        .map_err(|e| AppError::Database(format!("更新每日统计失败: {e}")))?;
-
-        Ok(())
-    }
 }
 
 /// Provider 限额状态

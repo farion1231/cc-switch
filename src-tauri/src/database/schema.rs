@@ -173,40 +173,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 10. Proxy Usage 表 (代理使用统计，可选)
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS proxy_usage (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                provider_id TEXT NOT NULL,
-                app_type TEXT NOT NULL,
-                endpoint TEXT NOT NULL,
-                request_tokens INTEGER,
-                response_tokens INTEGER,
-                status_code INTEGER NOT NULL,
-                latency_ms INTEGER NOT NULL,
-                error TEXT,
-                timestamp TEXT NOT NULL
-            )",
-            [],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        // 为 proxy_usage 创建索引
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_proxy_usage_timestamp
-             ON proxy_usage(timestamp)",
-            [],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_proxy_usage_provider
-             ON proxy_usage(provider_id, app_type)",
-            [],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        // 11. Proxy Request Logs 表 (详细请求日志)
+        // 10. Proxy Request Logs 表 (详细请求日志)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS proxy_request_logs (
                 request_id TEXT PRIMARY KEY,
@@ -272,7 +239,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 12. Model Pricing 表 (模型定价)
+        // 11. Model Pricing 表 (模型定价)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS model_pricing (
                 model_id TEXT PRIMARY KEY,
@@ -286,38 +253,20 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 13. Usage Daily Stats 表 (每日聚合统计)
+        // 12. Stream Check Logs 表 (流式健康检查日志)
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS usage_daily_stats (
-                date TEXT NOT NULL,
-                provider_id TEXT NOT NULL,
-                app_type TEXT NOT NULL,
-                model TEXT NOT NULL,
-                request_count INTEGER NOT NULL DEFAULT 0,
-                total_input_tokens INTEGER NOT NULL DEFAULT 0,
-                total_output_tokens INTEGER NOT NULL DEFAULT 0,
-                total_cost_usd TEXT NOT NULL DEFAULT '0',
-                success_count INTEGER NOT NULL DEFAULT 0,
-                error_count INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (date, provider_id, app_type, model)
-            )",
-            [],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        // 14. Model Test Logs 表 (模型测试日志，独立于代理使用统计)
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS model_test_logs (
+            "CREATE TABLE IF NOT EXISTS stream_check_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 provider_id TEXT NOT NULL,
                 provider_name TEXT NOT NULL,
                 app_type TEXT NOT NULL,
-                model TEXT NOT NULL,
-                prompt TEXT NOT NULL,
+                status TEXT NOT NULL,
                 success INTEGER NOT NULL,
                 message TEXT NOT NULL,
                 response_time_ms INTEGER,
                 http_status INTEGER,
+                model_used TEXT,
+                retry_count INTEGER DEFAULT 0,
                 tested_at INTEGER NOT NULL
             )",
             [],
@@ -325,20 +274,13 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_model_test_logs_provider
-             ON model_test_logs(provider_id, app_type)",
+            "CREATE INDEX IF NOT EXISTS idx_stream_check_logs_provider
+             ON stream_check_logs(app_type, provider_id, tested_at DESC)",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_model_test_logs_tested_at
-             ON model_test_logs(tested_at DESC)",
-            [],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        // 15. Circuit Breaker Config 表 (熔断器配置)
+        // 13. Circuit Breaker Config 表 (熔断器配置)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS circuit_breaker_config (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -553,24 +495,6 @@ impl Database {
                 output_cost_per_million TEXT NOT NULL,
                 cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
                 cache_creation_cost_per_million TEXT NOT NULL DEFAULT '0'
-            )",
-            [],
-        )?;
-
-        // usage_daily_stats 表
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS usage_daily_stats (
-                date TEXT NOT NULL,
-                provider_id TEXT NOT NULL,
-                app_type TEXT NOT NULL,
-                model TEXT NOT NULL,
-                request_count INTEGER NOT NULL DEFAULT 0,
-                total_input_tokens INTEGER NOT NULL DEFAULT 0,
-                total_output_tokens INTEGER NOT NULL DEFAULT 0,
-                total_cost_usd TEXT NOT NULL DEFAULT '0',
-                success_count INTEGER NOT NULL DEFAULT 0,
-                error_count INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (date, provider_id, app_type, model)
             )",
             [],
         )?;

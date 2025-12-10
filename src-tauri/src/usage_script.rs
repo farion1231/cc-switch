@@ -525,23 +525,18 @@ fn validate_request_url(request_url: &str, base_url: &str) -> Result<(), AppErro
 
     // 检查端口是否匹配（考虑默认端口）
     // 使用 port_or_known_default() 会自动处理默认端口（http->80, https->443）
-    match (parsed_request.port_or_known_default(), parsed_base.port_or_known_default()) {
+    match (
+        parsed_request.port_or_known_default(),
+        parsed_base.port_or_known_default(),
+    ) {
         (Some(request_port), Some(base_port)) if request_port == base_port => {
             // 端口匹配，继续执行
         }
         (Some(request_port), Some(base_port)) => {
             return Err(AppError::localized(
                 "usage_script.request_port_mismatch",
-                format!(
-                    "请求端口 {} 必须与 base_url 端口 {} 匹配",
-                    request_port,
-                    base_port
-                ),
-                format!(
-                    "Request port {} must match base_url port {}",
-                    request_port,
-                    base_port
-                ),
+                format!("请求端口 {request_port} 必须与 base_url 端口 {base_port} 匹配"),
+                format!("Request port {request_port} must match base_url port {base_port}"),
             ));
         }
         _ => {
@@ -774,22 +769,25 @@ mod tests {
     fn test_https_bypass_prevention() {
         // 非本地域名的 HTTP 应该被拒绝
         let result = validate_base_url("http://127.0.0.1.evil.com/api");
-        assert!(result.is_err(), "Should reject HTTP for non-localhost domains");
+        assert!(
+            result.is_err(),
+            "Should reject HTTP for non-localhost domains"
+        );
     }
 
     #[test]
     fn test_edge_cases() {
         // 边界情况测试
-        assert!(is_private_ip("172.16.0.0"));   // RFC1918起始
+        assert!(is_private_ip("172.16.0.0")); // RFC1918起始
         assert!(is_private_ip("172.31.255.255")); // RFC1918结束
-        assert!(is_private_ip("10.0.0.0"));      // 10.0.0.0/8起始
+        assert!(is_private_ip("10.0.0.0")); // 10.0.0.0/8起始
         assert!(is_private_ip("10.255.255.255")); // 10.0.0.0/8结束
-        assert!(is_private_ip("192.168.0.0"));   // 192.168.0.0/16起始
+        assert!(is_private_ip("192.168.0.0")); // 192.168.0.0/16起始
         assert!(is_private_ip("192.168.255.255")); // 192.168.0.0/16结束
 
         // 紧邻RFC1918的公网地址 - 应该返回false
         assert!(!is_private_ip("172.15.255.255")); // 172.16.0.0的前一个
-        assert!(!is_private_ip("172.32.0.0"));    // 172.31.255.255的后一个
+        assert!(!is_private_ip("172.32.0.0")); // 172.31.255.255的后一个
     }
 
     #[test]
@@ -815,27 +813,57 @@ mod tests {
         // 测试用例：(base_url, request_url, should_match)
         let test_cases = vec![
             // HTTPS默认端口测试
-            ("https://api.example.com", "https://api.example.com/v1/test", true),
-            ("https://api.example.com", "https://api.example.com:443/v1/test", true),
-            ("https://api.example.com:443", "https://api.example.com/v1/test", true),
-            ("https://api.example.com:443", "https://api.example.com:443/v1/test", true),
-
+            (
+                "https://api.example.com",
+                "https://api.example.com/v1/test",
+                true,
+            ),
+            (
+                "https://api.example.com",
+                "https://api.example.com:443/v1/test",
+                true,
+            ),
+            (
+                "https://api.example.com:443",
+                "https://api.example.com/v1/test",
+                true,
+            ),
+            (
+                "https://api.example.com:443",
+                "https://api.example.com:443/v1/test",
+                true,
+            ),
             // 端口不匹配测试
-            ("https://api.example.com", "https://api.example.com:8443/v1/test", false),
-            ("https://api.example.com:443", "https://api.example.com:8443/v1/test", false),
+            (
+                "https://api.example.com",
+                "https://api.example.com:8443/v1/test",
+                false,
+            ),
+            (
+                "https://api.example.com:443",
+                "https://api.example.com:8443/v1/test",
+                false,
+            ),
         ];
 
         for (base_url, request_url, should_match) in test_cases {
             let result = validate_request_url(request_url, base_url);
 
             if should_match {
-                assert!(result.is_ok(),
+                assert!(
+                    result.is_ok(),
                     "应该匹配的URL被拒绝: base_url={}, request_url={}, error={}",
-                    base_url, request_url, result.unwrap_err());
+                    base_url,
+                    request_url,
+                    result.unwrap_err()
+                );
             } else {
-                assert!(result.is_err(),
+                assert!(
+                    result.is_err(),
                     "应该不匹配的URL被允许: base_url={}, request_url={}",
-                    base_url, request_url);
+                    base_url,
+                    request_url
+                );
             }
         }
     }
