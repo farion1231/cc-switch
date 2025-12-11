@@ -3,7 +3,6 @@
 # Claude Code / Codex / Gemini CLI 全方位辅助工具
 
 [![Version](https://img.shields.io/badge/version-3.8.2-blue.svg)](https://github.com/farion1231/cc-switch/releases)
-[![Trending](https://img.shields.io/badge/🔥_TypeScript_Trending-Daily%20%7C%20Weekly%20%7C%20Monthly-ff6b6b.svg)](https://github.com/trending/typescript)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![Downloads](https://img.shields.io/endpoint?url=https://api.pinstudios.net/api/badges/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
@@ -12,21 +11,13 @@
 
 [English](README.md) | 中文 | [日本語](README_JA.md) | [更新日志](CHANGELOG.md) | [v3.8.0 发布说明](docs/release-note-v3.8.0-zh.md)
 
-**从供应商切换器到 AI CLI 一体化管理平台**
-
-统一管理 Claude Code、Codex 与 Gemini CLI 的供应商配置、MCP 服务器、Skills 扩展和系统提示词。
-
 </div>
 
 ## ❤️赞助商
 
 ![智谱 GLM](assets/partners/banners/glm-zh.jpg)
 
-感谢智谱AI的 GLM CODING PLAN 赞助了本项目！
-
-GLM CODING PLAN 是专为AI编码打造的订阅套餐,每月最低仅需20元，即可在十余款主流AI编码工具如 Claude Code、Cline 中畅享智谱旗舰模型 GLM-4.6，为开发者提供顶尖、高速、稳定的编码体验。
-
-CC Switch 已经预设了智谱GLM，只需要填写 key 即可一键导入编程工具。智谱AI为本软件的用户提供了特别优惠，使用[此链接](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII)购买可以享受九折优惠。
+感谢智谱AI的 GLM CODING PLAN 赞助了本项目！GLM CODING PLAN 是专为AI编码打造的订阅套餐,每月最低仅需20元，即可在十余款主流AI编码工具如 Claude Code、Cline 中畅享智谱旗舰模型 GLM-4.6，为开发者提供顶尖、高速、稳定的编码体验。CC Switch 已经预设了智谱GLM，只需要填写 key 即可一键导入编程工具。智谱AI为本软件的用户提供了特别优惠，使用[此链接](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII)购买可以享受九折优惠。
 
 ---
 
@@ -39,6 +30,11 @@ CC Switch 已经预设了智谱GLM，只需要填写 key 即可一键导入编�
 <tr>
 <td width="180"><img src="assets/partners/logos/sds-zh.png" alt="ShanDianShuo" width="150"></td>
 <td>感谢闪电说赞助了本项目！闪电说是本地优先的 AI 语音输入法：毫秒级响应，数据不离设备；打字速度提升 4 倍，AI 智能纠错；绝对隐私安全，完全免费，配合 Claude Code 写代码效率翻倍！支持 Mac/Win 双平台，<a href="https://www.shandianshuo.cn">免费下载</a></td>
+</tr>
+
+<tr>
+<td width="180"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></td>
+<td>感谢 AIGoCode 赞助了本项目！AIGoCode 是一个集成了 Claude Code、Codex 以及 Gemini 最新模型的一站式平台，为你提供稳定、高效且高性价比的AI编程服务。本站提供灵活的订阅计划，零封号风险，国内直连，无需魔法，极速响应。AIGoCode 为 CC Switch 的用户提供了特别福利，通过<a href="https://aigocode.com/invite/CC-SWITCH">此链接</a>注册的用户首次充值可以获得额外10%奖励额度！</td>
 </tr>
 
 </table>
