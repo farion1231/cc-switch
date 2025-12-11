@@ -30,58 +30,42 @@ impl ProviderRouter {
     /// 选择可用的供应商（支持故障转移）
     /// 返回按优先级排序的可用供应商列表
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
-        // 1. 获取所有启用代理的供应商
-        let providers = self.db.get_proxy_targets(app_type).await?;
+        // 直接获取当前选中的供应商（基于 is_current 字段）
+        let current_id = self
+            .db
+            .get_current_provider(app_type)?
+            .ok_or_else(|| AppError::Config(format!("No current provider for {}", app_type)))?;
 
-        if providers.is_empty() {
-            return Err(AppError::Config(
-                "No proxy target providers configured".to_string(),
-            ));
-        }
-
-        log::debug!(
-            "Found {} proxy target providers for app_type: {}",
-            providers.len(),
-            app_type
-        );
-
-        // 2. 按 sort_index 排序（已经在数据库查询中排序了）
-        let sorted_providers: Vec<_> = providers.into_values().collect();
-
-        // 3. 过滤可用的供应商（检查熔断器状态）
-        let mut available_providers = Vec::new();
-
-        for provider in sorted_providers {
-            let circuit_key = format!("{}:{}", app_type, provider.id);
-            let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
-
-            if breaker.allow_request().await {
-                log::debug!(
-                    "Provider {} is available (circuit state: {:?})",
-                    provider.id,
-                    breaker.get_state().await
-                );
-                available_providers.push(provider);
-            } else {
-                log::warn!(
-                    "Provider {} is unavailable (circuit breaker open)",
-                    provider.id
-                );
-            }
-        }
-
-        if available_providers.is_empty() {
-            return Err(AppError::Config(
-                "All proxy target providers are unavailable (circuit breakers open)".to_string(),
-            ));
-        }
+        let providers = self.db.get_all_providers(app_type)?;
+        let provider = providers
+            .get(&current_id)
+            .ok_or_else(|| AppError::Config(format!("Current provider {} not found", current_id)))?
+            .clone();
 
         log::info!(
-            "Selected {} available providers for failover chain",
-            available_providers.len()
+            "[{}] Selected current provider: {} ({})",
+            app_type,
+            provider.name,
+            provider.id
         );
 
-        Ok(available_providers)
+        // 检查熔断器状态
+        let circuit_key = format!("{}:{}", app_type, provider.id);
+        let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+
+        if !breaker.allow_request().await {
+            log::warn!(
+                "Provider {} is unavailable (circuit breaker open)",
+                provider.id
+            );
+            return Err(AppError::Config(format!(
+                "Current provider {} is unavailable (circuit breaker open)",
+                provider.name
+            )));
+        }
+
+        // 返回单个供应商（保留 Vec 接口以兼容现有代码）
+        Ok(vec![provider])
     }
 
     /// 记录供应商请求结果

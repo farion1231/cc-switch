@@ -3,7 +3,6 @@ import { ProviderHealthStatus } from "@/types/proxy";
 
 interface ProviderHealthBadgeProps {
   consecutiveFailures: number;
-  isProxyTarget?: boolean;
   className?: string;
 }
 
@@ -13,14 +12,8 @@ interface ProviderHealthBadgeProps {
  */
 export function ProviderHealthBadge({
   consecutiveFailures,
-  isProxyTarget,
   className,
 }: ProviderHealthBadgeProps) {
-  // 如果代理目标已关闭但有失败记录，仍然显示（自动熔断场景）
-  // 如果代理目标启用，始终显示
-  // 如果代理目标关闭且无失败记录，隐藏
-  if (!isProxyTarget && consecutiveFailures === 0) return null;
-
   // 根据失败次数计算状态
   const getStatus = () => {
     if (consecutiveFailures === 0) {

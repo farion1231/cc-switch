@@ -174,8 +174,8 @@ export function SettingsPage({
 
   const {
     isRunning,
-    start: startProxy,
-    stop: stopProxy,
+    startWithTakeover: startProxy,
+    stopWithRestore: stopProxy,
     isPending: isProxyPending,
   } = useProxyStatus();
   const [failoverEnabled, setFailoverEnabled] = useState(true);

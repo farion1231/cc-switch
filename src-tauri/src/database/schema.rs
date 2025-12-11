@@ -302,6 +302,23 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 16. Proxy Live Backup 表 (Live 配置备份)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS proxy_live_backup (
+                app_type TEXT PRIMARY KEY,
+                original_config TEXT NOT NULL,
+                backed_up_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 尝试添加 live_takeover_active 列到 proxy_config 表
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+
         Ok(())
     }
 

@@ -17,7 +17,7 @@ impl Database {
             let conn = lock_conn!(self.conn);
             conn.query_row(
                 "SELECT enabled, listen_address, listen_port, max_retries,
-                        request_timeout, enable_logging
+                        request_timeout, enable_logging, live_takeover_active
                  FROM proxy_config WHERE id = 1",
                 [],
                 |row| {
@@ -28,6 +28,7 @@ impl Database {
                         max_retries: row.get::<_, i32>(3)? as u8,
                         request_timeout: row.get::<_, i32>(4)? as u64,
                         enable_logging: row.get::<_, i32>(5)? != 0,
+                        live_takeover_active: row.get::<_, i32>(6).unwrap_or(0) != 0,
                     })
                 },
             )
@@ -51,8 +52,8 @@ impl Database {
 
         conn.execute(
             "INSERT OR REPLACE INTO proxy_config
-             (id, enabled, listen_address, listen_port, max_retries, request_timeout, enable_logging, target_app, created_at, updated_at)
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7,
+             (id, enabled, listen_address, listen_port, max_retries, request_timeout, enable_logging, live_takeover_active, target_app, created_at, updated_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
                      COALESCE((SELECT created_at FROM proxy_config WHERE id = 1), datetime('now')),
                      datetime('now'))",
             rusqlite::params![
@@ -62,12 +63,37 @@ impl Database {
                 config.max_retries as i32,
                 config.request_timeout as i32,
                 if config.enable_logging { 1 } else { 0 },
+                if config.live_takeover_active { 1 } else { 0 },
                 "claude", // 兼容旧字段，写入默认值
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// 设置 Live 接管状态
+    pub async fn set_live_takeover_active(&self, active: bool) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE proxy_config SET live_takeover_active = ?1, updated_at = datetime('now') WHERE id = 1",
+            rusqlite::params![if active { 1 } else { 0 }],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// 检查是否处于 Live 接管模式
+    pub async fn is_live_takeover_active(&self) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let active: i32 = conn
+            .query_row(
+                "SELECT COALESCE(live_takeover_active, 0) FROM proxy_config WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        Ok(active != 0)
     }
 
     // ==================== Provider Health ====================
@@ -239,6 +265,76 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        Ok(())
+    }
+
+    // ==================== Live Backup ====================
+
+    /// 保存 Live 配置备份
+    pub async fn save_live_backup(
+        &self,
+        app_type: &str,
+        config_json: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let now = chrono::Utc::now().to_rfc3339();
+
+        conn.execute(
+            "INSERT OR REPLACE INTO proxy_live_backup (app_type, original_config, backed_up_at)
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![app_type, config_json, now],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        log::info!("已备份 {app_type} Live 配置");
+        Ok(())
+    }
+
+    /// 获取 Live 配置备份
+    pub async fn get_live_backup(&self, app_type: &str) -> Result<Option<LiveBackup>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let result = conn.query_row(
+            "SELECT app_type, original_config, backed_up_at FROM proxy_live_backup WHERE app_type = ?1",
+            rusqlite::params![app_type],
+            |row| {
+                Ok(LiveBackup {
+                    app_type: row.get(0)?,
+                    original_config: row.get(1)?,
+                    backed_up_at: row.get(2)?,
+                })
+            },
+        );
+
+        match result {
+            Ok(backup) => Ok(Some(backup)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(AppError::Database(e.to_string())),
+        }
+    }
+
+    /// 删除 Live 配置备份
+    pub async fn delete_live_backup(&self, app_type: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+
+        conn.execute(
+            "DELETE FROM proxy_live_backup WHERE app_type = ?1",
+            rusqlite::params![app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        log::info!("已删除 {app_type} Live 配置备份");
+        Ok(())
+    }
+
+    /// 删除所有 Live 配置备份
+    pub async fn delete_all_live_backups(&self) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+
+        conn.execute("DELETE FROM proxy_live_backup", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        log::info!("已删除所有 Live 配置备份");
         Ok(())
     }
 }

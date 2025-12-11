@@ -530,7 +530,7 @@ pub fn run() {
                     Ok(config) => {
                         if config.enabled {
                             log::info!("代理服务配置为启用，正在启动...");
-                            match state.proxy_service.start().await {
+                            match state.proxy_service.start_with_takeover().await {
                                 Ok(info) => log::info!(
                                     "代理服务器自动启动成功: {}:{}",
                                     info.address,
@@ -647,12 +647,14 @@ pub fn run() {
             commands::set_auto_launch,
             commands::get_auto_launch_status,
             // Proxy server management
-            commands::start_proxy_server,
-            commands::stop_proxy_server,
+            commands::start_proxy_with_takeover,
+            commands::stop_proxy_with_restore,
             commands::get_proxy_status,
             commands::get_proxy_config,
             commands::update_proxy_config,
             commands::is_proxy_running,
+            commands::is_live_takeover_active,
+            commands::switch_proxy_provider,
             // Proxy failover commands
             commands::get_proxy_targets,
             commands::set_proxy_target,
@@ -685,6 +687,22 @@ pub fn run() {
         .expect("error while running tauri application");
 
     app.run(|app_handle, event| {
+        // 处理退出请求（所有平台）
+        if let RunEvent::ExitRequested { api, .. } = &event {
+            log::info!("收到退出请求，开始清理...");
+            // 阻止立即退出，执行清理
+            api.prevent_exit();
+
+            let app_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                cleanup_before_exit(&app_handle).await;
+                log::info!("清理完成，退出应用");
+                // 使用 std::process::exit 避免再次触发 ExitRequested
+                std::process::exit(0);
+            });
+            return;
+        }
+
         #[cfg(target_os = "macos")]
         {
             match event {
@@ -762,6 +780,44 @@ pub fn run() {
             let _ = (app_handle, event);
         }
     });
+}
+
+// ============================================================
+// 应用退出清理
+// ============================================================
+
+/// 应用退出前的清理工作
+///
+/// 在应用退出前检查代理服务器状态，如果正在运行则停止代理并恢复 Live 配置。
+/// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
+pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
+    if let Some(state) = app_handle.try_state::<store::AppState>() {
+        let proxy_service = &state.proxy_service;
+
+        // 检查代理是否在运行
+        if proxy_service.is_running().await {
+            log::info!("检测到代理服务器正在运行，开始清理...");
+
+            // 检查是否处于 Live 接管模式
+            if let Ok(is_takeover) = state.db.is_live_takeover_active().await {
+                if is_takeover {
+                    // 接管模式：停止并恢复配置
+                    if let Err(e) = proxy_service.stop_with_restore().await {
+                        log::error!("退出时恢复 Live 配置失败: {e}");
+                    } else {
+                        log::info!("已恢复 Live 配置");
+                    }
+                } else {
+                    // 非接管模式：仅停止代理
+                    if let Err(e) = proxy_service.stop().await {
+                        log::error!("退出时停止代理失败: {e}");
+                    }
+                }
+            }
+
+            log::info!("代理服务器清理完成");
+        }
+    }
 }
 
 // ============================================================

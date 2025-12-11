@@ -25,6 +25,7 @@ import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { cn } from "@/lib/utils";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
@@ -33,6 +34,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
+import { ProxyToggle } from "@/components/proxy/ProxyToggle";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
@@ -63,7 +65,7 @@ function App() {
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
   // 获取代理服务状态
-  const { isRunning: isProxyRunning } = useProxyStatus();
+  const { isRunning: isProxyRunning, isTakeoverActive } = useProxyStatus();
 
   // 获取供应商列表，当代理服务运行时自动刷新
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
@@ -321,6 +323,7 @@ function App() {
                   appId={activeApp}
                   isLoading={isLoading}
                   isProxyRunning={isProxyRunning}
+                  isProxyTakeover={isProxyRunning && isTakeoverActive}
                   onSwitch={switchProvider}
                   onEdit={setEditingProvider}
                   onDelete={setConfirmDelete}
@@ -415,7 +418,12 @@ function App() {
                     href="https://github.com/farion1231/cc-switch"
                     target="_blank"
                     rel="noreferrer"
-                    className="text-xl font-semibold text-blue-500 transition-colors hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300"
+                    className={cn(
+                      "text-xl font-semibold transition-colors",
+                      isProxyRunning && isTakeoverActive
+                        ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
+                        : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300"
+                    )}
                   >
                     CC Switch
                   </a>
@@ -482,6 +490,8 @@ function App() {
             )}
             {currentView === "providers" && (
               <>
+                <ProxyToggle />
+
                 <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
 
                 <div className="bg-muted p-1 rounded-xl flex items-center gap-1">

@@ -18,7 +18,11 @@ export interface AutoFailoverConfigPanelProps {
 
 export function AutoFailoverConfigPanel({
   enabled,
+  onEnabledChange: _onEnabledChange,
 }: AutoFailoverConfigPanelProps) {
+  // Note: onEnabledChange is currently unused but kept in the interface
+  // for potential future use by parent components
+  void _onEnabledChange;
   const { t } = useTranslation();
   const { data: config, isLoading, error } = useCircuitBreakerConfig();
   const updateConfig = useUpdateCircuitBreakerConfig();
@@ -76,11 +80,11 @@ export function AutoFailoverConfigPanel({
 
   return (
     <div className="border-0 rounded-none shadow-none bg-transparent">
-      {/* Header Switch moved to parent accordion logic or kept here absolutely positioned if styling permits. 
-            Since we need it in the accordion header, and this component is inside the content, we can use a portal or 
-            absolute positioning trick similar to ProxyPanel, OR cleaner, just duplicate the switch logic in SettingsPage 
-            and pass it down. But for now, let's use the absolute positioning trick to "lift" it visually. 
-            Better yet, let's just render the content directly without the wrapping Card header/collapse logic 
+      {/* Header Switch moved to parent accordion logic or kept here absolutely positioned if styling permits.
+            Since we need it in the accordion header, and this component is inside the content, we can use a portal or
+            absolute positioning trick similar to ProxyPanel, OR cleaner, just duplicate the switch logic in SettingsPage
+            and pass it down. But for now, let's use the absolute positioning trick to "lift" it visually.
+            Better yet, let's just render the content directly without the wrapping Card header/collapse logic
             since the user requested "click to expand is detailed info, no need to fold again" (implying the accordion handles folding).
         */}
 

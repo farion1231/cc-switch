@@ -483,6 +483,26 @@ impl Database {
         Ok(targets)
     }
 
+    /// 更新供应商的 settings_config（仅更新配置，不改变其他字段）
+    pub fn update_provider_settings_config(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        settings_config: &serde_json::Value,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET settings_config = ?1 WHERE id = ?2 AND app_type = ?3",
+            params![
+                serde_json::to_string(settings_config).unwrap(),
+                provider_id,
+                app_type
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     /// 添加自定义端点
     pub fn add_custom_endpoint(
         &self,

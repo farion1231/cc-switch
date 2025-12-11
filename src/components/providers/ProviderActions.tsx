@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 interface ProviderActionsProps {
   isCurrent: boolean;
   isTesting?: boolean;
+  isProxyTakeover?: boolean;
   onSwitch: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
@@ -30,6 +31,7 @@ interface ProviderActionsProps {
 export function ProviderActions({
   isCurrent,
   isTesting,
+  isProxyTakeover = false,
   onSwitch,
   onEdit,
   onDuplicate,
@@ -54,6 +56,10 @@ export function ProviderActions({
           "w-[4.5rem] px-2.5",
           isCurrent &&
             "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+          // 代理接管模式下启用按钮使用绿色
+          !isCurrent &&
+            isProxyTakeover &&
+            "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
         )}
       >
         {isCurrent ? (
@@ -118,7 +124,8 @@ export function ProviderActions({
         </Button>
 
         {/* 重置熔断器按钮 - 代理目标启用时显示 */}
-        {onResetCircuitBreaker && isProxyTarget && (
+        {/* TODO: 暂时隐藏，后续根据故障转移功能启用 */}
+        {/* {onResetCircuitBreaker && isProxyTarget && (
           <Button
             size="icon"
             variant="ghost"
@@ -141,7 +148,7 @@ export function ProviderActions({
           >
             <RotateCcw className="h-4 w-4" />
           </Button>
-        )}
+        )} */}
 
         <Button
           size="icon"
@@ -151,7 +158,7 @@ export function ProviderActions({
           className={cn(
             iconButtonClass,
             !isCurrent && "hover:text-red-500 dark:hover:text-red-400",
-            isCurrent && "opacity-40 cursor-not-allowed text-muted-foreground",
+            isCurrent && "opacity-40 cursor-not-allowed text-muted-foreground"
           )}
         >
           <Trash2 className="h-4 w-4" />

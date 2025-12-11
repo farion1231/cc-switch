@@ -5,7 +5,6 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { useMemo } from "react";
 import type { CSSProperties } from "react";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
@@ -27,6 +26,7 @@ interface ProviderListProps {
   onCreate?: () => void;
   isLoading?: boolean;
   isProxyRunning?: boolean; // 代理服务运行状态
+  isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
 }
 
 export function ProviderList({
@@ -42,6 +42,7 @@ export function ProviderList({
   onCreate,
   isLoading = false,
   isProxyRunning = false, // 默认值为 false
+  isProxyTakeover = false, // 默认值为 false
 }: ProviderListProps) {
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
@@ -50,27 +51,6 @@ export function ProviderList({
 
   // 流式健康检查
   const { checkProvider, isChecking } = useStreamCheck(appId);
-
-  // 计算代理目标的实际优先级映射 (P1, P2, P3...)
-  const proxyPriorityMap = useMemo(() => {
-    // 获取所有启用代理目标的供应商
-    const proxyTargets = sortedProviders.filter((p) => p.isProxyTarget);
-
-    // 按 sortIndex 排序
-    const sortedTargets = proxyTargets.sort((a, b) => {
-      const indexA = a.sortIndex ?? Number.MAX_SAFE_INTEGER;
-      const indexB = b.sortIndex ?? Number.MAX_SAFE_INTEGER;
-      return indexA - indexB;
-    });
-
-    // 创建优先级映射
-    const map = new Map<string, number>();
-    sortedTargets.forEach((provider, index) => {
-      map.set(provider.id, index + 1); // P1, P2, P3...
-    });
-
-    return map;
-  }, [sortedProviders]);
 
   const handleTest = (provider: Provider) => {
     checkProvider(provider.id, provider.name);
@@ -122,8 +102,7 @@ export function ProviderList({
               onTest={handleTest}
               isTesting={isChecking(provider.id)}
               isProxyRunning={isProxyRunning}
-              proxyPriority={proxyPriorityMap.get(provider.id)}
-              allProviders={sortedProviders}
+              isProxyTakeover={isProxyTakeover}
             />
           ))}
         </div>
@@ -145,8 +124,7 @@ interface SortableProviderCardProps {
   onTest: (provider: Provider) => void;
   isTesting: boolean;
   isProxyRunning: boolean;
-  proxyPriority?: number; // 代理目标的实际优先级 (1, 2, 3...)
-  allProviders?: Provider[]; // 所有供应商列表
+  isProxyTakeover: boolean;
 }
 
 function SortableProviderCard({
@@ -162,8 +140,7 @@ function SortableProviderCard({
   onTest,
   isTesting,
   isProxyRunning,
-  proxyPriority,
-  allProviders,
+  isProxyTakeover,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -196,8 +173,7 @@ function SortableProviderCard({
         onTest={onTest}
         isTesting={isTesting}
         isProxyRunning={isProxyRunning}
-        proxyPriority={proxyPriority}
-        allProviders={allProviders}
+        isProxyTakeover={isProxyTakeover}
         dragHandleProps={{
           attributes,
           listeners,

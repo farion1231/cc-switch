@@ -15,6 +15,9 @@ pub struct ProxyConfig {
     pub request_timeout: u64,
     /// 是否启用日志
     pub enable_logging: bool,
+    /// 是否正在接管 Live 配置
+    #[serde(default)]
+    pub live_takeover_active: bool,
 }
 
 impl Default for ProxyConfig {
@@ -26,6 +29,7 @@ impl Default for ProxyConfig {
             max_retries: 3,
             request_timeout: 300,
             enable_logging: true,
+            live_takeover_active: false,
         }
     }
 }
@@ -102,4 +106,15 @@ pub struct ProviderHealth {
     pub last_failure_at: Option<String>,
     pub last_error: Option<String>,
     pub updated_at: String,
+}
+
+/// Live 配置备份记录
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveBackup {
+    /// 应用类型 (claude/codex/gemini)
+    pub app_type: String,
+    /// 原始配置 JSON
+    pub original_config: String,
+    /// 备份时间
+    pub backed_up_at: String,
 }

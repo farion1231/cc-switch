@@ -173,14 +173,71 @@ impl ProviderService {
     ///
     /// Switch flow:
     /// 1. Validate target provider exists
-    /// 2. **Backfill mechanism**: Backfill current live config to current provider, protect user manual modifications
-    /// 3. Update local settings current_provider_xxx (device-level)
-    /// 4. Update database is_current (as default for new devices)
-    /// 5. Write target provider config to live files
-    /// 6. Sync MCP configuration
+    /// 2. Check if proxy takeover mode is active AND proxy server is running
+    /// 3. If takeover mode active: hot-switch proxy target only (no Live config write)
+    /// 4. If normal mode:
+    ///    a. **Backfill mechanism**: Backfill current live config to current provider
+    ///    b. Update local settings current_provider_xxx (device-level)
+    ///    c. Update database is_current (as default for new devices)
+    ///    d. Write target provider config to live files
+    ///    e. Sync MCP configuration
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         // Check if provider exists
         let providers = state.db.get_all_providers(app_type.as_str())?;
+        let _provider = providers
+            .get(id)
+            .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        // Check if proxy takeover mode is active AND proxy server is actually running
+        // Both conditions must be true to use hot-switch mode
+        // Use blocking wait since this is a sync function
+        let is_takeover_flag =
+            futures::executor::block_on(state.db.is_live_takeover_active()).unwrap_or(false);
+        let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
+
+        // Hot-switch only when BOTH: takeover flag is set AND proxy server is actually running
+        let should_hot_switch = is_takeover_flag && is_proxy_running;
+
+        if should_hot_switch {
+            // Proxy takeover mode: hot-switch only, don't write Live config
+            log::info!(
+                "代理接管模式：热切换 {} 的目标供应商为 {}",
+                app_type.as_str(),
+                id
+            );
+
+            // Update database is_current
+            state.db.set_current_provider(app_type.as_str(), id)?;
+
+            // 同时更新 is_proxy_target（代理路由器使用此字段选择供应商）
+            state.db.set_proxy_target_provider(app_type.as_str(), id)?;
+
+            // Update local settings for consistency
+            crate::settings::set_current_provider(&app_type, Some(id))?;
+
+            // Note: No Live config write, no MCP sync
+            // The proxy server will route requests to the new provider via is_proxy_target
+            return Ok(());
+        }
+
+        // Normal mode: full switch with Live config write
+        // Also clear stale takeover flag if proxy is not running but flag was set
+        if is_takeover_flag && !is_proxy_running {
+            log::warn!("检测到代理接管标志残留（代理已停止），清除标志并执行正常切换");
+            // Clear stale takeover flag
+            let _ = futures::executor::block_on(state.db.set_live_takeover_active(false));
+        }
+
+        Self::switch_normal(state, app_type, id, &providers)
+    }
+
+    /// Normal switch flow (non-proxy mode)
+    fn switch_normal(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+        providers: &indexmap::IndexMap<String, Provider>,
+    ) -> Result<(), AppError> {
         let provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;

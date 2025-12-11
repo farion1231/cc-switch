@@ -302,10 +302,9 @@ function ProviderQueueItem({
           </span>
         )}
       </div>
-      {/* 健康徽章：队列中的代理目标始终显示，没有健康数据时默认为正常 */}
+      {/* 健康徽章 */}
       <ProviderHealthBadge
         consecutiveFailures={health?.consecutive_failures ?? 0}
-        isProxyTarget={true}
       />
     </div>
   );

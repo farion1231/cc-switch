@@ -148,17 +148,24 @@ impl ProxyServer {
             // 健康检查
             .route("/health", get(handlers::health_check))
             .route("/status", get(handlers::get_status))
-            // Claude API
+            // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))
-            // OpenAI Chat Completions API (Codex CLI)
+            .route("/claude/v1/messages", post(handlers::handle_messages))
+            // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
             .route(
                 "/v1/chat/completions",
                 post(handlers::handle_chat_completions),
             )
-            // OpenAI Responses API (Codex CLI)
+            .route(
+                "/codex/v1/chat/completions",
+                post(handlers::handle_chat_completions),
+            )
+            // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)
             .route("/v1/responses", post(handlers::handle_responses))
-            // Gemini API
+            .route("/codex/v1/responses", post(handlers::handle_responses))
+            // Gemini API (支持带前缀和不带前缀)
             .route("/v1beta/*path", post(handlers::handle_gemini))
+            .route("/gemini/v1beta/*path", post(handlers::handle_gemini))
             .layer(cors)
             .with_state(self.state.clone())
     }

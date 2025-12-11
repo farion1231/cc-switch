@@ -5,6 +5,7 @@ export interface ProxyConfig {
   max_retries: number;
   request_timeout: number;
   enable_logging: boolean;
+  live_takeover_active?: boolean;
 }
 
 export interface ProxyStatus {

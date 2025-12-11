@@ -7,18 +7,18 @@ use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 use crate::store::AppState;
 
-/// 启动代理服务器
+/// 启动代理服务器（带 Live 配置接管）
 #[tauri::command]
-pub async fn start_proxy_server(
+pub async fn start_proxy_with_takeover(
     state: tauri::State<'_, AppState>,
 ) -> Result<ProxyServerInfo, String> {
-    state.proxy_service.start().await
+    state.proxy_service.start_with_takeover().await
 }
 
-/// 停止代理服务器
+/// 停止代理服务器（恢复 Live 配置）
 #[tauri::command]
-pub async fn stop_proxy_server(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    state.proxy_service.stop().await
+pub async fn stop_proxy_with_restore(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.proxy_service.stop_with_restore().await
 }
 
 /// 获取代理服务器状态
@@ -46,6 +46,25 @@ pub async fn update_proxy_config(
 #[tauri::command]
 pub async fn is_proxy_running(state: tauri::State<'_, AppState>) -> Result<bool, String> {
     Ok(state.proxy_service.is_running().await)
+}
+
+/// 检查是否处于 Live 接管模式
+#[tauri::command]
+pub async fn is_live_takeover_active(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    state.proxy_service.is_takeover_active().await
+}
+
+/// 代理模式下切换供应商（热切换）
+#[tauri::command]
+pub async fn switch_proxy_provider(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    provider_id: String,
+) -> Result<(), String> {
+    state
+        .proxy_service
+        .switch_proxy_target(&app_type, &provider_id)
+        .await
 }
 
 // ==================== 故障转移相关命令 ====================
