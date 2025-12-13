@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
-import type { Settings } from "@/types";
+import type { ConfigDirectorySet, Settings } from "@/types";
 import { useSettingsForm, type SettingsFormState } from "./useSettingsForm";
 import {
   useDirectorySettings,
@@ -25,6 +25,7 @@ export interface UseSettingsResult {
   isPortable: boolean;
   appConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
+  configDirectorySets: ConfigDirectorySet[];
   requiresRestart: boolean;
   updateSettings: (updates: Partial<SettingsFormState>) => void;
   updateDirectory: (app: AppId, value?: string) => void;
@@ -33,6 +34,19 @@ export interface UseSettingsResult {
   browseAppConfigDir: () => Promise<void>;
   resetDirectory: (app: AppId) => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
+  addConfigDirectorySet: () => void;
+  removeConfigDirectorySet: (setId: string) => void;
+  updateConfigDirectorySet: (
+    setId: string,
+    updates: Partial<ConfigDirectorySet>,
+  ) => void;
+  updateConfigDirectorySetDirectory: (
+    setId: string,
+    app: AppId,
+    value?: string,
+  ) => void;
+  browseConfigDirectorySet: (setId: string, app: AppId) => Promise<void>;
+  resetConfigDirectorySet: (setId: string, app: AppId) => Promise<void>;
   saveSettings: (
     overrides?: Partial<SettingsFormState>,
     options?: { silent?: boolean },
@@ -80,12 +94,19 @@ export function useSettings(): UseSettingsResult {
     resolvedDirs,
     isLoading: isDirectoryLoading,
     initialAppConfigDir,
+    configDirectorySets,
     updateDirectory,
     updateAppConfigDir,
     browseDirectory,
     browseAppConfigDir,
     resetDirectory,
     resetAppConfigDir,
+    addConfigDirectorySet,
+    removeConfigDirectorySet,
+    updateConfigDirectorySet,
+    updateConfigDirectorySetDirectory,
+    browseConfigDirectorySet,
+    resetConfigDirectorySet,
     resetAllDirectories,
   } = useDirectorySettings({
     settings,
@@ -347,6 +368,7 @@ export function useSettings(): UseSettingsResult {
     isPortable,
     appConfigDir,
     resolvedDirs,
+     configDirectorySets,
     requiresRestart,
     updateSettings,
     updateDirectory,
@@ -355,6 +377,12 @@ export function useSettings(): UseSettingsResult {
     browseAppConfigDir,
     resetDirectory,
     resetAppConfigDir,
+    addConfigDirectorySet,
+    removeConfigDirectorySet,
+    updateConfigDirectorySet,
+    updateConfigDirectorySetDirectory,
+    browseConfigDirectorySet,
+    resetConfigDirectorySet,
     saveSettings,
     autoSaveSettings,
     resetSettings,

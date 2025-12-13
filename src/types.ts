@@ -96,6 +96,14 @@ export interface ProviderMeta {
   partnerPromotionKey?: string;
 }
 
+export interface ConfigDirectorySet {
+  id: string;
+  name: string;
+  claudeConfigDir?: string;
+  codexConfigDir?: string;
+  geminiConfigDir?: string;
+}
+
 // 应用设置类型（用于设置对话框与 Tauri API）
 // 存储在本地 ~/.cc-switch/settings.json，不随数据库同步
 export interface Settings {
@@ -126,6 +134,10 @@ export interface Settings {
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
+
+  // ===== 配置目录多组设置 (预览) =====
+  configDirectorySets?: ConfigDirectorySet[];
+  activeConfigDirectorySetId?: string;
 }
 
 // MCP 服务器连接参数（宽松：允许扩展字段）

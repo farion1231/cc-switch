@@ -16,6 +16,19 @@ pub struct CustomEndpoint {
     pub last_used: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigDirectorySet {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gemini_config_dir: Option<String>,
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -44,6 +57,13 @@ pub struct AppSettings {
     pub codex_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini_config_dir: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub config_directory_sets: Vec<ConfigDirectorySet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_config_directory_set_id: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -76,6 +96,8 @@ impl Default for AppSettings {
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
+            config_directory_sets: Vec::new(),
+            active_config_directory_set_id: None,
             current_provider_claude: None,
             current_provider_codex: None,
             current_provider_gemini: None,
@@ -120,6 +142,50 @@ impl AppSettings {
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "ja"))
             .map(|s| s.to_string());
+
+        self.active_config_directory_set_id = self
+            .active_config_directory_set_id
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        for (idx, set) in self.config_directory_sets.iter_mut().enumerate() {
+            let trimmed_id = set.id.trim();
+            if trimmed_id.is_empty() {
+                set.id = format!("configset-{}", idx + 1);
+            } else {
+                set.id = trimmed_id.to_string();
+            }
+
+            let trimmed_name = set.name.trim();
+            if trimmed_name.is_empty() {
+                set.name = format!("Config Set {}", idx + 1);
+            } else {
+                set.name = trimmed_name.to_string();
+            }
+
+            set.claude_config_dir = set
+                .claude_config_dir
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            set.codex_config_dir = set
+                .codex_config_dir
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            set.gemini_config_dir = set
+                .gemini_config_dir
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+        }
     }
 
     fn load_from_file() -> Self {
