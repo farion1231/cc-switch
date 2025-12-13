@@ -159,6 +159,64 @@ describe("useConfigSets", () => {
     expect(syncCurrentProvidersLiveSafeMock).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps config set order stable even when active set changes", () => {
+    const settings: Settings = {
+      ...baseSettings,
+      configDirectorySets: [
+        {
+          id: "windows",
+          name: "Windows",
+          claudeConfigDir: "/win/claude",
+          codexConfigDir: "/win/codex",
+          geminiConfigDir: "/win/gemini",
+          currentProviderClaude: "claude-win",
+          currentProviderCodex: "codex-win",
+          currentProviderGemini: "gemini-win",
+        },
+        {
+          id: "wsl",
+          name: "WSL",
+          claudeConfigDir: "/wsl/claude",
+          codexConfigDir: "/wsl/codex",
+          geminiConfigDir: "/wsl/gemini",
+          currentProviderClaude: "claude-wsl",
+          currentProviderCodex: "codex-wsl",
+          currentProviderGemini: "gemini-wsl",
+        },
+      ],
+      activeConfigDirectorySetId: "windows",
+    };
+
+    let currentSettings = settings;
+
+    useSettingsQueryMock.mockImplementation(() => ({
+      data: currentSettings,
+    }));
+
+    const { result, rerender } = renderHook(() => useConfigSets());
+
+    expect(result.current.configSets.map((set) => set.id)).toEqual([
+      "windows",
+      "wsl",
+    ]);
+
+    currentSettings = {
+      ...settings,
+      configDirectorySets: [
+        settings.configDirectorySets![1],
+        settings.configDirectorySets![0],
+      ],
+      activeConfigDirectorySetId: "wsl",
+    };
+
+    rerender();
+
+    expect(result.current.configSets.map((set) => set.id)).toEqual([
+      "windows",
+      "wsl",
+    ]);
+  });
+
   it("uses latest fetched settings when cached data is stale", async () => {
     const staleSettings: Settings = {
       ...baseSettings,

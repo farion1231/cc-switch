@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -196,10 +196,36 @@ export function useConfigSets(): UseConfigSetsResult {
     [t],
   );
 
-  const { configSets, activeConfigSetId } = useMemo(
+  const { configSets: builtConfigSets, activeConfigSetId } = useMemo(
     () => buildLaunchConfigSets(data, defaultName),
     [data, defaultName],
   );
+
+  const displayOrderRef = useRef<string[]>([]);
+
+  const configSets = useMemo(() => {
+    if (!builtConfigSets.length) {
+      displayOrderRef.current = [];
+      return builtConfigSets;
+    }
+
+    const availableIds = builtConfigSets.map((set) => set.id);
+    const preservedOrder = displayOrderRef.current.filter((id) =>
+      availableIds.includes(id),
+    );
+    const newIds = availableIds.filter((id) => !preservedOrder.includes(id));
+    const nextOrder = [...preservedOrder, ...newIds];
+
+    displayOrderRef.current = nextOrder;
+
+    const orderMap = new Map(nextOrder.map((id, index) => [id, index]));
+
+    return [...builtConfigSets].sort((a, b) => {
+      const orderA = orderMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const orderB = orderMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      return orderA - orderB;
+    });
+  }, [builtConfigSets]);
 
   const fetchLatestSettings = useCallback(async () => {
     try {
