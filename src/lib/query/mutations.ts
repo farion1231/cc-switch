@@ -21,6 +21,7 @@ export const useAddProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
 
       // 更新托盘菜单（失败不影响主操作）
       try {

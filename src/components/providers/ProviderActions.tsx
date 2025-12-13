@@ -1,15 +1,19 @@
-import { BarChart3, Check, Copy, Edit, Play, Trash2 } from "lucide-react";
+import { BarChart3, Check, Copy, Edit, Loader2, Play, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { LaunchConfigSet } from "@/hooks/useConfigSets";
 
 interface ProviderActionsProps {
   isCurrent: boolean;
-  onSwitch: () => void;
+  onSwitch: (configSetId?: string) => void | Promise<void>;
   onEdit: () => void;
   onDuplicate: () => void;
   onConfigureUsage: () => void;
   onDelete: () => void;
+  configSets?: LaunchConfigSet[];
+  activeConfigSetId?: string;
+  isSwitching?: boolean;
 }
 
 export function ProviderActions({
@@ -19,35 +23,63 @@ export function ProviderActions({
   onDuplicate,
   onConfigureUsage,
   onDelete,
+  configSets,
+  activeConfigSetId,
+  isSwitching = false,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
+  const defaultConfigSetId =
+    activeConfigSetId ?? configSets?.[0]?.id ?? undefined;
+
+  const handleSwitch = (configSetId?: string) => {
+    const target = configSetId ?? defaultConfigSetId;
+    void onSwitch(target);
+  };
+
+  const renderContent = (label: string) => (
+    <>
+      {isSwitching ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : label === "inUse" ? (
+        <Check className="h-4 w-4" />
+      ) : (
+        <Play className="h-4 w-4" />
+      )}
+      {label === "inUse" ? t("provider.inUse") : t("provider.enable")}
+    </>
+  );
+
+  const renderEnableButton = () => {
+    if (isCurrent) {
+      return (
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled
+          className="min-w-[4.5rem] px-2.5 bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700"
+        >
+          {renderContent("inUse")}
+        </Button>
+      );
+    }
+
+    return (
+      <Button
+        size="sm"
+        variant="default"
+        className="min-w-[4.5rem] px-2.5"
+        disabled={isSwitching}
+        onClick={() => handleSwitch()}
+      >
+        {renderContent("enable")}
+      </Button>
+    );
+  };
 
   return (
     <div className="flex items-center gap-1.5">
-      <Button
-        size="sm"
-        variant={isCurrent ? "secondary" : "default"}
-        onClick={onSwitch}
-        disabled={isCurrent}
-        className={cn(
-          "w-[4.5rem] px-2.5",
-          isCurrent &&
-            "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
-        )}
-      >
-        {isCurrent ? (
-          <>
-            <Check className="h-4 w-4" />
-            {t("provider.inUse")}
-          </>
-        ) : (
-          <>
-            <Play className="h-4 w-4" />
-            {t("provider.enable")}
-          </>
-        )}
-      </Button>
+      {renderEnableButton()}
 
       <div className="flex items-center gap-1">
         <Button

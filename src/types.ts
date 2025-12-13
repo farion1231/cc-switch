@@ -102,6 +102,9 @@ export interface ConfigDirectorySet {
   claudeConfigDir?: string;
   codexConfigDir?: string;
   geminiConfigDir?: string;
+  currentProviderClaude?: string;
+  currentProviderCodex?: string;
+  currentProviderGemini?: string;
 }
 
 // 应用设置类型（用于设置对话框与 Tauri API）

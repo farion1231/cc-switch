@@ -8,6 +8,7 @@ import {
 import type { CSSProperties } from "react";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
+import type { LaunchConfigSet } from "@/hooks/useConfigSets";
 import { useDragSort } from "@/hooks/useDragSort";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -16,7 +17,7 @@ interface ProviderListProps {
   providers: Record<string, Provider>;
   currentProviderId: string;
   appId: AppId;
-  onSwitch: (provider: Provider) => void;
+  onSwitch: (provider: Provider, configSetId?: string) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onDuplicate: (provider: Provider) => void;
@@ -24,6 +25,9 @@ interface ProviderListProps {
   onOpenWebsite: (url: string) => void;
   onCreate?: () => void;
   isLoading?: boolean;
+  configSets?: LaunchConfigSet[];
+  activeConfigSetId?: string;
+  isSwitching?: boolean;
 }
 
 export function ProviderList({
@@ -38,6 +42,9 @@ export function ProviderList({
   onOpenWebsite,
   onCreate,
   isLoading = false,
+  configSets,
+  activeConfigSetId,
+  isSwitching = false,
 }: ProviderListProps) {
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
@@ -87,6 +94,9 @@ export function ProviderList({
               onDuplicate={onDuplicate}
               onConfigureUsage={onConfigureUsage}
               onOpenWebsite={onOpenWebsite}
+              configSets={configSets}
+              activeConfigSetId={activeConfigSetId}
+              isSwitching={isSwitching}
             />
           ))}
         </div>
@@ -99,12 +109,15 @@ interface SortableProviderCardProps {
   provider: Provider;
   isCurrent: boolean;
   appId: AppId;
-  onSwitch: (provider: Provider) => void;
+  onSwitch: (provider: Provider, configSetId?: string) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
+  configSets?: LaunchConfigSet[];
+  activeConfigSetId?: string;
+  isSwitching: boolean;
 }
 
 function SortableProviderCard({
@@ -117,6 +130,9 @@ function SortableProviderCard({
   onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
+  configSets,
+  activeConfigSetId,
+  isSwitching,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -138,7 +154,7 @@ function SortableProviderCard({
         provider={provider}
         isCurrent={isCurrent}
         appId={appId}
-        onSwitch={onSwitch}
+        onSwitch={(configSetId) => onSwitch(provider, configSetId)}
         onEdit={onEdit}
         onDelete={onDelete}
         onDuplicate={onDuplicate}
@@ -151,6 +167,9 @@ function SortableProviderCard({
           listeners,
           isDragging,
         }}
+        configSets={configSets}
+        activeConfigSetId={activeConfigSetId}
+        isSwitching={isSwitching}
       />
     </div>
   );

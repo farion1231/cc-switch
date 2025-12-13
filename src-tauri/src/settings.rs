@@ -19,14 +19,20 @@ pub struct CustomEndpoint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigDirectorySet {
-    pub id: String,
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claude_config_dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub codex_config_dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gemini_config_dir: Option<String>,
+  pub id: String,
+  pub name: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub claude_config_dir: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub codex_config_dir: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub gemini_config_dir: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub current_provider_claude: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub current_provider_codex: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub current_provider_gemini: Option<String>,
 }
 
 /// 应用设置结构
@@ -185,6 +191,27 @@ impl AppSettings {
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
+
+            set.current_provider_claude = set
+                .current_provider_claude
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            set.current_provider_codex = set
+                .current_provider_codex
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            set.current_provider_gemini = set
+                .current_provider_gemini
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
         }
     }
 
@@ -255,7 +282,22 @@ pub fn get_settings() -> AppSettings {
 }
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
+    let active_set_id = new_settings.active_config_directory_set_id.clone();
+
     new_settings.normalize_paths();
+
+    if let Some(active_id) = active_set_id {
+        if let Some(target) = new_settings
+            .config_directory_sets
+            .iter()
+            .find(|set| set.id == active_id)
+        {
+            new_settings.current_provider_claude = target.current_provider_claude.clone();
+            new_settings.current_provider_codex = target.current_provider_codex.clone();
+            new_settings.current_provider_gemini = target.current_provider_gemini.clone();
+        }
+    }
+
     save_settings_file(&new_settings)?;
 
     let mut guard = settings_store().write().expect("写入设置锁失败");
@@ -322,6 +364,29 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Claude => settings.current_provider_claude = id.map(|s| s.to_string()),
         AppType::Codex => settings.current_provider_codex = id.map(|s| s.to_string()),
         AppType::Gemini => settings.current_provider_gemini = id.map(|s| s.to_string()),
+    }
+
+    if let Some(active_id) = settings.active_config_directory_set_id.clone() {
+        if let Some(active_set) = settings
+            .config_directory_sets
+            .iter_mut()
+            .find(|set| set.id == active_id)
+        {
+            match app_type {
+                AppType::Claude => {
+                    active_set.current_provider_claude =
+                        settings.current_provider_claude.clone();
+                }
+                AppType::Codex => {
+                    active_set.current_provider_codex =
+                        settings.current_provider_codex.clone();
+                }
+                AppType::Gemini => {
+                    active_set.current_provider_gemini =
+                        settings.current_provider_gemini.clone();
+                }
+            }
+        }
     }
 
     update_settings(settings)

@@ -17,6 +17,9 @@ const configDirectorySetSchema = z.object({
   claudeConfigDir: directorySchema.nullable().optional(),
   codexConfigDir: directorySchema.nullable().optional(),
   geminiConfigDir: directorySchema.nullable().optional(),
+  currentProviderClaude: z.string().trim().min(1).optional(),
+  currentProviderCodex: z.string().trim().min(1).optional(),
+  currentProviderGemini: z.string().trim().min(1).optional(),
 });
 
 export const settingsSchema = z.object({
