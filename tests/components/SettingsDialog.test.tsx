@@ -26,6 +26,7 @@ interface SettingsMock {
   isPortable: boolean;
   appConfigDir?: string;
   resolvedDirs: Record<string, string>;
+  configDirectorySets: Array<Record<string, any>>;
   requiresRestart: boolean;
   updateSettings: ReturnType<typeof vi.fn>;
   updateDirectory: ReturnType<typeof vi.fn>;
@@ -34,6 +35,12 @@ interface SettingsMock {
   browseAppConfigDir: ReturnType<typeof vi.fn>;
   resetDirectory: ReturnType<typeof vi.fn>;
   resetAppConfigDir: ReturnType<typeof vi.fn>;
+  addConfigDirectorySet: ReturnType<typeof vi.fn>;
+  removeConfigDirectorySet: ReturnType<typeof vi.fn>;
+  updateConfigDirectorySet: ReturnType<typeof vi.fn>;
+  updateConfigDirectorySetDirectory: ReturnType<typeof vi.fn>;
+  browseConfigDirectorySet: ReturnType<typeof vi.fn>;
+  resetConfigDirectorySet: ReturnType<typeof vi.fn>;
   saveSettings: ReturnType<typeof vi.fn>;
   autoSaveSettings: ReturnType<typeof vi.fn>;
   resetSettings: ReturnType<typeof vi.fn>;
@@ -57,7 +64,17 @@ const createSettingsMock = (overrides: Partial<SettingsMock> = {}) => {
     resolvedDirs: {
       claude: "/claude",
       codex: "/codex",
+      gemini: "/gemini",
     },
+    configDirectorySets: [
+      {
+        id: "primary",
+        name: "默认环境",
+        claudeConfigDir: "/claude",
+        codexConfigDir: "/codex",
+        geminiConfigDir: "/gemini",
+      },
+    ],
     requiresRestart: false,
     updateSettings: vi.fn(),
     updateDirectory: vi.fn(),
@@ -66,6 +83,12 @@ const createSettingsMock = (overrides: Partial<SettingsMock> = {}) => {
     browseAppConfigDir: vi.fn(),
     resetDirectory: vi.fn(),
     resetAppConfigDir: vi.fn(),
+    addConfigDirectorySet: vi.fn(),
+    removeConfigDirectorySet: vi.fn(),
+    updateConfigDirectorySet: vi.fn(),
+    updateConfigDirectorySetDirectory: vi.fn(),
+    browseConfigDirectorySet: vi.fn(),
+    resetConfigDirectorySet: vi.fn(),
     saveSettings: vi.fn().mockResolvedValue({ requiresRestart: false }),
     autoSaveSettings: vi.fn().mockResolvedValue({ requiresRestart: false }),
     resetSettings: vi.fn(),

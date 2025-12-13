@@ -12,17 +12,21 @@ import {
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { LaunchConfigSet } from "@/hooks/useConfigSets";
 
 interface ProviderActionsProps {
   isCurrent: boolean;
+  onSwitch: (configSetId?: string) => void | Promise<void>;
   isTesting?: boolean;
   isProxyTakeover?: boolean;
-  onSwitch: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
   onConfigureUsage: () => void;
   onDelete: () => void;
+  configSets?: LaunchConfigSet[];
+  activeConfigSetId?: string;
+  isSwitching?: boolean;
   onResetCircuitBreaker?: () => void;
   isProxyTarget?: boolean;
   consecutiveFailures?: number;
@@ -38,42 +42,63 @@ export function ProviderActions({
   onTest,
   onConfigureUsage,
   onDelete,
+  configSets,
+  activeConfigSetId,
+  isSwitching = false,
   onResetCircuitBreaker,
   isProxyTarget,
   consecutiveFailures = 0,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
+  const defaultConfigSetId =
+    activeConfigSetId ?? configSets?.[0]?.id ?? undefined;
+
+  const handleSwitch = (configSetId?: string) => {
+    const target = configSetId ?? defaultConfigSetId;
+    void onSwitch(target);
+  };
+
+  const renderContent = (label: "inUse" | "enable") => (
+    <>
+      {isSwitching ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : label === "inUse" ? (
+        <Check className="h-4 w-4" />
+      ) : (
+        <Play className="h-4 w-4" />
+      )}
+      {label === "inUse" ? t("provider.inUse") : t("provider.enable")}
+    </>
+  );
+
+  const handleEnableClick = () => {
+    if (isCurrent || isSwitching) return;
+    handleSwitch();
+  };
+
+  const renderEnableButton = () => (
+    <Button
+      size="sm"
+      variant={isCurrent ? "secondary" : "default"}
+      disabled={isCurrent || isSwitching}
+      onClick={handleEnableClick}
+      className={cn(
+        "min-w-[4.5rem] px-2.5",
+        isCurrent &&
+          "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+        !isCurrent &&
+          isProxyTakeover &&
+          "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
+      )}
+    >
+      {renderContent(isCurrent ? "inUse" : "enable")}
+    </Button>
+  );
 
   return (
     <div className="flex items-center gap-1.5">
-      <Button
-        size="sm"
-        variant={isCurrent ? "secondary" : "default"}
-        onClick={onSwitch}
-        disabled={isCurrent}
-        className={cn(
-          "w-[4.5rem] px-2.5",
-          isCurrent &&
-            "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
-          // 代理接管模式下启用按钮使用绿色
-          !isCurrent &&
-            isProxyTakeover &&
-            "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
-        )}
-      >
-        {isCurrent ? (
-          <>
-            <Check className="h-4 w-4" />
-            {t("provider.inUse")}
-          </>
-        ) : (
-          <>
-            <Play className="h-4 w-4" />
-            {t("provider.enable")}
-          </>
-        )}
-      </Button>
+      {renderEnableButton()}
 
       <div className="flex items-center gap-1">
         <Button
@@ -123,9 +148,7 @@ export function ProviderActions({
           <BarChart3 className="h-4 w-4" />
         </Button>
 
-        {/* 重置熔断器按钮 - 代理目标启用时显示 */}
-        {/* TODO: 暂时隐藏，后续根据故障转移功能启用 */}
-        {/* {onResetCircuitBreaker && isProxyTarget && (
+        {onResetCircuitBreaker && isProxyTarget && (
           <Button
             size="icon"
             variant="ghost"
@@ -148,7 +171,7 @@ export function ProviderActions({
           >
             <RotateCcw className="h-4 w-4" />
           </Button>
-        )} */}
+        )}
 
         <Button
           size="icon"

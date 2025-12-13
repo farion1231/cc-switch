@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
@@ -11,6 +11,10 @@ import {
   Wrench,
   Server,
   RefreshCw,
+  Globe2,
+  ChevronDown,
+  Loader2,
+  Check,
 } from "lucide-react";
 import type { Provider } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -23,6 +27,10 @@ import {
 } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
+import {
+  useConfigSets,
+  type ActivateConfigSetOptions,
+} from "@/hooks/useConfigSets";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
@@ -42,6 +50,14 @@ import { SkillsPage } from "@/components/skills/SkillsPage";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type View = "providers" | "settings" | "prompts" | "skills" | "mcp" | "agents";
 
@@ -83,7 +99,15 @@ function App() {
     switchProvider,
     deleteProvider,
     saveUsageScript,
+    isLoading: isProviderActionPending,
   } = useProviderActions(activeApp);
+
+  const {
+    configSets,
+    activeConfigSetId,
+    isActivating: isConfigSetActivating,
+    activateConfigSet,
+  } = useConfigSets();
 
   // 监听来自托盘菜单的切换事件
   useEffect(() => {
@@ -184,6 +208,54 @@ function App() {
 
     checkEnvOnSwitch();
   }, [activeApp]);
+
+  const isSwitchingProvider = isProviderActionPending || isConfigSetActivating;
+
+  const activeEnvironment = useMemo(
+    () =>
+      configSets.find((set) => set.id === activeConfigSetId) ?? configSets[0],
+    [configSets, activeConfigSetId],
+  );
+  const environmentLabel =
+    activeEnvironment?.name ??
+    t("settings.configSetDefaultName", { defaultValue: "默认环境" });
+  const hasMultipleConfigSets = configSets.length > 1;
+
+  const activateEnvironment = useCallback(
+    async (setId: string, options?: ActivateConfigSetOptions) => {
+      const activated = await activateConfigSet(setId, options);
+      if (activated) {
+        await refetch();
+      }
+      return activated;
+    },
+    [activateConfigSet, refetch],
+  );
+
+  const handleSwitchProvider = useCallback(
+    async (provider: Provider, targetSetId?: string) => {
+      const fallbackSetId =
+        activeConfigSetId ?? (configSets.length > 0 ? configSets[0].id : undefined);
+      const desiredSetId = targetSetId ?? fallbackSetId;
+
+      if (desiredSetId && desiredSetId !== activeConfigSetId) {
+        const activated = await activateEnvironment(desiredSetId, {
+          silent: true,
+        });
+        if (!activated) {
+          return;
+        }
+      }
+
+      await switchProvider(provider);
+    },
+    [
+      activateEnvironment,
+      activeConfigSetId,
+      configSets,
+      switchProvider,
+    ],
+  );
 
   // 打开网站链接
   const handleOpenWebsite = async (url: string) => {
@@ -322,15 +394,18 @@ function App() {
                   currentProviderId={currentProviderId}
                   appId={activeApp}
                   isLoading={isLoading}
+                  onSwitch={handleSwitchProvider}
                   isProxyRunning={isProxyRunning}
                   isProxyTakeover={isProxyRunning && isTakeoverActive}
-                  onSwitch={switchProvider}
                   onEdit={setEditingProvider}
                   onDelete={setConfirmDelete}
                   onDuplicate={handleDuplicateProvider}
                   onConfigureUsage={setUsageProvider}
                   onOpenWebsite={handleOpenWebsite}
                   onCreate={() => setIsAddOpen(true)}
+                  configSets={configSets}
+                  activeConfigSetId={activeConfigSetId}
+                  isSwitching={isSwitchingProvider}
                 />
               </div>
             </div>
@@ -490,9 +565,56 @@ function App() {
             )}
             {currentView === "providers" && (
               <>
-                <ProxyToggle />
-
-                <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
+                <div className="flex items-center gap-2">
+                  <ProxyToggle />
+                  <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
+                  {hasMultipleConfigSets ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isConfigSetActivating}
+                          className="flex items-center gap-2 rounded-lg border-border-default/50 px-3 text-sm"
+                        >
+                          {isConfigSetActivating ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Globe2 className="h-4 w-4" />
+                          )}
+                          <span className="max-w-[9rem] truncate text-left">
+                            {environmentLabel}
+                          </span>
+                          <ChevronDown className="h-3 w-3 opacity-70" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-52">
+                        <DropdownMenuLabel className="text-xs text-muted-foreground">
+                          {t("provider.selectEnvironment", {
+                            defaultValue: "选择环境",
+                          })}
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        {configSets.map((set) => (
+                          <DropdownMenuItem
+                            key={set.id}
+                            onSelect={(event) => {
+                              event.preventDefault();
+                              if (set.id === activeConfigSetId) return;
+                              void activateEnvironment(set.id);
+                            }}
+                            className="flex items-center justify-between gap-2"
+                          >
+                            <span className="truncate">{set.name}</span>
+                            {set.id === activeConfigSetId ? (
+                              <Check className="h-3 w-3 text-primary" />
+                            ) : null}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : null}
+                </div>
 
                 <div className="bg-muted p-1 rounded-xl flex items-center gap-1">
                   {hasSkillsSupport && (

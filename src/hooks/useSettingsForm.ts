@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
-import type { Settings } from "@/types";
+import type { ConfigDirectorySet, Settings } from "@/types";
+import { generateConfigDirectorySetId } from "@/utils/id";
 
 type Language = "zh" | "en" | "ja";
 
@@ -19,6 +20,131 @@ const sanitizeDir = (value?: string | null): string | undefined => {
   if (!value) return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const clampSetName = (
+  value: string | undefined | null,
+  fallbackName: string,
+  index: number,
+): string => {
+  const trimmed = value?.trim();
+  const base =
+    trimmed && trimmed.length > 0
+      ? trimmed
+      : index === 0
+        ? fallbackName
+        : `${fallbackName} ${index + 1}`;
+  return base.length > 60 ? base.slice(0, 60) : base;
+};
+
+const normalizeConfigDirectorySets = (
+  sets: ConfigDirectorySet[] | undefined,
+  fallbackName: string,
+): ConfigDirectorySet[] => {
+  if (!sets || sets.length === 0) {
+    return [
+      {
+        id: generateConfigDirectorySetId(),
+        name: fallbackName,
+      },
+    ];
+  }
+
+  return sets.map((set, index) => ({
+    ...set,
+    id:
+      typeof set.id === "string" && set.id.trim().length > 0
+        ? set.id
+        : generateConfigDirectorySetId(),
+    name: clampSetName(set.name, fallbackName, index),
+    claudeConfigDir: sanitizeDir(set.claudeConfigDir),
+    codexConfigDir: sanitizeDir(set.codexConfigDir),
+    geminiConfigDir: sanitizeDir(set.geminiConfigDir),
+  }));
+};
+
+const syncPrimaryDirectorySet = (
+  sets: ConfigDirectorySet[],
+  directories: Pick<ConfigDirectorySet, "claudeConfigDir" | "codexConfigDir" | "geminiConfigDir">,
+  fallbackName: string,
+): ConfigDirectorySet[] => {
+  if (!sets.length) {
+    return [
+      {
+        id: generateConfigDirectorySetId(),
+        name: fallbackName,
+        ...directories,
+      },
+    ];
+  }
+
+  const [primary, ...rest] = sets;
+  const syncedPrimary: ConfigDirectorySet = {
+    ...primary,
+    claudeConfigDir: directories.claudeConfigDir,
+    codexConfigDir: directories.codexConfigDir,
+    geminiConfigDir: directories.geminiConfigDir,
+  };
+
+  return [syncedPrimary, ...rest];
+};
+
+const applyConfigSetSync = (
+  state: SettingsFormState,
+  defaultSetName: string,
+): SettingsFormState => {
+  const directories = {
+    claudeConfigDir: sanitizeDir(state.claudeConfigDir),
+    codexConfigDir: sanitizeDir(state.codexConfigDir),
+    geminiConfigDir: sanitizeDir(state.geminiConfigDir),
+  };
+
+  const normalizedSets = normalizeConfigDirectorySets(
+    state.configDirectorySets,
+    defaultSetName,
+  );
+  const syncedSets = syncPrimaryDirectorySet(
+    normalizedSets,
+    directories,
+    defaultSetName,
+  );
+  const activeId =
+    state.activeConfigDirectorySetId &&
+    syncedSets.some((set) => set.id === state.activeConfigDirectorySetId)
+      ? state.activeConfigDirectorySetId
+      : syncedSets[0]?.id;
+
+  return {
+    ...state,
+    claudeConfigDir: directories.claudeConfigDir,
+    codexConfigDir: directories.codexConfigDir,
+    geminiConfigDir: directories.geminiConfigDir,
+    configDirectorySets: syncedSets,
+    activeConfigDirectorySetId: activeId,
+  };
+};
+
+const buildNormalizedSettingsState = (
+  data: Settings,
+  fallbackLanguage: Language,
+  defaultSetName: string,
+): SettingsFormState => {
+  const normalizedLanguage = normalizeLanguage(data.language ?? fallbackLanguage);
+
+  const base: SettingsFormState = {
+    ...data,
+    showInTray: data.showInTray ?? true,
+    minimizeToTrayOnClose: data.minimizeToTrayOnClose ?? true,
+    enableClaudePluginIntegration: data.enableClaudePluginIntegration ?? false,
+    claudeConfigDir: sanitizeDir(data.claudeConfigDir),
+    codexConfigDir: sanitizeDir(data.codexConfigDir),
+    geminiConfigDir: sanitizeDir(data.geminiConfigDir),
+    language: normalizedLanguage,
+    configDirectorySets: data.configDirectorySets ?? [],
+    activeConfigDirectorySetId: data.activeConfigDirectorySetId,
+  };
+
+  return applyConfigSetSync(base, defaultSetName);
 };
 
 export interface UseSettingsFormResult {
@@ -49,6 +175,11 @@ export function useSettingsForm(): UseSettingsFormResult {
 
   const initialLanguageRef = useRef<Language>("zh");
 
+  const getDefaultConfigSetName = useCallback(
+    () => i18n.t("settings.configSetDefaultName", { defaultValue: "默认环境" }),
+    [i18n],
+  );
+
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem("language");
@@ -73,25 +204,17 @@ export function useSettingsForm(): UseSettingsFormResult {
   useEffect(() => {
     if (!data) return;
 
-    const normalizedLanguage = normalizeLanguage(
+    const defaultSetName = getDefaultConfigSetName();
+    const normalized = buildNormalizedSettingsState(
+      data,
       data.language ?? readPersistedLanguage(),
+      defaultSetName,
     );
 
-    const normalized: SettingsFormState = {
-      ...data,
-      showInTray: data.showInTray ?? true,
-      minimizeToTrayOnClose: data.minimizeToTrayOnClose ?? true,
-      enableClaudePluginIntegration:
-        data.enableClaudePluginIntegration ?? false,
-      claudeConfigDir: sanitizeDir(data.claudeConfigDir),
-      codexConfigDir: sanitizeDir(data.codexConfigDir),
-      language: normalizedLanguage,
-    };
-
     setSettingsState(normalized);
-    initialLanguageRef.current = normalizedLanguage;
-    syncLanguage(normalizedLanguage);
-  }, [data, readPersistedLanguage, syncLanguage]);
+    initialLanguageRef.current = normalized.language;
+    syncLanguage(normalized.language);
+  }, [data, getDefaultConfigSetName, readPersistedLanguage, syncLanguage]);
 
   const updateSettings = useCallback(
     (updates: Partial<SettingsFormState>) => {
@@ -103,48 +226,41 @@ export function useSettingsForm(): UseSettingsFormResult {
             minimizeToTrayOnClose: true,
             enableClaudePluginIntegration: false,
             language: readPersistedLanguage(),
+            configDirectorySets: [],
           } as SettingsFormState);
 
-        const next: SettingsFormState = {
+        const merged: SettingsFormState = {
           ...base,
           ...updates,
         };
 
         if (updates.language) {
           const normalized = normalizeLanguage(updates.language);
-          next.language = normalized;
+          merged.language = normalized;
           syncLanguage(normalized);
         }
 
-        return next;
+        return applyConfigSetSync(merged, getDefaultConfigSetName());
       });
     },
-    [readPersistedLanguage, syncLanguage],
+    [getDefaultConfigSetName, readPersistedLanguage, syncLanguage],
   );
 
   const resetSettings = useCallback(
     (serverData: Settings | null) => {
       if (!serverData) return;
 
-      const normalizedLanguage = normalizeLanguage(
+      const defaultSetName = getDefaultConfigSetName();
+      const normalized = buildNormalizedSettingsState(
+        serverData,
         serverData.language ?? readPersistedLanguage(),
+        defaultSetName,
       );
-
-      const normalized: SettingsFormState = {
-        ...serverData,
-        showInTray: serverData.showInTray ?? true,
-        minimizeToTrayOnClose: serverData.minimizeToTrayOnClose ?? true,
-        enableClaudePluginIntegration:
-          serverData.enableClaudePluginIntegration ?? false,
-        claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
-        codexConfigDir: sanitizeDir(serverData.codexConfigDir),
-        language: normalizedLanguage,
-      };
 
       setSettingsState(normalized);
       syncLanguage(initialLanguageRef.current);
     },
-    [readPersistedLanguage, syncLanguage],
+    [getDefaultConfigSetName, readPersistedLanguage, syncLanguage],
   );
 
   return {

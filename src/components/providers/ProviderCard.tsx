@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
+import type { LaunchConfigSet } from "@/hooks/useConfigSets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import {
   useProviderHealth,
@@ -28,7 +29,7 @@ interface ProviderCardProps {
   provider: Provider;
   isCurrent: boolean;
   appId: AppId;
-  onSwitch: (provider: Provider) => void;
+  onSwitch: (configSetId?: string) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onConfigureUsage: (provider: Provider) => void;
@@ -39,6 +40,9 @@ interface ProviderCardProps {
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
   dragHandleProps?: DragHandleProps;
+  configSets?: LaunchConfigSet[];
+  activeConfigSetId?: string;
+  isSwitching: boolean;
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -91,6 +95,9 @@ export function ProviderCard({
   isProxyRunning,
   isProxyTakeover = false,
   dragHandleProps,
+  configSets,
+  activeConfigSetId,
+  isSwitching,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -262,14 +269,17 @@ export function ProviderCard({
           <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-300 ease-out translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0">
             <ProviderActions
               isCurrent={isCurrent}
+              onSwitch={onSwitch}
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
-              onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={onTest ? () => onTest(provider) : undefined}
               onConfigureUsage={() => onConfigureUsage(provider)}
               onDelete={() => onDelete(provider)}
+              configSets={configSets}
+              activeConfigSetId={activeConfigSetId}
+              isSwitching={isSwitching}
               onResetCircuitBreaker={
                 isProxyRunning && provider.isProxyTarget
                   ? handleResetCircuitBreaker

@@ -63,6 +63,7 @@ export function SettingsPage({
     isPortable,
     appConfigDir,
     resolvedDirs,
+    configDirectorySets,
     updateSettings,
     updateDirectory,
     updateAppConfigDir,
@@ -70,6 +71,12 @@ export function SettingsPage({
     browseAppConfigDir,
     resetDirectory,
     resetAppConfigDir,
+    addConfigDirectorySet,
+    removeConfigDirectorySet,
+    updateConfigDirectorySet,
+    updateConfigDirectorySetDirectory,
+    browseConfigDirectorySet,
+    resetConfigDirectorySet,
     saveSettings,
     autoSaveSettings,
     requiresRestart,
@@ -272,6 +279,17 @@ export function SettingsPage({
                           onDirectoryChange={updateDirectory}
                           onBrowseDirectory={browseDirectory}
                           onResetDirectory={resetDirectory}
+                          configSets={configDirectorySets}
+                          onConfigSetNameChange={(setId, name) =>
+                            updateConfigDirectorySet(setId, { name })
+                          }
+                          onAddConfigSet={addConfigDirectorySet}
+                          onRemoveConfigSet={removeConfigDirectorySet}
+                          onConfigSetDirectoryChange={
+                            updateConfigDirectorySetDirectory
+                          }
+                          onBrowseConfigSetDirectory={browseConfigDirectorySet}
+                          onResetConfigSetDirectory={resetConfigDirectorySet}
                         />
                       </AccordionContent>
                     </AccordionItem>
@@ -362,13 +380,10 @@ export function SettingsPage({
                             className="flex items-center gap-4"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <div className="flex items-center gap-2">
-                              {/* Removed status text as requested */}
-                              <Switch
-                                checked={failoverEnabled}
-                                onCheckedChange={setFailoverEnabled}
-                              />
-                            </div>
+                            <Switch
+                              checked={failoverEnabled}
+                              onCheckedChange={setFailoverEnabled}
+                            />
                           </div>
                         </div>
                       </AccordionTrigger>
