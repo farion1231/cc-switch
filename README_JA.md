@@ -3,7 +3,6 @@
 # Claude Code / Codex / Gemini CLI オールインワン・アシスタント
 
 [![Version](https://img.shields.io/badge/version-3.8.2-blue.svg)](https://github.com/farion1231/cc-switch/releases)
-[![Trending](https://img.shields.io/badge/🔥_TypeScript_Trending-Daily%20%7C%20Weekly%20%7C%20Monthly-ff6b6b.svg)](https://github.com/trending/typescript)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![Downloads](https://img.shields.io/endpoint?url=https://api.pinstudios.net/api/badges/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
@@ -12,21 +11,13 @@
 
 [English](README.md) | [中文](README_ZH.md) | 日本語 | [Changelog](CHANGELOG.md) | [v3.8.0 リリースノート](docs/release-note-v3.8.0-en.md)
 
-**プロバイダスイッチャーから AI CLI 一体型管理プラットフォームへ**
-
-Claude Code・Codex・Gemini CLI のプロバイダ設定、MCP サーバー、Skills 拡張、システムプロンプトを統合管理。
-
 </div>
 
 ## ❤️スポンサー
 
 ![Zhipu GLM](assets/partners/banners/glm-en.jpg)
 
-本プロジェクトは Z.ai の GLM CODING PLAN による支援を受けています。
-
-GLM CODING PLAN は AI コーディング向けのサブスクリプションで、月額わずか 3 ドルから。Claude Code、Cline、Roo Code など 10 以上の人気 AI コーディングツールでフラッグシップモデル GLM-4.6 を利用でき、速く安定した開発体験を提供します。
-
-[このリンク](https://z.ai/subscribe?ic=8JVLJQFSKB) から申し込むと 10% オフになります！
+本プロジェクトは Z.ai の GLM CODING PLAN による支援を受けています。GLM CODING PLAN は AI コーディング向けのサブスクリプションで、月額わずか 3 ドルから。Claude Code、Cline、Roo Code など 10 以上の人気 AI コーディングツールでフラッグシップモデル GLM-4.6 を利用でき、速く安定した開発体験を提供します。[このリンク](https://z.ai/subscribe?ic=8JVLJQFSKB) から申し込むと 10% オフになります！
 
 ---
 
@@ -39,6 +30,13 @@ GLM CODING PLAN は AI コーディング向けのサブスクリプションで
 <tr>
 <td width="180"><img src="assets/partners/logos/sds-en.png" alt="ShanDianShuo" width="150"></td>
 <td>ShanDianShuo のご支援に感謝します！ShanDianShuo はローカルファーストの音声入力ツールで、ミリ秒遅延・データは端末から外に出ず・キーボード入力の 4 倍の速度・AI 自動補正・プライバシー優先で完全無料。Claude Code と組み合わせればコーディング効率が倍増します。<a href="https://www.shandianshuo.cn">Mac/Win 版を無料ダウンロード</a></td>
+</tr>
+
+<tr>
+<td width="180"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></td>
+<td>本プロジェクトは AIGoCode のスポンサー提供でお届けしています。AIGoCode は、Claude Code・Codex・最新の Gemini モデルを統合したオールインワンのAIコーディングプラットフォームで、安定性・高速性・コストパフォーマンスに優れた開発サービスを提供します。柔軟なサブスクリプションプランを備え、レスポンスも非常に高速です。さらに、CC Switch ユーザー向けの特典として、<a href="https://aigocode.com/invite/CC-SWITCH">このリンク</a>から登録すると、初回チャージ時に10％分のボーナスクレジットが付与されます！
+
+</td>
 </tr>
 
 </table>

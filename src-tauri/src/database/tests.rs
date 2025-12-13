@@ -245,6 +245,7 @@ fn dry_run_validates_schema_compatibility() {
             meta: None,
             icon: None,
             icon_color: None,
+            is_proxy_target: Some(false),
         },
     );
 
@@ -270,5 +271,64 @@ fn dry_run_validates_schema_compatibility() {
     assert!(
         result.is_ok(),
         "Dry-run should succeed with provider data: {result:?}"
+    );
+}
+
+#[test]
+fn model_pricing_is_seeded_on_init() {
+    let db = Database::memory().expect("create memory db");
+
+    let conn = db.conn.lock().expect("lock conn");
+
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM model_pricing", [], |row| row.get(0))
+        .expect("count pricing");
+
+    assert!(
+        count > 0,
+        "模型定价数据应该在初始化时自动填充，实际数量: {}",
+        count
+    );
+
+    // 验证包含 Claude 模型
+    let claude_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM model_pricing WHERE model_id LIKE 'claude-%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("check claude");
+    assert!(
+        claude_count > 0,
+        "应该包含 Claude 模型定价，实际数量: {}",
+        claude_count
+    );
+
+    // 验证包含 GPT 模型
+    let gpt_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM model_pricing WHERE model_id LIKE 'gpt-%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("check gpt");
+    assert!(
+        gpt_count > 0,
+        "应该包含 GPT 模型定价，实际数量: {}",
+        gpt_count
+    );
+
+    // 验证包含 Gemini 模型
+    let gemini_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM model_pricing WHERE model_id LIKE 'gemini-%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("check gemini");
+    assert!(
+        gemini_count > 0,
+        "应该包含 Gemini 模型定价，实际数量: {}",
+        gemini_count
     );
 }

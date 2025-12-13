@@ -27,7 +27,11 @@ import {
 } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
-import { useConfigSets, type ActivateConfigSetOptions } from "@/hooks/useConfigSets";
+import {
+  useConfigSets,
+  type ActivateConfigSetOptions,
+} from "@/hooks/useConfigSets";
+import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import { AppSwitcher } from "@/components/AppSwitcher";
@@ -38,6 +42,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
+import { ProxyToggle } from "@/components/proxy/ProxyToggle";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
@@ -75,10 +80,17 @@ function App() {
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
-  const { data, isLoading, refetch } = useProvidersQuery(activeApp);
+  // 获取代理服务状态
+  const { isRunning: isProxyRunning, isTakeoverActive } = useProxyStatus();
+
+  // 获取供应商列表，当代理服务运行时自动刷新
+  const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
+    isProxyRunning,
+  });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
-  const isClaudeApp = activeApp === "claude";
+  // Skills 功能仅支持 Claude 和 Codex
+  const hasSkillsSupport = activeApp === "claude" || activeApp === "codex";
 
   // 🎯 使用 useProviderActions Hook 统一管理所有 Provider 操作
   const {
@@ -359,6 +371,7 @@ function App() {
           <SkillsPage
             ref={skillsPageRef}
             onClose={() => setCurrentView("providers")}
+            initialApp={activeApp}
           />
         );
       case "mcp":
@@ -382,6 +395,8 @@ function App() {
                   appId={activeApp}
                   isLoading={isLoading}
                   onSwitch={handleSwitchProvider}
+                  isProxyRunning={isProxyRunning}
+                  isProxyTakeover={isProxyRunning && isTakeoverActive}
                   onEdit={setEditingProvider}
                   onDelete={setConfirmDelete}
                   onDuplicate={handleDuplicateProvider}
@@ -438,7 +453,7 @@ function App() {
       )}
 
       <header
-        className="glass-header fixed top-0 z-50 w-full py-3 transition-all duration-300"
+        className="fixed top-0 z-50 w-full py-3 bg-background/80 backdrop-blur-md transition-all duration-300"
         data-tauri-drag-region
         style={{ WebkitAppRegion: "drag" } as any}
       >
@@ -478,7 +493,12 @@ function App() {
                     href="https://github.com/farion1231/cc-switch"
                     target="_blank"
                     rel="noreferrer"
-                    className="text-xl font-semibold text-blue-500 transition-colors hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300"
+                    className={cn(
+                      "text-xl font-semibold transition-colors",
+                      isProxyRunning && isTakeoverActive
+                        ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
+                        : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300"
+                    )}
                   >
                     CC Switch
                   </a>
@@ -546,6 +566,7 @@ function App() {
             {currentView === "providers" && (
               <>
                 <div className="flex items-center gap-2">
+                  <ProxyToggle />
                   <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
                   {hasMultipleConfigSets ? (
                     <DropdownMenu>
@@ -595,22 +616,18 @@ function App() {
                   ) : null}
                 </div>
 
-                <div className="glass p-1 rounded-xl flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setCurrentView("skills")}
-                    className={cn(
-                      "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
-                      "transition-all duration-200 ease-in-out overflow-hidden",
-                      isClaudeApp
-                        ? "opacity-100 w-8 scale-100 px-2"
-                        : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
-                    )}
-                    title={t("skills.manage")}
-                  >
-                    <Wrench className="h-4 w-4 flex-shrink-0" />
-                  </Button>
+                <div className="bg-muted p-1 rounded-xl flex items-center gap-1">
+                  {hasSkillsSupport && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCurrentView("skills")}
+                      className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                      title={t("skills.manage")}
+                    >
+                      <Wrench className="h-4 w-4" />
+                    </Button>
+                  )}
                   {/* TODO: Agents 功能开发中，暂时隐藏入口 */}
                   {/* {isClaudeApp && (
                     <Button

@@ -17,6 +17,7 @@ mod prompt;
 mod prompt_files;
 mod provider;
 mod provider_defaults;
+mod proxy;
 mod services;
 mod settings;
 mod store;
@@ -48,7 +49,6 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use std::sync::Arc;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-#[cfg(target_os = "macos")]
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 
@@ -521,6 +521,28 @@ pub fn run() {
                 }
             }
 
+            // 自动启动代理服务器
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app_handle.state::<AppState>();
+                match state.db.get_proxy_config().await {
+                    Ok(config) => {
+                        if config.enabled {
+                            log::info!("代理服务配置为启用，正在启动...");
+                            match state.proxy_service.start_with_takeover().await {
+                                Ok(info) => log::info!(
+                                    "代理服务器自动启动成功: {}:{}",
+                                    info.address,
+                                    info.port
+                                ),
+                                Err(e) => log::error!("代理服务器自动启动失败: {e}"),
+                            }
+                        }
+                    }
+                    Err(e) => log::error!("启动时获取代理配置失败: {e}"),
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -530,6 +552,7 @@ pub fn run() {
             commands::update_provider,
             commands::delete_provider,
             commands::switch_provider,
+            commands::set_proxy_target_provider,
             commands::import_default_config,
             commands::get_claude_config_status,
             commands::get_config_status,
@@ -611,14 +634,51 @@ pub fn run() {
             commands::restore_env_backup,
             // Skill management
             commands::get_skills,
+            commands::get_skills_for_app,
             commands::install_skill,
+            commands::install_skill_for_app,
             commands::uninstall_skill,
+            commands::uninstall_skill_for_app,
             commands::get_skill_repos,
             commands::add_skill_repo,
             commands::remove_skill_repo,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,
+            // Proxy server management
+            commands::start_proxy_with_takeover,
+            commands::stop_proxy_with_restore,
+            commands::get_proxy_status,
+            commands::get_proxy_config,
+            commands::update_proxy_config,
+            commands::is_proxy_running,
+            commands::is_live_takeover_active,
+            commands::switch_proxy_provider,
+            // Proxy failover commands
+            commands::get_proxy_targets,
+            commands::set_proxy_target,
+            commands::get_provider_health,
+            commands::reset_circuit_breaker,
+            commands::get_circuit_breaker_config,
+            commands::update_circuit_breaker_config,
+            commands::get_circuit_breaker_stats,
+            // Usage statistics
+            commands::get_usage_summary,
+            commands::get_usage_trends,
+            commands::get_provider_stats,
+            commands::get_model_stats,
+            commands::get_request_logs,
+            commands::get_request_detail,
+            commands::get_model_pricing,
+            commands::update_model_pricing,
+            commands::delete_model_pricing,
+            commands::check_provider_limits,
+            // Stream health check
+            commands::stream_check_provider,
+            commands::stream_check_all_providers,
+            commands::get_stream_check_config,
+            commands::save_stream_check_config,
+            commands::get_tool_versions,
         ]);
 
     let app = builder
@@ -626,6 +686,22 @@ pub fn run() {
         .expect("error while running tauri application");
 
     app.run(|app_handle, event| {
+        // 处理退出请求（所有平台）
+        if let RunEvent::ExitRequested { api, .. } = &event {
+            log::info!("收到退出请求，开始清理...");
+            // 阻止立即退出，执行清理
+            api.prevent_exit();
+
+            let app_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                cleanup_before_exit(&app_handle).await;
+                log::info!("清理完成，退出应用");
+                // 使用 std::process::exit 避免再次触发 ExitRequested
+                std::process::exit(0);
+            });
+            return;
+        }
+
         #[cfg(target_os = "macos")]
         {
             match event {
@@ -703,6 +779,44 @@ pub fn run() {
             let _ = (app_handle, event);
         }
     });
+}
+
+// ============================================================
+// 应用退出清理
+// ============================================================
+
+/// 应用退出前的清理工作
+///
+/// 在应用退出前检查代理服务器状态，如果正在运行则停止代理并恢复 Live 配置。
+/// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
+pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
+    if let Some(state) = app_handle.try_state::<store::AppState>() {
+        let proxy_service = &state.proxy_service;
+
+        // 检查代理是否在运行
+        if proxy_service.is_running().await {
+            log::info!("检测到代理服务器正在运行，开始清理...");
+
+            // 检查是否处于 Live 接管模式
+            if let Ok(is_takeover) = state.db.is_live_takeover_active().await {
+                if is_takeover {
+                    // 接管模式：停止并恢复配置
+                    if let Err(e) = proxy_service.stop_with_restore().await {
+                        log::error!("退出时恢复 Live 配置失败: {e}");
+                    } else {
+                        log::info!("已恢复 Live 配置");
+                    }
+                } else {
+                    // 非接管模式：仅停止代理
+                    if let Err(e) = proxy_service.stop().await {
+                        log::error!("退出时停止代理失败: {e}");
+                    }
+                }
+            }
+
+            log::info!("代理服务器清理完成");
+        }
+    }
 }
 
 // ============================================================

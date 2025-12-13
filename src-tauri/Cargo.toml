@@ -37,12 +37,18 @@ tauri-plugin-deep-link = "2"
 dirs = "5.0"
 toml = "0.8"
 toml_edit = "0.22"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "stream"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 futures = "0.3"
+async-stream = "0.3"
+bytes = "1.5"
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+hyper = { version = "1.0", features = ["full"] }
 regex = "1.10"
 rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }
-thiserror = "1.0"
+thiserror = "2.0"
 anyhow = "1.0"
 zip = "2.2"
 serde_yaml = "0.9"
@@ -53,6 +59,8 @@ once_cell = "1.21.3"
 base64 = "0.22"
 rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 indexmap = { version = "2", features = ["serde"] }
+rust_decimal = "1.33"
+uuid = { version = "1.11", features = ["v4"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"

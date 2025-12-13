@@ -115,4 +115,15 @@ export const settingsApi = {
   async getAutoLaunchStatus(): Promise<boolean> {
     return await invoke("get_auto_launch_status");
   },
+
+  async getToolVersions(): Promise<
+    Array<{
+      name: string;
+      version: string | null;
+      latest_version: string | null;
+      error: string | null;
+    }>
+  > {
+    return await invoke("get_tool_versions");
+  },
 };

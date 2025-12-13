@@ -36,6 +36,10 @@ pub struct Provider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "iconColor")]
     pub icon_color: Option<String>,
+    /// 是否为代理目标（数据库专用字段，不写入配置文件）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "isProxyTarget")]
+    pub is_proxy_target: Option<bool>,
 }
 
 impl Provider {
@@ -58,6 +62,7 @@ impl Provider {
             meta: None,
             icon: None,
             icon_color: None,
+            is_proxy_target: None,
         }
     }
 }
@@ -151,6 +156,15 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub partner_promotion_key: Option<String>,
+    /// 成本倍数（用于计算实际成本）
+    #[serde(rename = "costMultiplier", skip_serializing_if = "Option::is_none")]
+    pub cost_multiplier: Option<String>,
+    /// 每日消费限额（USD）
+    #[serde(rename = "limitDailyUsd", skip_serializing_if = "Option::is_none")]
+    pub limit_daily_usd: Option<String>,
+    /// 每月消费限额（USD）
+    #[serde(rename = "limitMonthlyUsd", skip_serializing_if = "Option::is_none")]
+    pub limit_monthly_usd: Option<String>,
 }
 
 impl ProviderManager {

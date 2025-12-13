@@ -12,6 +12,12 @@ import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import type { LaunchConfigSet } from "@/hooks/useConfigSets";
+import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
+import {
+  useProviderHealth,
+  useResetCircuitBreaker,
+} from "@/lib/query/failover";
+import { toast } from "sonner";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -23,12 +29,16 @@ interface ProviderCardProps {
   provider: Provider;
   isCurrent: boolean;
   appId: AppId;
-  onSwitch: (provider: Provider, configSetId?: string) => void;
+  onSwitch: (configSetId?: string) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
+  onTest?: (provider: Provider) => void;
+  isTesting?: boolean;
+  isProxyRunning: boolean;
+  isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
   dragHandleProps?: DragHandleProps;
   configSets?: LaunchConfigSet[];
   activeConfigSetId?: string;
@@ -80,12 +90,44 @@ export function ProviderCard({
   onConfigureUsage,
   onOpenWebsite,
   onDuplicate,
+  onTest,
+  isTesting,
+  isProxyRunning,
+  isProxyTakeover = false,
   dragHandleProps,
   configSets,
   activeConfigSetId,
   isSwitching,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+
+  // 获取供应商健康状态
+  const { data: health } = useProviderHealth(provider.id, appId);
+
+  // 重置熔断器
+  const resetCircuitBreaker = useResetCircuitBreaker();
+
+  const handleResetCircuitBreaker = async () => {
+    try {
+      await resetCircuitBreaker.mutateAsync({
+        providerId: provider.id,
+        appType: appId,
+      });
+      toast.success(
+        t("provider.circuitBreakerReset", {
+          defaultValue: "熔断器已重置",
+        }),
+      );
+    } catch (error) {
+      toast.error(
+        t("provider.circuitBreakerResetFailed", {
+          defaultValue: "重置失败",
+        }) +
+          ": " +
+          String(error),
+      );
+    }
+  };
 
   const fallbackUrlText = t("provider.notConfigured", {
     defaultValue: "未配置接口地址",
@@ -121,14 +163,26 @@ export function ProviderCard({
   return (
     <div
       className={cn(
-        "glass-card relative overflow-hidden rounded-xl p-4 transition-all duration-300",
-        "group hover:bg-black/[0.02] dark:hover:bg-white/[0.02] hover:border-primary/50",
-        isCurrent ? "glass-card-active" : "hover:scale-[1.01]",
+        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
+        "bg-card text-card-foreground group",
+        // 代理接管模式下 hover 使用绿色边框，否则使用蓝色
+        isProxyTakeover ? "hover:border-emerald-500/50" : "hover:border-border-active",
+        // 代理接管模式下当前供应商使用绿色边框
+        isProxyTakeover && isCurrent
+          ? "border-emerald-500/60 shadow-sm shadow-emerald-500/10"
+          : isCurrent
+            ? "border-primary/50 shadow-sm"
+            : "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+      <div className={cn(
+        "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
+        // 代理接管模式下使用绿色渐变，否则使用蓝色主色调
+        isProxyTakeover && isCurrent ? "from-emerald-500/10" : "from-primary/10",
+        isCurrent ? "opacity-100" : "opacity-0"
+      )} />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 items-center gap-2">
           <button
@@ -146,7 +200,7 @@ export function ProviderCard({
           </button>
 
           {/* 供应商图标 */}
-          <div className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center border border-gray-200 dark:border-white/10 group-hover:scale-105 transition-transform duration-300">
+          <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
             <ProviderIcon
               icon={provider.icon}
               name={provider.name}
@@ -160,6 +214,14 @@ export function ProviderCard({
               <h3 className="text-base font-semibold leading-none">
                 {provider.name}
               </h3>
+
+              {/* 健康状态徽章和优先级 */}
+              {isProxyRunning && health && (
+                <ProviderHealthBadge
+                  consecutiveFailures={health.consecutive_failures}
+                />
+              )}
+
               {provider.category === "third_party" &&
                 provider.meta?.isPartner && (
                   <span
@@ -171,14 +233,6 @@ export function ProviderCard({
                     ⭐
                   </span>
                 )}
-              <span
-                className={cn(
-                  "rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-500 dark:text-green-400 transition-opacity duration-200",
-                  isCurrent ? "opacity-100" : "opacity-0 pointer-events-none",
-                )}
-              >
-                {t("provider.currentlyUsing")}
-              </span>
             </div>
 
             {displayUrl && (
@@ -201,7 +255,7 @@ export function ProviderCard({
         </div>
 
         <div className="relative flex items-center ml-auto">
-          <div className="ml-auto transition-transform duration-200 group-hover:-translate-x-[12.25rem] group-focus-within:-translate-x-[12.25rem] sm:group-hover:-translate-x-[14.25rem] sm:group-focus-within:-translate-x-[14.25rem]">
+          <div className="ml-auto transition-transform duration-300 ease-out group-hover:-translate-x-[14.5rem] group-focus-within:-translate-x-[14.5rem] sm:group-hover:-translate-x-[16.5rem] sm:group-focus-within:-translate-x-[16.5rem]">
             <UsageFooter
               provider={provider}
               providerId={provider.id}
@@ -212,17 +266,27 @@ export function ProviderCard({
             />
           </div>
 
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0">
+          <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-300 ease-out translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0">
             <ProviderActions
               isCurrent={isCurrent}
-              onSwitch={(configSetId) => onSwitch(provider, configSetId)}
+              onSwitch={onSwitch}
+              isTesting={isTesting}
+              isProxyTakeover={isProxyTakeover}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
+              onTest={onTest ? () => onTest(provider) : undefined}
               onConfigureUsage={() => onConfigureUsage(provider)}
               onDelete={() => onDelete(provider)}
               configSets={configSets}
               activeConfigSetId={activeConfigSetId}
               isSwitching={isSwitching}
+              onResetCircuitBreaker={
+                isProxyRunning && provider.isProxyTarget
+                  ? handleResetCircuitBreaker
+                  : undefined
+              }
+              isProxyTarget={provider.isProxyTarget}
+              consecutiveFailures={health?.consecutive_failures ?? 0}
             />
           </div>
         </div>

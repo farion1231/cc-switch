@@ -23,6 +23,8 @@ export interface Provider {
   // 图标配置
   icon?: string; // 图标名称（如 "openai", "anthropic"）
   iconColor?: string; // 图标颜色（Hex 格式，如 "#00A67E"）
+  // 新增：是否为代理目标
+  isProxyTarget?: boolean;
 }
 
 export interface AppConfig {

@@ -3,6 +3,7 @@ use rquickjs::{Context, Function, Runtime};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
+use url::{Host, Url};
 
 use crate::error::AppError;
 
@@ -15,20 +16,14 @@ pub async fn execute_usage_script(
     access_token: Option<&str>,
     user_id: Option<&str>,
 ) -> Result<Value, AppError> {
-    // 1. 替换变量
-    let mut replaced = script_code
-        .replace("{{apiKey}}", api_key)
-        .replace("{{baseUrl}}", base_url);
+    // 1. 替换模板变量，避免泄露敏感信息
+    let script_with_vars =
+        build_script_with_vars(script_code, api_key, base_url, access_token, user_id);
 
-    // 替换 accessToken 和 userId
-    if let Some(token) = access_token {
-        replaced = replaced.replace("{{accessToken}}", token);
-    }
-    if let Some(uid) = user_id {
-        replaced = replaced.replace("{{userId}}", uid);
-    }
+    // 2. 验证 base_url 的安全性
+    validate_base_url(base_url)?;
 
-    // 2. 在独立作用域中提取 request 配置（确保 Runtime/Context 在 await 前释放）
+    // 3. 在独立作用域中提取 request 配置（确保 Runtime/Context 在 await 前释放）
     let request_config = {
         let runtime = Runtime::new().map_err(|e| {
             AppError::localized(
@@ -47,7 +42,7 @@ pub async fn execute_usage_script(
 
         context.with(|ctx| {
             // 执行用户代码，获取配置对象
-            let config: rquickjs::Object = ctx.eval(replaced.clone()).map_err(|e| {
+            let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
                 AppError::localized(
                     "usage_script.config_parse_failed",
                     format!("解析配置失败: {e}"),
@@ -94,7 +89,7 @@ pub async fn execute_usage_script(
         })?
     }; // Runtime 和 Context 在这里被 drop
 
-    // 3. 解析 request 配置
+    // 4. 解析 request 配置
     let request: RequestConfig = serde_json::from_str(&request_config).map_err(|e| {
         AppError::localized(
             "usage_script.request_format_invalid",
@@ -103,10 +98,13 @@ pub async fn execute_usage_script(
         )
     })?;
 
-    // 4. 发送 HTTP 请求
+    // 5. 验证请求 URL 是否安全（防止 SSRF）
+    validate_request_url(&request.url, base_url)?;
+
+    // 6. 发送 HTTP 请求
     let response_data = send_http_request(&request, timeout_secs).await?;
 
-    // 5. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
+    // 7. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
     let result: Value = {
         let runtime = Runtime::new().map_err(|e| {
             AppError::localized(
@@ -125,7 +123,7 @@ pub async fn execute_usage_script(
 
         context.with(|ctx| {
             // 重新 eval 获取配置对象
-            let config: rquickjs::Object = ctx.eval(replaced.clone()).map_err(|e| {
+            let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
                 AppError::localized(
                     "usage_script.config_reparse_failed",
                     format!("重新解析配置失败: {e}"),
@@ -198,7 +196,7 @@ pub async fn execute_usage_script(
         })?
     }; // Runtime 和 Context 在这里被 drop
 
-    // 6. 验证返回值格式
+    // 8. 验证返回值格式
     validate_result(&result)?;
 
     Ok(result)
@@ -393,4 +391,480 @@ fn validate_single_usage(result: &Value) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+/// 构建替换变量后的脚本，保持与旧版脚本的兼容性
+fn build_script_with_vars(
+    script_code: &str,
+    api_key: &str,
+    base_url: &str,
+    access_token: Option<&str>,
+    user_id: Option<&str>,
+) -> String {
+    let mut replaced = script_code
+        .replace("{{apiKey}}", api_key)
+        .replace("{{baseUrl}}", base_url);
+
+    if let Some(token) = access_token {
+        replaced = replaced.replace("{{accessToken}}", token);
+    }
+    if let Some(uid) = user_id {
+        replaced = replaced.replace("{{userId}}", uid);
+    }
+
+    replaced
+}
+
+/// 验证 base_url 的基本安全性
+fn validate_base_url(base_url: &str) -> Result<(), AppError> {
+    if base_url.is_empty() {
+        return Err(AppError::localized(
+            "usage_script.base_url_empty",
+            "base_url 不能为空",
+            "base_url cannot be empty",
+        ));
+    }
+
+    // 解析 URL
+    let parsed_url = Url::parse(base_url).map_err(|e| {
+        AppError::localized(
+            "usage_script.base_url_invalid",
+            format!("无效的 base_url: {e}"),
+            format!("Invalid base_url: {e}"),
+        )
+    })?;
+
+    let is_loopback = is_loopback_host(&parsed_url);
+
+    // 必须是 HTTPS（允许 localhost 用于开发）
+    if parsed_url.scheme() != "https" && !is_loopback {
+        return Err(AppError::localized(
+            "usage_script.base_url_https_required",
+            "base_url 必须使用 HTTPS 协议（localhost 除外）",
+            "base_url must use HTTPS (localhost allowed)",
+        ));
+    }
+
+    // 检查主机名格式有效性
+    let hostname = parsed_url.host_str().ok_or_else(|| {
+        AppError::localized(
+            "usage_script.base_url_hostname_missing",
+            "base_url 必须包含有效的主机名",
+            "base_url must include a valid hostname",
+        )
+    })?;
+
+    // 基本的主机名格式检查
+    if hostname.is_empty() {
+        return Err(AppError::localized(
+            "usage_script.base_url_hostname_empty",
+            "base_url 主机名不能为空",
+            "base_url hostname cannot be empty",
+        ));
+    }
+
+    // 检查是否为明显的私有IP（但在 base_url 阶段不过于严格，主要在 request_url 阶段检查）
+    if is_suspicious_hostname(hostname) {
+        return Err(AppError::localized(
+            "usage_script.base_url_suspicious",
+            "base_url 包含可疑的主机名",
+            "base_url contains a suspicious hostname",
+        ));
+    }
+
+    Ok(())
+}
+
+/// 验证请求 URL 是否安全（防止 SSRF）
+fn validate_request_url(request_url: &str, base_url: &str) -> Result<(), AppError> {
+    // 解析请求 URL
+    let parsed_request = Url::parse(request_url).map_err(|e| {
+        AppError::localized(
+            "usage_script.request_url_invalid",
+            format!("无效的请求 URL: {e}"),
+            format!("Invalid request URL: {e}"),
+        )
+    })?;
+
+    // 解析 base URL
+    let parsed_base = Url::parse(base_url).map_err(|e| {
+        AppError::localized(
+            "usage_script.base_url_invalid",
+            format!("无效的 base_url: {e}"),
+            format!("Invalid base_url: {e}"),
+        )
+    })?;
+
+    let is_request_loopback = is_loopback_host(&parsed_request);
+
+    // 必须使用 HTTPS（允许 localhost 用于开发）
+    if parsed_request.scheme() != "https" && !is_request_loopback {
+        return Err(AppError::localized(
+            "usage_script.request_https_required",
+            "请求 URL 必须使用 HTTPS 协议（localhost 除外）",
+            "Request URL must use HTTPS (localhost allowed)",
+        ));
+    }
+
+    // 核心安全检查：必须与 base_url 同源（相同域名和端口）
+    if parsed_request.host_str() != parsed_base.host_str() {
+        return Err(AppError::localized(
+            "usage_script.request_host_mismatch",
+            format!(
+                "请求域名 {} 与 base_url 域名 {} 不匹配（必须是同源请求）",
+                parsed_request.host_str().unwrap_or("unknown"),
+                parsed_base.host_str().unwrap_or("unknown")
+            ),
+            format!(
+                "Request host {} must match base_url host {} (same-origin required)",
+                parsed_request.host_str().unwrap_or("unknown"),
+                parsed_base.host_str().unwrap_or("unknown")
+            ),
+        ));
+    }
+
+    // 检查端口是否匹配（考虑默认端口）
+    // 使用 port_or_known_default() 会自动处理默认端口（http->80, https->443）
+    match (
+        parsed_request.port_or_known_default(),
+        parsed_base.port_or_known_default(),
+    ) {
+        (Some(request_port), Some(base_port)) if request_port == base_port => {
+            // 端口匹配，继续执行
+        }
+        (Some(request_port), Some(base_port)) => {
+            return Err(AppError::localized(
+                "usage_script.request_port_mismatch",
+                format!("请求端口 {request_port} 必须与 base_url 端口 {base_port} 匹配"),
+                format!("Request port {request_port} must match base_url port {base_port}"),
+            ));
+        }
+        _ => {
+            // 理论上不会发生，因为 port_or_known_default() 应该总是返回 Some
+            return Err(AppError::localized(
+                "usage_script.request_port_unknown",
+                "无法确定端口号",
+                "Unable to determine port number",
+            ));
+        }
+    }
+
+    // 禁止私有 IP 地址访问（除非 base_url 本身就是私有地址，用于开发环境）
+    if let Some(host) = parsed_request.host_str() {
+        let base_host = parsed_base.host_str().unwrap_or("");
+
+        // 如果 base_url 不是私有地址，则禁止访问私有IP
+        if !is_private_ip(base_host) && is_private_ip(host) {
+            return Err(AppError::localized(
+                "usage_script.private_ip_blocked",
+                "禁止访问私有 IP 地址",
+                "Access to private IP addresses is blocked",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// 检查是否为私有 IP 地址
+fn is_private_ip(host: &str) -> bool {
+    // localhost 检查
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+
+    // 尝试解析为IP地址
+    if let Ok(ip_addr) = host.parse::<std::net::IpAddr>() {
+        return is_private_ip_addr(ip_addr);
+    }
+
+    // 如果不是IP地址，不是私有IP
+    false
+}
+
+/// 使用标准库API检查IP地址是否为私有地址
+fn is_private_ip_addr(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ipv4) => {
+            let octets = ipv4.octets();
+
+            // 0.0.0.0/8 (包括未指定地址)
+            if octets[0] == 0 {
+                return true;
+            }
+
+            // RFC1918 私有地址范围
+            // 10.0.0.0/8
+            if octets[0] == 10 {
+                return true;
+            }
+
+            // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+            if octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31 {
+                return true;
+            }
+
+            // 192.168.0.0/16
+            if octets[0] == 192 && octets[1] == 168 {
+                return true;
+            }
+
+            // 其他特殊地址
+            // 169.254.0.0/16 (链路本地地址)
+            if octets[0] == 169 && octets[1] == 254 {
+                return true;
+            }
+
+            // 127.0.0.0/8 (环回地址)
+            if octets[0] == 127 {
+                return true;
+            }
+
+            false
+        }
+        std::net::IpAddr::V6(ipv6) => {
+            // IPv6 私有地址检查 - 使用标准库方法
+
+            // ::1 (环回地址)
+            if ipv6.is_loopback() {
+                return true;
+            }
+
+            // 唯一本地地址 (fc00::/7)
+            // Rust 1.70+ 可以使用 ipv6.is_unique_local()
+            // 但为了兼容性，我们手动检查
+            let first_segment = ipv6.segments()[0];
+            if (first_segment & 0xfe00) == 0xfc00 {
+                return true;
+            }
+
+            // 链路本地地址 (fe80::/10)
+            if (first_segment & 0xffc0) == 0xfe80 {
+                return true;
+            }
+
+            // 未指定地址 ::
+            if ipv6.is_unspecified() {
+                return true;
+            }
+
+            false
+        }
+    }
+}
+
+/// 检查是否为可疑的主机名（只检查明显不安全的模式）
+fn is_suspicious_hostname(hostname: &str) -> bool {
+    // 空主机名
+    if hostname.is_empty() {
+        return true;
+    }
+
+    // 检查明显的主机名格式问题
+    if hostname.contains("..") || hostname.starts_with(".") || hostname.ends_with(".") {
+        return true;
+    }
+
+    // 检查是否为纯IP地址但没有合理格式（过于宽松的检查在这里可能不够，但主要依赖后续的同源检查）
+    if hostname.parse::<std::net::IpAddr>().is_ok() {
+        // IP地址格式的，在这里不直接拒绝，让同源检查来处理
+        return false;
+    }
+
+    // 检查是否包含明显不当的字符
+    let suspicious_chars = ['<', '>', '"', '\'', '\n', '\r', '\t', '\0'];
+    if hostname.chars().any(|c| suspicious_chars.contains(&c)) {
+        return true;
+    }
+
+    false
+}
+
+/// 判断 URL 是否指向本机（localhost / loopback）
+fn is_loopback_host(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_private_ip_validation() {
+        // 测试IPv4私网地址
+
+        // RFC1918私网地址 - 应该返回true
+        assert!(is_private_ip("10.0.0.1"));
+        assert!(is_private_ip("10.255.255.254"));
+        assert!(is_private_ip("172.16.0.1"));
+        assert!(is_private_ip("172.31.255.255"));
+        assert!(is_private_ip("192.168.0.1"));
+        assert!(is_private_ip("192.168.255.255"));
+
+        // 链路本地地址 - 应该返回true
+        assert!(is_private_ip("169.254.0.1"));
+        assert!(is_private_ip("169.254.255.255"));
+
+        // 环回地址 - 应该返回true
+        assert!(is_private_ip("127.0.0.1"));
+        assert!(is_private_ip("localhost"));
+
+        // 公网172.x.x.x地址 - 应该返回false（这是修复的重点）
+        assert!(!is_private_ip("172.0.0.1"));
+        assert!(!is_private_ip("172.15.255.255"));
+        assert!(!is_private_ip("172.32.0.1"));
+        assert!(!is_private_ip("172.64.0.1"));
+        assert!(!is_private_ip("172.67.0.1")); // Cloudflare CDN
+        assert!(!is_private_ip("172.68.0.1"));
+        assert!(!is_private_ip("172.100.50.25"));
+        assert!(!is_private_ip("172.255.255.255"));
+
+        // 其他公网地址 - 应该返回false
+        assert!(!is_private_ip("8.8.8.8")); // Google DNS
+        assert!(!is_private_ip("1.1.1.1")); // Cloudflare DNS
+        assert!(!is_private_ip("208.67.222.222")); // OpenDNS
+        assert!(!is_private_ip("180.76.76.76")); // Baidu DNS
+
+        // 域名 - 应该返回false
+        assert!(!is_private_ip("api.example.com"));
+        assert!(!is_private_ip("www.google.com"));
+    }
+
+    #[test]
+    fn test_ipv6_private_validation() {
+        // IPv6私网地址
+        assert!(is_private_ip("::1")); // 环回地址
+        assert!(is_private_ip("fc00::1")); // 唯一本地地址
+        assert!(is_private_ip("fd00::1")); // 唯一本地地址
+        assert!(is_private_ip("fe80::1")); // 链路本地地址
+        assert!(is_private_ip("::")); // 未指定地址
+
+        // IPv6公网地址 - 应该返回false（修复的重点）
+        assert!(!is_private_ip("2001:4860:4860::8888")); // Google DNS IPv6
+        assert!(!is_private_ip("2606:4700:4700::1111")); // Cloudflare DNS IPv6
+        assert!(!is_private_ip("2404:6800:4001:c01::67")); // Google DNS IPv6 (其他格式)
+        assert!(!is_private_ip("2001:db8::1")); // 文档地址（非私网）
+
+        // 测试包含 ::1 子串但不是环回地址的公网地址
+        assert!(!is_private_ip("2001:db8::1abc")); // 包含 ::1abc 但不是环回
+        assert!(!is_private_ip("2606:4700::1")); // 包含 ::1 但不是环回
+    }
+
+    #[test]
+    fn test_hostname_bypass_prevention() {
+        // 看起来像本地，但实际是域名
+        assert!(!is_private_ip("127.0.0.1.evil.com"));
+        assert!(!is_private_ip("localhost.evil.com"));
+
+        // 0.0.0.0 应该被视为本地/阻断
+        assert!(is_private_ip("0.0.0.0"));
+    }
+
+    #[test]
+    fn test_https_bypass_prevention() {
+        // 非本地域名的 HTTP 应该被拒绝
+        let result = validate_base_url("http://127.0.0.1.evil.com/api");
+        assert!(
+            result.is_err(),
+            "Should reject HTTP for non-localhost domains"
+        );
+    }
+
+    #[test]
+    fn test_edge_cases() {
+        // 边界情况测试
+        assert!(is_private_ip("172.16.0.0")); // RFC1918起始
+        assert!(is_private_ip("172.31.255.255")); // RFC1918结束
+        assert!(is_private_ip("10.0.0.0")); // 10.0.0.0/8起始
+        assert!(is_private_ip("10.255.255.255")); // 10.0.0.0/8结束
+        assert!(is_private_ip("192.168.0.0")); // 192.168.0.0/16起始
+        assert!(is_private_ip("192.168.255.255")); // 192.168.0.0/16结束
+
+        // 紧邻RFC1918的公网地址 - 应该返回false
+        assert!(!is_private_ip("172.15.255.255")); // 172.16.0.0的前一个
+        assert!(!is_private_ip("172.32.0.0")); // 172.31.255.255的后一个
+    }
+
+    #[test]
+    fn test_ip_addr_parsing() {
+        // 测试IP地址解析功能
+        let ipv4_private = "10.0.0.1".parse::<std::net::IpAddr>().unwrap();
+        assert!(is_private_ip_addr(ipv4_private));
+
+        let ipv4_public = "172.67.0.1".parse::<std::net::IpAddr>().unwrap();
+        assert!(!is_private_ip_addr(ipv4_public));
+
+        let ipv6_private = "fc00::1".parse::<std::net::IpAddr>().unwrap();
+        assert!(is_private_ip_addr(ipv6_private));
+
+        let ipv6_public = "2001:4860:4860::8888".parse::<std::net::IpAddr>().unwrap();
+        assert!(!is_private_ip_addr(ipv6_public));
+    }
+
+    #[test]
+    fn test_port_comparison() {
+        // 测试端口比较逻辑是否正确处理默认端口和显式端口
+
+        // 测试用例：(base_url, request_url, should_match)
+        let test_cases = vec![
+            // HTTPS默认端口测试
+            (
+                "https://api.example.com",
+                "https://api.example.com/v1/test",
+                true,
+            ),
+            (
+                "https://api.example.com",
+                "https://api.example.com:443/v1/test",
+                true,
+            ),
+            (
+                "https://api.example.com:443",
+                "https://api.example.com/v1/test",
+                true,
+            ),
+            (
+                "https://api.example.com:443",
+                "https://api.example.com:443/v1/test",
+                true,
+            ),
+            // 端口不匹配测试
+            (
+                "https://api.example.com",
+                "https://api.example.com:8443/v1/test",
+                false,
+            ),
+            (
+                "https://api.example.com:443",
+                "https://api.example.com:8443/v1/test",
+                false,
+            ),
+        ];
+
+        for (base_url, request_url, should_match) in test_cases {
+            let result = validate_request_url(request_url, base_url);
+
+            if should_match {
+                assert!(
+                    result.is_ok(),
+                    "应该匹配的URL被拒绝: base_url={}, request_url={}, error={}",
+                    base_url,
+                    request_url,
+                    result.unwrap_err()
+                );
+            } else {
+                assert!(
+                    result.is_err(),
+                    "应该不匹配的URL被允许: base_url={}, request_url={}",
+                    base_url,
+                    request_url
+                );
+            }
+        }
+    }
 }

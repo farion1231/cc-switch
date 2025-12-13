@@ -38,6 +38,10 @@ export const providersApi = {
     return await invoke("switch_provider", { id, app: appId });
   },
 
+  async setProxyTarget(id: string, appId: AppId): Promise<boolean> {
+    return await invoke("set_proxy_target_provider", { id, app: appId });
+  },
+
   async importDefault(appId: AppId): Promise<boolean> {
     return await invoke("import_default_config", { app: appId });
   },

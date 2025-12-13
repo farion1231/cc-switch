@@ -44,7 +44,7 @@ const DB_BACKUP_RETAIN: usize = 10;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 1;
+pub(crate) const SCHEMA_VERSION: i32 = 2;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -95,6 +95,7 @@ impl Database {
         };
         db.create_tables()?;
         db.apply_schema_migrations()?;
+        db.ensure_model_pricing_seeded()?;
 
         Ok(db)
     }
@@ -111,6 +112,7 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.create_tables()?;
+        db.ensure_model_pricing_seeded()?;
 
         Ok(db)
     }

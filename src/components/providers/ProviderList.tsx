@@ -10,6 +10,7 @@ import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import type { LaunchConfigSet } from "@/hooks/useConfigSets";
 import { useDragSort } from "@/hooks/useDragSort";
+import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 
@@ -28,6 +29,8 @@ interface ProviderListProps {
   configSets?: LaunchConfigSet[];
   activeConfigSetId?: string;
   isSwitching?: boolean;
+  isProxyRunning?: boolean; // 代理服务运行状态
+  isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
 }
 
 export function ProviderList({
@@ -45,11 +48,20 @@ export function ProviderList({
   configSets,
   activeConfigSetId,
   isSwitching = false,
+  isProxyRunning = false, // 默认值为 false
+  isProxyTakeover = false, // 默认值为 false
 }: ProviderListProps) {
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
     appId,
   );
+
+  // 流式健康检查
+  const { checkProvider, isChecking } = useStreamCheck(appId);
+
+  const handleTest = (provider: Provider) => {
+    checkProvider(provider.id, provider.name);
+  };
 
   if (isLoading) {
     return (
@@ -97,6 +109,10 @@ export function ProviderList({
               configSets={configSets}
               activeConfigSetId={activeConfigSetId}
               isSwitching={isSwitching}
+              onTest={handleTest}
+              isTesting={isChecking(provider.id)}
+              isProxyRunning={isProxyRunning}
+              isProxyTakeover={isProxyTakeover}
             />
           ))}
         </div>
@@ -118,6 +134,10 @@ interface SortableProviderCardProps {
   configSets?: LaunchConfigSet[];
   activeConfigSetId?: string;
   isSwitching: boolean;
+  onTest?: (provider: Provider) => void;
+  isTesting?: boolean;
+  isProxyRunning: boolean;
+  isProxyTakeover: boolean;
 }
 
 function SortableProviderCard({
@@ -133,6 +153,10 @@ function SortableProviderCard({
   configSets,
   activeConfigSetId,
   isSwitching,
+  onTest,
+  isTesting,
+  isProxyRunning,
+  isProxyTakeover,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -162,6 +186,10 @@ function SortableProviderCard({
           onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
         }
         onOpenWebsite={onOpenWebsite}
+        onTest={onTest}
+        isTesting={isTesting}
+        isProxyRunning={isProxyRunning}
+        isProxyTakeover={isProxyTakeover}
         dragHandleProps={{
           attributes,
           listeners,

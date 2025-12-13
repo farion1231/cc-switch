@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import type { Provider, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { generateUUID } from "@/utils/uuid";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -13,7 +14,7 @@ export const useAddProviderMutation = (appId: AppId) => {
     mutationFn: async (providerInput: Omit<Provider, "id">) => {
       const newProvider: Provider = {
         ...providerInput,
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         createdAt: Date.now(),
       };
       await providersApi.add(newProvider, appId);
@@ -37,6 +38,9 @@ export const useAddProviderMutation = (appId: AppId) => {
         t("notifications.providerAdded", {
           defaultValue: "供应商已添加",
         }),
+        {
+          closeButton: true,
+        },
       );
     },
     onError: (error: Error) => {
@@ -65,6 +69,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
         }),
+        {
+          closeButton: true,
+        },
       );
     },
     onError: (error: Error) => {
@@ -103,6 +110,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
         t("notifications.deleteSuccess", {
           defaultValue: "供应商已删除",
         }),
+        {
+          closeButton: true,
+        },
       );
     },
     onError: (error: Error) => {
@@ -142,6 +152,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
           defaultValue: "切换供应商成功",
           appName: t(`apps.${appId}`, { defaultValue: appId }),
         }),
+        {
+          closeButton: true,
+        },
       );
     },
     onError: (error: Error) => {
@@ -163,6 +176,34 @@ export const useSwitchProviderMutation = (appId: AppId) => {
             },
           },
         },
+      );
+    },
+  });
+};
+
+export const useSetProxyTargetMutation = (appId: AppId) => {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: async (providerId: string) => {
+      return await providersApi.setProxyTarget(providerId, appId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      toast.success(
+        t("notifications.proxyTargetSet", {
+          defaultValue: "已设置代理目标",
+        }),
+      );
+    },
+    onError: (error: Error) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
+      toast.error(
+        t("notifications.setProxyTargetFailed", {
+          defaultValue: "设置代理目标失败: {{error}}",
+          error: detail,
+        }),
       );
     },
   });

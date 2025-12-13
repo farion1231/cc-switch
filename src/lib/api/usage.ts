@@ -1,33 +1,25 @@
 import { invoke } from "@tauri-apps/api/core";
+import type {
+  UsageSummary,
+  DailyStats,
+  ProviderStats,
+  ModelStats,
+  RequestLog,
+  LogFilters,
+  ModelPricing,
+  ProviderLimitStatus,
+  PaginatedLogs,
+} from "@/types/usage";
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
-import i18n from "@/i18n";
 
 export const usageApi = {
-  async query(providerId: string, appId: AppId): Promise<UsageResult> {
-    try {
-      return await invoke("queryProviderUsage", {
-        providerId: providerId,
-        app: appId,
-      });
-    } catch (error: unknown) {
-      // 提取错误消息：优先使用后端返回的错误信息
-      const message =
-        typeof error === "string"
-          ? error
-          : error instanceof Error
-            ? error.message
-            : "";
-
-      // 如果没有错误消息，使用国际化的默认提示
-      return {
-        success: false,
-        error: message || i18n.t("errors.usage_query_failed"),
-      };
-    }
+  // Provider usage script methods
+  query: async (providerId: string, appId: AppId): Promise<UsageResult> => {
+    return invoke("queryProviderUsage", { providerId, app: appId });
   },
 
-  async testScript(
+  testScript: async (
     providerId: string,
     appId: AppId,
     scriptCode: string,
@@ -36,30 +28,85 @@ export const usageApi = {
     baseUrl?: string,
     accessToken?: string,
     userId?: string,
-  ): Promise<UsageResult> {
-    try {
-      return await invoke("testUsageScript", {
-        providerId: providerId,
-        app: appId,
-        scriptCode: scriptCode,
-        timeout: timeout,
-        apiKey: apiKey,
-        baseUrl: baseUrl,
-        accessToken: accessToken,
-        userId: userId,
-      });
-    } catch (error: unknown) {
-      const message =
-        typeof error === "string"
-          ? error
-          : error instanceof Error
-            ? error.message
-            : "";
+  ): Promise<UsageResult> => {
+    return invoke("testUsageScript", {
+      providerId,
+      app: appId,
+      scriptCode,
+      timeout,
+      apiKey,
+      baseUrl,
+      accessToken,
+      userId,
+    });
+  },
 
-      return {
-        success: false,
-        error: message || i18n.t("errors.usage_query_failed"),
-      };
-    }
+  // Proxy usage statistics methods
+  getUsageSummary: async (
+    startDate?: number,
+    endDate?: number,
+  ): Promise<UsageSummary> => {
+    return invoke("get_usage_summary", { startDate, endDate });
+  },
+
+  getUsageTrends: async (days: number): Promise<DailyStats[]> => {
+    return invoke("get_usage_trends", { days });
+  },
+
+  getProviderStats: async (): Promise<ProviderStats[]> => {
+    return invoke("get_provider_stats");
+  },
+
+  getModelStats: async (): Promise<ModelStats[]> => {
+    return invoke("get_model_stats");
+  },
+
+  getRequestLogs: async (
+    filters: LogFilters,
+    page: number = 0,
+    pageSize: number = 20,
+  ): Promise<PaginatedLogs> => {
+    return invoke("get_request_logs", {
+      filters,
+      page,
+      pageSize,
+    });
+  },
+
+  getRequestDetail: async (requestId: string): Promise<RequestLog | null> => {
+    return invoke("get_request_detail", { requestId });
+  },
+
+  getModelPricing: async (): Promise<ModelPricing[]> => {
+    return invoke("get_model_pricing");
+  },
+
+  updateModelPricing: async (
+    modelId: string,
+    displayName: string,
+    inputCost: string,
+    outputCost: string,
+    cacheReadCost: string,
+    cacheCreationCost: string,
+  ): Promise<void> => {
+    return invoke("update_model_pricing", {
+      modelId,
+      displayName,
+      inputCost,
+      outputCost,
+      cacheReadCost,
+      cacheCreationCost,
+    });
+  },
+
+  deleteModelPricing: async (modelId: string): Promise<void> => {
+    return invoke("delete_model_pricing", { modelId });
+  },
+
+  checkProviderLimits: async (
+    providerId: string,
+    appType: string,
+  ): Promise<ProviderLimitStatus> => {
+    return invoke("check_provider_limits", { providerId, appType });
   },
 };

@@ -14,6 +14,7 @@ interface ProviderIconProps {
 export const ProviderIcon: React.FC<ProviderIconProps> = ({
   icon,
   name,
+  color,
   size = 32,
   className,
   showFallback = true,
@@ -46,7 +47,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
           "inline-flex items-center justify-center flex-shrink-0",
           className,
         )}
-        style={sizeStyle}
+        style={{ ...sizeStyle, color }}
         dangerouslySetInnerHTML={{ __html: iconSvg }}
       />
     );
