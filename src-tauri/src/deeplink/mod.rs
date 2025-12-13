@@ -113,4 +113,27 @@ pub struct DeepLinkImportRequest {
     /// Remote config URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_url: Option<String>,
+
+    // ============ Usage script fields (v3.9+) ============
+    /// Whether to enable usage query (default: true if usage_script is provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_enabled: Option<bool>,
+    /// Base64 encoded usage query script code
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_script: Option<String>,
+    /// Usage query API key (if different from provider API key)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_api_key: Option<String>,
+    /// Usage query base URL (if different from provider endpoint)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_base_url: Option<String>,
+    /// Usage query access token (for NewAPI template)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_access_token: Option<String>,
+    /// Usage query user ID (for NewAPI template)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_user_id: Option<String>,
+    /// Auto query interval in minutes (0 to disable)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_auto_interval: Option<u64>,
 }

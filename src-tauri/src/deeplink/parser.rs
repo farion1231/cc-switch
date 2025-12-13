@@ -122,6 +122,19 @@ fn parse_provider_deeplink(
     let config_url = params.get("configUrl").cloned();
     let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
 
+    // Extract usage script fields (v3.9+)
+    let usage_enabled = params
+        .get("usageEnabled")
+        .and_then(|v| v.parse::<bool>().ok());
+    let usage_script = params.get("usageScript").cloned();
+    let usage_api_key = params.get("usageApiKey").cloned();
+    let usage_base_url = params.get("usageBaseUrl").cloned();
+    let usage_access_token = params.get("usageAccessToken").cloned();
+    let usage_user_id = params.get("usageUserId").cloned();
+    let usage_auto_interval = params
+        .get("usageAutoInterval")
+        .and_then(|v| v.parse::<u64>().ok());
+
     Ok(DeepLinkImportRequest {
         version,
         resource,
@@ -146,6 +159,13 @@ fn parse_provider_deeplink(
         config,
         config_format,
         config_url,
+        usage_enabled,
+        usage_script,
+        usage_api_key,
+        usage_base_url,
+        usage_access_token,
+        usage_user_id,
+        usage_auto_interval,
     })
 }
 
@@ -206,6 +226,13 @@ fn parse_prompt_deeplink(
         config: None,
         config_format: None,
         config_url: None,
+        usage_enabled: None,
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
     })
 }
 
@@ -261,6 +288,13 @@ fn parse_mcp_deeplink(
         directory: None,
         branch: None,
         config_url: None,
+        usage_enabled: None,
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
     })
 }
 
@@ -309,5 +343,12 @@ fn parse_skill_deeplink(
         config: None,
         config_format: None,
         config_url: None,
+        usage_enabled: None,
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
     })
 }
