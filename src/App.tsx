@@ -27,7 +27,7 @@ import {
 } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
-import { useConfigSets } from "@/hooks/useConfigSets";
+import { useConfigSets, type ActivateConfigSetOptions } from "@/hooks/useConfigSets";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import { AppSwitcher } from "@/components/AppSwitcher";
@@ -210,8 +210,8 @@ function App() {
   const hasMultipleConfigSets = configSets.length > 1;
 
   const activateEnvironment = useCallback(
-    async (setId: string) => {
-      const activated = await activateConfigSet(setId);
+    async (setId: string, options?: ActivateConfigSetOptions) => {
+      const activated = await activateConfigSet(setId, options);
       if (activated) {
         await refetch();
       }
@@ -227,7 +227,9 @@ function App() {
       const desiredSetId = targetSetId ?? fallbackSetId;
 
       if (desiredSetId && desiredSetId !== activeConfigSetId) {
-        const activated = await activateEnvironment(desiredSetId);
+        const activated = await activateEnvironment(desiredSetId, {
+          silent: true,
+        });
         if (!activated) {
           return;
         }

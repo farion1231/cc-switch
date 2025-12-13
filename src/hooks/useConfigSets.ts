@@ -65,7 +65,7 @@ export interface LaunchConfigSet {
   currentProviderGemini?: string;
 }
 
-interface ActivateConfigSetOptions {
+export interface ActivateConfigSetOptions {
   silent?: boolean;
 }
 
