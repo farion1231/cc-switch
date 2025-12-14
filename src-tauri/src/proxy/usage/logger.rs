@@ -107,6 +107,8 @@ impl<'a> UsageLogger<'a> {
     }
 
     /// 记录失败的请求
+    ///
+    /// 用于记录无法从上游获取 usage 信息的失败请求
     #[allow(dead_code, clippy::too_many_arguments)]
     pub fn log_error(
         &self,
@@ -132,6 +134,43 @@ impl<'a> UsageLogger<'a> {
             session_id: None,
             provider_type: None,
             is_streaming: false,
+            cost_multiplier: "1.0".to_string(),
+        };
+
+        self.log_request(&log)
+    }
+
+    /// 记录失败的请求（带更多上下文信息）
+    ///
+    /// 相比 log_error，这个方法接受更多参数以提供完整的请求上下文
+    #[allow(clippy::too_many_arguments)]
+    pub fn log_error_with_context(
+        &self,
+        request_id: String,
+        provider_id: String,
+        app_type: String,
+        model: String,
+        status_code: u16,
+        error_message: String,
+        latency_ms: u64,
+        is_streaming: bool,
+        session_id: Option<String>,
+        provider_type: Option<String>,
+    ) -> Result<(), AppError> {
+        let log = RequestLog {
+            request_id,
+            provider_id,
+            app_type,
+            model,
+            usage: TokenUsage::default(),
+            cost: None,
+            latency_ms,
+            first_token_ms: None,
+            status_code,
+            error_message: Some(error_message),
+            session_id,
+            provider_type,
+            is_streaming,
             cost_multiplier: "1.0".to_string(),
         };
 
