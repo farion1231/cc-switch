@@ -7,7 +7,7 @@ import {
   Play,
   TestTube2,
   Trash2,
-  RotateCcw,
+  // RotateCcw, // TODO: 暂时注释，等待故障转移功能启用
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -38,9 +38,9 @@ export function ProviderActions({
   onTest,
   onConfigureUsage,
   onDelete,
-  onResetCircuitBreaker,
-  isProxyTarget,
-  consecutiveFailures = 0,
+  onResetCircuitBreaker: _onResetCircuitBreaker, // 暂未使用，前缀 _ 避免 lint 警告
+  isProxyTarget: _isProxyTarget, // 暂未使用，前缀 _ 避免 lint 警告
+  consecutiveFailures: _consecutiveFailures = 0, // 暂未使用，前缀 _ 避免 lint 警告
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
@@ -59,7 +59,7 @@ export function ProviderActions({
           // 代理接管模式下启用按钮使用绿色
           !isCurrent &&
             isProxyTakeover &&
-            "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
+            "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
         )}
       >
         {isCurrent ? (
@@ -158,7 +158,7 @@ export function ProviderActions({
           className={cn(
             iconButtonClass,
             !isCurrent && "hover:text-red-500 dark:hover:text-red-400",
-            isCurrent && "opacity-40 cursor-not-allowed text-muted-foreground"
+            isCurrent && "opacity-40 cursor-not-allowed text-muted-foreground",
           )}
         >
           <Trash2 className="h-4 w-4" />

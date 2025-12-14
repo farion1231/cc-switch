@@ -105,16 +105,12 @@ impl ProxyService {
             if let Ok(Some(provider_id)) = self.db.get_current_provider(app_type) {
                 // 设置为代理目标
                 if let Err(e) = self.db.set_proxy_target(&provider_id, app_type, true).await {
-                    log::warn!("设置 {} 的代理目标 {} 失败: {}", app_type, provider_id, e);
+                    log::warn!("设置 {app_type} 的代理目标 {provider_id} 失败: {e}");
                 } else {
-                    log::info!(
-                        "已将 {} 的当前供应商 {} 设置为代理目标",
-                        app_type,
-                        provider_id
-                    );
+                    log::info!("已将 {app_type} 的当前供应商 {provider_id} 设置为代理目标");
                 }
             } else {
-                log::debug!("{} 没有当前供应商，跳过代理目标设置", app_type);
+                log::debug!("{app_type} 没有当前供应商，跳过代理目标设置");
             }
         }
 
@@ -158,8 +154,7 @@ impl ProxyService {
                                     log::warn!("同步 Claude Token 到数据库失败: {e}");
                                 } else {
                                     log::info!(
-                                        "已同步 Claude Token 到数据库 (provider: {})",
-                                        provider_id
+                                        "已同步 Claude Token 到数据库 (provider: {provider_id})"
                                     );
                                 }
                             }
@@ -198,8 +193,7 @@ impl ProxyService {
                                     log::warn!("同步 Codex Token 到数据库失败: {e}");
                                 } else {
                                     log::info!(
-                                        "已同步 Codex Token 到数据库 (provider: {})",
-                                        provider_id
+                                        "已同步 Codex Token 到数据库 (provider: {provider_id})"
                                     );
                                 }
                             }
@@ -238,8 +232,7 @@ impl ProxyService {
                                     log::warn!("同步 Gemini Token 到数据库失败: {e}");
                                 } else {
                                     log::info!(
-                                        "已同步 Gemini Token 到数据库 (provider: {})",
-                                        provider_id
+                                        "已同步 Gemini Token 到数据库 (provider: {provider_id})"
                                     );
                                 }
                             }
@@ -364,7 +357,7 @@ impl ProxyService {
                 });
             }
             self.write_claude_live(&live_config)?;
-            log::info!("Claude Live 配置已接管，代理地址: {}", proxy_url);
+            log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
         }
 
         // Codex: 修改 OPENAI_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
@@ -375,7 +368,7 @@ impl ProxyService {
                 auth.insert("OPENAI_API_KEY".to_string(), json!("PROXY_MANAGED"));
             }
             self.write_codex_live(&live_config)?;
-            log::info!("Codex Live 配置已接管，代理地址: {}", proxy_url);
+            log::info!("Codex Live 配置已接管，代理地址: {proxy_url}");
         }
 
         // Gemini: 修改 GEMINI_API_BASE，使用占位符替代真实 Token（代理会注入真实 Token）
@@ -391,7 +384,7 @@ impl ProxyService {
                 });
             }
             self.write_gemini_live(&live_config)?;
-            log::info!("Gemini Live 配置已接管，代理地址: {}", proxy_url);
+            log::info!("Gemini Live 配置已接管，代理地址: {proxy_url}");
         }
 
         Ok(())
@@ -448,11 +441,7 @@ impl ProxyService {
             .set_current_provider(app_type_enum.as_str(), provider_id)
             .map_err(|e| format!("更新当前供应商失败: {e}"))?;
 
-        log::info!(
-            "代理模式：已切换 {} 的目标供应商为 {}",
-            app_type,
-            provider_id
-        );
+        log::info!("代理模式：已切换 {app_type} 的目标供应商为 {provider_id}");
         Ok(())
     }
 

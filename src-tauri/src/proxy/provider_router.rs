@@ -34,12 +34,12 @@ impl ProviderRouter {
         let current_id = self
             .db
             .get_current_provider(app_type)?
-            .ok_or_else(|| AppError::Config(format!("No current provider for {}", app_type)))?;
+            .ok_or_else(|| AppError::Config(format!("No current provider for {app_type}")))?;
 
         let providers = self.db.get_all_providers(app_type)?;
         let provider = providers
             .get(&current_id)
-            .ok_or_else(|| AppError::Config(format!("Current provider {} not found", current_id)))?
+            .ok_or_else(|| AppError::Config(format!("Current provider {current_id} not found")))?
             .clone();
 
         log::info!(
