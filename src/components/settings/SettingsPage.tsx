@@ -35,6 +35,7 @@ import { ProxyPanel } from "@/components/proxy";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
 import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
+import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
@@ -372,7 +373,7 @@ export function SettingsPage({
                                 自动故障转移
                               </h3>
                               <p className="text-sm text-muted-foreground font-normal">
-                                配置自动故障转移和熔断策略
+                                配置故障转移队列和熔断策略
                               </p>
                             </div>
                           </div>
@@ -388,10 +389,55 @@ export function SettingsPage({
                         </div>
                       </AccordionTrigger>
                       <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                        <AutoFailoverConfigPanel
-                          enabled={failoverEnabled}
-                          onEnabledChange={setFailoverEnabled}
-                        />
+                        <div className="space-y-6">
+                          {/* 故障转移队列管理 */}
+                          <div className="space-y-4">
+                            <div>
+                              <h4 className="text-sm font-semibold">
+                                {t("proxy.failoverQueue.title", "故障转移队列")}
+                              </h4>
+                              <p className="text-xs text-muted-foreground">
+                                {t(
+                                  "proxy.failoverQueue.description",
+                                  "管理各应用的供应商故障转移顺序",
+                                )}
+                              </p>
+                            </div>
+                            <Tabs defaultValue="claude" className="w-full">
+                              <TabsList className="grid w-full grid-cols-3">
+                                <TabsTrigger value="claude">Claude</TabsTrigger>
+                                <TabsTrigger value="codex">Codex</TabsTrigger>
+                                <TabsTrigger value="gemini">Gemini</TabsTrigger>
+                              </TabsList>
+                              <TabsContent value="claude" className="mt-4">
+                                <FailoverQueueManager
+                                  appType="claude"
+                                  disabled={!failoverEnabled}
+                                />
+                              </TabsContent>
+                              <TabsContent value="codex" className="mt-4">
+                                <FailoverQueueManager
+                                  appType="codex"
+                                  disabled={!failoverEnabled}
+                                />
+                              </TabsContent>
+                              <TabsContent value="gemini" className="mt-4">
+                                <FailoverQueueManager
+                                  appType="gemini"
+                                  disabled={!failoverEnabled}
+                                />
+                              </TabsContent>
+                            </Tabs>
+                          </div>
+
+                          {/* 熔断器配置 */}
+                          <div className="border-t border-border/50 pt-6">
+                            <AutoFailoverConfigPanel
+                              enabled={failoverEnabled}
+                              onEnabledChange={setFailoverEnabled}
+                            />
+                          </div>
+                        </div>
                       </AccordionContent>
                     </AccordionItem>
 

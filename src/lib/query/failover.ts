@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { failoverApi } from "@/lib/api/failover";
 
+// ========== 旧版代理目标 Hooks（保留向后兼容）==========
+
 /**
  * 获取代理目标列表
  */
@@ -9,19 +11,6 @@ export function useProxyTargets(appType: string) {
     queryKey: ["proxyTargets", appType],
     queryFn: () => failoverApi.getProxyTargets(appType),
     enabled: !!appType,
-  });
-}
-
-/**
- * 获取供应商健康状态
- */
-export function useProviderHealth(providerId: string, appType: string) {
-  return useQuery({
-    queryKey: ["providerHealth", providerId, appType],
-    queryFn: () => failoverApi.getProviderHealth(providerId, appType),
-    enabled: !!providerId && !!appType,
-    refetchInterval: 5000, // 每 5 秒刷新一次
-    retry: false,
   });
 }
 
@@ -53,6 +42,21 @@ export function useSetProxyTarget() {
         queryKey: ["providerHealth", variables.providerId, variables.appType],
       });
     },
+  });
+}
+
+// ========== 熔断器 Hooks ==========
+
+/**
+ * 获取供应商健康状态
+ */
+export function useProviderHealth(providerId: string, appType: string) {
+  return useQuery({
+    queryKey: ["providerHealth", providerId, appType],
+    queryFn: () => failoverApi.getProviderHealth(providerId, appType),
+    enabled: !!providerId && !!appType,
+    refetchInterval: 5000, // 每 5 秒刷新一次
+    retry: false,
   });
 }
 
@@ -112,5 +116,125 @@ export function useCircuitBreakerStats(providerId: string, appType: string) {
     queryFn: () => failoverApi.getCircuitBreakerStats(providerId, appType),
     enabled: !!providerId && !!appType,
     refetchInterval: 5000, // 每 5 秒刷新一次
+  });
+}
+
+// ========== 故障转移队列 Hooks（新） ==========
+
+/**
+ * 获取故障转移队列
+ */
+export function useFailoverQueue(appType: string) {
+  return useQuery({
+    queryKey: ["failoverQueue", appType],
+    queryFn: () => failoverApi.getFailoverQueue(appType),
+    enabled: !!appType,
+  });
+}
+
+/**
+ * 获取可添加到队列的供应商
+ */
+export function useAvailableProvidersForFailover(appType: string) {
+  return useQuery({
+    queryKey: ["availableProvidersForFailover", appType],
+    queryFn: () => failoverApi.getAvailableProvidersForFailover(appType),
+    enabled: !!appType,
+  });
+}
+
+/**
+ * 添加供应商到故障转移队列
+ */
+export function useAddToFailoverQueue() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      providerId,
+    }: {
+      appType: string;
+      providerId: string;
+    }) => failoverApi.addToFailoverQueue(appType, providerId),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["failoverQueue", variables.appType],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["availableProvidersForFailover", variables.appType],
+      });
+    },
+  });
+}
+
+/**
+ * 从故障转移队列移除供应商
+ */
+export function useRemoveFromFailoverQueue() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      providerId,
+    }: {
+      appType: string;
+      providerId: string;
+    }) => failoverApi.removeFromFailoverQueue(appType, providerId),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["failoverQueue", variables.appType],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["availableProvidersForFailover", variables.appType],
+      });
+    },
+  });
+}
+
+/**
+ * 重新排序故障转移队列
+ */
+export function useReorderFailoverQueue() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      providerIds,
+    }: {
+      appType: string;
+      providerIds: string[];
+    }) => failoverApi.reorderFailoverQueue(appType, providerIds),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["failoverQueue", variables.appType],
+      });
+    },
+  });
+}
+
+/**
+ * 设置故障转移队列项的启用状态
+ */
+export function useSetFailoverItemEnabled() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      providerId,
+      enabled,
+    }: {
+      appType: string;
+      providerId: string;
+      enabled: boolean;
+    }) => failoverApi.setFailoverItemEnabled(appType, providerId, enabled),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["failoverQueue", variables.appType],
+      });
+    },
   });
 }

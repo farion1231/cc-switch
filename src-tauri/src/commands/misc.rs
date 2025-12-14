@@ -232,7 +232,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
             // 构建 PATH 环境变量，确保 node 可被找到
             let current_path = std::env::var("PATH").unwrap_or_default();
             let new_path = format!("{}:{}", path.display(), current_path);
-            
+
             let output = Command::new(&tool_path)
                 .arg("--version")
                 .env("PATH", &new_path)

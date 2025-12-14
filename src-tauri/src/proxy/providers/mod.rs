@@ -369,7 +369,7 @@ mod tests {
     fn test_from_app_type_gemini_api_key() {
         let provider = create_provider(json!({
             "env": {
-                "GOOGLE_GEMINI_API_KEY": "AIza-test-key"
+                "GEMINI_API_KEY": "AIza-test-key"
             }
         }));
 
@@ -381,7 +381,7 @@ mod tests {
     fn test_from_app_type_gemini_cli_oauth() {
         let provider = create_provider(json!({
             "env": {
-                "GOOGLE_GEMINI_API_KEY": "ya29.test-access-token"
+                "GEMINI_API_KEY": "ya29.test-access-token"
             }
         }));
 
@@ -393,7 +393,7 @@ mod tests {
     fn test_from_app_type_gemini_cli_json() {
         let provider = create_provider(json!({
             "env": {
-                "GOOGLE_GEMINI_API_KEY": "{\"access_token\":\"ya29.test\",\"refresh_token\":\"1//test\"}"
+                "GEMINI_API_KEY": "{\"access_token\":\"ya29.test\",\"refresh_token\":\"1//test\"}"
             }
         }));
 

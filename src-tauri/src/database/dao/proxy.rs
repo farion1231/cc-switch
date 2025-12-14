@@ -129,6 +129,8 @@ impl Database {
     }
 
     /// 更新Provider健康状态
+    ///
+    /// 使用默认阈值（5）判断是否健康，建议使用 `update_provider_health_with_threshold` 传入配置的阈值
     pub async fn update_provider_health(
         &self,
         provider_id: &str,
@@ -136,13 +138,30 @@ impl Database {
         success: bool,
         error_msg: Option<String>,
     ) -> Result<(), AppError> {
+        // 默认阈值与 CircuitBreakerConfig::default() 保持一致
+        self.update_provider_health_with_threshold(provider_id, app_type, success, error_msg, 5)
+            .await
+    }
+
+    /// 更新Provider健康状态（带阈值参数）
+    ///
+    /// # Arguments
+    /// * `failure_threshold` - 连续失败多少次后标记为不健康
+    pub async fn update_provider_health_with_threshold(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        success: bool,
+        error_msg: Option<String>,
+        failure_threshold: u32,
+    ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         let now = chrono::Utc::now().to_rfc3339();
 
         // 先查询当前状态
         let current = conn.query_row(
-            "SELECT consecutive_failures FROM provider_health 
+            "SELECT consecutive_failures FROM provider_health
              WHERE provider_id = ?1 AND app_type = ?2",
             rusqlite::params![provider_id, app_type],
             |row| Ok(row.get::<_, i64>(0)? as u32),
@@ -154,7 +173,8 @@ impl Database {
         } else {
             // 失败：增加失败计数
             let failures = current.unwrap_or(0) + 1;
-            let healthy = if failures >= 3 { 0 } else { 1 };
+            // 使用传入的阈值而非硬编码
+            let healthy = if failures >= failure_threshold { 0 } else { 1 };
             (healthy, failures)
         };
 
@@ -169,10 +189,10 @@ impl Database {
             "INSERT OR REPLACE INTO provider_health
              (provider_id, app_type, is_healthy, consecutive_failures,
               last_success_at, last_failure_at, last_error, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 
-                     COALESCE(?5, (SELECT last_success_at FROM provider_health 
+             VALUES (?1, ?2, ?3, ?4,
+                     COALESCE(?5, (SELECT last_success_at FROM provider_health
                                    WHERE provider_id = ?1 AND app_type = ?2)),
-                     COALESCE(?6, (SELECT last_failure_at FROM provider_health 
+                     COALESCE(?6, (SELECT last_failure_at FROM provider_health
                                    WHERE provider_id = ?1 AND app_type = ?2)),
                      ?7, ?8)",
             rusqlite::params![

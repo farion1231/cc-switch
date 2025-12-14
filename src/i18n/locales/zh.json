@@ -853,5 +853,50 @@
   },
   "agents": {
     "title": "智能体"
+  },
+  "proxy": {
+    "failoverQueue": {
+      "title": "故障转移队列",
+      "description": "管理各应用的供应商故障转移顺序",
+      "info": "当前激活的供应商始终优先。当请求失败时，系统会按队列顺序依次尝试其他供应商。",
+      "selectProvider": "选择供应商添加到队列",
+      "noAvailableProviders": "没有可添加的供应商",
+      "empty": "故障转移队列为空。添加供应商以启用自动故障转移。",
+      "dragHint": "拖拽供应商可调整故障转移顺序，序号越小优先级越高。",
+      "toggleEnabled": "启用/禁用",
+      "addSuccess": "已添加到故障转移队列",
+      "addFailed": "添加失败",
+      "removeSuccess": "已从故障转移队列移除",
+      "removeFailed": "移除失败",
+      "reorderSuccess": "队列顺序已更新",
+      "reorderFailed": "更新顺序失败",
+      "toggleFailed": "状态更新失败"
+    },
+    "autoFailover": {
+      "info": "当启用多个代理目标时，系统会按优先级顺序依次尝试。当某个供应商连续失败达到阈值时，熔断器会自动打开，跳过该供应商。",
+      "configSaved": "自动故障转移配置已保存",
+      "configSaveFailed": "保存失败",
+      "retrySettings": "重试与超时设置",
+      "failureThreshold": "失败阈值",
+      "failureThresholdHint": "连续失败多少次后打开熔断器（建议: 3-10）",
+      "timeout": "恢复等待时间（秒）",
+      "timeoutHint": "熔断器打开后，等待多久后尝试恢复（建议: 30-120）",
+      "circuitBreakerSettings": "熔断器高级设置",
+      "successThreshold": "恢复成功阈值",
+      "successThresholdHint": "半开状态下成功多少次后关闭熔断器",
+      "errorRate": "错误率阈值 (%)",
+      "errorRateHint": "错误率超过此值时打开熔断器",
+      "minRequests": "最小请求数",
+      "minRequestsHint": "计算错误率前的最小请求数",
+      "explanationTitle": "工作原理",
+      "failureThresholdLabel": "失败阈值",
+      "failureThresholdExplain": "连续失败达到此次数时，熔断器打开，该供应商暂时不可用",
+      "timeoutLabel": "恢复等待时间",
+      "timeoutExplain": "熔断器打开后，等待此时间后尝试半开状态",
+      "successThresholdLabel": "恢复成功阈值",
+      "successThresholdExplain": "半开状态下，成功达到此次数时关闭熔断器，供应商恢复可用",
+      "errorRateLabel": "错误率阈值",
+      "errorRateExplain": "错误率超过此值时，即使未达到失败阈值也会打开熔断器"
+    }
   }
 }

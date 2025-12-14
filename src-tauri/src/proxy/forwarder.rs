@@ -4,12 +4,12 @@
 
 use super::{
     error::*,
-    provider_router::ProviderRouter as NewProviderRouter,
+    provider_router::ProviderRouter,
     providers::{get_adapter, ProviderAdapter},
     types::ProxyStatus,
     ProxyError,
 };
-use crate::{app_config::AppType, database::Database, provider::Provider};
+use crate::{app_config::AppType, provider::Provider};
 use reqwest::{Client, Response};
 use serde_json::Value;
 use std::sync::Arc;
@@ -18,8 +18,9 @@ use tokio::sync::RwLock;
 
 pub struct RequestForwarder {
     client: Client,
-    router: Arc<NewProviderRouter>,
-    #[allow(dead_code)]
+    /// 共享的 ProviderRouter（持有熔断器状态）
+    router: Arc<ProviderRouter>,
+    /// 单个 Provider 内的最大重试次数
     max_retries: u8,
     status: Arc<RwLock<ProxyStatus>>,
     current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
@@ -27,7 +28,7 @@ pub struct RequestForwarder {
 
 impl RequestForwarder {
     pub fn new(
-        db: Arc<Database>,
+        router: Arc<ProviderRouter>,
         timeout_secs: u64,
         max_retries: u8,
         status: Arc<RwLock<ProxyStatus>>,
@@ -44,31 +45,84 @@ impl RequestForwarder {
 
         Self {
             client,
-            router: Arc::new(NewProviderRouter::new(db)),
+            router,
             max_retries,
             status,
             current_providers,
         }
     }
 
+    /// 对单个 Provider 执行请求（带重试）
+    ///
+    /// 在同一个 Provider 上最多重试 max_retries 次，使用指数退避
+    async fn forward_with_provider_retry(
+        &self,
+        provider: &Provider,
+        endpoint: &str,
+        body: &Value,
+        headers: &axum::http::HeaderMap,
+        adapter: &dyn ProviderAdapter,
+    ) -> Result<Response, ProxyError> {
+        let mut last_error = None;
+
+        for attempt in 0..=self.max_retries {
+            if attempt > 0 {
+                // 指数退避：100ms, 200ms, 400ms, ...
+                let delay_ms = 100 * 2u64.pow(attempt as u32 - 1);
+                log::info!(
+                    "[{}] 重试第 {}/{} 次（等待 {}ms）",
+                    adapter.name(),
+                    attempt,
+                    self.max_retries,
+                    delay_ms
+                );
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            }
+
+            match self.forward(provider, endpoint, body, headers, adapter).await {
+                Ok(response) => return Ok(response),
+                Err(e) => {
+                    let category = self.categorize_proxy_error(&e);
+
+                    // 只有可重试的错误才继续重试
+                    if category == ErrorCategory::NonRetryable {
+                        return Err(e);
+                    }
+
+                    log::debug!(
+                        "[{}] Provider {} 第 {} 次请求失败: {}",
+                        adapter.name(),
+                        provider.name,
+                        attempt + 1,
+                        e
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or(ProxyError::MaxRetriesExceeded))
+    }
+
     /// 转发请求（带故障转移）
+    ///
+    /// # Arguments
+    /// * `app_type` - 应用类型
+    /// * `endpoint` - API 端点
+    /// * `body` - 请求体
+    /// * `headers` - 请求头
+    /// * `providers` - 已选择的 Provider 列表（由 RequestContext 提供，避免重复调用 select_providers）
     pub async fn forward_with_retry(
         &self,
         app_type: &AppType,
         endpoint: &str,
         body: Value,
         headers: axum::http::HeaderMap,
+        providers: Vec<Provider>,
     ) -> Result<Response, ProxyError> {
         // 获取适配器
         let adapter = get_adapter(app_type);
         let app_type_str = app_type.as_str();
-
-        // 使用新的 ProviderRouter 选择所有可用供应商
-        let providers = self
-            .router
-            .select_providers(app_type_str)
-            .await
-            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
         if providers.is_empty() {
             return Err(ProxyError::NoAvailableProvider);
@@ -108,9 +162,9 @@ impl RequestForwarder {
 
             let start = Instant::now();
 
-            // 转发请求
+            // 转发请求（带单 Provider 内重试）
             match self
-                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                .forward_with_provider_retry(provider, endpoint, &body, &headers, adapter.as_ref())
                 .await
             {
                 Ok(response) => {
@@ -373,17 +427,22 @@ impl RequestForwarder {
     }
 
     /// 分类ProxyError
+    ///
+    /// 决定哪些错误应该触发故障转移到下一个 Provider
     fn categorize_proxy_error(&self, error: &ProxyError) -> ErrorCategory {
         match error {
             ProxyError::Timeout(_) => ErrorCategory::Retryable,
             ProxyError::ForwardFailed(_) => ErrorCategory::Retryable,
             ProxyError::UpstreamError { status, .. } => {
-                if *status >= 500 {
-                    ErrorCategory::Retryable
-                } else if *status >= 400 && *status < 500 {
-                    ErrorCategory::NonRetryable
-                } else {
-                    ErrorCategory::Retryable
+                match *status {
+                    // 速率限制 - 应该尝试其他 Provider
+                    429 => ErrorCategory::Retryable,
+                    // 请求超时
+                    408 => ErrorCategory::Retryable,
+                    // 服务器错误
+                    s if s >= 500 => ErrorCategory::Retryable,
+                    // 其他 4xx 错误（认证失败、参数错误等）不应重试
+                    _ => ErrorCategory::NonRetryable,
                 }
             }
             ProxyError::ProviderUnhealthy(_) => ErrorCategory::Retryable,

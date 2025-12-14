@@ -93,3 +93,12 @@ export interface ProxyUsageRecord {
   error: string | null;
   timestamp: string;
 }
+
+// 故障转移队列条目
+export interface FailoverQueueItem {
+  providerId: string;
+  providerName: string;
+  queueOrder: number;
+  enabled: boolean;
+  createdAt: number;
+}

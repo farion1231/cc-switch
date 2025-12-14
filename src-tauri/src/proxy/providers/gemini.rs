@@ -120,11 +120,7 @@ impl GeminiAdapter {
     /// 从 Provider 配置中提取原始 API Key
     fn extract_key_raw(&self, provider: &Provider) -> Option<String> {
         if let Some(env) = provider.settings_config.get("env") {
-            // 优先使用 GOOGLE_GEMINI_API_KEY
-            if let Some(key) = env.get("GOOGLE_GEMINI_API_KEY").and_then(|v| v.as_str()) {
-                return Some(key.to_string());
-            }
-            // 备选 GEMINI_API_KEY
+            // 使用 GEMINI_API_KEY
             if let Some(key) = env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
                 return Some(key.to_string());
             }
@@ -276,7 +272,7 @@ mod tests {
         let adapter = GeminiAdapter::new();
         let provider = create_provider(json!({
             "env": {
-                "GOOGLE_GEMINI_API_KEY": "AIza-test-key-12345678"
+                "GEMINI_API_KEY": "AIza-test-key-12345678"
             }
         }));
 
@@ -291,7 +287,7 @@ mod tests {
         let adapter = GeminiAdapter::new();
         let provider = create_provider(json!({
             "env": {
-                "GOOGLE_GEMINI_API_KEY": "ya29.test-access-token-12345"
+                "GEMINI_API_KEY": "ya29.test-access-token-12345"
             }
         }));
 
@@ -308,7 +304,7 @@ mod tests {
         let adapter = GeminiAdapter::new();
         let provider = create_provider(json!({
             "env": {
-                "GOOGLE_GEMINI_API_KEY": "{\"access_token\":\"ya29.test-token\",\"refresh_token\":\"1//refresh\"}"
+                "GEMINI_API_KEY": "{\"access_token\":\"ya29.test-token\",\"refresh_token\":\"1//refresh\"}"
             }
         }));
 
@@ -324,7 +320,7 @@ mod tests {
         // API Key
         let api_key_provider = create_provider(json!({
             "env": {
-                "GOOGLE_GEMINI_API_KEY": "AIza-test-key"
+                "GEMINI_API_KEY": "AIza-test-key"
             }
         }));
         assert_eq!(
@@ -335,7 +331,7 @@ mod tests {
         // OAuth access_token
         let oauth_provider = create_provider(json!({
             "env": {
-                "GOOGLE_GEMINI_API_KEY": "ya29.test-token"
+                "GEMINI_API_KEY": "ya29.test-token"
             }
         }));
         assert_eq!(
@@ -346,7 +342,7 @@ mod tests {
         // OAuth JSON
         let oauth_json_provider = create_provider(json!({
             "env": {
-                "GOOGLE_GEMINI_API_KEY": "{\"access_token\":\"ya29.test\"}"
+                "GEMINI_API_KEY": "{\"access_token\":\"ya29.test\"}"
             }
         }));
         assert_eq!(

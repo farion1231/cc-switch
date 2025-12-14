@@ -5,6 +5,7 @@
 use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
+use crate::provider::Provider;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::types::*;
 use serde_json::{json, Value};
@@ -209,13 +210,13 @@ impl ProxyService {
             }
         }
 
-        // Gemini: 同步 GOOGLE_API_KEY
+        // Gemini: 同步 GEMINI_API_KEY
         if let Ok(live_config) = self.read_gemini_live() {
             if let Some(provider_id) = self.db.get_current_provider("gemini").ok().flatten() {
                 if let Ok(Some(mut provider)) = self.db.get_provider_by_id(&provider_id, "gemini") {
                     // 从 live 配置提取 token
                     if let Some(env) = live_config.get("env") {
-                        if let Some(token) = env.get("GOOGLE_API_KEY").and_then(|v| v.as_str()) {
+                        if let Some(token) = env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
                             if !token.is_empty() {
                                 // 更新 provider 的 settings_config
                                 if let Some(env_obj) = provider
@@ -223,10 +224,10 @@ impl ProxyService {
                                     .get_mut("env")
                                     .and_then(|v| v.as_object_mut())
                                 {
-                                    env_obj.insert("GOOGLE_API_KEY".to_string(), json!(token));
+                                    env_obj.insert("GEMINI_API_KEY".to_string(), json!(token));
                                 } else {
                                     provider.settings_config["env"] = json!({
-                                        "GOOGLE_API_KEY": token
+                                        "GEMINI_API_KEY": token
                                     });
                                 }
                                 // 保存到数据库
@@ -367,27 +368,35 @@ impl ProxyService {
             log::info!("Claude Live 配置已接管，代理地址: {}", proxy_url);
         }
 
-        // Codex: 修改 OPENAI_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
+        // Codex: 修改 config.toml 的 base_url，auth.json 的 OPENAI_API_KEY（代理会注入真实 Token）
         if let Ok(mut live_config) = self.read_codex_live() {
+            // 1. 修改 auth.json 中的 OPENAI_API_KEY（使用占位符）
             if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut()) {
-                auth.insert("OPENAI_BASE_URL".to_string(), json!(&proxy_url));
-                // 使用占位符，避免显示缺少 key 的警告
                 auth.insert("OPENAI_API_KEY".to_string(), json!("PROXY_MANAGED"));
             }
+
+            // 2. 修改 config.toml 中的 base_url
+            let config_str = live_config
+                .get("config")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let updated_config = Self::update_toml_base_url(config_str, &proxy_url);
+            live_config["config"] = json!(updated_config);
+
             self.write_codex_live(&live_config)?;
             log::info!("Codex Live 配置已接管，代理地址: {}", proxy_url);
         }
 
-        // Gemini: 修改 GEMINI_API_BASE，使用占位符替代真实 Token（代理会注入真实 Token）
+        // Gemini: 修改 GOOGLE_GEMINI_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
         if let Ok(mut live_config) = self.read_gemini_live() {
             if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
-                env.insert("GEMINI_API_BASE".to_string(), json!(&proxy_url));
+                env.insert("GOOGLE_GEMINI_BASE_URL".to_string(), json!(&proxy_url));
                 // 使用占位符，避免显示缺少 key 的警告
-                env.insert("GOOGLE_API_KEY".to_string(), json!("PROXY_MANAGED"));
+                env.insert("GEMINI_API_KEY".to_string(), json!("PROXY_MANAGED"));
             } else {
                 live_config["env"] = json!({
-                    "GEMINI_API_BASE": &proxy_url,
-                    "GOOGLE_API_KEY": "PROXY_MANAGED"
+                    "GOOGLE_GEMINI_BASE_URL": &proxy_url,
+                    "GEMINI_API_KEY": "PROXY_MANAGED"
                 });
             }
             self.write_gemini_live(&live_config)?;
@@ -434,6 +443,73 @@ impl ProxyService {
             .map_err(|e| format!("检查接管状态失败: {e}"))
     }
 
+    /// 从异常退出中恢复（启动时调用）
+    ///
+    /// 检测到 live_takeover_active=true 但代理未运行时调用此方法。
+    /// 会恢复 Live 配置、清除接管标志、删除备份。
+    pub async fn recover_from_crash(&self) -> Result<(), String> {
+        // 1. 恢复 Live 配置
+        self.restore_live_configs().await?;
+
+        // 2. 清除接管标志
+        self.db
+            .set_live_takeover_active(false)
+            .await
+            .map_err(|e| format!("清除接管状态失败: {e}"))?;
+
+        // 3. 删除备份
+        self.db
+            .delete_all_live_backups()
+            .await
+            .map_err(|e| format!("删除备份失败: {e}"))?;
+
+        log::info!("已从异常退出中恢复 Live 配置");
+        Ok(())
+    }
+
+    /// 从供应商配置更新 Live 备份（用于代理模式下的热切换）
+    ///
+    /// 与 backup_live_configs() 不同，此方法从供应商的 settings_config 生成备份，
+    /// 而不是从 Live 文件读取（因为 Live 文件已被代理接管）。
+    pub async fn update_live_backup_from_provider(
+        &self,
+        app_type: &str,
+        provider: &Provider,
+    ) -> Result<(), String> {
+        let backup_json = match app_type {
+            "claude" => {
+                // Claude: settings_config 直接作为备份
+                serde_json::to_string(&provider.settings_config)
+                    .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?
+            }
+            "codex" => {
+                // Codex: settings_config 包含 {"auth": ..., "config": ...}，直接使用
+                serde_json::to_string(&provider.settings_config)
+                    .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?
+            }
+            "gemini" => {
+                // Gemini: 只提取 env 字段（与原始备份格式一致）
+                // proxy.rs 的 read_gemini_live() 返回 {"env": {...}}
+                let env_backup = if let Some(env) = provider.settings_config.get("env") {
+                    json!({ "env": env })
+                } else {
+                    json!({ "env": {} })
+                };
+                serde_json::to_string(&env_backup)
+                    .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?
+            }
+            _ => return Err(format!("未知的应用类型: {app_type}")),
+        };
+
+        self.db
+            .save_live_backup(app_type, &backup_json)
+            .await
+            .map_err(|e| format!("更新 {app_type} 备份失败: {e}"))?;
+
+        log::info!("已更新 {app_type} Live 备份（热切换）");
+        Ok(())
+    }
+
     /// 代理模式下切换供应商（热切换，不写 Live）
     pub async fn switch_proxy_target(
         &self,
@@ -457,6 +533,19 @@ impl ProxyService {
     }
 
     // ==================== Live 配置读写辅助方法 ====================
+
+    /// 更新 TOML 字符串中的 base_url
+    fn update_toml_base_url(toml_str: &str, new_url: &str) -> String {
+        use toml_edit::DocumentMut;
+
+        let mut doc = toml_str
+            .parse::<DocumentMut>()
+            .unwrap_or_else(|_| DocumentMut::new());
+
+        doc["base_url"] = toml_edit::value(new_url);
+
+        doc.to_string()
+    }
 
     fn read_claude_live(&self) -> Result<Value, String> {
         let path = get_claude_settings_path();
@@ -612,5 +701,42 @@ impl ProxyService {
     /// 检查服务器是否正在运行
     pub async fn is_running(&self) -> bool {
         self.server.read().await.is_some()
+    }
+
+    /// 热更新熔断器配置
+    ///
+    /// 如果代理服务器正在运行，将新配置应用到所有已创建的熔断器实例
+    pub async fn update_circuit_breaker_configs(
+        &self,
+        config: crate::proxy::CircuitBreakerConfig,
+    ) -> Result<(), String> {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server.update_circuit_breaker_configs(config).await;
+            log::info!("已热更新运行中的熔断器配置");
+        } else {
+            log::debug!("代理服务器未运行，熔断器配置将在下次启动时生效");
+        }
+        Ok(())
+    }
+
+    /// 重置指定 Provider 的熔断器
+    ///
+    /// 如果代理服务器正在运行，立即重置内存中的熔断器状态
+    pub async fn reset_provider_circuit_breaker(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<(), String> {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server
+                .reset_provider_circuit_breaker(provider_id, app_type)
+                .await;
+            log::info!(
+                "已重置 Provider {} (app: {}) 的熔断器",
+                provider_id,
+                app_type
+            );
+        }
+        Ok(())
     }
 }

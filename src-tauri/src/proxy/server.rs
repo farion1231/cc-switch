@@ -2,7 +2,7 @@
 //!
 //! 基于Axum的HTTP服务器，处理代理请求
 
-use super::{handlers, types::*, ProxyError};
+use super::{handlers, provider_router::ProviderRouter, types::*, ProxyError};
 use crate::database::Database;
 use axum::{
     routing::{get, post},
@@ -11,6 +11,7 @@ use axum::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
+use tokio::task::JoinHandle;
 use tower_http::cors::{Any, CorsLayer};
 
 /// 代理服务器状态（共享）
@@ -22,6 +23,8 @@ pub struct ProxyState {
     pub start_time: Arc<RwLock<Option<std::time::Instant>>>,
     /// 每个应用类型当前使用的 provider (app_type -> (provider_id, provider_name))
     pub current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
+    /// 共享的 ProviderRouter（持有熔断器状态，跨请求保持）
+    pub provider_router: Arc<ProviderRouter>,
 }
 
 /// 代理HTTP服务器
@@ -29,22 +32,29 @@ pub struct ProxyServer {
     config: ProxyConfig,
     state: ProxyState,
     shutdown_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
+    /// 服务器任务句柄，用于等待服务器实际关闭
+    server_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
 
 impl ProxyServer {
     pub fn new(config: ProxyConfig, db: Arc<Database>) -> Self {
+        // 创建共享的 ProviderRouter（熔断器状态将跨所有请求保持）
+        let provider_router = Arc::new(ProviderRouter::new(db.clone()));
+
         let state = ProxyState {
             db,
             config: Arc::new(RwLock::new(config.clone())),
             status: Arc::new(RwLock::new(ProxyStatus::default())),
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            provider_router,
         };
 
         Self {
             config,
             state,
             shutdown_tx: Arc::new(RwLock::new(None)),
+            server_handle: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -87,7 +97,7 @@ impl ProxyServer {
 
         // 启动服务器
         let state = self.state.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             axum::serve(listener, app)
                 .with_graceful_shutdown(async {
                     shutdown_rx.await.ok();
@@ -100,6 +110,9 @@ impl ProxyServer {
             *state.start_time.write().await = None;
         });
 
+        // 保存服务器任务句柄
+        *self.server_handle.write().await = Some(handle);
+
         Ok(ProxyServerInfo {
             address: self.config.listen_address.clone(),
             port: self.config.listen_port,
@@ -108,12 +121,23 @@ impl ProxyServer {
     }
 
     pub async fn stop(&self) -> Result<(), ProxyError> {
+        // 1. 发送关闭信号
         if let Some(tx) = self.shutdown_tx.write().await.take() {
             let _ = tx.send(());
-            Ok(())
         } else {
-            Err(ProxyError::NotRunning)
+            return Err(ProxyError::NotRunning);
         }
+
+        // 2. 等待服务器任务结束（带 5 秒超时保护）
+        if let Some(handle) = self.server_handle.write().await.take() {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
+                Ok(Ok(())) => log::info!("代理服务器已完全停止"),
+                Ok(Err(e)) => log::warn!("代理服务器任务异常终止: {e}"),
+                Err(_) => log::warn!("代理服务器停止超时（5秒），强制继续"),
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn get_status(&self) -> ProxyStatus {
@@ -173,5 +197,23 @@ impl ProxyServer {
     /// 在不重启服务的情况下更新运行时配置
     pub async fn apply_runtime_config(&self, config: &ProxyConfig) {
         *self.state.config.write().await = config.clone();
+    }
+
+    /// 热更新熔断器配置
+    ///
+    /// 将新配置应用到所有已创建的熔断器实例
+    pub async fn update_circuit_breaker_configs(
+        &self,
+        config: super::circuit_breaker::CircuitBreakerConfig,
+    ) {
+        self.state.provider_router.update_all_configs(config).await;
+    }
+
+    /// 重置指定 Provider 的熔断器
+    pub async fn reset_provider_circuit_breaker(&self, provider_id: &str, app_type: &str) {
+        self.state
+            .provider_router
+            .reset_provider_breaker(provider_id, app_type)
+            .await;
     }
 }

@@ -206,6 +206,11 @@ impl ProviderService {
                 id
             );
 
+            // 获取新供应商的完整配置（用于更新备份）
+            let provider = providers
+                .get(id)
+                .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
             // Update database is_current
             state.db.set_current_provider(app_type.as_str(), id)?;
 
@@ -214,6 +219,14 @@ impl ProviderService {
 
             // Update local settings for consistency
             crate::settings::set_current_provider(&app_type, Some(id))?;
+
+            // 更新 Live 备份（确保代理关闭时恢复正确的供应商配置）
+            futures::executor::block_on(
+                state
+                    .proxy_service
+                    .update_live_backup_from_provider(app_type.as_str(), provider),
+            )
+            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
 
             // Note: No Live config write, no MCP sync
             // The proxy server will route requests to the new provider via is_proxy_target
