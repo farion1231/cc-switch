@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Activity, Clock, TrendingUp, Server, ListOrdered } from "lucide-react";
+import {
+  Activity,
+  Clock,
+  TrendingUp,
+  Server,
+  ListOrdered,
+  Settings,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { ProxySettingsDialog } from "./ProxySettingsDialog";
@@ -39,8 +46,19 @@ export function ProxyPanel() {
           <div className="space-y-6">
             <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-4">
               <div>
-                <p className="text-xs text-muted-foreground">服务地址</p>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-muted-foreground">服务地址</p>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setShowSettings(true)}
+                    className="h-7 gap-1.5 text-xs"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                    配置
+                  </Button>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <code className="flex-1 text-sm bg-background px-3 py-2 rounded border border-border/60">
                     http://{status.address}:{status.port}
                   </code>
@@ -171,9 +189,18 @@ export function ProxyPanel() {
             <p className="text-base font-medium text-foreground mb-1">
               代理服务已停止
             </p>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground mb-4">
               使用右上角开关即可启动服务
             </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowSettings(true)}
+              className="gap-1.5"
+            >
+              <Settings className="h-4 w-4" />
+              配置代理服务
+            </Button>
           </div>
         )}
       </section>
