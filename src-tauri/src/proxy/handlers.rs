@@ -3,6 +3,7 @@
 //! 处理各种API端点的HTTP请求
 
 use super::{
+    error_mapper::{get_error_message, map_proxy_error_to_status},
     forwarder::RequestForwarder,
     providers::{get_adapter, transform, ProviderType},
     server::ProxyState,
@@ -285,6 +286,7 @@ pub async fn handle_messages(
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = std::time::Instant::now();
+    let session_id = uuid::Uuid::new_v4().to_string();
 
     let config = state.config.read().await.clone();
     let request_model = body
@@ -325,9 +327,36 @@ pub async fn handle_messages(
         state.current_providers.clone(),
     );
 
-    let response = forwarder
+    // 捕获错误并记录
+    let response = match forwarder
         .forward_with_retry(&AppType::Claude, "/v1/messages", body, headers)
-        .await?;
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            // 记录错误请求
+            let logger = UsageLogger::new(&state.db);
+            let status_code = map_proxy_error_to_status(&e);
+            let error_message = get_error_message(&e);
+
+            log::error!("[Claude] 请求失败: status={status_code}, error={error_message}");
+
+            let _ = logger.log_error_with_context(
+                session_id.clone(),
+                provider.id.clone(),
+                "claude".to_string(),
+                request_model.clone(),
+                status_code,
+                error_message,
+                start_time.elapsed().as_millis() as u64,
+                is_stream,
+                Some(session_id),
+                None, // provider_type 暂时设置为 None
+            );
+
+            return Err(e);
+        }
+    };
 
     let status = response.status();
     log::info!("[Claude] 上游响应状态: {status}");
@@ -627,6 +656,7 @@ pub async fn handle_gemini(
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = std::time::Instant::now();
+    let session_id = uuid::Uuid::new_v4().to_string();
 
     let config = state.config.read().await.clone();
 
@@ -658,11 +688,41 @@ pub async fn handle_gemini(
         .unwrap_or("unknown")
         .to_string();
 
+    // 检查是否是流式请求（从endpoint判断）
+    let is_stream = endpoint.contains("streamGenerateContent");
+
     log::info!("[Gemini] 请求端点: {endpoint}");
 
-    let response = forwarder
+    // 捕获错误并记录
+    let response = match forwarder
         .forward_with_retry(&AppType::Gemini, endpoint, body, headers)
-        .await?;
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            // 记录错误请求
+            let logger = UsageLogger::new(&state.db);
+            let status_code = map_proxy_error_to_status(&e);
+            let error_message = get_error_message(&e);
+
+            log::error!("[Gemini] 请求失败: status={status_code}, error={error_message}");
+
+            let _ = logger.log_error_with_context(
+                session_id.clone(),
+                provider.id.clone(),
+                "gemini".to_string(),
+                gemini_model.clone(),
+                status_code,
+                error_message,
+                start_time.elapsed().as_millis() as u64,
+                is_stream,
+                Some(session_id),
+                None, // provider_type 暂时设置为 None
+            );
+
+            return Err(e);
+        }
+    };
 
     let status = response.status();
     log::info!("[Gemini] 上游响应状态: {status}");
@@ -790,6 +850,7 @@ pub async fn handle_responses(
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = std::time::Instant::now();
+    let session_id = uuid::Uuid::new_v4().to_string();
 
     let config = state.config.read().await.clone();
     let request_model = body
@@ -811,9 +872,42 @@ pub async fn handle_responses(
         state.current_providers.clone(),
     );
 
-    let response = forwarder
+    // 检查是否是流式请求
+    let is_stream = body
+        .get("stream")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
+
+    // 捕获错误并记录
+    let response = match forwarder
         .forward_with_retry(&AppType::Codex, "/v1/responses", body, headers)
-        .await?;
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            // 记录错误请求
+            let logger = UsageLogger::new(&state.db);
+            let status_code = map_proxy_error_to_status(&e);
+            let error_message = get_error_message(&e);
+
+            log::error!("[Codex] 请求失败: status={status_code}, error={error_message}");
+
+            let _ = logger.log_error_with_context(
+                session_id.clone(),
+                provider.id.clone(),
+                "codex".to_string(),
+                request_model.clone(),
+                status_code,
+                error_message,
+                start_time.elapsed().as_millis() as u64,
+                is_stream,
+                Some(session_id),
+                None, // provider_type 暂时设置为 None
+            );
+
+            return Err(e);
+        }
+    };
 
     let status = response.status();
     log::info!("[Codex] 上游响应状态: {status}");
@@ -961,6 +1055,8 @@ pub async fn handle_chat_completions(
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let start_time = std::time::Instant::now();
+    let session_id = uuid::Uuid::new_v4().to_string();
+
     log::info!("[Codex] ====== /v1/chat/completions 请求开始 ======");
 
     let config = state.config.read().await.clone();
@@ -991,9 +1087,36 @@ pub async fn handle_chat_completions(
         state.current_providers.clone(),
     );
 
-    let response = forwarder
+    // 捕获错误并记录
+    let response = match forwarder
         .forward_with_retry(&AppType::Codex, "/v1/chat/completions", body, headers)
-        .await?;
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            // 记录错误请求
+            let logger = UsageLogger::new(&state.db);
+            let status_code = map_proxy_error_to_status(&e);
+            let error_message = get_error_message(&e);
+
+            log::error!("[Codex] 请求失败: status={status_code}, error={error_message}");
+
+            let _ = logger.log_error_with_context(
+                session_id.clone(),
+                provider.id.clone(),
+                "codex".to_string(),
+                request_model.clone(),
+                status_code,
+                error_message,
+                start_time.elapsed().as_millis() as u64,
+                is_stream,
+                Some(session_id),
+                None, // provider_type 暂时设置为 None
+            );
+
+            return Err(e);
+        }
+    };
 
     let status = response.status();
     log::info!("[Codex] 上游响应状态: {status}");
