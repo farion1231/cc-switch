@@ -112,7 +112,7 @@
     "providerAdded": "Provider added",
     "providerSaved": "Provider configuration saved",
     "providerDeleted": "Provider deleted successfully",
-    "switchSuccess": "Switch successful! Please restart {{appName}} terminal to take effect",
+    "switchSuccess": "Switch successful!",
     "switchFailedTitle": "Switch failed",
     "switchFailed": "Switch failed: {{error}}",
     "autoImported": "Default provider created from existing configuration",
@@ -535,9 +535,6 @@
     "env": "Environment (one per line, KEY=VALUE)",
     "envPlaceholder": "FOO=bar\nHELLO=world",
     "reset": "Reset",
-    "notice": {
-      "restartClaude": "Written. Restart Claude to take effect."
-    },
     "msg": {
       "saved": "Saved",
       "deleted": "Deleted",

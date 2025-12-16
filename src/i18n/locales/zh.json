@@ -112,7 +112,7 @@
     "providerAdded": "供应商已添加",
     "providerSaved": "供应商配置已保存",
     "providerDeleted": "供应商删除成功",
-    "switchSuccess": "切换成功！请重启 {{appName}} 终端以生效",
+    "switchSuccess": "切换成功！",
     "switchFailedTitle": "切换失败",
     "switchFailed": "切换失败：{{error}}",
     "autoImported": "已从现有配置创建默认供应商",
@@ -535,9 +535,6 @@
     "env": "环境变量 (一行一个，KEY=VALUE)",
     "envPlaceholder": "FOO=bar\nHELLO=world",
     "reset": "重置",
-    "notice": {
-      "restartClaude": "已写入配置，重启 Claude 生效"
-    },
     "msg": {
       "saved": "已保存",
       "deleted": "已删除",

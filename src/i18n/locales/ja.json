@@ -112,7 +112,7 @@
     "providerAdded": "プロバイダーを追加しました",
     "providerSaved": "プロバイダー設定を保存しました",
     "providerDeleted": "プロバイダーを削除しました",
-    "switchSuccess": "切り替え成功！ {{appName}} ターミナルを再起動すると反映されます",
+    "switchSuccess": "切り替え成功！",
     "switchFailedTitle": "切り替えに失敗しました",
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "autoImported": "既存設定からデフォルトプロバイダーを自動作成しました",
@@ -535,9 +535,6 @@
     "env": "環境変数（1 行に 1 件、KEY=VALUE）",
     "envPlaceholder": "FOO=bar\nHELLO=world",
     "reset": "リセット",
-    "notice": {
-      "restartClaude": "書き込みました。Claude を再起動すると反映されます。"
-    },
     "msg": {
       "saved": "保存しました",
       "deleted": "削除しました",
