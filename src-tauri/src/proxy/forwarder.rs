@@ -330,9 +330,8 @@ impl RequestForwarder {
                 status.failed_requests += 1;
                 status.last_error = Some("所有供应商暂时不可用（熔断器限制）".to_string());
                 if status.total_requests > 0 {
-                    status.success_rate = (status.success_requests as f32
-                        / status.total_requests as f32)
-                        * 100.0;
+                    status.success_rate =
+                        (status.success_requests as f32 / status.total_requests as f32) * 100.0;
                 }
             }
             return Err(ProxyError::NoAvailableProvider);

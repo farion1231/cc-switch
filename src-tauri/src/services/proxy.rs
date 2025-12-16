@@ -510,9 +510,7 @@ impl ProxyService {
             .set_current_provider(app_type_enum.as_str(), provider_id)
             .map_err(|e| format!("更新当前供应商失败: {e}"))?;
 
-        log::info!(
-            "代理模式：已切换 {app_type} 的目标供应商为 {provider_id}"
-        );
+        log::info!("代理模式：已切换 {app_type} 的目标供应商为 {provider_id}");
         Ok(())
     }
 
@@ -716,9 +714,7 @@ impl ProxyService {
             server
                 .reset_provider_circuit_breaker(provider_id, app_type)
                 .await;
-            log::info!(
-                "已重置 Provider {provider_id} (app: {app_type}) 的熔断器"
-            );
+            log::info!("已重置 Provider {provider_id} (app: {app_type}) 的熔断器");
         }
         Ok(())
     }

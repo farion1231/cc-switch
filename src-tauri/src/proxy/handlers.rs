@@ -14,9 +14,7 @@ use super::{
     },
     handler_context::RequestContext,
     providers::{get_adapter, streaming::create_anthropic_sse_stream, transform},
-    response_processor::{
-        create_logged_passthrough_stream, process_response, SseUsageCollector,
-    },
+    response_processor::{create_logged_passthrough_stream, process_response, SseUsageCollector},
     server::ProxyState,
     types::*,
     usage::parser::TokenUsage,
@@ -63,8 +61,7 @@ pub async fn handle_messages(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
-    let ctx =
-        RequestContext::new(&state, &body, AppType::Claude, "Claude", "claude").await?;
+    let ctx = RequestContext::new(&state, &body, AppType::Claude, "Claude", "claude").await?;
 
     // 检查是否需要格式转换（OpenRouter 等中转服务）
     let adapter = get_adapter(&AppType::Claude);
@@ -426,7 +423,12 @@ pub async fn handle_gemini(
 // 使用量记录（保留用于 Claude 转换逻辑）
 // ============================================================================
 
-fn log_forward_error(state: &ProxyState, ctx: &RequestContext, is_streaming: bool, error: &ProxyError) {
+fn log_forward_error(
+    state: &ProxyState,
+    ctx: &RequestContext,
+    is_streaming: bool,
+    error: &ProxyError,
+) {
     use super::usage::logger::UsageLogger;
 
     let logger = UsageLogger::new(&state.db);

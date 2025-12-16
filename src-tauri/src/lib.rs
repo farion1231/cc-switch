@@ -333,9 +333,7 @@ pub fn run() {
             let app_state = AppState::new(db);
 
             // 设置 AppHandle 用于代理故障转移时的 UI 更新
-            app_state
-                .proxy_service
-                .set_app_handle(app.handle().clone());
+            app_state.proxy_service.set_app_handle(app.handle().clone());
 
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）

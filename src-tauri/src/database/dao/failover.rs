@@ -69,11 +69,7 @@ impl Database {
     }
 
     /// 添加供应商到故障转移队列末尾
-    pub fn add_to_failover_queue(
-        &self,
-        app_type: &str,
-        provider_id: &str,
-    ) -> Result<(), AppError> {
+    pub fn add_to_failover_queue(&self, app_type: &str, provider_id: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         // 获取当前最大 queue_order
@@ -199,11 +195,8 @@ impl Database {
     pub fn clear_failover_queue(&self, app_type: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
-        conn.execute(
-            "DELETE FROM failover_queue WHERE app_type = ?1",
-            [app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute("DELETE FROM failover_queue WHERE app_type = ?1", [app_type])
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(())
     }

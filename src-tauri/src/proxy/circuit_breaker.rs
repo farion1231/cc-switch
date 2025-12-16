@@ -238,9 +238,7 @@ impl CircuitBreaker {
                 self.half_open_requests.fetch_sub(1, Ordering::SeqCst);
 
                 // HalfOpen 状态下失败，立即转为 Open
-                log::warn!(
-                    "Circuit breaker HalfOpen probe failed, transitioning to Open"
-                );
+                log::warn!("Circuit breaker HalfOpen probe failed, transitioning to Open");
                 drop(config);
                 self.transition_to_open().await;
             }

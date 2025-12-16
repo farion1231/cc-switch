@@ -61,10 +61,7 @@ impl SpeedtestService {
         }
 
         if valid_targets.is_empty() {
-            return Ok(results
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>());
+            return Ok(results.into_iter().flatten().collect::<Vec<_>>());
         }
 
         let timeout = Self::sanitize_timeout(timeout_secs);
