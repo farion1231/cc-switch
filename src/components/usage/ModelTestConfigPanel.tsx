@@ -47,7 +47,9 @@ export function ModelTestConfigPanel() {
     try {
       setIsSaving(true);
       await saveStreamCheckConfig(config);
-      toast.success(t("streamCheck.configSaved", "健康检查配置已保存"));
+      toast.success(t("streamCheck.configSaved", "健康检查配置已保存"), {
+        closeButton: true,
+      });
     } catch (e) {
       toast.error(
         t("streamCheck.configSaveFailed", "保存失败") + ": " + String(e),

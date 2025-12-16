@@ -87,6 +87,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
           t("provider.sortUpdated", {
             defaultValue: "排序已更新",
           }),
+          { closeButton: true },
         );
       } catch (error) {
         console.error("Failed to update provider sort order", error);

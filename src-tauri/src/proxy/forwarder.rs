@@ -4,12 +4,13 @@
 
 use super::{
     error::*,
-    provider_router::ProviderRouter as NewProviderRouter,
+    failover_switch::FailoverSwitchManager,
+    provider_router::ProviderRouter,
     providers::{get_adapter, ProviderAdapter},
     types::ProxyStatus,
     ProxyError,
 };
-use crate::{app_config::AppType, database::Database, provider::Provider};
+use crate::{app_config::AppType, provider::Provider};
 use reqwest::{Client, Response};
 use serde_json::Value;
 use std::sync::Arc;
@@ -18,20 +19,27 @@ use tokio::sync::RwLock;
 
 pub struct RequestForwarder {
     client: Client,
-    router: Arc<NewProviderRouter>,
-    #[allow(dead_code)]
+    /// 共享的 ProviderRouter（持有熔断器状态）
+    router: Arc<ProviderRouter>,
+    /// 单个 Provider 内的最大重试次数
     max_retries: u8,
     status: Arc<RwLock<ProxyStatus>>,
     current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
+    /// 故障转移切换管理器
+    failover_manager: Arc<FailoverSwitchManager>,
+    /// AppHandle，用于发射事件和更新托盘
+    app_handle: Option<tauri::AppHandle>,
 }
 
 impl RequestForwarder {
     pub fn new(
-        db: Arc<Database>,
+        router: Arc<ProviderRouter>,
         timeout_secs: u64,
         max_retries: u8,
         status: Arc<RwLock<ProxyStatus>>,
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
+        failover_manager: Arc<FailoverSwitchManager>,
+        app_handle: Option<tauri::AppHandle>,
     ) -> Self {
         let mut client_builder = Client::builder();
         if timeout_secs > 0 {
@@ -44,31 +52,89 @@ impl RequestForwarder {
 
         Self {
             client,
-            router: Arc::new(NewProviderRouter::new(db)),
+            router,
             max_retries,
             status,
             current_providers,
+            failover_manager,
+            app_handle,
         }
     }
 
+    /// 对单个 Provider 执行请求（带重试）
+    ///
+    /// 在同一个 Provider 上最多重试 max_retries 次，使用指数退避
+    async fn forward_with_provider_retry(
+        &self,
+        provider: &Provider,
+        endpoint: &str,
+        body: &Value,
+        headers: &axum::http::HeaderMap,
+        adapter: &dyn ProviderAdapter,
+    ) -> Result<Response, ProxyError> {
+        let mut last_error = None;
+
+        for attempt in 0..=self.max_retries {
+            if attempt > 0 {
+                // 指数退避：100ms, 200ms, 400ms, ...
+                let delay_ms = 100 * 2u64.pow(attempt as u32 - 1);
+                log::info!(
+                    "[{}] 重试第 {}/{} 次（等待 {}ms）",
+                    adapter.name(),
+                    attempt,
+                    self.max_retries,
+                    delay_ms
+                );
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            }
+
+            match self
+                .forward(provider, endpoint, body, headers, adapter)
+                .await
+            {
+                Ok(response) => return Ok(response),
+                Err(e) => {
+                    let category = self.categorize_proxy_error(&e);
+
+                    // 只有可重试的错误才继续重试
+                    if category == ErrorCategory::NonRetryable {
+                        return Err(e);
+                    }
+
+                    log::debug!(
+                        "[{}] Provider {} 第 {} 次请求失败: {}",
+                        adapter.name(),
+                        provider.name,
+                        attempt + 1,
+                        e
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or(ProxyError::MaxRetriesExceeded))
+    }
+
     /// 转发请求（带故障转移）
+    ///
+    /// # Arguments
+    /// * `app_type` - 应用类型
+    /// * `endpoint` - API 端点
+    /// * `body` - 请求体
+    /// * `headers` - 请求头
+    /// * `providers` - 已选择的 Provider 列表（由 RequestContext 提供，避免重复调用 select_providers）
     pub async fn forward_with_retry(
         &self,
         app_type: &AppType,
         endpoint: &str,
         body: Value,
         headers: axum::http::HeaderMap,
+        providers: Vec<Provider>,
     ) -> Result<Response, ProxyError> {
         // 获取适配器
         let adapter = get_adapter(app_type);
         let app_type_str = app_type.as_str();
-
-        // 使用新的 ProviderRouter 选择所有可用供应商
-        let providers = self
-            .router
-            .select_providers(app_type_str)
-            .await
-            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
         if providers.is_empty() {
             return Err(ProxyError::NoAvailableProvider);
@@ -82,13 +148,33 @@ impl RequestForwarder {
 
         let mut last_error = None;
         let mut failover_happened = false;
+        let mut attempted_providers = 0usize;
 
         // 依次尝试每个供应商
-        for (attempt, provider) in providers.iter().enumerate() {
+        for provider in providers.iter() {
+            // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
+            if !self
+                .router
+                .allow_provider_request(&provider.id, app_type_str)
+                .await
+            {
+                log::debug!(
+                    "[{}] Provider {} 熔断器拒绝本次请求，跳过",
+                    app_type_str,
+                    provider.name
+                );
+                continue;
+            }
+
+            attempted_providers += 1;
+            if attempted_providers > 1 {
+                failover_happened = true;
+            }
+
             log::info!(
                 "[{}] 尝试 {}/{} - 使用Provider: {} (sort_index: {})",
                 app_type_str,
-                attempt + 1,
+                attempted_providers,
                 providers.len(),
                 provider.name,
                 provider.sort_index.unwrap_or(999999)
@@ -101,16 +187,13 @@ impl RequestForwarder {
                 status.current_provider_id = Some(provider.id.clone());
                 status.total_requests += 1;
                 status.last_request_at = Some(chrono::Utc::now().to_rfc3339());
-                if attempt > 0 {
-                    failover_happened = true;
-                }
             }
 
             let start = Instant::now();
 
-            // 转发请求
+            // 转发请求（带单 Provider 内重试）
             match self
-                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                .forward_with_provider_retry(provider, endpoint, &body, &headers, adapter.as_ref())
                 .await
             {
                 Ok(response) => {
@@ -147,6 +230,20 @@ impl RequestForwarder {
                                 provider.name,
                                 latency
                             );
+
+                            // 异步触发供应商切换，更新 UI 和托盘菜单
+                            let fm = self.failover_manager.clone();
+                            let ah = self.app_handle.clone();
+                            let pid = provider.id.clone();
+                            let pname = provider.name.clone();
+                            let at = app_type_str.to_string();
+
+                            tokio::spawn(async move {
+                                if let Err(e) = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await
+                                {
+                                    log::error!("[Failover] 切换供应商失败: {e}");
+                                }
+                            });
                         }
                         // 重新计算成功率
                         if status.total_requests > 0 {
@@ -224,6 +321,21 @@ impl RequestForwarder {
                     }
                 }
             }
+        }
+
+        if attempted_providers == 0 {
+            // providers 列表非空，但全部被熔断器拒绝（典型：HalfOpen 探测名额被占用）
+            {
+                let mut status = self.status.write().await;
+                status.failed_requests += 1;
+                status.last_error = Some("所有供应商暂时不可用（熔断器限制）".to_string());
+                if status.total_requests > 0 {
+                    status.success_rate = (status.success_requests as f32
+                        / status.total_requests as f32)
+                        * 100.0;
+                }
+            }
+            return Err(ProxyError::NoAvailableProvider);
         }
 
         // 所有供应商都失败了
@@ -373,21 +485,24 @@ impl RequestForwarder {
     }
 
     /// 分类ProxyError
+    ///
+    /// 决定哪些错误应该触发故障转移到下一个 Provider
+    ///
+    /// 设计原则：既然用户配置了多个供应商，就应该让所有供应商都尝试一遍。
+    /// 只有明确是客户端中断的情况才不重试。
     fn categorize_proxy_error(&self, error: &ProxyError) -> ErrorCategory {
         match error {
+            // 网络和上游错误：都应该尝试下一个供应商
             ProxyError::Timeout(_) => ErrorCategory::Retryable,
             ProxyError::ForwardFailed(_) => ErrorCategory::Retryable,
-            ProxyError::UpstreamError { status, .. } => {
-                if *status >= 500 {
-                    ErrorCategory::Retryable
-                } else if *status >= 400 && *status < 500 {
-                    ErrorCategory::NonRetryable
-                } else {
-                    ErrorCategory::Retryable
-                }
-            }
             ProxyError::ProviderUnhealthy(_) => ErrorCategory::Retryable,
+            // 上游 HTTP 错误：无论状态码如何，都尝试下一个供应商
+            // 原因：不同供应商有不同的限制和认证，一个供应商的 4xx 错误
+            // 不代表其他供应商也会失败
+            ProxyError::UpstreamError { .. } => ErrorCategory::Retryable,
+            // 无可用供应商：所有供应商都试过了，无法重试
             ProxyError::NoAvailableProvider => ErrorCategory::NonRetryable,
+            // 其他错误（配置错误、数据库错误等）：不是供应商问题，无需重试
             _ => ErrorCategory::NonRetryable,
         }
     }

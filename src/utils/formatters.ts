@@ -1,6 +1,6 @@
 /**
  * 格式化 JSON 字符串
- * @param value - 原始 JSON 字符串（支持带键名包装的格式）
+ * @param value - 原始 JSON 字符串
  * @returns 格式化后的 JSON 字符串（2 空格缩进）
  * @throws 如果 JSON 格式无效
  */
@@ -9,9 +9,8 @@ export function formatJSON(value: string): string {
   if (!trimmed) {
     return "";
   }
-  // 使用智能解析器来处理可能的片段格式
-  const result = parseSmartMcpJson(trimmed);
-  return result.formattedConfig;
+  const parsed = JSON.parse(trimmed);
+  return JSON.stringify(parsed, null, 2);
 }
 
 /**

@@ -3,6 +3,7 @@
 mod config;
 mod deeplink;
 mod env;
+mod failover;
 mod import_export;
 mod mcp;
 mod misc;
@@ -18,6 +19,7 @@ mod usage;
 pub use config::*;
 pub use deeplink::*;
 pub use env::*;
+pub use failover::*;
 pub use import_export::*;
 pub use mcp::*;
 pub use misc::*;

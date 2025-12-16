@@ -72,8 +72,10 @@ pub struct CircuitBreaker {
     failed_requests: Arc<AtomicU32>,
     /// 上次打开时间
     last_opened_at: Arc<RwLock<Option<Instant>>>,
-    /// 配置
-    config: CircuitBreakerConfig,
+    /// 配置（支持热更新）
+    config: Arc<RwLock<CircuitBreakerConfig>>,
+    /// 半开状态已放行的请求数（用于限流）
+    half_open_requests: Arc<AtomicU32>,
 }
 
 impl CircuitBreaker {
@@ -86,20 +88,35 @@ impl CircuitBreaker {
             total_requests: Arc::new(AtomicU32::new(0)),
             failed_requests: Arc::new(AtomicU32::new(0)),
             last_opened_at: Arc::new(RwLock::new(None)),
-            config,
+            config: Arc::new(RwLock::new(config)),
+            half_open_requests: Arc::new(AtomicU32::new(0)),
         }
     }
 
-    /// 检查是否允许请求通过
-    pub async fn allow_request(&self) -> bool {
+    /// 更新熔断器配置（热更新，不重置状态）
+    pub async fn update_config(&self, new_config: CircuitBreakerConfig) {
+        *self.config.write().await = new_config;
+        log::debug!("Circuit breaker config updated");
+    }
+
+    /// 判断当前 Provider 是否“可被纳入候选链路”
+    ///
+    /// 这个方法不会占用 HalfOpen 探测名额，仅用于路由选择阶段的“可用性判断”：
+    /// - Closed / HalfOpen：可用（返回 true）
+    /// - Open：若超时到达则切到 HalfOpen 并返回 true，否则返回 false
+    ///
+    /// 注意：真正发起请求前仍需调用 `allow_request()` 来获取 HalfOpen 探测名额，
+    /// 并在请求结束后通过 `record_success()` / `record_failure()` 释放。
+    pub async fn is_available(&self) -> bool {
         let state = *self.state.read().await;
+        let config = self.config.read().await;
 
         match state {
-            CircuitState::Closed => true,
+            CircuitState::Closed | CircuitState::HalfOpen => true,
             CircuitState::Open => {
-                // 检查是否应该尝试半开
                 if let Some(opened_at) = *self.last_opened_at.read().await {
-                    if opened_at.elapsed().as_secs() >= self.config.timeout_seconds {
+                    if opened_at.elapsed().as_secs() >= config.timeout_seconds {
+                        drop(config); // 释放读锁再转换状态
                         log::info!(
                             "Circuit breaker transitioning from Open to HalfOpen (timeout reached)"
                         );
@@ -109,13 +126,62 @@ impl CircuitBreaker {
                 }
                 false
             }
-            CircuitState::HalfOpen => true,
+        }
+    }
+
+    /// 检查是否允许请求通过
+    pub async fn allow_request(&self) -> bool {
+        let state = *self.state.read().await;
+        let config = self.config.read().await;
+
+        match state {
+            CircuitState::Closed => true,
+            CircuitState::Open => {
+                // 检查是否应该尝试半开
+                if let Some(opened_at) = *self.last_opened_at.read().await {
+                    if opened_at.elapsed().as_secs() >= config.timeout_seconds {
+                        drop(config); // 释放读锁再转换状态
+                        log::info!(
+                            "Circuit breaker transitioning from Open to HalfOpen (timeout reached)"
+                        );
+                        self.transition_to_half_open().await;
+                        // 增加计数，确保 record_success/record_failure 减计数时不会下溢
+                        self.half_open_requests.fetch_add(1, Ordering::SeqCst);
+                        return true;
+                    }
+                }
+                false
+            }
+            CircuitState::HalfOpen => {
+                // 半开状态限流：只允许有限请求通过进行探测
+                // 默认最多允许 1 个请求（可在配置中扩展）
+                let max_half_open_requests = 1u32;
+                let current = self.half_open_requests.fetch_add(1, Ordering::SeqCst);
+
+                if current < max_half_open_requests {
+                    log::debug!(
+                        "Circuit breaker HalfOpen: allowing probe request ({}/{})",
+                        current + 1,
+                        max_half_open_requests
+                    );
+                    true
+                } else {
+                    // 超过限额，回退计数，拒绝请求
+                    self.half_open_requests.fetch_sub(1, Ordering::SeqCst);
+                    log::debug!(
+                        "Circuit breaker HalfOpen: rejecting request (limit reached: {})",
+                        max_half_open_requests
+                    );
+                    false
+                }
+            }
         }
     }
 
     /// 记录成功
     pub async fn record_success(&self) {
         let state = *self.state.read().await;
+        let config = self.config.read().await;
 
         // 重置失败计数
         self.consecutive_failures.store(0, Ordering::SeqCst);
@@ -123,14 +189,18 @@ impl CircuitBreaker {
 
         match state {
             CircuitState::HalfOpen => {
+                // 释放 in-flight 名额（探测请求结束）
+                self.half_open_requests.fetch_sub(1, Ordering::SeqCst);
+
                 let successes = self.consecutive_successes.fetch_add(1, Ordering::SeqCst) + 1;
                 log::debug!(
                     "Circuit breaker HalfOpen: {} consecutive successes (threshold: {})",
                     successes,
-                    self.config.success_threshold
+                    config.success_threshold
                 );
 
-                if successes >= self.config.success_threshold {
+                if successes >= config.success_threshold {
+                    drop(config); // 释放读锁再转换状态
                     log::info!("Circuit breaker transitioning from HalfOpen to Closed (success threshold reached)");
                     self.transition_to_closed().await;
                 }
@@ -145,6 +215,7 @@ impl CircuitBreaker {
     /// 记录失败
     pub async fn record_failure(&self) {
         let state = *self.state.read().await;
+        let config = self.config.read().await;
 
         // 更新计数器
         let failures = self.consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
@@ -158,26 +229,38 @@ impl CircuitBreaker {
             "Circuit breaker {:?}: {} consecutive failures (threshold: {})",
             state,
             failures,
-            self.config.failure_threshold
+            config.failure_threshold
         );
 
         // 检查是否应该打开熔断器
         match state {
-            CircuitState::Closed | CircuitState::HalfOpen => {
+            CircuitState::HalfOpen => {
+                // 释放 in-flight 名额（探测请求结束）
+                self.half_open_requests.fetch_sub(1, Ordering::SeqCst);
+
+                // HalfOpen 状态下失败，立即转为 Open
+                log::warn!(
+                    "Circuit breaker HalfOpen probe failed, transitioning to Open"
+                );
+                drop(config);
+                self.transition_to_open().await;
+            }
+            CircuitState::Closed => {
                 // 检查连续失败次数
-                if failures >= self.config.failure_threshold {
+                if failures >= config.failure_threshold {
                     log::warn!(
                         "Circuit breaker opening due to {} consecutive failures (threshold: {})",
                         failures,
-                        self.config.failure_threshold
+                        config.failure_threshold
                     );
+                    drop(config); // 释放读锁再转换状态
                     self.transition_to_open().await;
                 } else {
                     // 检查错误率
                     let total = self.total_requests.load(Ordering::SeqCst);
                     let failed = self.failed_requests.load(Ordering::SeqCst);
 
-                    if total >= self.config.min_requests {
+                    if total >= config.min_requests {
                         let error_rate = failed as f64 / total as f64;
                         log::debug!(
                             "Circuit breaker error rate: {:.2}% ({}/{} requests)",
@@ -186,12 +269,13 @@ impl CircuitBreaker {
                             total
                         );
 
-                        if error_rate >= self.config.error_rate_threshold {
+                        if error_rate >= config.error_rate_threshold {
                             log::warn!(
                                 "Circuit breaker opening due to high error rate: {:.2}% (threshold: {:.2}%)",
                                 error_rate * 100.0,
-                                self.config.error_rate_threshold * 100.0
+                                config.error_rate_threshold * 100.0
                             );
+                            drop(config); // 释放读锁再转换状态
                             self.transition_to_open().await;
                         }
                     }
@@ -238,6 +322,8 @@ impl CircuitBreaker {
     async fn transition_to_half_open(&self) {
         *self.state.write().await = CircuitState::HalfOpen;
         self.consecutive_successes.store(0, Ordering::SeqCst);
+        // 重置半开状态的请求限流计数
+        self.half_open_requests.store(0, Ordering::SeqCst);
     }
 
     /// 转换到关闭状态

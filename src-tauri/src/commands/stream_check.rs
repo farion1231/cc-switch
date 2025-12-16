@@ -6,6 +6,7 @@ use crate::services::stream_check::{
     HealthStatus, StreamCheckConfig, StreamCheckResult, StreamCheckService,
 };
 use crate::store::AppState;
+use std::collections::HashSet;
 use tauri::State;
 
 /// 流式健康检查（单个供应商）
@@ -44,10 +45,28 @@ pub async fn stream_check_all_providers(
     let providers = state.db.get_all_providers(app_type.as_str())?;
 
     let mut results = Vec::new();
+    let allowed_ids: Option<HashSet<String>> = if proxy_targets_only {
+        let mut ids = HashSet::new();
+        if let Ok(Some(current_id)) = state.db.get_current_provider(app_type.as_str()) {
+            ids.insert(current_id);
+        }
+        if let Ok(queue) = state.db.get_failover_queue(app_type.as_str()) {
+            for item in queue {
+                if item.enabled {
+                    ids.insert(item.provider_id);
+                }
+            }
+        }
+        Some(ids)
+    } else {
+        None
+    };
 
     for (id, provider) in providers {
-        if proxy_targets_only && !provider.is_proxy_target.unwrap_or(false) {
-            continue;
+        if let Some(ids) = &allowed_ids {
+            if !ids.contains(&id) {
+                continue;
+            }
         }
 
         let result = StreamCheckService::check_with_retry(&app_type, &provider, &config)

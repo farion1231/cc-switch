@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { GripVertical } from "lucide-react";
+import { useMemo, useState, useEffect } from "react";
+import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
   DraggableAttributes,
@@ -12,11 +12,8 @@ import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
-import {
-  useProviderHealth,
-  useResetCircuitBreaker,
-} from "@/lib/query/failover";
-import { toast } from "sonner";
+import { useProviderHealth } from "@/lib/query/failover";
+import { useUsageQuery } from "@/lib/query/queries";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -97,31 +94,6 @@ export function ProviderCard({
   // 获取供应商健康状态
   const { data: health } = useProviderHealth(provider.id, appId);
 
-  // 重置熔断器
-  const resetCircuitBreaker = useResetCircuitBreaker();
-
-  const handleResetCircuitBreaker = async () => {
-    try {
-      await resetCircuitBreaker.mutateAsync({
-        providerId: provider.id,
-        appType: appId,
-      });
-      toast.success(
-        t("provider.circuitBreakerReset", {
-          defaultValue: "熔断器已重置",
-        }),
-      );
-    } catch (error) {
-      toast.error(
-        t("provider.circuitBreakerResetFailed", {
-          defaultValue: "重置失败",
-        }) +
-          ": " +
-          String(error),
-      );
-    }
-  };
-
   const fallbackUrlText = t("provider.notConfigured", {
     defaultValue: "未配置接口地址",
   });
@@ -145,6 +117,29 @@ export function ProviderCard({
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
+
+  // 获取用量数据以判断是否有多套餐
+  const autoQueryInterval = isCurrent
+    ? provider.meta?.usage_script?.autoQueryInterval || 0
+    : 0;
+
+  const { data: usage } = useUsageQuery(provider.id, appId, {
+    enabled: usageEnabled,
+    autoQueryInterval,
+  });
+
+  const hasMultiplePlans =
+    usage?.success && usage.data && usage.data.length > 1;
+
+  // 多套餐默认展开
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // 当检测到多套餐时自动展开
+  useEffect(() => {
+    if (hasMultiplePlans) {
+      setIsExpanded(true);
+    }
+  }, [hasMultiplePlans]);
 
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
@@ -209,7 +204,7 @@ export function ProviderCard({
           </div>
 
           <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2 min-h-[20px]">
+            <div className="flex flex-wrap items-center gap-2 min-h-7">
               <h3 className="text-base font-semibold leading-none">
                 {provider.name}
               </h3>
@@ -253,19 +248,56 @@ export function ProviderCard({
           </div>
         </div>
 
-        <div className="relative flex items-center ml-auto">
-          <div className="ml-auto transition-transform duration-300 ease-out group-hover:-translate-x-[14.5rem] group-focus-within:-translate-x-[14.5rem] sm:group-hover:-translate-x-[16.5rem] sm:group-focus-within:-translate-x-[16.5rem]">
-            <UsageFooter
-              provider={provider}
-              providerId={provider.id}
-              appId={appId}
-              usageEnabled={usageEnabled}
-              isCurrent={isCurrent}
-              inline={true}
-            />
+        <div className="relative flex items-center ml-auto min-w-0">
+          {/* 用量信息区域 - hover 时向左移动，为操作按钮腾出空间 */}
+          <div className="ml-auto transition-transform duration-200 group-hover:-translate-x-[14.5rem] group-focus-within:-translate-x-[14.5rem] sm:group-hover:-translate-x-[16rem] sm:group-focus-within:-translate-x-[16rem]">
+            <div className="flex items-center gap-1">
+              {/* 多套餐时显示套餐数量，单套餐时显示详细信息 */}
+              {hasMultiplePlans ? (
+                <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                  <span className="font-medium">
+                    {t("usage.multiplePlans", {
+                      count: usage?.data?.length || 0,
+                      defaultValue: `${usage?.data?.length || 0} 个套餐`,
+                    })}
+                  </span>
+                </div>
+              ) : (
+                <UsageFooter
+                  provider={provider}
+                  providerId={provider.id}
+                  appId={appId}
+                  usageEnabled={usageEnabled}
+                  isCurrent={isCurrent}
+                  inline={true}
+                />
+              )}
+              {/* 展开/折叠按钮 - 仅在有多套餐时显示 */}
+              {hasMultiplePlans && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsExpanded(!isExpanded);
+                  }}
+                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  title={
+                    isExpanded
+                      ? t("usage.collapse", { defaultValue: "收起" })
+                      : t("usage.expand", { defaultValue: "展开" })
+                  }
+                >
+                  {isExpanded ? (
+                    <ChevronUp size={14} />
+                  ) : (
+                    <ChevronDown size={14} />
+                  )}
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-300 ease-out translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0">
+          {/* 操作按钮区域 - 绝对定位在右侧，hover 时滑入 */}
+          <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0">
             <ProviderActions
               isCurrent={isCurrent}
               isTesting={isTesting}
@@ -276,17 +308,24 @@ export function ProviderCard({
               onTest={onTest ? () => onTest(provider) : undefined}
               onConfigureUsage={() => onConfigureUsage(provider)}
               onDelete={() => onDelete(provider)}
-              onResetCircuitBreaker={
-                isProxyRunning && provider.isProxyTarget
-                  ? handleResetCircuitBreaker
-                  : undefined
-              }
-              isProxyTarget={provider.isProxyTarget}
-              consecutiveFailures={health?.consecutive_failures ?? 0}
             />
           </div>
         </div>
       </div>
+
+      {/* 展开的完整套餐列表 */}
+      {isExpanded && hasMultiplePlans && (
+        <div className="mt-4 pt-4 border-t border-border-default">
+          <UsageFooter
+            provider={provider}
+            providerId={provider.id}
+            appId={appId}
+            usageEnabled={usageEnabled}
+            isCurrent={isCurrent}
+            inline={false}
+          />
+        </div>
+      )}
     </div>
   );
 }

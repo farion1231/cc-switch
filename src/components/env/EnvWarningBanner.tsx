@@ -79,6 +79,7 @@ export function EnvWarningBanner({
           path: backupInfo.backupPath,
         }),
         duration: 5000,
+        closeButton: true,
       });
 
       // 清空选择并通知父组件

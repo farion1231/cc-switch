@@ -76,6 +76,7 @@ export function PricingEditModal({
         isNew
           ? t("usage.pricingAdded", "定价已添加")
           : t("usage.pricingUpdated", "定价已更新"),
+        { closeButton: true },
       );
 
       onClose();

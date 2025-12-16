@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { ProxySettingsDialog } from "./ProxySettingsDialog";
 import { toast } from "sonner";
-import { useProxyTargets } from "@/lib/query/failover";
+import { useFailoverQueue } from "@/lib/query/failover";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { useProviderHealth } from "@/lib/query/failover";
 import type { ProxyStatus } from "@/types/proxy";
@@ -20,10 +20,11 @@ export function ProxyPanel() {
   const { status, isRunning } = useProxyStatus();
   const [showSettings, setShowSettings] = useState(false);
 
-  // 获取所有三个应用类型的代理目标列表
-  const { data: claudeTargets = [] } = useProxyTargets("claude");
-  const { data: codexTargets = [] } = useProxyTargets("codex");
-  const { data: geminiTargets = [] } = useProxyTargets("gemini");
+  // 获取所有三个应用类型的故障转移队列（不包含当前供应商）
+  // 当前供应商始终优先，队列仅用于失败后的备用顺序
+  const { data: claudeQueue = [] } = useFailoverQueue("claude");
+  const { data: codexQueue = [] } = useFailoverQueue("codex");
+  const { data: geminiQueue = [] } = useFailoverQueue("gemini");
 
   const formatUptime = (seconds: number): string => {
     const hours = Math.floor(seconds / 3600);
@@ -69,7 +70,7 @@ export function ProxyPanel() {
                       navigator.clipboard.writeText(
                         `http://${status.address}:${status.port}`,
                       );
-                      toast.success("地址已复制");
+                      toast.success("地址已复制", { closeButton: true });
                     }}
                   >
                     复制
@@ -113,9 +114,9 @@ export function ProxyPanel() {
               </div>
 
               {/* 供应商队列 - 按应用类型分组展示 */}
-              {(claudeTargets.length > 0 ||
-                codexTargets.length > 0 ||
-                geminiTargets.length > 0) && (
+              {(claudeQueue.length > 0 ||
+                codexQueue.length > 0 ||
+                geminiQueue.length > 0) && (
                 <div className="pt-3 border-t border-border space-y-3">
                   <div className="flex items-center gap-2">
                     <ListOrdered className="h-3.5 w-3.5 text-muted-foreground" />
@@ -125,31 +126,49 @@ export function ProxyPanel() {
                   </div>
 
                   {/* Claude 队列 */}
-                  {claudeTargets.length > 0 && (
+                  {claudeQueue.length > 0 && (
                     <ProviderQueueGroup
                       appType="claude"
                       appLabel="Claude"
-                      targets={claudeTargets}
+                      targets={claudeQueue
+                        .filter((item) => item.enabled)
+                        .sort((a, b) => a.queueOrder - b.queueOrder)
+                        .map((item) => ({
+                          id: item.providerId,
+                          name: item.providerName,
+                        }))}
                       status={status}
                     />
                   )}
 
                   {/* Codex 队列 */}
-                  {codexTargets.length > 0 && (
+                  {codexQueue.length > 0 && (
                     <ProviderQueueGroup
                       appType="codex"
                       appLabel="Codex"
-                      targets={codexTargets}
+                      targets={codexQueue
+                        .filter((item) => item.enabled)
+                        .sort((a, b) => a.queueOrder - b.queueOrder)
+                        .map((item) => ({
+                          id: item.providerId,
+                          name: item.providerName,
+                        }))}
                       status={status}
                     />
                   )}
 
                   {/* Gemini 队列 */}
-                  {geminiTargets.length > 0 && (
+                  {geminiQueue.length > 0 && (
                     <ProviderQueueGroup
                       appType="gemini"
                       appLabel="Gemini"
-                      targets={geminiTargets}
+                      targets={geminiQueue
+                        .filter((item) => item.enabled)
+                        .sort((a, b) => a.queueOrder - b.queueOrder)
+                        .map((item) => ({
+                          id: item.providerId,
+                          name: item.providerName,
+                        }))}
                       status={status}
                     />
                   )}

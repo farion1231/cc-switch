@@ -128,6 +128,7 @@ export function DeepLinkImportDialog() {
             description: t("deeplink.mcpImportSuccessDescription", {
               count: summary.importedCount,
             }),
+            closeButton: true,
           });
         }
       };
@@ -142,6 +143,7 @@ export function DeepLinkImportDialog() {
             description: t("deeplink.importSuccessDescription", {
               name: request.name,
             }),
+            closeButton: true,
           });
         } else if (result.type === "prompt") {
           // Prompts don't use React Query, trigger a custom event for refresh
@@ -154,6 +156,7 @@ export function DeepLinkImportDialog() {
             description: t("deeplink.promptImportSuccessDescription", {
               name: request.name,
             }),
+            closeButton: true,
           });
         } else if (result.type === "mcp") {
           await refreshMcp(result);
@@ -171,6 +174,7 @@ export function DeepLinkImportDialog() {
             description: t("deeplink.skillImportSuccessDescription", {
               repo: request.repo,
             }),
+            closeButton: true,
           });
         }
       } else if (isMcpImportResult(result)) {
@@ -185,6 +189,7 @@ export function DeepLinkImportDialog() {
           description: t("deeplink.importSuccessDescription", {
             name: request.name,
           }),
+          closeButton: true,
         });
       }
 
@@ -602,6 +607,86 @@ export function DeepLinkImportDialog() {
                           </div>
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {/* Usage Script Configuration (v3.9+) */}
+                  {request.usageScript && (
+                    <div className="space-y-3 pt-2 border-t border-border-default">
+                      <div className="grid grid-cols-3 items-center gap-4">
+                        <div className="font-medium text-sm text-muted-foreground">
+                          {t("deeplink.usageScript", {
+                            defaultValue: "用量查询",
+                          })}
+                        </div>
+                        <div className="col-span-2 text-sm">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${
+                              request.usageEnabled !== false
+                                ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
+                                : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
+                            }`}
+                          >
+                            {request.usageEnabled !== false
+                              ? t("deeplink.usageScriptEnabled", {
+                                  defaultValue: "已启用",
+                                })
+                              : t("deeplink.usageScriptDisabled", {
+                                  defaultValue: "未启用",
+                                })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Usage API Key (if different from provider) */}
+                      {request.usageApiKey &&
+                        request.usageApiKey !== request.apiKey && (
+                          <div className="grid grid-cols-3 items-center gap-4">
+                            <div className="font-medium text-sm text-muted-foreground">
+                              {t("deeplink.usageApiKey", {
+                                defaultValue: "用量 API Key",
+                              })}
+                            </div>
+                            <div className="col-span-2 text-sm font-mono text-muted-foreground">
+                              {request.usageApiKey.length > 4
+                                ? `${request.usageApiKey.substring(0, 4)}${"*".repeat(12)}`
+                                : "****"}
+                            </div>
+                          </div>
+                        )}
+
+                      {/* Usage Base URL (if different from provider) */}
+                      {request.usageBaseUrl &&
+                        request.usageBaseUrl !== request.endpoint && (
+                          <div className="grid grid-cols-3 items-center gap-4">
+                            <div className="font-medium text-sm text-muted-foreground">
+                              {t("deeplink.usageBaseUrl", {
+                                defaultValue: "用量查询地址",
+                              })}
+                            </div>
+                            <div className="col-span-2 text-sm break-all">
+                              {request.usageBaseUrl}
+                            </div>
+                          </div>
+                        )}
+
+                      {/* Auto Query Interval */}
+                      {request.usageAutoInterval &&
+                        request.usageAutoInterval > 0 && (
+                          <div className="grid grid-cols-3 items-center gap-4">
+                            <div className="font-medium text-sm text-muted-foreground">
+                              {t("deeplink.usageAutoInterval", {
+                                defaultValue: "自动查询",
+                              })}
+                            </div>
+                            <div className="col-span-2 text-sm">
+                              {t("deeplink.usageAutoIntervalValue", {
+                                defaultValue: "每 {{minutes}} 分钟",
+                                minutes: request.usageAutoInterval,
+                              })}
+                            </div>
+                          </div>
+                        )}
                     </div>
                   )}
 

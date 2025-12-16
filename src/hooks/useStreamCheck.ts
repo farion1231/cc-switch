@@ -28,6 +28,7 @@ export function useStreamCheck(appId: AppId) {
               time: result.responseTimeMs,
               defaultValue: `${providerName} 运行正常 (${result.responseTimeMs}ms)`,
             }),
+            { closeButton: true },
           );
         } else if (result.status === "degraded") {
           toast.warning(

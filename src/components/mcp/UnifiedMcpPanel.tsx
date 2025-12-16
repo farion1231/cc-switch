@@ -99,7 +99,7 @@ const UnifiedMcpPanel = React.forwardRef<
         try {
           await deleteServerMutation.mutateAsync(id);
           setConfirmDialog(null);
-          toast.success(t("common.success"));
+          toast.success(t("common.success"), { closeButton: true });
         } catch (error) {
           toast.error(t("common.error"), {
             description: String(error),

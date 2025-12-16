@@ -36,10 +36,6 @@ pub struct Provider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "iconColor")]
     pub icon_color: Option<String>,
-    /// 是否为代理目标（数据库专用字段，不写入配置文件）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "isProxyTarget")]
-    pub is_proxy_target: Option<bool>,
 }
 
 impl Provider {
@@ -62,7 +58,6 @@ impl Provider {
             meta: None,
             icon: None,
             icon_color: None,
-            is_proxy_target: None,
         }
     }
 }

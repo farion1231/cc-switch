@@ -40,6 +40,7 @@ export function useProxyStatus() {
         t("proxy.startedWithTakeover", {
           defaultValue: `代理模式已启用 - ${info.address}:${info.port}`,
         }),
+        { closeButton: true },
       );
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
       queryClient.invalidateQueries({ queryKey: ["proxyTakeoverActive"] });
@@ -62,9 +63,12 @@ export function useProxyStatus() {
         t("proxy.stoppedWithRestore", {
           defaultValue: "代理模式已关闭，配置已恢复",
         }),
+        { closeButton: true },
       );
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
       queryClient.invalidateQueries({ queryKey: ["proxyTakeoverActive"] });
+      // 清除所有供应商健康状态缓存（后端已清空数据库记录）
+      queryClient.invalidateQueries({ queryKey: ["providerHealth"] });
     },
     onError: (error: Error) => {
       const detail = extractErrorMessage(error) || "未知错误";

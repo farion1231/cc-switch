@@ -142,6 +142,7 @@ function App() {
         if (migrated) {
           toast.success(
             t("migration.success", { defaultValue: "配置迁移成功" }),
+            { closeButton: true },
           );
         }
       } catch (error) {

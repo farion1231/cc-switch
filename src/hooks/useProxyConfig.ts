@@ -24,7 +24,7 @@ export function useProxyConfig() {
     mutationFn: (newConfig: ProxyConfig) =>
       invoke("update_proxy_config", { config: newConfig }),
     onSuccess: () => {
-      toast.success("代理配置已保存");
+      toast.success("代理配置已保存", { closeButton: true });
       queryClient.invalidateQueries({ queryKey: ["proxyConfig"] });
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
     },

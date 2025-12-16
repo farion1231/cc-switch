@@ -145,6 +145,13 @@ fn test_build_gemini_provider_with_model() {
         content: None,
         description: None,
         enabled: None,
+        usage_enabled: None,
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
     };
 
     let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
@@ -191,6 +198,13 @@ fn test_build_gemini_provider_without_model() {
         content: None,
         description: None,
         enabled: None,
+        usage_enabled: None,
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
     };
 
     let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
@@ -232,6 +246,13 @@ fn test_parse_and_merge_config_claude() {
         content: None,
         description: None,
         enabled: None,
+        usage_enabled: None,
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
     };
 
     let merged = parse_and_merge_config(&request).unwrap();
@@ -275,6 +296,13 @@ fn test_parse_and_merge_config_url_override() {
         content: None,
         description: None,
         enabled: None,
+        usage_enabled: None,
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
     };
 
     let merged = parse_and_merge_config(&request).unwrap();

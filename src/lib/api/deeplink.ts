@@ -38,6 +38,15 @@ export interface DeepLinkImportRequest {
   config?: string;
   configFormat?: string;
   configUrl?: string;
+
+  // Usage script fields (v3.9+)
+  usageEnabled?: boolean;
+  usageScript?: string;
+  usageApiKey?: string;
+  usageBaseUrl?: string;
+  usageAccessToken?: string;
+  usageUserId?: string;
+  usageAutoInterval?: number;
 }
 
 export interface McpImportResult {

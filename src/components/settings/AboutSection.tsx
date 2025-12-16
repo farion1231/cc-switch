@@ -142,7 +142,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     try {
       const available = await checkUpdate();
       if (!available) {
-        toast.success(t("settings.upToDate"));
+        toast.success(t("settings.upToDate"), { closeButton: true });
       }
     } catch (error) {
       console.error("[AboutSection] Check update failed", error);

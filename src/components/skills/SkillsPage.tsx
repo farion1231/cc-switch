@@ -103,7 +103,9 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const handleInstall = async (directory: string) => {
       try {
         await skillsApi.install(directory, selectedApp);
-        toast.success(t("skills.installSuccess", { name: directory }));
+        toast.success(t("skills.installSuccess", { name: directory }), {
+          closeButton: true,
+        });
         await loadSkills();
       } catch (error) {
         const errorMessage =
@@ -132,7 +134,9 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const handleUninstall = async (directory: string) => {
       try {
         await skillsApi.uninstall(directory, selectedApp);
-        toast.success(t("skills.uninstallSuccess", { name: directory }));
+        toast.success(t("skills.uninstallSuccess", { name: directory }), {
+          closeButton: true,
+        });
         await loadSkills();
       } catch (error) {
         const errorMessage =
@@ -180,12 +184,15 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
           name: repo.name,
           count: repoSkillCount,
         }),
+        { closeButton: true },
       );
     };
 
     const handleRemoveRepo = async (owner: string, name: string) => {
       await skillsApi.removeRepo(owner, name);
-      toast.success(t("skills.repo.removeSuccess", { owner, name }));
+      toast.success(t("skills.repo.removeSuccess", { owner, name }), {
+        closeButton: true,
+      });
       await Promise.all([loadRepos(), loadSkills()]);
     };
 

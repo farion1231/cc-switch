@@ -19,6 +19,23 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: tMock }),
 }));
 
+vi.mock("@/hooks/useProxyStatus", () => ({
+  useProxyStatus: () => ({
+    status: null,
+    isLoading: false,
+    isRunning: false,
+    isTakeoverActive: false,
+    startWithTakeover: vi.fn(),
+    stopWithRestore: vi.fn(),
+    switchProxyProvider: vi.fn(),
+    checkRunning: vi.fn(),
+    checkTakeoverActive: vi.fn(),
+    isStarting: false,
+    isStopping: false,
+    isPending: false,
+  }),
+}));
+
 interface SettingsMock {
   settings: any;
   isLoading: boolean;
@@ -288,6 +305,7 @@ describe("SettingsPage Component", () => {
     });
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
+    fireEvent.click(screen.getByText("数据管理"));
 
     // 有文件时，点击导入按钮执行 importConfig
     fireEvent.click(
@@ -363,6 +381,7 @@ describe("SettingsPage Component", () => {
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(
         "settings.devModeRestartHint",
+        expect.objectContaining({ closeButton: true }),
       );
     });
   });
@@ -393,6 +412,7 @@ describe("SettingsPage Component", () => {
     render(<SettingsPage open={true} onOpenChange={vi.fn()} />);
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
+    fireEvent.click(screen.getByText("配置文件目录"));
 
     fireEvent.click(screen.getByText("browse-directory"));
     expect(settingsMock.browseDirectory).toHaveBeenCalledWith("claude");

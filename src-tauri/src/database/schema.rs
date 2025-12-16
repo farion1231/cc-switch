@@ -31,18 +31,11 @@ impl Database {
                 icon_color TEXT,
                 meta TEXT NOT NULL DEFAULT '{}',
                 is_current BOOLEAN NOT NULL DEFAULT 0,
-                is_proxy_target BOOLEAN NOT NULL DEFAULT 0,
                 PRIMARY KEY (id, app_type)
             )",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
-
-        // 尝试添加 is_proxy_target 列（如果表已存在但缺少该列）
-        let _ = conn.execute(
-            "ALTER TABLE providers ADD COLUMN is_proxy_target BOOLEAN NOT NULL DEFAULT 0",
-            [],
-        );
 
         // 2. Provider Endpoints 表
         conn.execute(
@@ -318,6 +311,30 @@ impl Database {
             "ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0",
             [],
         );
+
+        // 14. Failover Queue 表 (故障转移队列)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS failover_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                queue_order INTEGER NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL,
+                UNIQUE (app_type, provider_id),
+                FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 为故障转移队列创建索引
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_failover_queue_order
+             ON failover_queue(app_type, queue_order)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(())
     }

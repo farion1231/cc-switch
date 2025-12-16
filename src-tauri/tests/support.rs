@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use cc_switch_lib::{update_settings, AppSettings, AppState, Database, MultiAppConfig};
+use cc_switch_lib::{
+    update_settings, AppSettings, AppState, Database, MultiAppConfig, ProxyService,
+};
 
 /// 为测试设置隔离的 HOME 目录，避免污染真实用户数据。
 pub fn ensure_test_home() -> &'static Path {
@@ -48,15 +50,17 @@ pub fn test_mutex() -> &'static Mutex<()> {
 
 /// 创建测试用的 AppState，包含一个空的数据库
 pub fn create_test_state() -> Result<AppState, Box<dyn std::error::Error>> {
-    let db = Database::init()?;
-    Ok(AppState { db: Arc::new(db) })
+    let db = Arc::new(Database::init()?);
+    let proxy_service = ProxyService::new(db.clone());
+    Ok(AppState { db, proxy_service })
 }
 
 /// 创建测试用的 AppState，并从 MultiAppConfig 迁移数据
 pub fn create_test_state_with_config(
     config: &MultiAppConfig,
 ) -> Result<AppState, Box<dyn std::error::Error>> {
-    let db = Database::init()?;
+    let db = Arc::new(Database::init()?);
     db.migrate_from_json(config)?;
-    Ok(AppState { db: Arc::new(db) })
+    let proxy_service = ProxyService::new(db.clone());
+    Ok(AppState { db, proxy_service })
 }

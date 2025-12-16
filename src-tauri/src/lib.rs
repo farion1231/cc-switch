@@ -39,8 +39,8 @@ pub use mcp::{
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
-    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, SkillService,
-    SpeedtestService,
+    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
+    SkillService, SpeedtestService,
 };
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
@@ -332,6 +332,11 @@ pub fn run() {
 
             let app_state = AppState::new(db);
 
+            // 设置 AppHandle 用于代理故障转移时的 UI 更新
+            app_state
+                .proxy_service
+                .set_app_handle(app.handle().clone());
+
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
             // ============================================================
@@ -522,10 +527,33 @@ pub fn run() {
                 }
             }
 
-            // 自动启动代理服务器
+            // 异常退出恢复 + 自动启动代理服务器
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<AppState>();
+
+                // 1. 检测异常退出并恢复 Live 配置
+                match state.db.is_live_takeover_active().await {
+                    Ok(true) => {
+                        // 接管标志为 true 但代理未运行 → 上次异常退出
+                        if !state.proxy_service.is_running().await {
+                            log::warn!("检测到上次异常退出，正在恢复 Live 配置...");
+                            if let Err(e) = state.proxy_service.recover_from_crash().await {
+                                log::error!("恢复 Live 配置失败: {e}");
+                            } else {
+                                log::info!("Live 配置已从异常退出中恢复");
+                            }
+                        }
+                    }
+                    Ok(false) => {
+                        // 正常状态，无需恢复
+                    }
+                    Err(e) => {
+                        log::error!("检查接管状态失败: {e}");
+                    }
+                }
+
+                // 2. 自动启动代理服务器（如果配置为启用）
                 match state.db.get_proxy_config().await {
                     Ok(config) => {
                         if config.enabled {
@@ -553,7 +581,6 @@ pub fn run() {
             commands::update_provider,
             commands::delete_provider,
             commands::switch_provider,
-            commands::set_proxy_target_provider,
             commands::import_default_config,
             commands::get_claude_config_status,
             commands::get_config_status,
@@ -656,13 +683,18 @@ pub fn run() {
             commands::is_live_takeover_active,
             commands::switch_proxy_provider,
             // Proxy failover commands
-            commands::get_proxy_targets,
-            commands::set_proxy_target,
             commands::get_provider_health,
             commands::reset_circuit_breaker,
             commands::get_circuit_breaker_config,
             commands::update_circuit_breaker_config,
             commands::get_circuit_breaker_stats,
+            // Failover queue management
+            commands::get_failover_queue,
+            commands::get_available_providers_for_failover,
+            commands::add_to_failover_queue,
+            commands::remove_from_failover_queue,
+            commands::reorder_failover_queue,
+            commands::set_failover_item_enabled,
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_trends,
@@ -697,6 +729,10 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 cleanup_before_exit(&app_handle).await;
                 log::info!("清理完成，退出应用");
+
+                // 短暂等待确保所有 I/O 操作（如数据库写入）刷新到磁盘
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
                 // 使用 std::process::exit 避免再次触发 ExitRequested
                 std::process::exit(0);
             });
