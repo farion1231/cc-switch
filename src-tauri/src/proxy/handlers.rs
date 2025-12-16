@@ -392,7 +392,7 @@ pub async fn handle_gemini(
         .map(|pq| pq.as_str())
         .unwrap_or(uri.path());
 
-    log::info!("[Gemini] 请求端点: {}", endpoint);
+    log::info!("[Gemini] 请求端点: {endpoint}");
 
     let is_stream = body
         .get("stream")

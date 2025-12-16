@@ -48,16 +48,14 @@ impl FailoverSwitchManager {
         provider_id: &str,
         provider_name: &str,
     ) -> Result<bool, AppError> {
-        let switch_key = format!("{}:{}", app_type, provider_id);
+        let switch_key = format!("{app_type}:{provider_id}");
 
         // 去重检查：如果相同切换已在进行中，跳过
         {
             let mut pending = self.pending_switches.write().await;
             if pending.contains(&switch_key) {
                 log::debug!(
-                    "[Failover] 切换已在进行中，跳过: {} -> {}",
-                    app_type,
-                    provider_id
+                    "[Failover] 切换已在进行中，跳过: {app_type} -> {provider_id}"
                 );
                 return Ok(false);
             }
@@ -86,10 +84,7 @@ impl FailoverSwitchManager {
         provider_name: &str,
     ) -> Result<bool, AppError> {
         log::info!(
-            "[Failover] 开始切换供应商: {} -> {} ({})",
-            app_type,
-            provider_name,
-            provider_id
+            "[Failover] 开始切换供应商: {app_type} -> {provider_name} ({provider_id})"
         );
 
         // 1. 更新数据库 is_current
@@ -97,7 +92,7 @@ impl FailoverSwitchManager {
 
         // 2. 更新本地 settings（设备级）
         let app_type_enum = crate::app_config::AppType::from_str(app_type)
-            .map_err(|_| AppError::Message(format!("无效的应用类型: {}", app_type)))?;
+            .map_err(|_| AppError::Message(format!("无效的应用类型: {app_type}")))?;
         crate::settings::set_current_provider(&app_type_enum, Some(provider_id))?;
 
         // 3. 更新托盘菜单和发射事件
@@ -137,10 +132,7 @@ impl FailoverSwitchManager {
         }
 
         log::info!(
-            "[Failover] 供应商切换完成: {} -> {} ({})",
-            app_type,
-            provider_name,
-            provider_id
+            "[Failover] 供应商切换完成: {app_type} -> {provider_name} ({provider_id})"
         );
 
         Ok(true)

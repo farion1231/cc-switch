@@ -169,8 +169,7 @@ impl CircuitBreaker {
                     // 超过限额，回退计数，拒绝请求
                     self.half_open_requests.fetch_sub(1, Ordering::SeqCst);
                     log::debug!(
-                        "Circuit breaker HalfOpen: rejecting request (limit reached: {})",
-                        max_half_open_requests
+                        "Circuit breaker HalfOpen: rejecting request (limit reached: {max_half_open_requests})"
                     );
                     false
                 }

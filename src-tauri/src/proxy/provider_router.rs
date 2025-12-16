@@ -102,8 +102,7 @@ impl ProviderRouter {
 
         if result.is_empty() {
             return Err(AppError::Config(format!(
-                "No available provider for {} (all circuit breakers open or no providers configured)",
-                app_type
+                "No available provider for {app_type} (all circuit breakers open or no providers configured)"
             )));
         }
 
@@ -199,7 +198,7 @@ impl ProviderRouter {
             breaker.update_config(config.clone()).await;
         }
 
-        log::info!("已更新 {} 个熔断器的配置", count);
+        log::info!("已更新 {count} 个熔断器的配置");
     }
 
     /// 获取熔断器状态

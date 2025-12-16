@@ -142,8 +142,7 @@ impl ProxyService {
                                     log::warn!("同步 Claude Token 到数据库失败: {e}");
                                 } else {
                                     log::info!(
-                                        "已同步 Claude Token 到数据库 (provider: {})",
-                                        provider_id
+                                        "已同步 Claude Token 到数据库 (provider: {provider_id})"
                                     );
                                 }
                             }
@@ -182,8 +181,7 @@ impl ProxyService {
                                     log::warn!("同步 Codex Token 到数据库失败: {e}");
                                 } else {
                                     log::info!(
-                                        "已同步 Codex Token 到数据库 (provider: {})",
-                                        provider_id
+                                        "已同步 Codex Token 到数据库 (provider: {provider_id})"
                                     );
                                 }
                             }
@@ -222,8 +220,7 @@ impl ProxyService {
                                     log::warn!("同步 Gemini Token 到数据库失败: {e}");
                                 } else {
                                     log::info!(
-                                        "已同步 Gemini Token 到数据库 (provider: {})",
-                                        provider_id
+                                        "已同步 Gemini Token 到数据库 (provider: {provider_id})"
                                     );
                                 }
                             }
@@ -354,7 +351,7 @@ impl ProxyService {
                 });
             }
             self.write_claude_live(&live_config)?;
-            log::info!("Claude Live 配置已接管，代理地址: {}", proxy_url);
+            log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
         }
 
         // Codex: 修改 config.toml 的 base_url，auth.json 的 OPENAI_API_KEY（代理会注入真实 Token）
@@ -373,7 +370,7 @@ impl ProxyService {
             live_config["config"] = json!(updated_config);
 
             self.write_codex_live(&live_config)?;
-            log::info!("Codex Live 配置已接管，代理地址: {}", proxy_url);
+            log::info!("Codex Live 配置已接管，代理地址: {proxy_url}");
         }
 
         // Gemini: 修改 GOOGLE_GEMINI_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
@@ -389,7 +386,7 @@ impl ProxyService {
                 });
             }
             self.write_gemini_live(&live_config)?;
-            log::info!("Gemini Live 配置已接管，代理地址: {}", proxy_url);
+            log::info!("Gemini Live 配置已接管，代理地址: {proxy_url}");
         }
 
         Ok(())
@@ -514,9 +511,7 @@ impl ProxyService {
             .map_err(|e| format!("更新当前供应商失败: {e}"))?;
 
         log::info!(
-            "代理模式：已切换 {} 的目标供应商为 {}",
-            app_type,
-            provider_id
+            "代理模式：已切换 {app_type} 的目标供应商为 {provider_id}"
         );
         Ok(())
     }
@@ -722,9 +717,7 @@ impl ProxyService {
                 .reset_provider_circuit_breaker(provider_id, app_type)
                 .await;
             log::info!(
-                "已重置 Provider {} (app: {}) 的熔断器",
-                provider_id,
-                app_type
+                "已重置 Provider {provider_id} (app: {app_type}) 的熔断器"
             );
         }
         Ok(())

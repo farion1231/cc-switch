@@ -63,7 +63,7 @@ impl SpeedtestService {
         if valid_targets.is_empty() {
             return Ok(results
                 .into_iter()
-                .filter_map(|v| v)
+                .flatten()
                 .collect::<Vec<_>>());
         }
 
@@ -112,7 +112,7 @@ impl SpeedtestService {
             results[idx] = Some(latency);
         }
 
-        Ok(results.into_iter().filter_map(|v| v).collect::<Vec<_>>())
+        Ok(results.into_iter().flatten().collect::<Vec<_>>())
     }
 
     fn build_client(timeout_secs: u64) -> Result<Client, AppError> {
