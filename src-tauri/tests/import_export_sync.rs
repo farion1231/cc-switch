@@ -154,6 +154,12 @@ fn sync_enabled_to_codex_writes_enabled_servers() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
 
+    // 模拟 Codex 已安装/已初始化：存在 ~/.codex 目录
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+
     let mut config = MultiAppConfig::default();
     config.mcp.codex.servers.insert(
         "stdio-enabled".into(),
@@ -170,7 +176,6 @@ fn sync_enabled_to_codex_writes_enabled_servers() {
 
     cc_switch_lib::sync_enabled_to_codex(&config).expect("sync codex");
 
-    let path = cc_switch_lib::get_codex_config_path();
     assert!(path.exists(), "config.toml should be created");
     let text = fs::read_to_string(&path).expect("read config.toml");
     assert!(
@@ -594,6 +599,11 @@ command = "echo"
 fn sync_claude_enabled_mcp_projects_to_user_config() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
+    let home = ensure_test_home();
+
+    // 模拟 Claude 已安装/已初始化：存在 ~/.claude 目录
+    fs::create_dir_all(home.join(".claude")).expect("create claude dir");
+
     let mut config = MultiAppConfig::default();
 
     config.mcp.claude.servers.insert(

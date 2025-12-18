@@ -13,6 +13,12 @@ use crate::error::AppError;
 
 use super::validation::{extract_server_spec, validate_server_spec};
 
+fn should_sync_codex_mcp() -> bool {
+    // Codex 未安装/未初始化时：~/.codex 目录不存在。
+    // 按用户偏好：目录缺失时跳过写入/删除，不创建任何文件或目录。
+    crate::codex_config::get_codex_config_dir().exists()
+}
+
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
 fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
     let mut out = HashMap::new();
@@ -273,6 +279,9 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
 /// - 仅更新 `mcp_servers` 表，保留其它键
 /// - 仅写入启用项；无启用项时清理 mcp_servers 表
 pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
+    if !should_sync_codex_mcp() {
+        return Ok(());
+    }
     use toml_edit::{Item, Table};
 
     // 1) 收集启用项（Codex 维度）
@@ -339,6 +348,9 @@ pub fn sync_single_server_to_codex(
     id: &str,
     server_spec: &Value,
 ) -> Result<(), AppError> {
+    if !should_sync_codex_mcp() {
+        return Ok(());
+    }
     use toml_edit::Item;
 
     // 读取现有的 config.toml
@@ -384,6 +396,9 @@ pub fn sync_single_server_to_codex(
 /// 从 Codex live 配置中移除单个 MCP 服务器
 /// 从正确的 [mcp_servers] 表中删除，同时清理可能存在于错误位置 [mcp.servers] 的数据
 pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
+    if !should_sync_codex_mcp() {
+        return Ok(());
+    }
     let config_path = crate::codex_config::get_codex_config_path();
 
     if !config_path.exists() {
