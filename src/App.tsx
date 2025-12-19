@@ -65,7 +65,15 @@ function App() {
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
   // 获取代理服务状态
-  const { isRunning: isProxyRunning, isTakeoverActive } = useProxyStatus();
+  const { isRunning: isProxyRunning, takeoverStatus } = useProxyStatus();
+  // 当前应用的代理是否开启
+  const isCurrentAppTakeoverActive = takeoverStatus?.[activeApp] || false;
+  // 任意应用的代理是否开启
+  const isTakeoverActive =
+    takeoverStatus?.claude ||
+    takeoverStatus?.codex ||
+    takeoverStatus?.gemini ||
+    false;
 
   // 获取供应商列表，当代理服务运行时自动刷新
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
@@ -324,7 +332,7 @@ function App() {
                   appId={activeApp}
                   isLoading={isLoading}
                   isProxyRunning={isProxyRunning}
-                  isProxyTakeover={isProxyRunning && isTakeoverActive}
+                  isProxyTakeover={isProxyRunning && isCurrentAppTakeoverActive}
                   onSwitch={switchProvider}
                   onEdit={setEditingProvider}
                   onDelete={setConfirmDelete}
@@ -421,7 +429,7 @@ function App() {
                     rel="noreferrer"
                     className={cn(
                       "text-xl font-semibold transition-colors",
-                      isProxyRunning && isTakeoverActive
+                      isProxyRunning && isCurrentAppTakeoverActive
                         ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
                         : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
                     )}
