@@ -162,7 +162,7 @@
     "selectFileFailed": "有効な SQL バックアップファイルを選択してください",
     "configCorrupted": "SQL ファイルが壊れているか形式が無効な可能性があります",
     "backupId": "バックアップ ID",
-    "autoReload": "2 秒後に自動で再読み込みします...",
+    "autoReload": "データを更新しました",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",

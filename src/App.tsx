@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   Settings,
@@ -45,6 +46,7 @@ type View = "providers" | "settings" | "prompts" | "skills" | "mcp" | "agents";
 
 function App() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   const [activeApp, setActiveApp] = useState<AppId>("claude");
   const [currentView, setCurrentView] = useState<View>("providers");
@@ -258,7 +260,20 @@ function App() {
 
   // 导入配置成功后刷新
   const handleImportSuccess = async () => {
-    await refetch();
+    try {
+      // 导入会影响所有应用的供应商数据：刷新所有 providers 缓存
+      await queryClient.invalidateQueries({
+        queryKey: ["providers"],
+        refetchType: "all",
+      });
+      await queryClient.refetchQueries({
+        queryKey: ["providers"],
+        type: "all",
+      });
+    } catch (error) {
+      console.error("[App] Failed to refresh providers after import", error);
+      await refetch();
+    }
     try {
       await providersApi.updateTrayMenu();
     } catch (error) {

@@ -162,7 +162,7 @@
     "selectFileFailed": "Please choose a valid SQL backup file",
     "configCorrupted": "SQL file may be corrupted or invalid",
     "backupId": "Backup ID",
-    "autoReload": "Data will refresh automatically in 2 seconds...",
+    "autoReload": "Data refreshed",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",

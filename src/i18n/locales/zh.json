@@ -162,7 +162,7 @@
     "selectFileFailed": "请选择有效的 SQL 备份文件",
     "configCorrupted": "SQL 文件可能已损坏或格式不正确",
     "backupId": "备份ID",
-    "autoReload": "数据将在2秒后自动刷新...",
+    "autoReload": "数据已刷新",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",

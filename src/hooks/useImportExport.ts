@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { settingsApi } from "@/lib/api";
@@ -39,15 +39,6 @@ export function useImportExport(
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [backupId, setBackupId] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
-  const successTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (successTimerRef.current) {
-        window.clearTimeout(successTimerRef.current);
-      }
-    };
-  }, []);
 
   const clearSelection = useCallback(() => {
     setSelectedFile("");
@@ -105,6 +96,10 @@ export function useImportExport(
       }
 
       setBackupId(result.backupId ?? null);
+      // 导入成功后立即触发外部刷新（与 live 同步结果解耦）
+      // - 避免 sync 失败时 UI 不刷新
+      // - 避免依赖 setTimeout（组件卸载会取消）
+      void onImportSuccess?.();
 
       const syncResult = await syncCurrentProvidersLiveSafe();
       if (syncResult.ok) {
@@ -114,10 +109,6 @@ export function useImportExport(
             defaultValue: "配置导入成功",
           }),
         );
-
-        successTimerRef.current = window.setTimeout(() => {
-          void onImportSuccess?.();
-        }, 1500);
       } else {
         console.error(
           "[useImportExport] Failed to sync live config",
