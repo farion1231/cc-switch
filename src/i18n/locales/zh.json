@@ -146,7 +146,7 @@
     "themeDark": "深色",
     "themeSystem": "跟随系统",
     "importExport": "SQL 导入导出",
-    "importExportHint": "导入/导出数据库 SQL 备份，便于备份或迁移。",
+    "importExportHint": "导入/导出数据库 SQL 备份（仅支持导入由 CC Switch 导出的备份），便于备份或迁移。",
     "exportConfig": "导出 SQL 备份",
     "selectConfigFile": "选择 SQL 文件",
     "noFileSelected": "尚未选择配置文件。",

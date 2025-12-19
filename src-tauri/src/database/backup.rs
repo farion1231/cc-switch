@@ -13,6 +13,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 
+const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
+
 impl Database {
     /// 导出为 SQLite 兼容的 SQL 文本
     pub fn export_sql(&self, target_path: &Path) -> Result<(), AppError> {
@@ -36,7 +38,8 @@ impl Database {
         }
 
         let sql_raw = fs::read_to_string(source_path).map_err(|e| AppError::io(source_path, e))?;
-        let sql_content = Self::sanitize_import_sql(&sql_raw);
+        let sql_content = sql_raw.trim_start_matches('\u{feff}');
+        Self::validate_cc_switch_sql_export(sql_content)?;
 
         // 导入前备份现有数据库
         let backup_path = self.backup_database_file()?;
@@ -51,7 +54,7 @@ impl Database {
             Connection::open(&temp_path).map_err(|e| AppError::Database(e.to_string()))?;
 
         temp_conn
-            .execute_batch(&sql_content)
+            .execute_batch(sql_content)
             .map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
 
         // 补齐缺失表/索引并进行基础校验
@@ -93,26 +96,17 @@ impl Database {
         Ok(snapshot)
     }
 
-    /// 移除 SQLite 保留对象相关语句（如 sqlite_sequence），避免导入报错
-    fn sanitize_import_sql(sql: &str) -> String {
-        let mut cleaned = String::new();
-        let lower_keyword = "sqlite_sequence";
-
-        for stmt in sql.split(';') {
-            let trimmed = stmt.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            if trimmed.to_ascii_lowercase().contains(lower_keyword) {
-                continue;
-            }
-
-            cleaned.push_str(trimmed);
-            cleaned.push_str(";\n");
+    fn validate_cc_switch_sql_export(sql: &str) -> Result<(), AppError> {
+        let trimmed = sql.trim_start();
+        if trimmed.starts_with(CC_SWITCH_SQL_EXPORT_HEADER) {
+            return Ok(());
         }
 
-        cleaned
+        Err(AppError::localized(
+            "backup.sql.invalid_format",
+            "仅支持导入由 CC Switch 导出的 SQL 备份文件。",
+            "Only SQL backups exported by CC Switch are supported.",
+        ))
     }
 
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
@@ -129,8 +123,15 @@ impl Database {
 
         fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
 
-        let backup_id = format!("db_backup_{}", Utc::now().format("%Y%m%d_%H%M%S"));
-        let backup_path = backup_dir.join(format!("{backup_id}.db"));
+        let base_id = format!("db_backup_{}", Utc::now().format("%Y%m%d_%H%M%S"));
+        let mut backup_id = base_id.clone();
+        let mut backup_path = backup_dir.join(format!("{backup_id}.db"));
+        let mut counter = 1;
+        while backup_path.exists() {
+            backup_id = format!("{base_id}_{counter}");
+            backup_path = backup_dir.join(format!("{backup_id}.db"));
+            counter += 1;
+        }
 
         {
             let conn = lock_conn!(self.conn);
