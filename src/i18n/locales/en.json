@@ -845,6 +845,89 @@
   "agents": {
     "title": "Agents"
   },
+  "templates": {
+    "title": "Template Market",
+    "search": "Search components...",
+    "refresh": "Refresh Index",
+    "refreshing": "Refreshing...",
+    "types": {
+      "agent": "Agent",
+      "command": "Command",
+      "mcp": "MCP Service",
+      "setting": "Setting",
+      "hook": "Hook",
+      "skill": "Skill"
+    },
+    "categories": {
+      "all": "All",
+      "security": "Security",
+      "development": "Development",
+      "database": "Database",
+      "web-tools": "Web Tools"
+    },
+    "card": {
+      "install": "Install",
+      "installed": "Installed",
+      "uninstall": "Uninstall",
+      "installing": "Installing..."
+    },
+    "detail": {
+      "description": "Description",
+      "metadata": "Metadata",
+      "content": "Content Preview",
+      "viewOnGithub": "View on GitHub",
+      "installTo": "Install to",
+      "type": "Type",
+      "category": "Category",
+      "model": "Model",
+      "tools": "Tools"
+    },
+    "repos": {
+      "title": "Template Repositories",
+      "add": "Add Repository",
+      "remove": "Remove",
+      "enable": "Enable",
+      "disable": "Disable",
+      "owner": "Owner",
+      "name": "Name",
+      "branch": "Branch"
+    },
+    "errors": {
+      "refreshFailed": "Failed to refresh index",
+      "installFailed": "Installation failed",
+      "uninstallFailed": "Uninstallation failed",
+      "loadFailed": "Failed to load components"
+    },
+    "empty": {
+      "noComponents": "No components",
+      "noResults": "No matching components found"
+    },
+    "notifications": {
+      "installSuccess": "Component installed successfully",
+      "uninstallSuccess": "Component uninstalled successfully",
+      "refreshSuccess": "Index refreshed successfully"
+    },
+    "type": {
+      "bundle": "Bundle",
+      "agent": "Agent",
+      "command": "Command",
+      "mcp": "MCP",
+      "setting": "Setting",
+      "hook": "Hook",
+      "skill": "Skill"
+    },
+    "bundle": {
+      "empty": "No bundles",
+      "emptyDescription": "Add a template repository with components.json",
+      "installTo": "Install to:",
+      "componentCount": "{{count}} components",
+      "install": "Install Bundle",
+      "noMatch": "No matching components found",
+      "installSuccess": "Installed {{count}} components",
+      "partialFail": "{{count}} components failed to install",
+      "installFailed": "Failed to install bundle"
+    }
+  },
   "proxy": {
     "failoverQueue": {
       "title": "Failover Queue",

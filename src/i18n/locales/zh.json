@@ -845,6 +845,89 @@
   "agents": {
     "title": "智能体"
   },
+  "templates": {
+    "title": "模板市场",
+    "search": "搜索组件...",
+    "refresh": "刷新索引",
+    "refreshing": "刷新中...",
+    "types": {
+      "agent": "代理",
+      "command": "命令",
+      "mcp": "MCP 服务",
+      "setting": "设置",
+      "hook": "钩子",
+      "skill": "技能"
+    },
+    "categories": {
+      "all": "全部",
+      "security": "安全",
+      "development": "开发",
+      "database": "数据库",
+      "web-tools": "Web 工具"
+    },
+    "card": {
+      "install": "安装",
+      "installed": "已安装",
+      "uninstall": "卸载",
+      "installing": "安装中..."
+    },
+    "detail": {
+      "description": "描述",
+      "metadata": "元数据",
+      "content": "内容预览",
+      "viewOnGithub": "在 GitHub 上查看",
+      "installTo": "安装到",
+      "type": "类型",
+      "category": "分类",
+      "model": "模型",
+      "tools": "工具"
+    },
+    "repos": {
+      "title": "模板仓库",
+      "add": "添加仓库",
+      "remove": "删除",
+      "enable": "启用",
+      "disable": "禁用",
+      "owner": "所有者",
+      "name": "名称",
+      "branch": "分支"
+    },
+    "errors": {
+      "refreshFailed": "刷新索引失败",
+      "installFailed": "安装失败",
+      "uninstallFailed": "卸载失败",
+      "loadFailed": "加载组件失败"
+    },
+    "empty": {
+      "noComponents": "暂无组件",
+      "noResults": "未找到匹配的组件"
+    },
+    "notifications": {
+      "installSuccess": "组件安装成功",
+      "uninstallSuccess": "组件卸载成功",
+      "refreshSuccess": "索引刷新成功"
+    },
+    "type": {
+      "bundle": "组合",
+      "agent": "代理",
+      "command": "命令",
+      "mcp": "MCP",
+      "setting": "设置",
+      "hook": "钩子",
+      "skill": "技能"
+    },
+    "bundle": {
+      "empty": "暂无组合",
+      "emptyDescription": "请添加包含 components.json 的模板仓库",
+      "installTo": "安装到:",
+      "componentCount": "{{count}} 个组件",
+      "install": "安装组合",
+      "noMatch": "未找到匹配的组件",
+      "installSuccess": "已安装 {{count}} 个组件",
+      "partialFail": "{{count}} 个组件安装失败",
+      "installFailed": "安装组合失败"
+    }
+  },
   "proxy": {
     "failoverQueue": {
       "title": "故障转移队列",

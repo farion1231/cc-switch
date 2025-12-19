@@ -13,7 +13,7 @@ const buttonVariants = cva(
           "bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
         // 危险按钮：红底白字（对应旧版 danger）
         destructive:
-          "bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700",
+          "bg-red-500 text-white hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-600",
         // 轮廓按钮
         outline:
           "border border-border-default bg-background hover:bg-gray-100 hover:border-border-hover dark:hover:bg-gray-800",

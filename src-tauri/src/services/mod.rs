@@ -8,6 +8,7 @@ pub mod proxy;
 pub mod skill;
 pub mod speedtest;
 pub mod stream_check;
+pub mod template;
 pub mod usage_stats;
 
 pub use config::ConfigService;
@@ -17,6 +18,12 @@ pub use provider::{ProviderService, ProviderSortUpdate};
 pub use proxy::ProxyService;
 pub use skill::{Skill, SkillRepo, SkillService};
 pub use speedtest::{EndpointLatency, SpeedtestService};
+#[allow(unused_imports)]
+pub use template::{
+    BatchInstallResult, ComponentDetail, ComponentMetadata, ComponentType, InstalledComponent,
+    MarketplaceBundle, MarketplaceBundleItem, PaginatedResult, TemplateComponent, TemplateRepo,
+    TemplateService,
+};
 #[allow(unused_imports)]
 pub use usage_stats::{
     DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,

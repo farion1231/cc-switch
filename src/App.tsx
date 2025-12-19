@@ -11,6 +11,7 @@ import {
   Wrench,
   Server,
   RefreshCw,
+  Package,
 } from "lucide-react";
 import type { Provider } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -41,9 +42,17 @@ import PromptPanel from "@/components/prompts/PromptPanel";
 import { SkillsPage } from "@/components/skills/SkillsPage";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
+import { TemplatesPage } from "@/components/templates/TemplatesPage";
 import { Button } from "@/components/ui/button";
 
-type View = "providers" | "settings" | "prompts" | "skills" | "mcp" | "agents";
+type View =
+  | "providers"
+  | "settings"
+  | "prompts"
+  | "skills"
+  | "mcp"
+  | "agents"
+  | "templates";
 
 function App() {
   const { t } = useTranslation();
@@ -312,6 +321,8 @@ function App() {
         );
       case "agents":
         return <AgentsPanel onOpenChange={() => setCurrentView("providers")} />;
+      case "templates":
+        return <TemplatesPage activeApp={activeApp} />;
       default:
         return (
           <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
@@ -410,6 +421,7 @@ function App() {
                   {currentView === "skills" && t("skills.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
                   {currentView === "agents" && t("agents.title")}
+                  {currentView === "templates" && t("templates.title")}
                 </h1>
               </div>
             ) : (
@@ -540,6 +552,15 @@ function App() {
                     title={t("mcp.title")}
                   >
                     <Server className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCurrentView("templates")}
+                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                    title={t("templates.title")}
+                  >
+                    <Package className="h-4 w-4" />
                   </Button>
                 </div>
 

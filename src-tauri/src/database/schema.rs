@@ -336,6 +336,90 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 15. Template Repos 表 (模板仓库)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS template_repos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner TEXT NOT NULL,
+                name TEXT NOT NULL,
+                branch TEXT NOT NULL DEFAULT 'main',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(owner, name)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 插入默认模板仓库
+        conn.execute(
+            "INSERT OR IGNORE INTO template_repos (owner, name, branch, enabled)
+             VALUES ('yovinchen', 'claude-code-templates', 'main', 1)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 16. Template Components 表 (模板组件)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS template_components (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                repo_id INTEGER NOT NULL,
+                component_type TEXT NOT NULL,
+                category TEXT,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                description TEXT,
+                content_hash TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (repo_id) REFERENCES template_repos(id) ON DELETE CASCADE,
+                UNIQUE(repo_id, component_type, path)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 为 template_components 创建索引
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_template_components_type
+             ON template_components(component_type)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_template_components_category
+             ON template_components(category)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 17. Installed Components 表 (已安装组件)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS installed_components (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                component_id INTEGER,
+                component_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                installed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (component_id) REFERENCES template_components(id) ON DELETE SET NULL,
+                UNIQUE(component_type, path, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 为 installed_components 创建索引
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_installed_components_app
+             ON installed_components(app_type)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(())
     }
 
@@ -374,6 +458,13 @@ impl Database {
                         );
                         Self::migrate_v1_to_v2(conn)?;
                         Self::set_user_version(conn, 2)?;
+                    }
+                    2 => {
+                        log::info!(
+                            "迁移数据库从 v2 到 v3（添加 Claude Code Templates 功能相关表）"
+                        );
+                        Self::migrate_v2_to_v3(conn)?;
+                        Self::set_user_version(conn, 3)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -614,6 +705,96 @@ impl Database {
             .map_err(|e| AppError::Database(format!("删除旧 skills 表失败: {e}")))?;
 
         log::info!("skills 表迁移完成，共迁移 {count} 条记录");
+        Ok(())
+    }
+
+    /// v2 -> v3 迁移：添加 Claude Code Templates 功能相关表
+    fn migrate_v2_to_v3(conn: &Connection) -> Result<(), AppError> {
+        // 1. template_repos 表 - 存储模板仓库信息
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS template_repos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner TEXT NOT NULL,
+                name TEXT NOT NULL,
+                branch TEXT NOT NULL DEFAULT 'main',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(owner, name)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 template_repos 表失败: {e}")))?;
+
+        // 2. template_components 表 - 存储从仓库中发现的模板组件
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS template_components (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                repo_id INTEGER NOT NULL,
+                component_type TEXT NOT NULL,
+                category TEXT,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                description TEXT,
+                content_hash TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (repo_id) REFERENCES template_repos(id) ON DELETE CASCADE,
+                UNIQUE(repo_id, component_type, path)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 template_components 表失败: {e}")))?;
+
+        // 为 template_components 创建索引
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_template_components_type
+             ON template_components(component_type)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 template_components 类型索引失败: {e}")))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_template_components_category
+             ON template_components(category)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 template_components 分类索引失败: {e}")))?;
+
+        // 3. installed_components 表 - 存储已安装的组件
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS installed_components (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                component_id INTEGER,
+                component_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                installed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (component_id) REFERENCES template_components(id) ON DELETE SET NULL,
+                UNIQUE(component_type, path, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 installed_components 表失败: {e}")))?;
+
+        // 为 installed_components 创建索引
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_installed_components_app
+             ON installed_components(app_type)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 installed_components 应用索引失败: {e}")))?;
+
+        // 4. 插入默认模板仓库
+        conn.execute(
+            "INSERT OR IGNORE INTO template_repos (owner, name, branch, enabled)
+             VALUES ('yovinchen', 'claude-code-templates', 'main', 1)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("插入默认模板仓库失败: {e}")))?;
+
+        log::info!("已创建 Claude Code Templates 相关表并插入默认仓库");
         Ok(())
     }
 

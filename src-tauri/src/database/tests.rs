@@ -285,8 +285,7 @@ fn model_pricing_is_seeded_on_init() {
 
     assert!(
         count > 0,
-        "模型定价数据应该在初始化时自动填充，实际数量: {}",
-        count
+        "模型定价数据应该在初始化时自动填充，实际数量: {count}"
     );
 
     // 验证包含 Claude 模型
@@ -299,8 +298,7 @@ fn model_pricing_is_seeded_on_init() {
         .expect("check claude");
     assert!(
         claude_count > 0,
-        "应该包含 Claude 模型定价，实际数量: {}",
-        claude_count
+        "应该包含 Claude 模型定价，实际数量: {claude_count}"
     );
 
     // 验证包含 GPT 模型
@@ -313,8 +311,7 @@ fn model_pricing_is_seeded_on_init() {
         .expect("check gpt");
     assert!(
         gpt_count > 0,
-        "应该包含 GPT 模型定价，实际数量: {}",
-        gpt_count
+        "应该包含 GPT 模型定价，实际数量: {gpt_count}"
     );
 
     // 验证包含 Gemini 模型
@@ -327,7 +324,90 @@ fn model_pricing_is_seeded_on_init() {
         .expect("check gemini");
     assert!(
         gemini_count > 0,
-        "应该包含 Gemini 模型定价，实际数量: {}",
-        gemini_count
+        "应该包含 Gemini 模型定价，实际数量: {gemini_count}"
     );
+}
+
+#[test]
+fn test_v2_to_v3_migration_creates_template_tables() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    // 创建 v2 schema（即当前完整的 schema）
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::set_user_version(&conn, 2).expect("set v2 version");
+
+    // 应用迁移到 v3
+    Database::apply_schema_migrations_on_conn(&conn).expect("migrate to v3");
+
+    // 验证版本号已更新
+    assert_eq!(
+        Database::get_user_version(&conn).expect("read version"),
+        3,
+        "版本应该更新为 3"
+    );
+
+    // 验证 template_repos 表存在且包含默认仓库
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM template_repos", [], |row| row.get(0))
+        .expect("count template_repos");
+    assert_eq!(count, 1, "应该有 1 个默认模板仓库");
+
+    let (owner, name, branch): (String, String, String) = conn
+        .query_row(
+            "SELECT owner, name, branch FROM template_repos WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read default repo");
+    assert_eq!(owner, "yovinchen", "默认仓库 owner 应该是 yovinchen");
+    assert_eq!(
+        name, "claude-code-templates",
+        "默认仓库 name 应该是 claude-code-templates"
+    );
+    assert_eq!(branch, "main", "默认仓库 branch 应该是 main");
+
+    // 验证 template_components 表存在
+    assert!(
+        Database::table_exists(&conn, "template_components").expect("check table"),
+        "template_components 表应该存在"
+    );
+
+    // 验证 installed_components 表存在
+    assert!(
+        Database::table_exists(&conn, "installed_components").expect("check table"),
+        "installed_components 表应该存在"
+    );
+
+    // 验证索引存在
+    let index_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND (
+                name = 'idx_template_components_type' OR
+                name = 'idx_template_components_category' OR
+                name = 'idx_installed_components_app'
+            )",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count indexes");
+    assert_eq!(index_count, 3, "应该创建 3 个索引");
+
+    // 验证外键约束
+    let fk_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_foreign_key_list('template_components')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count fk");
+    assert_eq!(fk_count, 1, "template_components 应该有 1 个外键约束");
+
+    let fk_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_foreign_key_list('installed_components')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count fk");
+    assert_eq!(fk_count, 1, "installed_components 应该有 1 个外键约束");
 }

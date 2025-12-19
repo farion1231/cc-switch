@@ -860,9 +860,7 @@ mod tests {
             } else {
                 assert!(
                     result.is_err(),
-                    "应该不匹配的URL被允许: base_url={}, request_url={}",
-                    base_url,
-                    request_url
+                    "应该不匹配的URL被允许: base_url={base_url}, request_url={request_url}"
                 );
             }
         }

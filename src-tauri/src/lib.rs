@@ -730,6 +730,21 @@ pub fn run() {
             commands::get_stream_check_config,
             commands::save_stream_check_config,
             commands::get_tool_versions,
+            // Template management
+            commands::refresh_template_index,
+            commands::list_template_components,
+            commands::get_template_component,
+            commands::install_template_component,
+            commands::uninstall_template_component,
+            commands::batch_install_template_components,
+            commands::list_template_repos,
+            commands::add_template_repo,
+            commands::remove_template_repo,
+            commands::toggle_template_repo,
+            commands::list_template_categories,
+            commands::list_installed_components,
+            commands::preview_component_content,
+            commands::list_marketplace_bundles,
         ]);
 
     let app = builder

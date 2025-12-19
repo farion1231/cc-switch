@@ -844,5 +844,88 @@
   },
   "agents": {
     "title": "エージェント"
+  },
+  "templates": {
+    "title": "テンプレートマーケット",
+    "search": "コンポーネントを検索...",
+    "refresh": "インデックスを更新",
+    "refreshing": "更新中...",
+    "types": {
+      "agent": "エージェント",
+      "command": "コマンド",
+      "mcp": "MCP サービス",
+      "setting": "設定",
+      "hook": "フック",
+      "skill": "スキル"
+    },
+    "categories": {
+      "all": "すべて",
+      "security": "セキュリティ",
+      "development": "開発",
+      "database": "データベース",
+      "web-tools": "ウェブツール"
+    },
+    "card": {
+      "install": "インストール",
+      "installed": "インストール済み",
+      "uninstall": "アンインストール",
+      "installing": "インストール中..."
+    },
+    "detail": {
+      "description": "説明",
+      "metadata": "メタデータ",
+      "content": "コンテンツプレビュー",
+      "viewOnGithub": "GitHub で見る",
+      "installTo": "インストール先",
+      "type": "タイプ",
+      "category": "カテゴリ",
+      "model": "モデル",
+      "tools": "ツール"
+    },
+    "repos": {
+      "title": "テンプレートリポジトリ",
+      "add": "リポジトリを追加",
+      "remove": "削除",
+      "enable": "有効化",
+      "disable": "無効化",
+      "owner": "オーナー",
+      "name": "名前",
+      "branch": "ブランチ"
+    },
+    "errors": {
+      "refreshFailed": "インデックスの更新に失敗しました",
+      "installFailed": "インストールに失敗しました",
+      "uninstallFailed": "アンインストールに失敗しました",
+      "loadFailed": "コンポーネントの読み込みに失敗しました"
+    },
+    "empty": {
+      "noComponents": "コンポーネントなし",
+      "noResults": "一致するコンポーネントが見つかりません"
+    },
+    "notifications": {
+      "installSuccess": "コンポーネントのインストールに成功しました",
+      "uninstallSuccess": "コンポーネントのアンインストールに成功しました",
+      "refreshSuccess": "インデックスの更新に成功しました"
+    },
+    "type": {
+      "bundle": "バンドル",
+      "agent": "エージェント",
+      "command": "コマンド",
+      "mcp": "MCP",
+      "setting": "設定",
+      "hook": "フック",
+      "skill": "スキル"
+    },
+    "bundle": {
+      "empty": "バンドルなし",
+      "emptyDescription": "components.json を含むテンプレートリポジトリを追加してください",
+      "installTo": "インストール先:",
+      "componentCount": "{{count}} 個のコンポーネント",
+      "install": "バンドルをインストール",
+      "noMatch": "一致するコンポーネントが見つかりません",
+      "installSuccess": "{{count}} 個のコンポーネントをインストールしました",
+      "partialFail": "{{count}} 個のコンポーネントのインストールに失敗しました",
+      "installFailed": "バンドルのインストールに失敗しました"
+    }
   }
 }
