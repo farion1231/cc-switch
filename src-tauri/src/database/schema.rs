@@ -375,6 +375,11 @@ impl Database {
                         Self::migrate_v1_to_v2(conn)?;
                         Self::set_user_version(conn, 2)?;
                     }
+                    2 => {
+                        log::info!("迁移数据库从 v2 到 v3（添加私有仓库支持字段）");
+                        Self::migrate_v2_to_v3(conn)?;
+                        Self::set_user_version(conn, 3)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -455,6 +460,10 @@ impl Database {
             "TEXT NOT NULL DEFAULT 'main'",
         )?;
         Self::add_column_if_missing(conn, "skill_repos", "enabled", "BOOLEAN NOT NULL DEFAULT 1")?;
+        // 私有仓库支持字段
+        Self::add_column_if_missing(conn, "skill_repos", "base_url", "TEXT")?;
+        Self::add_column_if_missing(conn, "skill_repos", "access_token", "TEXT")?;
+        Self::add_column_if_missing(conn, "skill_repos", "auth_header", "TEXT")?;
         // 注意: skills_path 字段已被移除，因为现在支持全仓库递归扫描
 
         Ok(())
@@ -540,6 +549,16 @@ impl Database {
 
         // 重构 skills 表（添加 app_type 字段）
         Self::migrate_skills_table(conn)?;
+
+        Ok(())
+    }
+
+    /// v2 -> v3 迁移：添加私有仓库支持字段
+    fn migrate_v2_to_v3(conn: &Connection) -> Result<(), AppError> {
+        // skill_repos 表：私有仓库支持字段
+        Self::add_column_if_missing(conn, "skill_repos", "base_url", "TEXT")?;
+        Self::add_column_if_missing(conn, "skill_repos", "access_token", "TEXT")?;
+        Self::add_column_if_missing(conn, "skill_repos", "auth_header", "TEXT")?;
 
         Ok(())
     }

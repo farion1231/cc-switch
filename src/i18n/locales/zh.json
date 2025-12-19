@@ -744,7 +744,31 @@
       "addFailed": "添加失败",
       "removeSuccess": "仓库 {{owner}}/{{name}} 已删除",
       "removeFailed": "删除失败",
-      "skillCount": "识别到 {{count}} 个技能"
+      "skillCount": "识别到 {{count}} 个技能",
+      "tabs": {
+        "public": "公共仓库",
+        "private": "私有仓库"
+      },
+      "addPublic": "添加公共仓库",
+      "addPrivate": "添加私有仓库",
+      "private": {
+        "label": "私有",
+        "url": "仓库 URL",
+        "urlPlaceholder": "https://gitlab.company.com/owner/name",
+        "token": "Access Token",
+        "tokenPlaceholder": "输入访问令牌",
+        "testConnection": "测试连接",
+        "testSuccess": "连接成功",
+        "testFirst": "请先测试连接",
+        "connectionFailed": "连接失败，请检查 URL 和 Token",
+        "invalidUrl": "无效的 URL 格式，请输入完整的 https:// 地址",
+        "tokenRequired": "请输入 Access Token",
+        "editTitle": "编辑私有仓库",
+        "repo": "仓库",
+        "currentToken": "当前 Token",
+        "newToken": "新 Token",
+        "updateFailed": "更新失败"
+      }
     },
     "search": "搜索技能",
     "searchPlaceholder": "搜索技能名称或描述...",

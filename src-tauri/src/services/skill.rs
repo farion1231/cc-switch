@@ -48,6 +48,17 @@ pub struct SkillRepo {
     pub branch: String,
     /// 是否启用
     pub enabled: bool,
+    
+    // 私有仓库字段（可选）
+    /// 私有仓库的基础 URL（如 https://gitlab.company.com）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// 访问令牌
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_token: Option<String>,
+    /// 认证头名称（连通测试时自动探测，如 "Authorization" 或 "PRIVATE-TOKEN"）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_header: Option<String>,
 }
 
 /// 技能安装状态
@@ -79,18 +90,27 @@ impl Default for SkillStore {
                     name: "awesome-claude-skills".to_string(),
                     branch: "main".to_string(),
                     enabled: true,
+                    base_url: None,
+                    access_token: None,
+                    auth_header: None,
                 },
                 SkillRepo {
                     owner: "anthropics".to_string(),
                     name: "skills".to_string(),
                     branch: "main".to_string(),
                     enabled: true,
+                    base_url: None,
+                    access_token: None,
+                    auth_header: None,
                 },
                 SkillRepo {
                     owner: "cexll".to_string(),
                     name: "myclaude".to_string(),
                     branch: "master".to_string(),
                     enabled: true,
+                    base_url: None,
+                    access_token: None,
+                    auth_header: None,
                 },
             ],
         }
@@ -451,6 +471,9 @@ impl SkillService {
     }
 
     /// 下载仓库
+    /// 根据 access_token 是否存在选择下载策略：
+    /// - 公共仓库（access_token 为空）：无认证，直接下载
+    /// - 私有仓库（access_token 有值）：使用存储的 auth_header 构建认证头下载
     async fn download_repo(&self, repo: &SkillRepo) -> Result<PathBuf> {
         let temp_dir = tempfile::tempdir()?;
         let temp_path = temp_dir.path().to_path_buf();
@@ -463,14 +486,32 @@ impl SkillService {
             vec![repo.branch.as_str(), "main", "master"]
         };
 
+        // 根据 access_token 是否存在判断仓库类型
+        let is_private = repo.access_token.is_some();
+
         let mut last_error = None;
         for branch in branches {
-            let url = format!(
-                "https://github.com/{}/{}/archive/refs/heads/{}.zip",
-                repo.owner, repo.name, branch
-            );
+            // 构建下载 URL
+            let url = if is_private {
+                // 私有仓库：使用 base_url 构建下载 URL
+                let base_url = repo.base_url.as_deref().unwrap_or("https://github.com");
+                self.build_private_repo_download_url(base_url, &repo.owner, &repo.name, branch)
+            } else {
+                // 公共仓库：使用 GitHub URL
+                format!(
+                    "https://github.com/{}/{}/archive/refs/heads/{}.zip",
+                    repo.owner, repo.name, branch
+                )
+            };
 
-            match self.download_and_extract(&url, &temp_path).await {
+            // 构建认证头（仅私有仓库需要）
+            let auth_header = if is_private {
+                self.build_auth_header(repo)
+            } else {
+                None
+            };
+
+            match self.download_and_extract(&url, &temp_path, auth_header.as_ref()).await {
                 Ok(_) => {
                     return Ok(temp_path);
                 }
@@ -484,10 +525,59 @@ impl SkillService {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支下载失败")))
     }
 
+    /// 构建私有仓库下载 URL
+    /// 支持 GitHub、GitLab、Gitea 等平台
+    fn build_private_repo_download_url(&self, base_url: &str, owner: &str, name: &str, branch: &str) -> String {
+        let base_url = base_url.trim_end_matches('/');
+        
+        // 检测平台类型并构建对应的下载 URL
+        if base_url.contains("gitlab") {
+            // GitLab 格式: {base_url}/{owner}/{name}/-/archive/{branch}/{name}-{branch}.zip
+            format!("{}/{}/{}/-/archive/{}/{}-{}.zip", base_url, owner, name, branch, name, branch)
+        } else if base_url.contains("gitea") || base_url.contains("codeberg") {
+            // Gitea 格式: {base_url}/{owner}/{name}/archive/{branch}.zip
+            format!("{}/{}/{}/archive/{}.zip", base_url, owner, name, branch)
+        } else {
+            // GitHub 格式（默认）: {base_url}/{owner}/{name}/archive/refs/heads/{branch}.zip
+            format!("{}/{}/{}/archive/refs/heads/{}.zip", base_url, owner, name, branch)
+        }
+    }
+
+    /// 构建认证头
+    /// 根据存储的 auth_header 和 access_token 构建完整的认证头
+    fn build_auth_header(&self, repo: &SkillRepo) -> Option<(String, String)> {
+        let token = repo.access_token.as_ref()?;
+        let auth_header = repo.auth_header.as_deref().unwrap_or("Authorization");
+        
+        let header_value = match auth_header {
+            "PRIVATE-TOKEN" => token.clone(),
+            "Authorization" => {
+                // 检查是否已经包含 token/Bearer 前缀
+                if token.starts_with("token ") || token.starts_with("Bearer ") {
+                    token.clone()
+                } else {
+                    format!("token {}", token)
+                }
+            }
+            _ => token.clone(),
+        };
+        
+        Some((auth_header.to_string(), header_value))
+    }
+
     /// 下载并解压 ZIP
-    async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
+    /// auth_header: 可选的认证头，格式为 (header_name, header_value)
+    async fn download_and_extract(&self, url: &str, dest: &Path, auth_header: Option<&(String, String)>) -> Result<()> {
+        // 构建请求
+        let mut request = self.http_client.get(url);
+        
+        // 如果提供了认证头，添加到请求中
+        if let Some((header_name, header_value)) = auth_header {
+            request = request.header(header_name.as_str(), header_value.as_str());
+        }
+        
         // 下载 ZIP
-        let response = self.http_client.get(url).send().await?;
+        let response = request.send().await?;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(

@@ -73,7 +73,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT owner, name, branch, enabled FROM skill_repos ORDER BY owner ASC, name ASC",
+                "SELECT owner, name, branch, enabled, base_url, access_token, auth_header FROM skill_repos ORDER BY owner ASC, name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -84,6 +84,9 @@ impl Database {
                     name: row.get(1)?,
                     branch: row.get(2)?,
                     enabled: row.get(3)?,
+                    base_url: row.get(4)?,
+                    access_token: row.get(5)?,
+                    auth_header: row.get(6)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -99,8 +102,8 @@ impl Database {
     pub fn save_skill_repo(&self, repo: &SkillRepo) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled) VALUES (?1, ?2, ?3, ?4)",
-            params![repo.owner, repo.name, repo.branch, repo.enabled],
+            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled, base_url, access_token, auth_header) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![repo.owner, repo.name, repo.branch, repo.enabled, repo.base_url, repo.access_token, repo.auth_header],
         ).map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }

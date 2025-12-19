@@ -744,7 +744,31 @@
       "addFailed": "追加に失敗しました",
       "removeSuccess": "リポジトリ {{owner}}/{{name}} を削除しました",
       "removeFailed": "削除に失敗しました",
-      "skillCount": "{{count}} 件のスキルを検出"
+      "skillCount": "{{count}} 件のスキルを検出",
+      "tabs": {
+        "public": "公開リポジトリ",
+        "private": "プライベートリポジトリ"
+      },
+      "addPublic": "公開リポジトリを追加",
+      "addPrivate": "プライベートリポジトリを追加",
+      "private": {
+        "label": "プライベート",
+        "url": "リポジトリ URL",
+        "urlPlaceholder": "https://gitlab.company.com/owner/name",
+        "token": "アクセストークン",
+        "tokenPlaceholder": "アクセストークンを入力",
+        "testConnection": "接続テスト",
+        "testSuccess": "接続成功",
+        "testFirst": "先に接続テストを行ってください",
+        "connectionFailed": "接続に失敗しました。URL とトークンを確認してください",
+        "invalidUrl": "無効な URL 形式です。完全な https:// アドレスを入力してください",
+        "tokenRequired": "アクセストークンを入力してください",
+        "editTitle": "プライベートリポジトリを編集",
+        "repo": "リポジトリ",
+        "currentToken": "現在のトークン",
+        "newToken": "新しいトークン",
+        "updateFailed": "更新に失敗しました"
+      }
     },
     "search": "スキルを検索",
     "searchPlaceholder": "スキル名または説明で検索...",

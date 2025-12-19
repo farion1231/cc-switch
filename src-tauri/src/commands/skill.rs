@@ -4,6 +4,7 @@ use crate::services::skill::SkillState;
 use crate::services::{Skill, SkillRepo, SkillService};
 use crate::store::AppState;
 use chrono::Utc;
+use reqwest::Client;
 use std::sync::Arc;
 use tauri::State;
 
@@ -137,6 +138,9 @@ pub async fn install_skill_for_app(
                 .clone()
                 .unwrap_or_else(|| "main".to_string()),
             enabled: true,
+            base_url: None,
+            access_token: None,
+            auth_header: None,
         };
 
         service
@@ -232,4 +236,51 @@ pub fn remove_skill_repo(
         .delete_skill_repo(&owner, &name)
         .map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+/// 测试私有仓库连接
+/// 依次尝试多种认证头，返回成功的认证头名称
+#[tauri::command]
+pub async fn test_repo_connection(url: String, access_token: String) -> Result<String, String> {
+    let client = Client::builder()
+        .user_agent("cc-switch")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+    // 认证方式列表：依次尝试
+    let auth_methods: Vec<(&str, String)> = vec![
+        ("Authorization", format!("token {}", access_token)),      // GitHub/Gitea
+        ("Authorization", format!("Bearer {}", access_token)),     // GitHub/Bitbucket
+        ("PRIVATE-TOKEN", access_token.clone()),                   // GitLab
+    ];
+
+    for (header_name, header_value) in &auth_methods {
+        log::debug!("尝试认证头: {} = {}...", header_name, &header_value[..header_value.len().min(10)]);
+        
+        match client
+            .head(&url)
+            .header(*header_name, header_value)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                let status = response.status();
+                log::debug!("认证头 {} 响应状态: {}", header_name, status);
+                
+                if status.is_success() || status.as_u16() == 302 {
+                    // 成功或重定向都视为认证通过
+                    log::info!("连通测试成功，使用认证头: {}", header_name);
+                    return Ok(header_name.to_string());
+                }
+            }
+            Err(e) => {
+                log::debug!("认证头 {} 请求失败: {}", header_name, e);
+                continue;
+            }
+        }
+    }
+
+    // 所有认证方式都失败
+    Err("连接失败，请检查 URL 和 Token 是否正确".to_string())
 }

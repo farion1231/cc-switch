@@ -744,7 +744,31 @@
       "addFailed": "Failed to add",
       "removeSuccess": "Repository {{owner}}/{{name}} removed",
       "removeFailed": "Failed to remove",
-      "skillCount": "{{count}} skills detected"
+      "skillCount": "{{count}} skills detected",
+      "tabs": {
+        "public": "Public Repos",
+        "private": "Private Repos"
+      },
+      "addPublic": "Add Public Repository",
+      "addPrivate": "Add Private Repository",
+      "private": {
+        "label": "Private",
+        "url": "Repository URL",
+        "urlPlaceholder": "https://gitlab.company.com/owner/name",
+        "token": "Access Token",
+        "tokenPlaceholder": "Enter access token",
+        "testConnection": "Test Connection",
+        "testSuccess": "Connection successful",
+        "testFirst": "Please test connection first",
+        "connectionFailed": "Connection failed, please check URL and Token",
+        "invalidUrl": "Invalid URL format, please enter full https:// address",
+        "tokenRequired": "Please enter Access Token",
+        "editTitle": "Edit Private Repository",
+        "repo": "Repository",
+        "currentToken": "Current Token",
+        "newToken": "New Token",
+        "updateFailed": "Update failed"
+      }
     },
     "search": "Search Skills",
     "searchPlaceholder": "Search skill name or description...",
