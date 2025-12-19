@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Download,
+  Copy,
   ExternalLink,
   Info,
   Loader2,
@@ -8,6 +9,7 @@ import {
   Terminal,
   CheckCircle2,
   AlertCircle,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
@@ -17,6 +19,7 @@ import { settingsApi } from "@/lib/api";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { relaunchApp } from "@/lib/updater";
 import { Badge } from "@/components/ui/badge";
+import { motion } from "framer-motion";
 
 interface AboutSectionProps {
   isPortable: boolean;
@@ -28,6 +31,10 @@ interface ToolVersion {
   latest_version: string | null;
   error: string | null;
 }
+
+const ONE_CLICK_INSTALL_COMMANDS = `npm i -g @anthropic-ai/claude-code@latest
+npm i -g @openai/codex@latest
+npm i -g @google/gemini-cli@latest`;
 
 export function AboutSection({ isPortable }: AboutSectionProps) {
   // ... (use hooks as before) ...
@@ -46,6 +53,18 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     resetDismiss,
     isChecking,
   } = useUpdate();
+
+  const loadToolVersions = useCallback(async () => {
+    setIsLoadingTools(true);
+    try {
+      const tools = await settingsApi.getToolVersions();
+      setToolVersions(tools);
+    } catch (error) {
+      console.error("[AboutSection] Failed to load tool versions", error);
+    } finally {
+      setIsLoadingTools(false);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -150,10 +169,25 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     }
   }, [checkUpdate, hasUpdate, isPortable, resetDismiss, t, updateHandle]);
 
+  const handleCopyInstallCommands = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(ONE_CLICK_INSTALL_COMMANDS);
+      toast.success(t("settings.installCommandsCopied"), { closeButton: true });
+    } catch (error) {
+      console.error("[AboutSection] Failed to copy install commands", error);
+      toast.error(t("settings.installCommandsCopyFailed"));
+    }
+  }, [t]);
+
   const displayVersion = version ?? t("common.unknown");
 
   return (
-    <section className="space-y-6">
+    <motion.section
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="space-y-6"
+    >
       <header className="space-y-1">
         <h3 className="text-sm font-medium">{t("common.about")}</h3>
         <p className="text-xs text-muted-foreground">
@@ -161,12 +195,22 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         </p>
       </header>
 
-      <div className="rounded-xl border border-border bg-card/50 p-6 space-y-6">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.98 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.3, delay: 0.1 }}
+        className="rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-6 space-y-5 shadow-sm"
+      >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-2">
-            <h4 className="text-lg font-semibold text-foreground">CC Switch</h4>
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="gap-1.5 bg-background">
+              <Sparkles className="h-5 w-5 text-primary" />
+              <h4 className="text-lg font-semibold text-foreground">
+                CC Switch
+              </h4>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="gap-1.5 bg-background/80">
                 <span className="text-muted-foreground">
                   {t("common.version")}
                 </span>
@@ -185,15 +229,15 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2">
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={handleOpenReleaseNotes}
-              className="h-9"
+              className="h-8 gap-1.5 text-xs"
             >
-              <ExternalLink className="mr-2 h-4 w-4" />
+              <ExternalLink className="h-3.5 w-3.5" />
               {t("settings.releaseNotes")}
             </Button>
             <Button
@@ -201,34 +245,41 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               size="sm"
               onClick={handleCheckUpdate}
               disabled={isChecking || isDownloading}
-              className="min-w-[140px] h-9"
+              className="h-8 gap-1.5 text-xs"
             >
               {isDownloading ? (
-                <span className="inline-flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   {t("settings.updating")}
-                </span>
+                </>
               ) : hasUpdate ? (
-                <span className="inline-flex items-center gap-2">
-                  <Download className="h-4 w-4" />
+                <>
+                  <Download className="h-3.5 w-3.5" />
                   {t("settings.updateTo", {
                     version: updateInfo?.availableVersion ?? "",
                   })}
-                </span>
+                </>
               ) : isChecking ? (
-                <span className="inline-flex items-center gap-2">
-                  <RefreshCw className="h-4 w-4 animate-spin" />
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                   {t("settings.checking")}
-                </span>
+                </>
               ) : (
-                t("settings.checkForUpdates")
+                <>
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  {t("settings.checkForUpdates")}
+                </>
               )}
             </Button>
           </div>
         </div>
 
         {hasUpdate && updateInfo && (
-          <div className="rounded-lg bg-primary/10 border border-primary/20 px-4 py-3 text-sm">
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            className="rounded-lg bg-primary/10 border border-primary/20 px-4 py-3 text-sm"
+          >
             <p className="font-medium text-primary mb-1">
               {t("settings.updateAvailable", {
                 version: updateInfo.availableVersion,
@@ -239,60 +290,111 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                 {updateInfo.notes}
               </p>
             )}
-          </div>
+          </motion.div>
         )}
-      </div>
+      </motion.div>
 
       <div className="space-y-3">
-        <h4 className="text-sm font-medium text-muted-foreground px-1">
-          本地环境检查
-        </h4>
+        <div className="flex items-center justify-between px-1">
+          <h3 className="text-sm font-medium">{t("settings.localEnvCheck")}</h3>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 text-xs"
+            onClick={loadToolVersions}
+            disabled={isLoadingTools}
+          >
+            <RefreshCw
+              className={
+                isLoadingTools ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"
+              }
+            />
+            {isLoadingTools ? t("common.refreshing") : t("common.refresh")}
+          </Button>
+        </div>
         <div className="grid gap-3 sm:grid-cols-3">
-          {isLoadingTools
-            ? Array.from({ length: 3 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="h-20 rounded-xl border border-border bg-card/50 animate-pulse"
-                />
-              ))
-            : toolVersions.map((tool) => (
-                <div
-                  key={tool.name}
-                  className="flex flex-col gap-2 rounded-xl border border-border bg-card/50 p-4 transition-colors hover:bg-muted/50"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Terminal className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium capitalize">
-                        {tool.name}
-                      </span>
-                    </div>
-                    {tool.version ? (
-                      <div className="flex items-center gap-1.5">
-                        {tool.latest_version &&
-                          tool.version !== tool.latest_version && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20">
-                              Update: {tool.latest_version}
-                            </span>
-                          )}
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
-                      </div>
-                    ) : (
-                      <AlertCircle className="h-4 w-4 text-yellow-500" />
-                    )}
+          {["claude", "codex", "gemini"].map((toolName, index) => {
+            const tool = toolVersions.find((item) => item.name === toolName);
+            const displayName = tool?.name ?? toolName;
+            const title = tool?.version || tool?.error || t("common.unknown");
+
+            return (
+              <motion.div
+                key={toolName}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.15 + index * 0.05 }}
+                whileHover={{ scale: 1.02 }}
+                className="flex flex-col gap-2 rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-4 shadow-sm transition-colors hover:border-primary/30"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Terminal className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium capitalize">
+                      {displayName}
+                    </span>
                   </div>
-                  <div className="flex flex-col gap-0.5">
-                    <div
-                      className="text-xs font-mono truncate"
-                      title={tool.version || tool.error || "Unknown"}
-                    >
-                      {tool.version ? tool.version : tool.error || "未安装"}
+                  {isLoadingTools ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : tool?.version ? (
+                    <div className="flex items-center gap-1.5">
+                      {tool.latest_version &&
+                        tool.version !== tool.latest_version && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20">
+                            {tool.latest_version}
+                          </span>
+                        )}
+                      <CheckCircle2 className="h-4 w-4 text-green-500" />
                     </div>
-                  </div>
+                  ) : (
+                    <AlertCircle className="h-4 w-4 text-yellow-500" />
+                  )}
                 </div>
-              ))}
+                <div
+                  className="text-xs font-mono text-muted-foreground truncate"
+                  title={title}
+                >
+                  {isLoadingTools
+                    ? t("common.loading")
+                    : tool?.version
+                      ? tool.version
+                      : tool?.error || t("common.notInstalled")}
+                </div>
+              </motion.div>
+            );
+          })}
         </div>
       </div>
-    </section>
+
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.3 }}
+        className="space-y-3"
+      >
+        <h3 className="text-sm font-medium px-1">
+          {t("settings.oneClickInstall")}
+        </h3>
+        <div className="rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-4 space-y-3 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              {t("settings.oneClickInstallHint")}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleCopyInstallCommands}
+              className="h-7 gap-1.5 text-xs"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              {t("common.copy")}
+            </Button>
+          </div>
+          <pre className="text-xs font-mono bg-background/80 px-3 py-2.5 rounded-lg border border-border/60 overflow-x-auto">
+            {ONE_CLICK_INSTALL_COMMANDS}
+          </pre>
+        </div>
+      </motion.div>
+    </motion.section>
   );
 }

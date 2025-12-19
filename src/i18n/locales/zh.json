@@ -17,6 +17,7 @@
     "about": "关于",
     "version": "版本",
     "loading": "加载中...",
+    "notInstalled": "未安装",
     "success": "成功",
     "error": "错误",
     "unknown": "未知",
@@ -28,7 +29,10 @@
     "formatError": "格式化失败：{{error}}",
     "copy": "复制",
     "view": "查看",
-    "back": "返回"
+    "back": "返回",
+    "refresh": "刷新",
+    "refreshing": "刷新中...",
+    "notInstalled": "未安装"
   },
   "apiKeyInput": {
     "placeholder": "请输入API Key",
@@ -205,6 +209,11 @@
     "releaseNotes": "更新日志",
     "viewReleaseNotes": "查看该版本更新日志",
     "viewCurrentReleaseNotes": "查看当前版本更新日志",
+    "oneClickInstall": "一键安装",
+    "oneClickInstallHint": "安装 Claude Code / Codex / Gemini CLI",
+    "localEnvCheck": "本地环境检查",
+    "installCommandsCopied": "安装命令已复制",
+    "installCommandsCopyFailed": "复制失败，请手动复制。",
     "importFailedError": "导入配置失败：{{message}}",
     "exportFailedError": "导出配置失败:",
     "restartRequired": "需要重启应用",

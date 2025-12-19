@@ -155,11 +155,17 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
 
     match output {
         Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
             if out.status.success() {
-                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                (Some(extract_version(&raw)), None)
+                let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                if raw.is_empty() {
+                    (None, Some("未安装或无法执行".to_string()))
+                } else {
+                    (Some(extract_version(raw)), None)
+                }
             } else {
-                let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                let err = if stderr.is_empty() { stdout } else { stderr };
                 (
                     None,
                     Some(if err.is_empty() {
@@ -239,9 +245,13 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
                 .output();
 
             if let Ok(out) = output {
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
                 if out.status.success() {
-                    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    return (Some(extract_version(&raw)), None);
+                    let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                    if !raw.is_empty() {
+                        return (Some(extract_version(raw)), None);
+                    }
                 }
             }
         }

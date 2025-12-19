@@ -17,6 +17,7 @@
     "about": "About",
     "version": "Version",
     "loading": "Loading...",
+    "notInstalled": "Not installed",
     "success": "Success",
     "error": "Error",
     "unknown": "Unknown",
@@ -28,7 +29,10 @@
     "formatError": "Format failed: {{error}}",
     "copy": "Copy",
     "view": "View",
-    "back": "Back"
+    "back": "Back",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing...",
+    "notInstalled": "Not installed"
   },
   "apiKeyInput": {
     "placeholder": "Enter API Key",
@@ -205,6 +209,11 @@
     "releaseNotes": "Release Notes",
     "viewReleaseNotes": "View release notes for this version",
     "viewCurrentReleaseNotes": "View current version release notes",
+    "oneClickInstall": "One-click Install",
+    "oneClickInstallHint": "Install Claude Code / Codex / Gemini CLI",
+    "localEnvCheck": "Local environment check",
+    "installCommandsCopied": "Install commands copied",
+    "installCommandsCopyFailed": "Copy failed, please copy manually.",
     "importFailedError": "Import config failed: {{message}}",
     "exportFailedError": "Export config failed:",
     "restartRequired": "Restart Required",

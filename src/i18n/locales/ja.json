@@ -17,6 +17,7 @@
     "about": "バージョン情報",
     "version": "バージョン",
     "loading": "読み込み中...",
+    "notInstalled": "未インストール",
     "success": "成功",
     "error": "エラー",
     "unknown": "不明",
@@ -28,7 +29,10 @@
     "formatError": "整形に失敗しました: {{error}}",
     "copy": "コピー",
     "view": "表示",
-    "back": "戻る"
+    "back": "戻る",
+    "refresh": "更新",
+    "refreshing": "更新中...",
+    "notInstalled": "未インストール"
   },
   "apiKeyInput": {
     "placeholder": "API Key を入力",
@@ -205,6 +209,11 @@
     "releaseNotes": "リリースノート",
     "viewReleaseNotes": "このバージョンのリリースノートを見る",
     "viewCurrentReleaseNotes": "現在のバージョンのリリースノートを見る",
+    "oneClickInstall": "ワンクリックインストール",
+    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI をインストール",
+    "localEnvCheck": "ローカル環境チェック",
+    "installCommandsCopied": "インストールコマンドをコピーしました",
+    "installCommandsCopyFailed": "コピーに失敗しました。手動でコピーしてください。",
     "importFailedError": "設定のインポートに失敗しました: {{message}}",
     "exportFailedError": "設定のエクスポートに失敗しました:",
     "restartRequired": "再起動が必要です",
