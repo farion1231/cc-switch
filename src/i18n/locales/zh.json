@@ -264,7 +264,8 @@
       "zhipu": "智谱 GLM 是 CC Switch 的官方合作伙伴，使用此链接充值可以获得9折优惠",
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
       "minimax_cn": "MiniMax Coding Plan 特惠，Starter 套餐 9.9 元起",
-      "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 套餐现仅 $2/月（2折优惠！）"
+      "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 套餐现仅 $2/月（2折优惠！）",
+      "dmxapi": "Claude Code 专属模型 3.4 折优惠进行中！"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",

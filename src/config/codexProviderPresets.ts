@@ -131,6 +131,8 @@ requires_openai_auth = true`,
       "gpt-5.1-codex",
     ),
     endpointCandidates: ["https://www.dmxapi.cn/v1"],
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "dmxapi", // 促销信息 i18n key
   },
   {
     name: "PackyCode",

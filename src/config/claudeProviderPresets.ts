@@ -350,6 +350,8 @@ export const providerPresets: ProviderPreset[] = [
     // 请求地址候选（用于地址管理/测速），用户可自行选择/覆盖
     endpointCandidates: ["https://www.dmxapi.cn", "https://api.dmxapi.cn"],
     category: "aggregator",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "dmxapi", // 促销信息 i18n key
   },
   {
     name: "PackyCode",
