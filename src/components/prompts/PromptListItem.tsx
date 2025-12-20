@@ -36,11 +36,11 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
         </div>
 
         <div className="flex-1 min-w-0">
-          <h3 className="font-medium text-gray-900 dark:text-gray-100 mb-1">
+          <h3 className="font-medium text-foreground mb-1">
             {prompt.name}
           </h3>
           {prompt.description && (
-            <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+            <p className="text-sm text-muted-foreground truncate">
               {prompt.description}
             </p>
           )}

@@ -30,7 +30,7 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
 
   const inputClass = `w-full px-3 py-2 pr-10 border rounded-lg text-sm transition-colors ${
     disabled
-      ? "bg-gray-100 dark:bg-gray-800 border-border-default text-gray-400 dark:text-gray-500 cursor-not-allowed"
+      ? "bg-muted border-border-default text-muted-foreground cursor-not-allowed"
       : "border-border-default dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20"
   }`;
 

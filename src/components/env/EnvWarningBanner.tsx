@@ -197,7 +197,7 @@ export function EnvWarningBanner({
                             <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 break-all">
                               {t("env.field.value")}: {conflict.varValue}
                             </p>
-                            <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                            <p className="text-xs text-muted-foreground mt-1">
                               {t("env.field.source")}:{" "}
                               {getSourceDescription(conflict)}
                             </p>
