@@ -303,6 +303,34 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["chatglm", "glm"],
     defaultColor: "#0F62FE",
   },
+  openrouter: {
+    name: "openrouter",
+    displayName: "OpenRouter",
+    category: "ai-provider",
+    keywords: ["openrouter", "router", "aggregator"],
+    defaultColor: "#6566F1",
+  },
+  longcat: {
+    name: "longcat",
+    displayName: "LongCat",
+    category: "ai-provider",
+    keywords: ["longcat", "long", "cat"],
+    defaultColor: "#29E154",
+  },
+  modelscope: {
+    name: "modelscope",
+    displayName: "ModelScope",
+    category: "ai-provider",
+    keywords: ["modelscope", "alibaba", "scope"],
+    defaultColor: "#624AFF",
+  },
+  aihubmix: {
+    name: "aihubmix",
+    displayName: "AiHubMix",
+    category: "ai-provider",
+    keywords: ["aihubmix", "hub", "mix", "aggregator"],
+    defaultColor: "#006FFB",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

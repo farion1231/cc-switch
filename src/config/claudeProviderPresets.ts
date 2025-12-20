@@ -185,6 +185,8 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "aggregator",
+    icon: "modelscope",
+    iconColor: "#624AFF",
   },
   {
     name: "KAT-Coder",
@@ -228,6 +230,8 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    icon: "longcat",
+    iconColor: "#29E154",
   },
   {
     name: "MiniMax",
@@ -330,6 +334,8 @@ export const providerPresets: ProviderPreset[] = [
     // 请求地址候选（用于地址管理/测速），用户可自行选择/覆盖
     endpointCandidates: ["https://aihubmix.com", "https://api.aihubmix.com"],
     category: "aggregator",
+    icon: "aihubmix",
+    iconColor: "#006FFB",
   },
   {
     name: "DMXAPI",
@@ -364,5 +370,23 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "packycode", // 促销信息 i18n key
     icon: "packycode",
+  },
+  {
+    name: "OpenRouter",
+    websiteUrl: "https://openrouter.ai",
+    apiKeyUrl: "https://openrouter.ai/keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://openrouter.ai/api",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "anthropic/claude-sonnet-4.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-4.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-4.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-4.5",
+      },
+    },
+    category: "aggregator",
+    icon: "openrouter",
+    iconColor: "#6566F1",
   },
 ];
