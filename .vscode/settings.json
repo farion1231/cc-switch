@@ -1,0 +1,49 @@
+{
+  "i18n-ally.localesPaths": [
+    "src/i18n",
+    "src/i18n/locales"
+  ],
+  "editor.formatOnSave": true,
+  "[javascript][javascriptreact][typescript][typescriptreact][json][jsonc]": {
+    "editor.codeActionsOnSave": {
+      "source.fixAll.eslint": "explicit"
+    }
+  },
+  "tailwindCSS.experimental.classRegex": [
+    [
+      "([\"'`][^\"'`]*.*?[\"'`])",
+      "[\"'`]([^\"'`]*).*?[\"'`]"
+    ]
+  ],
+  // If you do not want to autofix some rules on save
+  // You can put this in your user settings or workspace settings
+  "eslint.codeActionsOnSave.rules": [
+    "!unused-imports/no-unused-imports",
+    "*"
+  ],
+  // If you want to silent stylistic rules
+  // You can put this in your user settings or workspace settings
+  "eslint.rules.customizations": [
+    {
+      "rule": "@stylistic/*",
+      "severity": "off",
+      "fixable": true
+    },
+    {
+      "rule": "antfu/consistent-list-newline",
+      "severity": "off"
+    },
+    {
+      "rule": "hyoban/jsx-attribute-spacing",
+      "severity": "off"
+    },
+    {
+      "rule": "simple-import-sort/*",
+      "severity": "off"
+    },
+    {
+      "rule": "unused-imports/no-unused-imports",
+      "severity": "off"
+    }
+  ],
+}
