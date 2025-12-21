@@ -115,7 +115,14 @@ impl ProxyService {
             return Err(e);
         }
 
-        // 5. 启动代理服务器
+        // 5. 设置 settings 表中所有应用的接管状态（用于重启后自动恢复）
+        for app in ["claude", "codex", "gemini"] {
+            if let Err(e) = self.db.set_proxy_takeover_enabled(app, true) {
+                log::warn!("设置 {app} 接管状态失败: {e}");
+            }
+        }
+
+        // 6. 启动代理服务器
         match self.start().await {
             Ok(info) => Ok(info),
             Err(e) => {
@@ -125,6 +132,8 @@ impl ProxyService {
                     Ok(()) => {
                         let _ = self.db.set_live_takeover_active(false).await;
                         let _ = self.db.delete_all_live_backups().await;
+                        // 清除 settings 状态
+                        let _ = self.db.clear_all_proxy_takeover();
                     }
                     Err(restore_err) => {
                         log::error!("恢复原始配置失败，将保留备份以便下次启动恢复: {restore_err}");
