@@ -18,6 +18,9 @@ export function useProviderHealth(providerId: string, appType: string) {
 
 /**
  * 重置熔断器
+ *
+ * 重置后后端会检查是否应该切回优先级更高的供应商，
+ * 因此需要同时刷新供应商列表和代理状态。
  */
 export function useResetCircuitBreaker() {
   const queryClient = useQueryClient();
@@ -34,6 +37,14 @@ export function useResetCircuitBreaker() {
       // 刷新健康状态
       queryClient.invalidateQueries({
         queryKey: ["providerHealth", variables.providerId, variables.appType],
+      });
+      // 刷新供应商列表（因为可能发生了自动恢复切换）
+      queryClient.invalidateQueries({
+        queryKey: ["providers", variables.appType],
+      });
+      // 刷新代理状态（更新 active_targets）
+      queryClient.invalidateQueries({
+        queryKey: ["proxyStatus"],
       });
     },
   });
@@ -236,55 +247,60 @@ export function useSetFailoverItemEnabled() {
   });
 }
 
-// ========== 自动故障转移总开关 Hooks ==========
+// ========== 自动故障转移开关 Hooks ==========
 
 /**
- * 获取自动故障转移总开关状态
+ * 获取指定应用的自动故障转移开关状态
  */
-export function useAutoFailoverEnabled() {
+export function useAutoFailoverEnabled(appType: string) {
   return useQuery({
-    queryKey: ["autoFailoverEnabled"],
-    queryFn: () => failoverApi.getAutoFailoverEnabled(),
+    queryKey: ["autoFailoverEnabled", appType],
+    queryFn: () => failoverApi.getAutoFailoverEnabled(appType),
     // 默认值为 false（与后端保持一致）
     placeholderData: false,
   });
 }
 
 /**
- * 设置自动故障转移总开关状态
+ * 设置指定应用的自动故障转移开关状态
  */
 export function useSetAutoFailoverEnabled() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (enabled: boolean) =>
-      failoverApi.setAutoFailoverEnabled(enabled),
+    mutationFn: ({ appType, enabled }: { appType: string; enabled: boolean }) =>
+      failoverApi.setAutoFailoverEnabled(appType, enabled),
 
     // 乐观更新
-    onMutate: async (enabled) => {
-      await queryClient.cancelQueries({ queryKey: ["autoFailoverEnabled"] });
+    onMutate: async ({ appType, enabled }) => {
+      await queryClient.cancelQueries({
+        queryKey: ["autoFailoverEnabled", appType],
+      });
       const previousValue = queryClient.getQueryData<boolean>([
         "autoFailoverEnabled",
+        appType,
       ]);
 
-      queryClient.setQueryData(["autoFailoverEnabled"], enabled);
+      queryClient.setQueryData(["autoFailoverEnabled", appType], enabled);
 
-      return { previousValue };
+      return { previousValue, appType };
     },
 
     // 错误时回滚
-    onError: (_error, _enabled, context) => {
+    onError: (_error, _variables, context) => {
       if (context?.previousValue !== undefined) {
         queryClient.setQueryData(
-          ["autoFailoverEnabled"],
+          ["autoFailoverEnabled", context.appType],
           context.previousValue,
         );
       }
     },
 
     // 无论成功失败，都重新获取
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["autoFailoverEnabled"] });
+    onSettled: (_, __, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["autoFailoverEnabled", variables.appType],
+      });
     },
   });
 }

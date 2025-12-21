@@ -82,28 +82,35 @@ pub async fn set_failover_item_enabled(
         .set_failover_item_enabled(&app_type, &provider_id, enabled)
         .map_err(|e| e.to_string())
 }
-
-/// 获取自动故障转移总开关状态
+/// 获取指定应用的自动故障转移开关状态
 #[tauri::command]
-pub async fn get_auto_failover_enabled(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+pub async fn get_auto_failover_enabled(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+) -> Result<bool, String> {
+    let key = format!("auto_failover_enabled_{app_type}");
     state
         .db
-        .get_setting("auto_failover_enabled")
+        .get_setting(&key)
         .map(|v| v.map(|s| s == "true").unwrap_or(false)) // 默认关闭
         .map_err(|e| e.to_string())
 }
 
-/// 设置自动故障转移总开关状态
+/// 设置指定应用的自动故障转移开关状态
+///
+/// 注意：关闭故障转移时不会清除队列，队列内容会保留供下次开启时使用
 #[tauri::command]
 pub async fn set_auto_failover_enabled(
     state: tauri::State<'_, AppState>,
+    app_type: String,
     enabled: bool,
 ) -> Result<(), String> {
-    state
-        .db
-        .set_setting(
-            "auto_failover_enabled",
-            if enabled { "true" } else { "false" },
-        )
-        .map_err(|e| e.to_string())
+    let key = format!("auto_failover_enabled_{app_type}");
+    let value = if enabled { "true" } else { "false" };
+
+    log::info!(
+        "[Failover] Setting auto_failover_enabled: key='{key}', value='{value}', app_type='{app_type}'"
+    );
+
+    state.db.set_setting(&key, value).map_err(|e| e.to_string())
 }

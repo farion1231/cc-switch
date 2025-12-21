@@ -105,13 +105,16 @@ export const failoverApi = {
     });
   },
 
-  // 获取自动故障转移总开关状态
-  async getAutoFailoverEnabled(): Promise<boolean> {
-    return invoke("get_auto_failover_enabled");
+  // 获取指定应用的自动故障转移开关状态
+  async getAutoFailoverEnabled(appType: string): Promise<boolean> {
+    return invoke("get_auto_failover_enabled", { appType });
   },
 
-  // 设置自动故障转移总开关状态
-  async setAutoFailoverEnabled(enabled: boolean): Promise<void> {
-    return invoke("set_auto_failover_enabled", { enabled });
+  // 设置指定应用的自动故障转移开关状态
+  async setAutoFailoverEnabled(
+    appType: string,
+    enabled: boolean,
+  ): Promise<void> {
+    return invoke("set_auto_failover_enabled", { appType, enabled });
   },
 };
