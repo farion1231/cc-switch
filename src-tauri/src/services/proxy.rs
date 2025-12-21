@@ -538,6 +538,7 @@ impl ProxyService {
             .await
             .map_err(|e| format!("重置健康状态失败: {e}"))?;
 
+        // 注意：不清除故障转移队列和开关状态，保留供下次开启代理时使用
         log::info!("代理已停止，Live 配置已恢复");
         Ok(())
     }

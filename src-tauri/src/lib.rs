@@ -658,7 +658,6 @@ pub fn run() {
             commands::get_auto_launch_status,
             // Proxy server management
             commands::start_proxy_server,
-            commands::start_proxy_with_takeover,
             commands::stop_proxy_with_restore,
             commands::get_proxy_takeover_status,
             commands::set_proxy_takeover_for_app,
