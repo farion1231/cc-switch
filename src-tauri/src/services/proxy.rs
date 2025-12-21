@@ -214,7 +214,12 @@ impl ProxyService {
                 return Err(e);
             }
 
-            // 6) 兼容旧逻辑：写入 any-of 标志（失败不影响功能）
+            // 6) 设置 settings 表中的接管状态
+            self.db
+                .set_proxy_takeover_enabled(app_type_str, true)
+                .map_err(|e| format!("设置 {app_type_str} 接管状态失败: {e}"))?;
+
+            // 7) 兼容旧逻辑：写入 any-of 标志（失败不影响功能）
             let _ = self.db.set_live_takeover_active(true).await;
             return Ok(());
         }
@@ -239,7 +244,12 @@ impl ProxyService {
             .await
             .map_err(|e| format!("删除 {app_type_str} Live 备份失败: {e}"))?;
 
-        // 3) 若无其它接管，更新旧标志，并停止代理服务
+        // 3) 清除 settings 表中该应用的接管状态
+        self.db
+            .set_proxy_takeover_enabled(app_type_str, false)
+            .map_err(|e| format!("清除 {app_type_str} 接管状态失败: {e}"))?;
+
+        // 4) 若无其它接管，更新旧标志，并停止代理服务
         let has_any_backup = self
             .db
             .has_any_live_backup()
@@ -484,7 +494,9 @@ impl ProxyService {
         }
     }
 
-    /// 停止代理服务器（恢复 Live 配置）
+    /// 停止代理服务器（恢复 Live 配置，用户手动关闭时使用）
+    ///
+    /// 会清除 settings 表中的代理状态，下次启动不会自动恢复。
     pub async fn stop_with_restore(&self) -> Result<(), String> {
         // 1. 停止代理服务器（即使未运行也继续执行恢复逻辑）
         if let Err(e) = self.stop().await {
@@ -494,25 +506,65 @@ impl ProxyService {
         // 2. 恢复原始 Live 配置
         self.restore_live_configs().await?;
 
-        // 3. 清除接管状态
+        // 3. 清除 proxy_config 表中的接管状态（兼容旧版）
         self.db
             .set_live_takeover_active(false)
             .await
             .map_err(|e| format!("清除接管状态失败: {e}"))?;
 
-        // 4. 删除备份
+        // 4. 清除 settings 表中的代理状态（用户手动关闭，不需要下次自动恢复）
+        self.db
+            .clear_all_proxy_takeover()
+            .map_err(|e| format!("清除代理状态失败: {e}"))?;
+
+        // 5. 删除备份
         self.db
             .delete_all_live_backups()
             .await
             .map_err(|e| format!("删除备份失败: {e}"))?;
 
-        // 5. 重置健康状态（让健康徽章恢复为正常）
+        // 6. 重置健康状态（让健康徽章恢复为正常）
         self.db
             .clear_all_provider_health()
             .await
             .map_err(|e| format!("重置健康状态失败: {e}"))?;
 
         log::info!("代理已停止，Live 配置已恢复");
+        Ok(())
+    }
+
+    /// 停止代理服务器（恢复 Live 配置，但保留 settings 表中的代理状态）
+    ///
+    /// 用于程序正常退出时，保留代理状态以便下次启动时自动恢复
+    pub async fn stop_with_restore_keep_state(&self) -> Result<(), String> {
+        // 1. 停止代理服务器（即使未运行也继续执行恢复逻辑）
+        if let Err(e) = self.stop().await {
+            log::warn!("停止代理服务器失败（将继续恢复 Live 配置）: {e}");
+        }
+
+        // 2. 恢复原始 Live 配置
+        self.restore_live_configs().await?;
+
+        // 3. 更新 proxy_config 表中的 live_takeover_active 标志（兼容旧版）
+        //    注意：仅更新 proxy_config 表，不清除 settings 表中的 proxy_takeover_* 状态
+        if let Ok(mut config) = self.db.get_proxy_config().await {
+            config.live_takeover_active = false;
+            let _ = self.db.update_proxy_config(config).await;
+        }
+
+        // 4. 删除备份（Live 配置已恢复，备份不再需要）
+        self.db
+            .delete_all_live_backups()
+            .await
+            .map_err(|e| format!("删除备份失败: {e}"))?;
+
+        // 5. 重置健康状态
+        self.db
+            .clear_all_provider_health()
+            .await
+            .map_err(|e| format!("重置健康状态失败: {e}"))?;
+
+        log::info!("代理已停止，Live 配置已恢复（保留代理状态，下次启动将自动恢复）");
         Ok(())
     }
 

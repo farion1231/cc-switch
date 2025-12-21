@@ -71,21 +71,27 @@ impl Database {
         Ok(())
     }
 
-    /// 设置 Live 接管状态
+    /// 设置 Live 接管状态（仅更新 proxy_config 表，兼容旧逻辑）
+    ///
+    /// 注意：此方法不会清除 settings 表中的 proxy_takeover_* 状态。
+    /// settings 表的状态由 set_proxy_takeover_enabled 单独管理，用于跨重启保持状态。
     pub async fn set_live_takeover_active(&self, active: bool) -> Result<(), AppError> {
+        // 仅更新 proxy_config 表（兼容旧版本）
         let conn = lock_conn!(self.conn);
         conn.execute(
             "UPDATE proxy_config SET live_takeover_active = ?1, updated_at = datetime('now') WHERE id = 1",
             rusqlite::params![if active { 1 } else { 0 }],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(())
     }
 
     /// 检查是否处于 Live 接管模式
+    ///
+    /// v3.8.0+：以 settings 表中的 `proxy_takeover_{app_type}` 为真实来源
     pub async fn is_live_takeover_active(&self) -> Result<bool, AppError> {
-        // v3.7.0+：以 proxy_live_backup 是否存在作为“接管状态”的真实来源（更贴近 per-app 接管）
-        self.has_any_live_backup().await
+        self.has_any_proxy_takeover()
     }
 
     // ==================== Provider Health ====================

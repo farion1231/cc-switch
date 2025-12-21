@@ -524,7 +524,7 @@ pub fn run() {
                 }
             }
 
-            // 异常退出恢复
+            // 异常退出恢复 + 代理状态自动恢复
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<AppState>();
@@ -548,6 +548,9 @@ pub fn run() {
                         log::info!("Live 配置已恢复");
                     }
                 }
+
+                // 检查 settings 表中的代理状态，自动恢复代理服务
+                restore_proxy_state_on_startup(&state).await;
             });
 
             Ok(())
@@ -811,6 +814,7 @@ pub fn run() {
 ///
 /// 在应用退出前检查代理服务器状态，如果正在运行则停止代理并恢复 Live 配置。
 /// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
+/// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
         let proxy_service = &state.proxy_service;
@@ -827,11 +831,12 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
         let needs_restore = has_backups || live_taken_over;
 
         if needs_restore {
-            log::info!("检测到接管残留，开始恢复 Live 配置...");
-            if let Err(e) = proxy_service.stop_with_restore().await {
+            log::info!("检测到接管残留，开始恢复 Live 配置（保留代理状态）...");
+            // 使用 keep_state 版本，保留 settings 表中的代理状态
+            if let Err(e) = proxy_service.stop_with_restore_keep_state().await {
                 log::error!("退出时恢复 Live 配置失败: {e}");
             } else {
-                log::info!("已恢复 Live 配置");
+                log::info!("已恢复 Live 配置（代理状态已保留，下次启动将自动恢复）");
             }
             return;
         }
@@ -843,6 +848,55 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
                 log::error!("退出时停止代理失败: {e}");
             }
             log::info!("代理服务器清理完成");
+        }
+    }
+}
+
+// ============================================================
+// 启动时恢复代理状态
+// ============================================================
+
+/// 启动时根据 settings 表中的代理状态自动恢复代理服务
+///
+/// 检查 `proxy_takeover_claude`、`proxy_takeover_codex`、`proxy_takeover_gemini` 的值，
+/// 如果有任一应用的状态为 `true`，则自动启动代理服务并接管对应应用的 Live 配置。
+async fn restore_proxy_state_on_startup(state: &store::AppState) {
+    // 收集需要恢复接管的应用列表
+    let apps_to_restore: Vec<&str> = ["claude", "codex", "gemini"]
+        .iter()
+        .filter(|app_type| {
+            state
+                .db
+                .get_proxy_takeover_enabled(app_type)
+                .unwrap_or(false)
+        })
+        .copied()
+        .collect();
+
+    if apps_to_restore.is_empty() {
+        log::debug!("启动时无需恢复代理状态");
+        return;
+    }
+
+    log::info!("检测到上次代理状态需要恢复，应用列表: {apps_to_restore:?}");
+
+    // 逐个恢复接管状态
+    for app_type in apps_to_restore {
+        match state
+            .proxy_service
+            .set_takeover_for_app(app_type, true)
+            .await
+        {
+            Ok(()) => {
+                log::info!("✓ 已恢复 {app_type} 的代理接管状态");
+            }
+            Err(e) => {
+                log::error!("✗ 恢复 {app_type} 的代理接管状态失败: {e}");
+                // 失败时清除该应用的状态，避免下次启动再次尝试
+                if let Err(clear_err) = state.db.set_proxy_takeover_enabled(app_type, false) {
+                    log::error!("清除 {app_type} 代理状态失败: {clear_err}");
+                }
+            }
         }
     }
 }
