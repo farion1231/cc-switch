@@ -47,6 +47,10 @@ import { Button } from "@/components/ui/button";
 
 type View = "providers" | "settings" | "prompts" | "skills" | "mcp" | "agents";
 
+const DRAG_BAR_HEIGHT = 28; // px
+const HEADER_HEIGHT = 64; // px
+const CONTENT_TOP_OFFSET = DRAG_BAR_HEIGHT + HEADER_HEIGHT;
+
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -101,7 +105,7 @@ function App() {
             if (event.appType === activeApp) {
               await refetch();
             }
-          },
+          }
         );
       } catch (error) {
         console.error("[App] Failed to subscribe provider switch event", error);
@@ -131,7 +135,7 @@ function App() {
       } catch (error) {
         console.error(
           "[App] Failed to check environment conflicts on startup:",
-          error,
+          error
         );
       }
     };
@@ -147,7 +151,7 @@ function App() {
         if (migrated) {
           toast.success(
             t("migration.success", { defaultValue: "配置迁移成功" }),
-            { closeButton: true },
+            { closeButton: true }
           );
         }
       } catch (error) {
@@ -168,10 +172,10 @@ function App() {
           // 合并新检测到的冲突
           setEnvConflicts((prev) => {
             const existingKeys = new Set(
-              prev.map((c) => `${c.varName}:${c.sourcePath}`),
+              prev.map((c) => `${c.varName}:${c.sourcePath}`)
             );
             const newConflicts = conflicts.filter(
-              (c) => !existingKeys.has(`${c.varName}:${c.sourcePath}`),
+              (c) => !existingKeys.has(`${c.varName}:${c.sourcePath}`)
             );
             return [...prev, ...newConflicts];
           });
@@ -183,7 +187,7 @@ function App() {
       } catch (error) {
         console.error(
           "[App] Failed to check environment conflicts on app switch:",
-          error,
+          error
         );
       }
     };
@@ -244,7 +248,7 @@ function App() {
           (p) =>
             p.sortIndex !== undefined &&
             p.sortIndex >= newSortIndex! &&
-            p.id !== provider.id,
+            p.id !== provider.id
         )
         .map((p) => ({
           id: p.id,
@@ -260,7 +264,7 @@ function App() {
           toast.error(
             t("provider.sortUpdateFailed", {
               defaultValue: "排序更新失败",
-            }),
+            })
           );
           return; // 如果排序更新失败，不继续添加
         }
@@ -334,7 +338,7 @@ function App() {
         return (
           <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
             {/* 独立滚动容器 - 解决 Linux/Ubuntu 下 DndContext 与滚轮事件冲突 */}
-            <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
+            <div className="flex-1 px-1 pb-12 overflow-x-hidden overflow-y-auto">
               <AnimatePresence mode="wait">
                 <motion.div
                   key={activeApp}
@@ -350,7 +354,9 @@ function App() {
                     appId={activeApp}
                     isLoading={isLoading}
                     isProxyRunning={isProxyRunning}
-                    isProxyTakeover={isProxyRunning && isCurrentAppTakeoverActive}
+                    isProxyTakeover={
+                      isProxyRunning && isCurrentAppTakeoverActive
+                    }
                     onSwitch={switchProvider}
                     onEdit={setEditingProvider}
                     onDelete={setConfirmDelete}
@@ -369,14 +375,14 @@ function App() {
 
   return (
     <div
-      className="flex min-h-screen flex-col bg-background text-foreground selection:bg-primary/30"
-      style={{ overflowX: "hidden" }}
+      className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30"
+      style={{ overflowX: "hidden", paddingTop: CONTENT_TOP_OFFSET }}
     >
-      {/* 全局拖拽区域（顶部 4px），避免上边框无法拖动 */}
+      {/* 全局拖拽区域（顶部 28px），避免上边框无法拖动 */}
       <div
-        className="fixed top-0 left-0 right-0 h-4 z-[60]"
+        className="fixed top-0 left-0 right-0 z-[60]"
         data-tauri-drag-region
-        style={{ WebkitAppRegion: "drag" } as any}
+        style={{ WebkitAppRegion: "drag", height: DRAG_BAR_HEIGHT } as any}
       />
       {/* 环境变量警告横幅 */}
       {showEnvBanner && envConflicts.length > 0 && (
@@ -398,7 +404,7 @@ function App() {
             } catch (error) {
               console.error(
                 "[App] Failed to re-check conflicts after deletion:",
-                error,
+                error
               );
             }
           }}
@@ -406,13 +412,18 @@ function App() {
       )}
 
       <header
-        className="fixed top-0 z-50 w-full py-3 bg-background/80 backdrop-blur-md transition-all duration-300"
+        className="fixed z-50 w-full transition-all duration-300 bg-background/80 backdrop-blur-md"
         data-tauri-drag-region
-        style={{ WebkitAppRegion: "drag" } as any}
+        style={
+          {
+            WebkitAppRegion: "drag",
+            top: DRAG_BAR_HEIGHT,
+            height: HEADER_HEIGHT,
+          } as any
+        }
       >
-        <div className="h-4 w-full" aria-hidden data-tauri-drag-region />
         <div
-          className="mx-auto max-w-[56rem] px-6 flex flex-wrap items-center justify-between gap-2"
+          className="mx-auto flex h-full max-w-[56rem] flex-wrap items-center justify-between gap-2 px-6"
           data-tauri-drag-region
           style={{ WebkitAppRegion: "drag" } as any}
         >
@@ -428,7 +439,7 @@ function App() {
                   onClick={() => setCurrentView("providers")}
                   className="mr-2 rounded-lg"
                 >
-                  <ArrowLeft className="h-4 w-4" />
+                  <ArrowLeft className="w-4 h-4" />
                 </Button>
                 <h1 className="text-lg font-semibold">
                   {currentView === "settings" && t("settings.title")}
@@ -450,7 +461,7 @@ function App() {
                       "text-xl font-semibold transition-colors",
                       isProxyRunning && isCurrentAppTakeoverActive
                         ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
-                        : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
+                        : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300"
                     )}
                   >
                     CC Switch
@@ -462,7 +473,7 @@ function App() {
                     title={t("common.settings")}
                     className="hover:bg-black/5 dark:hover:bg-white/5"
                   >
-                    <Settings className="h-4 w-4" />
+                    <Settings className="w-4 h-4" />
                   </Button>
                 </div>
                 <UpdateBadge onClick={() => setCurrentView("settings")} />
@@ -481,7 +492,7 @@ function App() {
                 className={addActionButtonClass}
                 title={t("prompts.add")}
               >
-                <Plus className="h-5 w-5" />
+                <Plus className="w-5 h-5" />
               </Button>
             )}
             {currentView === "mcp" && (
@@ -491,7 +502,7 @@ function App() {
                 className={addActionButtonClass}
                 title={t("mcp.unifiedPanel.addServer")}
               >
-                <Plus className="h-5 w-5" />
+                <Plus className="w-5 h-5" />
               </Button>
             )}
             {currentView === "skills" && (
@@ -502,7 +513,7 @@ function App() {
                   onClick={() => skillsPageRef.current?.refresh()}
                   className="hover:bg-black/5 dark:hover:bg-white/5"
                 >
-                  <RefreshCw className="h-4 w-4 mr-2" />
+                  <RefreshCw className="w-4 h-4 mr-2" />
                   {t("skills.refresh")}
                 </Button>
                 <Button
@@ -511,7 +522,7 @@ function App() {
                   onClick={() => skillsPageRef.current?.openRepoManager()}
                   className="hover:bg-black/5 dark:hover:bg-white/5"
                 >
-                  <Settings className="h-4 w-4 mr-2" />
+                  <Settings className="w-4 h-4 mr-2" />
                   {t("skills.repoManager")}
                 </Button>
               </>
@@ -522,7 +533,7 @@ function App() {
 
                 <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
 
-                <div className="bg-muted p-1 rounded-xl flex items-center gap-1">
+                <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
                   <Button
                     variant="ghost"
                     size="sm"
@@ -532,24 +543,24 @@ function App() {
                       "transition-all duration-200 ease-in-out overflow-hidden",
                       hasSkillsSupport
                         ? "opacity-100 w-8 scale-100 px-2"
-                        : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                        : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1"
                     )}
                     title={t("skills.manage")}
                   >
-                    <Wrench className="h-4 w-4 flex-shrink-0" />
+                    <Wrench className="flex-shrink-0 w-4 h-4" />
                   </Button>
                   {/* TODO: Agents 功能开发中，暂时隐藏入口 */}
                   {/* {isClaudeApp && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setCurrentView("agents")}
-                      className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                      title="Agents"
-                    >
-                      <Bot className="h-4 w-4" />
-                    </Button>
-                  )} */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentView("agents")}
+                        className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                        title="Agents"
+                      >
+                        <Bot className="w-4 h-4" />
+                      </Button>
+                    )} */}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -557,7 +568,7 @@ function App() {
                     className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
                     title={t("prompts.manage")}
                   >
-                    <Book className="h-4 w-4" />
+                    <Book className="w-4 h-4" />
                   </Button>
                   <Button
                     variant="ghost"
@@ -566,7 +577,7 @@ function App() {
                     className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
                     title={t("mcp.title")}
                   >
-                    <Server className="h-4 w-4" />
+                    <Server className="w-4 h-4" />
                   </Button>
                 </div>
 
@@ -575,7 +586,7 @@ function App() {
                   size="icon"
                   className={`ml-2 ${addActionButtonClass}`}
                 >
-                  <Plus className="h-5 w-5" />
+                  <Plus className="w-5 h-5" />
                 </Button>
               </>
             )}
@@ -583,13 +594,12 @@ function App() {
         </div>
       </header>
 
-      <main
-        className={`flex-1 overflow-y-auto pb-12 animate-fade-in scroll-overlay ${
-          currentView === "providers" ? "pt-24" : "pt-20"
-        }`}
-        style={{ overflowX: "hidden" }}
-      >
-        {renderContent()}
+      <main className="flex-1 pb-12 animate-fade-in ">
+        <div
+          className={cn("pb-12", currentView === "providers" ? "pt-6" : "pt-4")}
+        >
+          {renderContent()}
+        </div>
       </main>
 
       <AddProviderDialog
