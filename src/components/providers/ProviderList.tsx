@@ -5,8 +5,15 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { useMemo, useState, type CSSProperties } from "react";
-import { Search } from "lucide-react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
@@ -15,6 +22,7 @@ import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -61,6 +69,36 @@ export function ProviderList({
   };
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if ((event.metaKey || event.ctrlKey) && key === "f") {
+        event.preventDefault();
+        setIsSearchOpen(true);
+        return;
+      }
+
+      if (key === "escape") {
+        setIsSearchOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (isSearchOpen) {
+      const frame = requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [isSearchOpen]);
 
   const filteredProviders = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
@@ -126,20 +164,70 @@ export function ProviderList({
 
   return (
     <div className="mt-4 space-y-4">
-      <div className="relative w-full sm:max-w-xs">
-        <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
-        <Input
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          placeholder={t("provider.searchPlaceholder", {
-            defaultValue: "Search name, notes, or URL...",
-          })}
-          aria-label={t("provider.searchAriaLabel", {
-            defaultValue: "Search providers",
-          })}
-          className="pl-9"
-        />
-      </div>
+      <AnimatePresence>
+        {isSearchOpen && (
+          <motion.div
+            key="provider-search"
+            initial={{ opacity: 0, y: -8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.98 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 sm:right-6 sm:left-auto sm:translate-x-0"
+          >
+            <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
+              <div className="relative flex items-center gap-2">
+                <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
+                <Input
+                  ref={searchInputRef}
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder={t("provider.searchPlaceholder", {
+                    defaultValue: "Search name, notes, or URL...",
+                  })}
+                  aria-label={t("provider.searchAriaLabel", {
+                    defaultValue: "Search providers",
+                  })}
+                  className="pr-16 pl-9"
+                />
+                {searchTerm && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="absolute text-xs -translate-y-1/2 right-11 top-1/2"
+                    onClick={() => setSearchTerm("")}
+                  >
+                    {t("common.clear", { defaultValue: "Clear" })}
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="ml-auto"
+                  onClick={() => setIsSearchOpen(false)}
+                  aria-label={t("provider.searchCloseAriaLabel", {
+                    defaultValue: "Close provider search",
+                  })}
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                <span>
+                  {t("provider.searchScopeHint", {
+                    defaultValue: "Matches provider name, notes, and URL.",
+                  })}
+                </span>
+                <span>
+                  {t("provider.searchCloseHint", {
+                    defaultValue: "Press Esc to close",
+                  })}
+                </span>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {filteredProviders.length === 0 ? (
         <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
           {t("provider.noSearchResults", {

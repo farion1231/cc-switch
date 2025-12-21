@@ -259,6 +259,7 @@ describe("ProviderList Component", () => {
       />,
     );
 
+    fireEvent.keyDown(window, { key: "f", metaKey: true });
     const searchInput = screen.getByPlaceholderText(
       "Search name, notes, or URL...",
     );
