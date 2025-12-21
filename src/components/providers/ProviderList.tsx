@@ -5,13 +5,16 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import type { CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
+import { Search } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { useDragSort } from "@/hooks/useDragSort";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+import { Input } from "@/components/ui/input";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -44,9 +47,10 @@ export function ProviderList({
   isProxyRunning = false, // 默认值为 false
   isProxyTakeover = false, // 默认值为 false
 }: ProviderListProps) {
+  const { t } = useTranslation();
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
-    appId,
+    appId
   );
 
   // 流式健康检查
@@ -56,13 +60,26 @@ export function ProviderList({
     checkProvider(provider.id, provider.name);
   };
 
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const filteredProviders = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+    if (!keyword) return sortedProviders;
+    return sortedProviders.filter((provider) => {
+      const fields = [provider.name, provider.notes, provider.websiteUrl];
+      return fields.some((field) =>
+        field?.toString().toLowerCase().includes(keyword)
+      );
+    });
+  }, [searchTerm, sortedProviders]);
+
   if (isLoading) {
     return (
       <div className="space-y-3">
         {[0, 1, 2].map((index) => (
           <div
             key={index}
-            className="h-28 w-full rounded-lg border border-dashed border-muted-foreground/40 bg-muted/40"
+            className="w-full border border-dashed rounded-lg h-28 border-muted-foreground/40 bg-muted/40"
           />
         ))}
       </div>
@@ -73,18 +90,18 @@ export function ProviderList({
     return <ProviderEmptyState onCreate={onCreate} />;
   }
 
-  return (
+  const renderProviderList = () => (
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
       onDragEnd={handleDragEnd}
     >
       <SortableContext
-        items={sortedProviders.map((provider) => provider.id)}
+        items={filteredProviders.map((provider) => provider.id)}
         strategy={verticalListSortingStrategy}
       >
         <div className="space-y-3">
-          {sortedProviders.map((provider) => (
+          {filteredProviders.map((provider) => (
             <SortableProviderCard
               key={provider.id}
               provider={provider}
@@ -105,6 +122,34 @@ export function ProviderList({
         </div>
       </SortableContext>
     </DndContext>
+  );
+
+  return (
+    <div className="mt-4 space-y-4">
+      <div className="relative w-full sm:max-w-xs">
+        <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
+        <Input
+          value={searchTerm}
+          onChange={(event) => setSearchTerm(event.target.value)}
+          placeholder={t("provider.searchPlaceholder", {
+            defaultValue: "Search name, notes, or URL...",
+          })}
+          aria-label={t("provider.searchAriaLabel", {
+            defaultValue: "Search providers",
+          })}
+          className="pl-9"
+        />
+      </div>
+      {filteredProviders.length === 0 ? (
+        <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
+          {t("provider.noSearchResults", {
+            defaultValue: "No providers match your search.",
+          })}
+        </div>
+      ) : (
+        renderProviderList()
+      )}
+    </div>
   );
 }
 
