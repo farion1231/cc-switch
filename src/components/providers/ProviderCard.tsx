@@ -12,6 +12,7 @@ import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
+import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 
@@ -36,6 +37,12 @@ interface ProviderCardProps {
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
   dragHandleProps?: DragHandleProps;
+  // 故障转移相关
+  isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
+  failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
+  isInFailoverQueue?: boolean; // 是否在故障转移队列中
+  onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
+  activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -88,6 +95,12 @@ export function ProviderCard({
   isProxyRunning,
   isProxyTakeover = false,
   dragHandleProps,
+  // 故障转移相关
+  isAutoFailoverEnabled = false,
+  failoverPriority,
+  isInFailoverQueue = false,
+  onToggleFailover,
+  activeProviderId,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -148,21 +161,27 @@ export function ProviderCard({
     onOpenWebsite(displayUrl);
   };
 
+  // 判断是否是"当前使用中"的供应商
+  // - 故障转移模式：代理实际使用的供应商（activeProviderId）
+  // - 代理接管模式（非故障转移）：isCurrent
+  // - 普通模式：isCurrent
+  const isActiveProvider = isAutoFailoverEnabled
+    ? activeProviderId === provider.id
+    : isCurrent;
+
   return (
     <div
       className={cn(
         "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
         "bg-card text-card-foreground group",
-        // 代理接管模式下 hover 使用绿色边框，否则使用蓝色
-        isProxyTakeover
+        // hover 时的边框效果
+        isAutoFailoverEnabled || isProxyTakeover
           ? "hover:border-emerald-500/50"
           : "hover:border-border-active",
-        // 代理接管模式下当前供应商使用绿色边框
-        isProxyTakeover && isCurrent
+        // 当前激活的供应商边框样式
+        isActiveProvider
           ? "border-emerald-500/60 shadow-sm shadow-emerald-500/10"
-          : isCurrent
-            ? "border-primary/50 shadow-sm"
-            : "hover:shadow-sm",
+          : "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
@@ -170,11 +189,9 @@ export function ProviderCard({
       <div
         className={cn(
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
-          // 代理接管模式下使用绿色渐变，否则使用蓝色主色调
-          isProxyTakeover && isCurrent
-            ? "from-emerald-500/10"
-            : "from-primary/10",
-          isCurrent ? "opacity-100" : "opacity-0",
+          // 当前激活的供应商使用绿色渐变
+          isActiveProvider ? "from-emerald-500/10" : "from-primary/10",
+          isActiveProvider ? "opacity-100" : "opacity-0",
         )}
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -209,12 +226,19 @@ export function ProviderCard({
                 {provider.name}
               </h3>
 
-              {/* 健康状态徽章和优先级 */}
+              {/* 健康状态徽章 */}
               {isProxyRunning && health && (
                 <ProviderHealthBadge
                   consecutiveFailures={health.consecutive_failures}
                 />
               )}
+
+              {/* 故障转移优先级徽章 */}
+              {isAutoFailoverEnabled &&
+                isInFailoverQueue &&
+                failoverPriority && (
+                  <FailoverPriorityBadge priority={failoverPriority} />
+                )}
 
               {provider.category === "third_party" &&
                 provider.meta?.isPartner && (
@@ -308,6 +332,10 @@ export function ProviderCard({
               onTest={onTest ? () => onTest(provider) : undefined}
               onConfigureUsage={() => onConfigureUsage(provider)}
               onDelete={() => onDelete(provider)}
+              // 故障转移相关
+              isAutoFailoverEnabled={isAutoFailoverEnabled}
+              isInFailoverQueue={isInFailoverQueue}
+              onToggleFailover={onToggleFailover}
             />
           </div>
         </div>

@@ -68,9 +68,20 @@ function App() {
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
   // 获取代理服务状态
-  const { isRunning: isProxyRunning, takeoverStatus } = useProxyStatus();
+  const {
+    isRunning: isProxyRunning,
+    takeoverStatus,
+    status: proxyStatus,
+  } = useProxyStatus();
   // 当前应用的代理是否开启
   const isCurrentAppTakeoverActive = takeoverStatus?.[activeApp] || false;
+  // 当前应用代理实际使用的供应商 ID（从 active_targets 中获取）
+  const activeProviderId = useMemo(() => {
+    const target = proxyStatus?.active_targets?.find(
+      (t) => t.app_type === activeApp,
+    );
+    return target?.provider_id;
+  }, [proxyStatus?.active_targets, activeApp]);
 
   // 获取供应商列表，当代理服务运行时自动刷新
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
@@ -353,6 +364,7 @@ function App() {
                     isProxyTakeover={
                       isProxyRunning && isCurrentAppTakeoverActive
                     }
+                    activeProviderId={activeProviderId}
                     onSwitch={switchProvider}
                     onEdit={setEditingProvider}
                     onDelete={setConfirmDelete}

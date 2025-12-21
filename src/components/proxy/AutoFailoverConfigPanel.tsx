@@ -12,14 +12,14 @@ import {
 } from "@/lib/query/failover";
 
 export interface AutoFailoverConfigPanelProps {
-  enabled: boolean;
-  onEnabledChange: (enabled: boolean) => void;
+  enabled?: boolean;
+  onEnabledChange?: (enabled: boolean) => void;
 }
 
 export function AutoFailoverConfigPanel({
-  enabled,
+  enabled = true,
   onEnabledChange: _onEnabledChange,
-}: AutoFailoverConfigPanelProps) {
+}: AutoFailoverConfigPanelProps = {}) {
   // Note: onEnabledChange is currently unused but kept in the interface
   // for potential future use by parent components
   void _onEnabledChange;
