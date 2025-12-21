@@ -350,7 +350,9 @@ function App() {
                     appId={activeApp}
                     isLoading={isLoading}
                     isProxyRunning={isProxyRunning}
-                    isProxyTakeover={isProxyRunning && isCurrentAppTakeoverActive}
+                    isProxyTakeover={
+                      isProxyRunning && isCurrentAppTakeoverActive
+                    }
                     onSwitch={switchProvider}
                     onEdit={setEditingProvider}
                     onDelete={setConfirmDelete}

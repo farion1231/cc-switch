@@ -173,6 +173,7 @@ export function useReorderFailoverQueue() {
 
 /**
  * 设置故障转移队列项的启用状态
+ * 使用乐观更新(Optimistic Update)以提供即时反馈
  */
 export function useSetFailoverItemEnabled() {
   const queryClient = useQueryClient();
@@ -187,10 +188,103 @@ export function useSetFailoverItemEnabled() {
       providerId: string;
       enabled: boolean;
     }) => failoverApi.setFailoverItemEnabled(appType, providerId, enabled),
-    onSuccess: (_, variables) => {
+
+    // 乐观更新：立即更新缓存中的数据
+    onMutate: async (variables) => {
+      // 取消正在进行的查询，防止覆盖乐观更新
+      await queryClient.cancelQueries({
+        queryKey: ["failoverQueue", variables.appType],
+      });
+
+      // 保存之前的数据以便回滚
+      const previousQueue = queryClient.getQueryData<
+        import("@/types/proxy").FailoverQueueItem[]
+      >(["failoverQueue", variables.appType]);
+
+      // 乐观地更新缓存
+      if (previousQueue) {
+        queryClient.setQueryData<import("@/types/proxy").FailoverQueueItem[]>(
+          ["failoverQueue", variables.appType],
+          previousQueue.map((item) =>
+            item.providerId === variables.providerId
+              ? { ...item, enabled: variables.enabled }
+              : item,
+          ),
+        );
+      }
+
+      // 返回上下文供 onError 使用
+      return { previousQueue };
+    },
+
+    // 错误时回滚
+    onError: (_error, variables, context) => {
+      if (context?.previousQueue) {
+        queryClient.setQueryData(
+          ["failoverQueue", variables.appType],
+          context.previousQueue,
+        );
+      }
+    },
+
+    // 无论成功失败，都重新获取最新数据以确保一致性
+    onSettled: (_, __, variables) => {
       queryClient.invalidateQueries({
         queryKey: ["failoverQueue", variables.appType],
       });
+    },
+  });
+}
+
+// ========== 自动故障转移总开关 Hooks ==========
+
+/**
+ * 获取自动故障转移总开关状态
+ */
+export function useAutoFailoverEnabled() {
+  return useQuery({
+    queryKey: ["autoFailoverEnabled"],
+    queryFn: () => failoverApi.getAutoFailoverEnabled(),
+    // 默认值为 false（与后端保持一致）
+    placeholderData: false,
+  });
+}
+
+/**
+ * 设置自动故障转移总开关状态
+ */
+export function useSetAutoFailoverEnabled() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (enabled: boolean) =>
+      failoverApi.setAutoFailoverEnabled(enabled),
+
+    // 乐观更新
+    onMutate: async (enabled) => {
+      await queryClient.cancelQueries({ queryKey: ["autoFailoverEnabled"] });
+      const previousValue = queryClient.getQueryData<boolean>([
+        "autoFailoverEnabled",
+      ]);
+
+      queryClient.setQueryData(["autoFailoverEnabled"], enabled);
+
+      return { previousValue };
+    },
+
+    // 错误时回滚
+    onError: (_error, _enabled, context) => {
+      if (context?.previousValue !== undefined) {
+        queryClient.setQueryData(
+          ["autoFailoverEnabled"],
+          context.previousValue,
+        );
+      }
+    },
+
+    // 无论成功失败，都重新获取
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["autoFailoverEnabled"] });
     },
   });
 }

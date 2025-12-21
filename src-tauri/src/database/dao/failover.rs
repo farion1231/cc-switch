@@ -182,11 +182,25 @@ impl Database {
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
-        conn.execute(
-            "UPDATE failover_queue SET enabled = ?3 WHERE app_type = ?1 AND provider_id = ?2",
-            rusqlite::params![app_type, provider_id, enabled],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows_affected = conn
+            .execute(
+                "UPDATE failover_queue SET enabled = ?3 WHERE app_type = ?1 AND provider_id = ?2",
+                rusqlite::params![app_type, provider_id, enabled],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        if rows_affected == 0 {
+            log::warn!(
+                "set_failover_item_enabled: 未找到匹配记录 app_type={app_type}, provider_id={provider_id}"
+            );
+            return Err(AppError::Database(format!(
+                "未找到故障转移队列项: app_type={app_type}, provider_id={provider_id}"
+            )));
+        }
+
+        log::info!(
+            "set_failover_item_enabled: 已更新 app_type={app_type}, provider_id={provider_id}, enabled={enabled}"
+        );
 
         Ok(())
     }

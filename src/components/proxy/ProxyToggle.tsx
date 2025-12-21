@@ -49,10 +49,7 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
 
   return (
     <div
-      className={cn(
-        "p-1 rounded-xl transition-all",
-        className,
-      )}
+      className={cn("p-1 rounded-xl transition-all", className)}
       title={tooltipText}
     >
       <div className="flex items-center gap-2 px-2 h-8 rounded-md cursor-default">

@@ -93,8 +93,7 @@ export function PricingConfigPanel() {
           <CardContent>
             <Alert variant="destructive">
               <AlertDescription>
-                {t("usage.loadPricingError")}:{" "}
-                {String(error)}
+                {t("usage.loadPricingError")}: {String(error)}
               </AlertDescription>
             </Alert>
           </CardContent>
@@ -124,9 +123,7 @@ export function PricingConfigPanel() {
       <div className="space-y-4">
         {!pricing || pricing.length === 0 ? (
           <Alert>
-            <AlertDescription>
-              {t("usage.noPricingData")}
-            </AlertDescription>
+            <AlertDescription>{t("usage.noPricingData")}</AlertDescription>
           </Alert>
         ) : (
           <div className="rounded-md bg-card/60 shadow-sm">
@@ -220,9 +217,7 @@ export function PricingConfigPanel() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {t("usage.deleteConfirmTitle")}
-            </DialogTitle>
+            <DialogTitle>{t("usage.deleteConfirmTitle")}</DialogTitle>
             <DialogDescription>
               {t("usage.deleteConfirmDesc")}
             </DialogDescription>

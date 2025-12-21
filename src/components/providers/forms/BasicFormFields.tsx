@@ -153,7 +153,10 @@ export function BasicFormFields({ form }: BasicFormFieldsProps) {
           <FormItem>
             <FormLabel>{t("provider.websiteUrl")}</FormLabel>
             <FormControl>
-              <Input {...field} placeholder={t("providerForm.websiteUrlPlaceholder")} />
+              <Input
+                {...field}
+                placeholder={t("providerForm.websiteUrlPlaceholder")}
+              />
             </FormControl>
             <FormMessage />
           </FormItem>

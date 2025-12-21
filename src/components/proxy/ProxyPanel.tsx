@@ -51,7 +51,9 @@ export function ProxyPanel() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs text-muted-foreground">
-                    {t("proxy.panel.serviceAddress", { defaultValue: "服务地址" })}
+                    {t("proxy.panel.serviceAddress", {
+                      defaultValue: "服务地址",
+                    })}
                   </p>
                   <Button
                     size="sm"
@@ -229,7 +231,9 @@ export function ProxyPanel() {
               <Server className="h-8 w-8" />
             </div>
             <p className="text-base font-medium text-foreground mb-1">
-              {t("proxy.panel.stoppedTitle", { defaultValue: "代理服务已停止" })}
+              {t("proxy.panel.stoppedTitle", {
+                defaultValue: "代理服务已停止",
+              })}
             </p>
             <p className="text-sm text-muted-foreground mb-4">
               {t("proxy.panel.stoppedDescription", {

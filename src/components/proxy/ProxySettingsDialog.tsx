@@ -29,7 +29,11 @@ import type { ProxyConfig } from "@/types/proxy";
 // 表单数据类型（仅包含可编辑字段）
 type ProxyConfigForm = Pick<
   ProxyConfig,
-  "listen_address" | "listen_port" | "max_retries" | "request_timeout" | "enable_logging"
+  | "listen_address"
+  | "listen_port"
+  | "max_retries"
+  | "request_timeout"
+  | "enable_logging"
 >;
 
 const createProxyConfigSchema = (t: TFunction) => {

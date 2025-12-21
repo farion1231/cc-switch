@@ -47,6 +47,10 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
+import {
+  useAutoFailoverEnabled,
+  useSetAutoFailoverEnabled,
+} from "@/lib/query/failover";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -182,17 +186,37 @@ export function SettingsPage({
     stopWithRestore,
     isPending: isProxyPending,
   } = useProxyStatus();
-  const [failoverEnabled, setFailoverEnabled] = useState(true);
+
+  // 使用持久化的自动故障转移开关状态
+  const { data: failoverEnabled = false } = useAutoFailoverEnabled();
+  const setAutoFailoverEnabled = useSetAutoFailoverEnabled();
 
   const handleToggleProxy = async (checked: boolean) => {
     try {
       if (!checked) {
+        // 关闭代理时，同时关闭故障转移
+        if (failoverEnabled) {
+          setAutoFailoverEnabled.mutate(false);
+        }
         await stopWithRestore();
       } else {
         await startProxyServer();
       }
     } catch (error) {
       console.error("Toggle proxy failed:", error);
+    }
+  };
+
+  // 处理故障转移开关：开启时自动启动代理
+  const handleToggleFailover = async (checked: boolean) => {
+    try {
+      if (checked && !isRunning) {
+        // 开启故障转移时，先启动代理
+        await startProxyServer();
+      }
+      setAutoFailoverEnabled.mutate(checked);
+    } catch (error) {
+      console.error("Toggle failover failed:", error);
     }
   };
 
@@ -215,9 +239,7 @@ export function SettingsPage({
             <TabsTrigger value="advanced">
               {t("settings.tabAdvanced")}
             </TabsTrigger>
-            <TabsTrigger value="usage">
-              {t("usage.title")}
-            </TabsTrigger>
+            <TabsTrigger value="usage">{t("usage.title")}</TabsTrigger>
             <TabsTrigger value="about">{t("common.about")}</TabsTrigger>
           </TabsList>
 
@@ -318,7 +340,9 @@ export function SettingsPage({
                             <Activity
                               className={`h-3 w-3 ${isRunning ? "animate-pulse" : ""}`}
                             />
-                            {isRunning ? t("settings.advanced.proxy.running") : t("settings.advanced.proxy.stopped")}
+                            {isRunning
+                              ? t("settings.advanced.proxy.running")
+                              : t("settings.advanced.proxy.stopped")}
                           </Badge>
                           <Switch
                             checked={isRunning}
@@ -376,8 +400,11 @@ export function SettingsPage({
 
                         <div className="flex items-center gap-2 pl-4">
                           <Switch
-                            checked={failoverEnabled}
-                            onCheckedChange={setFailoverEnabled}
+                            checked={failoverEnabled && isRunning}
+                            onCheckedChange={handleToggleFailover}
+                            disabled={
+                              setAutoFailoverEnabled.isPending || isProxyPending
+                            }
                           />
                         </div>
                       </AccordionPrimitive.Header>
@@ -402,19 +429,19 @@ export function SettingsPage({
                               <TabsContent value="claude" className="mt-4">
                                 <FailoverQueueManager
                                   appType="claude"
-                                  disabled={!failoverEnabled}
+                                  disabled={!failoverEnabled || !isRunning}
                                 />
                               </TabsContent>
                               <TabsContent value="codex" className="mt-4">
                                 <FailoverQueueManager
                                   appType="codex"
-                                  disabled={!failoverEnabled}
+                                  disabled={!failoverEnabled || !isRunning}
                                 />
                               </TabsContent>
                               <TabsContent value="gemini" className="mt-4">
                                 <FailoverQueueManager
                                   appType="gemini"
-                                  disabled={!failoverEnabled}
+                                  disabled={!failoverEnabled || !isRunning}
                                 />
                               </TabsContent>
                             </Tabs>
@@ -423,8 +450,8 @@ export function SettingsPage({
                           {/* 熔断器配置 */}
                           <div className="border-t border-border/50 pt-6">
                             <AutoFailoverConfigPanel
-                              enabled={failoverEnabled}
-                              onEnabledChange={setFailoverEnabled}
+                              enabled={failoverEnabled && isRunning}
+                              onEnabledChange={handleToggleFailover}
                             />
                           </div>
                         </div>

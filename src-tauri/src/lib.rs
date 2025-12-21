@@ -678,6 +678,8 @@ pub fn run() {
             commands::remove_from_failover_queue,
             commands::reorder_failover_queue,
             commands::set_failover_item_enabled,
+            commands::get_auto_failover_enabled,
+            commands::set_auto_failover_enabled,
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_trends,

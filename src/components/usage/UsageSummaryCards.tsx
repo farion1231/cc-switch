@@ -56,7 +56,7 @@ export function UsageSummaryCards({ days }: UsageSummaryCardsProps) {
         color: "text-purple-500",
         bg: "bg-purple-500/10",
         subValue: (
-            <div className="flex flex-col gap-1 text-xs text-muted-foreground mt-3 pt-3 border-t border-border/50">
+          <div className="flex flex-col gap-1 text-xs text-muted-foreground mt-3 pt-3 border-t border-border/50">
             <div className="flex justify-between items-center">
               <span>{t("usage.input")}</span>
               <span className="text-foreground/80">
@@ -78,21 +78,21 @@ export function UsageSummaryCards({ days }: UsageSummaryCardsProps) {
         icon: Database,
         color: "text-orange-500",
         bg: "bg-orange-500/10",
-          subValue: (
-            <div className="flex flex-col gap-1 text-xs text-muted-foreground mt-3 pt-3 border-t border-border/50">
-              <div className="flex justify-between items-center">
-                <span>{t("usage.cacheWrite")}</span>
-                <span className="text-foreground/80">
-                  {(cacheWriteTokens / 1000).toFixed(1)}k
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span>{t("usage.cacheRead")}</span>
-                <span className="text-foreground/80">
-                  {(cacheReadTokens / 1000).toFixed(1)}k
-                </span>
-              </div>
+        subValue: (
+          <div className="flex flex-col gap-1 text-xs text-muted-foreground mt-3 pt-3 border-t border-border/50">
+            <div className="flex justify-between items-center">
+              <span>{t("usage.cacheWrite")}</span>
+              <span className="text-foreground/80">
+                {(cacheWriteTokens / 1000).toFixed(1)}k
+              </span>
             </div>
+            <div className="flex justify-between items-center">
+              <span>{t("usage.cacheRead")}</span>
+              <span className="text-foreground/80">
+                {(cacheReadTokens / 1000).toFixed(1)}k
+              </span>
+            </div>
+          </div>
         ),
       },
     ];

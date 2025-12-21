@@ -104,4 +104,14 @@ export const failoverApi = {
       enabled,
     });
   },
+
+  // 获取自动故障转移总开关状态
+  async getAutoFailoverEnabled(): Promise<boolean> {
+    return invoke("get_auto_failover_enabled");
+  },
+
+  // 设置自动故障转移总开关状态
+  async setAutoFailoverEnabled(enabled: boolean): Promise<void> {
+    return invoke("set_auto_failover_enabled", { enabled });
+  },
 };

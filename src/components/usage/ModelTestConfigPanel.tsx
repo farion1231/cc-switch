@@ -51,9 +51,7 @@ export function ModelTestConfigPanel() {
         closeButton: true,
       });
     } catch (e) {
-      toast.error(
-        t("streamCheck.configSaveFailed") + ": " + String(e),
-      );
+      toast.error(t("streamCheck.configSaveFailed") + ": " + String(e));
     } finally {
       setIsSaving(false);
     }
@@ -82,9 +80,7 @@ export function ModelTestConfigPanel() {
         </h4>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
-            <Label htmlFor="claudeModel">
-              {t("streamCheck.claudeModel")}
-            </Label>
+            <Label htmlFor="claudeModel">{t("streamCheck.claudeModel")}</Label>
             <Input
               id="claudeModel"
               value={config.claudeModel}
@@ -96,9 +92,7 @@ export function ModelTestConfigPanel() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="codexModel">
-              {t("streamCheck.codexModel")}
-            </Label>
+            <Label htmlFor="codexModel">{t("streamCheck.codexModel")}</Label>
             <Input
               id="codexModel"
               value={config.codexModel}
@@ -110,9 +104,7 @@ export function ModelTestConfigPanel() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="geminiModel">
-              {t("streamCheck.geminiModel")}
-            </Label>
+            <Label htmlFor="geminiModel">{t("streamCheck.geminiModel")}</Label>
             <Input
               id="geminiModel"
               value={config.geminiModel}
@@ -132,9 +124,7 @@ export function ModelTestConfigPanel() {
         </h4>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
-            <Label htmlFor="timeoutSecs">
-              {t("streamCheck.timeout")}
-            </Label>
+            <Label htmlFor="timeoutSecs">{t("streamCheck.timeout")}</Label>
             <Input
               id="timeoutSecs"
               type="number"
@@ -151,9 +141,7 @@ export function ModelTestConfigPanel() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="maxRetries">
-              {t("streamCheck.maxRetries")}
-            </Label>
+            <Label htmlFor="maxRetries">{t("streamCheck.maxRetries")}</Label>
             <Input
               id="maxRetries"
               type="number"

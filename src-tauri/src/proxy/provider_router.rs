@@ -31,11 +31,18 @@ impl ProviderRouter {
     ///
     /// 返回按优先级排序的可用供应商列表：
     /// 1. 当前供应商（is_current=true）始终第一位
-    /// 2. 故障转移队列中的其他供应商（按 queue_order 排序）
+    /// 2. 故障转移队列中的其他供应商（按 queue_order 排序）- 仅当自动故障转移开关开启时
     /// 3. 只返回熔断器未打开的供应商
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
         let all_providers = self.db.get_all_providers(app_type)?;
+
+        // 检查自动故障转移总开关是否开启
+        let auto_failover_enabled = self
+            .db
+            .get_setting("auto_failover_enabled")
+            .map(|v| v.map(|s| s == "true").unwrap_or(false)) // 默认关闭
+            .unwrap_or(false);
 
         // 1. 当前供应商始终第一位
         if let Some(current_id) = self.db.get_current_provider(app_type)? {
@@ -61,43 +68,47 @@ impl ProviderRouter {
             }
         }
 
-        // 2. 获取故障转移队列中的供应商
-        let queue = self.db.get_failover_queue(app_type)?;
+        // 2. 获取故障转移队列中的供应商（仅当自动故障转移开关开启时）
+        if auto_failover_enabled {
+            let queue = self.db.get_failover_queue(app_type)?;
 
-        for item in queue {
-            // 跳过已添加的当前供应商
-            if result.iter().any(|p| p.id == item.provider_id) {
-                continue;
-            }
+            for item in queue {
+                // 跳过已添加的当前供应商
+                if result.iter().any(|p| p.id == item.provider_id) {
+                    continue;
+                }
 
-            // 跳过禁用的队列项
-            if !item.enabled {
-                continue;
-            }
+                // 跳过禁用的队列项
+                if !item.enabled {
+                    continue;
+                }
 
-            // 获取供应商信息
-            if let Some(provider) = all_providers.get(&item.provider_id) {
-                // 检查熔断器状态
-                let circuit_key = format!("{}:{}", app_type, provider.id);
-                let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+                // 获取供应商信息
+                if let Some(provider) = all_providers.get(&item.provider_id) {
+                    // 检查熔断器状态
+                    let circuit_key = format!("{}:{}", app_type, provider.id);
+                    let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
-                if breaker.is_available().await {
-                    log::info!(
-                        "[{}] Failover provider available: {} ({}) at queue position {}",
-                        app_type,
-                        provider.name,
-                        provider.id,
-                        item.queue_order
-                    );
-                    result.push(provider.clone());
-                } else {
-                    log::debug!(
-                        "[{}] Failover provider {} circuit breaker open, skipping",
-                        app_type,
-                        provider.name
-                    );
+                    if breaker.is_available().await {
+                        log::info!(
+                            "[{}] Failover provider available: {} ({}) at queue position {}",
+                            app_type,
+                            provider.name,
+                            provider.id,
+                            item.queue_order
+                        );
+                        result.push(provider.clone());
+                    } else {
+                        log::debug!(
+                            "[{}] Failover provider {} circuit breaker open, skipping",
+                            app_type,
+                            provider.name
+                        );
+                    }
                 }
             }
+        } else {
+            log::info!("[{app_type}] Auto-failover disabled, using only current provider");
         }
 
         if result.is_empty() {

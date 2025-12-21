@@ -237,9 +237,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
       {/* 左侧：服务器信息 */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          <h3 className="font-medium text-foreground">
-            {name}
-          </h3>
+          <h3 className="font-medium text-foreground">{name}</h3>
           {docsUrl && (
             <Button
               type="button"

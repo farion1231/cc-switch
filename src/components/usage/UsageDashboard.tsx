@@ -26,9 +26,7 @@ export function UsageDashboard() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex flex-col gap-1">
           <h2 className="text-2xl font-bold">{t("usage.title")}</h2>
-          <p className="text-sm text-muted-foreground">
-            {t("usage.subtitle")}
-          </p>
+          <p className="text-sm text-muted-foreground">{t("usage.subtitle")}</p>
         </div>
 
         <Tabs

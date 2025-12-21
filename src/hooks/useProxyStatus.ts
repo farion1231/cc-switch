@@ -51,7 +51,8 @@ export function useProxyStatus() {
     },
     onError: (error: Error) => {
       const detail =
-        extractErrorMessage(error) || t("common.unknown", { defaultValue: "未知错误" });
+        extractErrorMessage(error) ||
+        t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.server.startFailed", {
           defaultValue: `启动代理服务失败: ${detail}`,
@@ -77,7 +78,8 @@ export function useProxyStatus() {
     },
     onError: (error: Error) => {
       const detail =
-        extractErrorMessage(error) || t("common.unknown", { defaultValue: "未知错误" });
+        extractErrorMessage(error) ||
+        t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.stopWithRestoreFailed", {
           defaultValue: `停止失败: ${detail}`,
@@ -114,7 +116,8 @@ export function useProxyStatus() {
     },
     onError: (error: Error) => {
       const detail =
-        extractErrorMessage(error) || t("common.unknown", { defaultValue: "未知错误" });
+        extractErrorMessage(error) ||
+        t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.takeover.failed", {
           defaultValue: `操作失败: ${detail}`,
@@ -137,7 +140,8 @@ export function useProxyStatus() {
     },
     onError: (error: Error) => {
       const detail =
-        extractErrorMessage(error) || t("common.unknown", { defaultValue: "未知错误" });
+        extractErrorMessage(error) ||
+        t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.switchFailed", {
           error: detail,

@@ -87,9 +87,7 @@ export function RequestLogTable() {
               <SelectValue placeholder={t("usage.appType")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">
-                {t("usage.allApps")}
-              </SelectItem>
+              <SelectItem value="all">{t("usage.allApps")}</SelectItem>
               <SelectItem value="claude">Claude</SelectItem>
               <SelectItem value="codex">Codex</SelectItem>
               <SelectItem value="gemini">Gemini</SelectItem>
@@ -149,9 +147,7 @@ export function RequestLogTable() {
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span className="whitespace-nowrap">
-              {t("usage.timeRange")}:
-            </span>
+            <span className="whitespace-nowrap">{t("usage.timeRange")}:</span>
             <Input
               type="datetime-local"
               className="h-8 w-[200px] bg-background"
@@ -283,8 +279,7 @@ export function RequestLogTable() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {log.providerName ||
-                          t("usage.unknownProvider")}
+                        {log.providerName || t("usage.unknownProvider")}
                       </TableCell>
                       <TableCell
                         className="font-mono text-sm max-w-[280px] truncate"
