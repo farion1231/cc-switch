@@ -265,6 +265,40 @@
     "codex": "Codex",
     "gemini": "Gemini"
   },
+  "tray": {
+    "title": "Quick Switch",
+    "subtitle": "Swap any provider directly from the tray",
+    "providers": "providers",
+    "currentProvider": "Current: {{name}}",
+    "noCurrent": "No selection yet",
+    "loading": "Loading providers…",
+    "empty": "No providers yet. Use the main window to add one.",
+    "actions": {
+      "openMain": "Open main window",
+      "refresh": "Refresh",
+      "quit": "Quit"
+    },
+    "card": {
+      "current": "Active",
+      "switching": "Switching",
+      "switch": "Switch"
+    },
+    "categories": {
+      "official": "Official",
+      "cn_official": "China official",
+      "aggregator": "Aggregator",
+      "third_party": "Third-party",
+      "custom": "Custom"
+    },
+    "switchFailedTitle": "Switch failed",
+    "switchFailed": "Failed to switch provider: {{error}}",
+    "error": {
+      "generic": "Unknown error",
+      "openMain": "Failed to open main window",
+      "refreshFailed": "Refresh failed",
+      "loadFailed": "Failed to load providers. Please refresh."
+    }
+  },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
     "setupListenerFailed": "Failed to setup provider switch listener:",

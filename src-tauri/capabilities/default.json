@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "main",
+    "tray-popover"
   ],
   "permissions": [
     "core:default",
@@ -11,6 +12,9 @@
     "updater:default",
     "core:window:allow-set-skip-taskbar",
     "core:window:allow-start-dragging",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
     "process:allow-restart",
     "dialog:default"
   ]

@@ -69,8 +69,8 @@ tauri-plugin-single-instance = "2"
 winreg = "0.52"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.5"
-objc2-app-kit = { version = "0.2", features = ["NSColor"] }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSColor", "NSStatusBarButton", "NSStatusItem"] }
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]

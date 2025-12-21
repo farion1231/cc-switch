@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::app_config::AppType;
 use crate::error::AppError;
@@ -76,14 +76,24 @@ pub fn switch_provider_test_hook(
 
 #[tauri::command]
 pub fn switch_provider(
+    app_handle: AppHandle,
     state: State<'_, AppState>,
     app: String,
     id: String,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    switch_provider_internal(&state, app_type, &id)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+    switch_provider_internal(&state, app_type.clone(), &id)
+        .map_err(|e| e.to_string())?;
+
+    let payload = serde_json::json!({
+        "appType": app_type.as_str(),
+        "providerId": id.clone()
+    });
+    if let Err(err) = app_handle.emit("provider-switched", payload) {
+        log::warn!("Failed to emit provider-switched event: {err}");
+    }
+
+    Ok(true)
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {

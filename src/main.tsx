@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import TrayPopoverApp from "./TrayPopoverApp";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import "./index.css";
 // 导入国际化配置
@@ -71,6 +72,10 @@ try {
 }
 
 async function bootstrap() {
+  const searchParams = new URLSearchParams(window.location.search);
+  const isTrayWindow =
+    window.location.hash === "#tray" || searchParams.get("window") === "tray";
+
   // 启动早期主动查询后端初始化错误，避免事件竞态
   try {
     const initError = (await invoke(
@@ -91,7 +96,7 @@ async function bootstrap() {
       <QueryClientProvider client={queryClient}>
         <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
           <UpdateProvider>
-            <App />
+            {isTrayWindow ? <TrayPopoverApp /> : <App />}
             <Toaster />
           </UpdateProvider>
         </ThemeProvider>

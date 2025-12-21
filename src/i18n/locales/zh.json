@@ -265,6 +265,40 @@
     "codex": "Codex",
     "gemini": "Gemini"
   },
+  "tray": {
+    "title": "快速切换",
+    "subtitle": "无需打开主界面，即可在托盘中切换供应商",
+    "providers": "个供应商",
+    "currentProvider": "当前：{{name}}",
+    "noCurrent": "尚未选择",
+    "loading": "载入供应商...",
+    "empty": "暂未添加供应商，请在主界面中创建",
+    "actions": {
+      "openMain": "打开主界面",
+      "refresh": "刷新",
+      "quit": "退出"
+    },
+    "card": {
+      "current": "当前",
+      "switching": "切换中",
+      "switch": "切换"
+    },
+    "categories": {
+      "official": "官方",
+      "cn_official": "国内官方",
+      "aggregator": "聚合",
+      "third_party": "第三方",
+      "custom": "自定义"
+    },
+    "switchFailedTitle": "切换失败",
+    "switchFailed": "切换供应商失败：{{error}}",
+    "error": {
+      "generic": "发生未知错误",
+      "openMain": "打开主界面失败",
+      "refreshFailed": "刷新失败",
+      "loadFailed": "加载失败，请刷新"
+    }
+  },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",
     "setupListenerFailed": "设置供应商切换监听器失败:",
