@@ -4,6 +4,12 @@ use crate::init_status::InitErrorPayload;
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// 打开外部链接
 #[tauri::command]
 pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
@@ -142,11 +148,16 @@ fn extract_version(raw: &str) -> String {
 fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
     use std::process::Command;
 
-    let output = if cfg!(target_os = "windows") {
+    #[cfg(target_os = "windows")]
+    let output = {
         Command::new("cmd")
             .args(["/C", &format!("{tool} --version")])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
-    } else {
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let output = {
         Command::new("sh")
             .arg("-c")
             .arg(format!("{tool} --version"))
@@ -239,10 +250,22 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
             let current_path = std::env::var("PATH").unwrap_or_default();
             let new_path = format!("{}:{}", path.display(), current_path);
 
-            let output = Command::new(&tool_path)
-                .arg("--version")
-                .env("PATH", &new_path)
-                .output();
+            #[cfg(target_os = "windows")]
+            let output = {
+                Command::new(&tool_path)
+                    .arg("--version")
+                    .env("PATH", &new_path)
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output()
+            };
+
+            #[cfg(not(target_os = "windows"))]
+            let output = {
+                Command::new(&tool_path)
+                    .arg("--version")
+                    .env("PATH", &new_path)
+                    .output()
+            };
 
             if let Ok(out) = output {
                 let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
