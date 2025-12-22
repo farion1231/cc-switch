@@ -116,7 +116,7 @@ function App() {
             if (event.appType === activeApp) {
               await refetch();
             }
-          }
+          },
         );
       } catch (error) {
         console.error("[App] Failed to subscribe provider switch event", error);
@@ -146,7 +146,7 @@ function App() {
       } catch (error) {
         console.error(
           "[App] Failed to check environment conflicts on startup:",
-          error
+          error,
         );
       }
     };
@@ -162,7 +162,7 @@ function App() {
         if (migrated) {
           toast.success(
             t("migration.success", { defaultValue: "配置迁移成功" }),
-            { closeButton: true }
+            { closeButton: true },
           );
         }
       } catch (error) {
@@ -183,10 +183,10 @@ function App() {
           // 合并新检测到的冲突
           setEnvConflicts((prev) => {
             const existingKeys = new Set(
-              prev.map((c) => `${c.varName}:${c.sourcePath}`)
+              prev.map((c) => `${c.varName}:${c.sourcePath}`),
             );
             const newConflicts = conflicts.filter(
-              (c) => !existingKeys.has(`${c.varName}:${c.sourcePath}`)
+              (c) => !existingKeys.has(`${c.varName}:${c.sourcePath}`),
             );
             return [...prev, ...newConflicts];
           });
@@ -198,7 +198,7 @@ function App() {
       } catch (error) {
         console.error(
           "[App] Failed to check environment conflicts on app switch:",
-          error
+          error,
         );
       }
     };
@@ -259,7 +259,7 @@ function App() {
           (p) =>
             p.sortIndex !== undefined &&
             p.sortIndex >= newSortIndex! &&
-            p.id !== provider.id
+            p.id !== provider.id,
         )
         .map((p) => ({
           id: p.id,
@@ -275,7 +275,7 @@ function App() {
           toast.error(
             t("provider.sortUpdateFailed", {
               defaultValue: "排序更新失败",
-            })
+            }),
           );
           return; // 如果排序更新失败，不继续添加
         }
@@ -345,7 +345,9 @@ function App() {
             />
           );
         case "agents":
-          return <AgentsPanel onOpenChange={() => setCurrentView("providers")} />;
+          return (
+            <AgentsPanel onOpenChange={() => setCurrentView("providers")} />
+          );
         default:
           return (
             <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
@@ -366,7 +368,9 @@ function App() {
                       appId={activeApp}
                       isLoading={isLoading}
                       isProxyRunning={isProxyRunning}
-                      isProxyTakeover={isProxyRunning && isCurrentAppTakeoverActive}
+                      isProxyTakeover={
+                        isProxyRunning && isCurrentAppTakeoverActive
+                      }
                       activeProviderId={activeProviderId}
                       onSwitch={switchProvider}
                       onEdit={setEditingProvider}
@@ -430,7 +434,7 @@ function App() {
             } catch (error) {
               console.error(
                 "[App] Failed to re-check conflicts after deletion:",
-                error
+                error,
               );
             }
           }}
@@ -487,7 +491,7 @@ function App() {
                       "text-xl font-semibold transition-colors",
                       isProxyRunning && isCurrentAppTakeoverActive
                         ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
-                        : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300"
+                        : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
                     )}
                   >
                     CC Switch
@@ -569,7 +573,7 @@ function App() {
                       "transition-all duration-200 ease-in-out overflow-hidden",
                       hasSkillsSupport
                         ? "opacity-100 w-8 scale-100 px-2"
-                        : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1"
+                        : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
                     )}
                     title={t("skills.manage")}
                   >

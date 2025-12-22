@@ -67,7 +67,7 @@ export function ProviderList({
   const { t } = useTranslation();
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
-    appId
+    appId,
   );
 
   // 流式健康检查
@@ -158,7 +158,7 @@ export function ProviderList({
     return sortedProviders.filter((provider) => {
       const fields = [provider.name, provider.notes, provider.websiteUrl];
       return fields.some((field) =>
-        field?.toString().toLowerCase().includes(keyword)
+        field?.toString().toLowerCase().includes(keyword),
       );
     });
   }, [searchTerm, sortedProviders]);
