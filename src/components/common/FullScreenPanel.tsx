@@ -1,5 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
+import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -35,7 +36,10 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   if (!isOpen) return null;
 
   return createPortal(
-    <div
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.2 }}
       className="fixed inset-0 z-[60] flex flex-col"
       style={{ backgroundColor: "hsl(var(--background))" }}
     >
@@ -71,7 +75,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           </div>
         </div>
       )}
-    </div>,
+    </motion.div>,
     document.body,
   );
 };

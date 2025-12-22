@@ -310,79 +310,93 @@ function App() {
   };
 
   const renderContent = () => {
-    switch (currentView) {
-      case "settings":
-        return (
-          <SettingsPage
-            open={true}
-            onOpenChange={() => setCurrentView("providers")}
-            onImportSuccess={handleImportSuccess}
-          />
-        );
-      case "prompts":
-        return (
-          <PromptPanel
-            ref={promptPanelRef}
-            open={true}
-            onOpenChange={() => setCurrentView("providers")}
-            appId={activeApp}
-          />
-        );
-      case "skills":
-        return (
-          <SkillsPage
-            ref={skillsPageRef}
-            onClose={() => setCurrentView("providers")}
-            initialApp={activeApp}
-          />
-        );
-      case "mcp":
-        return (
-          <UnifiedMcpPanel
-            ref={mcpPanelRef}
-            onOpenChange={() => setCurrentView("providers")}
-          />
-        );
-      case "agents":
-        return <AgentsPanel onOpenChange={() => setCurrentView("providers")} />;
-      default:
-        return (
-          <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
-            {/* 独立滚动容器 - 解决 Linux/Ubuntu 下 DndContext 与滚轮事件冲突 */}
-            <div className="flex-1 px-1 pb-12 overflow-x-hidden overflow-y-auto">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={activeApp}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="space-y-4"
-                >
-                  <ProviderList
-                    providers={providers}
-                    currentProviderId={currentProviderId}
-                    appId={activeApp}
-                    isLoading={isLoading}
-                    isProxyRunning={isProxyRunning}
-                    isProxyTakeover={
-                      isProxyRunning && isCurrentAppTakeoverActive
-                    }
-                    activeProviderId={activeProviderId}
-                    onSwitch={switchProvider}
-                    onEdit={setEditingProvider}
-                    onDelete={setConfirmDelete}
-                    onDuplicate={handleDuplicateProvider}
-                    onConfigureUsage={setUsageProvider}
-                    onOpenWebsite={handleOpenWebsite}
-                    onCreate={() => setIsAddOpen(true)}
-                  />
-                </motion.div>
-              </AnimatePresence>
+    const content = (() => {
+      switch (currentView) {
+        case "settings":
+          return (
+            <SettingsPage
+              open={true}
+              onOpenChange={() => setCurrentView("providers")}
+              onImportSuccess={handleImportSuccess}
+            />
+          );
+        case "prompts":
+          return (
+            <PromptPanel
+              ref={promptPanelRef}
+              open={true}
+              onOpenChange={() => setCurrentView("providers")}
+              appId={activeApp}
+            />
+          );
+        case "skills":
+          return (
+            <SkillsPage
+              ref={skillsPageRef}
+              onClose={() => setCurrentView("providers")}
+              initialApp={activeApp}
+            />
+          );
+        case "mcp":
+          return (
+            <UnifiedMcpPanel
+              ref={mcpPanelRef}
+              onOpenChange={() => setCurrentView("providers")}
+            />
+          );
+        case "agents":
+          return <AgentsPanel onOpenChange={() => setCurrentView("providers")} />;
+        default:
+          return (
+            <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
+              {/* 独立滚动容器 - 解决 Linux/Ubuntu 下 DndContext 与滚轮事件冲突 */}
+              <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={activeApp}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="space-y-4"
+                  >
+                    <ProviderList
+                      providers={providers}
+                      currentProviderId={currentProviderId}
+                      appId={activeApp}
+                      isLoading={isLoading}
+                      isProxyRunning={isProxyRunning}
+                      isProxyTakeover={isProxyRunning && isCurrentAppTakeoverActive}
+                      activeProviderId={activeProviderId}
+                      onSwitch={switchProvider}
+                      onEdit={setEditingProvider}
+                      onDelete={setConfirmDelete}
+                      onDuplicate={handleDuplicateProvider}
+                      onConfigureUsage={setUsageProvider}
+                      onOpenWebsite={handleOpenWebsite}
+                      onCreate={() => setIsAddOpen(true)}
+                    />
+                  </motion.div>
+                </AnimatePresence>
+              </div>
             </div>
-          </div>
-        );
-    }
+          );
+      }
+    })();
+
+    return (
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={currentView}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+        >
+          {content}
+        </motion.div>
+      </AnimatePresence>
+    );
   };
 
   return (
@@ -494,14 +508,14 @@ function App() {
           </div>
 
           <div
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 min-h-[40px]"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
             {currentView === "prompts" && (
               <Button
                 size="icon"
                 onClick={() => promptPanelRef.current?.openAdd()}
-                className={addActionButtonClass}
+                className={`ml-auto ${addActionButtonClass}`}
                 title={t("prompts.add")}
               >
                 <Plus className="w-5 h-5" />
@@ -511,7 +525,7 @@ function App() {
               <Button
                 size="icon"
                 onClick={() => mcpPanelRef.current?.openAdd()}
-                className={addActionButtonClass}
+                className={`ml-auto ${addActionButtonClass}`}
                 title={t("mcp.unifiedPanel.addServer")}
               >
                 <Plus className="w-5 h-5" />
