@@ -502,8 +502,8 @@ pub fn run() {
             tray::init_tray_popover_window(app)?;
 
             // 构建托盘
-            let mut tray_builder = TrayIconBuilder::with_id("main")
-                .on_tray_icon_event(|tray, event| match event {
+            let mut tray_builder =
+                TrayIconBuilder::with_id("main").on_tray_icon_event(|tray, event| match event {
                     TrayIconEvent::Click {
                         button,
                         button_state,
@@ -530,21 +530,18 @@ pub fn run() {
                         position,
                         rect,
                         ..
-                    } => {
-                        match button {
-                            MouseButton::Left => {
-                                tray::hide_tray_popover(tray.app_handle());
-                                tray::show_main_window(tray.app_handle());
-                            }
-                            MouseButton::Right => {
-                                tray::toggle_tray_popover(tray.app_handle(), position, rect);
-                            }
-                            _ => {}
+                    } => match button {
+                        MouseButton::Left => {
+                            tray::hide_tray_popover(tray.app_handle());
+                            tray::show_main_window(tray.app_handle());
                         }
-                    }
+                        MouseButton::Right => {
+                            tray::toggle_tray_popover(tray.app_handle(), position, rect);
+                        }
+                        _ => {}
+                    },
                     _ => log::debug!("unhandled event {event:?}"),
-                })
-                ;
+                });
 
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
             #[cfg(target_os = "macos")]

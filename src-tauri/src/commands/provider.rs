@@ -82,8 +82,7 @@ pub fn switch_provider(
     id: String,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    switch_provider_internal(&state, app_type.clone(), &id)
-        .map_err(|e| e.to_string())?;
+    switch_provider_internal(&state, app_type.clone(), &id).map_err(|e| e.to_string())?;
 
     let payload = serde_json::json!({
         "appType": app_type.as_str(),

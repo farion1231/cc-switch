@@ -105,7 +105,6 @@ impl FailoverSwitchManager {
                         log::warn!("[Failover] 更新 Live 备份失败: {e}");
                     }
                 }
-
             }
 
             // 发射事件到前端
