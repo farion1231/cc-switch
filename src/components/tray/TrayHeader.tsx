@@ -109,8 +109,7 @@ export const TrayHeader = ({
             )}
           </div>
         </div>
-        {/* TODO usage */}
-        {/* <div className="flex flex-col items-center gap-2" data-tauri-no-drag>
+        <div className="flex flex-col items-center gap-2" data-tauri-no-drag>
           <button
             onClick={onToggleView}
             className={cn(
@@ -122,7 +121,7 @@ export const TrayHeader = ({
           >
             <TrendingUp className="w-5 h-5 text-slate-600" />
           </button>
-        </div> */}
+        </div>
       </div>
     </div>
   );

@@ -124,12 +124,6 @@ const TrayPopoverApp = () => {
     };
   }, [trayWindow]);
 
-  useEffect(() => {
-    if (viewMode === "trends" && isSearchOpen) {
-      setIsSearchOpen(false);
-      setSearchQuery("");
-    }
-  }, [isSearchOpen, viewMode]);
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
@@ -246,14 +240,20 @@ const TrayPopoverApp = () => {
     setViewMode("main");
   }, []);
 
-  const handleToggleSearch = useCallback(() => {
-    setIsSearchOpen((prev) => {
-      if (prev) {
-        setSearchQuery("");
-      }
-      return !prev;
-    });
+  const handleOpenSearch = useCallback(() => {
+    setIsSearchOpen(true);
   }, []);
+
+  const handleCloseSearch = useCallback(() => {
+    setIsSearchOpen(false);
+    setSearchQuery("");
+  }, []);
+
+  useEffect(() => {
+    if (viewMode === "trends" && isSearchOpen) {
+      handleCloseSearch();
+    }
+  }, [handleCloseSearch, isSearchOpen, viewMode]);
 
   const handleSwitch = useCallback(
     async (appId: AppId, provider: Provider) => {
@@ -469,7 +469,8 @@ const TrayPopoverApp = () => {
         isSearchOpen={isSearchOpen}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        onToggleSearch={handleToggleSearch}
+        onOpenSearch={handleOpenSearch}
+        onCloseSearch={handleCloseSearch}
       />
       </div>
     </motion.div>
