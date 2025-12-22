@@ -61,27 +61,16 @@ pub async fn handle_messages(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
-    let ctx = RequestContext::new(&state, &body, AppType::Claude, "Claude", "claude").await?;
-
-    // 检查是否需要格式转换（OpenRouter 等中转服务）
-    let adapter = get_adapter(&AppType::Claude);
-    let needs_transform = adapter.needs_transform(&ctx.provider);
+    let mut ctx = RequestContext::new(&state, &body, AppType::Claude, "Claude", "claude").await?;
 
     let is_stream = body
         .get("stream")
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
 
-    log::info!(
-        "[Claude] Provider: {}, needs_transform: {}, is_stream: {}",
-        ctx.provider.name,
-        needs_transform,
-        is_stream
-    );
-
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
-    let response = match forwarder
+    let result = match forwarder
         .forward_with_retry(
             &AppType::Claude,
             "/v1/messages",
@@ -91,12 +80,29 @@ pub async fn handle_messages(
         )
         .await
     {
-        Ok(resp) => resp,
-        Err(e) => {
-            log_forward_error(&state, &ctx, is_stream, &e);
-            return Err(e);
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, is_stream, &err.error);
+            return Err(err.error);
         }
     };
+
+    ctx.provider = result.provider;
+    let response = result.response;
+
+    // 检查是否需要格式转换（OpenRouter 等中转服务）
+    let adapter = get_adapter(&AppType::Claude);
+    let needs_transform = adapter.needs_transform(&ctx.provider);
+
+    log::info!(
+        "[Claude] Provider: {}, needs_transform: {}, is_stream: {}",
+        ctx.provider.name,
+        needs_transform,
+        is_stream
+    );
 
     let status = response.status();
     log::info!("[Claude] 上游响应状态: {status}");
@@ -295,7 +301,7 @@ pub async fn handle_chat_completions(
 ) -> Result<axum::response::Response, ProxyError> {
     log::info!("[Codex] ====== /v1/chat/completions 请求开始 ======");
 
-    let ctx = RequestContext::new(&state, &body, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx = RequestContext::new(&state, &body, AppType::Codex, "Codex", "codex").await?;
 
     let is_stream = body
         .get("stream")
@@ -309,7 +315,7 @@ pub async fn handle_chat_completions(
     );
 
     let forwarder = ctx.create_forwarder(&state);
-    let response = match forwarder
+    let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
             "/v1/chat/completions",
@@ -319,12 +325,18 @@ pub async fn handle_chat_completions(
         )
         .await
     {
-        Ok(resp) => resp,
-        Err(e) => {
-            log_forward_error(&state, &ctx, is_stream, &e);
-            return Err(e);
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, is_stream, &err.error);
+            return Err(err.error);
         }
     };
+
+    ctx.provider = result.provider;
+    let response = result.response;
 
     log::info!("[Codex] 上游响应状态: {}", response.status());
 
@@ -337,7 +349,7 @@ pub async fn handle_responses(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
-    let ctx = RequestContext::new(&state, &body, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx = RequestContext::new(&state, &body, AppType::Codex, "Codex", "codex").await?;
 
     let is_stream = body
         .get("stream")
@@ -345,7 +357,7 @@ pub async fn handle_responses(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let response = match forwarder
+    let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
             "/v1/responses",
@@ -355,12 +367,18 @@ pub async fn handle_responses(
         )
         .await
     {
-        Ok(resp) => resp,
-        Err(e) => {
-            log_forward_error(&state, &ctx, is_stream, &e);
-            return Err(e);
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, is_stream, &err.error);
+            return Err(err.error);
         }
     };
+
+    ctx.provider = result.provider;
+    let response = result.response;
 
     log::info!("[Codex] 上游响应状态: {}", response.status());
 
@@ -379,7 +397,7 @@ pub async fn handle_gemini(
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     // Gemini 的模型名称在 URI 中
-    let ctx = RequestContext::new(&state, &body, AppType::Gemini, "Gemini", "gemini")
+    let mut ctx = RequestContext::new(&state, &body, AppType::Gemini, "Gemini", "gemini")
         .await?
         .with_model_from_uri(&uri);
 
@@ -397,7 +415,7 @@ pub async fn handle_gemini(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let response = match forwarder
+    let result = match forwarder
         .forward_with_retry(
             &AppType::Gemini,
             endpoint,
@@ -407,12 +425,18 @@ pub async fn handle_gemini(
         )
         .await
     {
-        Ok(resp) => resp,
-        Err(e) => {
-            log_forward_error(&state, &ctx, is_stream, &e);
-            return Err(e);
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, is_stream, &err.error);
+            return Err(err.error);
         }
     };
+
+    ctx.provider = result.provider;
+    let response = result.response;
 
     log::info!("[Gemini] 上游响应状态: {}", response.status());
 

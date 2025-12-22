@@ -17,6 +17,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
+pub struct ForwardResult {
+    pub response: Response,
+    pub provider: Provider,
+}
+
+pub struct ForwardError {
+    pub error: ProxyError,
+    pub provider: Option<Provider>,
+}
+
 pub struct RequestForwarder {
     client: Client,
     /// 共享的 ProviderRouter（持有熔断器状态）
@@ -134,13 +144,16 @@ impl RequestForwarder {
         body: Value,
         headers: axum::http::HeaderMap,
         providers: Vec<Provider>,
-    ) -> Result<Response, ProxyError> {
+    ) -> Result<ForwardResult, ForwardError> {
         // 获取适配器
         let adapter = get_adapter(app_type);
         let app_type_str = app_type.as_str();
 
         if providers.is_empty() {
-            return Err(ProxyError::NoAvailableProvider);
+            return Err(ForwardError {
+                error: ProxyError::NoAvailableProvider,
+                provider: None,
+            });
         }
 
         log::info!(
@@ -150,6 +163,7 @@ impl RequestForwarder {
         );
 
         let mut last_error = None;
+        let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
         // 依次尝试每个供应商
@@ -269,7 +283,10 @@ impl RequestForwarder {
                         latency
                     );
 
-                    return Ok(response);
+                    return Ok(ForwardResult {
+                        response,
+                        provider: provider.clone(),
+                    });
                 }
                 Err(e) => {
                     let latency = start.elapsed().as_millis() as u64;
@@ -310,6 +327,7 @@ impl RequestForwarder {
                             );
 
                             last_error = Some(e);
+                            last_provider = Some(provider.clone());
                             // 继续尝试下一个供应商
                             continue;
                         }
@@ -331,7 +349,10 @@ impl RequestForwarder {
                                 provider.name,
                                 e
                             );
-                            return Err(e);
+                            return Err(ForwardError {
+                                error: e,
+                                provider: Some(provider.clone()),
+                            });
                         }
                     }
                 }
@@ -349,7 +370,10 @@ impl RequestForwarder {
                         (status.success_requests as f32 / status.total_requests as f32) * 100.0;
                 }
             }
-            return Err(ProxyError::NoAvailableProvider);
+            return Err(ForwardError {
+                error: ProxyError::NoAvailableProvider,
+                provider: None,
+            });
         }
 
         // 所有供应商都失败了
@@ -369,7 +393,10 @@ impl RequestForwarder {
             providers.len()
         );
 
-        Err(last_error.unwrap_or(ProxyError::MaxRetriesExceeded))
+        Err(ForwardError {
+            error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
+            provider: last_provider,
+        })
     }
 
     /// 转发单个请求（使用适配器）
