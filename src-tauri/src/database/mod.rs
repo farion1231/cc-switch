@@ -24,7 +24,7 @@
 //! ```
 
 mod backup;
-mod dao;
+pub mod dao;
 mod migration;
 mod schema;
 

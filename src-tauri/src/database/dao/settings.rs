@@ -4,7 +4,9 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+use crate::webdav::WebDavConfig;
 use rusqlite::params;
+use serde_json;
 
 impl Database {
     /// 获取设置值
@@ -112,6 +114,35 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         log::info!("已清除所有代理接管状态");
+        Ok(())
+    }
+
+    // --- WebDAV 配置管理 ---
+
+    /// 保存 WebDAV 配置
+    pub fn save_webdav_config(&self, config: &WebDavConfig) -> Result<(), AppError> {
+        let config_json = serde_json::to_string(config)
+            .map_err(|e| AppError::JsonSerialize { source: e })?;
+        self.set_setting("webdav_config", &config_json)
+    }
+
+    /// 获取 WebDAV 配置
+    pub fn get_webdav_config(&self) -> Result<Option<WebDavConfig>, AppError> {
+        match self.get_setting("webdav_config")? {
+            Some(json_str) => {
+                let config = serde_json::from_str(&json_str)
+                    .map_err(|e| AppError::json(&json_str, e))?;
+                Ok(Some(config))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// 删除 WebDAV 配置
+    pub fn delete_webdav_config(&self) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute("DELETE FROM settings WHERE key = 'webdav_config'", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 }

@@ -23,6 +23,7 @@ mod settings;
 mod store;
 mod tray;
 mod usage_script;
+mod webdav;
 
 pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
@@ -692,6 +693,14 @@ pub fn run() {
             commands::get_stream_check_config,
             commands::save_stream_check_config,
             commands::get_tool_versions,
+            // WebDAV cloud backup
+            commands::save_webdav_config,
+            commands::get_webdav_config,
+            commands::test_webdav_connection,
+            commands::export_config_to_webdav,
+            commands::import_config_from_webdav,
+            commands::list_webdav_backups,
+            commands::delete_webdav_backup,
         ]);
 
     let app = builder

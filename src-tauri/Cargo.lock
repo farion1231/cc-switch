@@ -746,6 +746,7 @@ dependencies = [
  "tower-http 0.5.2",
  "url",
  "uuid",
+ "webdav-request",
  "winreg 0.52.0",
  "zip 2.4.2",
 ]
@@ -3752,6 +3753,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
 dependencies = [
  "memchr",
+ "serde",
 ]
 
 [[package]]
@@ -6272,6 +6274,22 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webdav-request"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fef311159c1543376be9d76d7926621f6153ade834d63db2e4f6a0949e694c1"
+dependencies = [
+ "bytes",
+ "percent-encoding",
+ "quick-xml 0.37.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
 ]
 
 [[package]]

@@ -6,9 +6,9 @@ import {
   FolderSearch,
   Activity,
   Coins,
-  Database,
   Server,
   ChevronDown,
+  Database,
 } from "lucide-react";
 import * as AccordionPrimitive from "@radix-ui/react-accordion";
 import { toast } from "sonner";
@@ -31,8 +31,8 @@ import { settingsApi } from "@/lib/api";
 import { LanguageSettings } from "@/components/settings/LanguageSettings";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
 import { WindowSettings } from "@/components/settings/WindowSettings";
+import { WebDavSettings } from "@/components/settings/WebDavSettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
-import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { ProxyPanel } from "@/components/proxy";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
@@ -481,7 +481,7 @@ export function SettingsPage({
                     </AccordionItem>
 
                     <AccordionItem
-                      value="data"
+                      value="backup"
                       className="rounded-xl glass-card overflow-hidden"
                     >
                       <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
@@ -489,17 +489,17 @@ export function SettingsPage({
                           <Database className="h-5 w-5 text-blue-500" />
                           <div className="text-left">
                             <h3 className="text-base font-semibold">
-                              {t("settings.advanced.data.title")}
+                              备份与恢复
                             </h3>
                             <p className="text-sm text-muted-foreground font-normal">
-                              {t("settings.advanced.data.description")}
+                              本地备份和云端备份管理
                             </p>
                           </div>
                         </div>
                       </AccordionTrigger>
                       <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                        <ImportExportSection
-                          status={importStatus}
+                        <WebDavSettings
+                          importStatus={importStatus}
                           selectedFile={selectedFile}
                           errorMessage={errorMessage}
                           backupId={backupId}
@@ -512,26 +512,6 @@ export function SettingsPage({
                       </AccordionContent>
                     </AccordionItem>
                   </Accordion>
-
-                  <div className="pt-4">
-                    <Button
-                      onClick={handleSave}
-                      className="w-full h-12 text-base font-medium"
-                      disabled={isSaving}
-                    >
-                      {isSaving ? (
-                        <span className="inline-flex items-center gap-2">
-                          <Loader2 className="h-5 w-5 animate-spin" />
-                          {t("settings.saving")}
-                        </span>
-                      ) : (
-                        <>
-                          <Save className="mr-2 h-5 w-5" />
-                          {t("common.save")}
-                        </>
-                      )}
-                    </Button>
-                  </div>
                 </motion.div>
               ) : null}
             </TabsContent>
