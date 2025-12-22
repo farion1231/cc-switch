@@ -169,6 +169,10 @@ export function ProviderCard({
     ? activeProviderId === provider.id
     : isCurrent;
 
+  // 判断是否使用绿色（代理接管模式）还是蓝色（普通模式）
+  const shouldUseGreen = isProxyTakeover && isActiveProvider;
+  const shouldUseBlue = !isProxyTakeover && isActiveProvider;
+
   return (
     <div
       className={cn(
@@ -179,9 +183,9 @@ export function ProviderCard({
           ? "hover:border-emerald-500/50"
           : "hover:border-border-active",
         // 当前激活的供应商边框样式
-        isActiveProvider
-          ? "border-emerald-500/60 shadow-sm shadow-emerald-500/10"
-          : "hover:shadow-sm",
+        shouldUseGreen && "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
+        shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
+        !isActiveProvider && "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
@@ -189,8 +193,10 @@ export function ProviderCard({
       <div
         className={cn(
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
-          // 当前激活的供应商使用绿色渐变
-          isActiveProvider ? "from-emerald-500/10" : "from-primary/10",
+          // 代理接管模式使用绿色渐变，普通模式使用蓝色渐变
+          shouldUseGreen && "from-emerald-500/10",
+          shouldUseBlue && "from-blue-500/10",
+          !isActiveProvider && "from-primary/10",
           isActiveProvider ? "opacity-100" : "opacity-0",
         )}
       />
