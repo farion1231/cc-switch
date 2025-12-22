@@ -313,8 +313,19 @@ impl Database {
             [],
         );
 
+        // 确保 in_failover_queue 列存在（对于已存在的 v2 数据库）
+        Self::add_column_if_missing(
+            conn,
+            "providers",
+            "in_failover_queue",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        // 删除旧的 failover_queue 表（如果存在）
+        let _ = conn.execute("DROP INDEX IF EXISTS idx_failover_queue_order", []);
+        let _ = conn.execute("DROP TABLE IF EXISTS failover_queue", []);
+
         // 为故障转移队列创建索引（基于 providers 表）
-        // 注意：此索引依赖 in_failover_queue 列，对于旧数据库会在迁移时创建
         let _ = conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_providers_failover
              ON providers(app_type, in_failover_queue, sort_index)",
