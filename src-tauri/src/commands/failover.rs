@@ -1,6 +1,6 @@
 //! 故障转移队列命令
 //!
-//! 管理代理模式下的故障转移队列
+//! 管理代理模式下的故障转移队列（基于 providers 表的 in_failover_queue 字段）
 
 use crate::database::FailoverQueueItem;
 use crate::provider::Provider;
@@ -56,32 +56,6 @@ pub async fn remove_from_failover_queue(
         .map_err(|e| e.to_string())
 }
 
-/// 重新排序故障转移队列
-#[tauri::command]
-pub async fn reorder_failover_queue(
-    state: tauri::State<'_, AppState>,
-    app_type: String,
-    provider_ids: Vec<String>,
-) -> Result<(), String> {
-    state
-        .db
-        .reorder_failover_queue(&app_type, &provider_ids)
-        .map_err(|e| e.to_string())
-}
-
-/// 设置故障转移队列项的启用状态
-#[tauri::command]
-pub async fn set_failover_item_enabled(
-    state: tauri::State<'_, AppState>,
-    app_type: String,
-    provider_id: String,
-    enabled: bool,
-) -> Result<(), String> {
-    state
-        .db
-        .set_failover_item_enabled(&app_type, &provider_id, enabled)
-        .map_err(|e| e.to_string())
-}
 /// 获取指定应用的自动故障转移开关状态
 #[tauri::command]
 pub async fn get_auto_failover_enabled(

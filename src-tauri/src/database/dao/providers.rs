@@ -17,7 +17,7 @@ impl Database {
     ) -> Result<IndexMap<String, Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta
+            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
              FROM providers WHERE app_type = ?1
              ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
@@ -35,6 +35,7 @@ impl Database {
                 let icon: Option<String> = row.get(8)?;
                 let icon_color: Option<String> = row.get(9)?;
                 let meta_str: String = row.get(10)?;
+                let in_failover_queue: bool = row.get(11)?;
 
                 let settings_config =
                     serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
@@ -54,6 +55,7 @@ impl Database {
                         meta: Some(meta),
                         icon,
                         icon_color,
+                        in_failover_queue,
                     },
                 ))
             })
@@ -129,7 +131,7 @@ impl Database {
     ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let result = conn.query_row(
-            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta
+            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
              FROM providers WHERE id = ?1 AND app_type = ?2",
             params![id, app_type],
             |row| {
@@ -143,6 +145,7 @@ impl Database {
                 let icon: Option<String> = row.get(7)?;
                 let icon_color: Option<String> = row.get(8)?;
                 let meta_str: String = row.get(9)?;
+                let in_failover_queue: bool = row.get(10)?;
 
                 let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
                 let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
@@ -159,6 +162,7 @@ impl Database {
                     meta: Some(meta),
                     icon,
                     icon_color,
+                    in_failover_queue,
                 })
             },
         );
@@ -184,17 +188,18 @@ impl Database {
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
 
-        // 检查是否存在（用于判断新增/更新，以及保留 is_current）
-        let existing: Option<bool> = tx
+        // 检查是否存在（用于判断新增/更新，以及保留 is_current 和 in_failover_queue）
+        let existing: Option<(bool, bool)> = tx
             .query_row(
-                "SELECT is_current FROM providers WHERE id = ?1 AND app_type = ?2",
+                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
                 params![provider.id, app_type],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .ok();
 
         let is_update = existing.is_some();
-        let is_current = existing.unwrap_or(false);
+        let (is_current, in_failover_queue) =
+            existing.unwrap_or((false, provider.in_failover_queue));
 
         if is_update {
             // 更新模式：使用 UPDATE 避免触发 ON DELETE CASCADE
@@ -210,8 +215,9 @@ impl Database {
                     icon = ?8,
                     icon_color = ?9,
                     meta = ?10,
-                    is_current = ?11
-                WHERE id = ?12 AND app_type = ?13",
+                    is_current = ?11,
+                    in_failover_queue = ?12
+                WHERE id = ?13 AND app_type = ?14",
                 params![
                     provider.name,
                     serde_json::to_string(&provider.settings_config).unwrap(),
@@ -224,6 +230,7 @@ impl Database {
                     provider.icon_color,
                     serde_json::to_string(&meta_clone).unwrap(),
                     is_current,
+                    in_failover_queue,
                     provider.id,
                     app_type,
                 ],
@@ -234,8 +241,8 @@ impl Database {
             tx.execute(
                 "INSERT INTO providers (
                     id, app_type, name, settings_config, website_url, category,
-                    created_at, sort_index, notes, icon, icon_color, meta, is_current
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     provider.id,
                     app_type,
@@ -250,6 +257,7 @@ impl Database {
                     provider.icon_color,
                     serde_json::to_string(&meta_clone).unwrap(),
                     is_current,
+                    in_failover_queue,
                 ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;

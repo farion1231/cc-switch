@@ -17,9 +17,8 @@ import {
   useFailoverQueue,
   useAddToFailoverQueue,
   useRemoveFromFailoverQueue,
-  useReorderFailoverQueue,
 } from "@/lib/query/failover";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback } from "react";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -67,22 +66,16 @@ export function ProviderList({
   const { data: failoverQueue } = useFailoverQueue(appId);
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
-  const reorderQueue = useReorderFailoverQueue();
 
   // 联动状态：只有当前应用开启代理接管且故障转移开启时才启用故障转移模式
   const isFailoverModeActive =
     isProxyTakeover === true && isAutoFailoverEnabled === true;
 
-  // 防止重复调用的 ref
-  const lastReorderRef = useRef<string>("");
-
-  // 计算供应商在故障转移队列中的优先级
+  // 计算供应商在故障转移队列中的优先级（基于 sortIndex 排序）
   const getFailoverPriority = useCallback(
     (providerId: string): number | undefined => {
       if (!isFailoverModeActive || !failoverQueue) return undefined;
-      // 只计算已启用的供应商的优先级
-      const enabledQueue = failoverQueue.filter((item) => item.enabled);
-      const index = enabledQueue.findIndex(
+      const index = failoverQueue.findIndex(
         (item) => item.providerId === providerId,
       );
       return index >= 0 ? index + 1 : undefined;
@@ -94,9 +87,7 @@ export function ProviderList({
   const isInFailoverQueue = useCallback(
     (providerId: string): boolean => {
       if (!isFailoverModeActive || !failoverQueue) return false;
-      return failoverQueue.some(
-        (item) => item.providerId === providerId && item.enabled,
-      );
+      return failoverQueue.some((item) => item.providerId === providerId);
     },
     [isFailoverModeActive, failoverQueue],
   );
@@ -112,42 +103,6 @@ export function ProviderList({
     },
     [appId, addToQueue, removeFromQueue],
   );
-
-  // 当拖拽排序后，同步故障转移队列顺序
-  useEffect(() => {
-    if (!isFailoverModeActive || !failoverQueue || failoverQueue.length === 0)
-      return;
-
-    // 获取当前在队列中且已启用的供应商 ID 列表（按显示顺序）
-    const enabledProviderIds = sortedProviders
-      .filter((p) => isInFailoverQueue(p.id))
-      .map((p) => p.id);
-
-    if (enabledProviderIds.length === 0) return;
-
-    // 生成唯一标识防止重复调用
-    const orderKey = enabledProviderIds.join(",");
-    if (orderKey === lastReorderRef.current) return;
-
-    // 检查顺序是否需要更新
-    const currentOrder = failoverQueue
-      .filter((item) => item.enabled)
-      .sort((a, b) => a.queueOrder - b.queueOrder)
-      .map((item) => item.providerId)
-      .join(",");
-
-    if (orderKey !== currentOrder) {
-      lastReorderRef.current = orderKey;
-      reorderQueue.mutate({ appType: appId, providerIds: enabledProviderIds });
-    }
-  }, [
-    sortedProviders,
-    isFailoverModeActive,
-    failoverQueue,
-    isInFailoverQueue,
-    appId,
-    reorderQueue,
-  ]);
 
   const handleTest = (provider: Provider) => {
     checkProvider(provider.id, provider.name);

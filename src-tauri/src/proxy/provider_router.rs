@@ -34,7 +34,6 @@ impl ProviderRouter {
     /// - 故障转移开启时：完全按照故障转移队列顺序返回，忽略当前供应商设置
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
-        let all_providers = self.db.get_all_providers(app_type)?;
 
         // 检查该应用的自动故障转移开关是否开启
         let failover_key = format!("auto_failover_enabled_{app_type}");
@@ -61,42 +60,34 @@ impl ProviderRouter {
         };
 
         if auto_failover_enabled {
-            // 故障转移开启：完全按照队列顺序，忽略当前供应商
-            let queue = self.db.get_failover_queue(app_type)?;
+            // 故障转移开启：使用 in_failover_queue 标记的供应商，按 sort_index 排序
+            let failover_providers = self.db.get_failover_providers(app_type)?;
             log::info!(
                 "[{}] Failover enabled, using queue order ({} items)",
                 app_type,
-                queue.len()
+                failover_providers.len()
             );
 
-            for item in queue {
-                // 跳过禁用的队列项
-                if !item.enabled {
-                    continue;
-                }
+            for provider in failover_providers {
+                // 检查熔断器状态
+                let circuit_key = format!("{}:{}", app_type, provider.id);
+                let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
-                // 获取供应商信息
-                if let Some(provider) = all_providers.get(&item.provider_id) {
-                    // 检查熔断器状态
-                    let circuit_key = format!("{}:{}", app_type, provider.id);
-                    let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
-
-                    if breaker.is_available().await {
-                        log::info!(
-                            "[{}] Queue provider available: {} ({}) at position {}",
-                            app_type,
-                            provider.name,
-                            provider.id,
-                            item.queue_order
-                        );
-                        result.push(provider.clone());
-                    } else {
-                        log::debug!(
-                            "[{}] Queue provider {} circuit breaker open, skipping",
-                            app_type,
-                            provider.name
-                        );
-                    }
+                if breaker.is_available().await {
+                    log::info!(
+                        "[{}] Queue provider available: {} ({}) at sort_index {:?}",
+                        app_type,
+                        provider.name,
+                        provider.id,
+                        provider.sort_index
+                    );
+                    result.push(provider);
+                } else {
+                    log::debug!(
+                        "[{}] Queue provider {} circuit breaker open, skipping",
+                        app_type,
+                        provider.name
+                    );
                 }
             }
         } else {
@@ -104,7 +95,7 @@ impl ProviderRouter {
             log::info!("[{app_type}] Failover disabled, using current provider only");
 
             if let Some(current_id) = self.db.get_current_provider(app_type)? {
-                if let Some(current) = all_providers.get(&current_id) {
+                if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
                     let circuit_key = format!("{}:{}", app_type, current.id);
                     let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
@@ -115,7 +106,7 @@ impl ProviderRouter {
                             current.name,
                             current.id
                         );
-                        result.push(current.clone());
+                        result.push(current);
                     } else {
                         log::warn!(
                             "[{}] Current provider {} circuit breaker open",
@@ -320,10 +311,13 @@ mod tests {
     async fn test_failover_enabled_uses_queue_order() {
         let db = Arc::new(Database::memory().unwrap());
 
-        let provider_a =
+        // 设置 sort_index 来控制顺序：b=1, a=2
+        let mut provider_a =
             Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
-        let provider_b =
+        provider_a.sort_index = Some(2);
+        let mut provider_b =
             Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        provider_b.sort_index = Some(1);
 
         db.save_provider("claude", &provider_a).unwrap();
         db.save_provider("claude", &provider_b).unwrap();
@@ -338,6 +332,7 @@ mod tests {
         let providers = router.select_providers("claude").await.unwrap();
 
         assert_eq!(providers.len(), 2);
+        // 按 sort_index 排序：b(1) 在前，a(2) 在后
         assert_eq!(providers[0].id, "b");
         assert_eq!(providers[1].id, "a");
     }

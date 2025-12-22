@@ -36,6 +36,10 @@ pub struct Provider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "iconColor")]
     pub icon_color: Option<String>,
+    /// 是否加入故障转移队列
+    #[serde(default)]
+    #[serde(rename = "inFailoverQueue")]
+    pub in_failover_queue: bool,
 }
 
 impl Provider {
@@ -58,6 +62,7 @@ impl Provider {
             meta: None,
             icon: None,
             icon_color: None,
+            in_failover_queue: false,
         }
     }
 }

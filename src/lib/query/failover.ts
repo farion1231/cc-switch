@@ -131,6 +131,9 @@ export function useAddToFailoverQueue() {
       queryClient.invalidateQueries({
         queryKey: ["availableProvidersForFailover", variables.appType],
       });
+      queryClient.invalidateQueries({
+        queryKey: ["providers", variables.appType],
+      });
     },
   });
 }
@@ -156,92 +159,8 @@ export function useRemoveFromFailoverQueue() {
       queryClient.invalidateQueries({
         queryKey: ["availableProvidersForFailover", variables.appType],
       });
-    },
-  });
-}
-
-/**
- * 重新排序故障转移队列
- */
-export function useReorderFailoverQueue() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({
-      appType,
-      providerIds,
-    }: {
-      appType: string;
-      providerIds: string[];
-    }) => failoverApi.reorderFailoverQueue(appType, providerIds),
-    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({
-        queryKey: ["failoverQueue", variables.appType],
-      });
-    },
-  });
-}
-
-/**
- * 设置故障转移队列项的启用状态
- * 使用乐观更新(Optimistic Update)以提供即时反馈
- */
-export function useSetFailoverItemEnabled() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({
-      appType,
-      providerId,
-      enabled,
-    }: {
-      appType: string;
-      providerId: string;
-      enabled: boolean;
-    }) => failoverApi.setFailoverItemEnabled(appType, providerId, enabled),
-
-    // 乐观更新：立即更新缓存中的数据
-    onMutate: async (variables) => {
-      // 取消正在进行的查询，防止覆盖乐观更新
-      await queryClient.cancelQueries({
-        queryKey: ["failoverQueue", variables.appType],
-      });
-
-      // 保存之前的数据以便回滚
-      const previousQueue = queryClient.getQueryData<
-        import("@/types/proxy").FailoverQueueItem[]
-      >(["failoverQueue", variables.appType]);
-
-      // 乐观地更新缓存
-      if (previousQueue) {
-        queryClient.setQueryData<import("@/types/proxy").FailoverQueueItem[]>(
-          ["failoverQueue", variables.appType],
-          previousQueue.map((item) =>
-            item.providerId === variables.providerId
-              ? { ...item, enabled: variables.enabled }
-              : item,
-          ),
-        );
-      }
-
-      // 返回上下文供 onError 使用
-      return { previousQueue };
-    },
-
-    // 错误时回滚
-    onError: (_error, variables, context) => {
-      if (context?.previousQueue) {
-        queryClient.setQueryData(
-          ["failoverQueue", variables.appType],
-          context.previousQueue,
-        );
-      }
-    },
-
-    // 无论成功失败，都重新获取最新数据以确保一致性
-    onSettled: (_, __, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ["failoverQueue", variables.appType],
+        queryKey: ["providers", variables.appType],
       });
     },
   });

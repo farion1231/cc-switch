@@ -103,7 +103,5 @@ export interface ProxyUsageRecord {
 export interface FailoverQueueItem {
   providerId: string;
   providerName: string;
-  queueOrder: number;
-  enabled: boolean;
-  createdAt: number;
+  sortIndex?: number;
 }

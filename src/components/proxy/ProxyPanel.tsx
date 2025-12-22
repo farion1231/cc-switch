@@ -147,13 +147,10 @@ export function ProxyPanel() {
                     <ProviderQueueGroup
                       appType="claude"
                       appLabel="Claude"
-                      targets={claudeQueue
-                        .filter((item) => item.enabled)
-                        .sort((a, b) => a.queueOrder - b.queueOrder)
-                        .map((item) => ({
-                          id: item.providerId,
-                          name: item.providerName,
-                        }))}
+                      targets={claudeQueue.map((item) => ({
+                        id: item.providerId,
+                        name: item.providerName,
+                      }))}
                       status={status}
                     />
                   )}
@@ -163,13 +160,10 @@ export function ProxyPanel() {
                     <ProviderQueueGroup
                       appType="codex"
                       appLabel="Codex"
-                      targets={codexQueue
-                        .filter((item) => item.enabled)
-                        .sort((a, b) => a.queueOrder - b.queueOrder)
-                        .map((item) => ({
-                          id: item.providerId,
-                          name: item.providerName,
-                        }))}
+                      targets={codexQueue.map((item) => ({
+                        id: item.providerId,
+                        name: item.providerName,
+                      }))}
                       status={status}
                     />
                   )}
@@ -179,13 +173,10 @@ export function ProxyPanel() {
                     <ProviderQueueGroup
                       appType="gemini"
                       appLabel="Gemini"
-                      targets={geminiQueue
-                        .filter((item) => item.enabled)
-                        .sort((a, b) => a.queueOrder - b.queueOrder)
-                        .map((item) => ({
-                          id: item.providerId,
-                          name: item.providerName,
-                        }))}
+                      targets={geminiQueue.map((item) => ({
+                        id: item.providerId,
+                        name: item.providerName,
+                      }))}
                       status={status}
                     />
                   )}
