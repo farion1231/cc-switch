@@ -441,7 +441,7 @@ function App() {
           </div>
 
           <div
-            className="flex items-center gap-2 min-h-[40px]"
+            className="flex items-center gap-2 h-[32px]"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
             {currentView === "prompts" && (
@@ -551,13 +551,10 @@ function App() {
         </div>
       </header>
 
-      <main
-        className={`flex-1 overflow-y-auto pb-12 animate-fade-in scroll-overlay ${
-          currentView === "providers" ? "pt-24" : "pt-20"
-        }`}
-        style={{ overflowX: "hidden" }}
-      >
-        {renderContent()}
+      <main className="flex-1 pb-12 animate-fade-in ">
+        <div className="pb-12">
+          {renderContent()}
+        </div>
       </main>
 
       <AddProviderDialog
