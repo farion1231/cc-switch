@@ -258,7 +258,13 @@ impl ProxyService {
             .set_proxy_takeover_enabled(app_type_str, false)
             .map_err(|e| format!("清除 {app_type_str} 接管状态失败: {e}"))?;
 
-        // 4) 若无其它接管，更新旧标志，并停止代理服务
+        // 4) 清除该应用的健康状态（关闭代理时重置队列状态）
+        self.db
+            .clear_provider_health_for_app(app_type_str)
+            .await
+            .map_err(|e| format!("清除 {app_type_str} 健康状态失败: {e}"))?;
+
+        // 5) 若无其它接管，更新旧标志，并停止代理服务
         let has_any_backup = self
             .db
             .has_any_live_backup()
