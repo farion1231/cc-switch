@@ -119,6 +119,31 @@ impl Database {
         Ok(())
     }
 
+    /// 切换 Skill 仓库的启用状态
+    pub fn toggle_skill_repo_enabled(
+        &self,
+        owner: &str,
+        name: &str,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let rows_affected = conn
+            .execute(
+                "UPDATE skill_repos SET enabled = ?1 WHERE owner = ?2 AND name = ?3",
+                params![enabled, owner, name],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        if rows_affected == 0 {
+            return Err(AppError::Database(format!(
+                "仓库 {}/{} 不存在",
+                owner, name
+            )));
+        }
+
+        Ok(())
+    }
+
     /// 初始化默认的 Skill 仓库（首次启动时调用）
     pub fn init_default_skill_repos(&self) -> Result<usize, AppError> {
         // 检查是否已有仓库

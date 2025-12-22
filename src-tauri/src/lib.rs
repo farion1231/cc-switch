@@ -678,6 +678,8 @@ pub fn run() {
             // Skill management
             commands::get_skills,
             commands::get_skills_for_app,
+            commands::get_skills_for_repo,
+            commands::get_local_skills,
             commands::install_skill,
             commands::install_skill_for_app,
             commands::uninstall_skill,
@@ -685,6 +687,7 @@ pub fn run() {
             commands::get_skill_repos,
             commands::add_skill_repo,
             commands::remove_skill_repo,
+            commands::toggle_repo_enabled,
             commands::test_repo_connection,
             // Auto launch
             commands::set_auto_launch,

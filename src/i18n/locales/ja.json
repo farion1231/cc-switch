@@ -745,6 +745,10 @@
       "removeSuccess": "リポジトリ {{owner}}/{{name}} を削除しました",
       "removeFailed": "削除に失敗しました",
       "skillCount": "{{count}} 件のスキルを検出",
+      "hidden": "非表示",
+      "enable": "リポジトリを有効化",
+      "disable": "リポジトリを無効化",
+      "toggleFailed": "リポジトリの状態切り替えに失敗しました",
       "tabs": {
         "public": "公開リポジトリ",
         "private": "プライベートリポジトリ"
@@ -777,6 +781,14 @@
       "all": "すべて",
       "installed": "インストール済み",
       "uninstalled": "未インストール"
+    },
+    "repoFilter": {
+      "placeholder": "リポジトリで絞り込み",
+      "all": "すべてのリポジトリ",
+      "local": "ローカル"
+    },
+    "repoStatus": {
+      "loading": "リポジトリを読み込み中"
     },
     "noResults": "一致するスキルが見つかりませんでした"
   },

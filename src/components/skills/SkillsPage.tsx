@@ -1,6 +1,5 @@
 import {
   useState,
-  useEffect,
   useMemo,
   forwardRef,
   useImperativeHandle,
@@ -15,17 +14,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, Search } from "lucide-react";
+import { RefreshCw, Search, AlertCircle, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { SkillCard } from "./SkillCard";
 import { RepoManagerPanel } from "./RepoManagerPanel";
+import { RepoFilter, LOCAL_REPO_KEY, isInstalledSkill } from "./RepoFilter";
 import {
   skillsApi,
-  type Skill,
   type SkillRepo,
   type AppType,
 } from "@/lib/api/skills";
 import { formatSkillError } from "@/lib/errors/skillErrorParser";
+import { useSkillsLoader, getRepoKey } from "@/hooks/useSkillsLoader";
 
 interface SkillsPageProps {
   onClose?: () => void;
@@ -37,66 +37,99 @@ export interface SkillsPageHandle {
   openRepoManager: () => void;
 }
 
+/**
+ * 仓库加载状态显示组件
+ */
+function RepoLoadingStatus({
+  repos,
+  repoStates,
+}: {
+  repos: SkillRepo[];
+  repoStates: Map<string, import("@/lib/api/skills").RepoLoadingState>;
+}) {
+  const { t } = useTranslation();
+  const enabledRepos = repos.filter((repo) => repo.enabled);
+
+  if (enabledRepos.length === 0) {
+    return null;
+  }
+
+  // 检查是否有任何仓库正在加载或有错误
+  const hasLoadingOrError = enabledRepos.some((repo) => {
+    const state = repoStates.get(getRepoKey(repo));
+    return (
+      state?.status === "pending" ||
+      state?.status === "loading" ||
+      state?.status === "error"
+    );
+  });
+
+  // 如果所有仓库都成功加载，不显示状态区域
+  if (!hasLoadingOrError) {
+    return null;
+  }
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
+      <span className="text-muted-foreground">
+        {t("skills.repoStatus.loading")}:
+      </span>
+      {enabledRepos.map((repo) => {
+        const repoKey = getRepoKey(repo);
+        const state = repoStates.get(repoKey);
+        const status = state?.status || "pending";
+
+        return (
+          <div
+            key={repoKey}
+            className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/50"
+          >
+            {status === "pending" || status === "loading" ? (
+              <RefreshCw className="h-3 w-3 animate-spin text-muted-foreground" />
+            ) : status === "error" ? (
+              <AlertCircle className="h-3 w-3 text-destructive" />
+            ) : (
+              <CheckCircle2 className="h-3 w-3 text-green-500" />
+            )}
+            <span
+              className={`text-xs ${status === "error" ? "text-destructive" : "text-muted-foreground"}`}
+              title={state?.error}
+            >
+              {repo.owner}/{repo.name}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
   ({ onClose: _onClose, initialApp = "claude" }, ref) => {
     const { t } = useTranslation();
-    const [skills, setSkills] = useState<Skill[]>([]);
-    const [repos, setRepos] = useState<SkillRepo[]>([]);
-    const [loading, setLoading] = useState(true);
     const [repoManagerOpen, setRepoManagerOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [filterStatus, setFilterStatus] = useState<
       "all" | "installed" | "uninstalled"
     >("all");
+    // 默认选中"本地"筛选
+    const [selectedRepo, setSelectedRepo] = useState<string | "all">(LOCAL_REPO_KEY);
+
     // 使用 initialApp，不允许切换
     const selectedApp = initialApp;
 
-    const loadSkills = async (afterLoad?: (data: Skill[]) => void) => {
-      try {
-        setLoading(true);
-        const data = await skillsApi.getAll(selectedApp);
-        setSkills(data);
-        if (afterLoad) {
-          afterLoad(data);
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-
-        // 传入 "skills.loadFailed" 作为标题
-        const { title, description } = formatSkillError(
-          errorMessage,
-          t,
-          "skills.loadFailed",
-        );
-
-        toast.error(title, {
-          description,
-          duration: 8000,
-        });
-
-        console.error("Load skills failed:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    const loadRepos = async () => {
-      try {
-        const data = await skillsApi.getRepos();
-        setRepos(data);
-      } catch (error) {
-        console.error("Failed to load repos:", error);
-      }
-    };
-
-    useEffect(() => {
-      Promise.all([loadSkills(), loadRepos()]);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    // 使用渐进式加载 Hook
+    const {
+      skills,
+      repos,
+      repoStates,
+      isLoading,
+      isLoadingRepos,
+      refresh,
+    } = useSkillsLoader(selectedApp);
 
     useImperativeHandle(ref, () => ({
-      refresh: () => loadSkills(),
+      refresh: () => refresh(),
       openRepoManager: () => setRepoManagerOpen(true),
     }));
 
@@ -106,12 +139,11 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         toast.success(t("skills.installSuccess", { name: directory }), {
           closeButton: true,
         });
-        await loadSkills();
+        refresh();
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
 
-        // 使用错误解析器格式化错误，传入 "skills.installFailed"
         const { title, description } = formatSkillError(
           errorMessage,
           t,
@@ -120,7 +152,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
         toast.error(title, {
           description,
-          duration: 10000, // 延长显示时间让用户看清
+          duration: 10000,
         });
 
         console.error("Install skill failed:", {
@@ -137,12 +169,11 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         toast.success(t("skills.uninstallSuccess", { name: directory }), {
           closeButton: true,
         });
-        await loadSkills();
+        refresh();
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
 
-        // 使用错误解析器格式化错误，传入 "skills.uninstallFailed"
         const { title, description } = formatSkillError(
           errorMessage,
           t,
@@ -164,25 +195,13 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     const handleAddRepo = async (repo: SkillRepo) => {
       await skillsApi.addRepo(repo);
-
-      let repoSkillCount = 0;
-      await Promise.all([
-        loadRepos(),
-        loadSkills((data) => {
-          repoSkillCount = data.filter(
-            (skill) =>
-              skill.repoOwner === repo.owner &&
-              skill.repoName === repo.name &&
-              (skill.repoBranch || "main") === (repo.branch || "main"),
-          ).length;
-        }),
-      ]);
+      refresh();
 
       toast.success(
         t("skills.repo.addSuccess", {
           owner: repo.owner,
           name: repo.name,
-          count: repoSkillCount,
+          count: 0, // 技能数量会在刷新后更新
         }),
         { closeButton: true },
       );
@@ -193,43 +212,96 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       toast.success(t("skills.repo.removeSuccess", { owner, name }), {
         closeButton: true,
       });
-      await Promise.all([loadRepos(), loadSkills()]);
+      // 如果当前选中的仓库被删除，重置为 "all"
+      const removedRepoKey = `${owner}/${name}`;
+      if (selectedRepo === removedRepoKey) {
+        setSelectedRepo("all");
+      }
+      refresh();
     };
 
-    // 过滤技能列表
+    const handleToggleRepoEnabled = async (owner: string, name: string, enabled: boolean) => {
+      try {
+        await skillsApi.toggleRepoEnabled(owner, name, enabled);
+        refresh();
+      } catch (error) {
+        toast.error(t("skills.repo.toggleFailed"), {
+          closeButton: true,
+        });
+        console.error("Toggle repo enabled failed:", error);
+      }
+    };
+
+    // 过滤技能列表 - 支持仓库筛选 + 搜索 + 状态筛选组合
     const filteredSkills = useMemo(() => {
-      const byStatus = skills.filter((skill) => {
-        if (filterStatus === "installed") return skill.installed;
-        if (filterStatus === "uninstalled") return !skill.installed;
-        return true;
-      });
+      // 1. 按仓库筛选
+      let filtered = skills;
+      if (selectedRepo === LOCAL_REPO_KEY) {
+        // "本地" = 所有已安装的技能，按目录名去重
+        // 因为安装时只用目录名最后一段，所以不同仓库的同名技能会安装到同一目录
+        const installedSkills = skills.filter(isInstalledSkill);
+        const seenDirectories = new Set<string>();
+        filtered = installedSkills.filter((skill) => {
+          // 使用目录名最后一段作为去重 key
+          const dirName = skill.directory.split('/').pop()?.toLowerCase() || skill.directory.toLowerCase();
+          if (seenDirectories.has(dirName)) {
+            return false;
+          }
+          seenDirectories.add(dirName);
+          return true;
+        });
+      } else if (selectedRepo !== "all") {
+        // 筛选特定仓库的技能
+        filtered = skills.filter((skill) => {
+          const skillRepoKey = `${skill.repoOwner}/${skill.repoName}`;
+          return skillRepoKey === selectedRepo;
+        });
+      }
 
-      if (!searchQuery.trim()) return byStatus;
+      // 2. 按安装状态筛选（仅在非"本地"筛选时生效，因为"本地"已经是已安装的）
+      if (selectedRepo !== LOCAL_REPO_KEY) {
+        filtered = filtered.filter((skill) => {
+          if (filterStatus === "installed") return skill.installed;
+          if (filterStatus === "uninstalled") return !skill.installed;
+          return true;
+        });
+      }
 
-      const query = searchQuery.toLowerCase();
-      return byStatus.filter((skill) => {
-        const name = skill.name?.toLowerCase() || "";
-        const description = skill.description?.toLowerCase() || "";
-        const directory = skill.directory?.toLowerCase() || "";
+      // 3. 按搜索关键词筛选
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        filtered = filtered.filter((skill) => {
+          const name = skill.name?.toLowerCase() || "";
+          const description = skill.description?.toLowerCase() || "";
+          const directory = skill.directory?.toLowerCase() || "";
 
-        return (
-          name.includes(query) ||
-          description.includes(query) ||
-          directory.includes(query)
-        );
-      });
-    }, [skills, searchQuery, filterStatus]);
+          return (
+            name.includes(query) ||
+            description.includes(query) ||
+            directory.includes(query)
+          );
+        });
+      }
+
+      return filtered;
+    }, [skills, selectedRepo, filterStatus, searchQuery]);
+
+    // 判断是否显示空状态（仓库列表加载完成且没有启用的仓库）
+    const showEmptyState = !isLoadingRepos && repos.filter(r => r.enabled).length === 0;
+
+    // 判断是否显示初始加载状态（仓库列表正在加载）
+    const showInitialLoading = isLoadingRepos;
 
     return (
       <div className="mx-auto max-w-[56rem] px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden bg-background/50">
         {/* 技能网格（可滚动详情区域） */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden animate-fade-in">
-          <div className="py-4">
-            {loading ? (
+          <div className="py-4 px-2">
+            {showInitialLoading ? (
               <div className="flex items-center justify-center h-64">
                 <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
-            ) : skills.length === 0 ? (
+            ) : showEmptyState ? (
               <div className="flex flex-col items-center justify-center h-64 text-center">
                 <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
                   {t("skills.empty")}
@@ -247,7 +319,10 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
               </div>
             ) : (
               <>
-                {/* 搜索框 */}
+                {/* 仓库加载状态显示区域 */}
+                <RepoLoadingStatus repos={repos} repoStates={repoStates} />
+
+                {/* 搜索框和筛选器 */}
                 <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
                   <div className="relative flex-1 min-w-0">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -259,7 +334,16 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                       className="pl-9 pr-3"
                     />
                   </div>
-                  <div className="w-full md:w-48">
+                  {/* 仓库筛选器 */}
+                  <RepoFilter
+                    repos={repos}
+                    repoStates={repoStates}
+                    selectedRepo={selectedRepo}
+                    onSelect={setSelectedRepo}
+                    skills={skills}
+                  />
+                  {/* 状态筛选器 */}
+                  <div className="w-full md:w-24">
                     <Select
                       value={filterStatus}
                       onValueChange={(val) =>
@@ -306,12 +390,23 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                 {/* 技能列表或无结果提示 */}
                 {filteredSkills.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-48 text-center">
-                    <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                      {t("skills.noResults")}
-                    </p>
-                    <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                      {t("skills.emptyDescription")}
-                    </p>
+                    {isLoading ? (
+                      <>
+                        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground mb-2" />
+                        <p className="text-sm text-muted-foreground">
+                          {t("skills.loading")}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                          {t("skills.noResults")}
+                        </p>
+                        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                          {t("skills.emptyDescription")}
+                        </p>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -337,6 +432,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
             skills={skills}
             onAdd={handleAddRepo}
             onRemove={handleRemoveRepo}
+            onToggleEnabled={handleToggleRepoEnabled}
             onClose={() => setRepoManagerOpen(false)}
           />
         )}

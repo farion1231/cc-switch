@@ -185,6 +185,41 @@ impl SkillService {
 
 // 核心方法实现
 impl SkillService {
+    /// 获取单个仓库的技能列表
+    /// 
+    /// 根据 owner 和 name 查找对应的仓库配置，然后加载该仓库的技能。
+    /// 只更新已安装状态，不添加本地独有的技能。
+    pub async fn list_skills_for_repo(
+        &self,
+        repos: &[SkillRepo],
+        repo_owner: &str,
+        repo_name: &str,
+    ) -> Result<Vec<Skill>> {
+        // 查找匹配的仓库配置
+        let repo = repos
+            .iter()
+            .find(|r| r.owner == repo_owner && r.name == repo_name && r.enabled)
+            .ok_or_else(|| {
+                anyhow!(format_skill_error(
+                    "REPO_NOT_FOUND",
+                    &[("owner", repo_owner), ("name", repo_name)],
+                    Some("checkRepoConfig"),
+                ))
+            })?;
+
+        // 获取该仓库的技能
+        let mut skills = self.fetch_repo_skills(repo).await?;
+
+        // 只更新已安装状态，不添加本地独有的技能
+        self.update_installed_status(&mut skills)?;
+
+        // 去重并排序
+        Self::deduplicate_skills(&mut skills);
+        skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+        Ok(skills)
+    }
+
     /// 列出所有技能
     pub async fn list_skills(&self, repos: Vec<SkillRepo>) -> Result<Vec<Skill>> {
         let mut skills = Vec::new();
@@ -217,10 +252,14 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<Skill>> {
+        log::info!("开始获取仓库技能: {}/{}, branch: {}, is_private: {}", 
+            repo.owner, repo.name, repo.branch, repo.access_token.is_some());
+        
         // 为单个仓库加载增加整体超时，避免无效链接长时间阻塞
         let temp_dir = timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
             .await
             .map_err(|_| {
+                log::error!("下载仓库超时: {}/{}", repo.owner, repo.name);
                 anyhow!(format_skill_error(
                     "DOWNLOAD_TIMEOUT",
                     &[
@@ -231,6 +270,9 @@ impl SkillService {
                     Some("checkNetwork"),
                 ))
             })??;
+        
+        log::info!("仓库下载成功: {}/{}, 临时目录: {:?}", repo.owner, repo.name, temp_dir);
+        
         let mut skills = Vec::new();
 
         // 扫描仓库根目录（支持全仓库递归扫描）
@@ -238,6 +280,8 @@ impl SkillService {
 
         // 递归扫描目录查找所有技能
         self.scan_dir_recursive(&scan_dir, &scan_dir, repo, &mut skills)?;
+        
+        log::info!("仓库 {}/{} 扫描完成，发现 {} 个技能", repo.owner, repo.name, skills.len());
 
         // 清理临时目录
         let _ = fs::remove_dir_all(&temp_dir);
@@ -261,6 +305,8 @@ impl SkillService {
         let skill_md = current_dir.join("SKILL.md");
 
         if skill_md.exists() {
+            log::debug!("发现 SKILL.md: {:?}", skill_md);
+            
             // 发现技能！获取相对路径作为目录名
             let directory = if current_dir == base_dir {
                 // 根目录的 SKILL.md，使用仓库名
@@ -275,7 +321,10 @@ impl SkillService {
             };
 
             if let Ok(skill) = self.build_skill_from_metadata(&skill_md, &directory, repo) {
+                log::info!("解析技能成功: {} ({})", skill.name, skill.directory);
                 skills.push(skill);
+            } else {
+                log::warn!("解析技能元数据失败: {:?}", skill_md);
             }
 
             // 停止扫描此目录的子目录（同级目录都是功能文件夹）
@@ -283,8 +332,13 @@ impl SkillService {
         }
 
         // 未发现 SKILL.md，继续递归扫描所有子目录
-        for entry in fs::read_dir(current_dir)? {
-            let entry = entry?;
+        let entries: Vec<_> = fs::read_dir(current_dir)?
+            .filter_map(|e| e.ok())
+            .collect();
+        
+        log::debug!("扫描目录 {:?}, 子项数量: {}", current_dir, entries.len());
+        
+        for entry in entries {
             let path = entry.path();
 
             // 只处理目录
@@ -393,6 +447,80 @@ impl SkillService {
         Ok(())
     }
 
+    /// 只更新已安装状态，不添加本地独有的技能
+    /// 用于单个仓库加载时，避免本地技能被重复添加到每个仓库
+    fn update_installed_status(&self, skills: &mut Vec<Skill>) -> Result<()> {
+        if !self.install_dir.exists() {
+            return Ok(());
+        }
+
+        // 收集所有本地技能
+        let mut local_skills = Vec::new();
+        self.scan_local_dir_recursive(&self.install_dir, &self.install_dir, &mut local_skills)?;
+
+        // 只更新已安装状态，不添加本地独有的技能
+        for local_skill in local_skills {
+            let directory = &local_skill.directory;
+
+            // 使用目录最后一段进行比较，因为安装时只使用最后一段作为目录名
+            let local_install_name = Path::new(directory)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| directory.clone());
+
+            for skill in skills.iter_mut() {
+                let remote_install_name = Path::new(&skill.directory)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| skill.directory.clone());
+
+                if remote_install_name.eq_ignore_ascii_case(&local_install_name) {
+                    skill.installed = true;
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 获取本地独有的技能列表
+    /// 
+    /// 返回所有本地安装的技能中，不属于任何远程仓库的技能。
+    /// 用于渐进式加载时单独显示本地技能。
+    pub fn list_local_skills(&self, remote_skills: &[Skill]) -> Result<Vec<Skill>> {
+        if !self.install_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        // 收集所有本地技能
+        let mut local_skills = Vec::new();
+        self.scan_local_dir_recursive(&self.install_dir, &self.install_dir, &mut local_skills)?;
+
+        // 过滤出本地独有的技能（不在远程仓库中的）
+        let local_only_skills: Vec<Skill> = local_skills
+            .into_iter()
+            .filter(|local_skill| {
+                let local_install_name = Path::new(&local_skill.directory)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| local_skill.directory.clone());
+
+                // 检查是否在远程技能中存在
+                !remote_skills.iter().any(|remote_skill| {
+                    let remote_install_name = Path::new(&remote_skill.directory)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| remote_skill.directory.clone());
+
+                    remote_install_name.eq_ignore_ascii_case(&local_install_name)
+                })
+            })
+            .collect();
+
+        Ok(local_only_skills)
+    }
+
     /// 递归扫描本地目录查找 SKILL.md
     fn scan_local_dir_recursive(
         &self,
@@ -473,7 +601,7 @@ impl SkillService {
     /// 下载仓库
     /// 根据 access_token 是否存在选择下载策略：
     /// - 公共仓库（access_token 为空）：无认证，直接下载
-    /// - 私有仓库（access_token 有值）：使用存储的 auth_header 构建认证头下载
+    /// - 私有仓库（access_token 有值）：尝试多种认证头下载
     async fn download_repo(&self, repo: &SkillRepo) -> Result<PathBuf> {
         let temp_dir = tempfile::tempdir()?;
         let temp_path = temp_dir.path().to_path_buf();
@@ -488,81 +616,137 @@ impl SkillService {
 
         // 根据 access_token 是否存在判断仓库类型
         let is_private = repo.access_token.is_some();
+        
+        log::info!("下载仓库 {}/{}, is_private: {}, base_url: {:?}", 
+            repo.owner, repo.name, is_private, repo.base_url);
+
+        // 构建认证头列表（仅私有仓库需要）
+        let auth_headers = if is_private {
+            self.build_auth_headers(repo)
+        } else {
+            vec![]
+        };
 
         let mut last_error = None;
-        for branch in branches {
-            // 构建下载 URL
-            let url = if is_private {
-                // 私有仓库：使用 base_url 构建下载 URL
+        for branch in &branches {
+            // 构建下载 URL 列表（主 URL + 备用 URL）
+            let urls = if is_private {
                 let base_url = repo.base_url.as_deref().unwrap_or("https://github.com");
-                self.build_private_repo_download_url(base_url, &repo.owner, &repo.name, branch)
+                let primary = self.build_private_repo_download_url(base_url, &repo.owner, &repo.name, branch);
+                let fallbacks = self.build_fallback_download_urls(base_url, &repo.owner, &repo.name, branch);
+                std::iter::once(primary).chain(fallbacks).collect::<Vec<_>>()
             } else {
                 // 公共仓库：使用 GitHub URL
-                format!(
+                vec![format!(
                     "https://github.com/{}/{}/archive/refs/heads/{}.zip",
                     repo.owner, repo.name, branch
-                )
+                )]
             };
 
-            // 构建认证头（仅私有仓库需要）
-            let auth_header = if is_private {
-                self.build_auth_header(repo)
-            } else {
-                None
-            };
+            // 尝试所有 URL 格式
+            for url in &urls {
+                // 对于私有仓库，尝试所有认证头
+                if is_private {
+                    for (header_name, header_value) in &auth_headers {
+                        log::info!("尝试下载: {} (branch: {}, auth: {})", url, branch, header_name);
 
-            match self.download_and_extract(&url, &temp_path, auth_header.as_ref()).await {
-                Ok(_) => {
-                    return Ok(temp_path);
-                }
-                Err(e) => {
-                    last_error = Some(e);
-                    continue;
+                        match self.download_and_extract(url, &temp_path, Some(&(header_name.clone(), header_value.clone()))).await {
+                            Ok(_) => {
+                                log::info!("下载成功: {} (auth: {})", url, header_name);
+                                return Ok(temp_path);
+                            }
+                            Err(e) => {
+                                log::warn!("下载失败: {} (auth: {}) - {}", url, header_name, e);
+                                last_error = Some(e);
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    // 公共仓库，无需认证
+                    log::info!("尝试下载: {} (branch: {})", url, branch);
+
+                    match self.download_and_extract(url, &temp_path, None).await {
+                        Ok(_) => {
+                            log::info!("下载成功: {}", url);
+                            return Ok(temp_path);
+                        }
+                        Err(e) => {
+                            log::warn!("下载失败: {} - {}", url, e);
+                            last_error = Some(e);
+                            continue;
+                        }
+                    }
                 }
             }
         }
 
+        log::error!("所有分支和格式下载失败: {}/{}, 尝试的分支: {:?}", repo.owner, repo.name, branches);
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支下载失败")))
     }
 
     /// 构建私有仓库下载 URL
     /// 支持 GitHub、GitLab、Gitea 等平台
+    /// 
+    /// GitLab 需要使用 API 方式下载，Web URL 不支持 Token 认证
     fn build_private_repo_download_url(&self, base_url: &str, owner: &str, name: &str, branch: &str) -> String {
         let base_url = base_url.trim_end_matches('/');
         
-        // 检测平台类型并构建对应的下载 URL
-        if base_url.contains("gitlab") {
-            // GitLab 格式: {base_url}/{owner}/{name}/-/archive/{branch}/{name}-{branch}.zip
-            format!("{}/{}/{}/-/archive/{}/{}-{}.zip", base_url, owner, name, branch, name, branch)
-        } else if base_url.contains("gitea") || base_url.contains("codeberg") {
-            // Gitea 格式: {base_url}/{owner}/{name}/archive/{branch}.zip
-            format!("{}/{}/{}/archive/{}.zip", base_url, owner, name, branch)
-        } else {
-            // GitHub 格式（默认）: {base_url}/{owner}/{name}/archive/refs/heads/{branch}.zip
+        // 只有明确是 github.com 时使用 GitHub 格式
+        if base_url.contains("github.com") {
+            // GitHub 格式: {base_url}/{owner}/{name}/archive/refs/heads/{branch}.zip
             format!("{}/{}/{}/archive/refs/heads/{}.zip", base_url, owner, name, branch)
+        } else {
+            // GitLab API 格式（支持 Token 认证）
+            // 格式: {base_url}/api/v4/projects/{owner}%2F{name}/repository/archive.zip?sha={branch}
+            let encoded_path = format!("{}%2F{}", owner, name);
+            format!("{}/api/v4/projects/{}/repository/archive.zip?sha={}", base_url, encoded_path, branch)
+        }
+    }
+    
+    /// 构建备用下载 URL（当主 URL 失败时尝试）
+    /// 返回其他平台格式的 URL 列表
+    fn build_fallback_download_urls(&self, base_url: &str, owner: &str, name: &str, branch: &str) -> Vec<String> {
+        let base_url = base_url.trim_end_matches('/');
+        
+        if base_url.contains("github.com") {
+            // GitHub 没有备用格式
+            vec![]
+        } else {
+            // 私有仓库的备用格式：Gitea 格式
+            vec![
+                // Gitea 格式: {base_url}/{owner}/{name}/archive/{branch}.zip
+                format!("{}/{}/{}/archive/{}.zip", base_url, owner, name, branch),
+            ]
         }
     }
 
     /// 构建认证头
     /// 根据存储的 auth_header 和 access_token 构建完整的认证头
-    fn build_auth_header(&self, repo: &SkillRepo) -> Option<(String, String)> {
-        let token = repo.access_token.as_ref()?;
-        let auth_header = repo.auth_header.as_deref().unwrap_or("Authorization");
-        
-        let header_value = match auth_header {
-            "PRIVATE-TOKEN" => token.clone(),
-            "Authorization" => {
-                // 检查是否已经包含 token/Bearer 前缀
-                if token.starts_with("token ") || token.starts_with("Bearer ") {
-                    token.clone()
-                } else {
-                    format!("token {}", token)
-                }
-            }
-            _ => token.clone(),
+    /// 返回多个可能的认证头，按优先级排序
+    fn build_auth_headers(&self, repo: &SkillRepo) -> Vec<(String, String)> {
+        let token = match repo.access_token.as_ref() {
+            Some(t) => t,
+            None => return vec![],
         };
         
-        Some((auth_header.to_string(), header_value))
+        let base_url = repo.base_url.as_deref().unwrap_or("");
+        
+        // 根据平台返回不同的认证头列表
+        if base_url.contains("github.com") {
+            // GitHub 只需要 Authorization
+            vec![
+                ("Authorization".to_string(), format!("token {}", token)),
+            ]
+        } else {
+            // 其他平台（GitLab、Gitea 等）尝试多种认证头
+            // GitLab 下载 ZIP 需要 PRIVATE-TOKEN
+            vec![
+                ("PRIVATE-TOKEN".to_string(), token.clone()),           // GitLab
+                ("Authorization".to_string(), format!("token {}", token)), // Gitea/GitHub
+                ("Authorization".to_string(), format!("Bearer {}", token)), // 通用
+            ]
+        }
     }
 
     /// 下载并解压 ZIP
@@ -578,12 +762,21 @@ impl SkillService {
         
         // 下载 ZIP
         let response = request.send().await?;
-        if !response.status().is_success() {
-            let status = response.status().as_u16().to_string();
+        let status = response.status();
+        let content_type = response.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("unknown")
+            .to_string();
+        
+        log::info!("响应状态: {}, Content-Type: {}", status, content_type);
+        
+        if !status.is_success() {
+            let status_code = status.as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(
                 "DOWNLOAD_FAILED",
-                &[("status", &status)],
-                match status.as_str() {
+                &[("status", &status_code)],
+                match status_code.as_str() {
                     "403" => Some("http403"),
                     "404" => Some("http404"),
                     "429" => Some("http429"),
@@ -593,6 +786,19 @@ impl SkillService {
         }
 
         let bytes = response.bytes().await?;
+        
+        // 检查响应内容
+        log::info!("响应大小: {} bytes", bytes.len());
+        if bytes.len() < 100 {
+            log::warn!("响应内容过小，可能不是有效的 ZIP 文件");
+        }
+        
+        // 检查是否是 HTML（可能是登录页面或错误页面）
+        if bytes.starts_with(b"<!DOCTYPE") || bytes.starts_with(b"<html") || bytes.starts_with(b"<HTML") {
+            let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(500)]);
+            log::error!("收到 HTML 响应而非 ZIP 文件: {}", preview);
+            return Err(anyhow::anyhow!("服务器返回 HTML 页面而非 ZIP 文件，可能需要重新认证"));
+        }
 
         // 解压
         let cursor = std::io::Cursor::new(bytes);
@@ -768,5 +974,29 @@ impl SkillService {
             .retain(|r| !(r.owner == owner && r.name == name));
 
         Ok(())
+    }
+
+    /// 切换仓库的启用状态
+    pub fn toggle_repo_enabled(
+        &self,
+        store: &mut SkillStore,
+        owner: String,
+        name: String,
+        enabled: bool,
+    ) -> Result<()> {
+        if let Some(repo) = store
+            .repos
+            .iter_mut()
+            .find(|r| r.owner == owner && r.name == name)
+        {
+            repo.enabled = enabled;
+            Ok(())
+        } else {
+            Err(anyhow!(format_skill_error(
+                "REPO_NOT_FOUND",
+                &[("owner", &owner), ("name", &name)],
+                Some("checkRepoConfig"),
+            )))
+        }
     }
 }

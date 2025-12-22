@@ -745,6 +745,10 @@
       "removeSuccess": "Repository {{owner}}/{{name}} removed",
       "removeFailed": "Failed to remove",
       "skillCount": "{{count}} skills detected",
+      "hidden": "Hidden",
+      "enable": "Enable repository",
+      "disable": "Disable repository",
+      "toggleFailed": "Failed to toggle repository status",
       "tabs": {
         "public": "Public Repos",
         "private": "Private Repos"
@@ -777,6 +781,14 @@
       "all": "All",
       "installed": "Installed",
       "uninstalled": "Not installed"
+    },
+    "repoFilter": {
+      "placeholder": "Filter by repository",
+      "all": "All Repositories",
+      "local": "Local"
+    },
+    "repoStatus": {
+      "loading": "Loading repositories"
     },
     "noResults": "No matching skills found"
   },

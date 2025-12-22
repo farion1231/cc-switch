@@ -745,6 +745,10 @@
       "removeSuccess": "仓库 {{owner}}/{{name}} 已删除",
       "removeFailed": "删除失败",
       "skillCount": "识别到 {{count}} 个技能",
+      "hidden": "已隐藏",
+      "enable": "启用仓库",
+      "disable": "禁用仓库",
+      "toggleFailed": "切换仓库状态失败",
       "tabs": {
         "public": "公共仓库",
         "private": "私有仓库"
@@ -777,6 +781,14 @@
       "all": "全部",
       "installed": "已安装",
       "uninstalled": "未安装"
+    },
+    "repoFilter": {
+      "placeholder": "仓库筛选",
+      "all": "全部仓库",
+      "local": "本地"
+    },
+    "repoStatus": {
+      "loading": "正在加载仓库"
     },
     "noResults": "未找到匹配的技能"
   },

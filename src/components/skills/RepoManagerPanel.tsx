@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Trash2,
@@ -27,6 +28,7 @@ interface RepoManagerPanelProps {
   skills: Skill[];
   onAdd: (repo: SkillRepo) => Promise<void>;
   onRemove: (owner: string, name: string) => Promise<void>;
+  onToggleEnabled: (owner: string, name: string, enabled: boolean) => Promise<void>;
   onClose: () => void;
 }
 
@@ -35,6 +37,7 @@ export function RepoManagerPanel({
   skills,
   onAdd,
   onRemove,
+  onToggleEnabled,
   onClose,
 }: RepoManagerPanelProps) {
   const { t } = useTranslation();
@@ -418,7 +421,9 @@ export function RepoManagerPanel({
             {repos.map((repo) => (
               <div
                 key={`${repo.owner}/${repo.name}`}
-                className="flex items-center justify-between glass-card rounded-xl px-4 py-3"
+                className={`flex items-center justify-between glass-card rounded-xl px-4 py-3 ${
+                  !repo.enabled ? "opacity-50" : ""
+                }`}
               >
                 <div>
                   <div className="text-sm font-medium text-foreground flex items-center gap-2">
@@ -427,6 +432,11 @@ export function RepoManagerPanel({
                       <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-400">
                         <Lock className="h-3 w-3" />
                         {t("skills.repo.private.label")}
+                      </span>
+                    )}
+                    {!repo.enabled && (
+                      <span className="inline-flex items-center rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+                        {t("skills.repo.hidden")}
                       </span>
                     )}
                   </div>
@@ -439,7 +449,14 @@ export function RepoManagerPanel({
                     </span>
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={repo.enabled}
+                    onCheckedChange={(checked) =>
+                      onToggleEnabled(repo.owner, repo.name, checked)
+                    }
+                    aria-label={repo.enabled ? t("skills.repo.disable") : t("skills.repo.enable")}
+                  />
                   <Button
                     variant="ghost"
                     size="icon"
