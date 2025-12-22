@@ -8,14 +8,13 @@ use tauri::{
     WebviewWindowBuilder, WindowEvent,
 };
 
-
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::store::AppState;
 
 pub const TRAY_WINDOW_LABEL: &str = "tray-popover";
 const TRAY_POPUP_WIDTH: f64 = 360.0;
-const TRAY_POPUP_HEIGHT: f64 = 480.0;
+const TRAY_POPUP_HEIGHT: f64 = 680.0;
 const TRAY_POPUP_MARGIN: f64 = 10.0;
 
 #[cfg(target_os = "macos")]
@@ -25,8 +24,8 @@ fn set_tray_highlight(app: &tauri::AppHandle, highlighted: bool) {
             if let Some(status_item) = inner.ns_status_item() {
                 #[allow(deprecated)]
                 unsafe {
-                    use objc2::runtime::AnyObject;
                     use objc2::msg_send;
+                    use objc2::runtime::AnyObject;
                     let button_ptr: *mut AnyObject = msg_send![&*status_item, button];
                     if !button_ptr.is_null() {
                         let _: () = msg_send![button_ptr, highlight: highlighted];
@@ -120,7 +119,7 @@ pub fn init_tray_popover_window(app: &mut App) -> tauri::Result<()> {
         TRAY_WINDOW_LABEL,
         WebviewUrl::App("index.html#tray".into()),
     )
-    .title("Quick Switch")
+    .title("")
     .inner_size(TRAY_POPUP_WIDTH, TRAY_POPUP_HEIGHT)
     .resizable(false)
     .maximizable(false)
@@ -133,6 +132,9 @@ pub fn init_tray_popover_window(app: &mut App) -> tauri::Result<()> {
     .visible(false)
     .focused(false)
     .build()?;
+
+    #[cfg(target_os = "macos")]
+    apply_tray_window_corner(&tray_window, 14.0);
 
     let handle = tray_window.clone();
     tray_window.on_window_event(move |event| match event {
@@ -153,12 +155,57 @@ pub fn init_tray_popover_window(app: &mut App) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn apply_tray_window_corner(window: &tauri::WebviewWindow, radius: f64) {
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::NSColor;
+
+    unsafe {
+        if let Ok(ns_window_ptr) = window.ns_window() {
+            if let Some(ns_window) = Retained::retain(ns_window_ptr as *mut AnyObject) {
+                let _: () = msg_send![&*ns_window, setOpaque: false];
+                let clear_color = NSColor::clearColor();
+                let _: () = msg_send![&*ns_window, setBackgroundColor: &*clear_color];
+
+                let content_view: *mut AnyObject = msg_send![&*ns_window, contentView];
+                if content_view.is_null() {
+                    return;
+                }
+                let super_view: *mut AnyObject = msg_send![content_view, superview];
+                let target_view = if super_view.is_null() {
+                    content_view
+                } else {
+                    super_view
+                };
+
+                let _: () = msg_send![target_view, setWantsLayer: true];
+                let layer: *mut AnyObject = msg_send![target_view, layer];
+                if layer.is_null() {
+                    return;
+                }
+                let _: () = msg_send![layer, setCornerRadius: radius];
+                let _: () = msg_send![layer, setMasksToBounds: true];
+
+                // content view 也设置，避免 webview 超出时露边
+                if content_view.is_null() {
+                    return;
+                }
+                let _: () = msg_send![content_view, setWantsLayer: true];
+                let layer: *mut AnyObject = msg_send![content_view, layer];
+                if layer.is_null() {
+                    return;
+                }
+                let _: () = msg_send![layer, setCornerRadius: radius];
+                let _: () = msg_send![layer, setMasksToBounds: true];
+            }
+        }
+    }
+}
+
 /// 计算弹窗在当前屏幕内的坐标
-fn constrained_position(
-    x: f64,
-    y: f64,
-    monitor: Option<&Monitor>,
-) -> (f64, f64) {
+fn constrained_position(x: f64, y: f64, monitor: Option<&Monitor>) -> (f64, f64) {
     let Some(monitor) = monitor else {
         return (x, y);
     };
@@ -224,24 +271,16 @@ fn position_tray_window(
         if y < TRAY_POPUP_MARGIN {
             y = rect_position.y + rect_size.height + TRAY_POPUP_MARGIN;
         }
-        (
-            anchor_x - TRAY_POPUP_WIDTH,
-            y,
-        )
+        (anchor_x - TRAY_POPUP_WIDTH, y)
     };
 
     (x, y) = constrained_position(x, y, monitor.as_ref());
 
     let logical_x = x / scale_factor;
     let logical_y = y / scale_factor;
-    log::debug!(
-        "[Tray] Setting popover position physical=({}, {}), logical=({}, {}) scale={scale_factor}",
-        x,
-        y,
-        logical_x,
-        logical_y
-    );
-    window.set_position(Position::Logical(LogicalPosition::new(logical_x, logical_y)))
+    window.set_position(Position::Logical(LogicalPosition::new(
+        logical_x, logical_y,
+    )))
 }
 
 /// 显示或隐藏托盘弹窗
@@ -250,9 +289,6 @@ pub fn toggle_tray_popover(
     click_position: PhysicalPosition<f64>,
     rect: Rect,
 ) {
-    log::info!(
-        "[Tray] Toggle popover requested at position={click_position:?}, rect={rect:?}"
-    );
     let Some(window) = app.get_webview_window(TRAY_WINDOW_LABEL) else {
         log::warn!("托盘弹窗窗口尚未初始化");
         return;
@@ -282,7 +318,6 @@ pub fn toggle_tray_popover(
 pub fn hide_tray_popover(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window(TRAY_WINDOW_LABEL) {
         set_tray_highlight(app, false);
-        log::debug!("[Tray] Hiding popover window");
         let _ = window.hide();
     }
 }
@@ -424,7 +459,6 @@ pub fn apply_tray_policy(app: &tauri::AppHandle, dock_visible: bool) {
 
 /// 显示主窗口并聚焦
 pub fn show_main_window(app: &tauri::AppHandle) {
-    log::info!("[Tray] Showing main window via tray action");
     set_tray_highlight(app, false);
     if let Some(window) = app.get_webview_window("main") {
         #[cfg(target_os = "windows")]
@@ -439,6 +473,5 @@ pub fn show_main_window(app: &tauri::AppHandle) {
             apply_tray_policy(app, true);
         }
     } else {
-        log::warn!("[Tray] Main window not found when requested from tray");
     }
 }

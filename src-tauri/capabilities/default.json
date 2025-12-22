@@ -14,6 +14,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-hide",
     "core:window:allow-show",
+    "core:window:allow-unminimize",
     "core:window:allow-set-focus",
     "process:allow-restart",
     "dialog:default"

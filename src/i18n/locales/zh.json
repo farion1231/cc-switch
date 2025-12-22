@@ -268,9 +268,11 @@
   "tray": {
     "title": "快速切换",
     "subtitle": "无需打开主界面，即可在托盘中切换供应商",
+    "overviewTitle": "控制中心",
     "providers": "个供应商",
     "currentProvider": "当前：{{name}}",
     "noCurrent": "尚未选择",
+    "switchSection": "可切换的供应商",
     "loading": "载入供应商...",
     "empty": "暂未添加供应商，请在主界面中创建",
     "actions": {
@@ -278,6 +280,12 @@
       "refresh": "刷新",
       "quit": "退出"
     },
+    "actionsDescriptions": {
+      "openMain": "在主界面管理供应商、用量与设置",
+      "refresh": "同步供应商列表与用量数据",
+      "quit": "完全退出 CC Switch"
+    },
+    "actionsSection": "快捷操作",
     "card": {
       "current": "当前",
       "switching": "切换中",
@@ -290,6 +298,22 @@
       "third_party": "第三方",
       "custom": "自定义"
     },
+    "usage": {
+      "title": "用量",
+      "unnamed": "套餐",
+      "unavailable": "暂无额度数据",
+      "remaining": "剩余 {{value}}",
+      "notConfigured": "尚未配置用量脚本",
+      "configureHint": "请在主界面设置用量查询",
+      "lastUpdated": "上次更新：{{time}}",
+      "never": "从未"
+    },
+    "history": {
+      "title": "成本趋势（30 天）",
+      "summary": "过去 30 天：${{amount}}",
+      "empty": "暂无用量数据"
+    },
+    "searchEmpty": "没有匹配的供应商",
     "switchFailedTitle": "切换失败",
     "switchFailed": "切换供应商失败：{{error}}",
     "error": {

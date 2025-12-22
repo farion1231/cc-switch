@@ -511,9 +511,6 @@ pub fn run() {
                         rect,
                         ..
                     } => {
-                        log::info!(
-                            "[Tray] Click event: button={button:?}, state={button_state:?}, pos={position:?}"
-                        );
                         if !matches!(button_state, MouseButtonState::Up) {
                             return;
                         }
@@ -534,9 +531,6 @@ pub fn run() {
                         rect,
                         ..
                     } => {
-                        log::info!(
-                            "[Tray] DoubleClick event: button={button:?}, pos={position:?}"
-                        );
                         match button {
                             MouseButton::Left => {
                                 tray::hide_tray_popover(tray.app_handle());
