@@ -162,6 +162,18 @@ export function useRemoveFromFailoverQueue() {
       queryClient.invalidateQueries({
         queryKey: ["providers", variables.appType],
       });
+      // 清除该供应商的健康状态缓存（退出队列后不再需要健康监控）
+      queryClient.invalidateQueries({
+        queryKey: ["providerHealth", variables.providerId, variables.appType],
+      });
+      // 清除该供应商的熔断器统计缓存
+      queryClient.invalidateQueries({
+        queryKey: [
+          "circuitBreakerStats",
+          variables.providerId,
+          variables.appType,
+        ],
+      });
     },
   });
 }

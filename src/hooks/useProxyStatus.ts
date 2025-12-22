@@ -73,8 +73,10 @@ export function useProxyStatus() {
       );
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
       queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] });
-      // 清除所有供应商健康状态缓存（后端已清空数据库记录）
-      queryClient.invalidateQueries({ queryKey: ["providerHealth"] });
+      // 彻底删除所有供应商健康状态缓存（后端已清空数据库记录）
+      queryClient.removeQueries({ queryKey: ["providerHealth"] });
+      // 彻底删除所有熔断器统计缓存（代理停止后熔断器状态已重置）
+      queryClient.removeQueries({ queryKey: ["circuitBreakerStats"] });
       // 注意：故障转移队列和开关状态会保留，不需要刷新
     },
     onError: (error: Error) => {

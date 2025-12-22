@@ -183,7 +183,8 @@ export function ProviderCard({
           ? "hover:border-emerald-500/50"
           : "hover:border-border-active",
         // 当前激活的供应商边框样式
-        shouldUseGreen && "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
+        shouldUseGreen &&
+          "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
         shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
         !isActiveProvider && "hover:shadow-sm",
         dragHandleProps?.isDragging &&
@@ -233,7 +234,7 @@ export function ProviderCard({
               </h3>
 
               {/* 健康状态徽章 */}
-              {isProxyRunning && health && (
+              {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
                   consecutiveFailures={health.consecutive_failures}
                 />
