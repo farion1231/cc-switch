@@ -44,6 +44,11 @@ import { Button } from "@/components/ui/button";
 
 type View = "providers" | "settings" | "prompts" | "skills" | "mcp" | "agents";
 
+// 顶部拖拽区域和 header 的高度常量
+const DRAG_BAR_HEIGHT = 28; // px
+const HEADER_HEIGHT = 64; // px
+const CONTENT_TOP_OFFSET = DRAG_BAR_HEIGHT + HEADER_HEIGHT;
+
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -345,7 +350,7 @@ function App() {
   return (
     <div
       className="flex min-h-screen flex-col bg-background text-foreground selection:bg-primary/30"
-      style={{ overflowX: "hidden" }}
+      style={{ overflowX: "hidden", paddingTop: CONTENT_TOP_OFFSET }}
     >
       {/* 全局拖拽区域（顶部 4px），避免上边框无法拖动 */}
       <div
