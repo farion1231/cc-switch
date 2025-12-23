@@ -85,7 +85,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     isOfficial: true,
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "azure"
-model = "gpt-5.1-codex"
+model = "gpt-5.2"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
@@ -113,7 +113,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "aihubmix",
       "https://aihubmix.com/v1",
-      "gpt-5.1-codex"
+      "gpt-5.2"
     ),
     endpointCandidates: [
       "https://aihubmix.com/v1",
@@ -128,7 +128,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "dmxapi",
       "https://www.dmxapi.cn/v1",
-      "gpt-5.1-codex"
+      "gpt-5.2"
     ),
     endpointCandidates: ["https://www.dmxapi.cn/v1"],
     isPartner: true, // 合作伙伴
@@ -143,7 +143,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "packycode",
       "https://www.packyapi.com/v1",
-      "gpt-5.1-codex"
+      "gpt-5.2"
     ),
     endpointCandidates: [
       "https://www.packyapi.com/v1",
