@@ -18,26 +18,9 @@ export interface Provider {
   meta?: unknown;
   icon?: string;
   iconColor?: string;
-  isProxyTarget?: boolean;
 }
 
 export const failoverApi = {
-  // ========== 旧版代理目标 API（保留向后兼容）==========
-
-  // 获取代理目标列表
-  async getProxyTargets(appType: string): Promise<Provider[]> {
-    return invoke("get_proxy_targets", { appType });
-  },
-
-  // 设置代理目标
-  async setProxyTarget(
-    providerId: string,
-    appType: string,
-    enabled: boolean,
-  ): Promise<void> {
-    return invoke("set_proxy_target", { providerId, appType, enabled });
-  },
-
   // ========== 熔断器 API ==========
 
   // 获取供应商健康状态
@@ -89,10 +72,7 @@ export const failoverApi = {
   },
 
   // 添加供应商到故障转移队列
-  async addToFailoverQueue(
-    appType: string,
-    providerId: string,
-  ): Promise<void> {
+  async addToFailoverQueue(appType: string, providerId: string): Promise<void> {
     return invoke("add_to_failover_queue", { appType, providerId });
   },
 
@@ -104,20 +84,16 @@ export const failoverApi = {
     return invoke("remove_from_failover_queue", { appType, providerId });
   },
 
-  // 重新排序故障转移队列
-  async reorderFailoverQueue(
-    appType: string,
-    providerIds: string[],
-  ): Promise<void> {
-    return invoke("reorder_failover_queue", { appType, providerIds });
+  // 获取指定应用的自动故障转移开关状态
+  async getAutoFailoverEnabled(appType: string): Promise<boolean> {
+    return invoke("get_auto_failover_enabled", { appType });
   },
 
-  // 设置故障转移队列项的启用状态
-  async setFailoverItemEnabled(
+  // 设置指定应用的自动故障转移开关状态
+  async setAutoFailoverEnabled(
     appType: string,
-    providerId: string,
     enabled: boolean,
   ): Promise<void> {
-    return invoke("set_failover_item_enabled", { appType, providerId, enabled });
+    return invoke("set_auto_failover_enabled", { appType, enabled });
   },
 };

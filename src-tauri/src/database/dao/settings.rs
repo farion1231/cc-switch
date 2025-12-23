@@ -62,4 +62,56 @@ impl Database {
             Ok(())
         }
     }
+
+    // --- 代理接管状态管理 ---
+
+    /// 获取指定应用的代理接管状态
+    ///
+    /// 使用 settings 表存储各应用的接管状态，key 格式: `proxy_takeover_{app_type}`
+    pub fn get_proxy_takeover_enabled(&self, app_type: &str) -> Result<bool, AppError> {
+        let key = format!("proxy_takeover_{app_type}");
+        match self.get_setting(&key)? {
+            Some(value) => Ok(value == "true"),
+            None => Ok(false),
+        }
+    }
+
+    /// 设置指定应用的代理接管状态
+    ///
+    /// - `true` = 开启代理接管
+    /// - `false` = 关闭代理接管
+    pub fn set_proxy_takeover_enabled(
+        &self,
+        app_type: &str,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        let key = format!("proxy_takeover_{app_type}");
+        let value = if enabled { "true" } else { "false" };
+        self.set_setting(&key, value)
+    }
+
+    /// 检查是否有任一应用开启了代理接管
+    pub fn has_any_proxy_takeover(&self) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key LIKE 'proxy_takeover_%' AND value = 'true'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(count > 0)
+    }
+
+    /// 清除所有代理接管状态（将所有 proxy_takeover_* 设置为 false）
+    pub fn clear_all_proxy_takeover(&self) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE settings SET value = 'false' WHERE key LIKE 'proxy_takeover_%'",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        log::info!("已清除所有代理接管状态");
+        Ok(())
+    }
 }

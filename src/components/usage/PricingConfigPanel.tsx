@@ -63,7 +63,7 @@ export function PricingConfigPanel() {
           <div className="flex items-center gap-2">
             <ChevronRight className="h-4 w-4" />
             <CardTitle className="text-base">
-              {t("usage.modelPricing", "模型定价")}
+              {t("usage.modelPricing")}
             </CardTitle>
           </div>
         </CardHeader>
@@ -85,7 +85,7 @@ export function PricingConfigPanel() {
               <ChevronRight className="h-4 w-4" />
             )}
             <CardTitle className="text-base">
-              {t("usage.modelPricing", "模型定价")}
+              {t("usage.modelPricing")}
             </CardTitle>
           </div>
         </CardHeader>
@@ -93,8 +93,7 @@ export function PricingConfigPanel() {
           <CardContent>
             <Alert variant="destructive">
               <AlertDescription>
-                {t("usage.loadPricingError", "加载定价数据失败")}:{" "}
-                {String(error)}
+                {t("usage.loadPricingError")}: {String(error)}
               </AlertDescription>
             </Alert>
           </CardContent>
@@ -107,7 +106,7 @@ export function PricingConfigPanel() {
     <div className="space-y-4">
       <div className="flex items-center justify-between mb-4">
         <h4 className="text-sm font-medium text-muted-foreground">
-          {t("usage.modelPricingDesc", "配置各模型的 Token 成本")} (每百万)
+          {t("usage.modelPricingDesc")} {t("usage.perMillion")}
         </h4>
         <Button
           onClick={(e) => {
@@ -117,41 +116,36 @@ export function PricingConfigPanel() {
           size="sm"
         >
           <Plus className="mr-1 h-4 w-4" />
-          {t("common.add", "新增")}
+          {t("common.add")}
         </Button>
       </div>
 
       <div className="space-y-4">
         {!pricing || pricing.length === 0 ? (
           <Alert>
-            <AlertDescription>
-              {t(
-                "usage.noPricingData",
-                '暂无定价数据。点击"新增"添加模型定价配置。',
-              )}
-            </AlertDescription>
+            <AlertDescription>{t("usage.noPricingData")}</AlertDescription>
           </Alert>
         ) : (
           <div className="rounded-md bg-card/60 shadow-sm">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{t("usage.model", "模型")}</TableHead>
-                  <TableHead>{t("usage.displayName", "显示名称")}</TableHead>
+                  <TableHead>{t("usage.model")}</TableHead>
+                  <TableHead>{t("usage.displayName")}</TableHead>
                   <TableHead className="text-right">
-                    {t("usage.inputCost", "输入成本")}
+                    {t("usage.inputCost")}
                   </TableHead>
                   <TableHead className="text-right">
-                    {t("usage.outputCost", "输出成本")}
+                    {t("usage.outputCost")}
                   </TableHead>
                   <TableHead className="text-right">
-                    {t("usage.cacheReadCost", "缓存读取")}
+                    {t("usage.cacheReadCost")}
                   </TableHead>
                   <TableHead className="text-right">
-                    {t("usage.cacheWriteCost", "缓存写入")}
+                    {t("usage.cacheWriteCost")}
                   </TableHead>
                   <TableHead className="text-right">
-                    {t("common.actions", "操作")}
+                    {t("common.actions")}
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -183,7 +177,7 @@ export function PricingConfigPanel() {
                             setIsAddingNew(false);
                             setEditingModel(model);
                           }}
-                          title={t("common.edit", "编辑")}
+                          title={t("common.edit")}
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -191,7 +185,7 @@ export function PricingConfigPanel() {
                           variant="ghost"
                           size="icon"
                           onClick={() => setDeleteConfirm(model.modelId)}
-                          title={t("common.delete", "删除")}
+                          title={t("common.delete")}
                           className="text-destructive hover:text-destructive"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -223,19 +217,14 @@ export function PricingConfigPanel() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {t("usage.deleteConfirmTitle", "确认删除")}
-            </DialogTitle>
+            <DialogTitle>{t("usage.deleteConfirmTitle")}</DialogTitle>
             <DialogDescription>
-              {t(
-                "usage.deleteConfirmDesc",
-                "确定要删除此模型定价配置吗？此操作无法撤销。",
-              )}
+              {t("usage.deleteConfirmDesc")}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteConfirm(null)}>
-              {t("common.cancel", "取消")}
+              {t("common.cancel")}
             </Button>
             <Button
               variant="destructive"
@@ -243,8 +232,8 @@ export function PricingConfigPanel() {
               disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending
-                ? t("common.deleting", "删除中...")
-                : t("common.delete", "删除")}
+                ? t("common.deleting")
+                : t("common.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

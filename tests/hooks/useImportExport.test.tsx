@@ -110,12 +110,6 @@ describe("useImportExport Hook", () => {
     expect(result.current.status).toBe("success");
     expect(result.current.backupId).toBe("backup-123");
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
-
-    // Skip delay to execute callback
-    await act(async () => {
-      vi.runOnlyPendingTimers();
-    });
-
     expect(onImportSuccess).toHaveBeenCalledTimes(1);
   });
 
@@ -180,6 +174,7 @@ describe("useImportExport Hook", () => {
     expect(exportConfigMock).toHaveBeenCalledWith("/export.json");
     expect(toastSuccessMock).toHaveBeenCalledWith(
       expect.stringContaining("/backup/export.json"),
+      expect.objectContaining({ closeButton: true }),
     );
   });
 

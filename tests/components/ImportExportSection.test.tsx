@@ -63,7 +63,7 @@ describe("ImportExportSection Component", () => {
     fireEvent.click(importButton);
     expect(baseProps.onImport).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    fireEvent.click(screen.getByRole("button", { name: "common.clear" }));
     expect(baseProps.onClear).toHaveBeenCalledTimes(1);
   });
 

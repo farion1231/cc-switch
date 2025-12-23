@@ -17,6 +17,7 @@
     "about": "バージョン情報",
     "version": "バージョン",
     "loading": "読み込み中...",
+    "notInstalled": "未インストール",
     "success": "成功",
     "error": "エラー",
     "unknown": "不明",
@@ -28,7 +29,14 @@
     "formatError": "整形に失敗しました: {{error}}",
     "copy": "コピー",
     "view": "表示",
-    "back": "戻る"
+    "back": "戻る",
+    "refresh": "更新",
+    "refreshing": "更新中...",
+    "all": "すべて",
+    "search": "検索",
+    "reset": "リセット",
+    "actions": "操作",
+    "deleting": "削除中..."
   },
   "apiKeyInput": {
     "placeholder": "API Key を入力",
@@ -80,6 +88,12 @@
     "removeFromClaudePlugin": "Claude プラグインから解除",
     "dragToReorder": "ドラッグで並べ替え",
     "dragHandle": "ドラッグで並べ替え",
+    "searchPlaceholder": "名前・メモ・URLで検索...",
+    "searchAriaLabel": "プロバイダーを検索",
+    "searchScopeHint": "名前・メモ・URL を対象に検索します。",
+    "searchCloseHint": "Esc で閉じる",
+    "searchCloseAriaLabel": "検索を閉じる",
+    "noSearchResults": "一致するプロバイダーがありません。",
     "duplicate": "複製",
     "sortUpdateFailed": "並び順の更新に失敗しました",
     "configureUsage": "利用状況を設定",
@@ -113,7 +127,7 @@
     "providerAdded": "プロバイダーを追加しました",
     "providerSaved": "プロバイダー設定を保存しました",
     "providerDeleted": "プロバイダーを削除しました",
-    "switchSuccess": "切り替え成功！ {{appName}} ターミナルを再起動すると反映されます",
+    "switchSuccess": "切り替え成功！",
     "switchFailedTitle": "切り替えに失敗しました",
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "autoImported": "既存設定からデフォルトプロバイダーを自動作成しました",
@@ -123,6 +137,8 @@
     "appliedToClaudePlugin": "Claude プラグインに適用しました",
     "removedFromClaudePlugin": "Claude プラグインから削除しました",
     "syncClaudePluginFailed": "Claude プラグインとの同期に失敗しました",
+    "skipClaudeOnboardingFailed": "Claude Code の初回確認スキップに失敗しました",
+    "clearClaudeOnboardingSkipFailed": "Claude Code の初回確認の復元に失敗しました",
     "updateSuccess": "プロバイダーを更新しました",
     "updateFailed": "プロバイダーの更新に失敗しました: {{error}}",
     "deleteSuccess": "プロバイダーを削除しました",
@@ -139,6 +155,34 @@
     "general": "一般",
     "tabGeneral": "一般",
     "tabAdvanced": "詳細",
+    "advanced": {
+      "configDir": {
+        "title": "設定ディレクトリ",
+        "description": "Claude、Codex、Gemini の設定保存パスを管理"
+      },
+      "proxy": {
+        "title": "ローカルプロキシ",
+        "description": "プロキシサービスの切り替え、ステータスとポート情報を表示",
+        "running": "実行中",
+        "stopped": "停止中"
+      },
+      "modelTest": {
+        "title": "モデルテスト設定",
+        "description": "モデルテストで使用するデフォルトモデルとプロンプトを設定"
+      },
+      "failover": {
+        "title": "自動フェイルオーバー",
+        "description": "フェイルオーバーキューとサーキットブレーカー戦略を設定"
+      },
+      "pricing": {
+        "title": "コスト計算",
+        "description": "各モデルのトークン料金ルールを管理"
+      },
+      "data": {
+        "title": "データ管理",
+        "description": "設定のインポート/エクスポートとバックアップ/復元"
+      }
+    },
     "language": "言語",
     "languageHint": "切り替えるとすぐにプレビューされ、保存後に永続化されます。",
     "theme": "テーマ",
@@ -147,7 +191,7 @@
     "themeDark": "ダーク",
     "themeSystem": "システム",
     "importExport": "SQL インポート/エクスポート",
-    "importExportHint": "移行や復元用にデータベースの SQL バックアップをインポート/エクスポートします。",
+    "importExportHint": "移行や復元用にデータベースの SQL バックアップをインポート/エクスポートします（インポートは CC Switch がエクスポートしたバックアップのみ対応）。",
     "exportConfig": "SQL バックアップをエクスポート",
     "selectConfigFile": "SQL ファイルを選択",
     "noFileSelected": "ファイルが選択されていません。",
@@ -163,7 +207,7 @@
     "selectFileFailed": "有効な SQL バックアップファイルを選択してください",
     "configCorrupted": "SQL ファイルが壊れているか形式が無効な可能性があります",
     "backupId": "バックアップ ID",
-    "autoReload": "2 秒後に自動で再読み込みします...",
+    "autoReload": "データを更新しました",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
@@ -176,6 +220,8 @@
     "minimizeToTrayDescription": "チェックすると閉じるボタンでトレイに隠し、オフならアプリを終了します。",
     "enableClaudePluginIntegration": "Claude Code 拡張に適用",
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
+    "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
+    "skipClaudeOnboardingDescription": "オンにすると Claude Code の初回インストール確認をスキップします",
     "configDirectoryOverride": "設定ディレクトリの上書き（詳細）",
     "configDirectoryDescription": "WSL などで Claude Code や Codex を使う場合、ここで設定ディレクトリを WSL 側に合わせるとデータを揃えられます。",
     "configSetDefaultName": "デフォルト環境",
@@ -218,6 +264,11 @@
     "releaseNotes": "リリースノート",
     "viewReleaseNotes": "このバージョンのリリースノートを見る",
     "viewCurrentReleaseNotes": "現在のバージョンのリリースノートを見る",
+    "oneClickInstall": "ワンクリックインストール",
+    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI をインストール",
+    "localEnvCheck": "ローカル環境チェック",
+    "installCommandsCopied": "インストールコマンドをコピーしました",
+    "installCommandsCopyFailed": "コピーに失敗しました。手動でコピーしてください。",
     "importFailedError": "設定のインポートに失敗しました: {{message}}",
     "exportFailedError": "設定のエクスポートに失敗しました:",
     "restartRequired": "再起動が必要です",
@@ -277,7 +328,8 @@
       "zhipu": "Zhipu GLM は CC Switch の公式パートナーです。リンク経由でチャージすると 10% 割引",
       "packycode": "PackyCode は CC Switch の公式パートナーです。登録後チャージ時に \"cc-switch\" を入力すると 10% オフ",
       "minimax_cn": "MiniMax Coding Plan 特別価格、Starter ¥9.9 から",
-      "minimax_en": "MiniMax Coding Plan Black Friday、Starter が月額 $2（80% OFF）"
+      "minimax_en": "MiniMax Coding Plan Black Friday、Starter が月額 $2（80% OFF）",
+      "dmxapi": "Claude Code 専用モデル 66% OFF 実施中！"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
@@ -368,6 +420,50 @@
     "hint": "プリセットを選んだ後でも、下のフィールドで調整できます。"
   },
   "usage": {
+    "title": "利用統計",
+    "subtitle": "AI モデルの利用状況とコスト統計を表示",
+    "today": "24時間",
+    "last7days": "7日間",
+    "last30days": "30日間",
+    "totalRequests": "総リクエスト数",
+    "totalCost": "総コスト",
+    "cost": "コスト",
+    "perMillion": "(100万あたり)",
+    "trends": "利用トレンド",
+    "rangeToday": "今日 (時間別)",
+    "rangeLast7Days": "過去7日間",
+    "rangeLast30Days": "過去30日間",
+    "totalTokens": "総トークン数",
+    "cacheTokens": "キャッシュトークン",
+    "requestLogs": "リクエストログ",
+    "providerStats": "プロバイダー統計",
+    "modelStats": "モデル統計",
+    "time": "時間",
+    "provider": "プロバイダー",
+    "billingModel": "課金モデル",
+    "inputTokens": "入力",
+    "outputTokens": "出力",
+    "cacheReadTokens": "キャッシュ読取",
+    "cacheCreationTokens": "キャッシュ書込",
+    "timingInfo": "応答時間/TTFT",
+    "status": "ステータス",
+    "noData": "データなし",
+    "unknownProvider": "不明なプロバイダー",
+    "stream": "ストリーム",
+    "nonStream": "非ストリーム",
+    "totalRecords": "全 {{total}} 件",
+    "modelPricing": "モデル料金",
+    "loadPricingError": "料金データの読み込みに失敗しました",
+    "modelPricingDesc": "各モデルのトークンコストを設定",
+    "noPricingData": "料金データがありません。「追加」をクリックしてモデル料金を設定してください。",
+    "model": "モデル",
+    "displayName": "表示名",
+    "inputCost": "入力コスト",
+    "outputCost": "出力コスト",
+    "cacheReadCost": "キャッシュ読取",
+    "cacheWriteCost": "キャッシュ書込",
+    "deleteConfirmTitle": "削除の確認",
+    "deleteConfirmDesc": "このモデル料金を削除しますか？この操作は元に戻せません。",
     "queryFailed": "照会に失敗しました",
     "refreshUsage": "利用状況を更新",
     "planUsage": "プラン利用状況",
@@ -378,7 +474,22 @@
     "justNow": "たった今",
     "minutesAgo": "{{count}} 分前",
     "hoursAgo": "{{count}} 時間前",
-    "daysAgo": "{{count}} 日前"
+    "daysAgo": "{{count}} 日前",
+    "multiplePlans": "{{count}} プラン",
+    "expand": "展開",
+    "collapse": "折りたたむ",
+    "modelIdPlaceholder": "例: claude-3-5-sonnet-20241022",
+    "displayNamePlaceholder": "例: Claude 3.5 Sonnet",
+    "appType": "アプリ種別",
+    "allApps": "すべてのアプリ",
+    "statusCode": "ステータスコード",
+    "searchProviderPlaceholder": "プロバイダーを検索...",
+    "searchModelPlaceholder": "モデルを検索...",
+    "timeRange": "期間",
+    "input": "Input",
+    "output": "Output",
+    "cacheWrite": "Write",
+    "cacheRead": "Read"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -391,6 +502,10 @@
     "templateGeneral": "General",
     "templateNewAPI": "NewAPI",
     "credentialsConfig": "認証情報",
+    "credentialsHint": "空欄の場合はプロバイダー設定を使用",
+    "optional": "オプション",
+    "apiKeyPlaceholder": "空欄の場合はプロバイダーの API Key を使用",
+    "baseUrlPlaceholder": "空欄の場合はプロバイダーの Base URL を使用",
     "baseUrl": "Base URL",
     "accessToken": "Access Token",
     "accessTokenPlaceholder": "「Security Settings」で生成",
@@ -444,7 +559,9 @@
     "tip3": "• 全体を () で囲み、オブジェクトリテラル式にしてください"
   },
   "errors": {
-    "usage_query_failed": "利用状況の取得に失敗しました"
+    "usage_query_failed": "利用状況の取得に失敗しました",
+    "configLoadFailedTitle": "設定の読み込みに失敗しました",
+    "configLoadFailedMessage": "設定ファイルを読み込めません:\n{{path}}\n\nエラー詳細:\n{{detail}}\n\nJSON が正しいか確認するか、同じディレクトリのバックアップファイル（config.json.bak など）から復元してください。\n\nアプリを終了して修正してください。"
   },
   "presetSelector": {
     "title": "設定タイプを選択",
@@ -547,9 +664,6 @@
     "env": "環境変数（1 行に 1 件、KEY=VALUE）",
     "envPlaceholder": "FOO=bar\nHELLO=world",
     "reset": "リセット",
-    "notice": {
-      "restartClaude": "書き込みました。Claude を再起動すると反映されます。"
-    },
     "msg": {
       "saved": "保存しました",
       "deleted": "削除しました",
@@ -846,12 +960,100 @@
     "label": "アイコン",
     "colorLabel": "アイコンカラー",
     "selectIcon": "アイコンを選択",
-    "preview": "プレビュー"
+    "preview": "プレビュー",
+    "clickToChange": "クリックでアイコンを変更",
+    "clickToSelect": "クリックでアイコンを選択"
   },
   "migration": {
     "success": "設定の移行が完了しました"
   },
   "agents": {
     "title": "エージェント"
+  },
+  "health": {
+    "operational": "正常",
+    "degraded": "低下",
+    "failed": "失敗",
+    "circuitOpen": "サーキットオープン",
+    "consecutiveFailures": "{{count}} 回連続失敗"
+  },
+  "proxy": {
+    "panel": {
+      "serviceAddress": "サービスアドレス",
+      "addressCopied": "アドレスをコピーしました",
+      "currentProvider": "現在のプロバイダー:",
+      "waitingFirstRequest": "現在のプロバイダー: 最初のリクエスト待ち...",
+      "stoppedTitle": "プロキシサービス停止中",
+      "stoppedDescription": "右上のトグルでサービスを開始できます",
+      "openSettings": "プロキシサービスを設定",
+      "stats": {
+        "activeConnections": "アクティブ接続",
+        "totalRequests": "総リクエスト数",
+        "successRate": "成功率",
+        "uptime": "稼働時間"
+      }
+    },
+    "settings": {
+      "toast": {
+        "saved": "プロキシ設定を保存しました",
+        "saveFailed": "保存に失敗しました: {{error}}"
+      }
+    },
+    "switchFailed": "切り替えに失敗しました: {{error}}",
+    "failoverQueue": {
+      "title": "フェイルオーバーキュー",
+      "description": "各アプリのプロバイダーのフェイルオーバー順序を管理します",
+      "info": "現在アクティブなプロバイダーが常に優先されます。リクエストが失敗すると、システムはキュー順に他のプロバイダーを試行します。",
+      "selectProvider": "キューに追加するプロバイダーを選択",
+      "noAvailableProviders": "追加できるプロバイダーがありません",
+      "empty": "フェイルオーバーキューが空です。自動フェイルオーバーを有効にするにはプロバイダーを追加してください。",
+      "dragHint": "ドラッグでフェイルオーバー順序を調整します。番号が小さいほど優先度が高くなります。",
+      "toggleEnabled": "有効/無効",
+      "addSuccess": "フェイルオーバーキューに追加しました",
+      "addFailed": "追加に失敗しました",
+      "removeSuccess": "フェイルオーバーキューから削除しました",
+      "removeFailed": "削除に失敗しました",
+      "reorderSuccess": "キュー順序を更新しました",
+      "reorderFailed": "順序の更新に失敗しました",
+      "toggleFailed": "状態の更新に失敗しました"
+    },
+    "autoFailover": {
+      "info": "フェイルオーバーキューに複数のプロバイダーが設定されている場合、リクエストが失敗すると優先度順に試行します。プロバイダーが連続失敗のしきい値に達すると、サーキットブレーカーが開き、一時的にスキップされます。",
+      "configSaved": "自動フェイルオーバー設定を保存しました",
+      "configSaveFailed": "保存に失敗しました",
+      "retrySettings": "リトライとタイムアウト設定",
+      "failureThreshold": "失敗しきい値",
+      "failureThresholdHint": "この回数連続で失敗するとサーキットブレーカーが開きます（推奨: 3-10）",
+      "timeout": "回復待ち時間（秒）",
+      "timeoutHint": "サーキットが開いた後、回復を試みるまでの待ち時間（推奨: 30-120）",
+      "circuitBreakerSettings": "サーキットブレーカー詳細設定",
+      "successThreshold": "回復成功しきい値",
+      "successThresholdHint": "半開状態でこの回数成功するとサーキットブレーカーが閉じます",
+      "errorRate": "エラー率しきい値 (%)",
+      "errorRateHint": "この値を超えるとサーキットブレーカーが開きます",
+      "minRequests": "最小リクエスト数",
+      "minRequestsHint": "エラー率を計算する前の最小リクエスト数",
+      "explanationTitle": "仕組み",
+      "failureThresholdLabel": "失敗しきい値",
+      "failureThresholdExplain": "この回数連続で失敗すると、サーキットブレーカーが開き、プロバイダーは一時的に利用不可になります",
+      "timeoutLabel": "回復待ち時間",
+      "timeoutExplain": "サーキットが開いた後、半開状態を試みるまでの待ち時間",
+      "successThresholdLabel": "回復成功しきい値",
+      "successThresholdExplain": "半開状態でこの回数成功するとサーキットブレーカーが閉じ、プロバイダーが再び利用可能になります",
+      "errorRateLabel": "エラー率しきい値",
+      "errorRateExplain": "失敗しきい値に達していなくても、エラー率がこの値を超えるとサーキットブレーカーが開きます"
+    }
+  },
+  "streamCheck": {
+    "configSaved": "ヘルスチェック設定を保存しました",
+    "configSaveFailed": "保存に失敗しました",
+    "testModels": "テストモデル",
+    "claudeModel": "Claude モデル",
+    "codexModel": "Codex モデル",
+    "geminiModel": "Gemini モデル",
+    "checkParams": "チェックパラメーター",
+    "timeout": "タイムアウト（秒）",
+    "maxRetries": "最大リトライ回数",
+    "degradedThreshold": "劣化しきい値（ミリ秒）"
   }
 }

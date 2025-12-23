@@ -234,7 +234,9 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     try {
       const formatted = formatJSON(currentValue);
       onChange(formatted);
-      toast.success(t("common.formatSuccess", { defaultValue: "格式化成功" }));
+      toast.success(t("common.formatSuccess", { defaultValue: "格式化成功" }), {
+        closeButton: true,
+      });
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);

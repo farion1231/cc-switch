@@ -23,7 +23,7 @@ import type { LogFilters } from "@/types/usage";
 import { ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react";
 
 export function RequestLogTable() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
 
   // 默认时间范围：过去24小时
@@ -62,6 +62,13 @@ export function RequestLogTable() {
     });
   };
 
+  const dateLocale =
+    i18n.language === "zh"
+      ? "zh-CN"
+      : i18n.language === "ja"
+        ? "ja-JP"
+        : "en-US";
+
   return (
     <div className="space-y-4">
       {/* 筛选栏 */}
@@ -77,10 +84,10 @@ export function RequestLogTable() {
             }
           >
             <SelectTrigger className="w-[130px] bg-background">
-              <SelectValue placeholder={t("usage.endpoint", "端点")} />
+              <SelectValue placeholder={t("usage.appType")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">{t("common.all", "全部端点")}</SelectItem>
+              <SelectItem value="all">{t("usage.allApps")}</SelectItem>
               <SelectItem value="claude">Claude</SelectItem>
               <SelectItem value="codex">Codex</SelectItem>
               <SelectItem value="gemini">Gemini</SelectItem>
@@ -97,10 +104,10 @@ export function RequestLogTable() {
             }
           >
             <SelectTrigger className="w-[130px] bg-background">
-              <SelectValue placeholder={t("usage.status", "状态码")} />
+              <SelectValue placeholder={t("usage.statusCode")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">{t("common.all", "全部状态")}</SelectItem>
+              <SelectItem value="all">{t("common.all")}</SelectItem>
               <SelectItem value="200">200 OK</SelectItem>
               <SelectItem value="400">400 Bad Request</SelectItem>
               <SelectItem value="401">401 Unauthorized</SelectItem>
@@ -113,7 +120,7 @@ export function RequestLogTable() {
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder={t("usage.provider", "搜索供应商...")}
+                placeholder={t("usage.searchProviderPlaceholder")}
                 className="pl-9 bg-background"
                 value={tempFilters.providerName || ""}
                 onChange={(e) =>
@@ -125,7 +132,7 @@ export function RequestLogTable() {
               />
             </div>
             <Input
-              placeholder={t("usage.model", "搜索模型...")}
+              placeholder={t("usage.searchModelPlaceholder")}
               className="w-[180px] bg-background"
               value={tempFilters.model || ""}
               onChange={(e) =>
@@ -140,7 +147,7 @@ export function RequestLogTable() {
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span className="whitespace-nowrap">时间范围:</span>
+            <span className="whitespace-nowrap">{t("usage.timeRange")}:</span>
             <Input
               type="datetime-local"
               className="h-8 w-[200px] bg-background"
@@ -190,7 +197,7 @@ export function RequestLogTable() {
               className="h-8"
             >
               <Search className="mr-2 h-3.5 w-3.5" />
-              {t("common.search", "查询")}
+              {t("common.search")}
             </Button>
             <Button
               size="sm"
@@ -199,7 +206,7 @@ export function RequestLogTable() {
               className="h-8"
             >
               <X className="mr-2 h-3.5 w-3.5" />
-              {t("common.reset", "重置")}
+              {t("common.reset")}
             </Button>
             <Button
               size="sm"
@@ -222,34 +229,34 @@ export function RequestLogTable() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="whitespace-nowrap">
-                    {t("usage.time", "时间")}
+                    {t("usage.time")}
                   </TableHead>
                   <TableHead className="whitespace-nowrap">
-                    {t("usage.provider", "供应商")}
+                    {t("usage.provider")}
                   </TableHead>
                   <TableHead className="min-w-[280px] whitespace-nowrap">
-                    {t("usage.billingModel", "计费模型")}
+                    {t("usage.billingModel")}
                   </TableHead>
                   <TableHead className="text-right whitespace-nowrap">
-                    {t("usage.inputTokens", "输入")}
+                    {t("usage.inputTokens")}
                   </TableHead>
                   <TableHead className="text-right whitespace-nowrap">
-                    {t("usage.outputTokens", "输出")}
+                    {t("usage.outputTokens")}
                   </TableHead>
                   <TableHead className="text-right min-w-[90px] whitespace-nowrap">
-                    {t("usage.cacheReadTokens", "缓存读取")}
+                    {t("usage.cacheReadTokens")}
                   </TableHead>
                   <TableHead className="text-right min-w-[90px] whitespace-nowrap">
-                    {t("usage.cacheCreationTokens", "缓存写入")}
+                    {t("usage.cacheCreationTokens")}
                   </TableHead>
                   <TableHead className="text-right whitespace-nowrap">
-                    {t("usage.totalCost", "成本")}
+                    {t("usage.totalCost")}
                   </TableHead>
                   <TableHead className="text-center min-w-[140px] whitespace-nowrap">
-                    {t("usage.timingInfo", "用时/首字")}
+                    {t("usage.timingInfo")}
                   </TableHead>
                   <TableHead className="whitespace-nowrap">
-                    {t("usage.status", "状态")}
+                    {t("usage.status")}
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -260,18 +267,19 @@ export function RequestLogTable() {
                       colSpan={10}
                       className="text-center text-muted-foreground"
                     >
-                      {t("usage.noData", "暂无数据")}
+                      {t("usage.noData")}
                     </TableCell>
                   </TableRow>
                 ) : (
                   logs.map((log) => (
                     <TableRow key={log.requestId}>
                       <TableCell>
-                        {new Date(log.createdAt * 1000).toLocaleString("zh-CN")}
+                        {new Date(log.createdAt * 1000).toLocaleString(
+                          dateLocale,
+                        )}
                       </TableCell>
                       <TableCell>
-                        {log.providerName ||
-                          t("usage.unknownProvider", "未知供应商")}
+                        {log.providerName || t("usage.unknownProvider")}
                       </TableCell>
                       <TableCell
                         className="font-mono text-sm max-w-[280px] truncate"
@@ -339,8 +347,8 @@ export function RequestLogTable() {
                             }`}
                           >
                             {log.isStreaming
-                              ? t("usage.stream", "流")
-                              : t("usage.nonStream", "非流")}
+                              ? t("usage.stream")
+                              : t("usage.nonStream")}
                           </span>
                         </div>
                       </TableCell>
@@ -366,7 +374,7 @@ export function RequestLogTable() {
           {total > 0 && (
             <div className="flex items-center justify-between px-2">
               <span className="text-sm text-muted-foreground">
-                {t("usage.totalRecords", "共 {{total}} 条记录", { total })}
+                {t("usage.totalRecords", { total })}
               </span>
               <div className="flex items-center gap-1">
                 <Button

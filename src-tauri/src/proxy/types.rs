@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 /// 代理服务器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
-    /// 是否启用代理服务
-    pub enabled: bool,
     /// 监听地址
     pub listen_address: String,
     /// 监听端口
@@ -23,7 +21,6 @@ pub struct ProxyConfig {
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
             listen_address: "127.0.0.1".to_string(),
             listen_port: 15721, // 使用较少占用的高位端口
             max_retries: 3,
@@ -84,6 +81,14 @@ pub struct ProxyServerInfo {
     pub address: String,
     pub port: u16,
     pub started_at: String,
+}
+
+/// 各应用的接管状态（是否改写该应用的 Live 配置指向本地代理）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProxyTakeoverStatus {
+    pub claude: bool,
+    pub codex: bool,
+    pub gemini: bool,
 }
 
 /// API 格式类型（预留，当前不需要格式转换）

@@ -19,6 +19,23 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: tMock }),
 }));
 
+vi.mock("@/hooks/useProxyStatus", () => ({
+  useProxyStatus: () => ({
+    status: null,
+    isLoading: false,
+    isRunning: false,
+    isTakeoverActive: false,
+    startWithTakeover: vi.fn(),
+    stopWithRestore: vi.fn(),
+    switchProxyProvider: vi.fn(),
+    checkRunning: vi.fn(),
+    checkTakeoverActive: vi.fn(),
+    isStarting: false,
+    isStopping: false,
+    isPending: false,
+  }),
+}));
+
 interface SettingsMock {
   settings: any;
   isLoading: boolean;
@@ -311,6 +328,7 @@ describe("SettingsPage Component", () => {
     });
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
+    fireEvent.click(screen.getByText("settings.advanced.data.title"));
 
     // 有文件时，点击导入按钮执行 importConfig
     fireEvent.click(
@@ -324,7 +342,7 @@ describe("SettingsPage Component", () => {
     expect(importExportMock.exportConfig).toHaveBeenCalled();
 
     // 清除选择按钮
-    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    fireEvent.click(screen.getByRole("button", { name: "common.clear" }));
     expect(importExportMock.clearSelection).toHaveBeenCalled();
   });
 
@@ -386,6 +404,7 @@ describe("SettingsPage Component", () => {
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(
         "settings.devModeRestartHint",
+        expect.objectContaining({ closeButton: true }),
       );
     });
   });
@@ -416,6 +435,7 @@ describe("SettingsPage Component", () => {
     render(<SettingsPage open={true} onOpenChange={vi.fn()} />);
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
+    fireEvent.click(screen.getByText("settings.advanced.configDir.title"));
 
     fireEvent.click(screen.getByText("browse-directory"));
     expect(settingsMock.browseDirectory).toHaveBeenCalledWith("claude");

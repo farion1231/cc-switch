@@ -32,7 +32,7 @@ export function DeepLinkImportDialog() {
 
   // 容错判断：MCP 导入结果可能缺少 type 字段
   const isMcpImportResult = (
-    value: unknown
+    value: unknown,
   ): value is {
     importedCount: number;
     importedIds: string[];
@@ -59,7 +59,7 @@ export function DeepLinkImportDialog() {
         if (event.payload.config || event.payload.configUrl) {
           try {
             const mergedRequest = await deeplinkApi.mergeDeeplinkConfig(
-              event.payload
+              event.payload,
             );
             console.log("Config merged successfully:", mergedRequest);
             setRequest(mergedRequest);
@@ -77,7 +77,7 @@ export function DeepLinkImportDialog() {
         }
 
         setIsOpen(true);
-      }
+      },
     );
 
     // Listen for deep link error events
@@ -128,6 +128,7 @@ export function DeepLinkImportDialog() {
             description: t("deeplink.mcpImportSuccessDescription", {
               count: summary.importedCount,
             }),
+            closeButton: true,
           });
         }
       };
@@ -142,18 +143,20 @@ export function DeepLinkImportDialog() {
             description: t("deeplink.importSuccessDescription", {
               name: request.name,
             }),
+            closeButton: true,
           });
         } else if (result.type === "prompt") {
           // Prompts don't use React Query, trigger a custom event for refresh
           window.dispatchEvent(
             new CustomEvent("prompt-imported", {
               detail: { app: request.app },
-            })
+            }),
           );
           toast.success(t("deeplink.promptImportSuccess"), {
             description: t("deeplink.promptImportSuccessDescription", {
               name: request.name,
             }),
+            closeButton: true,
           });
         } else if (result.type === "mcp") {
           await refreshMcp(result);
@@ -171,6 +174,7 @@ export function DeepLinkImportDialog() {
             description: t("deeplink.skillImportSuccessDescription", {
               repo: request.repo,
             }),
+            closeButton: true,
           });
         }
       } else if (isMcpImportResult(result)) {
@@ -185,6 +189,7 @@ export function DeepLinkImportDialog() {
           description: t("deeplink.importSuccessDescription", {
             name: request.name,
           }),
+          closeButton: true,
         });
       }
 
@@ -279,7 +284,7 @@ export function DeepLinkImportDialog() {
   const maskValue = (key: string, value: string): string => {
     const sensitiveKeys = ["TOKEN", "KEY", "SECRET", "PASSWORD"];
     const isSensitive = sensitiveKeys.some((k) =>
-      key.toUpperCase().includes(k)
+      key.toUpperCase().includes(k),
     );
     if (isSensitive && value.length > 8) {
       return `${value.substring(0, 8)}${"*".repeat(12)}`;
@@ -521,7 +526,7 @@ export function DeepLinkImportDialog() {
                                         {maskValue(key, String(value))}
                                       </span>
                                     </div>
-                                  )
+                                  ),
                                 )}
                               </div>
                             )}
@@ -548,7 +553,7 @@ export function DeepLinkImportDialog() {
                                             {maskValue(key, String(value))}
                                           </span>
                                         </div>
-                                      )
+                                      ),
                                     )}
                                   </div>
                                 )}
@@ -584,7 +589,7 @@ export function DeepLinkImportDialog() {
                                         {maskValue(key, String(value))}
                                       </span>
                                     </div>
-                                  )
+                                  ),
                                 )}
                               </div>
                             )}

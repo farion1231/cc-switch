@@ -1,22 +1,32 @@
 import { useState } from "react";
-import { Activity, Clock, TrendingUp, Server, ListOrdered } from "lucide-react";
+import {
+  Activity,
+  Clock,
+  TrendingUp,
+  Server,
+  ListOrdered,
+  Settings,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { ProxySettingsDialog } from "./ProxySettingsDialog";
 import { toast } from "sonner";
-import { useProxyTargets } from "@/lib/query/failover";
+import { useFailoverQueue } from "@/lib/query/failover";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { useProviderHealth } from "@/lib/query/failover";
 import type { ProxyStatus } from "@/types/proxy";
+import { useTranslation } from "react-i18next";
 
 export function ProxyPanel() {
+  const { t } = useTranslation();
   const { status, isRunning } = useProxyStatus();
   const [showSettings, setShowSettings] = useState(false);
 
-  // 获取所有三个应用类型的代理目标列表
-  const { data: claudeTargets = [] } = useProxyTargets("claude");
-  const { data: codexTargets = [] } = useProxyTargets("codex");
-  const { data: geminiTargets = [] } = useProxyTargets("gemini");
+  // 获取所有三个应用类型的故障转移队列（不包含当前供应商）
+  // 当前供应商始终优先，队列仅用于失败后的备用顺序
+  const { data: claudeQueue = [] } = useFailoverQueue("claude");
+  const { data: codexQueue = [] } = useFailoverQueue("codex");
+  const { data: geminiQueue = [] } = useFailoverQueue("gemini");
 
   const formatUptime = (seconds: number): string => {
     const hours = Math.floor(seconds / 3600);
@@ -39,8 +49,23 @@ export function ProxyPanel() {
           <div className="space-y-6">
             <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-4">
               <div>
-                <p className="text-xs text-muted-foreground">服务地址</p>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-muted-foreground">
+                    {t("proxy.panel.serviceAddress", {
+                      defaultValue: "服务地址",
+                    })}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setShowSettings(true)}
+                    className="h-7 gap-1.5 text-xs"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                    {t("common.settings")}
+                  </Button>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <code className="flex-1 text-sm bg-background px-3 py-2 rounded border border-border/60">
                     http://{status.address}:{status.port}
                   </code>
@@ -51,16 +76,23 @@ export function ProxyPanel() {
                       navigator.clipboard.writeText(
                         `http://${status.address}:${status.port}`,
                       );
-                      toast.success("地址已复制");
+                      toast.success(
+                        t("proxy.panel.addressCopied", {
+                          defaultValue: "地址已复制",
+                        }),
+                        { closeButton: true },
+                      );
                     }}
                   >
-                    复制
+                    {t("common.copy")}
                   </Button>
                 </div>
               </div>
 
               <div className="pt-3 border-t border-border space-y-2">
-                <p className="text-xs text-muted-foreground">使用中</p>
+                <p className="text-xs text-muted-foreground">
+                  {t("provider.inUse")}
+                </p>
                 {status.active_targets && status.active_targets.length > 0 ? (
                   <div className="grid gap-2 sm:grid-cols-2">
                     {status.active_targets.map((target) => (
@@ -82,56 +114,69 @@ export function ProxyPanel() {
                   </div>
                 ) : status.current_provider ? (
                   <p className="text-sm text-muted-foreground">
-                    当前 Provider：{" "}
+                    {t("proxy.panel.currentProvider", {
+                      defaultValue: "当前 Provider：",
+                    })}{" "}
                     <span className="font-medium text-foreground">
                       {status.current_provider}
                     </span>
                   </p>
                 ) : (
                   <p className="text-sm text-yellow-600 dark:text-yellow-400">
-                    当前 Provider：等待首次请求…
+                    {t("proxy.panel.waitingFirstRequest", {
+                      defaultValue: "当前 Provider：等待首次请求…",
+                    })}
                   </p>
                 )}
               </div>
 
               {/* 供应商队列 - 按应用类型分组展示 */}
-              {(claudeTargets.length > 0 ||
-                codexTargets.length > 0 ||
-                geminiTargets.length > 0) && (
+              {(claudeQueue.length > 0 ||
+                codexQueue.length > 0 ||
+                geminiQueue.length > 0) && (
                 <div className="pt-3 border-t border-border space-y-3">
                   <div className="flex items-center gap-2">
                     <ListOrdered className="h-3.5 w-3.5 text-muted-foreground" />
                     <p className="text-xs text-muted-foreground">
-                      故障转移队列
+                      {t("proxy.failoverQueue.title")}
                     </p>
                   </div>
 
                   {/* Claude 队列 */}
-                  {claudeTargets.length > 0 && (
+                  {claudeQueue.length > 0 && (
                     <ProviderQueueGroup
                       appType="claude"
                       appLabel="Claude"
-                      targets={claudeTargets}
+                      targets={claudeQueue.map((item) => ({
+                        id: item.providerId,
+                        name: item.providerName,
+                      }))}
                       status={status}
                     />
                   )}
 
                   {/* Codex 队列 */}
-                  {codexTargets.length > 0 && (
+                  {codexQueue.length > 0 && (
                     <ProviderQueueGroup
                       appType="codex"
                       appLabel="Codex"
-                      targets={codexTargets}
+                      targets={codexQueue.map((item) => ({
+                        id: item.providerId,
+                        name: item.providerName,
+                      }))}
                       status={status}
                     />
                   )}
 
                   {/* Gemini 队列 */}
-                  {geminiTargets.length > 0 && (
+                  {geminiQueue.length > 0 && (
                     <ProviderQueueGroup
                       appType="gemini"
                       appLabel="Gemini"
-                      targets={geminiTargets}
+                      targets={geminiQueue.map((item) => ({
+                        id: item.providerId,
+                        name: item.providerName,
+                      }))}
                       status={status}
                     />
                   )}
@@ -142,23 +187,31 @@ export function ProxyPanel() {
             <div className="grid gap-3 md:grid-cols-4">
               <StatCard
                 icon={<Activity className="h-4 w-4" />}
-                label="活跃连接"
+                label={t("proxy.panel.stats.activeConnections", {
+                  defaultValue: "活跃连接",
+                })}
                 value={status.active_connections}
               />
               <StatCard
                 icon={<TrendingUp className="h-4 w-4" />}
-                label="总请求数"
+                label={t("proxy.panel.stats.totalRequests", {
+                  defaultValue: "总请求数",
+                })}
                 value={status.total_requests}
               />
               <StatCard
                 icon={<Clock className="h-4 w-4" />}
-                label="成功率"
+                label={t("proxy.panel.stats.successRate", {
+                  defaultValue: "成功率",
+                })}
                 value={`${status.success_rate.toFixed(1)}%`}
                 variant={status.success_rate > 90 ? "success" : "warning"}
               />
               <StatCard
                 icon={<Clock className="h-4 w-4" />}
-                label="运行时间"
+                label={t("proxy.panel.stats.uptime", {
+                  defaultValue: "运行时间",
+                })}
                 value={formatUptime(status.uptime_seconds)}
               />
             </div>
@@ -169,11 +222,26 @@ export function ProxyPanel() {
               <Server className="h-8 w-8" />
             </div>
             <p className="text-base font-medium text-foreground mb-1">
-              代理服务已停止
+              {t("proxy.panel.stoppedTitle", {
+                defaultValue: "代理服务已停止",
+              })}
             </p>
-            <p className="text-sm text-muted-foreground">
-              使用右上角开关即可启动服务
+            <p className="text-sm text-muted-foreground mb-4">
+              {t("proxy.panel.stoppedDescription", {
+                defaultValue: "使用右上角开关即可启动服务",
+              })}
             </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowSettings(true)}
+              className="gap-1.5"
+            >
+              <Settings className="h-4 w-4" />
+              {t("proxy.panel.openSettings", {
+                defaultValue: "配置代理服务",
+              })}
+            </Button>
           </div>
         )}
       </section>
@@ -273,6 +341,7 @@ function ProviderQueueItem({
   appType,
   isCurrent,
 }: ProviderQueueItemProps) {
+  const { t } = useTranslation();
   const { data: health } = useProviderHealth(provider.id, appType);
 
   return (
@@ -298,7 +367,7 @@ function ProviderQueueItem({
         </span>
         {isCurrent && (
           <span className="text-xs px-1.5 py-0.5 rounded bg-primary/20 text-primary">
-            使用中
+            {t("provider.inUse")}
           </span>
         )}
       </div>

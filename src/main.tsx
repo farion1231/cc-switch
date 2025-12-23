@@ -4,7 +4,7 @@ import App from "./App";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import "./index.css";
 // 导入国际化配置
-import "./i18n";
+import i18n from "./i18n";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/components/theme-provider";
 import { queryClient } from "@/lib/query";
@@ -43,8 +43,18 @@ async function handleConfigLoadError(
   const detail = payload?.error ?? "Unknown error";
 
   await message(
-    `无法读取配置文件：\n${path}\n\n错误详情：\n${detail}\n\n请手动检查 JSON 是否有效，或从同目录的备份文件（如 config.json.bak）恢复。\n\n应用将退出以便您进行修复。`,
-    { title: "配置加载失败", kind: "error" },
+    i18n.t("errors.configLoadFailedMessage", {
+      path,
+      detail,
+      defaultValue:
+        "无法读取配置文件：\n{{path}}\n\n错误详情：\n{{detail}}\n\n请手动检查 JSON 是否有效，或从同目录的备份文件（如 config.json.bak）恢复。\n\n应用将退出以便您进行修复。",
+    }),
+    {
+      title: i18n.t("errors.configLoadFailedTitle", {
+        defaultValue: "配置加载失败",
+      }),
+      kind: "error",
+    },
   );
 
   await exit(1);

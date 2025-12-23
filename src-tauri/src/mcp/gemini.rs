@@ -8,6 +8,12 @@ use crate::error::AppError;
 
 use super::validation::{extract_server_spec, validate_server_spec};
 
+fn should_sync_gemini_mcp() -> bool {
+    // Gemini 未安装/未初始化时：~/.gemini 目录不存在。
+    // 按用户偏好：目录缺失时跳过写入/删除，不创建任何文件或目录。
+    crate::gemini_config::get_gemini_dir().exists()
+}
+
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
 fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
     let mut out = HashMap::new();
@@ -33,6 +39,9 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
 
 /// 将 config.json 中 Gemini 的 enabled==true 项写入 Gemini MCP 配置
 pub fn sync_enabled_to_gemini(config: &MultiAppConfig) -> Result<(), AppError> {
+    if !should_sync_gemini_mcp() {
+        return Ok(());
+    }
     let enabled = collect_enabled_servers(&config.mcp.gemini);
     crate::gemini_mcp::set_mcp_servers_map(&enabled)
 }
@@ -103,6 +112,9 @@ pub fn sync_single_server_to_gemini(
     id: &str,
     server_spec: &Value,
 ) -> Result<(), AppError> {
+    if !should_sync_gemini_mcp() {
+        return Ok(());
+    }
     // 读取现有的 MCP 配置
     let mut current = crate::gemini_mcp::read_mcp_servers_map()?;
 
@@ -115,6 +127,9 @@ pub fn sync_single_server_to_gemini(
 
 /// 从 Gemini live 配置中移除单个 MCP 服务器
 pub fn remove_server_from_gemini(id: &str) -> Result<(), AppError> {
+    if !should_sync_gemini_mcp() {
+        return Ok(());
+    }
     // 读取现有的 MCP 配置
     let mut current = crate::gemini_mcp::read_mcp_servers_map()?;
 

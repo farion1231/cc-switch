@@ -2,7 +2,10 @@
 //!
 //! 基于Axum的HTTP服务器，处理代理请求
 
-use super::{handlers, provider_router::ProviderRouter, types::*, ProxyError};
+use super::{
+    failover_switch::FailoverSwitchManager, handlers, provider_router::ProviderRouter, types::*,
+    ProxyError,
+};
 use crate::database::Database;
 use axum::{
     routing::{get, post},
@@ -25,6 +28,10 @@ pub struct ProxyState {
     pub current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     /// 共享的 ProviderRouter（持有熔断器状态，跨请求保持）
     pub provider_router: Arc<ProviderRouter>,
+    /// AppHandle，用于发射事件和更新托盘菜单
+    pub app_handle: Option<tauri::AppHandle>,
+    /// 故障转移切换管理器
+    pub failover_manager: Arc<FailoverSwitchManager>,
 }
 
 /// 代理HTTP服务器
@@ -37,9 +44,15 @@ pub struct ProxyServer {
 }
 
 impl ProxyServer {
-    pub fn new(config: ProxyConfig, db: Arc<Database>) -> Self {
+    pub fn new(
+        config: ProxyConfig,
+        db: Arc<Database>,
+        app_handle: Option<tauri::AppHandle>,
+    ) -> Self {
         // 创建共享的 ProviderRouter（熔断器状态将跨所有请求保持）
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
+        // 创建故障转移切换管理器
+        let failover_manager = Arc::new(FailoverSwitchManager::new(db.clone()));
 
         let state = ProxyState {
             db,
@@ -48,6 +61,8 @@ impl ProxyServer {
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
             provider_router,
+            app_handle,
+            failover_manager,
         };
 
         Self {
@@ -176,8 +191,13 @@ impl ProxyServer {
             .route("/v1/messages", post(handlers::handle_messages))
             .route("/claude/v1/messages", post(handlers::handle_messages))
             // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
+            .route("/chat/completions", post(handlers::handle_chat_completions))
             .route(
                 "/v1/chat/completions",
+                post(handlers::handle_chat_completions),
+            )
+            .route(
+                "/v1/v1/chat/completions",
                 post(handlers::handle_chat_completions),
             )
             .route(
@@ -185,7 +205,9 @@ impl ProxyServer {
                 post(handlers::handle_chat_completions),
             )
             // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)
+            .route("/responses", post(handlers::handle_responses))
             .route("/v1/responses", post(handlers::handle_responses))
+            .route("/v1/v1/responses", post(handlers::handle_responses))
             .route("/codex/v1/responses", post(handlers::handle_responses))
             // Gemini API (支持带前缀和不带前缀)
             .route("/v1beta/*path", post(handlers::handle_gemini))

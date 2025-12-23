@@ -16,19 +16,18 @@ impl Database {
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
-                "SELECT enabled, listen_address, listen_port, max_retries,
+                "SELECT listen_address, listen_port, max_retries,
                         request_timeout, enable_logging, live_takeover_active
                  FROM proxy_config WHERE id = 1",
                 [],
                 |row| {
                     Ok(ProxyConfig {
-                        enabled: row.get::<_, i32>(0)? != 0,
-                        listen_address: row.get(1)?,
-                        listen_port: row.get::<_, i32>(2)? as u16,
-                        max_retries: row.get::<_, i32>(3)? as u8,
-                        request_timeout: row.get::<_, i32>(4)? as u64,
-                        enable_logging: row.get::<_, i32>(5)? != 0,
-                        live_takeover_active: row.get::<_, i32>(6).unwrap_or(0) != 0,
+                        listen_address: row.get(0)?,
+                        listen_port: row.get::<_, i32>(1)? as u16,
+                        max_retries: row.get::<_, i32>(2)? as u8,
+                        request_timeout: row.get::<_, i32>(3)? as u64,
+                        enable_logging: row.get::<_, i32>(4)? != 0,
+                        live_takeover_active: row.get::<_, i32>(5).unwrap_or(0) != 0,
                     })
                 },
             )
@@ -57,7 +56,7 @@ impl Database {
                      COALESCE((SELECT created_at FROM proxy_config WHERE id = 1), datetime('now')),
                      datetime('now'))",
             rusqlite::params![
-                if config.enabled { 1 } else { 0 },
+                0, // 已移除自动启用逻辑，保留列但固定为 0
                 config.listen_address,
                 config.listen_port as i32,
                 config.max_retries as i32,
@@ -72,28 +71,27 @@ impl Database {
         Ok(())
     }
 
-    /// 设置 Live 接管状态
+    /// 设置 Live 接管状态（仅更新 proxy_config 表，兼容旧逻辑）
+    ///
+    /// 注意：此方法不会清除 settings 表中的 proxy_takeover_* 状态。
+    /// settings 表的状态由 set_proxy_takeover_enabled 单独管理，用于跨重启保持状态。
     pub async fn set_live_takeover_active(&self, active: bool) -> Result<(), AppError> {
+        // 仅更新 proxy_config 表（兼容旧版本）
         let conn = lock_conn!(self.conn);
         conn.execute(
             "UPDATE proxy_config SET live_takeover_active = ?1, updated_at = datetime('now') WHERE id = 1",
             rusqlite::params![if active { 1 } else { 0 }],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(())
     }
 
     /// 检查是否处于 Live 接管模式
+    ///
+    /// v3.8.0+：以 settings 表中的 `proxy_takeover_{app_type}` 为真实来源
     pub async fn is_live_takeover_active(&self) -> Result<bool, AppError> {
-        let conn = lock_conn!(self.conn);
-        let active: i32 = conn
-            .query_row(
-                "SELECT COALESCE(live_takeover_active, 0) FROM proxy_config WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-        Ok(active != 0)
+        self.has_any_proxy_takeover()
     }
 
     // ==================== Provider Health ====================
@@ -104,28 +102,45 @@ impl Database {
         provider_id: &str,
         app_type: &str,
     ) -> Result<ProviderHealth, AppError> {
-        let conn = lock_conn!(self.conn);
+        let result = {
+            let conn = lock_conn!(self.conn);
 
-        conn.query_row(
-            "SELECT provider_id, app_type, is_healthy, consecutive_failures,
-                    last_success_at, last_failure_at, last_error, updated_at
-             FROM provider_health
-             WHERE provider_id = ?1 AND app_type = ?2",
-            rusqlite::params![provider_id, app_type],
-            |row| {
-                Ok(ProviderHealth {
-                    provider_id: row.get(0)?,
-                    app_type: row.get(1)?,
-                    is_healthy: row.get::<_, i64>(2)? != 0,
-                    consecutive_failures: row.get::<_, i64>(3)? as u32,
-                    last_success_at: row.get(4)?,
-                    last_failure_at: row.get(5)?,
-                    last_error: row.get(6)?,
-                    updated_at: row.get(7)?,
-                })
-            },
-        )
-        .map_err(|e| AppError::Database(e.to_string()))
+            conn.query_row(
+                "SELECT provider_id, app_type, is_healthy, consecutive_failures,
+                        last_success_at, last_failure_at, last_error, updated_at
+                 FROM provider_health
+                 WHERE provider_id = ?1 AND app_type = ?2",
+                rusqlite::params![provider_id, app_type],
+                |row| {
+                    Ok(ProviderHealth {
+                        provider_id: row.get(0)?,
+                        app_type: row.get(1)?,
+                        is_healthy: row.get::<_, i64>(2)? != 0,
+                        consecutive_failures: row.get::<_, i64>(3)? as u32,
+                        last_success_at: row.get(4)?,
+                        last_failure_at: row.get(5)?,
+                        last_error: row.get(6)?,
+                        updated_at: row.get(7)?,
+                    })
+                },
+            )
+        };
+
+        match result {
+            Ok(health) => Ok(health),
+            // 缺少记录时视为健康（关闭后清空状态，再次打开时默认正常）
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(ProviderHealth {
+                provider_id: provider_id.to_string(),
+                app_type: app_type.to_string(),
+                is_healthy: true,
+                consecutive_failures: 0,
+                last_success_at: None,
+                last_failure_at: None,
+                last_error: None,
+                updated_at: chrono::Utc::now().to_rfc3339(),
+            }),
+            Err(e) => Err(AppError::Database(e.to_string())),
+        }
     }
 
     /// 更新Provider健康状态
@@ -230,6 +245,31 @@ impl Database {
         Ok(())
     }
 
+    /// 清空指定应用的健康状态（关闭单个代理时使用）
+    pub async fn clear_provider_health_for_app(&self, app_type: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+
+        conn.execute(
+            "DELETE FROM provider_health WHERE app_type = ?1",
+            [app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        log::debug!("Cleared provider health records for app {app_type}");
+        Ok(())
+    }
+
+    /// 清空所有Provider健康状态（代理停止时调用）
+    pub async fn clear_all_provider_health(&self) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+
+        conn.execute("DELETE FROM provider_health", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        log::debug!("Cleared all provider health records");
+        Ok(())
+    }
+
     // ==================== Circuit Breaker Config ====================
 
     /// 获取熔断器配置
@@ -308,6 +348,17 @@ impl Database {
 
         log::info!("已备份 {app_type} Live 配置");
         Ok(())
+    }
+
+    /// 检查是否存在任意 Live 配置备份
+    pub async fn has_any_live_backup(&self) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM proxy_live_backup", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(count > 0)
     }
 
     /// 获取 Live 配置备份

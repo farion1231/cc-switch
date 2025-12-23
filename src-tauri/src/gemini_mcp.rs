@@ -42,8 +42,8 @@ fn write_json_value(path: &Path, value: &Value) -> Result<(), AppError> {
 ///
 /// 执行反向格式转换以保持与统一 MCP 结构的兼容性：
 /// - httpUrl → url + type: "http"
-/// - 仅有 url 字段 → 保持不变（SSE 类型）
-/// - 仅有 command 字段 → 保持不变（stdio 类型）
+/// - 仅有 url 字段 → 补齐 type: "sse"（Gemini 以字段名推断传输类型）
+/// - 仅有 command 字段 → 补齐 type: "stdio"
 pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>, AppError> {
     let path = user_config_path();
     if !path.exists() {
@@ -65,8 +65,15 @@ pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>
                 obj.insert("url".to_string(), http_url);
                 obj.insert("type".to_string(), Value::String("http".to_string()));
             }
-            // 如果有 url 但没有 type，不添加 type（默认为 SSE）
-            // 如果有 command 但没有 type，不添加 type（默认为 stdio）
+
+            // Gemini CLI 不使用 type 字段：这里补齐成统一结构，便于校验与导入
+            if obj.get("type").is_none() {
+                if obj.contains_key("command") {
+                    obj.insert("type".to_string(), Value::String("stdio".to_string()));
+                } else if obj.contains_key("url") {
+                    obj.insert("type".to_string(), Value::String("sse".to_string()));
+                }
+            }
         }
     }
 

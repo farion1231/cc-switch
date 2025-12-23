@@ -80,7 +80,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "Azure OpenAI",
     websiteUrl:
-      "https://learn.microsoft.com/azure/ai-services/openai/how-to/overview",
+      "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
     category: "third_party",
     isOfficial: true,
     auth: generateThirdPartyAuth(""),
@@ -131,6 +131,8 @@ requires_openai_auth = true`,
       "gpt-5.1-codex",
     ),
     endpointCandidates: ["https://www.dmxapi.cn/v1"],
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "dmxapi", // 促销信息 i18n key
   },
   {
     name: "PackyCode",

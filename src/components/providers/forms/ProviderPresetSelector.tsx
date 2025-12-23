@@ -149,10 +149,7 @@ export function ProviderPresetSelector({
                 className={`${getPresetButtonClass(isSelected, entry.preset)} relative`}
                 style={getPresetButtonStyle(isSelected, entry.preset)}
                 title={
-                  presetCategoryLabels[category] ??
-                  t("providerPreset.categoryOther", {
-                    defaultValue: "其他",
-                  })
+                  presetCategoryLabels[category] ?? t("providerPreset.other")
                 }
               >
                 {renderPresetIcon(entry.preset)}

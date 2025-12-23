@@ -69,6 +69,14 @@ export const settingsApi = {
     return await invoke("apply_claude_plugin_config", { official });
   },
 
+  async applyClaudeOnboardingSkip(): Promise<boolean> {
+    return await invoke("apply_claude_onboarding_skip");
+  },
+
+  async clearClaudeOnboardingSkip(): Promise<boolean> {
+    return await invoke("clear_claude_onboarding_skip");
+  },
+
   async saveFileDialog(defaultName: string): Promise<string | null> {
     return await invoke("save_file_dialog", { defaultName });
   },

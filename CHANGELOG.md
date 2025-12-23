@@ -5,6 +5,100 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0-1] - 2025-12-18
+
+### Beta Release
+
+This beta release introduces the **Local API Proxy** feature, along with Skills multi-app support, UI improvements, and numerous bug fixes.
+
+### Major Features
+
+#### Local Proxy Server
+- **Local HTTP Proxy** - High-performance proxy server built on Axum framework
+- **Multi-app Support** - Unified proxy for Claude Code, Codex, and Gemini CLI API requests
+- **Per-app Takeover** - Independent control over which apps route through the proxy
+- **Live Config Takeover** - Automatically backs up and redirects CLI configurations to local proxy
+
+#### Auto Failover
+- **Circuit Breaker** - Automatically detects provider failures and triggers protection
+- **Smart Failover** - Automatically switches to backup provider when current one is unavailable
+- **Health Tracking** - Real-time monitoring of provider availability
+- **Independent Failover Queues** - Each app maintains its own failover queue
+
+#### Monitoring
+- **Request Logging** - Detailed logging of all proxy requests
+- **Usage Statistics** - Token consumption, latency, success rate metrics
+- **Real-time Status** - Frontend displays proxy status and statistics
+
+#### Skills Multi-App Support
+- **Multi-app Support** - Skills now support both Claude and Codex (#365)
+- **Multi-app Migration** - Existing Skills auto-migrate to multi-app structure (#378)
+- **Installation Path Fix** - Use directory basename for skill installation path (#358)
+
+### Added
+- **Provider Icon Colors** - Customize provider icon colors (#385)
+- **Deeplink Usage Config** - Import usage query config via deeplink (#400)
+- **Error Request Logging** - Detailed logging for proxy requests (#401)
+- **Closable Toast** - Added close button to switch notification toast (#350)
+- **Icon Color Component** - ProviderIcon component supports color prop (#384)
+
+### Fixed
+
+#### Proxy Related
+- Takeover Codex base_url via model_provider
+- Harden crash recovery with fallback detection
+- Sync UI when active provider differs from current setting
+- Resolve circuit breaker race condition and error classification
+- Stabilize live takeover and provider editing
+- Reset health badges when proxy stops
+- Retry failover for all HTTP errors including 4xx
+- Fix HalfOpen counter underflow and config field inconsistencies
+- Resolve circuit breaker state persistence and HalfOpen deadlock
+- Auto-recover live config after abnormal exit
+- Update live backup when hot-switching provider in proxy mode
+- Wait for server shutdown before exiting app
+- Disable auto-start on app launch by resetting enabled flag on stop
+- Sync live config tokens to database before takeover
+- Resolve 404 error and auto-setup proxy targets
+
+#### MCP Related
+- Skip sync when target CLI app is not installed
+- Improve upsert and import robustness
+- Use browser-compatible platform detection for MCP presets
+
+#### UI Related
+- Restore fade transition for Skills button
+- Add close button to all success toasts
+- Prevent card jitter when health badge appears
+- Update SettingsPage tab styles (#342)
+
+#### Other
+- Fix Azure website link (#407)
+- Add fallback to provider config for usage credentials (#360)
+- Fix Windows black screen on startup (use system titlebar)
+- Add fallback for crypto.randomUUID() on older WebViews
+- Use correct npm package for Codex CLI version check
+- Security fixes for JavaScript executor and usage script (#151)
+
+### Improved
+- **Proxy Active Theme** - Apply emerald theme when proxy takeover is active
+- **Card Animation** - Improved provider card hover animation
+- **Remove Restart Prompt** - No longer prompts restart when switching providers
+
+### Technical
+- Implement per-app takeover mode
+- Proxy module contains 20+ Rust files with complete layered architecture
+- Add 5 new database tables for proxy functionality
+- Modularize handlers.rs to reduce code duplication
+- Remove is_proxy_target in favor of failover_queue
+
+### Stats
+- 55 commits since v3.8.2
+- 164 files changed
+- +22,164 / -570 lines
+
+---
+
 ## [3.8.0] - 2025-11-28
 
 ### Major Updates

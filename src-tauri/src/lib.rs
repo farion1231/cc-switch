@@ -48,6 +48,8 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use tauri::image::Image;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
@@ -133,6 +135,19 @@ async fn update_tray_menu(
     }
 }
 
+#[cfg(target_os = "macos")]
+fn macos_tray_icon() -> Option<Image<'static>> {
+    const ICON_BYTES: &[u8] = include_bytes!("../icons/tray/macos/statusbar_template_3x.png");
+
+    match Image::from_bytes(ICON_BYTES) {
+        Ok(icon) => Some(icon),
+        Err(err) => {
+            log::warn!("Failed to load macOS tray icon: {err}");
+            None
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -208,44 +223,6 @@ pub fn run() {
                     log::warn!("初始化 Updater 插件失败，已跳过：{e}");
                 }
             }
-            #[cfg(target_os = "macos")]
-            {
-                // 设置 macOS 标题栏背景色为主界面蓝色
-                if let Some(window) = app.get_webview_window("main") {
-                    use objc2::rc::Retained;
-                    use objc2::runtime::AnyObject;
-                    use objc2_app_kit::NSColor;
-
-                    match window.ns_window() {
-                        Ok(ns_window_ptr) => {
-                            if let Some(ns_window) =
-                                unsafe { Retained::retain(ns_window_ptr as *mut AnyObject) }
-                            {
-                                // 使用与主界面 banner 相同的蓝色 #3498db
-                                // #3498db = RGB(52, 152, 219)
-                                let bg_color = unsafe {
-                                    NSColor::colorWithRed_green_blue_alpha(
-                                        52.0 / 255.0,  // R: 52
-                                        152.0 / 255.0, // G: 152
-                                        219.0 / 255.0, // B: 219
-                                        1.0,           // Alpha: 1.0
-                                    )
-                                };
-
-                                unsafe {
-                                    use objc2::msg_send;
-                                    let _: () =
-                                        msg_send![&*ns_window, setBackgroundColor: &*bg_color];
-                                }
-                            } else {
-                                log::warn!("Failed to retain NSWindow reference");
-                            }
-                        }
-                        Err(e) => log::warn!("Failed to get NSWindow pointer: {e}"),
-                    }
-                }
-            }
-
             // 初始化日志
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -330,6 +307,9 @@ pub fn run() {
             }
 
             let app_state = AppState::new(db);
+
+            // 设置 AppHandle 用于代理故障转移时的 UI 更新
+            app_state.proxy_service.set_app_handle(app.handle().clone());
 
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
@@ -500,11 +480,26 @@ pub fn run() {
                 })
                 .show_menu_on_left_click(true);
 
-            // 统一使用应用默认图标；待托盘模板图标就绪后再启用
-            if let Some(icon) = app.default_window_icon() {
-                tray_builder = tray_builder.icon(icon.clone());
-            } else {
-                log::warn!("Failed to get default window icon for tray");
+            // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(icon) = macos_tray_icon() {
+                    tray_builder = tray_builder.icon(icon).icon_as_template(true);
+                } else if let Some(icon) = app.default_window_icon() {
+                    log::warn!("Falling back to default window icon for tray");
+                    tray_builder = tray_builder.icon(icon.clone());
+                } else {
+                    log::warn!("Failed to load macOS tray icon for tray");
+                }
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                if let Some(icon) = app.default_window_icon() {
+                    tray_builder = tray_builder.icon(icon.clone());
+                } else {
+                    log::warn!("Failed to get default window icon for tray");
+                }
             }
 
             let _tray = tray_builder.build(app)?;
@@ -521,49 +516,33 @@ pub fn run() {
                 }
             }
 
-            // 异常退出恢复 + 自动启动代理服务器
+            // 异常退出恢复 + 代理状态自动恢复
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<AppState>();
 
-                // 1. 检测异常退出并恢复 Live 配置
-                match state.db.is_live_takeover_active().await {
-                    Ok(true) => {
-                        // 接管标志为 true 但代理未运行 → 上次异常退出
-                        if !state.proxy_service.is_running().await {
-                            log::warn!("检测到上次异常退出，正在恢复 Live 配置...");
-                            if let Err(e) = state.proxy_service.recover_from_crash().await {
-                                log::error!("恢复 Live 配置失败: {e}");
-                            } else {
-                                log::info!("Live 配置已从异常退出中恢复");
-                            }
-                        }
-                    }
-                    Ok(false) => {
-                        // 正常状态，无需恢复
-                    }
+                // 检查是否有 Live 备份（表示上次异常退出时可能处于接管状态）
+                let has_backups = match state.db.has_any_live_backup().await {
+                    Ok(v) => v,
                     Err(e) => {
-                        log::error!("检查接管状态失败: {e}");
+                        log::error!("检查 Live 备份失败: {e}");
+                        false
+                    }
+                };
+                // 检查 Live 配置是否仍处于被接管状态（包含占位符）
+                let live_taken_over = state.proxy_service.detect_takeover_in_live_configs();
+
+                if has_backups || live_taken_over {
+                    log::warn!("检测到上次异常退出（存在接管残留），正在恢复 Live 配置...");
+                    if let Err(e) = state.proxy_service.recover_from_crash().await {
+                        log::error!("恢复 Live 配置失败: {e}");
+                    } else {
+                        log::info!("Live 配置已恢复");
                     }
                 }
 
-                // 2. 自动启动代理服务器（如果配置为启用）
-                match state.db.get_proxy_config().await {
-                    Ok(config) => {
-                        if config.enabled {
-                            log::info!("代理服务配置为启用，正在启动...");
-                            match state.proxy_service.start_with_takeover().await {
-                                Ok(info) => log::info!(
-                                    "代理服务器自动启动成功: {}:{}",
-                                    info.address,
-                                    info.port
-                                ),
-                                Err(e) => log::error!("代理服务器自动启动失败: {e}"),
-                            }
-                        }
-                    }
-                    Err(e) => log::error!("启动时获取代理配置失败: {e}"),
-                }
+                // 检查 settings 表中的代理状态，自动恢复代理服务
+                restore_proxy_state_on_startup(&state).await;
             });
 
             Ok(())
@@ -575,7 +554,6 @@ pub fn run() {
             commands::update_provider,
             commands::delete_provider,
             commands::switch_provider,
-            commands::set_proxy_target_provider,
             commands::import_default_config,
             commands::get_claude_config_status,
             commands::get_config_status,
@@ -602,6 +580,8 @@ pub fn run() {
             commands::read_claude_plugin_config,
             commands::apply_claude_plugin_config,
             commands::is_claude_plugin_applied,
+            commands::apply_claude_onboarding_skip,
+            commands::clear_claude_onboarding_skip,
             // Claude MCP management
             commands::get_claude_mcp_status,
             commands::read_claude_mcp_config,
@@ -669,8 +649,10 @@ pub fn run() {
             commands::set_auto_launch,
             commands::get_auto_launch_status,
             // Proxy server management
-            commands::start_proxy_with_takeover,
+            commands::start_proxy_server,
             commands::stop_proxy_with_restore,
+            commands::get_proxy_takeover_status,
+            commands::set_proxy_takeover_for_app,
             commands::get_proxy_status,
             commands::get_proxy_config,
             commands::update_proxy_config,
@@ -678,8 +660,6 @@ pub fn run() {
             commands::is_live_takeover_active,
             commands::switch_proxy_provider,
             // Proxy failover commands
-            commands::get_proxy_targets,
-            commands::set_proxy_target,
             commands::get_provider_health,
             commands::reset_circuit_breaker,
             commands::get_circuit_breaker_config,
@@ -690,8 +670,8 @@ pub fn run() {
             commands::get_available_providers_for_failover,
             commands::add_to_failover_queue,
             commands::remove_from_failover_queue,
-            commands::reorder_failover_queue,
-            commands::set_failover_item_enabled,
+            commands::get_auto_failover_enabled,
+            commands::set_auto_failover_enabled,
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_trends,
@@ -823,32 +803,89 @@ pub fn run() {
 ///
 /// 在应用退出前检查代理服务器状态，如果正在运行则停止代理并恢复 Live 配置。
 /// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
+/// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
         let proxy_service = &state.proxy_service;
 
-        // 检查代理是否在运行
-        if proxy_service.is_running().await {
-            log::info!("检测到代理服务器正在运行，开始清理...");
+        // 退出时也需要兜底：代理可能已崩溃/未运行，但 Live 接管残留仍在（占位符/备份）。
+        let has_backups = match state.db.has_any_live_backup().await {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("退出时检查 Live 备份失败: {e}");
+                false
+            }
+        };
+        let live_taken_over = proxy_service.detect_takeover_in_live_configs();
+        let needs_restore = has_backups || live_taken_over;
 
-            // 检查是否处于 Live 接管模式
-            if let Ok(is_takeover) = state.db.is_live_takeover_active().await {
-                if is_takeover {
-                    // 接管模式：停止并恢复配置
-                    if let Err(e) = proxy_service.stop_with_restore().await {
-                        log::error!("退出时恢复 Live 配置失败: {e}");
-                    } else {
-                        log::info!("已恢复 Live 配置");
-                    }
-                } else {
-                    // 非接管模式：仅停止代理
-                    if let Err(e) = proxy_service.stop().await {
-                        log::error!("退出时停止代理失败: {e}");
-                    }
+        if needs_restore {
+            log::info!("检测到接管残留，开始恢复 Live 配置（保留代理状态）...");
+            // 使用 keep_state 版本，保留 settings 表中的代理状态
+            if let Err(e) = proxy_service.stop_with_restore_keep_state().await {
+                log::error!("退出时恢复 Live 配置失败: {e}");
+            } else {
+                log::info!("已恢复 Live 配置（代理状态已保留，下次启动将自动恢复）");
+            }
+            return;
+        }
+
+        // 非接管模式：代理在运行则仅停止代理
+        if proxy_service.is_running().await {
+            log::info!("检测到代理服务器正在运行，开始停止...");
+            if let Err(e) = proxy_service.stop().await {
+                log::error!("退出时停止代理失败: {e}");
+            }
+            log::info!("代理服务器清理完成");
+        }
+    }
+}
+
+// ============================================================
+// 启动时恢复代理状态
+// ============================================================
+
+/// 启动时根据 settings 表中的代理状态自动恢复代理服务
+///
+/// 检查 `proxy_takeover_claude`、`proxy_takeover_codex`、`proxy_takeover_gemini` 的值，
+/// 如果有任一应用的状态为 `true`，则自动启动代理服务并接管对应应用的 Live 配置。
+async fn restore_proxy_state_on_startup(state: &store::AppState) {
+    // 收集需要恢复接管的应用列表
+    let apps_to_restore: Vec<&str> = ["claude", "codex", "gemini"]
+        .iter()
+        .filter(|app_type| {
+            state
+                .db
+                .get_proxy_takeover_enabled(app_type)
+                .unwrap_or(false)
+        })
+        .copied()
+        .collect();
+
+    if apps_to_restore.is_empty() {
+        log::debug!("启动时无需恢复代理状态");
+        return;
+    }
+
+    log::info!("检测到上次代理状态需要恢复，应用列表: {apps_to_restore:?}");
+
+    // 逐个恢复接管状态
+    for app_type in apps_to_restore {
+        match state
+            .proxy_service
+            .set_takeover_for_app(app_type, true)
+            .await
+        {
+            Ok(()) => {
+                log::info!("✓ 已恢复 {app_type} 的代理接管状态");
+            }
+            Err(e) => {
+                log::error!("✗ 恢复 {app_type} 的代理接管状态失败: {e}");
+                // 失败时清除该应用的状态，避免下次启动再次尝试
+                if let Err(clear_err) = state.db.set_proxy_takeover_enabled(app_type, false) {
+                    log::error!("清除 {app_type} 代理状态失败: {clear_err}");
                 }
             }
-
-            log::info!("代理服务器清理完成");
         }
     }
 }

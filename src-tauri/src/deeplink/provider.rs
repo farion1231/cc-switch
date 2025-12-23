@@ -132,7 +132,7 @@ pub(crate) fn build_provider_from_request(
         meta,
         icon: request.icon.clone(),
         icon_color: None,
-        is_proxy_target: None,
+        in_failover_queue: false,
     };
 
     Ok(provider)

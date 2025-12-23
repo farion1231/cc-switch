@@ -210,7 +210,6 @@ export function useSettingsForm(): UseSettingsFormResult {
       data.language ?? readPersistedLanguage(),
       defaultSetName,
     );
-
     setSettingsState(normalized);
     initialLanguageRef.current = normalized.language;
     syncLanguage(normalized.language);
@@ -225,6 +224,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             showInTray: true,
             minimizeToTrayOnClose: true,
             enableClaudePluginIntegration: false,
+            skipClaudeOnboarding: true,
             language: readPersistedLanguage(),
             configDirectorySets: [],
           } as SettingsFormState);
@@ -256,7 +256,6 @@ export function useSettingsForm(): UseSettingsFormResult {
         serverData.language ?? readPersistedLanguage(),
         defaultSetName,
       );
-
       setSettingsState(normalized);
       syncLanguage(initialLanguageRef.current);
     },

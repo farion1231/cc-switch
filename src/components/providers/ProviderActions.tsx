@@ -5,9 +5,10 @@ import {
   Edit,
   Loader2,
   Play,
+  Plus,
+  RotateCcw,
   TestTube2,
   Trash2,
-  RotateCcw,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,9 @@ interface ProviderActionsProps {
   onResetCircuitBreaker?: () => void;
   isProxyTarget?: boolean;
   consecutiveFailures?: number;
+  isAutoFailoverEnabled?: boolean;
+  isInFailoverQueue?: boolean;
+  onToggleFailover?: (enabled: boolean) => void;
 }
 
 export function ProviderActions({
@@ -48,6 +52,9 @@ export function ProviderActions({
   onResetCircuitBreaker,
   isProxyTarget,
   consecutiveFailures = 0,
+  isAutoFailoverEnabled = false,
+  isInFailoverQueue = false,
+  onToggleFailover,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
@@ -77,28 +84,60 @@ export function ProviderActions({
     handleSwitch();
   };
 
-  const renderEnableButton = () => (
-    <Button
-      size="sm"
-      variant={isCurrent ? "secondary" : "default"}
-      disabled={isCurrent || isSwitching}
-      onClick={handleEnableClick}
-      className={cn(
-        "min-w-[4.5rem] px-2.5",
-        isCurrent &&
-          "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
-        !isCurrent &&
-          isProxyTakeover &&
-          "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
-      )}
-    >
-      {renderContent(isCurrent ? "inUse" : "enable")}
-    </Button>
-  );
+  const isFailoverMode = isAutoFailoverEnabled && typeof onToggleFailover === "function";
+
+  const renderMainButton = () => {
+    if (isFailoverMode) {
+      const queuedLabel = isInFailoverQueue
+        ? t("failover.inQueue", { defaultValue: "已加入" })
+        : t("failover.addQueue", { defaultValue: "加入" });
+
+      return (
+        <Button
+          size="sm"
+          variant={isInFailoverQueue ? "secondary" : "default"}
+          disabled={isSwitching}
+          onClick={() => onToggleFailover?.(!isInFailoverQueue)}
+          className={cn(
+            "min-w-[4.5rem] px-2.5",
+            isInFailoverQueue
+              ? "bg-blue-100 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/50 dark:text-blue-400"
+              : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white",
+          )}
+        >
+          {isInFailoverQueue ? (
+            <Check className="h-4 w-4" />
+          ) : (
+            <Plus className="h-4 w-4" />
+          )}
+          {queuedLabel}
+        </Button>
+      );
+    }
+
+    return (
+      <Button
+        size="sm"
+        variant={isCurrent ? "secondary" : "default"}
+        disabled={isCurrent || isSwitching}
+        onClick={handleEnableClick}
+        className={cn(
+          "min-w-[4.5rem] px-2.5",
+          isCurrent &&
+            "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+          !isCurrent &&
+            isProxyTakeover &&
+            "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
+        )}
+      >
+        {renderContent(isCurrent ? "inUse" : "enable")}
+      </Button>
+    );
+  };
 
   return (
     <div className="flex items-center gap-1.5">
-      {renderEnableButton()}
+      {renderMainButton()}
 
       <div className="flex items-center gap-1">
         <Button
@@ -172,7 +211,6 @@ export function ProviderActions({
             <RotateCcw className="h-4 w-4" />
           </Button>
         )}
-
         <Button
           size="icon"
           variant="ghost"
@@ -181,7 +219,7 @@ export function ProviderActions({
           className={cn(
             iconButtonClass,
             !isCurrent && "hover:text-red-500 dark:hover:text-red-400",
-            isCurrent && "opacity-40 cursor-not-allowed text-muted-foreground"
+            isCurrent && "opacity-40 cursor-not-allowed text-muted-foreground",
           )}
         >
           <Trash2 className="h-4 w-4" />

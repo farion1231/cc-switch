@@ -391,7 +391,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       }
 
       await upsertMutation.mutateAsync(entry);
-      toast.success(t("common.success"));
+      toast.success(t("common.success"), { closeButton: true });
       await onSave();
     } catch (error: any) {
       const detail = extractErrorMessage(error);

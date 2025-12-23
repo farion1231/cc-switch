@@ -181,34 +181,6 @@ export const useSwitchProviderMutation = (appId: AppId) => {
   });
 };
 
-export const useSetProxyTargetMutation = (appId: AppId) => {
-  const queryClient = useQueryClient();
-  const { t } = useTranslation();
-
-  return useMutation({
-    mutationFn: async (providerId: string) => {
-      return await providersApi.setProxyTarget(providerId, appId);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
-      toast.success(
-        t("notifications.proxyTargetSet", {
-          defaultValue: "已设置代理目标",
-        }),
-      );
-    },
-    onError: (error: Error) => {
-      const detail = extractErrorMessage(error) || t("common.unknown");
-      toast.error(
-        t("notifications.setProxyTargetFailed", {
-          defaultValue: "设置代理目标失败: {{error}}",
-          error: detail,
-        }),
-      );
-    },
-  });
-};
-
 export const useSaveSettingsMutation = () => {
   const queryClient = useQueryClient();
 

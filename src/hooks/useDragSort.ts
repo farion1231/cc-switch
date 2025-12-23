@@ -75,6 +75,11 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
           queryKey: ["providers", appId],
         });
 
+        // 刷新故障转移队列（因为队列顺序依赖 sort_index）
+        await queryClient.invalidateQueries({
+          queryKey: ["failoverQueue", appId],
+        });
+
         // 更新托盘菜单以反映新的排序（失败不影响主操作）
         try {
           await providersApi.updateTrayMenu();
@@ -87,6 +92,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
           t("provider.sortUpdated", {
             defaultValue: "排序已更新",
           }),
+          { closeButton: true },
         );
       } catch (error) {
         console.error("Failed to update provider sort order", error);

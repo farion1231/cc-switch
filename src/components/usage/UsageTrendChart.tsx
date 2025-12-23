@@ -17,7 +17,7 @@ interface UsageTrendChartProps {
 }
 
 export function UsageTrendChart({ days }: UsageTrendChartProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { data: trends, isLoading } = useUsageTrends(days);
 
   if (isLoading) {
@@ -29,14 +29,20 @@ export function UsageTrendChart({ days }: UsageTrendChartProps) {
   }
 
   const isToday = days === 1;
+  const dateLocale =
+    i18n.language === "zh"
+      ? "zh-CN"
+      : i18n.language === "ja"
+        ? "ja-JP"
+        : "en-US";
   const chartData =
     trends?.map((stat) => {
       const pointDate = new Date(stat.date);
       return {
         rawDate: stat.date,
         label: isToday
-          ? pointDate.toLocaleTimeString("zh-CN", { hour: "2-digit" })
-          : pointDate.toLocaleDateString("zh-CN", {
+          ? pointDate.toLocaleTimeString(dateLocale, { hour: "2-digit" })
+          : pointDate.toLocaleDateString(dateLocale, {
               month: "2-digit",
               day: "2-digit",
             }),

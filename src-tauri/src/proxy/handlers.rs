@@ -5,17 +5,16 @@
 //! 重构后的结构：
 //! - 通用逻辑提取到 `handler_context` 和 `response_processor` 模块
 //! - 各 handler 只保留独特的业务逻辑
-//! - Claude 的格式转换逻辑保留在此文件（独有功能）
+//! - Claude 的格式转换逻辑保留在此文件（用于 OpenRouter 旧接口回退）
 
 use super::{
+    error_mapper::{get_error_message, map_proxy_error_to_status},
     handler_config::{
         CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
     },
     handler_context::RequestContext,
     providers::{get_adapter, streaming::create_anthropic_sse_stream, transform},
-    response_processor::{
-        create_logged_passthrough_stream, process_response, SseUsageCollector,
-    },
+    response_processor::{create_logged_passthrough_stream, process_response, SseUsageCollector},
     server::ProxyState,
     types::*,
     usage::parser::TokenUsage,
@@ -55,35 +54,23 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// 处理 /v1/messages 请求（Claude API）
 ///
 /// Claude 处理器包含独特的格式转换逻辑：
-/// - 当使用 OpenRouter 等中转服务时，需要将 Anthropic 格式转换为 OpenAI 格式
-/// - 响应需要从 OpenAI 格式转回 Anthropic 格式
+/// - 过去用于 OpenRouter 的 OpenAI Chat Completions 兼容接口（Anthropic ↔ OpenAI 转换）
+/// - 现在 OpenRouter 已推出 Claude Code 兼容接口，默认不再启用该转换（逻辑保留以备回退）
 pub async fn handle_messages(
     State(state): State<ProxyState>,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
-    let ctx =
-        RequestContext::new(&state, &body, AppType::Claude, "Claude", "claude").await?;
-
-    // 检查是否需要格式转换（OpenRouter 等中转服务）
-    let adapter = get_adapter(&AppType::Claude);
-    let needs_transform = adapter.needs_transform(&ctx.provider);
+    let mut ctx = RequestContext::new(&state, &body, AppType::Claude, "Claude", "claude").await?;
 
     let is_stream = body
         .get("stream")
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
 
-    log::info!(
-        "[Claude] Provider: {}, needs_transform: {}, is_stream: {}",
-        ctx.provider.name,
-        needs_transform,
-        is_stream
-    );
-
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
-    let response = forwarder
+    let result = match forwarder
         .forward_with_retry(
             &AppType::Claude,
             "/v1/messages",
@@ -91,7 +78,31 @@ pub async fn handle_messages(
             headers,
             ctx.get_providers(),
         )
-        .await?;
+        .await
+    {
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, is_stream, &err.error);
+            return Err(err.error);
+        }
+    };
+
+    ctx.provider = result.provider;
+    let response = result.response;
+
+    // 检查是否需要格式转换（OpenRouter 等中转服务）
+    let adapter = get_adapter(&AppType::Claude);
+    let needs_transform = adapter.needs_transform(&ctx.provider);
+
+    log::info!(
+        "[Claude] Provider: {}, needs_transform: {}, is_stream: {}",
+        ctx.provider.name,
+        needs_transform,
+        is_stream
+    );
 
     let status = response.status();
     log::info!("[Claude] 上游响应状态: {status}");
@@ -107,7 +118,7 @@ pub async fn handle_messages(
 
 /// Claude 格式转换处理（独有逻辑）
 ///
-/// 处理 OpenRouter 等需要格式转换的中转服务
+/// 处理 OpenRouter 旧 OpenAI 兼容接口的回退方案（当前默认不启用）
 async fn handle_claude_transform(
     response: reqwest::Response,
     ctx: &RequestContext,
@@ -290,7 +301,7 @@ pub async fn handle_chat_completions(
 ) -> Result<axum::response::Response, ProxyError> {
     log::info!("[Codex] ====== /v1/chat/completions 请求开始 ======");
 
-    let ctx = RequestContext::new(&state, &body, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx = RequestContext::new(&state, &body, AppType::Codex, "Codex", "codex").await?;
 
     let is_stream = body
         .get("stream")
@@ -304,7 +315,7 @@ pub async fn handle_chat_completions(
     );
 
     let forwarder = ctx.create_forwarder(&state);
-    let response = forwarder
+    let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
             "/v1/chat/completions",
@@ -312,7 +323,20 @@ pub async fn handle_chat_completions(
             headers,
             ctx.get_providers(),
         )
-        .await?;
+        .await
+    {
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, is_stream, &err.error);
+            return Err(err.error);
+        }
+    };
+
+    ctx.provider = result.provider;
+    let response = result.response;
 
     log::info!("[Codex] 上游响应状态: {}", response.status());
 
@@ -325,10 +349,15 @@ pub async fn handle_responses(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
-    let ctx = RequestContext::new(&state, &body, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx = RequestContext::new(&state, &body, AppType::Codex, "Codex", "codex").await?;
+
+    let is_stream = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let response = forwarder
+    let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
             "/v1/responses",
@@ -336,7 +365,20 @@ pub async fn handle_responses(
             headers,
             ctx.get_providers(),
         )
-        .await?;
+        .await
+    {
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, is_stream, &err.error);
+            return Err(err.error);
+        }
+    };
+
+    ctx.provider = result.provider;
+    let response = result.response;
 
     log::info!("[Codex] 上游响应状态: {}", response.status());
 
@@ -355,7 +397,7 @@ pub async fn handle_gemini(
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     // Gemini 的模型名称在 URI 中
-    let ctx = RequestContext::new(&state, &body, AppType::Gemini, "Gemini", "gemini")
+    let mut ctx = RequestContext::new(&state, &body, AppType::Gemini, "Gemini", "gemini")
         .await?
         .with_model_from_uri(&uri);
 
@@ -365,10 +407,15 @@ pub async fn handle_gemini(
         .map(|pq| pq.as_str())
         .unwrap_or(uri.path());
 
-    log::info!("[Gemini] 请求端点: {}", endpoint);
+    log::info!("[Gemini] 请求端点: {endpoint}");
+
+    let is_stream = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let response = forwarder
+    let result = match forwarder
         .forward_with_retry(
             &AppType::Gemini,
             endpoint,
@@ -376,7 +423,20 @@ pub async fn handle_gemini(
             headers,
             ctx.get_providers(),
         )
-        .await?;
+        .await
+    {
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, is_stream, &err.error);
+            return Err(err.error);
+        }
+    };
+
+    ctx.provider = result.provider;
+    let response = result.response;
 
     log::info!("[Gemini] 上游响应状态: {}", response.status());
 
@@ -386,6 +446,35 @@ pub async fn handle_gemini(
 // ============================================================================
 // 使用量记录（保留用于 Claude 转换逻辑）
 // ============================================================================
+
+fn log_forward_error(
+    state: &ProxyState,
+    ctx: &RequestContext,
+    is_streaming: bool,
+    error: &ProxyError,
+) {
+    use super::usage::logger::UsageLogger;
+
+    let logger = UsageLogger::new(&state.db);
+    let status_code = map_proxy_error_to_status(error);
+    let error_message = get_error_message(error);
+    let request_id = uuid::Uuid::new_v4().to_string();
+
+    if let Err(e) = logger.log_error_with_context(
+        request_id.clone(),
+        ctx.provider.id.clone(),
+        ctx.app_type_str.to_string(),
+        ctx.request_model.clone(),
+        status_code,
+        error_message,
+        ctx.latency_ms(),
+        is_streaming,
+        Some(request_id),
+        None,
+    ) {
+        log::warn!("记录失败请求日志失败: {e}");
+    }
+}
 
 /// 记录请求使用量
 #[allow(clippy::too_many_arguments)]

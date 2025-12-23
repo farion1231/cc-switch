@@ -17,7 +17,26 @@ impl McpService {
 
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
+        // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）
+        let prev_apps = state
+            .db
+            .get_all_mcp_servers()?
+            .get(&server.id)
+            .map(|s| s.apps.clone())
+            .unwrap_or_default();
+
         state.db.save_mcp_server(&server)?;
+
+        // 处理禁用：若旧版本启用但新版本取消，则需要从该应用的 live 配置移除
+        if prev_apps.claude && !server.apps.claude {
+            Self::remove_server_from_app(state, &server.id, &AppType::Claude)?;
+        }
+        if prev_apps.codex && !server.apps.codex {
+            Self::remove_server_from_app(state, &server.id, &AppType::Codex)?;
+        }
+        if prev_apps.gemini && !server.apps.gemini {
+            Self::remove_server_from_app(state, &server.id, &AppType::Gemini)?;
+        }
 
         // 同步到各个启用的应用
         Self::sync_server_to_apps(state, &server)?;
@@ -190,10 +209,22 @@ impl McpService {
         // 如果有导入的服务器，保存到数据库
         if count > 0 {
             if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
                 for server in servers.values() {
-                    state.db.save_mcp_server(server)?;
-                    // 同步到 Claude live 配置
-                    Self::sync_server_to_apps(state, server)?;
+                    // 已存在：仅启用 Claude，不覆盖其他字段（与导入模块语义保持一致）
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.claude = true;
+                        merged
+                    } else {
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
+
+                    // 同步到对应应用 live 配置
+                    Self::sync_server_to_apps(state, &to_save)?;
                 }
             }
         }
@@ -212,10 +243,22 @@ impl McpService {
         // 如果有导入的服务器，保存到数据库
         if count > 0 {
             if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
                 for server in servers.values() {
-                    state.db.save_mcp_server(server)?;
-                    // 同步到 Codex live 配置
-                    Self::sync_server_to_apps(state, server)?;
+                    // 已存在：仅启用 Codex，不覆盖其他字段（与导入模块语义保持一致）
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.codex = true;
+                        merged
+                    } else {
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
+
+                    // 同步到对应应用 live 配置
+                    Self::sync_server_to_apps(state, &to_save)?;
                 }
             }
         }
@@ -234,10 +277,22 @@ impl McpService {
         // 如果有导入的服务器，保存到数据库
         if count > 0 {
             if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
                 for server in servers.values() {
-                    state.db.save_mcp_server(server)?;
-                    // 同步到 Gemini live 配置
-                    Self::sync_server_to_apps(state, server)?;
+                    // 已存在：仅启用 Gemini，不覆盖其他字段（与导入模块语义保持一致）
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.gemini = true;
+                        merged
+                    } else {
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
+
+                    // 同步到对应应用 live 配置
+                    Self::sync_server_to_apps(state, &to_save)?;
                 }
             }
         }

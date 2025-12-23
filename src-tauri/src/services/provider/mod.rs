@@ -144,9 +144,29 @@ impl ProviderService {
         state.db.save_provider(app_type.as_str(), &provider)?;
 
         if is_current {
-            write_live_snapshot(&app_type, &provider)?;
-            // Sync MCP
-            McpService::sync_all_enabled(state)?;
+            // 如果代理接管模式处于激活状态，并且代理服务正在运行：
+            // - 不写 Live 配置（否则会破坏接管）
+            // - 仅更新 Live 备份（保证关闭代理时能恢复到最新配置）
+            let is_app_taken_over =
+                futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+                    .ok()
+                    .flatten()
+                    .is_some();
+            let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
+            let should_skip_live_write = is_app_taken_over && is_proxy_running;
+
+            if should_skip_live_write {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .update_live_backup_from_provider(app_type.as_str(), &provider),
+                )
+                .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+            } else {
+                write_live_snapshot(&app_type, &provider)?;
+                // Sync MCP
+                McpService::sync_all_enabled(state)?;
+            }
         }
 
         Ok(true)
@@ -191,12 +211,15 @@ impl ProviderService {
         // Check if proxy takeover mode is active AND proxy server is actually running
         // Both conditions must be true to use hot-switch mode
         // Use blocking wait since this is a sync function
-        let is_takeover_flag =
-            futures::executor::block_on(state.db.is_live_takeover_active()).unwrap_or(false);
+        let is_app_taken_over =
+            futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+                .ok()
+                .flatten()
+                .is_some();
         let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
 
-        // Hot-switch only when BOTH: takeover flag is set AND proxy server is actually running
-        let should_hot_switch = is_takeover_flag && is_proxy_running;
+        // Hot-switch only when BOTH: this app is taken over AND proxy server is actually running
+        let should_hot_switch = is_app_taken_over && is_proxy_running;
 
         if should_hot_switch {
             // Proxy takeover mode: hot-switch only, don't write Live config
@@ -214,9 +237,6 @@ impl ProviderService {
             // Update database is_current
             state.db.set_current_provider(app_type.as_str(), id)?;
 
-            // 同时更新 is_proxy_target（代理路由器使用此字段选择供应商）
-            state.db.set_proxy_target_provider(app_type.as_str(), id)?;
-
             // Update local settings for consistency
             crate::settings::set_current_provider(&app_type, Some(id))?;
 
@@ -229,18 +249,11 @@ impl ProviderService {
             .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
 
             // Note: No Live config write, no MCP sync
-            // The proxy server will route requests to the new provider via is_proxy_target
+            // The proxy server will route requests to the new provider via is_current
             return Ok(());
         }
 
         // Normal mode: full switch with Live config write
-        // Also clear stale takeover flag if proxy is not running but flag was set
-        if is_takeover_flag && !is_proxy_running {
-            log::warn!("检测到代理接管标志残留（代理已停止），清除标志并执行正常切换");
-            // Clear stale takeover flag
-            let _ = futures::executor::block_on(state.db.set_live_takeover_active(false));
-        }
-
         Self::switch_normal(state, app_type, id, &providers)
     }
 
@@ -284,18 +297,6 @@ impl ProviderService {
         // Sync MCP
         McpService::sync_all_enabled(state)?;
 
-        Ok(())
-    }
-
-    /// Set proxy target provider
-    pub fn set_proxy_target(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
-        // Check if provider exists
-        let providers = state.db.get_all_providers(app_type.as_str())?;
-        if !providers.contains_key(id) {
-            return Err(AppError::Message(format!("供应商 {id} 不存在")));
-        }
-
-        state.db.set_proxy_target_provider(app_type.as_str(), id)?;
         Ok(())
     }
 

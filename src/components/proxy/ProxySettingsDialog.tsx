@@ -26,8 +26,15 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import type { ProxyConfig } from "@/types/proxy";
 
-// 表单数据类型（不包含 enabled 字段，该字段由后端自动管理）
-type ProxyConfigForm = Omit<ProxyConfig, "enabled">;
+// 表单数据类型（仅包含可编辑字段）
+type ProxyConfigForm = Pick<
+  ProxyConfig,
+  | "listen_address"
+  | "listen_port"
+  | "max_retries"
+  | "request_timeout"
+  | "enable_logging"
+>;
 
 const createProxyConfigSchema = (t: TFunction) => {
   const requestTimeoutSchema = z
@@ -120,19 +127,18 @@ export function ProxySettingsDialog({
   useEffect(() => {
     if (config) {
       form.reset({
-        ...config,
+        listen_address: config.listen_address,
+        listen_port: config.listen_port,
+        max_retries: config.max_retries,
+        request_timeout: config.request_timeout,
+        enable_logging: config.enable_logging,
       });
     }
   }, [config, form]);
 
   const onSubmit = async (data: ProxyConfigForm) => {
     try {
-      // 添加 enabled 字段（从当前配置中获取，保持不变）
-      const configToSave: ProxyConfig = {
-        ...data,
-        enabled: config?.enabled ?? true,
-      };
-      await updateConfig(configToSave);
+      await updateConfig(data);
       closePanel();
     } catch (error) {
       console.error("Save config failed:", error);

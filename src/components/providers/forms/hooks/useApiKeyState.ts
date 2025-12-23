@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { ProviderCategory } from "@/types";
 import {
   getApiKeyFromConfig,
@@ -31,6 +31,28 @@ export function useApiKeyState({
     }
     return "";
   });
+
+  // 当外部通过 form.reset / 读取 live 等方式更新配置时，同步回 API Key 状态
+  // - 仅在 JSON 可解析时同步，避免用户编辑 JSON 过程中因临时无效导致输入框闪烁
+  useEffect(() => {
+    if (!initialConfig) return;
+
+    try {
+      JSON.parse(initialConfig);
+    } catch {
+      return;
+    }
+
+    // 仅当配置确实包含 API Key 字段时才同步（避免无意清空用户正在输入的 key）
+    if (!hasApiKeyField(initialConfig, appType)) {
+      return;
+    }
+
+    const extracted = getApiKeyFromConfig(initialConfig, appType);
+    if (extracted !== apiKey) {
+      setApiKey(extracted);
+    }
+  }, [initialConfig, appType, apiKey]);
 
   const handleApiKeyChange = useCallback(
     (key: string) => {

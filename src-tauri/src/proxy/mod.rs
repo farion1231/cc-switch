@@ -4,6 +4,8 @@
 
 pub mod circuit_breaker;
 pub mod error;
+pub mod error_mapper;
+pub(crate) mod failover_switch;
 mod forwarder;
 pub mod handler_config;
 pub mod handler_context;

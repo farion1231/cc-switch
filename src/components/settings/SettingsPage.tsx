@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import {
   Loader2,
   Save,
@@ -7,7 +8,9 @@ import {
   Coins,
   Database,
   Server,
+  ChevronDown,
 } from "lucide-react";
+import * as AccordionPrimitive from "@radix-ui/react-accordion";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -143,7 +146,7 @@ export function SettingsPage({
   const handleRestartNow = useCallback(async () => {
     setShowRestartPrompt(false);
     if (import.meta.env.DEV) {
-      toast.success(t("settings.devModeRestartHint"));
+      toast.success(t("settings.devModeRestartHint"), { closeButton: true });
       closeAfterSave();
       return;
     }
@@ -182,18 +185,17 @@ export function SettingsPage({
 
   const {
     isRunning,
-    startWithTakeover: startProxy,
-    stopWithRestore: stopProxy,
+    startProxyServer,
+    stopWithRestore,
     isPending: isProxyPending,
   } = useProxyStatus();
-  const [failoverEnabled, setFailoverEnabled] = useState(true);
 
   const handleToggleProxy = async (checked: boolean) => {
     try {
       if (!checked) {
-        await stopProxy();
+        await stopWithRestore();
       } else {
-        await startProxy();
+        await startProxyServer();
       }
     } catch (error) {
       console.error("Toggle proxy failed:", error);
@@ -219,16 +221,19 @@ export function SettingsPage({
             <TabsTrigger value="advanced">
               {t("settings.tabAdvanced")}
             </TabsTrigger>
-            <TabsTrigger value="usage">
-              {t("usage.title", "使用统计")}
-            </TabsTrigger>
+            <TabsTrigger value="usage">{t("usage.title")}</TabsTrigger>
             <TabsTrigger value="about">{t("common.about")}</TabsTrigger>
           </TabsList>
 
           <div className="flex-1 overflow-y-auto overflow-x-hidden pr-2">
             <TabsContent value="general" className="space-y-6 mt-0">
               {settings ? (
-                <>
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className="space-y-6"
+                >
                   <LanguageSettings
                     value={settings.language}
                     onChange={(lang) => handleAutoSave({ language: lang })}
@@ -238,13 +243,18 @@ export function SettingsPage({
                     settings={settings}
                     onChange={handleAutoSave}
                   />
-                </>
+                </motion.div>
               ) : null}
             </TabsContent>
 
             <TabsContent value="advanced" className="space-y-6 mt-0 pb-6">
               {settings ? (
-                <div className="space-y-4">
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className="space-y-4"
+                >
                   <Accordion
                     type="multiple"
                     defaultValue={[]}
@@ -259,10 +269,10 @@ export function SettingsPage({
                           <FolderSearch className="h-5 w-5 text-primary" />
                           <div className="text-left">
                             <h3 className="text-base font-semibold">
-                              配置文件目录
+                              {t("settings.advanced.configDir.title")}
                             </h3>
                             <p className="text-sm text-muted-foreground font-normal">
-                              管理 Claude、Codex 和 Gemini 的配置存储路径
+                              {t("settings.advanced.configDir.description")}
                             </p>
                           </div>
                         </div>
@@ -297,42 +307,43 @@ export function SettingsPage({
 
                     <AccordionItem
                       value="proxy"
-                      className="rounded-xl glass-card overflow-hidden"
+                      className="rounded-xl glass-card overflow-hidden [&[data-state=open]>.accordion-header]:bg-muted/50"
                     >
-                      <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
-                        <div className="flex flex-1 items-center justify-between pr-4">
+                      <AccordionPrimitive.Header className="accordion-header flex items-center justify-between px-6 py-4 hover:bg-muted/50">
+                        <AccordionPrimitive.Trigger className="flex flex-1 items-center justify-between hover:no-underline [&[data-state=open]>svg]:rotate-180">
                           <div className="flex items-center gap-3">
                             <Server className="h-5 w-5 text-green-500" />
                             <div className="text-left">
                               <h3 className="text-base font-semibold">
-                                本地代理
+                                {t("settings.advanced.proxy.title")}
                               </h3>
                               <p className="text-sm text-muted-foreground font-normal">
-                                控制代理服务开关、查看状态与端口信息
+                                {t("settings.advanced.proxy.description")}
                               </p>
                             </div>
                           </div>
-                          <div
-                            className="flex items-center gap-4"
-                            onClick={(e) => e.stopPropagation()}
+                          <ChevronDown className="h-4 w-4 shrink-0 transition-transform duration-200" />
+                        </AccordionPrimitive.Trigger>
+
+                        <div className="flex items-center gap-4 pl-4">
+                          <Badge
+                            variant={isRunning ? "default" : "secondary"}
+                            className="gap-1.5 h-6"
                           >
-                            <Badge
-                              variant={isRunning ? "default" : "secondary"}
-                              className="gap-1.5 h-6"
-                            >
-                              <Activity
-                                className={`h-3 w-3 ${isRunning ? "animate-pulse" : ""}`}
-                              />
-                              {isRunning ? "运行中" : "已停止"}
-                            </Badge>
-                            <Switch
-                              checked={isRunning}
-                              onCheckedChange={handleToggleProxy}
-                              disabled={isProxyPending}
+                            <Activity
+                              className={`h-3 w-3 ${isRunning ? "animate-pulse" : ""}`}
                             />
-                          </div>
+                            {isRunning
+                              ? t("settings.advanced.proxy.running")
+                              : t("settings.advanced.proxy.stopped")}
+                          </Badge>
+                          <Switch
+                            checked={isRunning}
+                            onCheckedChange={handleToggleProxy}
+                            disabled={isProxyPending}
+                          />
                         </div>
-                      </AccordionTrigger>
+                      </AccordionPrimitive.Header>
                       <AccordionContent className="px-6 pb-6 pt-0 border-t border-border/50">
                         <ProxyPanel />
                       </AccordionContent>
@@ -347,10 +358,10 @@ export function SettingsPage({
                           <Activity className="h-5 w-5 text-indigo-500" />
                           <div className="text-left">
                             <h3 className="text-base font-semibold">
-                              模型测试配置
+                              {t("settings.advanced.modelTest.title")}
                             </h3>
                             <p className="text-sm text-muted-foreground font-normal">
-                              配置模型测试使用的默认模型和提示词
+                              {t("settings.advanced.modelTest.description")}
                             </p>
                           </div>
                         </div>
@@ -365,42 +376,40 @@ export function SettingsPage({
                       className="rounded-xl glass-card overflow-hidden"
                     >
                       <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
-                        <div className="flex flex-1 items-center justify-between pr-4">
-                          <div className="flex items-center gap-3">
-                            <Activity className="h-5 w-5 text-orange-500" />
-                            <div className="text-left">
-                              <h3 className="text-base font-semibold">
-                                自动故障转移
-                              </h3>
-                              <p className="text-sm text-muted-foreground font-normal">
-                                配置故障转移队列和熔断策略
-                              </p>
-                            </div>
-                          </div>
-                          <div
-                            className="flex items-center gap-4"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Switch
-                              checked={failoverEnabled}
-                              onCheckedChange={setFailoverEnabled}
-                            />
+                        <div className="flex items-center gap-3">
+                          <Activity className="h-5 w-5 text-orange-500" />
+                          <div className="text-left">
+                            <h3 className="text-base font-semibold">
+                              {t("settings.advanced.failover.title")}
+                            </h3>
+                            <p className="text-sm text-muted-foreground font-normal">
+                              {t("settings.advanced.failover.description")}
+                            </p>
                           </div>
                         </div>
                       </AccordionTrigger>
                       <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
                         <div className="space-y-6">
-                          {/* 故障转移队列管理 */}
+                          {/* 代理未运行时的提示 */}
+                          {!isRunning && (
+                            <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                              <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                                {t("proxy.failover.proxyRequired", {
+                                  defaultValue:
+                                    "需要先启动代理服务才能配置故障转移",
+                                })}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* 故障转移队列管理 - 每个应用独立 */}
                           <div className="space-y-4">
                             <div>
                               <h4 className="text-sm font-semibold">
-                                {t("proxy.failoverQueue.title", "故障转移队列")}
+                                {t("proxy.failoverQueue.title")}
                               </h4>
                               <p className="text-xs text-muted-foreground">
-                                {t(
-                                  "proxy.failoverQueue.description",
-                                  "管理各应用的供应商故障转移顺序",
-                                )}
+                                {t("proxy.failoverQueue.description")}
                               </p>
                             </div>
                             <Tabs defaultValue="claude" className="w-full">
@@ -412,30 +421,27 @@ export function SettingsPage({
                               <TabsContent value="claude" className="mt-4">
                                 <FailoverQueueManager
                                   appType="claude"
-                                  disabled={!failoverEnabled}
+                                  disabled={!isRunning}
                                 />
                               </TabsContent>
                               <TabsContent value="codex" className="mt-4">
                                 <FailoverQueueManager
                                   appType="codex"
-                                  disabled={!failoverEnabled}
+                                  disabled={!isRunning}
                                 />
                               </TabsContent>
                               <TabsContent value="gemini" className="mt-4">
                                 <FailoverQueueManager
                                   appType="gemini"
-                                  disabled={!failoverEnabled}
+                                  disabled={!isRunning}
                                 />
                               </TabsContent>
                             </Tabs>
                           </div>
 
-                          {/* 熔断器配置 */}
+                          {/* 熔断器配置 - 全局共享 */}
                           <div className="border-t border-border/50 pt-6">
-                            <AutoFailoverConfigPanel
-                              enabled={failoverEnabled}
-                              onEnabledChange={setFailoverEnabled}
-                            />
+                            <AutoFailoverConfigPanel />
                           </div>
                         </div>
                       </AccordionContent>
@@ -450,10 +456,10 @@ export function SettingsPage({
                           <Coins className="h-5 w-5 text-yellow-500" />
                           <div className="text-left">
                             <h3 className="text-base font-semibold">
-                              成本定价
+                              {t("settings.advanced.pricing.title")}
                             </h3>
                             <p className="text-sm text-muted-foreground font-normal">
-                              管理各模型 Token 计费规则
+                              {t("settings.advanced.pricing.description")}
                             </p>
                           </div>
                         </div>
@@ -472,10 +478,10 @@ export function SettingsPage({
                           <Database className="h-5 w-5 text-blue-500" />
                           <div className="text-left">
                             <h3 className="text-base font-semibold">
-                              数据管理
+                              {t("settings.advanced.data.title")}
                             </h3>
                             <p className="text-sm text-muted-foreground font-normal">
-                              导入导出配置与备份恢复
+                              {t("settings.advanced.data.description")}
                             </p>
                           </div>
                         </div>
@@ -515,7 +521,7 @@ export function SettingsPage({
                       )}
                     </Button>
                   </div>
-                </div>
+                </motion.div>
               ) : null}
             </TabsContent>
 

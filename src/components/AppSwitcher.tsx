@@ -24,11 +24,11 @@ export function AppSwitcher({ activeApp, onSwitch }: AppSwitcherProps) {
   };
 
   return (
-    <div className="inline-flex bg-muted rounded-lg p-1 gap-1">
+    <div className="inline-flex bg-muted rounded-xl p-1 gap-1">
       <button
         type="button"
         onClick={() => handleSwitch("claude")}
-        className={`group inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
+        className={`group inline-flex items-center gap-2 px-3 h-8 rounded-md text-sm font-medium transition-all duration-200 ${
           activeApp === "claude"
             ? "bg-background text-foreground shadow-sm"
             : "text-muted-foreground hover:text-foreground hover:bg-background/50"
@@ -50,7 +50,7 @@ export function AppSwitcher({ activeApp, onSwitch }: AppSwitcherProps) {
       <button
         type="button"
         onClick={() => handleSwitch("codex")}
-        className={`group inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
+        className={`group inline-flex items-center gap-2 px-3 h-8 rounded-md text-sm font-medium transition-all duration-200 ${
           activeApp === "codex"
             ? "bg-background text-foreground shadow-sm"
             : "text-muted-foreground hover:text-foreground hover:bg-background/50"
@@ -72,7 +72,7 @@ export function AppSwitcher({ activeApp, onSwitch }: AppSwitcherProps) {
       <button
         type="button"
         onClick={() => handleSwitch("gemini")}
-        className={`group inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
+        className={`group inline-flex items-center gap-2 px-3 h-8 rounded-md text-sm font-medium transition-all duration-200 ${
           activeApp === "gemini"
             ? "bg-background text-foreground shadow-sm"
             : "text-muted-foreground hover:text-foreground hover:bg-background/50"

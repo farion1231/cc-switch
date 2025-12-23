@@ -5,7 +5,7 @@
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -30,85 +30,102 @@ impl ProviderRouter {
     /// 选择可用的供应商（支持故障转移）
     ///
     /// 返回按优先级排序的可用供应商列表：
-    /// 1. 当前供应商（is_current=true）始终第一位
-    /// 2. 故障转移队列中的其他供应商（按 queue_order 排序）
-    /// 3. 只返回熔断器未打开的供应商
+    /// - 故障转移关闭时：仅返回当前供应商
+    /// - 故障转移开启时：完全按照故障转移队列顺序返回，忽略当前供应商设置
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
-        let all_providers = self.db.get_all_providers(app_type)?;
 
-        // 1. 当前供应商始终第一位
-        if let Some(current_id) = self.db.get_current_provider(app_type)? {
-            if let Some(current) = all_providers.get(&current_id) {
-                let circuit_key = format!("{}:{}", app_type, current.id);
-                let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
-
-                if breaker.allow_request().await {
-                    log::info!(
-                        "[{}] Current provider available: {} ({})",
-                        app_type,
-                        current.name,
-                        current.id
-                    );
-                    result.push(current.clone());
-                } else {
-                    log::warn!(
-                        "[{}] Current provider {} circuit breaker open, checking failover queue",
-                        app_type,
-                        current.name
-                    );
-                }
+        // 检查该应用的自动故障转移开关是否开启
+        let failover_key = format!("auto_failover_enabled_{app_type}");
+        let auto_failover_enabled = match self.db.get_setting(&failover_key) {
+            Ok(Some(value)) => {
+                let enabled = value == "true";
+                log::info!(
+                    "[{app_type}] Failover setting '{failover_key}' = '{value}', enabled: {enabled}"
+                );
+                enabled
             }
-        }
-
-        // 2. 获取故障转移队列中的供应商
-        let queue = self.db.get_failover_queue(app_type)?;
-
-        for item in queue {
-            // 跳过已添加的当前供应商
-            if result.iter().any(|p| p.id == item.provider_id) {
-                continue;
+            Ok(None) => {
+                log::warn!(
+                    "[{app_type}] Failover setting '{failover_key}' not found in database, defaulting to disabled"
+                );
+                false
             }
-
-            // 跳过禁用的队列项
-            if !item.enabled {
-                continue;
+            Err(e) => {
+                log::error!(
+                    "[{app_type}] Failed to read failover setting '{failover_key}': {e}, defaulting to disabled"
+                );
+                false
             }
+        };
 
-            // 获取供应商信息
-            if let Some(provider) = all_providers.get(&item.provider_id) {
+        if auto_failover_enabled {
+            // 故障转移开启：使用 in_failover_queue 标记的供应商，按 sort_index 排序
+            let failover_providers = self.db.get_failover_providers(app_type)?;
+            log::info!(
+                "[{}] Failover enabled, using queue order ({} items)",
+                app_type,
+                failover_providers.len()
+            );
+
+            for provider in failover_providers {
                 // 检查熔断器状态
                 let circuit_key = format!("{}:{}", app_type, provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
-                if breaker.allow_request().await {
+                if breaker.is_available().await {
                     log::info!(
-                        "[{}] Failover provider available: {} ({}) at queue position {}",
+                        "[{}] Queue provider available: {} ({}) at sort_index {:?}",
                         app_type,
                         provider.name,
                         provider.id,
-                        item.queue_order
+                        provider.sort_index
                     );
-                    result.push(provider.clone());
+                    result.push(provider);
                 } else {
                     log::debug!(
-                        "[{}] Failover provider {} circuit breaker open, skipping",
+                        "[{}] Queue provider {} circuit breaker open, skipping",
                         app_type,
                         provider.name
                     );
+                }
+            }
+        } else {
+            // 故障转移关闭：仅使用当前供应商
+            log::info!("[{app_type}] Failover disabled, using current provider only");
+
+            if let Some(current_id) = self.db.get_current_provider(app_type)? {
+                if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
+                    let circuit_key = format!("{}:{}", app_type, current.id);
+                    let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+
+                    if breaker.is_available().await {
+                        log::info!(
+                            "[{}] Current provider available: {} ({})",
+                            app_type,
+                            current.name,
+                            current.id
+                        );
+                        result.push(current);
+                    } else {
+                        log::warn!(
+                            "[{}] Current provider {} circuit breaker open",
+                            app_type,
+                            current.name
+                        );
+                    }
                 }
             }
         }
 
         if result.is_empty() {
             return Err(AppError::Config(format!(
-                "No available provider for {} (all circuit breakers open or no providers configured)",
-                app_type
+                "No available provider for {app_type} (all circuit breakers open or no providers configured)"
             )));
         }
 
         log::info!(
-            "[{}] Failover chain: {} provider(s) available",
+            "[{}] Provider chain: {} provider(s) available",
             app_type,
             result.len()
         );
@@ -116,11 +133,26 @@ impl ProviderRouter {
         Ok(result)
     }
 
+    /// 请求执行前获取熔断器“放行许可”
+    ///
+    /// - Closed：直接放行
+    /// - Open：超时到达后切到 HalfOpen 并放行一次探测
+    /// - HalfOpen：按限流规则放行探测
+    ///
+    /// 注意：调用方必须在请求结束后通过 `record_result()` 释放 HalfOpen 名额，
+    /// 否则会导致该 Provider 长时间无法进入探测状态。
+    pub async fn allow_provider_request(&self, provider_id: &str, app_type: &str) -> AllowResult {
+        let circuit_key = format!("{app_type}:{provider_id}");
+        let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+        breaker.allow_request().await
+    }
+
     /// 记录供应商请求结果
     pub async fn record_result(
         &self,
         provider_id: &str,
         app_type: &str,
+        used_half_open_permit: bool,
         success: bool,
         error_msg: Option<String>,
     ) -> Result<(), AppError> {
@@ -133,10 +165,10 @@ impl ProviderRouter {
         let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
         if success {
-            breaker.record_success().await;
+            breaker.record_success(used_half_open_permit).await;
             log::debug!("Provider {provider_id} request succeeded");
         } else {
-            breaker.record_failure().await;
+            breaker.record_failure(used_half_open_permit).await;
             log::warn!(
                 "Provider {} request failed: {}",
                 provider_id,
@@ -154,24 +186,6 @@ impl ProviderRouter {
                 failure_threshold,
             )
             .await?;
-
-        // 4. 如果连续失败达到熔断阈值，自动禁用代理目标
-        if !success {
-            let health = self.db.get_provider_health(provider_id, app_type).await?;
-
-            // 如果连续失败达到阈值，自动关闭该供应商的代理开关
-            if health.consecutive_failures >= failure_threshold {
-                log::warn!(
-                    "Provider {} has failed {} times (threshold: {}), auto-disabling proxy target",
-                    provider_id,
-                    health.consecutive_failures,
-                    failure_threshold
-                );
-                self.db
-                    .set_proxy_target(provider_id, app_type, false)
-                    .await?;
-            }
-        }
 
         Ok(())
     }
@@ -203,7 +217,7 @@ impl ProviderRouter {
             breaker.update_config(config.clone()).await;
         }
 
-        log::info!("已更新 {} 个熔断器的配置", count);
+        log::info!("已更新 {count} 个熔断器的配置");
     }
 
     /// 获取熔断器状态
@@ -261,14 +275,103 @@ impl ProviderRouter {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use serde_json::json;
 
     #[tokio::test]
     async fn test_provider_router_creation() {
         let db = Arc::new(Database::memory().unwrap());
         let router = ProviderRouter::new(db);
 
-        // 测试创建熔断器
         let breaker = router.get_or_create_circuit_breaker("claude:test").await;
-        assert!(breaker.allow_request().await);
+        assert!(breaker.allow_request().await.allowed);
+    }
+
+    #[tokio::test]
+    async fn test_failover_disabled_uses_current_provider() {
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+        db.add_to_failover_queue("claude", "b").unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let providers = router.select_providers("claude").await.unwrap();
+
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "a");
+    }
+
+    #[tokio::test]
+    async fn test_failover_enabled_uses_queue_order() {
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 设置 sort_index 来控制顺序：b=1, a=2
+        let mut provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        provider_a.sort_index = Some(2);
+        let mut provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        provider_b.sort_index = Some(1);
+
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        db.add_to_failover_queue("claude", "b").unwrap();
+        db.add_to_failover_queue("claude", "a").unwrap();
+        db.set_setting("auto_failover_enabled_claude", "true")
+            .unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let providers = router.select_providers("claude").await.unwrap();
+
+        assert_eq!(providers.len(), 2);
+        // 按 sort_index 排序：b(1) 在前，a(2) 在后
+        assert_eq!(providers[0].id, "b");
+        assert_eq!(providers[1].id, "a");
+    }
+
+    #[tokio::test]
+    async fn test_select_providers_does_not_consume_half_open_permit() {
+        let db = Arc::new(Database::memory().unwrap());
+
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 0,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+
+        db.add_to_failover_queue("claude", "a").unwrap();
+        db.add_to_failover_queue("claude", "b").unwrap();
+        db.set_setting("auto_failover_enabled_claude", "true")
+            .unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        router
+            .record_result("b", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        let providers = router.select_providers("claude").await.unwrap();
+        assert_eq!(providers.len(), 2);
+
+        assert!(router.allow_provider_request("b", "claude").await.allowed);
     }
 }

@@ -1,5 +1,4 @@
 export interface ProxyConfig {
-  enabled: boolean;
   listen_address: string;
   listen_port: number;
   max_retries: number;
@@ -36,6 +35,12 @@ export interface ProxyServerInfo {
   address: string;
   port: number;
   started_at: string;
+}
+
+export interface ProxyTakeoverStatus {
+  claude: boolean;
+  codex: boolean;
+  gemini: boolean;
 }
 
 export interface ProviderHealth {
@@ -98,7 +103,5 @@ export interface ProxyUsageRecord {
 export interface FailoverQueueItem {
   providerId: string;
   providerName: string;
-  queueOrder: number;
-  enabled: boolean;
-  createdAt: number;
+  sortIndex?: number;
 }

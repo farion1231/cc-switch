@@ -86,7 +86,7 @@ export const deeplinkApi = {
    * @returns Merged deep link request with config fields populated
    */
   mergeDeeplinkConfig: async (
-    request: DeepLinkImportRequest
+    request: DeepLinkImportRequest,
   ): Promise<DeepLinkImportRequest> => {
     return invoke("merge_deeplink_config", { request });
   },
@@ -97,7 +97,7 @@ export const deeplinkApi = {
    * @returns Import result based on resource type
    */
   importFromDeeplink: async (
-    request: DeepLinkImportRequest
+    request: DeepLinkImportRequest,
   ): Promise<ImportResult> => {
     return invoke("import_from_deeplink_unified", { request });
   },

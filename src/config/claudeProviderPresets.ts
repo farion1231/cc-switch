@@ -185,6 +185,8 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "aggregator",
+    icon: "modelscope",
+    iconColor: "#624AFF",
   },
   {
     name: "KAT-Coder",
@@ -228,6 +230,8 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    icon: "longcat",
+    iconColor: "#29E154",
   },
   {
     name: "MiniMax",
@@ -330,6 +334,8 @@ export const providerPresets: ProviderPreset[] = [
     // 请求地址候选（用于地址管理/测速），用户可自行选择/覆盖
     endpointCandidates: ["https://aihubmix.com", "https://api.aihubmix.com"],
     category: "aggregator",
+    icon: "aihubmix",
+    iconColor: "#006FFB",
   },
   {
     name: "DMXAPI",
@@ -344,6 +350,8 @@ export const providerPresets: ProviderPreset[] = [
     // 请求地址候选（用于地址管理/测速），用户可自行选择/覆盖
     endpointCandidates: ["https://www.dmxapi.cn", "https://api.dmxapi.cn"],
     category: "aggregator",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "dmxapi", // 促销信息 i18n key
   },
   {
     name: "PackyCode",
@@ -381,6 +389,6 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     icon: "openrouter",
-    iconColor: "#6366F1",
+    iconColor: "#6566F1",
   },
 ];

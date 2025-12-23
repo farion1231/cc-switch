@@ -31,40 +31,51 @@ impl SpeedtestService {
             return Ok(vec![]);
         }
 
+        let mut results: Vec<Option<EndpointLatency>> = vec![None; urls.len()];
+        let mut valid_targets = Vec::new();
+
+        for (idx, raw_url) in urls.into_iter().enumerate() {
+            let trimmed = raw_url.trim().to_string();
+
+            if trimmed.is_empty() {
+                results[idx] = Some(EndpointLatency {
+                    url: raw_url,
+                    latency: None,
+                    status: None,
+                    error: Some("URL 不能为空".to_string()),
+                });
+                continue;
+            }
+
+            match Url::parse(&trimmed) {
+                Ok(parsed_url) => valid_targets.push((idx, trimmed, parsed_url)),
+                Err(err) => {
+                    results[idx] = Some(EndpointLatency {
+                        url: trimmed,
+                        latency: None,
+                        status: None,
+                        error: Some(format!("URL 无效: {err}")),
+                    });
+                }
+            }
+        }
+
+        if valid_targets.is_empty() {
+            return Ok(results.into_iter().flatten().collect::<Vec<_>>());
+        }
+
         let timeout = Self::sanitize_timeout(timeout_secs);
         let client = Self::build_client(timeout)?;
 
-        let tasks = urls.into_iter().map(|raw_url| {
+        let tasks = valid_targets.into_iter().map(|(idx, trimmed, parsed_url)| {
             let client = client.clone();
             async move {
-                let trimmed = raw_url.trim().to_string();
-                if trimmed.is_empty() {
-                    return EndpointLatency {
-                        url: raw_url,
-                        latency: None,
-                        status: None,
-                        error: Some("URL 不能为空".to_string()),
-                    };
-                }
-
-                let parsed_url = match Url::parse(&trimmed) {
-                    Ok(url) => url,
-                    Err(err) => {
-                        return EndpointLatency {
-                            url: trimmed,
-                            latency: None,
-                            status: None,
-                            error: Some(format!("URL 无效: {err}")),
-                        };
-                    }
-                };
-
                 // 先进行一次热身请求，忽略结果，仅用于复用连接/绕过首包惩罚。
                 let _ = client.get(parsed_url.clone()).send().await;
 
                 // 第二次请求开始计时，并将其作为结果返回。
                 let start = Instant::now();
-                match client.get(parsed_url).send().await {
+                let latency = match client.get(parsed_url).send().await {
                     Ok(resp) => EndpointLatency {
                         url: trimmed,
                         latency: Some(start.elapsed().as_millis()),
@@ -88,11 +99,17 @@ impl SpeedtestService {
                             error: Some(error_message),
                         }
                     }
-                }
+                };
+
+                (idx, latency)
             }
         });
 
-        Ok(join_all(tasks).await)
+        for (idx, latency) in join_all(tasks).await {
+            results[idx] = Some(latency);
+        }
+
+        Ok(results.into_iter().flatten().collect::<Vec<_>>())
     }
 
     fn build_client(timeout_secs: u64) -> Result<Client, AppError> {

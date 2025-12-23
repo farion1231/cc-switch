@@ -23,8 +23,8 @@ export interface Provider {
   // 图标配置
   icon?: string; // 图标名称（如 "openai", "anthropic"）
   iconColor?: string; // 图标颜色（Hex 格式，如 "#00A67E"）
-  // 新增：是否为代理目标
-  isProxyTarget?: boolean;
+  // 是否加入故障转移队列
+  inFailoverQueue?: boolean;
 }
 
 export interface AppConfig {
@@ -119,6 +119,8 @@ export interface Settings {
   minimizeToTrayOnClose: boolean;
   // 启用 Claude 插件联动（写入 ~/.claude/config.json 的 primaryApiKey）
   enableClaudePluginIntegration?: boolean;
+  // 跳过 Claude Code 初次安装确认（写入 ~/.claude.json 的 hasCompletedOnboarding）
+  skipClaudeOnboarding?: boolean;
   // 是否开机自启
   launchOnStartup?: boolean;
   // 首选语言（可选，默认中文）

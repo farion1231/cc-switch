@@ -4,7 +4,9 @@
     "windows": [
       {
         "label": "main",
-        "titleBarStyle": "Visible"
+        "titleBarStyle": "Visible",
+        "minWidth": 900,
+        "minHeight": 600
       }
     ]
   }

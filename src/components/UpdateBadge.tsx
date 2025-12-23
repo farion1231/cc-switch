@@ -56,7 +56,7 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
         "
         aria-label={t("common.close")}
       >
-        <X className="w-3 h-3 text-gray-400 dark:text-gray-500" />
+        <X className="w-3 h-3 text-muted-foreground" />
       </button>
     </div>
   );
