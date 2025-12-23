@@ -160,6 +160,36 @@ export function useSettings(): UseSettingsResult {
           }
         }
 
+        // Claude Code 初次安装确认：开=写入 hasCompletedOnboarding=true；关=删除该字段
+        // 仅在本次更新包含 skipClaudeOnboarding 时触发，避免其它自动保存误触发
+        const nextSkipClaudeOnboarding = updates.skipClaudeOnboarding;
+        if (
+          nextSkipClaudeOnboarding !== undefined &&
+          nextSkipClaudeOnboarding !== (data?.skipClaudeOnboarding ?? false)
+        ) {
+          try {
+            if (nextSkipClaudeOnboarding) {
+              await settingsApi.applyClaudeOnboardingSkip();
+            } else {
+              await settingsApi.clearClaudeOnboardingSkip();
+            }
+          } catch (error) {
+            console.warn(
+              "[useSettings] Failed to sync Claude onboarding skip",
+              error,
+            );
+            toast.error(
+              nextSkipClaudeOnboarding
+                ? t("notifications.skipClaudeOnboardingFailed", {
+                    defaultValue: "跳过 Claude Code 初次安装确认失败",
+                  })
+                : t("notifications.clearClaudeOnboardingSkipFailed", {
+                    defaultValue: "恢复 Claude Code 初次安装确认失败",
+                  }),
+            );
+          }
+        }
+
         // 持久化语言偏好
         try {
           if (typeof window !== "undefined" && updates.language) {
@@ -238,6 +268,33 @@ export function useSettings(): UseSettingsResult {
               t("settings.autoLaunchFailed", {
                 defaultValue: "设置开机自启失败",
               }),
+            );
+          }
+        }
+
+        // Claude Code 初次安装确认：开=写入 hasCompletedOnboarding=true；关=删除该字段
+        const prevSkipClaudeOnboarding = data?.skipClaudeOnboarding ?? false;
+        const nextSkipClaudeOnboarding = payload.skipClaudeOnboarding ?? false;
+        if (nextSkipClaudeOnboarding !== prevSkipClaudeOnboarding) {
+          try {
+            if (nextSkipClaudeOnboarding) {
+              await settingsApi.applyClaudeOnboardingSkip();
+            } else {
+              await settingsApi.clearClaudeOnboardingSkip();
+            }
+          } catch (error) {
+            console.warn(
+              "[useSettings] Failed to sync Claude onboarding skip",
+              error,
+            );
+            toast.error(
+              nextSkipClaudeOnboarding
+                ? t("notifications.skipClaudeOnboardingFailed", {
+                    defaultValue: "跳过 Claude Code 初次安装确认失败",
+                  })
+                : t("notifications.clearClaudeOnboardingSkipFailed", {
+                    defaultValue: "恢复 Claude Code 初次安装确认失败",
+                  }),
             );
           }
         }

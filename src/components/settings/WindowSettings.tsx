@@ -41,6 +41,13 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
           onChange({ enableClaudePluginIntegration: value })
         }
       />
+
+      <ToggleRow
+        title={t("settings.skipClaudeOnboarding")}
+        description={t("settings.skipClaudeOnboardingDescription")}
+        checked={!!settings.skipClaudeOnboarding}
+        onCheckedChange={(value) => onChange({ skipClaudeOnboarding: value })}
+      />
     </section>
   );
 }

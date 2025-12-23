@@ -12,6 +12,7 @@ export const settingsSchema = z.object({
   showInTray: z.boolean(),
   minimizeToTrayOnClose: z.boolean(),
   enableClaudePluginIntegration: z.boolean().optional(),
+  skipClaudeOnboarding: z.boolean().optional(),
   launchOnStartup: z.boolean().optional(),
   language: z.enum(["en", "zh", "ja"]).optional(),
 

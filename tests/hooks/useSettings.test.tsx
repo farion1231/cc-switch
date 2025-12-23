@@ -7,6 +7,8 @@ const mutateAsyncMock = vi.fn();
 const useSettingsQueryMock = vi.fn();
 const setAppConfigDirOverrideMock = vi.fn();
 const applyClaudePluginConfigMock = vi.fn();
+const applyClaudeOnboardingSkipMock = vi.fn();
+const clearClaudeOnboardingSkipMock = vi.fn();
 const syncCurrentProvidersLiveMock = vi.fn();
 const updateTrayMenuMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -50,6 +52,10 @@ vi.mock("@/lib/api", () => ({
       setAppConfigDirOverrideMock(...args),
     applyClaudePluginConfig: (...args: unknown[]) =>
       applyClaudePluginConfigMock(...args),
+    applyClaudeOnboardingSkip: (...args: unknown[]) =>
+      applyClaudeOnboardingSkipMock(...args),
+    clearClaudeOnboardingSkip: (...args: unknown[]) =>
+      clearClaudeOnboardingSkipMock(...args),
     syncCurrentProvidersLive: (...args: unknown[]) =>
       syncCurrentProvidersLiveMock(...args),
   },
@@ -63,6 +69,7 @@ const createSettingsFormMock = (overrides: Record<string, unknown> = {}) => ({
     showInTray: true,
     minimizeToTrayOnClose: true,
     enableClaudePluginIntegration: false,
+    skipClaudeOnboarding: true,
     claudeConfigDir: "/claude",
     codexConfigDir: "/codex",
     language: "zh",
@@ -111,6 +118,8 @@ describe("useSettings hook", () => {
     useSettingsQueryMock.mockReset();
     setAppConfigDirOverrideMock.mockReset();
     applyClaudePluginConfigMock.mockReset();
+    applyClaudeOnboardingSkipMock.mockReset();
+    clearClaudeOnboardingSkipMock.mockReset();
     syncCurrentProvidersLiveMock.mockReset();
     toastErrorMock.mockReset();
     toastSuccessMock.mockReset();
@@ -120,6 +129,7 @@ describe("useSettings hook", () => {
       showInTray: true,
       minimizeToTrayOnClose: true,
       enableClaudePluginIntegration: false,
+      skipClaudeOnboarding: true,
       claudeConfigDir: "/server/claude",
       codexConfigDir: "/server/codex",
       language: "zh",
@@ -142,6 +152,64 @@ describe("useSettings hook", () => {
     mutateAsyncMock.mockResolvedValue(true);
     setAppConfigDirOverrideMock.mockResolvedValue(true);
     applyClaudePluginConfigMock.mockResolvedValue(true);
+    applyClaudeOnboardingSkipMock.mockResolvedValue(true);
+    clearClaudeOnboardingSkipMock.mockResolvedValue(true);
+  });
+
+  it("auto-saves and applies Claude onboarding skip when toggled on", async () => {
+    serverSettings = {
+      ...serverSettings,
+      skipClaudeOnboarding: false,
+    };
+    useSettingsQueryMock.mockReturnValue({
+      data: serverSettings,
+      isLoading: false,
+    });
+
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        language: "zh",
+        skipClaudeOnboarding: false,
+      },
+    });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.autoSaveSettings({ skipClaudeOnboarding: true });
+    });
+
+    expect(applyClaudeOnboardingSkipMock).toHaveBeenCalledTimes(1);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("auto-saves and clears Claude onboarding skip when toggled off", async () => {
+    serverSettings = {
+      ...serverSettings,
+      skipClaudeOnboarding: true,
+    };
+    useSettingsQueryMock.mockReturnValue({
+      data: serverSettings,
+      isLoading: false,
+    });
+
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        language: "zh",
+        skipClaudeOnboarding: true,
+      },
+    });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.autoSaveSettings({ skipClaudeOnboarding: false });
+    });
+
+    expect(clearClaudeOnboardingSkipMock).toHaveBeenCalledTimes(1);
+    expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
   it("saves settings and flags restart when app config directory changes", async () => {
