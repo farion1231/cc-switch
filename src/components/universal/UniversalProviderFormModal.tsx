@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import JsonEditor from "@/components/JsonEditor";
 import type { UniversalProvider, UniversalProviderModels } from "@/types";
 import {
   universalProviderPresets,
@@ -18,6 +20,7 @@ interface UniversalProviderFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (provider: UniversalProvider) => void;
+  onSaveAndSync?: (provider: UniversalProvider) => void;
   editingProvider?: UniversalProvider | null;
   initialPreset?: UniversalProviderPreset | null;
 }
@@ -26,6 +29,7 @@ export function UniversalProviderFormModal({
   isOpen,
   onClose,
   onSave,
+  onSaveAndSync,
   editingProvider,
   initialPreset,
 }: UniversalProviderFormModalProps) {
@@ -49,6 +53,11 @@ export function UniversalProviderFormModal({
 
   // 模型配置
   const [models, setModels] = useState<UniversalProviderModels>({});
+
+  // 保存并同步确认弹窗
+  const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
+  const [pendingProvider, setPendingProvider] =
+    useState<UniversalProvider | null>(null);
 
   // 初始化表单
   useEffect(() => {
@@ -114,6 +123,61 @@ export function UniversalProviderFormModal({
     [],
   );
 
+  // 计算 Claude 配置 JSON 预览
+  const claudeConfigJson = useMemo(() => {
+    if (!claudeEnabled) return null;
+    const model = models.claude?.model || "claude-sonnet-4-20250514";
+    const haiku = models.claude?.haikuModel || "claude-haiku-4-20250514";
+    const sonnet = models.claude?.sonnetModel || "claude-sonnet-4-20250514";
+    const opus = models.claude?.opusModel || "claude-sonnet-4-20250514";
+    return {
+      env: {
+        ANTHROPIC_BASE_URL: baseUrl,
+        ANTHROPIC_AUTH_TOKEN: apiKey,
+        ANTHROPIC_MODEL: model,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: haiku,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: sonnet,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: opus,
+      },
+    };
+  }, [claudeEnabled, baseUrl, apiKey, models.claude]);
+
+  // 计算 Codex 配置 JSON 预览
+  const codexConfigJson = useMemo(() => {
+    if (!codexEnabled) return null;
+    const model = models.codex?.model || "gpt-4o";
+    const reasoningEffort = models.codex?.reasoningEffort || "high";
+    const configToml = `model_provider = "newapi"
+model = "${model}"
+model_reasoning_effort = "${reasoningEffort}"
+disable_response_storage = true
+
+[model_providers.newapi]
+name = "NewAPI"
+base_url = "${baseUrl}"
+wire_api = "responses"
+requires_openai_auth = true`;
+    return {
+      auth: {
+        OPENAI_API_KEY: apiKey,
+      },
+      config: configToml,
+    };
+  }, [codexEnabled, baseUrl, apiKey, models.codex]);
+
+  // 计算 Gemini 配置 JSON 预览
+  const geminiConfigJson = useMemo(() => {
+    if (!geminiEnabled) return null;
+    const model = models.gemini?.model || "gemini-2.5-pro";
+    return {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: baseUrl,
+        GEMINI_API_KEY: apiKey,
+        GEMINI_MODEL: model,
+      },
+    };
+  }, [geminiEnabled, baseUrl, apiKey, models.gemini]);
+
   // 提交表单
   const handleSubmit = useCallback(() => {
     if (!name.trim() || !baseUrl.trim() || !apiKey.trim()) {
@@ -173,19 +237,102 @@ export function UniversalProviderFormModal({
     onClose,
   ]);
 
+  // 构建 provider 对象的辅助函数
+  const buildProvider = useCallback((): UniversalProvider | null => {
+    if (!name.trim() || !baseUrl.trim() || !apiKey.trim()) {
+      return null;
+    }
+
+    const provider: UniversalProvider = editingProvider
+      ? {
+          ...editingProvider,
+          name: name.trim(),
+          baseUrl: baseUrl.trim(),
+          apiKey: apiKey.trim(),
+          websiteUrl: websiteUrl.trim() || undefined,
+          notes: notes.trim() || undefined,
+          apps: {
+            claude: claudeEnabled,
+            codex: codexEnabled,
+            gemini: geminiEnabled,
+          },
+          models,
+        }
+      : createUniversalProviderFromPreset(
+          selectedPreset || universalProviderPresets[0],
+          crypto.randomUUID(),
+          baseUrl.trim(),
+          apiKey.trim(),
+          name.trim(),
+        );
+
+    // 如果是新建，更新应用启用状态和模型
+    if (!editingProvider) {
+      provider.apps = {
+        claude: claudeEnabled,
+        codex: codexEnabled,
+        gemini: geminiEnabled,
+      };
+      provider.models = models;
+      provider.websiteUrl = websiteUrl.trim() || undefined;
+      provider.notes = notes.trim() || undefined;
+    }
+
+    return provider;
+  }, [
+    editingProvider,
+    name,
+    baseUrl,
+    apiKey,
+    websiteUrl,
+    notes,
+    claudeEnabled,
+    codexEnabled,
+    geminiEnabled,
+    models,
+    selectedPreset,
+  ]);
+
+  // 打开保存并同步确认弹窗
+  const handleSaveAndSyncClick = useCallback(() => {
+    const provider = buildProvider();
+    if (!provider || !onSaveAndSync) return;
+
+    setPendingProvider(provider);
+    setSyncConfirmOpen(true);
+  }, [buildProvider, onSaveAndSync]);
+
+  // 确认保存并同步
+  const confirmSaveAndSync = useCallback(() => {
+    if (!pendingProvider || !onSaveAndSync) return;
+
+    onSaveAndSync(pendingProvider);
+    setSyncConfirmOpen(false);
+    setPendingProvider(null);
+    onClose();
+  }, [pendingProvider, onSaveAndSync, onClose]);
+
   const footer = (
     <>
       <Button variant="outline" onClick={onClose}>
         {t("common.cancel", { defaultValue: "取消" })}
       </Button>
-      <Button
-        onClick={handleSubmit}
-        disabled={!name.trim() || !baseUrl.trim() || !apiKey.trim()}
-      >
-        {isEditMode
-          ? t("common.save", { defaultValue: "保存" })
-          : t("common.add", { defaultValue: "添加" })}
-      </Button>
+      {isEditMode && onSaveAndSync ? (
+        <Button
+          onClick={handleSaveAndSyncClick}
+          disabled={!name.trim() || !baseUrl.trim() || !apiKey.trim()}
+        >
+          <RefreshCw className="mr-1.5 h-4 w-4" />
+          {t("universalProvider.saveAndSync", { defaultValue: "保存并同步" })}
+        </Button>
+      ) : (
+        <Button
+          onClick={handleSubmit}
+          disabled={!name.trim() || !baseUrl.trim() || !apiKey.trim()}
+        >
+          {t("common.add", { defaultValue: "添加" })}
+        </Button>
+      )}
     </>
   );
 
@@ -479,7 +626,89 @@ export function UniversalProviderFormModal({
             </div>
           )}
         </div>
+
+        {/* 配置 JSON 预览 */}
+        {isEditMode && (claudeEnabled || codexEnabled || geminiEnabled) && (
+          <div className="space-y-4">
+            <Label>
+              {t("universalProvider.configJsonPreview", {
+                defaultValue: "配置 JSON 预览",
+              })}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t("universalProvider.configJsonPreviewHint", {
+                defaultValue:
+                  "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）",
+              })}
+            </p>
+
+            {/* Claude JSON */}
+            {claudeConfigJson && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <ProviderIcon icon="claude" name="Claude" size={16} />
+                  Claude
+                </div>
+                <JsonEditor
+                  value={JSON.stringify(claudeConfigJson, null, 2)}
+                  onChange={() => {}}
+                  height={180}
+                />
+              </div>
+            )}
+
+            {/* Codex JSON */}
+            {codexConfigJson && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <ProviderIcon icon="openai" name="Codex" size={16} />
+                  Codex
+                </div>
+                <JsonEditor
+                  value={JSON.stringify(codexConfigJson, null, 2)}
+                  onChange={() => {}}
+                  height={280}
+                />
+              </div>
+            )}
+
+            {/* Gemini JSON */}
+            {geminiConfigJson && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <ProviderIcon icon="gemini" name="Gemini" size={16} />
+                  Gemini
+                </div>
+                <JsonEditor
+                  value={JSON.stringify(geminiConfigJson, null, 2)}
+                  onChange={() => {}}
+                  height={140}
+                />
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* 保存并同步确认弹窗 */}
+      <ConfirmDialog
+        isOpen={syncConfirmOpen}
+        title={t("universalProvider.syncConfirmTitle", {
+          defaultValue: "同步统一供应商",
+        })}
+        message={t("universalProvider.syncConfirmDescription", {
+          defaultValue: `同步 "${name}" 将会覆盖 Claude、Codex 和 Gemini 中关联的供应商配置。确定要继续吗？`,
+          name: name,
+        })}
+        confirmText={t("universalProvider.saveAndSync", {
+          defaultValue: "保存并同步",
+        })}
+        onConfirm={confirmSaveAndSync}
+        onCancel={() => {
+          setSyncConfirmOpen(false);
+          setPendingProvider(null);
+        }}
+      />
     </FullScreenPanel>
   );
 }

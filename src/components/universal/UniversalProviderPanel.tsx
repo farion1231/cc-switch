@@ -23,6 +23,11 @@ export function UniversalProviderPanel() {
     id: string;
     name: string;
   }>({ open: false, id: "", name: "" });
+  const [syncConfirm, setSyncConfirm] = useState<{
+    open: boolean;
+    id: string;
+    name: string;
+  }>({ open: false, id: "", name: "" });
 
   // 加载数据
   const loadProviders = useCallback(async () => {
@@ -74,6 +79,31 @@ export function UniversalProviderPanel() {
     [editingProvider, loadProviders, t],
   );
 
+  // 保存并同步供应商
+  const handleSaveAndSync = useCallback(
+    async (provider: UniversalProvider) => {
+      try {
+        await universalProvidersApi.upsert(provider);
+        await universalProvidersApi.sync(provider.id);
+        toast.success(
+          t("universalProvider.savedAndSynced", {
+            defaultValue: "已保存并同步到所有应用",
+          }),
+        );
+        loadProviders();
+        setEditingProvider(null);
+      } catch (error) {
+        console.error("Failed to save and sync universal provider:", error);
+        toast.error(
+          t("universalProvider.saveAndSyncError", {
+            defaultValue: "保存并同步失败",
+          }),
+        );
+      }
+    },
+    [loadProviders, t],
+  );
+
   // 删除供应商
   const handleDelete = useCallback(async () => {
     if (!deleteConfirm.id) return;
@@ -97,23 +127,37 @@ export function UniversalProviderPanel() {
   }, [deleteConfirm.id, loadProviders, t]);
 
   // 同步供应商
-  const handleSync = useCallback(
-    async (id: string) => {
-      try {
-        await universalProvidersApi.sync(id);
-        toast.success(
-          t("universalProvider.synced", { defaultValue: "已同步到所有应用" }),
-        );
-      } catch (error) {
-        console.error("Failed to sync universal provider:", error);
-        toast.error(
-          t("universalProvider.syncError", {
-            defaultValue: "同步统一供应商失败",
-          }),
-        );
-      }
+  const handleSync = useCallback(async () => {
+    if (!syncConfirm.id) return;
+
+    try {
+      await universalProvidersApi.sync(syncConfirm.id);
+      toast.success(
+        t("universalProvider.synced", { defaultValue: "已同步到所有应用" }),
+      );
+    } catch (error) {
+      console.error("Failed to sync universal provider:", error);
+      toast.error(
+        t("universalProvider.syncError", {
+          defaultValue: "同步统一供应商失败",
+        }),
+      );
+    } finally {
+      setSyncConfirm({ open: false, id: "", name: "" });
+    }
+  }, [syncConfirm.id, t]);
+
+  // 打开同步确认
+  const handleSyncClick = useCallback(
+    (id: string) => {
+      const provider = providers[id];
+      setSyncConfirm({
+        open: true,
+        id,
+        name: provider?.name || id,
+      });
     },
-    [t],
+    [providers],
   );
 
   // 打开编辑
@@ -197,7 +241,7 @@ export function UniversalProviderPanel() {
               provider={provider}
               onEdit={handleEdit}
               onDelete={handleDeleteClick}
-              onSync={handleSync}
+              onSync={handleSyncClick}
             />
           ))}
         </div>
@@ -211,6 +255,7 @@ export function UniversalProviderPanel() {
           setEditingProvider(null);
         }}
         onSave={handleSave}
+        onSaveAndSync={handleSaveAndSync}
         editingProvider={editingProvider}
       />
 
@@ -227,6 +272,23 @@ export function UniversalProviderPanel() {
         confirmText={t("common.delete", { defaultValue: "删除" })}
         onConfirm={handleDelete}
         onCancel={() => setDeleteConfirm({ open: false, id: "", name: "" })}
+      />
+
+      {/* 同步确认对话框 */}
+      <ConfirmDialog
+        isOpen={syncConfirm.open}
+        title={t("universalProvider.syncConfirmTitle", {
+          defaultValue: "同步统一供应商",
+        })}
+        message={t("universalProvider.syncConfirmDescription", {
+          defaultValue: `同步 "${syncConfirm.name}" 将会覆盖 Claude、Codex 和 Gemini 中关联的供应商配置。确定要继续吗？`,
+          name: syncConfirm.name,
+        })}
+        confirmText={t("universalProvider.syncConfirm", {
+          defaultValue: "同步",
+        })}
+        onConfirm={handleSync}
+        onCancel={() => setSyncConfirm({ open: false, id: "", name: "" })}
       />
     </div>
   );

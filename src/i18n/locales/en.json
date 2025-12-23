@@ -1169,6 +1169,14 @@
     "saveError": "Failed to save universal provider",
     "deleteError": "Failed to delete universal provider",
     "deleteConfirmTitle": "Delete Universal Provider",
-    "deleteConfirmDescription": "Are you sure you want to delete \"{{name}}\"? This will also delete its generated provider configurations in each app."
+    "deleteConfirmDescription": "Are you sure you want to delete \"{{name}}\"? This will also delete its generated provider configurations in each app.",
+    "syncConfirmTitle": "Sync Universal Provider",
+    "syncConfirmDescription": "Syncing \"{{name}}\" will overwrite the associated provider configurations in Claude, Codex, and Gemini. Do you want to continue?",
+    "syncConfirm": "Sync",
+    "saveAndSync": "Save & Sync",
+    "savedAndSynced": "Saved and synced to all apps",
+    "saveAndSyncError": "Failed to save and sync",
+    "configJsonPreview": "Config JSON Preview",
+    "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)"
   }
 }

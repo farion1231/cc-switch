@@ -714,18 +714,13 @@ impl ProviderService {
         state.db.get_universal_provider(id)
     }
 
-    /// 添加或更新统一供应商
+    /// 添加或更新统一供应商（不自动同步，需手动调用 sync_universal_to_apps）
     pub fn upsert_universal(
         state: &AppState,
         provider: UniversalProvider,
     ) -> Result<bool, AppError> {
-        let id = provider.id.clone();
-
         // 保存统一供应商
         state.db.save_universal_provider(&provider)?;
-
-        // 同步到各应用
-        Self::sync_universal_to_apps(state, &id)?;
 
         Ok(true)
     }
@@ -765,7 +760,13 @@ impl ProviderService {
             .ok_or_else(|| AppError::Message(format!("统一供应商 {} 不存在", id)))?;
 
         // 同步到 Claude
-        if let Some(claude_provider) = provider.to_claude_provider() {
+        if let Some(mut claude_provider) = provider.to_claude_provider() {
+            // 合并已有配置
+            if let Some(existing) = state.db.get_provider_by_id(&claude_provider.id, "claude")? {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &claude_provider.settings_config);
+                claude_provider.settings_config = merged;
+            }
             state.db.save_provider("claude", &claude_provider)?;
         } else {
             // 如果禁用了 Claude，删除对应的子供应商
@@ -774,7 +775,13 @@ impl ProviderService {
         }
 
         // 同步到 Codex
-        if let Some(codex_provider) = provider.to_codex_provider() {
+        if let Some(mut codex_provider) = provider.to_codex_provider() {
+            // 合并已有配置
+            if let Some(existing) = state.db.get_provider_by_id(&codex_provider.id, "codex")? {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &codex_provider.settings_config);
+                codex_provider.settings_config = merged;
+            }
             state.db.save_provider("codex", &codex_provider)?;
         } else {
             let codex_id = format!("universal-codex-{}", id);
@@ -782,7 +789,13 @@ impl ProviderService {
         }
 
         // 同步到 Gemini
-        if let Some(gemini_provider) = provider.to_gemini_provider() {
+        if let Some(mut gemini_provider) = provider.to_gemini_provider() {
+            // 合并已有配置
+            if let Some(existing) = state.db.get_provider_by_id(&gemini_provider.id, "gemini")? {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &gemini_provider.settings_config);
+                gemini_provider.settings_config = merged;
+            }
             state.db.save_provider("gemini", &gemini_provider)?;
         } else {
             let gemini_id = format!("universal-gemini-{}", id);
@@ -790,5 +803,27 @@ impl ProviderService {
         }
 
         Ok(true)
+    }
+
+    /// 递归合并 JSON：base 为底，patch 覆盖同名字段
+    fn merge_json(base: &mut serde_json::Value, patch: &serde_json::Value) {
+        use serde_json::Value;
+
+        match (base, patch) {
+            (Value::Object(base_map), Value::Object(patch_map)) => {
+                for (k, v_patch) in patch_map {
+                    match base_map.get_mut(k) {
+                        Some(v_base) => Self::merge_json(v_base, v_patch),
+                        None => {
+                            base_map.insert(k.clone(), v_patch.clone());
+                        }
+                    }
+                }
+            }
+            // 其它类型：直接覆盖
+            (base_val, patch_val) => {
+                *base_val = patch_val.clone();
+            }
+        }
     }
 }

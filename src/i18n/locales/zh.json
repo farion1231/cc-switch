@@ -1169,6 +1169,14 @@
     "saveError": "保存统一供应商失败",
     "deleteError": "删除统一供应商失败",
     "deleteConfirmTitle": "删除统一供应商",
-    "deleteConfirmDescription": "确定要删除 \"{{name}}\" 吗？这将同时删除它在各应用中生成的供应商配置。"
+    "deleteConfirmDescription": "确定要删除 \"{{name}}\" 吗？这将同时删除它在各应用中生成的供应商配置。",
+    "syncConfirmTitle": "同步统一供应商",
+    "syncConfirmDescription": "同步 \"{{name}}\" 将会覆盖 Claude、Codex 和 Gemini 中关联的供应商配置。确定要继续吗？",
+    "syncConfirm": "同步",
+    "saveAndSync": "保存并同步",
+    "savedAndSynced": "已保存并同步到所有应用",
+    "saveAndSyncError": "保存并同步失败",
+    "configJsonPreview": "配置 JSON 预览",
+    "configJsonPreviewHint": "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）"
   }
 }

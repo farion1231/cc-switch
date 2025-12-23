@@ -1169,6 +1169,14 @@
     "saveError": "統合プロバイダーの保存に失敗しました",
     "deleteError": "統合プロバイダーの削除に失敗しました",
     "deleteConfirmTitle": "統合プロバイダーを削除",
-    "deleteConfirmDescription": "「{{name}}」を削除してもよろしいですか？各アプリで生成されたプロバイダー設定も削除されます。"
+    "deleteConfirmDescription": "「{{name}}」を削除してもよろしいですか？各アプリで生成されたプロバイダー設定も削除されます。",
+    "syncConfirmTitle": "統合プロバイダーを同期",
+    "syncConfirmDescription": "「{{name}}」を同期すると、Claude、Codex、Gemini の関連プロバイダー設定が上書きされます。続行しますか？",
+    "syncConfirm": "同期",
+    "saveAndSync": "保存して同期",
+    "savedAndSynced": "すべてのアプリに保存・同期されました",
+    "saveAndSyncError": "保存と同期に失敗しました",
+    "configJsonPreview": "設定 JSON プレビュー",
+    "configJsonPreviewHint": "以下は各アプリに同期される設定内容です（表示されているフィールドのみ上書きされ、他のカスタム設定は保持されます）"
   }
 }
