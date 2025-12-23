@@ -34,6 +34,12 @@ impl TokenUsage {
     /// 从 Claude API 非流式响应解析
     pub fn from_claude_response(body: &Value) -> Option<Self> {
         let usage = body.get("usage")?;
+        // 提取响应中的模型名称
+        let model = body
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         Some(Self {
             input_tokens: usage.get("input_tokens")?.as_u64()? as u32,
             output_tokens: usage.get("output_tokens")?.as_u64()? as u32,
@@ -45,7 +51,7 @@ impl TokenUsage {
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
-            model: None,
+            model,
         })
     }
 
@@ -53,11 +59,20 @@ impl TokenUsage {
     #[allow(dead_code)]
     pub fn from_claude_stream_events(events: &[Value]) -> Option<Self> {
         let mut usage = Self::default();
+        let mut model: Option<String> = None;
 
         for event in events {
             if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
                 match event_type {
                     "message_start" => {
+                        // 从 message_start 提取模型名称
+                        if model.is_none() {
+                            if let Some(message) = event.get("message") {
+                                if let Some(m) = message.get("model").and_then(|v| v.as_str()) {
+                                    model = Some(m.to_string());
+                                }
+                            }
+                        }
                         if let Some(msg_usage) = event.get("message").and_then(|m| m.get("usage")) {
                             // 从 message_start 获取 input_tokens（原生 Claude API）
                             if let Some(input) =
@@ -102,6 +117,7 @@ impl TokenUsage {
         }
 
         if usage.input_tokens > 0 || usage.output_tokens > 0 {
+            usage.model = model;
             Some(usage)
         } else {
             None
@@ -141,6 +157,12 @@ impl TokenUsage {
             return None;
         }
 
+        // 提取响应中的模型名称
+        let model = body
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         Some(Self {
             input_tokens: input_tokens? as u32,
             output_tokens: output_tokens? as u32,
@@ -152,7 +174,7 @@ impl TokenUsage {
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
-            model: None,
+            model,
         })
     }
 
@@ -222,12 +244,18 @@ impl TokenUsage {
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
 
+        // 提取响应中的模型名称
+        let model = body
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         Some(Self {
             input_tokens: prompt_tokens as u32,
             output_tokens: completion_tokens as u32,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: 0,
-            model: None,
+            model,
         })
     }
 
@@ -322,6 +350,7 @@ mod tests {
     #[test]
     fn test_claude_response_parsing() {
         let response = json!({
+            "model": "claude-sonnet-4-20250514",
             "usage": {
                 "input_tokens": 100,
                 "output_tokens": 50,
@@ -335,10 +364,60 @@ mod tests {
         assert_eq!(usage.output_tokens, 50);
         assert_eq!(usage.cache_read_tokens, 20);
         assert_eq!(usage.cache_creation_tokens, 10);
+        assert_eq!(usage.model, Some("claude-sonnet-4-20250514".to_string()));
+    }
+
+    #[test]
+    fn test_claude_response_parsing_no_model() {
+        let response = json!({
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_read_input_tokens": 20,
+                "cache_creation_input_tokens": 10
+            }
+        });
+
+        let usage = TokenUsage::from_claude_response(&response).unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 50);
+        assert_eq!(usage.cache_read_tokens, 20);
+        assert_eq!(usage.cache_creation_tokens, 10);
+        assert_eq!(usage.model, None);
     }
 
     #[test]
     fn test_claude_stream_parsing() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "claude-sonnet-4-20250514",
+                    "usage": {
+                        "input_tokens": 100,
+                        "cache_read_input_tokens": 20,
+                        "cache_creation_input_tokens": 10
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "output_tokens": 50
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 50);
+        assert_eq!(usage.cache_read_tokens, 20);
+        assert_eq!(usage.cache_creation_tokens, 10);
+        assert_eq!(usage.model, Some("claude-sonnet-4-20250514".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_parsing_no_model() {
         let events = vec![
             json!({
                 "type": "message_start",
@@ -363,6 +442,7 @@ mod tests {
         assert_eq!(usage.output_tokens, 50);
         assert_eq!(usage.cache_read_tokens, 20);
         assert_eq!(usage.cache_creation_tokens, 10);
+        assert_eq!(usage.model, None);
     }
 
     #[test]
@@ -481,6 +561,7 @@ mod tests {
             json!({
                 "type": "message_start",
                 "message": {
+                    "model": "claude-sonnet-4-20250514",
                     "usage": {
                         "input_tokens": 0,
                         "output_tokens": 0
@@ -502,6 +583,7 @@ mod tests {
         let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
         assert_eq!(usage.input_tokens, 150);
         assert_eq!(usage.output_tokens, 75);
+        assert_eq!(usage.model, Some("claude-sonnet-4-20250514".to_string()));
     }
 
     #[test]
@@ -512,6 +594,7 @@ mod tests {
             json!({
                 "type": "message_start",
                 "message": {
+                    "model": "claude-sonnet-4-20250514",
                     "usage": {
                         "input_tokens": 200,
                         "cache_read_input_tokens": 50
@@ -530,5 +613,6 @@ mod tests {
         assert_eq!(usage.input_tokens, 200);
         assert_eq!(usage.output_tokens, 100);
         assert_eq!(usage.cache_read_tokens, 50);
+        assert_eq!(usage.model, Some("claude-sonnet-4-20250514".to_string()));
     }
 }

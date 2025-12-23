@@ -51,7 +51,12 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           >
             <div className="h-4 w-full" data-tauri-drag-region />
             <div className="mx-auto max-w-[56rem] px-6 flex items-center gap-4">
-              <Button type="button" variant="outline" size="icon" onClick={onClose}>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={onClose}
+              >
                 <ArrowLeft className="h-4 w-4" />
               </Button>
               <h2 className="text-lg font-semibold text-foreground">{title}</h2>

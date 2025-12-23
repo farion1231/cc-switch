@@ -93,12 +93,16 @@ pub async fn handle_non_streaming(
 
         // 解析使用量
         if let Some(usage) = (parser_config.response_parser)(&json_value) {
-            let model = json_value
-                .get("model")
-                .and_then(|m| m.as_str())
-                .unwrap_or(&ctx.request_model);
+            // 优先使用 usage 中解析出的模型名称，其次使用响应中的 model 字段，最后回退到请求模型
+            let model = if let Some(ref m) = usage.model {
+                m.clone()
+            } else if let Some(m) = json_value.get("model").and_then(|m| m.as_str()) {
+                m.to_string()
+            } else {
+                ctx.request_model.clone()
+            };
 
-            spawn_log_usage(state, ctx, usage, model, status.as_u16(), false);
+            spawn_log_usage(state, ctx, usage, &model, status.as_u16(), false);
         } else {
             log::debug!(
                 "[{}] 未能解析 usage 信息，跳过记录",

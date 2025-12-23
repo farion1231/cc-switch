@@ -641,9 +641,7 @@ function App() {
       </header>
 
       <main className="flex-1 pb-12 animate-fade-in ">
-        <div className="pb-12">
-          {renderContent()}
-        </div>
+        <div className="pb-12">{renderContent()}</div>
       </main>
 
       <AddProviderDialog

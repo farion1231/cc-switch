@@ -31,13 +31,26 @@ pub struct UsageParserConfig {
 // 模型提取器实现
 // ============================================================================
 
-/// Claude 流式响应模型提取（直接使用请求模型）
-fn claude_model_extractor(_events: &[Value], request_model: &str) -> String {
+/// Claude 流式响应模型提取（优先使用 usage.model）
+fn claude_model_extractor(events: &[Value], request_model: &str) -> String {
+    // 首先尝试从解析的 usage 中获取模型
+    if let Some(usage) = TokenUsage::from_claude_stream_events(events) {
+        if let Some(model) = usage.model {
+            return model;
+        }
+    }
     request_model.to_string()
 }
 
-/// OpenAI Chat Completions 流式响应模型提取
+/// OpenAI Chat Completions 流式响应模型提取（优先使用 usage.model）
 fn openai_model_extractor(events: &[Value], request_model: &str) -> String {
+    // 首先尝试从解析的 usage 中获取模型
+    if let Some(usage) = TokenUsage::from_openai_stream_events(events) {
+        if let Some(model) = usage.model {
+            return model;
+        }
+    }
+    // 回退：从事件中直接提取
     events
         .iter()
         .find_map(|e| e.get("model")?.as_str())
@@ -45,8 +58,15 @@ fn openai_model_extractor(events: &[Value], request_model: &str) -> String {
         .to_string()
 }
 
-/// Codex Responses API 流式响应模型提取
+/// Codex Responses API 流式响应模型提取（优先使用 usage.model）
 fn codex_model_extractor(events: &[Value], request_model: &str) -> String {
+    // 首先尝试从解析的 usage 中获取模型
+    if let Some(usage) = TokenUsage::from_codex_stream_events(events) {
+        if let Some(model) = usage.model {
+            return model;
+        }
+    }
+    // 回退：从 response.completed 事件中提取
     events
         .iter()
         .find_map(|e| {
