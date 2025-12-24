@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **macOS tray template icon** - Use system template icon for better dark/light mode adaptation
 - **AiGoCode partner** - Added AiGoCode icon and partner promotion
 - **Skip first-run confirmation** - New setting to skip Claude Code first-run confirmation dialog
 - **DMXAPI partner** - Added DMXAPI as official partner
