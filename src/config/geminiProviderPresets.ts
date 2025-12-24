@@ -56,11 +56,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://www.packyapi.com",
-        GEMINI_MODEL: "gemini-3-pro-preview",
+        GEMINI_MODEL: "gemini-3-pro",
       },
     },
     baseURL: "https://www.packyapi.com",
-    model: "gemini-3-pro-preview",
+    model: "gemini-3-pro",
     description: "PackyCode",
     category: "third_party",
     isPartner: true,
@@ -70,19 +70,26 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       "https://www.packyapi.com",
     ],
     icon: "packycode",
-  },
+  },  
   {
-    name: "自定义",
-    websiteUrl: "",
+    name: "AiGoCode",
+    websiteUrl: "https://aigocode.com",
+    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "",
-        GEMINI_MODEL: "gemini-3-pro-preview",
+        GOOGLE_GEMINI_BASE_URL: "https://api.aigocode.com/gemini",
+        GEMINI_MODEL: "gemini-3-pro",
       },
     },
-    model: "gemini-3-pro-preview",
-    description: "自定义 Gemini API 端点",
-    category: "custom",
+    baseURL: "https://api.aigocode.com/gemini",
+    model: "gemini-3-pro",
+    description: "AiGoCode",
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "aigocode",
+    endpointCandidates: ["https://api.aigocode.com/gemini"],
+    icon: "aigocode",
+    iconColor: "#5B7FFF",
   },
 ];
 

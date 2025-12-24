@@ -269,7 +269,8 @@
       "packycode": "PackyCode は CC Switch の公式パートナーです。登録後チャージ時に \"cc-switch\" を入力すると 10% オフ",
       "minimax_cn": "MiniMax Coding Plan 特別価格、Starter ¥9.9 から",
       "minimax_en": "MiniMax Coding Plan Black Friday、Starter が月額 $2（80% OFF）",
-      "dmxapi": "Claude Code 専用モデル 66% OFF 実施中！"
+      "dmxapi": "Claude Code 専用モデル 66% OFF 実施中！",
+      "aigocode": "AiGoCode は CC Switch の公式パートナーです。このリンクから登録すると、初回チャージ時に 10% のボーナスクレジットがもらえます！"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",

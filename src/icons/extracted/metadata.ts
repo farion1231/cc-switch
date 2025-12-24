@@ -2,6 +2,13 @@
 import { IconMetadata } from "@/types/icon";
 
 export const iconMetadata: Record<string, IconMetadata> = {
+  aigocode: {
+    name: "aigocode",
+    displayName: "AiGoCode",
+    category: "ai-provider",
+    keywords: ["aigocode", "aigo", "code", "third-party"],
+    defaultColor: "#5B7FFF",
+  },
   alibaba: {
     name: "alibaba",
     displayName: "Alibaba",

@@ -374,6 +374,26 @@ export const providerPresets: ProviderPreset[] = [
     icon: "packycode",
   },
   {
+    name: "AiGoCode",
+    websiteUrl: "https://aigocode.com",
+    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.aigocode.com/api",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    // 请求地址候选（用于地址管理/测速）
+    endpointCandidates: [
+      "https://api.aigocode.com",
+    ],
+    category: "third_party",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "aigocode", // 促销信息 i18n key
+    icon: "aigocode",
+    iconColor: "#5B7FFF",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
