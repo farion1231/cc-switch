@@ -63,11 +63,13 @@ impl Database {
         }
     }
 
-    // --- 代理接管状态管理 ---
+    // --- 代理接管状态管理（已废弃，使用 proxy_config.enabled 替代）---
 
     /// 获取指定应用的代理接管状态
     ///
-    /// 使用 settings 表存储各应用的接管状态，key 格式: `proxy_takeover_{app_type}`
+    /// **已废弃**: 请使用 `proxy_config.enabled` 字段替代
+    /// 此方法仅用于数据库迁移时读取旧数据
+    #[deprecated(since = "3.9.0", note = "使用 get_proxy_config_for_app().enabled 替代")]
     pub fn get_proxy_takeover_enabled(&self, app_type: &str) -> Result<bool, AppError> {
         let key = format!("proxy_takeover_{app_type}");
         match self.get_setting(&key)? {
@@ -78,8 +80,11 @@ impl Database {
 
     /// 设置指定应用的代理接管状态
     ///
-    /// - `true` = 开启代理接管
-    /// - `false` = 关闭代理接管
+    /// **已废弃**: 请使用 `proxy_config.enabled` 字段替代
+    #[deprecated(
+        since = "3.9.0",
+        note = "使用 update_proxy_config_for_app() 修改 enabled 字段"
+    )]
     pub fn set_proxy_takeover_enabled(
         &self,
         app_type: &str,
@@ -91,6 +96,9 @@ impl Database {
     }
 
     /// 检查是否有任一应用开启了代理接管
+    ///
+    /// **已废弃**: 请使用 `is_live_takeover_active()` 替代
+    #[deprecated(since = "3.9.0", note = "使用 is_live_takeover_active() 替代")]
     pub fn has_any_proxy_takeover(&self) -> Result<bool, AppError> {
         let conn = lock_conn!(self.conn);
         let count: i64 = conn
@@ -104,6 +112,12 @@ impl Database {
     }
 
     /// 清除所有代理接管状态（将所有 proxy_takeover_* 设置为 false）
+    ///
+    /// **已废弃**: settings 表不再用于存储代理状态
+    #[deprecated(
+        since = "3.9.0",
+        note = "使用 update_proxy_config_for_app() 清除各应用的 enabled 字段"
+    )]
     pub fn clear_all_proxy_takeover(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
