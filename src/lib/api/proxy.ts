@@ -37,7 +37,10 @@ export const proxyApi = {
   },
 
   // 代理模式下切换供应商
-  async switchProxyProvider(appType: string, providerId: string): Promise<void> {
+  async switchProxyProvider(
+    appType: string,
+    providerId: string,
+  ): Promise<void> {
     return invoke("switch_proxy_provider", { appType, providerId });
   },
 
@@ -49,7 +52,10 @@ export const proxyApi = {
   },
 
   // 为指定应用开启/关闭接管
-  async setProxyTakeoverForApp(appType: string, enabled: boolean): Promise<void> {
+  async setProxyTakeoverForApp(
+    appType: string,
+    enabled: boolean,
+  ): Promise<void> {
     return invoke("set_proxy_takeover_for_app", { appType, enabled });
   },
 

@@ -110,11 +110,18 @@ export function useSwitchProxyProvider() {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: ({ appType, providerId }: { appType: string; providerId: string }) =>
-      proxyApi.switchProxyProvider(appType, providerId),
+    mutationFn: ({
+      appType,
+      providerId,
+    }: {
+      appType: string;
+      providerId: string;
+    }) => proxyApi.switchProxyProvider(appType, providerId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
-      queryClient.invalidateQueries({ queryKey: ["providers", variables.appType] });
+      queryClient.invalidateQueries({
+        queryKey: ["providers", variables.appType],
+      });
     },
     onError: (error: Error) => {
       toast.error(t("proxy.switchFailed", { error: error.message }));
@@ -144,7 +151,9 @@ export function useProxyConfig() {
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
     },
     onError: (error: Error) => {
-      toast.error(t("proxy.settings.toast.saveFailed", { error: error.message }));
+      toast.error(
+        t("proxy.settings.toast.saveFailed", { error: error.message }),
+      );
     },
   });
 
@@ -176,7 +185,8 @@ export function useUpdateGlobalProxyConfig() {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: (config: GlobalProxyConfig) => proxyApi.updateGlobalProxyConfig(config),
+    mutationFn: (config: GlobalProxyConfig) =>
+      proxyApi.updateGlobalProxyConfig(config),
     onSuccess: () => {
       toast.success(t("proxy.settings.toast.saved"), { closeButton: true });
       queryClient.invalidateQueries({ queryKey: ["globalProxyConfig"] });
@@ -184,7 +194,9 @@ export function useUpdateGlobalProxyConfig() {
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
     },
     onError: (error: Error) => {
-      toast.error(t("proxy.settings.toast.saveFailed", { error: error.message }));
+      toast.error(
+        t("proxy.settings.toast.saveFailed", { error: error.message }),
+      );
     },
   });
 }
@@ -208,15 +220,20 @@ export function useUpdateAppProxyConfig() {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: (config: AppProxyConfig) => proxyApi.updateProxyConfigForApp(config),
+    mutationFn: (config: AppProxyConfig) =>
+      proxyApi.updateProxyConfigForApp(config),
     onSuccess: (_, variables) => {
       toast.success(t("proxy.settings.toast.saved"), { closeButton: true });
-      queryClient.invalidateQueries({ queryKey: ["appProxyConfig", variables.appType] });
+      queryClient.invalidateQueries({
+        queryKey: ["appProxyConfig", variables.appType],
+      });
       queryClient.invalidateQueries({ queryKey: ["proxyConfig"] });
       queryClient.invalidateQueries({ queryKey: ["circuitBreakerConfig"] });
     },
     onError: (error: Error) => {
-      toast.error(t("proxy.settings.toast.saveFailed", { error: error.message }));
+      toast.error(
+        t("proxy.settings.toast.saveFailed", { error: error.message }),
+      );
     },
   });
 }
