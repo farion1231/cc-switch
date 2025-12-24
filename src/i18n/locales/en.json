@@ -1083,7 +1083,7 @@
       "failureThresholdHint": "Open circuit breaker after this many consecutive failures (recommended: 3-10)",
       "timeout": "Recovery Wait Time (seconds)",
       "timeoutHint": "Wait this long before trying to recover after circuit opens (recommended: 30-120)",
-      "circuitBreakerSettings": "Circuit Breaker Advanced Settings",
+      "circuitBreakerSettings": "Circuit Breaker Settings",
       "successThreshold": "Recovery Success Threshold",
       "successThresholdHint": "Close circuit breaker after this many successes in half-open state",
       "errorRate": "Error Rate Threshold (%)",
@@ -1112,5 +1112,21 @@
     "timeout": "Timeout (seconds)",
     "maxRetries": "Max Retries",
     "degradedThreshold": "Degraded Threshold (ms)"
+  },
+  "proxyConfig": {
+    "proxyEnabled": "Proxy Enabled",
+    "appTakeover": "Proxy Enabled",
+    "perAppConfig": "Per-App Config",
+    "circuitBreaker": "Circuit Breaker",
+    "circuitBreakerSettings": "Circuit Breaker Settings",
+    "failureThreshold": "Failure Threshold",
+    "successThreshold": "Success Threshold",
+    "recoveryTimeout": "Recovery Timeout",
+    "errorRateThreshold": "Error Rate Threshold",
+    "minRequests": "Min Requests",
+    "timeoutConfig": "Timeout Config",
+    "streamingFirstByte": "Streaming First Byte Timeout",
+    "streamingIdle": "Streaming Idle Timeout",
+    "nonStreaming": "Non-Streaming Timeout"
   }
 }

@@ -384,47 +384,89 @@ export function SettingsPage({
                             </div>
                           )}
 
-                          {/* 故障转移队列管理 - 每个应用独立 */}
-                          <div className="space-y-4">
-                            <div>
-                              <h4 className="text-sm font-semibold">
-                                {t("proxy.failoverQueue.title")}
-                              </h4>
-                              <p className="text-xs text-muted-foreground">
-                                {t("proxy.failoverQueue.description")}
-                              </p>
-                            </div>
-                            <Tabs defaultValue="claude" className="w-full">
-                              <TabsList className="grid w-full grid-cols-3">
-                                <TabsTrigger value="claude">Claude</TabsTrigger>
-                                <TabsTrigger value="codex">Codex</TabsTrigger>
-                                <TabsTrigger value="gemini">Gemini</TabsTrigger>
-                              </TabsList>
-                              <TabsContent value="claude" className="mt-4">
+                          {/* 故障转移设置 - 按应用分组 */}
+                          <Tabs defaultValue="claude" className="w-full">
+                            <TabsList className="grid w-full grid-cols-3">
+                              <TabsTrigger value="claude">Claude</TabsTrigger>
+                              <TabsTrigger value="codex">Codex</TabsTrigger>
+                              <TabsTrigger value="gemini">Gemini</TabsTrigger>
+                            </TabsList>
+                            <TabsContent
+                              value="claude"
+                              className="mt-4 space-y-6"
+                            >
+                              <div className="space-y-4">
+                                <div>
+                                  <h4 className="text-sm font-semibold">
+                                    {t("proxy.failoverQueue.title")}
+                                  </h4>
+                                  <p className="text-xs text-muted-foreground">
+                                    {t("proxy.failoverQueue.description")}
+                                  </p>
+                                </div>
                                 <FailoverQueueManager
                                   appType="claude"
                                   disabled={!isRunning}
                                 />
-                              </TabsContent>
-                              <TabsContent value="codex" className="mt-4">
+                              </div>
+                              <div className="border-t border-border/50 pt-6">
+                                <AutoFailoverConfigPanel
+                                  appType="claude"
+                                  disabled={!isRunning}
+                                />
+                              </div>
+                            </TabsContent>
+                            <TabsContent
+                              value="codex"
+                              className="mt-4 space-y-6"
+                            >
+                              <div className="space-y-4">
+                                <div>
+                                  <h4 className="text-sm font-semibold">
+                                    {t("proxy.failoverQueue.title")}
+                                  </h4>
+                                  <p className="text-xs text-muted-foreground">
+                                    {t("proxy.failoverQueue.description")}
+                                  </p>
+                                </div>
                                 <FailoverQueueManager
                                   appType="codex"
                                   disabled={!isRunning}
                                 />
-                              </TabsContent>
-                              <TabsContent value="gemini" className="mt-4">
+                              </div>
+                              <div className="border-t border-border/50 pt-6">
+                                <AutoFailoverConfigPanel
+                                  appType="codex"
+                                  disabled={!isRunning}
+                                />
+                              </div>
+                            </TabsContent>
+                            <TabsContent
+                              value="gemini"
+                              className="mt-4 space-y-6"
+                            >
+                              <div className="space-y-4">
+                                <div>
+                                  <h4 className="text-sm font-semibold">
+                                    {t("proxy.failoverQueue.title")}
+                                  </h4>
+                                  <p className="text-xs text-muted-foreground">
+                                    {t("proxy.failoverQueue.description")}
+                                  </p>
+                                </div>
                                 <FailoverQueueManager
                                   appType="gemini"
                                   disabled={!isRunning}
                                 />
-                              </TabsContent>
-                            </Tabs>
-                          </div>
-
-                          {/* 熔断器配置 - 全局共享 */}
-                          <div className="border-t border-border/50 pt-6">
-                            <AutoFailoverConfigPanel />
-                          </div>
+                              </div>
+                              <div className="border-t border-border/50 pt-6">
+                                <AutoFailoverConfigPanel
+                                  appType="gemini"
+                                  disabled={!isRunning}
+                                />
+                              </div>
+                            </TabsContent>
+                          </Tabs>
                         </div>
                       </AccordionContent>
                     </AccordionItem>

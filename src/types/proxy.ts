@@ -109,3 +109,27 @@ export interface FailoverQueueItem {
   providerName: string;
   sortIndex?: number;
 }
+
+// 全局代理配置（统一字段，三行镜像）
+export interface GlobalProxyConfig {
+  proxyEnabled: boolean;
+  listenAddress: string;
+  listenPort: number;
+  enableLogging: boolean;
+}
+
+// 应用级代理配置（每个 app 独立）
+export interface AppProxyConfig {
+  appType: string;
+  enabled: boolean;
+  autoFailoverEnabled: boolean;
+  maxRetries: number;
+  streamingFirstByteTimeout: number;
+  streamingIdleTimeout: number;
+  nonStreamingTimeout: number;
+  circuitFailureThreshold: number;
+  circuitSuccessThreshold: number;
+  circuitTimeoutSeconds: number;
+  circuitErrorRateThreshold: number;
+  circuitMinRequests: number;
+}

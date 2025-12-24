@@ -1083,7 +1083,7 @@
       "failureThresholdHint": "连续失败多少次后打开熔断器（建议: 3-10）",
       "timeout": "恢复等待时间（秒）",
       "timeoutHint": "熔断器打开后，等待多久后尝试恢复（建议: 30-120）",
-      "circuitBreakerSettings": "熔断器高级设置",
+      "circuitBreakerSettings": "熔断器设置",
       "successThreshold": "恢复成功阈值",
       "successThresholdHint": "半开状态下成功多少次后关闭熔断器",
       "errorRate": "错误率阈值 (%)",
@@ -1112,5 +1112,21 @@
     "timeout": "超时时间（秒）",
     "maxRetries": "最大重试次数",
     "degradedThreshold": "降级阈值（毫秒）"
+  },
+  "proxyConfig": {
+    "proxyEnabled": "代理总开关",
+    "appTakeover": "代理启用",
+    "perAppConfig": "应用配置",
+    "circuitBreaker": "熔断器配置",
+    "circuitBreakerSettings": "熔断器设置",
+    "failureThreshold": "失败阈值",
+    "successThreshold": "恢复阈值",
+    "recoveryTimeout": "恢复等待时间",
+    "errorRateThreshold": "错误率阈值",
+    "minRequests": "最小请求数",
+    "timeoutConfig": "超时配置",
+    "streamingFirstByte": "流式首字节超时",
+    "streamingIdle": "流式静默超时",
+    "nonStreaming": "非流式超时"
   }
 }

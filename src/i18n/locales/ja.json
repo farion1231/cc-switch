@@ -1083,7 +1083,7 @@
       "failureThresholdHint": "この回数連続で失敗するとサーキットブレーカーが開きます（推奨: 3-10）",
       "timeout": "回復待ち時間（秒）",
       "timeoutHint": "サーキットが開いた後、回復を試みるまでの待ち時間（推奨: 30-120）",
-      "circuitBreakerSettings": "サーキットブレーカー詳細設定",
+      "circuitBreakerSettings": "サーキットブレーカー設定",
       "successThreshold": "回復成功しきい値",
       "successThresholdHint": "半開状態でこの回数成功するとサーキットブレーカーが閉じます",
       "errorRate": "エラー率しきい値 (%)",
@@ -1112,5 +1112,21 @@
     "timeout": "タイムアウト（秒）",
     "maxRetries": "最大リトライ回数",
     "degradedThreshold": "劣化しきい値（ミリ秒）"
+  },
+  "proxyConfig": {
+    "proxyEnabled": "プロキシ有効",
+    "appTakeover": "プロキシ有効",
+    "perAppConfig": "アプリ別設定",
+    "circuitBreaker": "サーキットブレーカー",
+    "circuitBreakerSettings": "サーキットブレーカー設定",
+    "failureThreshold": "失敗閾値",
+    "successThreshold": "回復閾値",
+    "recoveryTimeout": "回復待機時間",
+    "errorRateThreshold": "エラー率閾値",
+    "minRequests": "最小リクエスト数",
+    "timeoutConfig": "タイムアウト設定",
+    "streamingFirstByte": "ストリーミング初回バイトタイムアウト",
+    "streamingIdle": "ストリーミングアイドルタイムアウト",
+    "nonStreaming": "非ストリーミングタイムアウト"
   }
 }
