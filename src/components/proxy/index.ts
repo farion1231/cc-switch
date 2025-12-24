@@ -3,4 +3,3 @@
  */
 
 export { ProxyPanel } from "./ProxyPanel";
-export { ProxySettingsDialog } from "./ProxySettingsDialog";
