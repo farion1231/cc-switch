@@ -283,11 +283,31 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
   }, [customUrl, entries, normalizedSelected, onChange, t]);
 
   const handleRemoveEndpoint = useCallback(
-    (entry: EndpointEntry) => {
+    async (entry: EndpointEntry) => {
       // 清空之前的错误提示
       setLastError(null);
 
-      // 更新本地状态（延迟保存，点击保存按钮时统一处理）
+      // 编辑模式下：立即调用后端API删除端点
+      if (isEditMode && providerId && entry.isCustom) {
+        try {
+          await vscodeApi.removeCustomEndpoint(appId, providerId, entry.url);
+          // 更新初始端点列表，保持同步
+          setInitialCustomUrls((prev) => {
+            const next = new Set(prev);
+            next.delete(normalizeEndpointUrl(entry.url));
+            return next;
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : t("endpointTest.removeEndpointFailed");
+          setLastError(message);
+          return; // 删除失败时不更新本地状态
+        }
+      }
+
+      // 更新本地状态
       setEntries((prev) => {
         const next = prev.filter((item) => item.id !== entry.id);
         if (entry.url === normalizedSelected) {
@@ -297,7 +317,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
         return next;
       });
     },
-    [normalizedSelected, onChange],
+    [appId, isEditMode, normalizedSelected, onChange, providerId, t],
   );
 
   const runSpeedTest = useCallback(async () => {
