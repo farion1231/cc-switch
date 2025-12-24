@@ -162,6 +162,8 @@ export function ProviderForm({
     mode: "onSubmit",
   });
 
+  const settingsConfigValue = form.watch("settingsConfig");
+
   // 使用 API Key hook
   const {
     apiKey,
@@ -199,6 +201,53 @@ export function ProviderForm({
     settingsConfig: form.watch("settingsConfig"),
     onConfigChange: (config) => form.setValue("settingsConfig", config),
   });
+
+  const isOpenRouterProvider = useMemo(() => {
+    if (appId !== "claude") return false;
+    const normalized = baseUrl.trim().toLowerCase();
+    if (normalized.includes("openrouter.ai")) {
+      return true;
+    }
+    try {
+      const config = JSON.parse(settingsConfigValue || "{}");
+      const envUrl = config?.env?.ANTHROPIC_BASE_URL;
+      return typeof envUrl === "string" && envUrl.includes("openrouter.ai");
+    } catch {
+      return false;
+    }
+  }, [appId, baseUrl, settingsConfigValue]);
+
+  const openRouterCompatEnabled = useMemo(() => {
+    if (!isOpenRouterProvider) return false;
+    try {
+      const config = JSON.parse(settingsConfigValue || "{}");
+      const raw = config?.openrouter_compat_mode;
+      if (typeof raw === "boolean") return raw;
+      if (typeof raw === "number") return raw !== 0;
+      if (typeof raw === "string") {
+        const normalized = raw.trim().toLowerCase();
+        return normalized === "true" || normalized === "1";
+      }
+    } catch {
+      // ignore
+    }
+    return true;
+  }, [isOpenRouterProvider, settingsConfigValue]);
+
+  const handleOpenRouterCompatChange = useCallback(
+    (enabled: boolean) => {
+      try {
+        const currentConfig = JSON.parse(
+          form.getValues("settingsConfig") || "{}",
+        );
+        currentConfig.openrouter_compat_mode = enabled;
+        form.setValue("settingsConfig", JSON.stringify(currentConfig, null, 2));
+      } catch {
+        // ignore
+      }
+    },
+    [form],
+  );
 
   // 使用 Codex 配置 hook (仅 Codex 模式)
   const {
@@ -796,6 +845,9 @@ export function ProviderForm({
             defaultOpusModel={defaultOpusModel}
             onModelChange={handleModelChange}
             speedTestEndpoints={speedTestEndpoints}
+            showOpenRouterCompatToggle={isOpenRouterProvider}
+            openRouterCompatEnabled={openRouterCompatEnabled}
+            onOpenRouterCompatChange={handleOpenRouterCompatChange}
           />
         )}
 
