@@ -430,11 +430,18 @@ impl RequestForwarder {
         let base_url = adapter.extract_base_url(provider)?;
         log::info!("[{}] base_url: {}", adapter.name(), base_url);
 
-        // 使用适配器构建 URL
-        let url = adapter.build_url(&base_url, endpoint);
-
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
+
+        let effective_endpoint =
+            if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
+                "/v1/chat/completions"
+            } else {
+                endpoint
+            };
+
+        // 使用适配器构建 URL
+        let url = adapter.build_url(&base_url, effective_endpoint);
 
         // 记录原始请求 JSON
         log::info!(
