@@ -39,12 +39,14 @@ interface ClaudeFormFieldsProps {
   // Model Selector
   shouldShowModelSelector: boolean;
   claudeModel: string;
+  reasoningModel: string;
   defaultHaikuModel: string;
   defaultSonnetModel: string;
   defaultOpusModel: string;
   onModelChange: (
     field:
       | "ANTHROPIC_MODEL"
+      | "ANTHROPIC_REASONING_MODEL"
       | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
       | "ANTHROPIC_DEFAULT_SONNET_MODEL"
       | "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -77,6 +79,7 @@ export function ClaudeFormFields({
   onCustomEndpointsChange,
   shouldShowModelSelector,
   claudeModel,
+  reasoningModel,
   defaultHaikuModel,
   defaultSonnetModel,
   defaultOpusModel,
@@ -179,6 +182,27 @@ export function ClaudeFormFields({
                   onModelChange("ANTHROPIC_MODEL", e.target.value)
                 }
                 placeholder={t("providerForm.modelPlaceholder", {
+                  defaultValue: "",
+                })}
+                autoComplete="off"
+              />
+            </div>
+
+            {/* 推理模型 */}
+            <div className="space-y-2">
+              <FormLabel htmlFor="reasoningModel">
+                {t("providerForm.anthropicReasoningModel", {
+                  defaultValue: "推理模型 (Thinking)",
+                })}
+              </FormLabel>
+              <Input
+                id="reasoningModel"
+                type="text"
+                value={reasoningModel}
+                onChange={(e) =>
+                  onModelChange("ANTHROPIC_REASONING_MODEL", e.target.value)
+                }
+                placeholder={t("providerForm.reasoningModelPlaceholder", {
                   defaultValue: "",
                 })}
                 autoComplete="off"

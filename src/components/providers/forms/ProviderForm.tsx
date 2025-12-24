@@ -187,9 +187,10 @@ export function ProviderForm({
     },
   });
 
-  // 使用 Model hook（新：主模型 + Haiku/Sonnet/Opus 默认模型）
+  // 使用 Model hook（新：主模型 + 推理模型 + Haiku/Sonnet/Opus 默认模型）
   const {
     claudeModel,
+    reasoningModel,
     defaultHaikuModel,
     defaultSonnetModel,
     defaultOpusModel,
@@ -789,6 +790,7 @@ export function ProviderForm({
             }
             shouldShowModelSelector={category !== "official"}
             claudeModel={claudeModel}
+            reasoningModel={reasoningModel}
             defaultHaikuModel={defaultHaikuModel}
             defaultSonnetModel={defaultSonnetModel}
             defaultOpusModel={defaultOpusModel}

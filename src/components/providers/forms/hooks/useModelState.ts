@@ -7,13 +7,14 @@ interface UseModelStateProps {
 
 /**
  * 管理模型选择状态
- * 支持 ANTHROPIC_MODEL 和 ANTHROPIC_SMALL_FAST_MODEL
+ * 支持 ANTHROPIC_MODEL, ANTHROPIC_REASONING_MODEL 和各类型默认模型
  */
 export function useModelState({
   settingsConfig,
   onConfigChange,
 }: UseModelStateProps) {
   const [claudeModel, setClaudeModel] = useState("");
+  const [reasoningModel, setReasoningModel] = useState("");
   const [defaultHaikuModel, setDefaultHaikuModel] = useState("");
   const [defaultSonnetModel, setDefaultSonnetModel] = useState("");
   const [defaultOpusModel, setDefaultOpusModel] = useState("");
@@ -29,6 +30,10 @@ export function useModelState({
       const env = cfg?.env || {};
       const model =
         typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "";
+      const reasoning =
+        typeof env.ANTHROPIC_REASONING_MODEL === "string"
+          ? env.ANTHROPIC_REASONING_MODEL
+          : "";
       const small =
         typeof env.ANTHROPIC_SMALL_FAST_MODEL === "string"
           ? env.ANTHROPIC_SMALL_FAST_MODEL
@@ -47,6 +52,7 @@ export function useModelState({
           : model || small;
 
       setClaudeModel(model || "");
+      setReasoningModel(reasoning || "");
       setDefaultHaikuModel(haiku || "");
       setDefaultSonnetModel(sonnet || "");
       setDefaultOpusModel(opus || "");
@@ -59,12 +65,14 @@ export function useModelState({
     (
       field:
         | "ANTHROPIC_MODEL"
+        | "ANTHROPIC_REASONING_MODEL"
         | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
         | "ANTHROPIC_DEFAULT_SONNET_MODEL"
         | "ANTHROPIC_DEFAULT_OPUS_MODEL",
       value: string,
     ) => {
       if (field === "ANTHROPIC_MODEL") setClaudeModel(value);
+      if (field === "ANTHROPIC_REASONING_MODEL") setReasoningModel(value);
       if (field === "ANTHROPIC_DEFAULT_HAIKU_MODEL")
         setDefaultHaikuModel(value);
       if (field === "ANTHROPIC_DEFAULT_SONNET_MODEL")
@@ -98,6 +106,8 @@ export function useModelState({
   return {
     claudeModel,
     setClaudeModel,
+    reasoningModel,
+    setReasoningModel,
     defaultHaikuModel,
     setDefaultHaikuModel,
     defaultSonnetModel,
