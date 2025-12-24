@@ -135,6 +135,9 @@ impl Database {
                 request_timeout INTEGER NOT NULL DEFAULT 300,
                 enable_logging INTEGER NOT NULL DEFAULT 1,
                 target_app TEXT NOT NULL DEFAULT 'claude',
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 30,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 60,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 300,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )",
@@ -313,6 +316,20 @@ impl Database {
             [],
         );
 
+        // 尝试添加超时配置列到 proxy_config 表（v3 新增）
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 30",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN streaming_idle_timeout INTEGER NOT NULL DEFAULT 60",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN non_streaming_timeout INTEGER NOT NULL DEFAULT 300",
+            [],
+        );
+
         // 确保 in_failover_queue 列存在（对于已存在的 v2 数据库）
         Self::add_column_if_missing(
             conn,
@@ -474,6 +491,28 @@ impl Database {
             "in_failover_queue",
             "BOOLEAN NOT NULL DEFAULT 0",
         )?;
+
+        // 添加代理超时配置字段（在 v2 迁移中直接添加）
+        if Self::table_exists(conn, "proxy_config")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "streaming_first_byte_timeout",
+                "INTEGER NOT NULL DEFAULT 30",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "streaming_idle_timeout",
+                "INTEGER NOT NULL DEFAULT 60",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "non_streaming_timeout",
+                "INTEGER NOT NULL DEFAULT 300",
+            )?;
+        }
 
         // 删除旧的 failover_queue 表（如果存在）
         conn.execute("DROP INDEX IF EXISTS idx_failover_queue_order", [])

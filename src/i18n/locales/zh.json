@@ -981,6 +981,76 @@
       }
     },
     "settings": {
+      "title": "代理服务设置",
+      "description": "配置本地代理服务器的监听地址、端口和运行参数，保存后立即生效。",
+      "alert": {
+        "autoApply": "保存后将自动同步到正在运行的代理服务，无需手动重启。"
+      },
+      "basic": {
+        "title": "基础设置",
+        "description": "配置代理服务监听的地址与端口。"
+      },
+      "advanced": {
+        "title": "高级参数",
+        "description": "控制请求的稳定性和日志记录。"
+      },
+      "timeout": {
+        "title": "超时设置",
+        "description": "配置流式和非流式请求的超时时间。"
+      },
+      "fields": {
+        "listenAddress": {
+          "label": "监听地址",
+          "placeholder": "127.0.0.1",
+          "description": "代理服务器监听的 IP 地址（推荐 127.0.0.1）"
+        },
+        "listenPort": {
+          "label": "监听端口",
+          "placeholder": "5000",
+          "description": "代理服务器监听的端口号（1024 ~ 65535）"
+        },
+        "maxRetries": {
+          "label": "最大重试次数",
+          "placeholder": "3",
+          "description": "请求失败时的重试次数（0 ~ 10）"
+        },
+        "requestTimeout": {
+          "label": "请求超时（秒）",
+          "placeholder": "0（不限）或 300",
+          "description": "单个请求的最大等待时间（0 表示不限制，或设置 10 ~ 600 秒）"
+        },
+        "enableLogging": {
+          "label": "启用日志记录",
+          "description": "记录所有代理请求，便于排查问题"
+        },
+        "streamingFirstByteTimeout": {
+          "label": "流式首字超时（秒）",
+          "description": "等待首个数据块的最大时间"
+        },
+        "streamingIdleTimeout": {
+          "label": "流式静默超时（秒）",
+          "description": "数据块之间的最大间隔"
+        },
+        "nonStreamingTimeout": {
+          "label": "非流式超时（秒）",
+          "description": "非流式请求的总超时时间"
+        }
+      },
+      "validation": {
+        "addressInvalid": "请输入有效的IP地址",
+        "portMin": "端口必须大于1024",
+        "portMax": "端口必须小于65535",
+        "retryMin": "重试次数不能为负",
+        "retryMax": "重试次数不能超过10",
+        "timeoutNonNegative": "超时时间不能为负数",
+        "timeoutMax": "超时时间最多600秒",
+        "timeoutRange": "请输入 0 或 10-600 之间的数值",
+        "streamingTimeoutMin": "超时时间至少5秒",
+        "streamingTimeoutMax": "超时时间最多300秒"
+      },
+      "actions": {
+        "save": "保存配置"
+      },
       "toast": {
         "saved": "代理配置已保存",
         "saveFailed": "保存失败: {{error}}"

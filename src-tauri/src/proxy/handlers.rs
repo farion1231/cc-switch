@@ -170,10 +170,14 @@ async fn handle_claude_transform(
             })
         };
 
+        // 获取流式超时配置
+        let timeout_config = ctx.streaming_timeout_config();
+
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
             "Claude/OpenRouter",
             Some(usage_collector),
+            timeout_config,
         );
 
         let mut headers = axum::http::HeaderMap::new();

@@ -5,6 +5,10 @@ export interface ProxyConfig {
   request_timeout: number;
   enable_logging: boolean;
   live_takeover_active?: boolean;
+  // 超时配置
+  streaming_first_byte_timeout: number;
+  streaming_idle_timeout: number;
+  non_streaming_timeout: number;
 }
 
 export interface ProxyStatus {

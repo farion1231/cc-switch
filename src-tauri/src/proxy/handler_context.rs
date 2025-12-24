@@ -9,6 +9,15 @@ use crate::proxy::{
 };
 use std::time::Instant;
 
+/// 流式超时配置
+#[derive(Debug, Clone, Copy)]
+pub struct StreamingTimeoutConfig {
+    /// 首字节超时（秒），0 表示禁用
+    pub first_byte_timeout: u64,
+    /// 静默期超时（秒），0 表示禁用
+    pub idle_timeout: u64,
+}
+
 /// 请求上下文
 ///
 /// 贯穿整个请求生命周期，包含：
@@ -135,13 +144,15 @@ impl RequestContext {
     pub fn create_forwarder(&self, state: &ProxyState) -> RequestForwarder {
         RequestForwarder::new(
             state.provider_router.clone(),
-            self.config.request_timeout,
+            self.config.non_streaming_timeout,
             self.config.max_retries,
             state.status.clone(),
             state.current_providers.clone(),
             state.failover_manager.clone(),
             state.app_handle.clone(),
             self.current_provider_id.clone(),
+            self.config.streaming_first_byte_timeout,
+            self.config.streaming_idle_timeout,
         )
     }
 
@@ -156,5 +167,14 @@ impl RequestContext {
     #[inline]
     pub fn latency_ms(&self) -> u64 {
         self.start_time.elapsed().as_millis() as u64
+    }
+
+    /// 获取流式超时配置
+    #[inline]
+    pub fn streaming_timeout_config(&self) -> StreamingTimeoutConfig {
+        StreamingTimeoutConfig {
+            first_byte_timeout: self.config.streaming_first_byte_timeout,
+            idle_timeout: self.config.streaming_idle_timeout,
+        }
     }
 }

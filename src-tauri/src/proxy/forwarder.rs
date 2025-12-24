@@ -39,7 +39,7 @@ pub struct RequestForwarder {
     failover_manager: Arc<FailoverSwitchManager>,
     /// AppHandle，用于发射事件和更新托盘
     app_handle: Option<tauri::AppHandle>,
-    /// 请求开始时的“当前供应商 ID”（用于判断是否需要同步 UI/托盘）
+    /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
 }
 
@@ -47,17 +47,27 @@ impl RequestForwarder {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<ProviderRouter>,
-        timeout_secs: u64,
+        non_streaming_timeout: u64,
         max_retries: u8,
         status: Arc<RwLock<ProxyStatus>>,
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<tauri::AppHandle>,
         current_provider_id_at_start: String,
+        _streaming_first_byte_timeout: u64,
+        _streaming_idle_timeout: u64,
     ) -> Self {
+        // 全局超时设置为 1800 秒（30 分钟），确保业务层超时配置能正常工作
+        // 参考 Claude Code Hub 的 undici 全局超时设计
+        const GLOBAL_TIMEOUT_SECS: u64 = 1800;
+
         let mut client_builder = Client::builder();
-        if timeout_secs > 0 {
-            client_builder = client_builder.timeout(Duration::from_secs(timeout_secs));
+        if non_streaming_timeout > 0 {
+            // 使用配置的非流式超时
+            client_builder = client_builder.timeout(Duration::from_secs(non_streaming_timeout));
+        } else {
+            // 禁用超时时使用全局超时作为保底
+            client_builder = client_builder.timeout(Duration::from_secs(GLOBAL_TIMEOUT_SECS));
         }
 
         let client = client_builder

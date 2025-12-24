@@ -17,7 +17,8 @@ impl Database {
             let conn = lock_conn!(self.conn);
             conn.query_row(
                 "SELECT listen_address, listen_port, max_retries,
-                        request_timeout, enable_logging, live_takeover_active
+                        request_timeout, enable_logging, live_takeover_active,
+                        streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout
                  FROM proxy_config WHERE id = 1",
                 [],
                 |row| {
@@ -28,6 +29,9 @@ impl Database {
                         request_timeout: row.get::<_, i32>(3)? as u64,
                         enable_logging: row.get::<_, i32>(4)? != 0,
                         live_takeover_active: row.get::<_, i32>(5).unwrap_or(0) != 0,
+                        streaming_first_byte_timeout: row.get::<_, i32>(6).unwrap_or(30) as u64,
+                        streaming_idle_timeout: row.get::<_, i32>(7).unwrap_or(60) as u64,
+                        non_streaming_timeout: row.get::<_, i32>(8).unwrap_or(300) as u64,
                     })
                 },
             )
@@ -51,8 +55,11 @@ impl Database {
 
         conn.execute(
             "INSERT OR REPLACE INTO proxy_config
-             (id, enabled, listen_address, listen_port, max_retries, request_timeout, enable_logging, live_takeover_active, target_app, created_at, updated_at)
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+             (id, enabled, listen_address, listen_port, max_retries, request_timeout,
+              enable_logging, live_takeover_active, target_app,
+              streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+              created_at, updated_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
                      COALESCE((SELECT created_at FROM proxy_config WHERE id = 1), datetime('now')),
                      datetime('now'))",
             rusqlite::params![
@@ -64,6 +71,9 @@ impl Database {
                 if config.enable_logging { 1 } else { 0 },
                 if config.live_takeover_active { 1 } else { 0 },
                 "claude", // 兼容旧字段，写入默认值
+                config.streaming_first_byte_timeout as i32,
+                config.streaming_idle_timeout as i32,
+                config.non_streaming_timeout as i32,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

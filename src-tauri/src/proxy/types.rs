@@ -9,13 +9,34 @@ pub struct ProxyConfig {
     pub listen_port: u16,
     /// 最大重试次数
     pub max_retries: u8,
-    /// 请求超时时间（秒）
+    /// 请求超时时间（秒）- 已废弃，保留兼容
     pub request_timeout: u64,
     /// 是否启用日志
     pub enable_logging: bool,
     /// 是否正在接管 Live 配置
     #[serde(default)]
     pub live_takeover_active: bool,
+    /// 流式首字超时（秒）- 等待首个数据块的最大时间
+    #[serde(default = "default_streaming_first_byte_timeout")]
+    pub streaming_first_byte_timeout: u64,
+    /// 流式静默超时（秒）- 两个数据块之间的最大间隔
+    #[serde(default = "default_streaming_idle_timeout")]
+    pub streaming_idle_timeout: u64,
+    /// 非流式总超时（秒）- 非流式请求的总超时时间
+    #[serde(default = "default_non_streaming_timeout")]
+    pub non_streaming_timeout: u64,
+}
+
+fn default_streaming_first_byte_timeout() -> u64 {
+    30
+}
+
+fn default_streaming_idle_timeout() -> u64 {
+    60
+}
+
+fn default_non_streaming_timeout() -> u64 {
+    600
 }
 
 impl Default for ProxyConfig {
@@ -27,6 +48,9 @@ impl Default for ProxyConfig {
             request_timeout: 300,
             enable_logging: true,
             live_takeover_active: false,
+            streaming_first_byte_timeout: 30,
+            streaming_idle_timeout: 60,
+            non_streaming_timeout: 600,
         }
     }
 }

@@ -34,28 +34,44 @@ type ProxyConfigForm = Pick<
   | "max_retries"
   | "request_timeout"
   | "enable_logging"
+  | "streaming_first_byte_timeout"
+  | "streaming_idle_timeout"
+  | "non_streaming_timeout"
 >;
 
 const createProxyConfigSchema = (t: TFunction) => {
-  const requestTimeoutSchema = z
+  // 流式首字节超时：0 或 1-180 秒
+  const streamingFirstByteSchema = z
     .number()
-    .min(
-      0,
-      t("proxy.settings.validation.timeoutNonNegative", {
-        defaultValue: "超时时间不能为负数",
-      }),
-    )
-    .max(
-      600,
-      t("proxy.settings.validation.timeoutMax", {
-        defaultValue: "超时时间最多600秒",
-      }),
-    )
-    .refine((value) => value === 0 || value >= 10, {
-      message: t("proxy.settings.validation.timeoutRange", {
-        defaultValue: "请输入 0 或 10-600 之间的数值",
+    .min(0)
+    .refine((val) => val === 0 || (val >= 1 && val <= 180), {
+      message: t("proxy.settings.validation.streamingFirstByteRange", {
+        defaultValue: "请输入 0 或 1-180 之间的数值",
       }),
     });
+
+  // 流式静默期超时：0 或 60-600 秒
+  const streamingIdleSchema = z
+    .number()
+    .min(0)
+    .refine((val) => val === 0 || (val >= 60 && val <= 600), {
+      message: t("proxy.settings.validation.streamingIdleRange", {
+        defaultValue: "请输入 0 或 60-600 之间的数值",
+      }),
+    });
+
+  // 非流式总超时：0 或 60-1800 秒
+  const nonStreamingSchema = z
+    .number()
+    .min(0)
+    .refine((val) => val === 0 || (val >= 60 && val <= 1800), {
+      message: t("proxy.settings.validation.nonStreamingRange", {
+        defaultValue: "请输入 0 或 60-1800 之间的数值",
+      }),
+    });
+
+  // 旧版请求超时（兼容）
+  const requestTimeoutSchema = z.number().min(0);
 
   return z.object({
     listen_address: z.string().regex(
@@ -94,6 +110,9 @@ const createProxyConfigSchema = (t: TFunction) => {
       ),
     request_timeout: requestTimeoutSchema,
     enable_logging: z.boolean(),
+    streaming_first_byte_timeout: streamingFirstByteSchema,
+    streaming_idle_timeout: streamingIdleSchema,
+    non_streaming_timeout: nonStreamingSchema,
   });
 };
 
@@ -120,6 +139,9 @@ export function ProxySettingsDialog({
       max_retries: 3,
       request_timeout: 300,
       enable_logging: true,
+      streaming_first_byte_timeout: 30,
+      streaming_idle_timeout: 60,
+      non_streaming_timeout: 600,
     },
   });
 
@@ -132,6 +154,9 @@ export function ProxySettingsDialog({
         max_retries: config.max_retries,
         request_timeout: config.request_timeout,
         enable_logging: config.enable_logging,
+        streaming_first_byte_timeout: config.streaming_first_byte_timeout ?? 30,
+        streaming_idle_timeout: config.streaming_idle_timeout ?? 60,
+        non_streaming_timeout: config.non_streaming_timeout ?? 300,
       });
     }
   }, [config, form]);
@@ -394,6 +419,131 @@ export function ProxySettingsDialog({
                   </FormItem>
                 )}
               />
+            </section>
+
+            <section className="space-y-4 rounded-xl border border-white/10 glass-card p-6">
+              <div>
+                <h3 className="text-base font-semibold text-foreground">
+                  {t("proxy.settings.timeout.title", {
+                    defaultValue: "超时设置",
+                  })}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {t("proxy.settings.timeout.description", {
+                    defaultValue: "配置流式和非流式请求的超时时间。",
+                  })}
+                </p>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <FormField
+                  control={form.control}
+                  name="streaming_first_byte_timeout"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {t(
+                          "proxy.settings.fields.streamingFirstByteTimeout.label",
+                          {
+                            defaultValue: "流式首字超时（秒）",
+                          },
+                        )}
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          inputMode="numeric"
+                          {...field}
+                          onChange={(e) =>
+                            field.onChange(parseInt(e.target.value, 10) || 0)
+                          }
+                          placeholder="30"
+                          disabled={isLoading}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          "proxy.settings.fields.streamingFirstByteTimeout.description",
+                          {
+                            defaultValue: "等待首个数据块的最大时间",
+                          },
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="streaming_idle_timeout"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {t("proxy.settings.fields.streamingIdleTimeout.label", {
+                          defaultValue: "流式静默超时（秒）",
+                        })}
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          inputMode="numeric"
+                          {...field}
+                          onChange={(e) =>
+                            field.onChange(parseInt(e.target.value, 10) || 0)
+                          }
+                          placeholder="60"
+                          disabled={isLoading}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          "proxy.settings.fields.streamingIdleTimeout.description",
+                          {
+                            defaultValue: "数据块之间的最大间隔",
+                          },
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="non_streaming_timeout"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {t("proxy.settings.fields.nonStreamingTimeout.label", {
+                          defaultValue: "非流式超时（秒）",
+                        })}
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          inputMode="numeric"
+                          {...field}
+                          onChange={(e) =>
+                            field.onChange(parseInt(e.target.value, 10) || 0)
+                          }
+                          placeholder="300"
+                          disabled={isLoading}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          "proxy.settings.fields.nonStreamingTimeout.description",
+                          {
+                            defaultValue: "非流式请求的总超时时间",
+                          },
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             </section>
           </form>
         </Form>

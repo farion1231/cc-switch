@@ -981,6 +981,76 @@
       }
     },
     "settings": {
+      "title": "Proxy Service Settings",
+      "description": "Configure local proxy server listening address, port and runtime parameters. Changes take effect immediately after saving.",
+      "alert": {
+        "autoApply": "Changes will be automatically synced to the running proxy service without manual restart."
+      },
+      "basic": {
+        "title": "Basic Settings",
+        "description": "Configure proxy service listening address and port."
+      },
+      "advanced": {
+        "title": "Advanced Parameters",
+        "description": "Control request stability and logging."
+      },
+      "timeout": {
+        "title": "Timeout Settings",
+        "description": "Configure timeout for streaming and non-streaming requests."
+      },
+      "fields": {
+        "listenAddress": {
+          "label": "Listen Address",
+          "placeholder": "127.0.0.1",
+          "description": "IP address the proxy server listens on (recommended: 127.0.0.1)"
+        },
+        "listenPort": {
+          "label": "Listen Port",
+          "placeholder": "5000",
+          "description": "Port number the proxy server listens on (1024 ~ 65535)"
+        },
+        "maxRetries": {
+          "label": "Max Retries",
+          "placeholder": "3",
+          "description": "Number of retries on request failure (0 ~ 10)"
+        },
+        "requestTimeout": {
+          "label": "Request Timeout (sec)",
+          "placeholder": "0 (unlimited) or 300",
+          "description": "Maximum wait time for a single request (0 = unlimited, or 10 ~ 600 seconds)"
+        },
+        "enableLogging": {
+          "label": "Enable Logging",
+          "description": "Log all proxy requests for troubleshooting"
+        },
+        "streamingFirstByteTimeout": {
+          "label": "Streaming First Byte Timeout (sec)",
+          "description": "Maximum time to wait for the first data chunk"
+        },
+        "streamingIdleTimeout": {
+          "label": "Streaming Idle Timeout (sec)",
+          "description": "Maximum interval between data chunks"
+        },
+        "nonStreamingTimeout": {
+          "label": "Non-Streaming Timeout (sec)",
+          "description": "Total timeout for non-streaming requests"
+        }
+      },
+      "validation": {
+        "addressInvalid": "Please enter a valid IP address",
+        "portMin": "Port must be greater than 1024",
+        "portMax": "Port must be less than 65535",
+        "retryMin": "Retry count cannot be negative",
+        "retryMax": "Retry count cannot exceed 10",
+        "timeoutNonNegative": "Timeout cannot be negative",
+        "timeoutMax": "Timeout cannot exceed 600 seconds",
+        "timeoutRange": "Please enter 0 or a value between 10-600",
+        "streamingTimeoutMin": "Timeout must be at least 5 seconds",
+        "streamingTimeoutMax": "Timeout cannot exceed 300 seconds"
+      },
+      "actions": {
+        "save": "Save Configuration"
+      },
       "toast": {
         "saved": "Proxy configuration saved",
         "saveFailed": "Save failed: {{error}}"

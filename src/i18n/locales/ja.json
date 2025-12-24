@@ -981,6 +981,76 @@
       }
     },
     "settings": {
+      "title": "プロキシサービス設定",
+      "description": "ローカルプロキシサーバーのリッスンアドレス、ポート、実行パラメータを設定します。保存後すぐに反映されます。",
+      "alert": {
+        "autoApply": "変更は実行中のプロキシサービスに自動的に同期され、手動での再起動は不要です。"
+      },
+      "basic": {
+        "title": "基本設定",
+        "description": "プロキシサービスのリッスンアドレスとポートを設定します。"
+      },
+      "advanced": {
+        "title": "詳細パラメータ",
+        "description": "リクエストの安定性とログ記録を制御します。"
+      },
+      "timeout": {
+        "title": "タイムアウト設定",
+        "description": "ストリーミングと非ストリーミングリクエストのタイムアウトを設定します。"
+      },
+      "fields": {
+        "listenAddress": {
+          "label": "リッスンアドレス",
+          "placeholder": "127.0.0.1",
+          "description": "プロキシサーバーがリッスンするIPアドレス（推奨: 127.0.0.1）"
+        },
+        "listenPort": {
+          "label": "リッスンポート",
+          "placeholder": "5000",
+          "description": "プロキシサーバーがリッスンするポート番号（1024 ~ 65535）"
+        },
+        "maxRetries": {
+          "label": "最大リトライ回数",
+          "placeholder": "3",
+          "description": "リクエスト失敗時のリトライ回数（0 ~ 10）"
+        },
+        "requestTimeout": {
+          "label": "リクエストタイムアウト（秒）",
+          "placeholder": "0（無制限）または 300",
+          "description": "単一リクエストの最大待機時間（0 = 無制限、または 10 ~ 600 秒）"
+        },
+        "enableLogging": {
+          "label": "ログ記録を有効化",
+          "description": "トラブルシューティングのためにすべてのプロキシリクエストを記録"
+        },
+        "streamingFirstByteTimeout": {
+          "label": "ストリーミング初回バイトタイムアウト（秒）",
+          "description": "最初のデータチャンクを待つ最大時間"
+        },
+        "streamingIdleTimeout": {
+          "label": "ストリーミングアイドルタイムアウト（秒）",
+          "description": "データチャンク間の最大間隔"
+        },
+        "nonStreamingTimeout": {
+          "label": "非ストリーミングタイムアウト（秒）",
+          "description": "非ストリーミングリクエストの総タイムアウト"
+        }
+      },
+      "validation": {
+        "addressInvalid": "有効なIPアドレスを入力してください",
+        "portMin": "ポートは1024より大きい必要があります",
+        "portMax": "ポートは65535より小さい必要があります",
+        "retryMin": "リトライ回数は負の値にできません",
+        "retryMax": "リトライ回数は10を超えることはできません",
+        "timeoutNonNegative": "タイムアウトは負の値にできません",
+        "timeoutMax": "タイムアウトは600秒を超えることはできません",
+        "timeoutRange": "0または10-600の間の値を入力してください",
+        "streamingTimeoutMin": "タイムアウトは少なくとも5秒必要です",
+        "streamingTimeoutMax": "タイムアウトは300秒を超えることはできません"
+      },
+      "actions": {
+        "save": "設定を保存"
+      },
       "toast": {
         "saved": "プロキシ設定を保存しました",
         "saveFailed": "保存に失敗しました: {{error}}"
