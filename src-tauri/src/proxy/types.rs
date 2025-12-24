@@ -147,3 +147,47 @@ pub struct LiveBackup {
     /// 备份时间
     pub backed_up_at: String,
 }
+
+/// 全局代理配置（统一字段，三行镜像）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalProxyConfig {
+    /// 代理总开关
+    pub proxy_enabled: bool,
+    /// 监听地址
+    pub listen_address: String,
+    /// 监听端口
+    pub listen_port: u16,
+    /// 是否启用日志
+    pub enable_logging: bool,
+}
+
+/// 应用级代理配置（每个 app 独立）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppProxyConfig {
+    /// 应用类型 (claude/codex/gemini)
+    pub app_type: String,
+    /// 该 app 代理启用开关
+    pub enabled: bool,
+    /// 该 app 自动故障转移开关
+    pub auto_failover_enabled: bool,
+    /// 最大重试次数
+    pub max_retries: u32,
+    /// 流式首字超时（秒）
+    pub streaming_first_byte_timeout: u32,
+    /// 流式静默超时（秒）
+    pub streaming_idle_timeout: u32,
+    /// 非流式总超时（秒）
+    pub non_streaming_timeout: u32,
+    /// 熔断失败阈值
+    pub circuit_failure_threshold: u32,
+    /// 熔断恢复阈值
+    pub circuit_success_threshold: u32,
+    /// 熔断恢复等待时间（秒）
+    pub circuit_timeout_seconds: u32,
+    /// 错误率阈值
+    pub circuit_error_rate_threshold: f64,
+    /// 计算错误率的最小请求数
+    pub circuit_min_requests: u32,
+}
