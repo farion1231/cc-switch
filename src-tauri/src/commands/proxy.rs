@@ -62,6 +62,63 @@ pub async fn update_proxy_config(
     state.proxy_service.update_config(&config).await
 }
 
+// ==================== Global & Per-App Config ====================
+
+/// 获取全局代理配置
+///
+/// 返回统一的全局配置字段（代理开关、监听地址、端口、日志开关）
+#[tauri::command]
+pub async fn get_global_proxy_config(
+    state: tauri::State<'_, AppState>,
+) -> Result<GlobalProxyConfig, String> {
+    let db = &state.db;
+    db.get_global_proxy_config()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 更新全局代理配置
+///
+/// 更新统一的全局配置字段，会同时更新三行（claude/codex/gemini）
+#[tauri::command]
+pub async fn update_global_proxy_config(
+    state: tauri::State<'_, AppState>,
+    config: GlobalProxyConfig,
+) -> Result<(), String> {
+    let db = &state.db;
+    db.update_global_proxy_config(config)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 获取指定应用的代理配置
+///
+/// 返回应用级配置（enabled、auto_failover、超时、熔断器等）
+#[tauri::command]
+pub async fn get_proxy_config_for_app(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+) -> Result<AppProxyConfig, String> {
+    let db = &state.db;
+    db.get_proxy_config_for_app(&app_type)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 更新指定应用的代理配置
+///
+/// 更新应用级配置（enabled、auto_failover、超时、熔断器等）
+#[tauri::command]
+pub async fn update_proxy_config_for_app(
+    state: tauri::State<'_, AppState>,
+    config: AppProxyConfig,
+) -> Result<(), String> {
+    let db = &state.db;
+    db.update_proxy_config_for_app(config)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// 检查代理服务器是否正在运行
 #[tauri::command]
 pub async fn is_proxy_running(state: tauri::State<'_, AppState>) -> Result<bool, String> {
@@ -126,19 +183,12 @@ pub async fn reset_circuit_breaker(
         .reset_provider_circuit_breaker(&provider_id, &app_type)
         .await?;
 
-    // 3. 检查是否应该切回优先级更高的供应商
-    let failover_key = format!("auto_failover_enabled_{app_type}");
-    let auto_failover_enabled = match db.get_setting(&failover_key) {
-        Ok(Some(value)) => value == "true",
-        Ok(None) => {
-            log::debug!(
-                "[{app_type}] Failover setting '{failover_key}' not found, defaulting to disabled"
-            );
-            false
-        }
+    // 3. 检查是否应该切回优先级更高的供应商（从 proxy_config 表读取）
+    let auto_failover_enabled = match db.get_proxy_config_for_app(&app_type).await {
+        Ok(config) => config.auto_failover_enabled,
         Err(e) => {
             log::error!(
-                "[{app_type}] Failed to read failover setting '{failover_key}': {e}, defaulting to disabled"
+                "[{app_type}] Failed to read proxy_config for auto_failover_enabled: {e}, defaulting to disabled"
             );
             false
         }

@@ -596,7 +596,7 @@ pub fn run() {
             commands::upsert_mcp_server_in_config,
             commands::delete_mcp_server_in_config,
             commands::set_mcp_enabled,
-            // v3.7.0: Unified MCP management
+            // Unified MCP management
             commands::get_mcp_servers,
             commands::upsert_mcp_server,
             commands::delete_mcp_server,
@@ -656,6 +656,11 @@ pub fn run() {
             commands::get_proxy_status,
             commands::get_proxy_config,
             commands::update_proxy_config,
+            // Global & Per-App Config
+            commands::get_global_proxy_config,
+            commands::update_global_proxy_config,
+            commands::get_proxy_config_for_app,
+            commands::update_proxy_config_for_app,
             commands::is_proxy_running,
             commands::is_live_takeover_active,
             commands::switch_proxy_provider,
@@ -845,22 +850,20 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
 // 启动时恢复代理状态
 // ============================================================
 
-/// 启动时根据 settings 表中的代理状态自动恢复代理服务
+/// 启动时根据 proxy_config 表中的代理状态自动恢复代理服务
 ///
-/// 检查 `proxy_takeover_claude`、`proxy_takeover_codex`、`proxy_takeover_gemini` 的值，
-/// 如果有任一应用的状态为 `true`，则自动启动代理服务并接管对应应用的 Live 配置。
+/// 检查 `proxy_config.enabled` 字段，如果有任一应用的状态为 `true`，
+/// 则自动启动代理服务并接管对应应用的 Live 配置。
 async fn restore_proxy_state_on_startup(state: &store::AppState) {
-    // 收集需要恢复接管的应用列表
-    let apps_to_restore: Vec<&str> = ["claude", "codex", "gemini"]
-        .iter()
-        .filter(|app_type| {
-            state
-                .db
-                .get_proxy_takeover_enabled(app_type)
-                .unwrap_or(false)
-        })
-        .copied()
-        .collect();
+    // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
+    let mut apps_to_restore = Vec::new();
+    for app_type in ["claude", "codex", "gemini"] {
+        if let Ok(config) = state.db.get_proxy_config_for_app(app_type).await {
+            if config.enabled {
+                apps_to_restore.push(app_type);
+            }
+        }
+    }
 
     if apps_to_restore.is_empty() {
         log::debug!("启动时无需恢复代理状态");
@@ -882,7 +885,11 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
             Err(e) => {
                 log::error!("✗ 恢复 {app_type} 的代理接管状态失败: {e}");
                 // 失败时清除该应用的状态，避免下次启动再次尝试
-                if let Err(clear_err) = state.db.set_proxy_takeover_enabled(app_type, false) {
+                if let Err(clear_err) = state
+                    .proxy_service
+                    .set_takeover_for_app(app_type, false)
+                    .await
+                {
                     log::error!("清除 {app_type} 代理状态失败: {clear_err}");
                 }
             }
