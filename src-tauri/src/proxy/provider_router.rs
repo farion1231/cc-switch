@@ -91,29 +91,19 @@ impl ProviderRouter {
                 }
             }
         } else {
-            // 故障转移关闭：仅使用当前供应商
-            log::info!("[{app_type}] Failover disabled, using current provider only");
+            // 故障转移关闭：仅使用当前供应商，跳过熔断器检查
+            // 原因：单 Provider 场景下，熔断器打开会导致所有请求失败，用户体验差
+            log::info!("[{app_type}] Failover disabled, using current provider only (circuit breaker bypassed)");
 
             if let Some(current_id) = self.db.get_current_provider(app_type)? {
                 if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
-                    let circuit_key = format!("{}:{}", app_type, current.id);
-                    let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
-
-                    if breaker.is_available().await {
-                        log::info!(
-                            "[{}] Current provider available: {} ({})",
-                            app_type,
-                            current.name,
-                            current.id
-                        );
-                        result.push(current);
-                    } else {
-                        log::warn!(
-                            "[{}] Current provider {} circuit breaker open",
-                            app_type,
-                            current.name
-                        );
-                    }
+                    log::info!(
+                        "[{}] Current provider: {} ({})",
+                        app_type,
+                        current.name,
+                        current.id
+                    );
+                    result.push(current);
                 }
             }
         }

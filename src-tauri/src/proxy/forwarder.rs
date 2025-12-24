@@ -176,14 +176,24 @@ impl RequestForwarder {
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
+        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
+        let bypass_circuit_breaker = providers.len() == 1;
+
         // 依次尝试每个供应商
         for provider in providers.iter() {
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
-            let permit = self
-                .router
-                .allow_provider_request(&provider.id, app_type_str)
-                .await;
-            if !permit.allowed {
+            // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
+            let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
+                (true, false)
+            } else {
+                let permit = self
+                    .router
+                    .allow_provider_request(&provider.id, app_type_str)
+                    .await;
+                (permit.allowed, permit.used_half_open_permit)
+            };
+
+            if !allowed {
                 log::debug!(
                     "[{}] Provider {} 熔断器拒绝本次请求，跳过",
                     app_type_str,
@@ -191,8 +201,6 @@ impl RequestForwarder {
                 );
                 continue;
             }
-
-            let used_half_open_permit = permit.used_half_open_permit;
 
             attempted_providers += 1;
 
@@ -435,10 +443,23 @@ impl RequestForwarder {
             serde_json::to_string_pretty(body).unwrap_or_else(|_| body.to_string())
         );
 
+        // 应用模型映射（独立于格式转换）
+        let (mapped_body, _original_model, mapped_model) =
+            super::model_mapper::apply_model_mapping(body.clone(), provider);
+
+        if let Some(ref mapped) = mapped_model {
+            log::info!(
+                "[{}] >>> 模型映射后的请求 JSON:\n{}",
+                adapter.name(),
+                serde_json::to_string_pretty(&mapped_body).unwrap_or_default()
+            );
+            log::info!("[{}] 模型已映射到: {}", adapter.name(), mapped);
+        }
+
         // 转换请求体（如果需要）
         let request_body = if needs_transform {
             log::info!("[{}] 转换请求格式 (Anthropic → OpenAI)", adapter.name());
-            let transformed = adapter.transform_request(body.clone(), provider)?;
+            let transformed = adapter.transform_request(mapped_body, provider)?;
             log::info!(
                 "[{}] >>> 转换后的请求 JSON:\n{}",
                 adapter.name(),
@@ -446,7 +467,7 @@ impl RequestForwarder {
             );
             transformed
         } else {
-            body.clone()
+            mapped_body
         };
 
         log::info!(
