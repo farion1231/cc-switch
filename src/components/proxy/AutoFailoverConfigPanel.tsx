@@ -10,7 +10,6 @@ import {
   useCircuitBreakerConfig,
   useUpdateCircuitBreakerConfig,
 } from "@/lib/query/failover";
-import { useProxyConfig } from "@/hooks/useProxyConfig";
 
 export interface AutoFailoverConfigPanelProps {
   enabled?: boolean;
@@ -27,12 +26,6 @@ export function AutoFailoverConfigPanel({
   const { t } = useTranslation();
   const { data: config, isLoading, error } = useCircuitBreakerConfig();
   const updateConfig = useUpdateCircuitBreakerConfig();
-  const {
-    config: proxyConfig,
-    isLoading: isProxyLoading,
-    updateConfig: updateProxyConfig,
-    isUpdating: isProxyUpdating,
-  } = useProxyConfig();
 
   const [formData, setFormData] = useState({
     failureThreshold: 5,
@@ -40,11 +33,6 @@ export function AutoFailoverConfigPanel({
     timeoutSeconds: 60,
     errorRateThreshold: 0.5,
     minRequests: 10,
-  });
-  const [timeoutConfig, setTimeoutConfig] = useState({
-    streaming_first_byte_timeout: 30,
-    streaming_idle_timeout: 60,
-    non_streaming_timeout: 600,
   });
 
   useEffect(() => {
@@ -55,17 +43,6 @@ export function AutoFailoverConfigPanel({
     }
   }, [config]);
 
-  useEffect(() => {
-    if (proxyConfig) {
-      setTimeoutConfig({
-        streaming_first_byte_timeout:
-          proxyConfig.streaming_first_byte_timeout ?? 30,
-        streaming_idle_timeout: proxyConfig.streaming_idle_timeout ?? 60,
-        non_streaming_timeout: proxyConfig.non_streaming_timeout ?? 300,
-      });
-    }
-  }, [proxyConfig]);
-
   const handleSave = async () => {
     try {
       await updateConfig.mutateAsync({
@@ -75,15 +52,6 @@ export function AutoFailoverConfigPanel({
         errorRateThreshold: formData.errorRateThreshold,
         minRequests: formData.minRequests,
       });
-      if (proxyConfig) {
-        await updateProxyConfig({
-          ...proxyConfig,
-          streaming_first_byte_timeout:
-            timeoutConfig.streaming_first_byte_timeout,
-          streaming_idle_timeout: timeoutConfig.streaming_idle_timeout,
-          non_streaming_timeout: timeoutConfig.non_streaming_timeout,
-        });
-      }
       toast.success(
         t("proxy.autoFailover.configSaved", "自动故障转移配置已保存"),
         { closeButton: true },
@@ -99,14 +67,6 @@ export function AutoFailoverConfigPanel({
     if (config) {
       setFormData({
         ...config,
-      });
-    }
-    if (proxyConfig) {
-      setTimeoutConfig({
-        streaming_first_byte_timeout:
-          proxyConfig.streaming_first_byte_timeout ?? 30,
-        streaming_idle_timeout: proxyConfig.streaming_idle_timeout ?? 60,
-        non_streaming_timeout: proxyConfig.non_streaming_timeout ?? 300,
       });
     }
   };
@@ -295,134 +255,20 @@ export function AutoFailoverConfigPanel({
           </div>
         </div>
 
-        {/* 代理请求超时配置 */}
-        <div className="space-y-4 rounded-lg border border-white/10 bg-muted/30 p-4">
-          <h4 className="text-sm font-semibold">
-            {t("proxy.settings.timeout.title", {
-              defaultValue: "超时设置",
-            })}
-          </h4>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="streamingFirstByteTimeout">
-                {t("proxy.settings.fields.streamingFirstByteTimeout.label", {
-                  defaultValue: "流式首字超时（秒）",
-                })}
-              </Label>
-              <Input
-                id="streamingFirstByteTimeout"
-                type="number"
-                min="0"
-                max="180"
-                value={timeoutConfig.streaming_first_byte_timeout}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value) || 0;
-                  if (val === 0 || (val >= 1 && val <= 180)) {
-                    setTimeoutConfig({
-                      ...timeoutConfig,
-                      streaming_first_byte_timeout: val,
-                    });
-                  }
-                }}
-                disabled={!enabled || isProxyLoading || isProxyUpdating}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t(
-                  "proxy.settings.fields.streamingFirstByteTimeout.description",
-                  "等待首个数据块的最大时间（0 禁用，范围 1-180 秒）",
-                )}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="streamingIdleTimeout">
-                {t("proxy.settings.fields.streamingIdleTimeout.label", {
-                  defaultValue: "流式静默超时（秒）",
-                })}
-              </Label>
-              <Input
-                id="streamingIdleTimeout"
-                type="number"
-                min="0"
-                max="600"
-                value={timeoutConfig.streaming_idle_timeout}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value) || 0;
-                  if (val === 0 || (val >= 60 && val <= 600)) {
-                    setTimeoutConfig({
-                      ...timeoutConfig,
-                      streaming_idle_timeout: val,
-                    });
-                  }
-                }}
-                disabled={!enabled || isProxyLoading || isProxyUpdating}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t(
-                  "proxy.settings.fields.streamingIdleTimeout.description",
-                  "数据块之间的最大间隔（0 禁用，范围 60-600 秒）",
-                )}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="nonStreamingTimeout">
-                {t("proxy.settings.fields.nonStreamingTimeout.label", {
-                  defaultValue: "非流式超时（秒）",
-                })}
-              </Label>
-              <Input
-                id="nonStreamingTimeout"
-                type="number"
-                min="0"
-                max="1800"
-                value={timeoutConfig.non_streaming_timeout}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value) || 0;
-                  if (val === 0 || (val >= 60 && val <= 1800)) {
-                    setTimeoutConfig({
-                      ...timeoutConfig,
-                      non_streaming_timeout: val,
-                    });
-                  }
-                }}
-                disabled={!enabled || isProxyLoading || isProxyUpdating}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t(
-                  "proxy.settings.fields.nonStreamingTimeout.description",
-                  "非流式请求的总超时时间（0 禁用，范围 60-1800 秒）",
-                )}
-              </p>
-            </div>
-          </div>
-        </div>
-
         {/* 操作按钮 */}
         <div className="flex justify-end gap-3 pt-2">
           <Button
             variant="outline"
             onClick={handleReset}
-            disabled={
-              updateConfig.isPending ||
-              isProxyLoading ||
-              isProxyUpdating ||
-              !enabled
-            }
+            disabled={updateConfig.isPending || !enabled}
           >
             {t("common.reset", "重置")}
           </Button>
           <Button
             onClick={handleSave}
-            disabled={
-              updateConfig.isPending ||
-              isProxyLoading ||
-              isProxyUpdating ||
-              !enabled
-            }
+            disabled={updateConfig.isPending || !enabled}
           >
-            {updateConfig.isPending || isProxyUpdating ? (
+            {updateConfig.isPending ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 {t("common.saving", "保存中...")}
