@@ -5,7 +5,7 @@
 use crate::app_config::AppType;
 use crate::provider::Provider;
 use crate::proxy::{
-    forwarder::RequestForwarder, server::ProxyState, types::ProxyConfig, ProxyError,
+    forwarder::RequestForwarder, server::ProxyState, types::AppProxyConfig, ProxyError,
 };
 use std::time::Instant;
 
@@ -22,15 +22,15 @@ pub struct StreamingTimeoutConfig {
 ///
 /// 贯穿整个请求生命周期，包含：
 /// - 计时信息
-/// - 代理配置
+/// - 应用级代理配置（per-app）
 /// - 选中的 Provider 列表（用于故障转移）
 /// - 请求模型名称
 /// - 日志标签
 pub struct RequestContext {
     /// 请求开始时间
     pub start_time: Instant,
-    /// 代理配置快照
-    pub config: ProxyConfig,
+    /// 应用级代理配置（per-app，包含重试次数和超时配置）
+    pub app_config: AppProxyConfig,
     /// 选中的 Provider（故障转移链的第一个）
     pub provider: Provider,
     /// 完整的 Provider 列表（用于故障转移）
@@ -71,7 +71,14 @@ impl RequestContext {
         app_type_str: &'static str,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
-        let config = state.config.read().await.clone();
+
+        // 从数据库读取应用级代理配置（per-app）
+        let app_config = state
+            .db
+            .get_proxy_config_for_app(app_type_str)
+            .await
+            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+
         let current_provider_id =
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
 
@@ -105,7 +112,7 @@ impl RequestContext {
 
         Ok(Self {
             start_time,
-            config,
+            app_config,
             provider,
             providers,
             current_provider_id,
@@ -144,15 +151,15 @@ impl RequestContext {
     pub fn create_forwarder(&self, state: &ProxyState) -> RequestForwarder {
         RequestForwarder::new(
             state.provider_router.clone(),
-            self.config.non_streaming_timeout,
-            self.config.max_retries,
+            self.app_config.non_streaming_timeout as u64,
+            self.app_config.max_retries as u8,
             state.status.clone(),
             state.current_providers.clone(),
             state.failover_manager.clone(),
             state.app_handle.clone(),
             self.current_provider_id.clone(),
-            self.config.streaming_first_byte_timeout,
-            self.config.streaming_idle_timeout,
+            self.app_config.streaming_first_byte_timeout as u64,
+            self.app_config.streaming_idle_timeout as u64,
         )
     }
 
@@ -173,8 +180,8 @@ impl RequestContext {
     #[inline]
     pub fn streaming_timeout_config(&self) -> StreamingTimeoutConfig {
         StreamingTimeoutConfig {
-            first_byte_timeout: self.config.streaming_first_byte_timeout,
-            idle_timeout: self.config.streaming_idle_timeout,
+            first_byte_timeout: self.app_config.streaming_first_byte_timeout as u64,
+            idle_timeout: self.app_config.streaming_idle_timeout as u64,
         }
     }
 }

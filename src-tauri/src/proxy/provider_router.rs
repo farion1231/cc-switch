@@ -35,25 +35,16 @@ impl ProviderRouter {
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
 
-        // 检查该应用的自动故障转移开关是否开启
-        let failover_key = format!("auto_failover_enabled_{app_type}");
-        let auto_failover_enabled = match self.db.get_setting(&failover_key) {
-            Ok(Some(value)) => {
-                let enabled = value == "true";
-                log::info!(
-                    "[{app_type}] Failover setting '{failover_key}' = '{value}', enabled: {enabled}"
-                );
+        // 检查该应用的自动故障转移开关是否开启（从 proxy_config 表读取）
+        let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
+            Ok(config) => {
+                let enabled = config.auto_failover_enabled;
+                log::info!("[{app_type}] Failover enabled from proxy_config: {enabled}");
                 enabled
-            }
-            Ok(None) => {
-                log::warn!(
-                    "[{app_type}] Failover setting '{failover_key}' not found in database, defaulting to disabled"
-                );
-                false
             }
             Err(e) => {
                 log::error!(
-                    "[{app_type}] Failed to read failover setting '{failover_key}': {e}, defaulting to disabled"
+                    "[{app_type}] Failed to read proxy_config for auto_failover_enabled: {e}, defaulting to disabled"
                 );
                 false
             }
@@ -315,8 +306,11 @@ mod tests {
 
         db.add_to_failover_queue("claude", "b").unwrap();
         db.add_to_failover_queue("claude", "a").unwrap();
-        db.set_setting("auto_failover_enabled_claude", "true")
-            .unwrap();
+
+        // 启用自动故障转移（使用新的 proxy_config API）
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
 
         let router = ProviderRouter::new(db.clone());
         let providers = router.select_providers("claude").await.unwrap();
@@ -349,8 +343,11 @@ mod tests {
 
         db.add_to_failover_queue("claude", "a").unwrap();
         db.add_to_failover_queue("claude", "b").unwrap();
-        db.set_setting("auto_failover_enabled_claude", "true")
-            .unwrap();
+
+        // 启用自动故障转移（使用新的 proxy_config API）
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
 
         let router = ProviderRouter::new(db.clone());
 
