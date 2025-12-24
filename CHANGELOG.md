@@ -5,6 +5,33 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.3] - 2025-12-24
+
+### Added
+
+- **AiGoCode partner** - Added AiGoCode icon and partner promotion
+- **Skip first-run confirmation** - New setting to skip Claude Code first-run confirmation dialog
+- **DMXAPI partner** - Added DMXAPI as official partner
+- **Provider icons** - Added icons for OpenRouter, LongCat, ModelScope, AiHubMix
+
+### Fixed
+
+- **UI header layout** - Fixed content being covered by fixed header (added padding-top)
+- **Dark mode visibility** - Improved text visibility in dark mode
+- **Azure link** - Corrected Azure website link (#407)
+- **Skill installation** - Use directory basename for skill installation path (#358)
+- **SQL import refresh** - Refresh all providers immediately after SQL import
+- **MCP sync safety** - Skip sync when target CLI app is not installed
+
+### Changed
+
+- **Model versions** - Updated model versions for provider presets
+- **Provider switch notification** - Removed restart prompt from notification
+- **SQL import restriction** - Restrict SQL import to CC Switch exported backups only
+- **GLM partner images** - Updated partner banner images
+
+---
+
 ## [3.8.0] - 2025-11-28
 
 ### Major Updates
