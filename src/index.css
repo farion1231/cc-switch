@@ -215,3 +215,19 @@ input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear {
   display: none;
 }
+
+/* 托盘弹窗窗口：透明背景 + 居中布局 */
+body.tray-window {
+  background: transparent;
+  height: 100vh;
+  overflow: hidden;
+}
+
+body.tray-window #root {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  overflow: hidden;
+}

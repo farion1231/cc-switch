@@ -50,7 +50,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 
@@ -120,16 +120,12 @@ async fn update_tray_menu(
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
     match tray::create_tray_menu(&app, state.inner()) {
-        Ok(new_menu) => {
-            if let Some(tray) = app.tray_by_id("main") {
-                tray.set_menu(Some(new_menu))
-                    .map_err(|e| format!("更新托盘菜单失败: {e}"))?;
-                return Ok(true);
-            }
-            Ok(false)
+        Ok(_) => {
+            log::info!("Tray menu 已禁用，创建结果已丢弃");
+            Ok(true)
         }
         Err(err) => {
-            log::error!("创建托盘菜单失败: {err}");
+            log::warn!("Tray menu 创建失败（已禁用）: {err}");
             Ok(false)
         }
     }
@@ -464,21 +460,50 @@ pub fn run() {
             });
             log::info!("✓ Deep-link URL handler registered");
 
-            // 创建动态托盘菜单
-            let menu = tray::create_tray_menu(app.handle(), &app_state)?;
+            // 初始化托盘弹窗窗口
+            tray::init_tray_popover_window(app)?;
 
             // 构建托盘
-            let mut tray_builder = TrayIconBuilder::with_id("main")
-                .on_tray_icon_event(|_tray, event| match event {
-                    // 左键点击已通过 show_menu_on_left_click(true) 打开菜单，这里不再额外处理
-                    TrayIconEvent::Click { .. } => {}
+            let mut tray_builder =
+                TrayIconBuilder::with_id("main").on_tray_icon_event(|tray, event| match event {
+                    TrayIconEvent::Click {
+                        button,
+                        button_state,
+                        position,
+                        rect,
+                        ..
+                    } => {
+                        if !matches!(button_state, MouseButtonState::Up) {
+                            return;
+                        }
+                        match button {
+                            MouseButton::Left => {
+                                tray::hide_tray_popover(tray.app_handle());
+                                tray::show_main_window(tray.app_handle());
+                            }
+                            MouseButton::Right => {
+                                tray::toggle_tray_popover(tray.app_handle(), position, rect);
+                            }
+                            _ => {}
+                        }
+                    }
+                    TrayIconEvent::DoubleClick {
+                        button,
+                        position,
+                        rect,
+                        ..
+                    } => match button {
+                        MouseButton::Left => {
+                            tray::hide_tray_popover(tray.app_handle());
+                            tray::show_main_window(tray.app_handle());
+                        }
+                        MouseButton::Right => {
+                            tray::toggle_tray_popover(tray.app_handle(), position, rect);
+                        }
+                        _ => {}
+                    },
                     _ => log::debug!("unhandled event {event:?}"),
-                })
-                .menu(&menu)
-                .on_menu_event(|app, event| {
-                    tray::handle_tray_menu_event(app, &event.id.0);
-                })
-                .show_menu_on_left_click(true);
+                });
 
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
             #[cfg(target_os = "macos")]
@@ -502,7 +527,12 @@ pub fn run() {
                 }
             }
 
-            let _tray = tray_builder.build(app)?;
+            let tray_icon = tray_builder.build(app)?;
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            if let Err(err) = tray_icon.set_show_menu_on_left_click(false) {
+                log::warn!("Failed to disable left-click menu: {err}");
+            }
+
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Plus,
   Settings,
@@ -46,6 +47,9 @@ import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { Button } from "@/components/ui/button";
 
 type View = "providers" | "settings" | "prompts" | "skills" | "mcp" | "agents";
+type TrayNavigatePayload = {
+  view: View;
+};
 
 const DRAG_BAR_HEIGHT = 28; // px
 const HEADER_HEIGHT = 64; // px
@@ -86,6 +90,29 @@ function App() {
   const skillsPageRef = useRef<any>(null);
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    const setup = async () => {
+      try {
+        unlisten = await listen<TrayNavigatePayload>(
+          "tray:navigate",
+          (event) => {
+            const targetView = event.payload?.view;
+            if (targetView) {
+              setCurrentView(targetView);
+            }
+          },
+        );
+      } catch (error) {
+        console.error("[App] Failed to listen tray navigation event", error);
+      }
+    };
+    void setup();
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   // 获取代理服务状态
   const {

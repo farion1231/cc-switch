@@ -271,6 +271,64 @@
     "codex": "Codex",
     "gemini": "Gemini"
   },
+  "tray": {
+    "title": "Quick Switch",
+    "subtitle": "Swap any provider directly from the tray",
+    "overviewTitle": "Overview",
+    "providers": "providers",
+    "currentProvider": "Current: {{name}}",
+    "noCurrent": "No selection yet",
+    "switchSection": "Available providers",
+    "loading": "Loading providers…",
+    "empty": "No providers yet. Use the main window to add one.",
+    "actions": {
+      "openMain": "Open main window",
+      "refresh": "Refresh",
+      "quit": "Quit"
+    },
+    "actionsDescriptions": {
+      "openMain": "Manage providers, usage, and settings in the main window",
+      "refresh": "Update provider list and usage status",
+      "quit": "Quit CC Switch completely"
+    },
+    "actionsSection": "Quick actions",
+    "card": {
+      "current": "Active",
+      "switching": "Switching",
+      "switch": "Switch"
+    },
+    "categories": {
+      "official": "Official",
+      "cn_official": "China official",
+      "aggregator": "Aggregator",
+      "third_party": "Third-party",
+      "custom": "Custom"
+    },
+    "usage": {
+      "title": "Usage",
+      "unnamed": "Plan",
+      "unavailable": "No quota data",
+      "remaining": "Remaining {{value}}",
+      "notConfigured": "Usage script not configured yet.",
+      "configureHint": "Open the main window to set up usage tracking.",
+      "lastUpdated": "Updated {{time}}",
+      "never": "Never"
+    },
+    "history": {
+      "title": "Cost history (30 days)",
+      "summary": "Last 30 days: ${{amount}}",
+      "empty": "No usage data yet"
+    },
+    "searchEmpty": "No matching providers",
+    "switchFailedTitle": "Switch failed",
+    "switchFailed": "Failed to switch provider: {{error}}",
+    "error": {
+      "generic": "Unknown error",
+      "openMain": "Failed to open main window",
+      "refreshFailed": "Refresh failed",
+      "loadFailed": "Failed to load providers. Please refresh."
+    }
+  },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
     "setupListenerFailed": "Failed to setup provider switch listener:",

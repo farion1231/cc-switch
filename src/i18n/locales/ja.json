@@ -271,6 +271,64 @@
     "codex": "Codex",
     "gemini": "Gemini"
   },
+  "tray": {
+    "title": "クイックスイッチ",
+    "subtitle": "トレイからすぐにプロバイダーを切り替え",
+    "overviewTitle": "コントロールセンター",
+    "providers": "件のプロバイダー",
+    "currentProvider": "現在: {{name}}",
+    "noCurrent": "未選択",
+    "switchSection": "切り替え可能なプロバイダー",
+    "loading": "プロバイダーを読み込み中...",
+    "empty": "まだプロバイダーがありません。メイン画面で追加してください。",
+    "actions": {
+      "openMain": "メイン画面を開く",
+      "refresh": "再読み込み",
+      "quit": "終了"
+    },
+    "actionsDescriptions": {
+      "openMain": "メイン画面でプロバイダー・用量・設定を管理",
+      "refresh": "リストと使用状況を更新",
+      "quit": "CC Switch を完全に終了"
+    },
+    "actionsSection": "クイック操作",
+    "card": {
+      "current": "使用中",
+      "switching": "切り替え中",
+      "switch": "切り替え"
+    },
+    "categories": {
+      "official": "公式",
+      "cn_official": "中国公式",
+      "aggregator": "アグリゲーター",
+      "third_party": "サードパーティ",
+      "custom": "カスタム"
+    },
+    "usage": {
+      "title": "利用状況",
+      "unnamed": "プラン",
+      "unavailable": "利用枠データなし",
+      "remaining": "残り {{value}}",
+      "notConfigured": "使用量スクリプトが設定されていません",
+      "configureHint": "メイン画面で使用量の設定を行ってください",
+      "lastUpdated": "最終更新: {{time}}",
+      "never": "未実行"
+    },
+    "history": {
+      "title": "コスト履歴（30日）",
+      "summary": "直近 30 日: ${{amount}}",
+      "empty": "使用データがありません"
+    },
+    "searchEmpty": "一致するプロバイダーがありません",
+    "switchFailedTitle": "切り替えに失敗しました",
+    "switchFailed": "プロバイダーの切り替えに失敗しました: {{error}}",
+    "error": {
+      "generic": "不明なエラーが発生しました",
+      "openMain": "メイン画面を開けませんでした",
+      "refreshFailed": "再読み込みに失敗しました",
+      "loadFailed": "プロバイダーを読み込めませんでした。再読み込みしてください。"
+    }
+  },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",
     "setupListenerFailed": "プロバイダー切り替えリスナーの設定に失敗:",
