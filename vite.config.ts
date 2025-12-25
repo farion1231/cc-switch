@@ -1,10 +1,16 @@
 import path from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { codeInspectorPlugin } from "code-inspector-plugin";
 
 export default defineConfig({
   root: "src",
-  plugins: [react()],
+  plugins: [
+    codeInspectorPlugin({
+      bundler: "vite",
+    }),
+    react(),
+  ],
   base: "./",
   build: {
     outDir: "../dist",

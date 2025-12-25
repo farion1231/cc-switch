@@ -2,6 +2,7 @@
   "name": "cc-switch",
   "version": "3.9.0-2",
   "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
+  "type": "module",
   "scripts": {
     "dev": "pnpm tauri dev",
     "build": "pnpm tauri build",
@@ -27,6 +28,7 @@
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
     "autoprefixer": "^10.4.20",
+    "code-inspector-plugin": "^1.3.3",
     "cross-fetch": "^4.1.0",
     "jsdom": "^25.0.0",
     "msw": "^2.11.6",
@@ -34,7 +36,7 @@
     "prettier": "^3.6.2",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.3.0",
-    "vite": "^5.0.0",
+    "vite": "^7.3.0",
     "vitest": "^2.0.5"
   },
   "dependencies": {
