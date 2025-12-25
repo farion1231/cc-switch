@@ -331,6 +331,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["aihubmix", "hub", "mix", "aggregator"],
     defaultColor: "#006FFB",
   },
+  xiaomimimo: {
+    name: "xiaomimimo",
+    displayName: "Xiaomi MiMo",
+    category: "ai-provider",
+    keywords: ["xiaomimimo", "xiaomi", "mimo"],
+    defaultColor: "#000000",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {
