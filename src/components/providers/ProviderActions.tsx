@@ -6,6 +6,7 @@ import {
   Loader2,
   Play,
   Plus,
+  Terminal,
   TestTube2,
   Trash2,
 } from "lucide-react";
@@ -23,6 +24,7 @@ interface ProviderActionsProps {
   onTest?: () => void;
   onConfigureUsage: () => void;
   onDelete: () => void;
+  onOpenTerminal?: () => void;
   // 故障转移相关
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
@@ -39,6 +41,7 @@ export function ProviderActions({
   onTest,
   onConfigureUsage,
   onDelete,
+  onOpenTerminal,
   // 故障转移相关
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
@@ -170,6 +173,21 @@ export function ProviderActions({
         >
           <BarChart3 className="h-4 w-4" />
         </Button>
+
+        {onOpenTerminal && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onOpenTerminal}
+            title={t("provider.openTerminal", "打开终端")}
+            className={cn(
+              iconButtonClass,
+              "hover:text-emerald-600 dark:hover:text-emerald-400",
+            )}
+          >
+            <Terminal className="h-4 w-4" />
+          </Button>
+        )}
 
         <Button
           size="icon"
