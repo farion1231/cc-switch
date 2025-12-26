@@ -358,6 +358,7 @@ impl UniversalProvider {
             meta: self.meta.clone(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
         })
     }
 
@@ -409,6 +410,7 @@ requires_openai_auth = true"#,
             meta: self.meta.clone(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
         })
     }
 
@@ -443,6 +445,7 @@ requires_openai_auth = true"#,
             meta: self.meta.clone(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
         })
     }
 }
