@@ -147,6 +147,10 @@ export function UniversalProviderFormModal({
     if (!codexEnabled) return null;
     const model = models.codex?.model || "gpt-4o";
     const reasoningEffort = models.codex?.reasoningEffort || "high";
+    // 确保 base_url 以 /v1 结尾（Codex 使用 OpenAI 兼容 API）
+    const codexBaseUrl = baseUrl.endsWith("/v1")
+      ? baseUrl
+      : `${baseUrl.replace(/\/+$/, "")}/v1`;
     const configToml = `model_provider = "newapi"
 model = "${model}"
 model_reasoning_effort = "${reasoningEffort}"
@@ -154,7 +158,7 @@ disable_response_storage = true
 
 [model_providers.newapi]
 name = "NewAPI"
-base_url = "${baseUrl}"
+base_url = "${codexBaseUrl}"
 wire_api = "responses"
 requires_openai_auth = true`;
     return {

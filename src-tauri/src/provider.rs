@@ -376,6 +376,13 @@ impl UniversalProvider {
             .and_then(|m| m.reasoning_effort.clone())
             .unwrap_or_else(|| "high".to_string());
 
+        // 确保 base_url 以 /v1 结尾（Codex 使用 OpenAI 兼容 API）
+        let codex_base_url = if self.base_url.ends_with("/v1") {
+            self.base_url.clone()
+        } else {
+            format!("{}/v1", self.base_url.trim_end_matches('/'))
+        };
+
         // 生成 Codex 的 config.toml 内容
         let config_toml = format!(
             r#"model_provider = "newapi"
@@ -388,7 +395,7 @@ name = "NewAPI"
 base_url = "{}"
 wire_api = "responses"
 requires_openai_auth = true"#,
-            model, reasoning_effort, self.base_url
+            model, reasoning_effort, codex_base_url
         );
 
         let settings_config = serde_json::json!({
