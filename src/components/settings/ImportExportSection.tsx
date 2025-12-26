@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -6,10 +6,15 @@ import {
   Loader2,
   Save,
   XCircle,
+  Cloud,
+  Settings as SettingsIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
 import type { ImportStatus } from "@/hooks/useImportExport";
+import { WebDavConfigDialog } from "./WebDavConfigDialog";
+import { WebDavBackupManager } from "./WebDavBackupManager";
+import { webdavApi, type WebDavConfig } from "@/lib/api/webdav";
 
 interface ImportExportSectionProps {
   status: ImportStatus;
@@ -35,12 +40,28 @@ export function ImportExportSection({
   onClear,
 }: ImportExportSectionProps) {
   const { t } = useTranslation();
+  const [webdavConfig, setWebdavConfig] = useState<WebDavConfig | null>(null);
+  const [showWebdavConfig, setShowWebdavConfig] = useState(false);
 
   const selectedFileName = useMemo(() => {
     if (!selectedFile) return "";
     const segments = selectedFile.split(/[\\/]/);
     return segments[segments.length - 1] || selectedFile;
   }, [selectedFile]);
+
+  // 加载 WebDAV 配置
+  useEffect(() => {
+    webdavApi
+      .getConfig()
+      .then((config) => {
+        if (config) {
+          setWebdavConfig(config);
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to load WebDAV config", error);
+      });
+  }, []);
 
   return (
     <section className="space-y-4">
@@ -54,7 +75,7 @@ export function ImportExportSection({
       </header>
 
       <div className="space-y-4 rounded-xl glass-card p-6 border border-white/10">
-        {/* Import and Export Buttons Side by Side */}
+        {/* 本地文件导入导出 */}
         <div className="grid grid-cols-2 gap-4 items-stretch">
           {/* Import Button */}
           <div className="relative">
@@ -113,12 +134,79 @@ export function ImportExportSection({
           </div>
         </div>
 
+        {/* WebDAV 云端备份 */}
+        <div className="border-t border-white/10 pt-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Cloud className="h-5 w-5 text-blue-500" />
+              <h4 className="font-medium">云端备份 (WebDAV)</h4>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowWebdavConfig(true)}
+            >
+              <SettingsIcon className="h-4 w-4 mr-2" />
+              {webdavConfig ? "修改配置" : "配置 WebDAV"}
+            </Button>
+          </div>
+
+          {webdavConfig ? (
+            <WebDavBackupManager
+              config={webdavConfig}
+              onConfigChange={() => {
+                webdavApi
+                  .getConfig()
+                  .then((config) => {
+                    if (config) {
+                      setWebdavConfig(config);
+                    }
+                  })
+                  .catch((error) => {
+                    console.error("Failed to load WebDAV config", error);
+                  });
+              }}
+            />
+          ) : (
+            <div className="text-center py-6 text-muted-foreground bg-blue-50/50 dark:bg-blue-950/20 rounded-lg">
+              <Cloud className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">请先配置 WebDAV 服务器信息</p>
+              <Button
+                variant="link"
+                size="sm"
+                onClick={() => setShowWebdavConfig(true)}
+                className="mt-2"
+              >
+                立即配置
+              </Button>
+            </div>
+          )}
+        </div>
+
         <ImportStatusMessage
           status={status}
           errorMessage={errorMessage}
           backupId={backupId}
         />
       </div>
+
+      {/* WebDAV 配置对话框 */}
+      <WebDavConfigDialog
+        open={showWebdavConfig}
+        onOpenChange={setShowWebdavConfig}
+        onSuccess={() => {
+          webdavApi
+            .getConfig()
+            .then((config) => {
+              if (config) {
+                setWebdavConfig(config);
+              }
+            })
+            .catch((error) => {
+              console.error("Failed to load WebDAV config", error);
+            });
+        }}
+      />
     </section>
   );
 }
