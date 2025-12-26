@@ -55,13 +55,19 @@ export function UniversalProviderPanel() {
     async (provider: UniversalProvider) => {
       try {
         await universalProvidersApi.upsert(provider);
+
+        // 新建模式下自动同步到各应用
+        if (!editingProvider) {
+          await universalProvidersApi.sync(provider.id);
+        }
+
         toast.success(
           editingProvider
             ? t("universalProvider.updated", {
                 defaultValue: "统一供应商已更新",
               })
-            : t("universalProvider.added", {
-                defaultValue: "统一供应商已添加",
+            : t("universalProvider.addedAndSynced", {
+                defaultValue: "统一供应商已添加并同步",
               }),
         );
         loadProviders();

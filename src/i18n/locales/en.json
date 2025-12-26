@@ -1162,6 +1162,7 @@
     "syncError": "Sync failed",
     "noAppsEnabled": "No apps enabled",
     "added": "Universal provider added",
+    "addedAndSynced": "Universal provider added and synced",
     "updated": "Universal provider updated",
     "deleted": "Universal provider deleted",
     "addSuccess": "Universal provider added successfully",

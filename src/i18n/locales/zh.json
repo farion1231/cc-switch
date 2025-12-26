@@ -1162,6 +1162,7 @@
     "syncError": "同步失败",
     "noAppsEnabled": "未启用任何应用",
     "added": "统一供应商已添加",
+    "addedAndSynced": "统一供应商已添加并同步",
     "updated": "统一供应商已更新",
     "deleted": "统一供应商已删除",
     "addSuccess": "统一供应商添加成功",
