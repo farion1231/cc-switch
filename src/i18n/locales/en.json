@@ -66,6 +66,8 @@
     "exitEditMode": "Exit Edit Mode"
   },
   "provider": {
+    "tabProvider": "Provider",
+    "tabUniversal": "Universal",
     "noProviders": "No providers added yet",
     "noProvidersDescription": "Click the \"Add Provider\" button in the top right to configure your first API provider",
     "currentlyUsing": "Currently Using",
@@ -1142,7 +1144,7 @@
     "add": "Add Universal Provider",
     "edit": "Edit Universal Provider",
     "empty": "No universal providers yet",
-    "emptyHint": "Click the Add button above to create one",
+    "emptyHint": "Click the \"Add Universal Provider\" button below to create one",
     "selectPreset": "Select Preset Type",
     "name": "Name",
     "namePlaceholder": "e.g., My NewAPI",

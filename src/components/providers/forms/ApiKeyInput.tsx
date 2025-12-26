@@ -36,10 +36,7 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
 
   return (
     <div className="space-y-2">
-      <label
-        htmlFor={id}
-        className="block text-sm font-medium text-foreground"
-      >
+      <label htmlFor={id} className="block text-sm font-medium text-foreground">
         {label} {required && "*"}
       </label>
       <div className="relative">

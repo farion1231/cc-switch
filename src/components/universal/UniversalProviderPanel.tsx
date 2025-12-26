@@ -1,8 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Layers } from "lucide-react";
+import { Layers } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { UniversalProviderCard } from "./UniversalProviderCard";
 import { UniversalProviderFormModal } from "./UniversalProviderFormModal";
@@ -179,31 +178,19 @@ export function UniversalProviderPanel() {
     [providers],
   );
 
-  // 打开新建
-  const handleAdd = useCallback(() => {
-    setEditingProvider(null);
-    setIsFormOpen(true);
-  }, []);
-
   const providerList = Object.values(providers);
 
   return (
     <div className="space-y-4">
       {/* 头部 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Layers className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold">
-            {t("universalProvider.title", { defaultValue: "统一供应商" })}
-          </h2>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-            {providerList.length}
-          </span>
-        </div>
-        <Button onClick={handleAdd} size="sm">
-          <Plus className="mr-1.5 h-4 w-4" />
-          {t("universalProvider.add", { defaultValue: "添加" })}
-        </Button>
+      <div className="flex items-center gap-2">
+        <Layers className="h-5 w-5 text-primary" />
+        <h2 className="text-lg font-semibold">
+          {t("universalProvider.title", { defaultValue: "统一供应商" })}
+        </h2>
+        <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+          {providerList.length}
+        </span>
       </div>
 
       {/* 描述 */}
@@ -229,7 +216,7 @@ export function UniversalProviderPanel() {
           </p>
           <p className="mt-1 text-xs text-muted-foreground/70">
             {t("universalProvider.emptyHint", {
-              defaultValue: "点击上方「添加」按钮创建一个",
+              defaultValue: "点击下方「添加统一供应商」按钮创建一个",
             })}
           </p>
         </div>

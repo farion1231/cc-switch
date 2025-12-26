@@ -66,6 +66,8 @@
     "exitEditMode": "退出编辑模式"
   },
   "provider": {
+    "tabProvider": "供应商",
+    "tabUniversal": "统一供应商",
     "noProviders": "还没有添加任何供应商",
     "noProvidersDescription": "点击右上角的\"添加供应商\"按钮开始配置您的第一个API供应商",
     "currentlyUsing": "当前使用",
@@ -1142,7 +1144,7 @@
     "add": "添加统一供应商",
     "edit": "编辑统一供应商",
     "empty": "还没有统一供应商",
-    "emptyHint": "点击上方「添加」按钮创建一个",
+    "emptyHint": "点击下方「添加统一供应商」按钮创建一个",
     "selectPreset": "选择预设类型",
     "name": "名称",
     "namePlaceholder": "例如：我的 NewAPI",

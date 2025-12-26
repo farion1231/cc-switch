@@ -66,6 +66,8 @@
     "exitEditMode": "編集モードを終了"
   },
   "provider": {
+    "tabProvider": "プロバイダー",
+    "tabUniversal": "統一プロバイダー",
     "noProviders": "まだプロバイダーがありません",
     "noProvidersDescription": "右上の「プロバイダーを追加」を押して最初の API プロバイダーを登録してください",
     "currentlyUsing": "現在使用中",
@@ -1142,7 +1144,7 @@
     "add": "統合プロバイダーを追加",
     "edit": "統合プロバイダーを編集",
     "empty": "統合プロバイダーがありません",
-    "emptyHint": "上の追加ボタンをクリックして作成してください",
+    "emptyHint": "下の「統合プロバイダーを追加」ボタンをクリックして作成してください",
     "selectPreset": "プリセットタイプを選択",
     "name": "名前",
     "namePlaceholder": "例：私の NewAPI",
