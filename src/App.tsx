@@ -262,6 +262,21 @@ function App() {
     checkEnvOnSwitch();
   }, [activeApp]);
 
+  useEffect(() => {
+    const handleGlobalShortcut = (event: KeyboardEvent) => {
+      if (event.key !== "," || !(event.metaKey || event.ctrlKey)) {
+        return;
+      }
+      event.preventDefault();
+      setCurrentView("settings");
+    };
+
+    window.addEventListener("keydown", handleGlobalShortcut);
+    return () => {
+      window.removeEventListener("keydown", handleGlobalShortcut);
+    };
+  }, []);
+
   // 打开网站链接
   const handleOpenWebsite = async (url: string) => {
     try {
