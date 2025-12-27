@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
+import type { ConfigDirectorySet } from "@/types";
+import { generateConfigDirectorySetId } from "@/utils/id";
 import type { SettingsFormState } from "./useSettingsForm";
 
 type DirectoryKey = "appConfig" | "claude" | "codex" | "gemini";
@@ -60,12 +62,26 @@ export interface UseDirectorySettingsResult {
   resolvedDirs: ResolvedDirectories;
   isLoading: boolean;
   initialAppConfigDir?: string;
+  configDirectorySets: ConfigDirectorySet[];
   updateDirectory: (app: AppId, value?: string) => void;
   updateAppConfigDir: (value?: string) => void;
   browseDirectory: (app: AppId) => Promise<void>;
   browseAppConfigDir: () => Promise<void>;
   resetDirectory: (app: AppId) => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
+  addConfigDirectorySet: () => void;
+  removeConfigDirectorySet: (setId: string) => void;
+  updateConfigDirectorySet: (
+    setId: string,
+    updates: Partial<ConfigDirectorySet>,
+  ) => void;
+  updateConfigDirectorySetDirectory: (
+    setId: string,
+    app: AppId,
+    value?: string,
+  ) => void;
+  browseConfigDirectorySet: (setId: string, app: AppId) => Promise<void>;
+  resetConfigDirectorySet: (setId: string, app: AppId) => Promise<void>;
   resetAllDirectories: (
     claudeDir?: string,
     codexDir?: string,
@@ -106,6 +122,16 @@ export function useDirectorySettings({
     gemini: "",
   });
   const initialAppConfigDirRef = useRef<string | undefined>(undefined);
+  const getConfigSetName = useCallback(
+    (position: number) =>
+      position === 1
+        ? t("settings.configSetDefaultName", { defaultValue: "默认环境" })
+        : t("settings.configSetNameTemplate", {
+            index: position,
+            defaultValue: `配置组 ${position}`,
+          }),
+    [t],
+  );
 
   // 加载目录信息
   useEffect(() => {
@@ -305,17 +331,179 @@ export function useDirectorySettings({
     [],
   );
 
+  const addConfigDirectorySet = useCallback(() => {
+    const currentSets = settings?.configDirectorySets ?? [];
+
+    const nextSet: ConfigDirectorySet = {
+      id: generateConfigDirectorySetId(),
+      name: getConfigSetName(currentSets.length + 1),
+      claudeConfigDir: undefined,
+      codexConfigDir: undefined,
+      geminiConfigDir: undefined,
+    };
+
+    onUpdateSettings({
+      configDirectorySets: [...currentSets, nextSet],
+    });
+  }, [getConfigSetName, onUpdateSettings, settings?.configDirectorySets]);
+
+  const removeConfigDirectorySet = useCallback(
+    (setId: string) => {
+      const currentSets = settings?.configDirectorySets ?? [];
+      if (currentSets.length <= 1) return;
+
+      const filtered = currentSets.filter((set, index) => {
+        if (index === 0 && set.id === setId) {
+          return true;
+        }
+        return set.id !== setId;
+      });
+
+      if (filtered.length === currentSets.length) return;
+
+      onUpdateSettings({ configDirectorySets: filtered });
+    },
+    [onUpdateSettings, settings?.configDirectorySets],
+  );
+
+  const updateConfigDirectorySet = useCallback(
+    (setId: string, updates: Partial<ConfigDirectorySet>) => {
+      const currentSets = settings?.configDirectorySets ?? [];
+      if (!currentSets.length) return;
+
+      const trimmedName =
+        typeof updates.name === "string"
+          ? updates.name.trim().slice(0, 60)
+          : undefined;
+
+      const nextSets = currentSets.map((set, index) => {
+        if (set.id !== setId) return set;
+        const fallbackName = getConfigSetName(index + 1);
+
+        return {
+          ...set,
+          ...(trimmedName !== undefined
+            ? { name: trimmedName.length > 0 ? trimmedName : fallbackName }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(updates, "claudeConfigDir")
+            ? { claudeConfigDir: sanitizeDir(updates.claudeConfigDir) }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(updates, "codexConfigDir")
+            ? { codexConfigDir: sanitizeDir(updates.codexConfigDir) }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(updates, "geminiConfigDir")
+            ? { geminiConfigDir: sanitizeDir(updates.geminiConfigDir) }
+            : {}),
+        };
+      });
+
+      onUpdateSettings({ configDirectorySets: nextSets });
+    },
+    [getConfigSetName, onUpdateSettings, settings?.configDirectorySets],
+  );
+
+  const updateConfigDirectorySetDirectory = useCallback(
+    (setId: string, app: AppId, value?: string) => {
+      const primaryId = settings?.configDirectorySets?.[0]?.id;
+      if (primaryId && setId === primaryId) {
+        updateDirectory(app, value);
+        return;
+      }
+      const key =
+        app === "claude"
+          ? "claudeConfigDir"
+          : app === "codex"
+            ? "codexConfigDir"
+            : "geminiConfigDir";
+      updateConfigDirectorySet(setId, { [key]: value } as Partial<
+        ConfigDirectorySet
+      >);
+    },
+    [settings?.configDirectorySets, updateConfigDirectorySet, updateDirectory],
+  );
+
+  const browseConfigDirectorySet = useCallback(
+    async (setId: string, app: AppId) => {
+      const primaryId = settings?.configDirectorySets?.[0]?.id;
+      if (primaryId && setId === primaryId) {
+        await browseDirectory(app);
+        return;
+      }
+
+      const key =
+        app === "claude"
+          ? "claudeConfigDir"
+          : app === "codex"
+            ? "codexConfigDir"
+            : "geminiConfigDir";
+      const currentSets = settings?.configDirectorySets ?? [];
+      const target = currentSets.find((set) => set.id === setId);
+      const currentValue = target?.[key];
+
+      try {
+        const picked = await settingsApi.selectConfigDirectory(currentValue);
+        const sanitized = sanitizeDir(picked ?? undefined);
+        if (!sanitized) return;
+        updateConfigDirectorySet(setId, { [key]: sanitized } as Partial<
+          ConfigDirectorySet
+        >);
+      } catch (error) {
+        console.error("[useDirectorySettings] Failed to pick directory", error);
+        toast.error(
+          t("settings.selectFileFailed", {
+            defaultValue: "选择目录失败",
+          }),
+        );
+      }
+    },
+    [
+      browseDirectory,
+      settings?.configDirectorySets,
+      t,
+      updateConfigDirectorySet,
+    ],
+  );
+
+  const resetConfigDirectorySet = useCallback(
+    async (setId: string, app: AppId) => {
+      const primaryId = settings?.configDirectorySets?.[0]?.id;
+      if (primaryId && setId === primaryId) {
+        await resetDirectory(app);
+        return;
+      }
+      const key =
+        app === "claude"
+          ? "claudeConfigDir"
+          : app === "codex"
+            ? "codexConfigDir"
+            : "geminiConfigDir";
+      updateConfigDirectorySet(setId, { [key]: undefined } as Partial<
+        ConfigDirectorySet
+      >);
+    },
+    [resetDirectory, settings?.configDirectorySets, updateConfigDirectorySet],
+  );
+
+  const configDirectorySets = settings?.configDirectorySets ?? [];
+
   return {
     appConfigDir,
     resolvedDirs,
     isLoading,
     initialAppConfigDir: initialAppConfigDirRef.current,
+    configDirectorySets,
     updateDirectory,
     updateAppConfigDir,
     browseDirectory,
     browseAppConfigDir,
     resetDirectory,
     resetAppConfigDir,
+    addConfigDirectorySet,
+    removeConfigDirectorySet,
+    updateConfigDirectorySet,
+    updateConfigDirectorySetDirectory,
+    browseConfigDirectorySet,
+    resetConfigDirectorySet,
     resetAllDirectories,
   };
 }
