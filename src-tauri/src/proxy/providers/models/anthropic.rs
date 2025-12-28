@@ -2,33 +2,10 @@
 //!
 //! 用于 Anthropic Messages API 的请求/响应格式转换
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-/// Anthropic 请求
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AnthropicRequest {
-    pub model: String,
-    pub messages: Vec<AnthropicMessage>,
-    pub max_tokens: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system: Option<Value>, // 可以是 String 或 Vec<SystemBlock>
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stream: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<AnthropicTool>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<Value>,
-}
-
-/// Anthropic 消息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AnthropicMessage {
-    pub role: String,
-    pub content: Value, // String 或 Vec<ContentBlock>
-}
 
 /// Anthropic 内容块
 #[derive(Debug, Clone, Serialize, Deserialize)]
