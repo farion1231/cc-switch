@@ -118,8 +118,13 @@ export function EditProviderDialog({
     };
   }, [
     provider?.id, // 只依赖 ID，provider 对象更新不会触发重新计算
+    provider?.name,
+    provider?.notes,
+    provider?.websiteUrl,
+    provider?.category,
+    provider?.icon,
+    provider?.iconColor,
     initialSettingsConfig,
-    // 注意：不依赖 provider 的其他字段，防止表单重置
   ]);
 
   const handleSubmit = useCallback(

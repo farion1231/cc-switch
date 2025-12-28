@@ -60,14 +60,41 @@ pub async fn get_auto_launch_status() -> Result<bool, String> {
     crate::auto_launch::is_auto_launch_enabled().map_err(|e| format!("获取开机自启状态失败: {e}"))
 }
 
-/// 读取 Droid settings.json
+/// 读取 Droid settings.json (运行时配置)
 #[tauri::command]
 pub async fn get_droid_settings() -> Result<serde_json::Value, String> {
     crate::droid_config::read_droid_settings().map_err(|e| e.to_string())
 }
 
-/// 获取 Droid 配置状态
+/// 获取 Droid 配置状态 (检查 config.json)
 #[tauri::command]
 pub async fn get_droid_config_status() -> Result<crate::config::ConfigStatus, String> {
     Ok(crate::droid_config::get_droid_config_status())
+}
+
+/// 读取 Droid config.json (主配置文件)
+#[tauri::command]
+pub async fn get_droid_config() -> Result<serde_json::Value, String> {
+    crate::droid_config::read_droid_config().map_err(|e| e.to_string())
+}
+
+/// 写入 Droid config.json (主配置文件)
+#[tauri::command]
+pub async fn set_droid_config(config: serde_json::Value) -> Result<bool, String> {
+    crate::droid_config::write_droid_config(&config).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// 清理 Droid settings.json 以让新配置生效
+/// 删除 customModels 空列表和 sessionDefaultSettings.model
+#[tauri::command]
+pub async fn cleanup_droid_settings() -> Result<bool, String> {
+    crate::droid_config::cleanup_settings_for_new_config().map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// 获取 Droid config.json 路径
+#[tauri::command]
+pub async fn get_droid_config_path() -> Result<String, String> {
+    Ok(crate::droid_config::get_droid_config_path().to_string_lossy().to_string())
 }

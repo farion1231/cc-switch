@@ -24,6 +24,7 @@ pub use live::{import_default_config, read_live_settings, sync_current_to_live};
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::write_live_snapshot;
+pub(crate) use live::remove_droid_custom_model;
 
 // Internal re-exports
 use live::write_gemini_live;
@@ -175,6 +176,7 @@ impl ProviderService {
     /// Delete a provider
     ///
     /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
+    /// 对于 Droid，还会同步删除 config.json 中对应的 custom_model。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         // Check both local settings and database
         let local_current = crate::settings::get_current_provider(&app_type);
@@ -184,6 +186,17 @@ impl ProviderService {
             return Err(AppError::Message(
                 "无法删除当前正在使用的供应商".to_string(),
             ));
+        }
+
+        // 对于 Droid，先获取供应商名称，然后从 config.json 中删除对应的 custom_model
+        if matches!(app_type, AppType::Droid) {
+            if let Ok(providers) = state.db.get_all_providers(app_type.as_str()) {
+                if let Some(provider) = providers.get(id) {
+                    if let Err(e) = remove_droid_custom_model(&provider.name) {
+                        log::warn!("从 Droid config.json 删除 custom_model 失败: {}", e);
+                    }
+                }
+            }
         }
 
         state.db.delete_provider(app_type.as_str(), id)

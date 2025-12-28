@@ -653,6 +653,10 @@ pub fn run() {
             // Droid config
             commands::get_droid_settings,
             commands::get_droid_config_status,
+            commands::get_droid_config,
+            commands::set_droid_config,
+            commands::cleanup_droid_settings,
+            commands::get_droid_config_path,
             // Proxy server management
             commands::start_proxy_server,
             commands::stop_proxy_with_restore,

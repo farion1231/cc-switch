@@ -27,6 +27,7 @@ import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
 import GeminiConfigEditor from "./GeminiConfigEditor";
+import { DroidConfigEditor } from "./DroidConfigEditor";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
@@ -477,10 +478,12 @@ export function ProviderForm({
   useEffect(() => {
     if (appId !== "droid") return;
     
-    if (initialData?.settingsConfig) {
-      const config = initialData.settingsConfig as any;
-      setDroidApiKey(config.apiKey || "");
-      setDroidBaseUrl(config.baseUrl || "");
+    const config = initialData?.settingsConfig as any;
+    if (config) {
+      console.log("[Droid] initialData.settingsConfig:", config);
+      // 支持 camelCase 和 snake_case 两种格式
+      setDroidApiKey(config.apiKey || config.api_key || "");
+      setDroidBaseUrl(config.baseUrl || config.base_url || "");
       setDroidModel(config.model || "");
       setDroidProvider(config.provider || "anthropic");
     } else {
@@ -490,7 +493,7 @@ export function ProviderForm({
       setDroidModel("");
       setDroidProvider("anthropic");
     }
-  }, [appId, initialData]);
+  }, [appId, initialData?.settingsConfig]);
 
   // 同步 Droid 字段到 settingsConfig
   useEffect(() => {
@@ -1051,19 +1054,21 @@ export function ProviderForm({
             />
           </>
         ) : appId === "droid" ? (
-          // Droid 使用 CommonConfigEditor（与 Claude 相同）
+          // Droid 使用专门的配置编辑器，显示 snake_case 格式
           <>
-            <CommonConfigEditor
-              value={form.watch("settingsConfig")}
-              onChange={(value) => form.setValue("settingsConfig", value)}
-              useCommonConfig={useCommonConfig}
-              onCommonConfigToggle={handleCommonConfigToggle}
-              commonConfigSnippet={commonConfigSnippet}
-              onCommonConfigSnippetChange={handleCommonConfigSnippetChange}
-              commonConfigError={commonConfigError}
-              onEditClick={() => setIsCommonConfigModalOpen(true)}
-              isModalOpen={isCommonConfigModalOpen}
-              onModalClose={() => setIsCommonConfigModalOpen(false)}
+            <DroidConfigEditor
+              apiKey={droidApiKey}
+              baseUrl={droidBaseUrl}
+              model={droidModel}
+              provider={droidProvider}
+              providerName={form.watch("name") || ""}
+              maxOutputTokens={131072}
+              onConfigChange={(config) => {
+                setDroidApiKey(config.apiKey);
+                setDroidBaseUrl(config.baseUrl);
+                setDroidModel(config.model);
+                setDroidProvider(config.provider);
+              }}
             />
             {/* 配置验证错误显示 */}
             <FormField
