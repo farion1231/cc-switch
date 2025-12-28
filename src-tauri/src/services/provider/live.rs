@@ -483,6 +483,9 @@ pub(crate) fn write_droid_live(provider: &Provider) -> Result<(), AppError> {
         .unwrap_or("")
         .to_string();
 
+    // 用于保存最终的模型 id
+    let final_model_id: String;
+
     // 检查是否已存在同名模型 (通过 displayName 匹配)
     let existing_index = custom_models.iter().position(|m| {
         m.get("displayName").and_then(|v| v.as_str()) == Some(&display_name)
@@ -495,15 +498,34 @@ pub(crate) fn write_droid_live(provider: &Provider) -> Result<(), AppError> {
         
         let mut updated_model = custom_model;
         updated_model["index"] = json!(old_index);
-        if let Some(id) = old_id {
+        if let Some(id) = &old_id {
             updated_model["id"] = json!(id);
+            final_model_id = id.clone();
+        } else {
+            final_model_id = updated_model.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
         }
         
         custom_models[idx] = updated_model;
         log::info!("更新 Droid 自定义模型: {}", display_name);
     } else {
+        final_model_id = custom_model.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
         custom_models.push(custom_model);
         log::info!("添加 Droid 自定义模型: {}", display_name);
+    }
+
+    // 重新获取 settings_obj 的可变引用（因为之前的借用已结束）
+    let settings_obj = settings.as_object_mut().unwrap();
+
+    // 更新 sessionDefaultSettings.model 为当前模型的 id
+    if !final_model_id.is_empty() {
+        let session_settings = settings_obj
+            .entry("sessionDefaultSettings")
+            .or_insert_with(|| json!({}));
+        
+        if let Some(session_obj) = session_settings.as_object_mut() {
+            session_obj.insert("model".to_string(), json!(final_model_id.clone()));
+            log::info!("设置 sessionDefaultSettings.model = {}", final_model_id);
+        }
     }
 
     // 写入 settings.json

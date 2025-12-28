@@ -1,15 +1,22 @@
 // Droid 配置文件模块
 //
-// Droid 配置机制说明：
-// - 主配置文件: ~/.factory/config.json (用户编辑此文件)
-// - 运行时配置: ~/.factory/settings.json (重启后从 config.json 同步)
-// - config.json 支持多行格式
+// Droid 配置机制说明（热更新方式）：
+// - 直接写入 settings.json 的 customModels 数组
+// - 重启 Droid 后立即生效
+// - 每个模型需要唯一的 id 和 index
 //
-// 让配置生效的步骤：
-// 1. 编辑 config.json 添加自定义模型
-// 2. 在 settings.json 中删除 "customModels": [] 里的空列表
-// 3. 删除 "sessionDefaultSettings": {"model": "..."} 中的 model key
-// 4. 重启 Droid
+// customModels 格式 (camelCase):
+// {
+//   "model": "sonnet-4-5",
+//   "id": "custom:provider-name-0",
+//   "index": 0,
+//   "baseUrl": "https://api.example.com",
+//   "apiKey": "your-api-key",
+//   "displayName": "Provider Name",
+//   "maxOutputTokens": 131072,
+//   "noImageSupport": false,
+//   "provider": "anthropic"
+// }
 use std::path::PathBuf;
 use crate::config::{read_json_file, write_json_file};
 use crate::error::AppError;
