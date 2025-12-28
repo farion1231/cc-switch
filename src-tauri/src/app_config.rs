@@ -13,6 +13,8 @@ pub struct McpApps {
     pub codex: bool,
     #[serde(default)]
     pub gemini: bool,
+    #[serde(default)]
+    pub droid: bool,
 }
 
 impl McpApps {
@@ -22,6 +24,7 @@ impl McpApps {
             AppType::Claude => self.claude,
             AppType::Codex => self.codex,
             AppType::Gemini => self.gemini,
+            AppType::Droid => self.droid,
         }
     }
 
@@ -31,6 +34,7 @@ impl McpApps {
             AppType::Claude => self.claude = enabled,
             AppType::Codex => self.codex = enabled,
             AppType::Gemini => self.gemini = enabled,
+            AppType::Droid => self.droid = enabled,
         }
     }
 
@@ -45,6 +49,9 @@ impl McpApps {
         }
         if self.gemini {
             apps.push(AppType::Gemini);
+        }
+        if self.droid {
+            apps.push(AppType::Droid);
         }
         apps
     }
@@ -101,6 +108,8 @@ pub struct McpRoot {
     pub codex: McpConfig,
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub gemini: McpConfig,
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub droid: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -112,6 +121,7 @@ impl Default for McpRoot {
             claude: McpConfig::default(),
             codex: McpConfig::default(),
             gemini: McpConfig::default(),
+            droid: McpConfig::default(),
         }
     }
 }
@@ -132,6 +142,8 @@ pub struct PromptRoot {
     pub codex: PromptConfig,
     #[serde(default)]
     pub gemini: PromptConfig,
+    #[serde(default)]
+    pub droid: PromptConfig,
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
@@ -169,10 +181,11 @@ impl FromStr for AppType {
             "claude" => Ok(AppType::Claude),
             "codex" => Ok(AppType::Codex),
             "gemini" => Ok(AppType::Gemini), // 新增
+            "droid" => Ok(AppType::Droid),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, droid。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, droid."),
             )),
         }
     }
@@ -189,6 +202,9 @@ pub struct CommonConfigSnippets {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub droid: Option<String>,
 }
 
 impl CommonConfigSnippets {
@@ -198,6 +214,7 @@ impl CommonConfigSnippets {
             AppType::Claude => self.claude.as_ref(),
             AppType::Codex => self.codex.as_ref(),
             AppType::Gemini => self.gemini.as_ref(),
+            AppType::Droid => self.droid.as_ref(),
         }
     }
 
@@ -207,6 +224,7 @@ impl CommonConfigSnippets {
             AppType::Claude => self.claude = snippet,
             AppType::Codex => self.codex = snippet,
             AppType::Gemini => self.gemini = snippet,
+            AppType::Droid => self.droid = snippet,
         }
     }
 }
@@ -404,6 +422,7 @@ impl MultiAppConfig {
             AppType::Claude => &self.mcp.claude,
             AppType::Codex => &self.mcp.codex,
             AppType::Gemini => &self.mcp.gemini,
+            AppType::Droid => &self.mcp.droid,
         }
     }
 
@@ -413,6 +432,7 @@ impl MultiAppConfig {
             AppType::Claude => &mut self.mcp.claude,
             AppType::Codex => &mut self.mcp.codex,
             AppType::Gemini => &mut self.mcp.gemini,
+            AppType::Droid => &mut self.mcp.droid,
         }
     }
 
@@ -521,6 +541,7 @@ impl MultiAppConfig {
             AppType::Claude => &mut config.prompts.claude.prompts,
             AppType::Codex => &mut config.prompts.codex.prompts,
             AppType::Gemini => &mut config.prompts.gemini.prompts,
+            AppType::Droid => &mut config.prompts.droid.prompts,
         };
 
         prompts.insert(id, prompt);
@@ -549,11 +570,12 @@ impl MultiAppConfig {
         let mut conflicts = Vec::new();
 
         // 收集所有应用的 MCP
-        for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app in [AppType::Claude, AppType::Codex, AppType::Gemini, AppType::Droid] {
             let old_servers = match app {
                 AppType::Claude => &self.mcp.claude.servers,
                 AppType::Codex => &self.mcp.codex.servers,
                 AppType::Gemini => &self.mcp.gemini.servers,
+                AppType::Droid => &self.mcp.droid.servers,
             };
 
             for (id, entry) in old_servers {

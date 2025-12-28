@@ -35,6 +35,7 @@ pub fn read_droid_settings() -> Result<serde_json::Value, AppError> {
 }
 
 /// 写入 Droid settings.json
+#[allow(dead_code)]
 pub fn write_droid_settings(settings: &serde_json::Value) -> Result<(), AppError> {
     let path = get_droid_settings_path();
     write_json_file(&path, settings)

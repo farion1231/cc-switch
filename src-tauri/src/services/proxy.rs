@@ -314,6 +314,10 @@ impl ProxyService {
             AppType::Claude => self.read_claude_live()?,
             AppType::Codex => self.read_codex_live()?,
             AppType::Gemini => self.read_gemini_live()?,
+            AppType::Droid => {
+                // Droid 暂不支持 live config 同步
+                return Ok(());
+            }
         };
 
         self.sync_live_config_to_provider(app_type, &live_config)
@@ -491,6 +495,10 @@ impl ProxyService {
                         }
                     }
                 }
+            }
+            AppType::Droid => {
+                // Droid 暂不支持 live config 同步到数据库
+                log::debug!("Droid 暂不支持 live config 同步，跳过");
             }
         }
 
@@ -670,6 +678,10 @@ impl ProxyService {
             AppType::Claude => ("claude", self.read_claude_live()?),
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
+            AppType::Droid => {
+                // Droid 暂不支持 backup
+                return Ok(());
+            }
         };
 
         let json_str = serde_json::to_string(&config)
@@ -870,6 +882,10 @@ impl ProxyService {
                 self.write_gemini_live(&live_config)?;
                 log::info!("Gemini Live 配置已接管，代理地址: {proxy_url}");
             }
+            AppType::Droid => {
+                // Droid 暂不支持 Live 配置接管
+                log::info!("Droid 暂不支持 Live 配置接管");
+            }
         }
 
         Ok(())
@@ -949,6 +965,10 @@ impl ProxyService {
                     let _ = self.write_gemini_live(&live_config);
                 }
             }
+            AppType::Droid => {
+                // Droid 暂不支持 Live 配置接管
+                log::debug!("Droid 暂不支持 Live 配置接管");
+            }
         }
 
         Ok(())
@@ -980,6 +1000,10 @@ impl ProxyService {
                     self.write_gemini_live(&config)?;
                     log::info!("Gemini Live 配置已恢复");
                 }
+            }
+            AppType::Droid => {
+                // Droid 暂不支持 Live 配置恢复
+                log::debug!("Droid 暂不支持 Live 配置恢复");
             }
         }
 
@@ -1060,6 +1084,10 @@ impl ProxyService {
             AppType::Claude => self.write_claude_live(config),
             AppType::Codex => self.write_codex_live(config),
             AppType::Gemini => self.write_gemini_live(config),
+            AppType::Droid => {
+                // Droid 暂不支持 live config 写入
+                Ok(())
+            }
         }
     }
 
@@ -1077,6 +1105,7 @@ impl ProxyService {
                 Ok(config) => Self::is_gemini_live_taken_over(&config),
                 Err(_) => false,
             },
+            AppType::Droid => false,
         }
     }
 
@@ -1116,6 +1145,10 @@ impl ProxyService {
             AppType::Claude => self.cleanup_claude_takeover_placeholders_in_live(),
             AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
+            AppType::Droid => {
+                // Droid 暂不支持 cleanup
+                Ok(())
+            }
         }
     }
 

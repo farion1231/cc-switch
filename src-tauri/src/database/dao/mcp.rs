@@ -44,6 +44,7 @@ impl Database {
                             claude: enabled_claude,
                             codex: enabled_codex,
                             gemini: enabled_gemini,
+                            droid: false,
                         },
                         description,
                         homepage,

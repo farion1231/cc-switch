@@ -12,12 +12,25 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
         AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
         AppType::Gemini => get_gemini_dir(),
+        AppType::Droid => {
+            // Droid 使用 .factory 目录
+            dirs::home_dir()
+                .map(|h| h.join(".factory"))
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "home_dir_not_found",
+                        "无法确定 .factory 配置目录：用户主目录不存在",
+                        "Cannot determine .factory config directory: user home not found",
+                    )
+                })?
+        }
     };
 
     let filename = match app {
         AppType::Claude => "CLAUDE.md",
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
+        AppType::Droid => "AGENTS.md",
     };
 
     Ok(base_dir.join(filename))

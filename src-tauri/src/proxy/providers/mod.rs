@@ -132,6 +132,10 @@ impl ProviderType {
                 }
                 ProviderType::Gemini
             }
+            AppType::Droid => {
+                // Droid 使用与 Gemini 相同的适配器
+                ProviderType::Gemini
+            }
         }
     }
 
@@ -176,6 +180,7 @@ pub fn get_adapter(app_type: &AppType) -> Box<dyn ProviderAdapter> {
         AppType::Claude => Box::new(ClaudeAdapter::new()),
         AppType::Codex => Box::new(CodexAdapter::new()),
         AppType::Gemini => Box::new(GeminiAdapter::new()),
+        AppType::Droid => Box::new(GeminiAdapter::new()), // Droid 使用 Gemini 适配器
     }
 }
 

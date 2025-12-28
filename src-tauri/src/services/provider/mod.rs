@@ -469,6 +469,10 @@ impl ProviderService {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
             }
+            AppType::Droid => {
+                // Droid 暂不支持配置验证
+                log::warn!("Droid 暂不支持配置验证");
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -603,6 +607,47 @@ impl ProviderService {
                     .get("GOOGLE_GEMINI_BASE_URL")
                     .cloned()
                     .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string());
+
+                Ok((api_key, base_url))
+            }
+            AppType::Droid => {
+                // Droid 使用与 Claude 相同的配置格式
+                let env = provider
+                    .settings_config
+                    .get("env")
+                    .and_then(|v| v.as_object())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.droid.env.missing",
+                            "配置格式错误: 缺少 env",
+                            "Invalid configuration: missing env section",
+                        )
+                    })?;
+
+                let api_key = env
+                    .get("ANTHROPIC_AUTH_TOKEN")
+                    .or_else(|| env.get("ANTHROPIC_API_KEY"))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.droid.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = env
+                    .get("ANTHROPIC_BASE_URL")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.droid.base_url.missing",
+                            "缺少 ANTHROPIC_BASE_URL 配置",
+                            "Missing ANTHROPIC_BASE_URL configuration",
+                        )
+                    })?
+                    .to_string();
 
                 Ok((api_key, base_url))
             }

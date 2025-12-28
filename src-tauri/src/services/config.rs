@@ -122,6 +122,10 @@ impl ConfigService {
             AppType::Codex => Self::sync_codex_live(config, &current_id, &provider)?,
             AppType::Claude => Self::sync_claude_live(config, &current_id, &provider)?,
             AppType::Gemini => Self::sync_gemini_live(config, &current_id, &provider)?,
+            AppType::Droid => {
+                // Droid 暂不支持 live config 同步
+                log::info!("Droid 不支持 live config 同步，跳过");
+            }
         }
 
         Ok(())

@@ -120,6 +120,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             // Delegate to write_gemini_live which handles env file writing correctly
             write_gemini_live(provider)?;
         }
+        AppType::Droid => {
+            // Droid 暂不支持 Live 配置写入
+            log::warn!("Droid 暂不支持 Live 配置写入");
+        }
     }
     Ok(())
 }
@@ -211,6 +215,13 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                 "config": config_obj
             }))
         }
+        AppType::Droid => {
+            return Err(AppError::localized(
+                "droid.live.not_supported",
+                "Droid 暂不支持 Live 配置读取",
+                "Droid live configuration reading is not supported",
+            ));
+        }
     }
 }
 
@@ -285,6 +296,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "env": env_obj,
                 "config": config_obj
             })
+        }
+        AppType::Droid => {
+            return Err(AppError::localized(
+                "droid.live.not_supported",
+                "Droid 暂不支持 Live 配置读取",
+                "Droid live configuration reading is not supported",
+            ));
         }
     };
 

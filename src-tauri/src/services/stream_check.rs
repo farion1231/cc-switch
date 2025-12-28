@@ -154,6 +154,10 @@ impl StreamCheckService {
             AppType::Gemini => {
                 Self::check_gemini_stream(&client, &base_url, &auth, &model_to_test).await
             }
+            AppType::Droid => {
+                // Droid 使用与 Gemini 相同的流式检查
+                Self::check_gemini_stream(&client, &base_url, &auth, &model_to_test).await
+            }
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -396,6 +400,11 @@ impl StreamCheckService {
             }
             AppType::Gemini => Self::extract_env_model(provider, "GEMINI_MODEL")
                 .unwrap_or_else(|| config.gemini_model.clone()),
+            AppType::Droid => {
+                // Droid 使用与 Claude 相同的模型配置
+                Self::extract_env_model(provider, "ANTHROPIC_MODEL")
+                    .unwrap_or_else(|| config.claude_model.clone())
+            }
         }
     }
 

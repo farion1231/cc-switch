@@ -115,6 +115,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Claude => build_claude_settings(request),
         AppType::Codex => build_codex_settings(request),
         AppType::Gemini => build_gemini_settings(request),
+        AppType::Droid => build_gemini_settings(request), // Droid 使用与 Gemini 相同的设置
     };
 
     // Build usage script configuration if provided

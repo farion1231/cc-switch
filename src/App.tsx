@@ -74,17 +74,78 @@ function App() {
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
 
-  // 处理应用切换，当切换到 Droid 时读取配置
+  // 处理应用切换，当切换到 Droid 时读取配置并自动导入供应商
   const handleAppSwitch = async (app: AppId) => {
     if (app === "droid") {
       try {
         const settings = await droidApi.getSettings();
         console.log("Droid settings:", settings);
-        toast.success(
-          t("notifications.droidSettingsLoaded", {
-            defaultValue: "已读取 Droid 配置文件",
-          }),
-        );
+
+        // 解析 customModels 并转换为供应商
+        const customModels = (settings as any).customModels as Array<{
+          id: string;
+          displayName: string;
+          baseUrl: string;
+          apiKey: string;
+          model: string;
+          provider: string;
+          maxOutputTokens?: number;
+        }> | undefined;
+
+        if (customModels && customModels.length > 0) {
+          let importedCount = 0;
+          const existingProviders = await providersApi.getAll("droid");
+
+          for (const model of customModels) {
+            // 检查是否已存在同名供应商
+            const exists = Object.values(existingProviders).some(
+              (p) => p.name === model.displayName
+            );
+
+            if (!exists) {
+              const provider: Provider = {
+                id: crypto.randomUUID(),
+                name: model.displayName,
+                category: "custom",
+                settingsConfig: {
+                  baseUrl: model.baseUrl,
+                  apiKey: model.apiKey,
+                  model: model.model,
+                  provider: model.provider,
+                  maxOutputTokens: model.maxOutputTokens,
+                },
+                createdAt: Date.now(),
+                sortIndex: importedCount,
+              };
+
+              await providersApi.add(provider, "droid");
+              importedCount++;
+            }
+          }
+
+          if (importedCount > 0) {
+            toast.success(
+              t("notifications.droidImportSuccess", {
+                defaultValue: `已从 Droid 配置导入 ${importedCount} 个供应商`,
+                count: importedCount,
+              }),
+            );
+            // 刷新供应商列表
+            await queryClient.invalidateQueries({ queryKey: ["providers", "droid"] });
+          } else {
+            toast.info(
+              t("notifications.droidNoNewProviders", {
+                defaultValue: "Droid 配置中没有新的供应商需要导入",
+              }),
+            );
+          }
+        } else {
+          toast.info(
+            t("notifications.droidNoCustomModels", {
+              defaultValue: "Droid 配置中没有 customModels",
+            }),
+          );
+        }
       } catch (error) {
         console.error("Failed to read Droid settings:", error);
         toast.error(
@@ -414,7 +475,7 @@ function App() {
             <SkillsPage
               ref={skillsPageRef}
               onClose={() => setCurrentView("providers")}
-              initialApp={activeApp}
+              initialApp={activeApp === "droid" ? "claude" : activeApp}
             />
           );
         case "mcp":

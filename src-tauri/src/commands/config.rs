@@ -38,6 +38,15 @@ pub async fn get_config_status(app: String) -> Result<ConfigStatus, String> {
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Droid => {
+            // Droid 配置状态
+            let path = crate::droid_config::get_droid_settings_path();
+            let exists = path.exists();
+            Ok(ConfigStatus {
+                exists,
+                path: path.to_string_lossy().to_string(),
+            })
+        }
     }
 }
 
@@ -54,6 +63,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::Claude => config::get_claude_config_dir(),
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
+        AppType::Droid => crate::droid_config::get_droid_config_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -66,6 +76,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::Claude => config::get_claude_config_dir(),
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
+        AppType::Droid => crate::droid_config::get_droid_config_dir(),
     };
 
     if !config_dir.exists() {

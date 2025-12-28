@@ -113,6 +113,10 @@ impl McpService {
             AppType::Gemini => {
                 mcp::sync_single_server_to_gemini(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::Droid => {
+                // Droid 暂不支持 MCP 同步
+                log::warn!("Droid 暂不支持 MCP 同步");
+            }
         }
         Ok(())
     }
@@ -135,6 +139,10 @@ impl McpService {
             AppType::Claude => mcp::remove_server_from_claude(id)?,
             AppType::Codex => mcp::remove_server_from_codex(id)?,
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
+            AppType::Droid => {
+                // Droid 暂不支持 MCP 移除
+                log::warn!("Droid 暂不支持 MCP 移除");
+            }
         }
         Ok(())
     }

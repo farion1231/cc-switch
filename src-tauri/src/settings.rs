@@ -60,6 +60,9 @@ pub struct AppSettings {
     /// 当前 Gemini 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_gemini: Option<String>,
+    /// 当前 Droid 供应商 ID（本地存储，优先于数据库 is_current）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_droid: Option<String>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -90,6 +93,7 @@ impl Default for AppSettings {
             current_provider_claude: None,
             current_provider_codex: None,
             current_provider_gemini: None,
+            current_provider_droid: None,
         }
     }
 }
@@ -260,6 +264,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Claude => settings.current_provider_claude.clone(),
         AppType::Codex => settings.current_provider_codex.clone(),
         AppType::Gemini => settings.current_provider_gemini.clone(),
+        AppType::Droid => settings.current_provider_droid.clone(),
     }
 }
 
@@ -274,6 +279,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Claude => settings.current_provider_claude = id.map(|s| s.to_string()),
         AppType::Codex => settings.current_provider_codex = id.map(|s| s.to_string()),
         AppType::Gemini => settings.current_provider_gemini = id.map(|s| s.to_string()),
+        AppType::Droid => settings.current_provider_droid = id.map(|s| s.to_string()),
     }
 
     update_settings(settings)

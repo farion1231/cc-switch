@@ -87,6 +87,7 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
                         claude: false,
                         codex: false,
                         gemini: true,
+                        droid: false,
                     },
                     description: None,
                     homepage: None,

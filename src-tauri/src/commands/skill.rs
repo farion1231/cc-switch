@@ -15,6 +15,7 @@ fn parse_app_type(app: &str) -> Result<AppType, String> {
         "claude" => Ok(AppType::Claude),
         "codex" => Ok(AppType::Codex),
         "gemini" => Ok(AppType::Gemini),
+        "droid" => Ok(AppType::Droid),
         _ => Err(format!("不支持的 app 类型: {app}")),
     }
 }
@@ -25,6 +26,7 @@ fn get_skill_key(app_type: &AppType, directory: &str) -> String {
         AppType::Claude => "claude",
         AppType::Codex => "codex",
         AppType::Gemini => "gemini",
+        AppType::Droid => "droid",
     };
     format!("{prefix}:{directory}")
 }

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use tokio::time::timeout;
 
 use crate::app_config::AppType;
-use crate::error::format_skill_error;
+use crate::error::{AppError, format_skill_error};
 
 /// 技能对象
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +152,15 @@ impl SkillService {
             AppType::Gemini => {
                 // 为 Gemini 预留，暂时使用默认路径
                 home.join(".gemini").join("skills")
+            }
+            AppType::Droid => {
+                // Droid 暂不支持 skills
+                return Err(AppError::localized(
+                    "skill.droid.not_supported",
+                    "Droid 暂不支持 Skills",
+                    "Skills are not supported for Droid",
+                )
+                .into());
             }
         };
 
