@@ -12,10 +12,11 @@ import {
   Book,
   Wrench,
   RefreshCw,
-  Search,
-  Download,
+  History,
   BarChart2,
+  Download,
   FolderArchive,
+  Search,
 } from "lucide-react";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -54,6 +55,7 @@ import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
+import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 
 type View =
   | "providers"
@@ -63,7 +65,8 @@ type View =
   | "skillsDiscovery"
   | "mcp"
   | "agents"
-  | "universal";
+  | "universal"
+  | "sessions";
 
 // macOS Overlay mode needs space for traffic light buttons, Windows/Linux use native titlebar
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
@@ -581,6 +584,9 @@ function App() {
               <UniversalProviderPanel />
             </div>
           );
+
+        case "sessions":
+          return <SessionManagerPage />;
         default:
           return (
             <div className="px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
@@ -734,6 +740,7 @@ function App() {
                     t("universalProvider.title", {
                       defaultValue: "统一供应商",
                     })}
+                  {currentView === "sessions" && t("sessionManager.title")}
                 </h1>
               </div>
             ) : (
@@ -947,6 +954,15 @@ function App() {
                     title={t("prompts.manage")}
                   >
                     <Book className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCurrentView("sessions")}
+                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                    title={t("sessionManager.title")}
+                  >
+                    <History className="w-4 h-4" />
                   </Button>
                   <Button
                     variant="ghost"

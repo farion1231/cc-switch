@@ -213,6 +213,24 @@ export interface Settings {
   preferredTerminal?: string;
 }
 
+export interface SessionMeta {
+  providerId: string;
+  sessionId: string;
+  title?: string;
+  summary?: string;
+  projectDir?: string | null;
+  createdAt?: number;
+  lastActiveAt?: number;
+  sourcePath?: string;
+  resumeCommand?: string;
+}
+
+export interface SessionMessage {
+  role: string;
+  content: string;
+  ts?: number;
+}
+
 // MCP 服务器连接参数（宽松：允许扩展字段）
 export interface McpServerSpec {
   // 可选：社区常见 .mcp.json 中 stdio 配置可不写 type
