@@ -580,7 +580,8 @@
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
-        "gemini": "Gemini"
+        "gemini": "Gemini",
+        "droid": "Droid"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",

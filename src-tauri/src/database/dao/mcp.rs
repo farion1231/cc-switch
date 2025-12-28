@@ -18,6 +18,9 @@ impl Database {
              ORDER BY name ASC, id ASC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 读取 Droid mcp.json 中已启用的服务器 ID 列表
+        let droid_enabled_ids = crate::mcp::get_enabled_server_ids();
+
         let server_iter = stmt
             .query_map([], |row| {
                 let id: String = row.get(0)?;
@@ -34,6 +37,9 @@ impl Database {
                 let server = serde_json::from_str(&server_config_str).unwrap_or_default();
                 let tags = serde_json::from_str(&tags_str).unwrap_or_default();
 
+                // Droid 启用状态从 mcp.json 文件读取
+                let enabled_droid = droid_enabled_ids.contains(&id);
+
                 Ok((
                     id.clone(),
                     McpServer {
@@ -44,7 +50,7 @@ impl Database {
                             claude: enabled_claude,
                             codex: enabled_codex,
                             gemini: enabled_gemini,
-                            droid: false,
+                            droid: enabled_droid,
                         },
                         description,
                         homepage,

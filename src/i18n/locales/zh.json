@@ -580,7 +580,8 @@
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
-        "gemini": "Gemini"
+        "gemini": "Gemini",
+        "droid": "Droid"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",

@@ -8,9 +8,11 @@
 //! - `claude` - Claude MCP 同步和导入
 //! - `codex` - Codex MCP 同步和导入（含 TOML 转换）
 //! - `gemini` - Gemini MCP 同步和导入
+//! - `droid` - Droid MCP 同步和导入
 
 mod claude;
 mod codex;
+mod droid;
 mod gemini;
 mod validation;
 
@@ -22,6 +24,7 @@ pub use claude::{
 pub use codex::{
     import_from_codex, remove_server_from_codex, sync_enabled_to_codex, sync_single_server_to_codex,
 };
+pub use droid::{get_enabled_server_ids, remove_server_from_droid, sync_single_server_to_droid};
 pub use gemini::{
     import_from_gemini, remove_server_from_gemini, sync_enabled_to_gemini,
     sync_single_server_to_gemini,

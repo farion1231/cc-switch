@@ -153,6 +153,7 @@ export interface McpApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  droid: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
