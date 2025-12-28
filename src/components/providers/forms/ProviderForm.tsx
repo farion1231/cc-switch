@@ -4,12 +4,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { AppId } from "@/lib/api";
 import type { ProviderCategory, ProviderMeta } from "@/types";
-import JsonEditor from "@/components/JsonEditor";
 import {
   providerPresets,
   type ProviderPreset,
@@ -984,15 +982,16 @@ export function ProviderForm({
         {/* Droid 专属字段 */}
         {appId === "droid" && (
           <DroidFormFields
-            form={form}
+            shouldShowApiKey={category !== "official"}
             apiKey={droidApiKey}
-            setApiKey={setDroidApiKey}
+            onApiKeyChange={setDroidApiKey}
+            category={category}
             baseUrl={droidBaseUrl}
-            setBaseUrl={setDroidBaseUrl}
+            onBaseUrlChange={setDroidBaseUrl}
             model={droidModel}
-            setModel={setDroidModel}
+            onModelChange={setDroidModel}
             provider={droidProvider}
-            setProvider={setDroidProvider}
+            onProviderChange={setDroidProvider}
           />
         )}
 
@@ -1052,16 +1051,20 @@ export function ProviderForm({
             />
           </>
         ) : appId === "droid" ? (
-          // Droid 使用简单的 JSON 编辑器
+          // Droid 使用 CommonConfigEditor（与 Claude 相同）
           <>
-            <div className="space-y-2">
-              <Label>{t("provider.configuration", { defaultValue: "配置" })}</Label>
-              <JsonEditor
-                value={form.watch("settingsConfig")}
-                onChange={(value) => form.setValue("settingsConfig", value)}
-                height="300px"
-              />
-            </div>
+            <CommonConfigEditor
+              value={form.watch("settingsConfig")}
+              onChange={(value) => form.setValue("settingsConfig", value)}
+              useCommonConfig={useCommonConfig}
+              onCommonConfigToggle={handleCommonConfigToggle}
+              commonConfigSnippet={commonConfigSnippet}
+              onCommonConfigSnippetChange={handleCommonConfigSnippetChange}
+              commonConfigError={commonConfigError}
+              onEditClick={() => setIsCommonConfigModalOpen(true)}
+              isModalOpen={isCommonConfigModalOpen}
+              onModalClose={() => setIsCommonConfigModalOpen(false)}
+            />
             {/* 配置验证错误显示 */}
             <FormField
               control={form.control}
