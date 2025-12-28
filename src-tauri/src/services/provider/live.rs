@@ -420,84 +420,104 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Write Droid live configuration to ~/.factory/config.json
+/// Write Droid live configuration directly to ~/.factory/settings.json
 ///
-/// Droid 配置机制：
-/// - 主配置文件: ~/.factory/config.json (用户编辑此文件)
-/// - 运行时配置: ~/.factory/settings.json (重启后从 config.json 同步)
-/// - config.json 支持多行格式
+/// 新的配置机制（热更新）：
+/// - 直接写入 settings.json 的 customModels 数组
+/// - 重启 Droid 后立即生效，无需修改 config.json
+/// - 每个模型需要唯一的 id 和 index
 ///
-/// 让配置生效的步骤：
-/// 1. 编辑 config.json 添加自定义模型到 custom_models 数组
-/// 2. 在 settings.json 中删除 "customModels": [] 里的空列表
-/// 3. 删除 "sessionDefaultSettings": {"model": "..."} 中的 model key
-/// 4. 重启 Droid
+/// customModels 格式 (camelCase):
+/// {
+///   "model": "sonnet-4-5",
+///   "id": "custom:provider-name-0",
+///   "index": 0,
+///   "baseUrl": "https://api.example.com",
+///   "apiKey": "your-api-key",
+///   "displayName": "Provider Name",
+///   "maxOutputTokens": 131072,
+///   "noImageSupport": false,
+///   "provider": "anthropic"
+/// }
 pub(crate) fn write_droid_live(provider: &Provider) -> Result<(), AppError> {
     use crate::droid_config::{
-        cleanup_settings_for_new_config, get_droid_config_path, read_droid_config,
-        write_droid_config,
+        get_droid_settings_path, read_droid_settings, write_droid_settings,
     };
 
-    let config_path = get_droid_config_path();
+    let settings_path = get_droid_settings_path();
 
-    // 读取现有配置或创建新配置
-    let mut config = read_droid_config().unwrap_or_else(|_| json!({}));
+    // 读取现有 settings.json 或创建新配置
+    let mut settings = read_droid_settings().unwrap_or_else(|_| json!({}));
 
     // 从 provider.settings_config 提取 Droid 配置
-    let settings = &provider.settings_config;
+    let provider_settings = &provider.settings_config;
 
-    // 构建 custom_model 对象
-    let custom_model = build_droid_custom_model(settings, &provider.name)?;
-
-    // 获取或创建 custom_models 数组 (注意是 snake_case)
-    let config_obj = config.as_object_mut().ok_or_else(|| {
-        AppError::Config("Droid config.json 必须是 JSON 对象".to_string())
+    // 获取或创建 customModels 数组 (camelCase)
+    let settings_obj = settings.as_object_mut().ok_or_else(|| {
+        AppError::Config("Droid settings.json 必须是 JSON 对象".to_string())
     })?;
 
-    let custom_models = config_obj
-        .entry("custom_models")
+    let custom_models = settings_obj
+        .entry("customModels")
         .or_insert_with(|| json!([]))
         .as_array_mut()
         .ok_or_else(|| {
-            AppError::Config("Droid config.json 的 custom_models 必须是数组".to_string())
+            AppError::Config("Droid settings.json 的 customModels 必须是数组".to_string())
         })?;
 
-    // 检查是否已存在同名模型 (通过 model_display_name 匹配)
-    let model_display_name = custom_model
-        .get("model_display_name")
+    // 计算下一个可用的 index
+    let next_index = custom_models
+        .iter()
+        .filter_map(|m| m.get("index").and_then(|v| v.as_i64()))
+        .max()
+        .map(|max| max + 1)
+        .unwrap_or(0) as i64;
+
+    // 构建 custom_model 对象 (camelCase 格式)
+    let custom_model = build_droid_settings_model(provider_settings, &provider.name, next_index)?;
+
+    // 获取新模型的 displayName 用于匹配
+    let display_name = custom_model
+        .get("displayName")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
 
+    // 检查是否已存在同名模型 (通过 displayName 匹配)
     let existing_index = custom_models.iter().position(|m| {
-        m.get("model_display_name").and_then(|v| v.as_str()) == Some(&model_display_name)
+        m.get("displayName").and_then(|v| v.as_str()) == Some(&display_name)
     });
 
-    if let Some(index) = existing_index {
-        custom_models[index] = custom_model;
-        log::info!("更新 Droid 自定义模型: {}", model_display_name);
+    if let Some(idx) = existing_index {
+        // 保留原有的 index 和 id
+        let old_index = custom_models[idx].get("index").and_then(|v| v.as_i64()).unwrap_or(idx as i64);
+        let old_id = custom_models[idx].get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+        
+        let mut updated_model = custom_model;
+        updated_model["index"] = json!(old_index);
+        if let Some(id) = old_id {
+            updated_model["id"] = json!(id);
+        }
+        
+        custom_models[idx] = updated_model;
+        log::info!("更新 Droid 自定义模型: {}", display_name);
     } else {
         custom_models.push(custom_model);
-        log::info!("添加 Droid 自定义模型: {}", model_display_name);
+        log::info!("添加 Droid 自定义模型: {}", display_name);
     }
 
-    // 写入 config.json
-    write_droid_config(&config)?;
-    log::info!("已写入 Droid config.json: {}", config_path.display());
-
-    // 清理 settings.json 以让新配置生效
-    if let Err(e) = cleanup_settings_for_new_config() {
-        log::warn!("清理 Droid settings.json 失败: {}", e);
-    }
+    // 写入 settings.json
+    write_droid_settings(&settings)?;
+    log::info!("已写入 Droid settings.json: {}", settings_path.display());
 
     Ok(())
 }
 
-/// 从 provider settings 构建 Droid custom_model 对象
-/// 使用 Droid 期望的 snake_case 字段名
+/// 从 provider settings 构建 Droid settings.json 的 customModels 对象
+/// 使用 camelCase 字段名（settings.json 格式）
 /// 支持 camelCase 和 snake_case 两种输入格式
-fn build_droid_custom_model(settings: &Value, provider_name: &str) -> Result<Value, AppError> {
-    log::debug!("build_droid_custom_model: settings = {:?}", settings);
+fn build_droid_settings_model(settings: &Value, provider_name: &str, index: i64) -> Result<Value, AppError> {
+    log::debug!("build_droid_settings_model: settings = {:?}", settings);
     
     let obj = settings.as_object().ok_or_else(|| {
         AppError::Config("Droid 供应商配置必须是 JSON 对象".to_string())
@@ -531,52 +551,68 @@ fn build_droid_custom_model(settings: &Value, provider_name: &str) -> Result<Val
         .or_else(|| obj.get("max_tokens"))
         .and_then(|v| v.as_i64())
         .unwrap_or(131072);
+
+    let no_image_support = obj
+        .get("noImageSupport")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     
-    log::debug!("build_droid_custom_model: api_key={}, base_url={}, model={}", 
+    log::debug!("build_droid_settings_model: api_key={}, base_url={}, model={}", 
         if api_key.is_empty() { "(empty)" } else { "***" }, 
         base_url, 
         model
     );
 
-    // 构建 custom_model 对象 (使用 Droid 期望的 snake_case 格式)
+    // 生成唯一的 id: "custom:{displayName}-{index}"
+    // 清理 displayName 中的特殊字符
+    let clean_name = provider_name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect::<String>();
+    let id = format!("custom:{}-{}", clean_name, index);
+
+    // 构建 customModel 对象 (使用 settings.json 的 camelCase 格式)
     Ok(json!({
-        "api_key": api_key,
-        "base_url": base_url,
         "model": model,
-        "model_display_name": provider_name,
-        "provider": provider_type,
-        "max_tokens": max_tokens
+        "id": id,
+        "index": index,
+        "baseUrl": base_url,
+        "apiKey": api_key,
+        "displayName": provider_name,
+        "maxOutputTokens": max_tokens,
+        "noImageSupport": no_image_support,
+        "provider": provider_type
     }))
 }
 
-/// 从 Droid config.json 中删除指定的 custom_model
-/// 通过 model_display_name 匹配
+/// 从 Droid settings.json 中删除指定的 customModel
+/// 通过 displayName 匹配
 pub(crate) fn remove_droid_custom_model(provider_name: &str) -> Result<(), AppError> {
-    use crate::droid_config::{read_droid_config, write_droid_config};
+    use crate::droid_config::{read_droid_settings, write_droid_settings};
 
-    let mut config = read_droid_config()?;
+    let mut settings = read_droid_settings()?;
 
-    let config_obj = match config.as_object_mut() {
+    let settings_obj = match settings.as_object_mut() {
         Some(obj) => obj,
         None => return Ok(()), // 配置不是对象，无需处理
     };
 
-    let custom_models = match config_obj.get_mut("custom_models") {
+    let custom_models = match settings_obj.get_mut("customModels") {
         Some(Value::Array(arr)) => arr,
-        _ => return Ok(()), // 没有 custom_models 数组，无需处理
+        _ => return Ok(()), // 没有 customModels 数组，无需处理
     };
 
     // 查找并删除匹配的 model
     let original_len = custom_models.len();
     custom_models.retain(|m| {
-        m.get("model_display_name")
+        m.get("displayName")
             .and_then(|v| v.as_str())
             != Some(provider_name)
     });
 
     if custom_models.len() < original_len {
-        write_droid_config(&config)?;
-        log::info!("已从 Droid config.json 删除 custom_model: {}", provider_name);
+        write_droid_settings(&settings)?;
+        log::info!("已从 Droid settings.json 删除 customModel: {}", provider_name);
     }
 
     Ok(())

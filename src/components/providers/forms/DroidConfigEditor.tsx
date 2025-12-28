@@ -9,22 +9,25 @@ interface DroidConfigEditorProps {
   baseUrl: string;
   model: string;
   provider: string;
-  providerName: string; // 供应商名称，用于 model_display_name
+  providerName: string; // 供应商名称，用于 displayName
   maxOutputTokens?: number;
+  noImageSupport?: boolean;
   // 当配置 JSON 变化时的回调
   onConfigChange?: (config: {
     apiKey: string;
     baseUrl: string;
     model: string;
     provider: string;
+    maxOutputTokens?: number;
+    noImageSupport?: boolean;
   }) => void;
 }
 
 /**
  * Droid 配置编辑器
  * 
- * 显示 Droid config.json 中 custom_model 的格式 (snake_case)
- * 与输入框双向同步
+ * 显示 Droid settings.json 中 customModels 的格式 (camelCase)
+ * 直接写入 settings.json 实现热更新
  */
 export function DroidConfigEditor({
   apiKey,
@@ -33,6 +36,7 @@ export function DroidConfigEditor({
   provider,
   providerName,
   maxOutputTokens = 131072,
+  noImageSupport = false,
   onConfigChange,
 }: DroidConfigEditorProps) {
   const { t } = useTranslation();
@@ -54,18 +58,19 @@ export function DroidConfigEditor({
     return () => observer.disconnect();
   }, []);
 
-  // 将输入框的值转换为 Droid config.json 格式 (snake_case)
+  // 将输入框的值转换为 Droid settings.json 格式 (camelCase)
   const configJsonValue = useMemo(() => {
     const customModel = {
-      api_key: apiKey,
-      base_url: baseUrl,
       model: model,
-      model_display_name: providerName,
+      baseUrl: baseUrl,
+      apiKey: apiKey,
+      displayName: providerName,
+      maxOutputTokens: maxOutputTokens,
+      noImageSupport: noImageSupport,
       provider: provider,
-      max_tokens: maxOutputTokens,
     };
     return JSON.stringify(customModel, null, 2);
-  }, [apiKey, baseUrl, model, provider, providerName, maxOutputTokens]);
+  }, [apiKey, baseUrl, model, provider, providerName, maxOutputTokens, noImageSupport]);
 
   // 当用户编辑 JSON 时，解析并同步到输入框
   const handleJsonChange = (value: string) => {
@@ -73,13 +78,14 @@ export function DroidConfigEditor({
       const parsed = JSON.parse(value);
       setJsonError("");
       
-      // 从 snake_case 转换为 camelCase 并回调
       if (onConfigChange) {
         onConfigChange({
-          apiKey: parsed.api_key ?? "",
-          baseUrl: parsed.base_url ?? "",
+          apiKey: parsed.apiKey ?? parsed.api_key ?? "",
+          baseUrl: parsed.baseUrl ?? parsed.base_url ?? "",
           model: parsed.model ?? "",
           provider: parsed.provider ?? "anthropic",
+          maxOutputTokens: parsed.maxOutputTokens ?? parsed.max_tokens ?? 131072,
+          noImageSupport: parsed.noImageSupport ?? false,
         });
       }
     } catch (e) {
@@ -92,7 +98,7 @@ export function DroidConfigEditor({
       <div className="flex items-center justify-between">
         <Label>{t("provider.configJson", { defaultValue: "配置 JSON" })}</Label>
         <span className="text-xs text-muted-foreground">
-          {t("droid.configFormat", { defaultValue: "Droid config.json 格式" })}
+          {t("droid.settingsFormat", { defaultValue: "Droid settings.json 格式" })}
         </span>
       </div>
       {jsonError && (
@@ -102,12 +108,13 @@ export function DroidConfigEditor({
         value={configJsonValue}
         onChange={handleJsonChange}
         placeholder={`{
-  "api_key": "your-api-key",
-  "base_url": "https://api.example.com",
   "model": "claude-sonnet-4-5-20250929",
-  "model_display_name": "My Provider",
-  "provider": "anthropic",
-  "max_tokens": 131072
+  "baseUrl": "https://api.example.com",
+  "apiKey": "your-api-key",
+  "displayName": "My Provider",
+  "maxOutputTokens": 131072,
+  "noImageSupport": false,
+  "provider": "anthropic"
 }`}
         darkMode={isDarkMode}
         rows={10}
