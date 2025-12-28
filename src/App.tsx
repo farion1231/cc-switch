@@ -21,6 +21,7 @@ import {
   providersApi,
   settingsApi,
   droidApi,
+  promptsApi,
   type AppId,
   type ProviderSwitchEvent,
 } from "@/lib/api";
@@ -76,6 +77,11 @@ function App() {
 
   // 处理应用切换，当切换到 Droid 时读取配置并自动导入供应商
   const handleAppSwitch = async (app: AppId) => {
+    // 切换应用时清理编辑状态，避免跨应用的 provider 数据污染
+    setEditingProvider(null);
+    setUsageProvider(null);
+    setConfirmDelete(null);
+    
     if (app === "droid") {
       try {
         const settings = await droidApi.getSettings();
@@ -145,6 +151,26 @@ function App() {
               defaultValue: "Droid 配置中没有 customModels",
             }),
           );
+        }
+
+        // 检查并导入提示词文件（仅在没有提示词时导入）
+        try {
+          const existingPrompts = await promptsApi.getPrompts("droid");
+          const hasPrompts = Object.keys(existingPrompts).length > 0;
+          
+          if (!hasPrompts) {
+            const importedPromptId = await promptsApi.importFromFile("droid");
+            if (importedPromptId) {
+              toast.success(
+                t("notifications.droidPromptImported", {
+                  defaultValue: "已导入 Droid 提示词文件",
+                }),
+              );
+            }
+          }
+        } catch (error) {
+          // 如果提示词文件不存在，静默处理
+          console.log("Droid prompt import skipped:", error);
         }
       } catch (error) {
         console.error("Failed to read Droid settings:", error);
