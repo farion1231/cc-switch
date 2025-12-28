@@ -283,11 +283,13 @@ impl ProviderService {
 
         // Backfill: Backfill current live config to current provider
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
+        // 注意：Droid 跳过回填，因为 config.json 格式是 {custom_models: [...]}，与数据库格式不同
         let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
 
         if let Some(current_id) = current_id {
-            if current_id != id {
+            if current_id != id && !matches!(app_type, AppType::Droid) {
                 // Only backfill when switching to a different provider
+                // Skip backfill for Droid as its live config format differs from database format
                 if let Ok(live_config) = read_live_settings(app_type.clone()) {
                     if let Some(mut current_provider) = providers.get(&current_id).cloned() {
                         current_provider.settings_config = live_config;

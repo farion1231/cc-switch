@@ -495,19 +495,24 @@ pub(crate) fn write_droid_live(provider: &Provider) -> Result<(), AppError> {
 
 /// 从 provider settings 构建 Droid custom_model 对象
 /// 使用 Droid 期望的 snake_case 字段名
+/// 支持 camelCase 和 snake_case 两种输入格式
 fn build_droid_custom_model(settings: &Value, provider_name: &str) -> Result<Value, AppError> {
+    log::debug!("build_droid_custom_model: settings = {:?}", settings);
+    
     let obj = settings.as_object().ok_or_else(|| {
         AppError::Config("Droid 供应商配置必须是 JSON 对象".to_string())
     })?;
 
-    // 提取必要字段 (从 camelCase 输入)
+    // 提取必要字段 (支持 camelCase 和 snake_case 两种格式)
     let api_key = obj
         .get("apiKey")
+        .or_else(|| obj.get("api_key"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
     let base_url = obj
         .get("baseUrl")
+        .or_else(|| obj.get("base_url"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
@@ -523,8 +528,15 @@ fn build_droid_custom_model(settings: &Value, provider_name: &str) -> Result<Val
 
     let max_tokens = obj
         .get("maxOutputTokens")
+        .or_else(|| obj.get("max_tokens"))
         .and_then(|v| v.as_i64())
         .unwrap_or(131072);
+    
+    log::debug!("build_droid_custom_model: api_key={}, base_url={}, model={}", 
+        if api_key.is_empty() { "(empty)" } else { "***" }, 
+        base_url, 
+        model
+    );
 
     // 构建 custom_model 对象 (使用 Droid 期望的 snake_case 格式)
     Ok(json!({

@@ -97,11 +97,16 @@ export function EditProviderDialog({
   }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
 
   const initialSettingsConfig = useMemo(() => {
+    // Droid 不使用 liveSettings，因为 config.json 格式是 {custom_models: [...]}
+    // 而不是单个供应商的配置格式
+    if (appId === "droid") {
+      return (provider?.settingsConfig ?? {}) as Record<string, unknown>;
+    }
     return (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
       string,
       unknown
     >;
-  }, [liveSettings, provider?.settingsConfig]); // 只依赖 settingsConfig，不依赖整个 provider
+  }, [appId, liveSettings, provider?.settingsConfig]);
 
   // 固定 initialData，防止 provider 对象更新时重置表单
   const initialData = useMemo(() => {
