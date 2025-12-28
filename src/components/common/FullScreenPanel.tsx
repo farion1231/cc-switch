@@ -50,7 +50,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
             style={{ backgroundColor: "hsl(var(--background))" }}
           >
             <div className="h-4 w-full" data-tauri-drag-region />
-            <div className="mx-auto max-w-[56rem] px-6 flex items-center gap-4">
+            <div className="mx-auto max-w-[62rem] px-6 flex items-center gap-4">
               <Button
                 type="button"
                 variant="outline"

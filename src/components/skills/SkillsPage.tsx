@@ -221,7 +221,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     }, [skills, searchQuery, filterStatus]);
 
     return (
-      <div className="mx-auto max-w-[56rem] px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden bg-background/50">
+      <div className="mx-auto max-w-[62rem] px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden bg-background/50">
         {/* 技能网格（可滚动详情区域） */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden animate-fade-in">
           <div className="py-4">

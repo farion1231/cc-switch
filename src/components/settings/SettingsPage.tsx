@@ -196,7 +196,7 @@ export function SettingsPage({
   };
 
   return (
-    <div className="mx-auto max-w-[56rem] flex flex-col h-[calc(100vh-8rem)] overflow-hidden px-6">
+    <div className="mx-auto max-w-[62rem] flex flex-col h-[calc(100vh-8rem)] overflow-hidden px-6">
       {isBusy ? (
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />

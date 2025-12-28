@@ -271,7 +271,8 @@
   "apps": {
     "claude": "Claude Code",
     "codex": "Codex",
-    "gemini": "Gemini"
+    "gemini": "Gemini",
+    "droid": "Droid"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",

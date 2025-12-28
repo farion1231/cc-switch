@@ -406,13 +406,13 @@ function App() {
           );
         case "universal":
           return (
-            <div className="mx-auto max-w-[56rem] px-5 pt-4">
+            <div className="mx-auto max-w-[62rem] px-5 pt-4">
               <UniversalProviderPanel />
             </div>
           );
         default:
           return (
-            <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
+            <div className="mx-auto max-w-[62rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
               {/* 独立滚动容器 - 解决 Linux/Ubuntu 下 DndContext 与滚轮事件冲突 */}
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
                 <AnimatePresence mode="wait">
@@ -515,7 +515,7 @@ function App() {
         }
       >
         <div
-          className="mx-auto flex h-full max-w-[56rem] flex-wrap items-center justify-between gap-2 px-6"
+          className="mx-auto flex h-full max-w-[62rem] flex-wrap items-center justify-between gap-2 px-6"
           data-tauri-drag-region
           style={{ WebkitAppRegion: "drag" } as any}
         >
@@ -554,7 +554,7 @@ function App() {
                     target="_blank"
                     rel="noreferrer"
                     className={cn(
-                      "text-xl font-semibold transition-colors",
+                      "text-xl font-semibold transition-colors whitespace-nowrap",
                       isProxyRunning && isCurrentAppTakeoverActive
                         ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
                         : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
@@ -562,6 +562,9 @@ function App() {
                   >
                     CC Switch
                   </a>
+                  <span className="text-sm font-medium px-2 py-0.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-full whitespace-nowrap">
+                    droid
+                  </span>
                   <Button
                     variant="ghost"
                     size="icon"
