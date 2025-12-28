@@ -59,3 +59,15 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 pub async fn get_auto_launch_status() -> Result<bool, String> {
     crate::auto_launch::is_auto_launch_enabled().map_err(|e| format!("获取开机自启状态失败: {e}"))
 }
+
+/// 读取 Droid settings.json
+#[tauri::command]
+pub async fn get_droid_settings() -> Result<serde_json::Value, String> {
+    crate::droid_config::read_droid_settings().map_err(|e| e.to_string())
+}
+
+/// 获取 Droid 配置状态
+#[tauri::command]
+pub async fn get_droid_config_status() -> Result<crate::config::ConfigStatus, String> {
+    Ok(crate::droid_config::get_droid_config_status())
+}

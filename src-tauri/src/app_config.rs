@@ -146,6 +146,7 @@ pub enum AppType {
     Claude,
     Codex,
     Gemini, // 新增
+    Droid,
 }
 
 impl AppType {
@@ -154,6 +155,7 @@ impl AppType {
             AppType::Claude => "claude",
             AppType::Codex => "codex",
             AppType::Gemini => "gemini", // 新增
+            AppType::Droid => "droid",
         }
     }
 }

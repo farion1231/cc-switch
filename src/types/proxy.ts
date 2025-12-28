@@ -45,6 +45,7 @@ export interface ProxyTakeoverStatus {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  droid: boolean;
 }
 
 export interface ProviderHealth {

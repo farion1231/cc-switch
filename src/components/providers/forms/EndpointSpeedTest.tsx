@@ -13,6 +13,7 @@ const ENDPOINT_TIMEOUT_SECS = {
   codex: 12,
   claude: 8,
   gemini: 8, // 新增 gemini
+  droid: 8,
 } as const;
 
 interface TestResult {

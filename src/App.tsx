@@ -20,6 +20,7 @@ import { useProvidersQuery } from "@/lib/query";
 import {
   providersApi,
   settingsApi,
+  droidApi,
   type AppId,
   type ProviderSwitchEvent,
 } from "@/lib/api";
@@ -72,6 +73,29 @@ function App() {
   const [confirmDelete, setConfirmDelete] = useState<Provider | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
+
+  // 处理应用切换，当切换到 Droid 时读取配置
+  const handleAppSwitch = async (app: AppId) => {
+    if (app === "droid") {
+      try {
+        const settings = await droidApi.getSettings();
+        console.log("Droid settings:", settings);
+        toast.success(
+          t("notifications.droidSettingsLoaded", {
+            defaultValue: "已读取 Droid 配置文件",
+          }),
+        );
+      } catch (error) {
+        console.error("Failed to read Droid settings:", error);
+        toast.error(
+          t("notifications.droidSettingsLoadFailed", {
+            defaultValue: "读取 Droid 配置失败",
+          }) + `: ${error}`,
+        );
+      }
+    }
+    setActiveApp(app);
+  };
 
   // 保存最后一个有效的 provider，用于动画退出期间显示内容
   const lastUsageProviderRef = useRef<Provider | null>(null);
@@ -630,7 +654,7 @@ function App() {
               <>
                 <ProxyToggle activeApp={activeApp} />
 
-                <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
+                <AppSwitcher activeApp={activeApp} onSwitch={handleAppSwitch} />
 
                 <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
                   <Button

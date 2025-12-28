@@ -6,6 +6,7 @@ mod claude_plugin;
 mod codex_config;
 mod commands;
 mod config;
+mod droid_config;
 mod database;
 mod deeplink;
 mod error;
@@ -648,6 +649,9 @@ pub fn run() {
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,
+            // Droid config
+            commands::get_droid_settings,
+            commands::get_droid_config_status,
             // Proxy server management
             commands::start_proxy_server,
             commands::stop_proxy_with_restore,

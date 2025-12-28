@@ -33,14 +33,6 @@ const createDefaultProviders = (): ProvidersByApp => ({
       sortIndex: 0,
       createdAt: Date.now(),
     },
-    "codex-2": {
-      id: "codex-2",
-      name: "Codex Secondary",
-      settingsConfig: {},
-      category: "custom",
-      sortIndex: 1,
-      createdAt: Date.now() + 1,
-    },
   },
   gemini: {
     "gemini-1": {
@@ -57,12 +49,14 @@ const createDefaultProviders = (): ProvidersByApp => ({
       createdAt: Date.now(),
     },
   },
+  droid: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
   claude: "claude-1",
   codex: "codex-1",
   gemini: "gemini-1",
+  droid: "",
 });
 
 let providers = createDefaultProviders();
@@ -102,6 +96,7 @@ let mcpConfigs: McpConfigState = {
     },
   },
   gemini: {},
+  droid: {},
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
@@ -145,6 +140,7 @@ export const resetProviderState = () => {
       },
     },
     gemini: {},
+    droid: {},
   };
 };
 
