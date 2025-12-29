@@ -75,8 +75,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn test_get_macos_app_bundle_path_valid() {
-        let exe_path =
-            std::path::Path::new("/Applications/CC Switch.app/Contents/MacOS/CC Switch");
+        let exe_path = std::path::Path::new("/Applications/CC Switch.app/Contents/MacOS/CC Switch");
         let result = get_macos_app_bundle_path(exe_path);
         assert_eq!(
             result,
@@ -92,7 +91,9 @@ mod tests {
         let result = get_macos_app_bundle_path(exe_path);
         assert_eq!(
             result,
-            Some(std::path::PathBuf::from("/Users/test/My Apps/CC Switch.app"))
+            Some(std::path::PathBuf::from(
+                "/Users/test/My Apps/CC Switch.app"
+            ))
         );
     }
 

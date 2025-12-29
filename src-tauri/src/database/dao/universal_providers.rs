@@ -12,22 +12,22 @@ const UNIVERSAL_PROVIDERS_KEY: &str = "universal_providers";
 
 impl Database {
     /// 获取所有统一供应商
-    pub fn get_all_universal_providers(&self) -> Result<HashMap<String, UniversalProvider>, AppError> {
+    pub fn get_all_universal_providers(
+        &self,
+    ) -> Result<HashMap<String, UniversalProvider>, AppError> {
         let conn = lock_conn!(self.conn);
-        
+
         let mut stmt = conn
             .prepare("SELECT value FROM settings WHERE key = ?")
             .map_err(|e| AppError::Database(e.to_string()))?;
-        
+
         let result: Option<String> = stmt
             .query_row([UNIVERSAL_PROVIDERS_KEY], |row| row.get(0))
             .ok();
-        
+
         match result {
-            Some(json) => {
-                serde_json::from_str(&json)
-                    .map_err(|e| AppError::Database(format!("解析统一供应商数据失败: {e}")))
-            }
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析统一供应商数据失败: {e}"))),
             None => Ok(HashMap::new()),
         }
     }
@@ -62,14 +62,13 @@ impl Database {
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         let json = to_json_string(providers)?;
-        
+
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
             [UNIVERSAL_PROVIDERS_KEY, &json],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
-        
+
         Ok(())
     }
 }
-
