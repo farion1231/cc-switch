@@ -411,6 +411,32 @@ impl Database {
 
         // 添加代理超时配置字段
         if Self::table_exists(conn, "proxy_config")? {
+            // 兼容旧版本缺失的基础字段
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "proxy_enabled",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "listen_address",
+                "TEXT NOT NULL DEFAULT '127.0.0.1'",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "listen_port",
+                "INTEGER NOT NULL DEFAULT 5000",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "enable_logging",
+                "INTEGER NOT NULL DEFAULT 1",
+            )?;
+
             Self::add_column_if_missing(
                 conn,
                 "proxy_config",
