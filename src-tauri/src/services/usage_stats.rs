@@ -4,7 +4,7 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use chrono::{Duration, Utc};
+use chrono::{Duration, Local, TimeZone};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -186,8 +186,17 @@ impl Database {
         let conn = lock_conn!(self.conn);
 
         if days <= 1 {
+            let today = Local::now().date_naive();
+            let start_of_today = today.and_hms_opt(0, 0, 0).unwrap();
+            // 使用 earliest() 处理 DST 切换时的歧义时间，fallback 到当前时间减一天
+            let start_ts = Local
+                .from_local_datetime(&start_of_today)
+                .earliest()
+                .unwrap_or_else(|| Local::now() - Duration::days(1))
+                .timestamp();
+
             let sql = "SELECT 
-                    strftime('%Y-%m-%dT%H:00:00Z', datetime(created_at, 'unixepoch')) as bucket,
+                    strftime('%Y-%m-%dT%H:00:00', datetime(created_at, 'unixepoch', 'localtime')) as bucket,
                     COUNT(*) as request_count,
                     COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
                     COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
@@ -196,12 +205,12 @@ impl Database {
                     COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
                     COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens
                  FROM proxy_request_logs
-                 WHERE created_at >= strftime('%s', 'now', '-1 day')
+                 WHERE created_at >= ?
                  GROUP BY bucket
                  ORDER BY bucket ASC";
 
             let mut stmt = conn.prepare(sql)?;
-            let rows = stmt.query_map([], |row| {
+            let rows = stmt.query_map([start_ts], |row| {
                 Ok(DailyStats {
                     date: row.get(0)?,
                     request_count: row.get::<_, i64>(1)? as u64,
@@ -221,12 +230,11 @@ impl Database {
             }
 
             let mut stats = Vec::new();
-            let today = Utc::now().date_naive();
             for hour in 0..24 {
                 let bucket = today
                     .and_hms_opt(hour, 0, 0)
                     .unwrap()
-                    .format("%Y-%m-%dT%H:00:00Z")
+                    .format("%Y-%m-%dT%H:00:00")
                     .to_string();
 
                 if let Some(stat) = buckets.remove(&bucket) {
@@ -246,8 +254,19 @@ impl Database {
             }
             Ok(stats)
         } else {
+            let today = Local::now().date_naive();
+            let start_day =
+                today - Duration::days((days.saturating_sub(1)) as i64);
+            let start_of_window = start_day.and_hms_opt(0, 0, 0).unwrap();
+            // 使用 earliest() 处理 DST 切换时的歧义时间，fallback 到当前时间减 days 天
+            let start_ts = Local
+                .from_local_datetime(&start_of_window)
+                .earliest()
+                .unwrap_or_else(|| Local::now() - Duration::days(days as i64))
+                .timestamp();
+
             let sql = "SELECT 
-                    date(created_at, 'unixepoch') as bucket,
+                    strftime('%Y-%m-%dT00:00:00', datetime(created_at, 'unixepoch', 'localtime')) as bucket,
                     COUNT(*) as request_count,
                     COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
                     COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
@@ -256,12 +275,12 @@ impl Database {
                     COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
                     COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens
                  FROM proxy_request_logs
-                 WHERE created_at >= strftime('%s', 'now', ?)
+                 WHERE created_at >= ?
                  GROUP BY bucket
                  ORDER BY bucket ASC";
 
             let mut stmt = conn.prepare(sql)?;
-            let rows = stmt.query_map([format!("-{days} days")], |row| {
+            let rows = stmt.query_map([start_ts], |row| {
                 Ok(DailyStats {
                     date: row.get(0)?,
                     request_count: row.get::<_, i64>(1)? as u64,
@@ -281,12 +300,10 @@ impl Database {
             }
 
             let mut stats = Vec::new();
-            let start_day =
-                Utc::now().date_naive() - Duration::days((days.saturating_sub(1)) as i64);
 
             for i in 0..days {
                 let day = start_day + Duration::days(i as i64);
-                let key = day.format("%Y-%m-%d").to_string();
+                let key = day.format("%Y-%m-%dT00:00:00").to_string();
                 if let Some(stat) = map.remove(&key) {
                     stats.push(stat);
                 } else {
@@ -617,7 +634,7 @@ impl Database {
                 "SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
              FROM proxy_request_logs
              WHERE provider_id = ? AND app_type = ?
-               AND date(created_at, 'unixepoch') = date('now')",
+               AND date(datetime(created_at, 'unixepoch', 'localtime')) = date('now', 'localtime')",
                 params![provider_id, app_type],
                 |row| row.get(0),
             )
@@ -629,7 +646,7 @@ impl Database {
                 "SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
              FROM proxy_request_logs
              WHERE provider_id = ? AND app_type = ?
-               AND strftime('%Y-%m', created_at, 'unixepoch') = strftime('%Y-%m', 'now')",
+               AND strftime('%Y-%m', datetime(created_at, 'unixepoch', 'localtime')) = strftime('%Y-%m', 'now', 'localtime')",
                 params![provider_id, app_type],
                 |row| row.get(0),
             )
