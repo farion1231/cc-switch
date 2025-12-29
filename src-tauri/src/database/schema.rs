@@ -265,6 +265,14 @@ impl Database {
             [],
         );
 
+        // 兼容：若旧版 proxy_config 仍为单例结构（无 app_type），则在启动时直接转换为三行结构
+        // 说明：user_version=2 时不会再触发 v1->v2 迁移，但新代码查询依赖 app_type 列。
+        if Self::table_exists(conn, "proxy_config")?
+            && !Self::has_column(conn, "proxy_config", "app_type")?
+        {
+            Self::migrate_proxy_config_to_per_app(conn)?;
+        }
+
         // 确保 in_failover_queue 列存在（对于已存在的 v2 数据库）
         Self::add_column_if_missing(
             conn,
