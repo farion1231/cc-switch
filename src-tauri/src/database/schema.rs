@@ -233,6 +233,24 @@ impl Database {
             [],
         );
 
+        // 尝试添加基础配置列到 proxy_config 表（兼容 v3.9.0-2 升级）
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN proxy_enabled INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN listen_address TEXT NOT NULL DEFAULT '127.0.0.1'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN listen_port INTEGER NOT NULL DEFAULT 5000",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN enable_logging INTEGER NOT NULL DEFAULT 1",
+            [],
+        );
+
         // 尝试添加超时配置列到 proxy_config 表
         let _ = conn.execute(
             "ALTER TABLE proxy_config ADD COLUMN streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 30",
