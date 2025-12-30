@@ -386,16 +386,15 @@ impl UniversalProvider {
         // 生成 Codex 的 config.toml 内容
         let config_toml = format!(
             r#"model_provider = "newapi"
-model = "{}"
-model_reasoning_effort = "{}"
+model = "{model}"
+model_reasoning_effort = "{reasoning_effort}"
 disable_response_storage = true
 
 [model_providers.newapi]
 name = "NewAPI"
-base_url = "{}"
+base_url = "{codex_base_url}"
 wire_api = "responses"
-requires_openai_auth = true"#,
-            model, reasoning_effort, codex_base_url
+requires_openai_auth = true"#
         );
 
         let settings_config = serde_json::json!({

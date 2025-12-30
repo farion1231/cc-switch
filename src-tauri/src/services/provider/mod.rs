@@ -736,15 +736,15 @@ impl ProviderService {
         // 删除生成的子供应商
         if let Some(p) = provider {
             if p.apps.claude {
-                let claude_id = format!("universal-claude-{}", id);
+                let claude_id = format!("universal-claude-{id}");
                 let _ = state.db.delete_provider("claude", &claude_id);
             }
             if p.apps.codex {
-                let codex_id = format!("universal-codex-{}", id);
+                let codex_id = format!("universal-codex-{id}");
                 let _ = state.db.delete_provider("codex", &codex_id);
             }
             if p.apps.gemini {
-                let gemini_id = format!("universal-gemini-{}", id);
+                let gemini_id = format!("universal-gemini-{id}");
                 let _ = state.db.delete_provider("gemini", &gemini_id);
             }
         }
@@ -757,7 +757,7 @@ impl ProviderService {
         let provider = state
             .db
             .get_universal_provider(id)?
-            .ok_or_else(|| AppError::Message(format!("统一供应商 {} 不存在", id)))?;
+            .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?;
 
         // 同步到 Claude
         if let Some(mut claude_provider) = provider.to_claude_provider() {
@@ -770,7 +770,7 @@ impl ProviderService {
             state.db.save_provider("claude", &claude_provider)?;
         } else {
             // 如果禁用了 Claude，删除对应的子供应商
-            let claude_id = format!("universal-claude-{}", id);
+            let claude_id = format!("universal-claude-{id}");
             let _ = state.db.delete_provider("claude", &claude_id);
         }
 
@@ -784,7 +784,7 @@ impl ProviderService {
             }
             state.db.save_provider("codex", &codex_provider)?;
         } else {
-            let codex_id = format!("universal-codex-{}", id);
+            let codex_id = format!("universal-codex-{id}");
             let _ = state.db.delete_provider("codex", &codex_id);
         }
 
@@ -798,7 +798,7 @@ impl ProviderService {
             }
             state.db.save_provider("gemini", &gemini_provider)?;
         } else {
-            let gemini_id = format!("universal-gemini-{}", id);
+            let gemini_id = format!("universal-gemini-{id}");
             let _ = state.db.delete_provider("gemini", &gemini_id);
         }
 
