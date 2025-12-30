@@ -53,6 +53,11 @@ impl ProviderRouter {
         if auto_failover_enabled {
             // 故障转移开启：使用 in_failover_queue 标记的供应商，按 sort_index 排序
             let failover_providers = self.db.get_failover_providers(app_type)?;
+            log::debug!(
+                "[{}] Found {} failover queue provider(s)",
+                app_type,
+                failover_providers.len()
+            );
             log::info!(
                 "[{}] Failover enabled, using queue order ({} items)",
                 app_type,
@@ -63,8 +68,16 @@ impl ProviderRouter {
                 // 检查熔断器状态
                 let circuit_key = format!("{}:{}", app_type, provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+                let state = breaker.get_state().await;
 
                 if breaker.is_available().await {
+                    log::debug!(
+                        "[{}] Queue provider available: {} ({}) (state: {:?})",
+                        app_type,
+                        provider.name,
+                        provider.id,
+                        state
+                    );
                     log::info!(
                         "[{}] Queue provider available: {} ({}) at sort_index {:?}",
                         app_type,
@@ -75,9 +88,10 @@ impl ProviderRouter {
                     result.push(provider);
                 } else {
                     log::debug!(
-                        "[{}] Queue provider {} circuit breaker open, skipping",
+                        "[{}] Queue provider {} circuit breaker open (state: {:?}), skipping",
                         app_type,
-                        provider.name
+                        provider.name,
+                        state
                     );
                 }
             }
@@ -95,7 +109,13 @@ impl ProviderRouter {
                         current.id
                     );
                     result.push(current);
+                } else {
+                    log::debug!(
+                        "[{app_type}] Current provider id {current_id} not found in database"
+                    );
                 }
+            } else {
+                log::debug!("[{app_type}] No current provider configured");
             }
         }
 
