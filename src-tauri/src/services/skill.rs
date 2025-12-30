@@ -77,7 +77,7 @@ impl Default for SkillStore {
                 SkillRepo {
                     owner: "ComposioHQ".to_string(),
                     name: "awesome-claude-skills".to_string(),
-                    branch: "main".to_string(),
+                    branch: "master".to_string(),
                     enabled: true,
                 },
                 SkillRepo {
