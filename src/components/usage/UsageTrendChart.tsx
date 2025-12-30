@@ -49,6 +49,8 @@ export function UsageTrendChart({ days }: UsageTrendChartProps) {
         hour: pointDate.getHours(),
         inputTokens: stat.totalInputTokens,
         outputTokens: stat.totalOutputTokens,
+        cacheCreationTokens: stat.totalCacheCreationTokens,
+        cacheReadTokens: stat.totalCacheReadTokens,
         cost: parseFloat(stat.totalCost),
       };
     }) || [];
@@ -65,6 +67,8 @@ export function UsageTrendChart({ days }: UsageTrendChartProps) {
         label: `${hour.toString().padStart(2, "0")}:00`,
         inputTokens: bucket?.inputTokens ?? 0,
         outputTokens: bucket?.outputTokens ?? 0,
+        cacheCreationTokens: bucket?.cacheCreationTokens ?? 0,
+        cacheReadTokens: bucket?.cacheReadTokens ?? 0,
         cost: bucket?.cost ?? 0,
       };
     });
@@ -131,6 +135,20 @@ export function UsageTrendChart({ days }: UsageTrendChartProps) {
                 <stop offset="5%" stopColor="#22c55e" stopOpacity={0.2} />
                 <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
               </linearGradient>
+              <linearGradient
+                id="colorCacheCreation"
+                x1="0"
+                y1="0"
+                x2="0"
+                y2="1"
+              >
+                <stop offset="5%" stopColor="#f97316" stopOpacity={0.2} />
+                <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
+              </linearGradient>
+              <linearGradient id="colorCacheRead" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#a855f7" stopOpacity={0.2} />
+                <stop offset="95%" stopColor="#a855f7" stopOpacity={0} />
+              </linearGradient>
             </defs>
             <CartesianGrid
               strokeDasharray="3 3"
@@ -180,6 +198,26 @@ export function UsageTrendChart({ days }: UsageTrendChartProps) {
               stroke="#22c55e"
               fillOpacity={1}
               fill="url(#colorOutput)"
+              strokeWidth={2}
+            />
+            <Area
+              yAxisId="tokens"
+              type="monotone"
+              dataKey="cacheCreationTokens"
+              name={t("usage.cacheCreationTokens", "缓存创建")}
+              stroke="#f97316"
+              fillOpacity={1}
+              fill="url(#colorCacheCreation)"
+              strokeWidth={2}
+            />
+            <Area
+              yAxisId="tokens"
+              type="monotone"
+              dataKey="cacheReadTokens"
+              name={t("usage.cacheReadTokens", "缓存命中")}
+              stroke="#a855f7"
+              fillOpacity={1}
+              fill="url(#colorCacheRead)"
               strokeWidth={2}
             />
             <Area
