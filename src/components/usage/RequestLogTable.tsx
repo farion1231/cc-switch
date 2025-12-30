@@ -62,6 +62,28 @@ export function RequestLogTable() {
     });
   };
 
+  // 将 Unix 时间戳转换为本地时间的 datetime-local 格式
+  const timestampToLocalDatetime = (timestamp: number): string => {
+    const date = new Date(timestamp * 1000);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
+
+  // 将 datetime-local 格式转换为 Unix 时间戳
+  const localDatetimeToTimestamp = (datetime: string): number | undefined => {
+    if (!datetime) return undefined;
+    // 验证格式是否完整 (YYYY-MM-DDTHH:mm)
+    if (datetime.length < 16) return undefined;
+    const timestamp = new Date(datetime).getTime();
+    // 验证是否为有效日期
+    if (isNaN(timestamp)) return undefined;
+    return Math.floor(timestamp / 1000);
+  };
+
   const dateLocale =
     i18n.language === "zh"
       ? "zh-CN"
@@ -153,19 +175,16 @@ export function RequestLogTable() {
               className="h-8 w-[200px] bg-background"
               value={
                 tempFilters.startDate
-                  ? new Date(tempFilters.startDate * 1000)
-                      .toISOString()
-                      .slice(0, 16)
+                  ? timestampToLocalDatetime(tempFilters.startDate)
                   : ""
               }
-              onChange={(e) =>
+              onChange={(e) => {
+                const timestamp = localDatetimeToTimestamp(e.target.value);
                 setTempFilters({
                   ...tempFilters,
-                  startDate: e.target.value
-                    ? Math.floor(new Date(e.target.value).getTime() / 1000)
-                    : undefined,
-                })
-              }
+                  startDate: timestamp,
+                });
+              }}
             />
             <span>-</span>
             <Input
@@ -173,19 +192,16 @@ export function RequestLogTable() {
               className="h-8 w-[200px] bg-background"
               value={
                 tempFilters.endDate
-                  ? new Date(tempFilters.endDate * 1000)
-                      .toISOString()
-                      .slice(0, 16)
+                  ? timestampToLocalDatetime(tempFilters.endDate)
                   : ""
               }
-              onChange={(e) =>
+              onChange={(e) => {
+                const timestamp = localDatetimeToTimestamp(e.target.value);
                 setTempFilters({
                   ...tempFilters,
-                  endDate: e.target.value
-                    ? Math.floor(new Date(e.target.value).getTime() / 1000)
-                    : undefined,
-                })
-              }
+                  endDate: timestamp,
+                });
+              }}
             />
           </div>
 
