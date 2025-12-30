@@ -436,8 +436,8 @@
     "billingModel": "課金モデル",
     "inputTokens": "入力",
     "outputTokens": "出力",
-    "cacheReadTokens": "キャッシュ読取",
-    "cacheCreationTokens": "キャッシュ書込",
+    "cacheReadTokens": "キャッシュヒット",
+    "cacheCreationTokens": "キャッシュ作成",
     "timingInfo": "応答時間/TTFT",
     "status": "ステータス",
     "noData": "データなし",
@@ -453,8 +453,8 @@
     "displayName": "表示名",
     "inputCost": "入力コスト",
     "outputCost": "出力コスト",
-    "cacheReadCost": "キャッシュ読取",
-    "cacheWriteCost": "キャッシュ書込",
+    "cacheReadCost": "キャッシュヒット",
+    "cacheWriteCost": "キャッシュ作成",
     "deleteConfirmTitle": "削除の確認",
     "deleteConfirmDesc": "このモデル料金を削除しますか？この操作は元に戻せません。",
     "queryFailed": "照会に失敗しました",
@@ -481,8 +481,8 @@
     "timeRange": "期間",
     "input": "Input",
     "output": "Output",
-    "cacheWrite": "Write",
-    "cacheRead": "Read"
+    "cacheWrite": "作成",
+    "cacheRead": "ヒット"
   },
   "usageScript": {
     "title": "利用状況を設定",

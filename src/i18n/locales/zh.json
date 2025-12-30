@@ -436,8 +436,8 @@
     "billingModel": "计费模型",
     "inputTokens": "输入",
     "outputTokens": "输出",
-    "cacheReadTokens": "缓存读取",
-    "cacheCreationTokens": "缓存写入",
+    "cacheReadTokens": "缓存命中",
+    "cacheCreationTokens": "缓存创建",
     "timingInfo": "用时/首字",
     "status": "状态",
     "noData": "暂无数据",
@@ -453,8 +453,8 @@
     "displayName": "显示名称",
     "inputCost": "输入成本",
     "outputCost": "输出成本",
-    "cacheReadCost": "缓存读取",
-    "cacheWriteCost": "缓存写入",
+    "cacheReadCost": "缓存命中",
+    "cacheWriteCost": "缓存创建",
     "deleteConfirmTitle": "确认删除",
     "deleteConfirmDesc": "确定要删除此模型定价配置吗？此操作无法撤销。",
     "queryFailed": "查询失败",
@@ -481,8 +481,8 @@
     "timeRange": "时间范围",
     "input": "Input",
     "output": "Output",
-    "cacheWrite": "Write",
-    "cacheRead": "Read"
+    "cacheWrite": "创建",
+    "cacheRead": "命中"
   },
   "usageScript": {
     "title": "配置用量查询",

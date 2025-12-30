@@ -436,8 +436,8 @@
     "billingModel": "Billing Model",
     "inputTokens": "Input",
     "outputTokens": "Output",
-    "cacheReadTokens": "Cache Read",
-    "cacheCreationTokens": "Cache Write",
+    "cacheReadTokens": "Cache Hit",
+    "cacheCreationTokens": "Cache Creation",
     "timingInfo": "Duration/TTFT",
     "status": "Status",
     "noData": "No data",
@@ -453,8 +453,8 @@
     "displayName": "Display Name",
     "inputCost": "Input Cost",
     "outputCost": "Output Cost",
-    "cacheReadCost": "Cache Read",
-    "cacheWriteCost": "Cache Write",
+    "cacheReadCost": "Cache Hit",
+    "cacheWriteCost": "Cache Creation",
     "deleteConfirmTitle": "Confirm Delete",
     "deleteConfirmDesc": "Are you sure you want to delete this model pricing? This action cannot be undone.",
     "queryFailed": "Query failed",
@@ -481,8 +481,8 @@
     "timeRange": "Time Range",
     "input": "Input",
     "output": "Output",
-    "cacheWrite": "Write",
-    "cacheRead": "Read"
+    "cacheWrite": "Creation",
+    "cacheRead": "Hit"
   },
   "usageScript": {
     "title": "Configure Usage Query",
