@@ -233,7 +233,7 @@ impl TokenUsage {
                 if event_type == "response.completed" {
                     if let Some(response) = event.get("response") {
                         log::debug!("[Codex] 找到 response.completed 事件，解析 usage");
-                        return Self::from_codex_response(response);
+                        return Self::from_codex_response_adjusted(response);
                     }
                 }
             }
@@ -297,9 +297,16 @@ impl TokenUsage {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        let prompt_tokens = usage.get("promptTokenCount")?.as_u64()? as u32;
+        let total_tokens = usage.get("totalTokenCount")?.as_u64()? as u32;
+
+        // 输出 tokens = 总 tokens - 输入 tokens
+        // 这包含了 candidatesTokenCount + thoughtsTokenCount
+        let output_tokens = total_tokens.saturating_sub(prompt_tokens);
+
         Some(Self {
-            input_tokens: usage.get("promptTokenCount")?.as_u64()? as u32,
-            output_tokens: usage.get("candidatesTokenCount")?.as_u64()? as u32,
+            input_tokens: prompt_tokens,
+            output_tokens,
             cache_read_tokens: usage
                 .get("cachedContentTokenCount")
                 .and_then(|v| v.as_u64())
@@ -313,20 +320,25 @@ impl TokenUsage {
     #[allow(dead_code)]
     pub fn from_gemini_stream_chunks(chunks: &[Value]) -> Option<Self> {
         let mut total_input = 0u32;
-        let mut total_output = 0u32;
+        let mut total_tokens = 0u32;
         let mut total_cache_read = 0u32;
         let mut model: Option<String> = None;
 
         for chunk in chunks {
             if let Some(usage) = chunk.get("usageMetadata") {
+                // 输入 tokens (通常在所有 chunk 中保持不变)
                 total_input = usage
                     .get("promptTokenCount")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0) as u32;
-                total_output += usage
-                    .get("candidatesTokenCount")
+
+                // 总 tokens (包含输入 + 输出 + 思考)
+                total_tokens = usage
+                    .get("totalTokenCount")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0) as u32;
+
+                // 缓存读取 tokens
                 total_cache_read = usage
                     .get("cachedContentTokenCount")
                     .and_then(|v| v.as_u64())
@@ -340,6 +352,9 @@ impl TokenUsage {
                 }
             }
         }
+
+        // 输出 tokens = 总 tokens - 输入 tokens
+        let total_output = total_tokens.saturating_sub(total_input);
 
         if total_input > 0 || total_output > 0 {
             Some(Self {
@@ -479,15 +494,18 @@ mod tests {
         let response = json!({
             "modelVersion": "gemini-3-pro-high",
             "usageMetadata": {
-                "promptTokenCount": 100,
+                "promptTokenCount": 8383,
                 "candidatesTokenCount": 50,
+                "thoughtsTokenCount": 114,
+                "totalTokenCount": 8547,
                 "cachedContentTokenCount": 20
             }
         });
 
         let usage = TokenUsage::from_gemini_response(&response).unwrap();
-        assert_eq!(usage.input_tokens, 100);
-        assert_eq!(usage.output_tokens, 50);
+        assert_eq!(usage.input_tokens, 8383);
+        // output_tokens = totalTokenCount - promptTokenCount = 8547 - 8383 = 164
+        assert_eq!(usage.output_tokens, 164);
         assert_eq!(usage.cache_read_tokens, 20);
         assert_eq!(usage.cache_creation_tokens, 0);
         assert_eq!(usage.model, Some("gemini-3-pro-high".to_string()));
@@ -499,17 +517,57 @@ mod tests {
         let response = json!({
             "usageMetadata": {
                 "promptTokenCount": 100,
-                "candidatesTokenCount": 50,
+                "totalTokenCount": 150,
                 "cachedContentTokenCount": 20
             }
         });
 
         let usage = TokenUsage::from_gemini_response(&response).unwrap();
         assert_eq!(usage.input_tokens, 100);
+        // output_tokens = totalTokenCount - promptTokenCount = 150 - 100 = 50
         assert_eq!(usage.output_tokens, 50);
         assert_eq!(usage.cache_read_tokens, 20);
         assert_eq!(usage.cache_creation_tokens, 0);
         assert_eq!(usage.model, None);
+    }
+
+    #[test]
+    fn test_gemini_response_with_thoughts() {
+        // 测试包含 thoughtsTokenCount 的实际响应
+        // 这是用户报告的真实场景
+        let response = json!({
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": "",
+                                "thoughtSignature": "EvcECvQE..."
+                            }
+                        ],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ],
+            "modelVersion": "gemini-3-pro-high",
+            "responseId": "yupTafqLDu-PjMcPhrOx4QQ",
+            "usageMetadata": {
+                "candidatesTokenCount": 50,
+                "promptTokenCount": 8383,
+                "thoughtsTokenCount": 114,
+                "totalTokenCount": 8547
+            }
+        });
+
+        let usage = TokenUsage::from_gemini_response(&response).unwrap();
+        assert_eq!(usage.input_tokens, 8383);
+        // output_tokens = totalTokenCount - promptTokenCount
+        // = 8547 - 8383 = 164 (包含 candidatesTokenCount 50 + thoughtsTokenCount 114)
+        assert_eq!(usage.output_tokens, 164);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_creation_tokens, 0);
+        assert_eq!(usage.model, Some("gemini-3-pro-high".to_string()));
     }
 
     #[test]
