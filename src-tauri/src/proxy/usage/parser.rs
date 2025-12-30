@@ -211,6 +211,12 @@ impl TokenUsage {
         // 调整 input_tokens: 减去 cached_tokens
         let adjusted_input = input_tokens.saturating_sub(cached_tokens);
 
+        // 提取响应中的模型名称
+        let model = body
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         Some(Self {
             input_tokens: adjusted_input,
             output_tokens,
@@ -219,7 +225,7 @@ impl TokenUsage {
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
-            model: None,
+            model,
         })
     }
 
@@ -240,6 +246,51 @@ impl TokenUsage {
         }
         log::debug!("[Codex] 未找到 response.completed 事件");
         None
+    }
+
+    /// 智能 Codex 响应解析 - 自动检测 OpenAI 或 Codex 格式
+    ///
+    /// Codex 支持两种 API 格式：
+    /// - `/v1/responses`: 使用 input_tokens/output_tokens
+    /// - `/v1/chat/completions`: 使用 prompt_tokens/completion_tokens (OpenAI 格式)
+    ///
+    /// 注意：记录原始 input_tokens，费用计算时再减去 cached_tokens
+    pub fn from_codex_response_auto(body: &Value) -> Option<Self> {
+        let usage = body.get("usage")?;
+
+        // 检测格式：OpenAI 使用 prompt_tokens，Codex 使用 input_tokens
+        if usage.get("prompt_tokens").is_some() {
+            log::debug!("[Codex] 检测到 OpenAI 格式 (prompt_tokens)");
+            Self::from_openai_response(body)
+        } else if usage.get("input_tokens").is_some() {
+            log::debug!("[Codex] 检测到 Codex 格式 (input_tokens)");
+            // 使用非调整版本，记录原始 input_tokens
+            Self::from_codex_response(body)
+        } else {
+            log::debug!("[Codex] 无法识别响应格式，usage: {usage:?}");
+            None
+        }
+    }
+
+    /// 智能 Codex 流式响应解析 - 自动检测 OpenAI 或 Codex 格式
+    pub fn from_codex_stream_events_auto(events: &[Value]) -> Option<Self> {
+        log::debug!("[Codex] 智能解析流式事件，共 {} 个事件", events.len());
+
+        // 先尝试 Codex Responses API 格式 (response.completed 事件)
+        for event in events {
+            if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
+                if event_type == "response.completed" {
+                    if let Some(response) = event.get("response") {
+                        log::debug!("[Codex] 找到 response.completed 事件");
+                        return Self::from_codex_response_auto(response);
+                    }
+                }
+            }
+        }
+
+        // 回退到 OpenAI Chat Completions 格式 (最后一个 chunk 包含 usage)
+        log::debug!("[Codex] 尝试 OpenAI 流式格式");
+        Self::from_openai_stream_events(events)
     }
 
     /// 从 OpenAI Chat Completions API 响应解析 (prompt_tokens, completion_tokens)
@@ -720,5 +771,111 @@ mod tests {
         assert_eq!(usage.output_tokens, 100);
         assert_eq!(usage.cache_read_tokens, 50);
         assert_eq!(usage.model, Some("claude-sonnet-4-20250514".to_string()));
+    }
+
+    // ============================================================================
+    // 智能 Codex 解析测试
+    // ============================================================================
+
+    #[test]
+    fn test_codex_response_auto_openai_format() {
+        // OpenAI 格式 (prompt_tokens/completion_tokens)
+        let response = json!({
+            "model": "gpt-4o",
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 500,
+                "prompt_tokens_details": {
+                    "cached_tokens": 200
+                }
+            }
+        });
+
+        let usage = TokenUsage::from_codex_response_auto(&response).unwrap();
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 500);
+        assert_eq!(usage.cache_read_tokens, 200);
+        assert_eq!(usage.model, Some("gpt-4o".to_string()));
+    }
+
+    #[test]
+    fn test_codex_response_auto_codex_format() {
+        // Codex 格式 (input_tokens/output_tokens)
+        let response = json!({
+            "model": "o3",
+            "usage": {
+                "input_tokens": 1000,
+                "output_tokens": 500,
+                "input_tokens_details": {
+                    "cached_tokens": 300
+                }
+            }
+        });
+
+        let usage = TokenUsage::from_codex_response_auto(&response).unwrap();
+        // 记录原始 input_tokens，不调整
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 500);
+        assert_eq!(usage.cache_read_tokens, 300);
+        assert_eq!(usage.model, Some("o3".to_string()));
+    }
+
+    #[test]
+    fn test_codex_stream_events_auto_codex_format() {
+        // Codex Responses API 流式格式 (response.completed 事件)
+        let events = vec![
+            json!({
+                "type": "response.created",
+                "response": {
+                    "id": "resp_123"
+                }
+            }),
+            json!({
+                "type": "response.completed",
+                "response": {
+                    "model": "o3",
+                    "usage": {
+                        "input_tokens": 1000,
+                        "output_tokens": 500,
+                        "input_tokens_details": {
+                            "cached_tokens": 200
+                        }
+                    }
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_codex_stream_events_auto(&events).unwrap();
+        // 记录原始 input_tokens，不调整
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 500);
+        assert_eq!(usage.cache_read_tokens, 200);
+        assert_eq!(usage.model, Some("o3".to_string()));
+    }
+
+    #[test]
+    fn test_codex_stream_events_auto_openai_format() {
+        // OpenAI Chat Completions 流式格式 (最后一个 chunk 包含 usage)
+        let events = vec![
+            json!({
+                "id": "chatcmpl-123",
+                "model": "gpt-4o",
+                "choices": [{"delta": {"content": "Hello"}}]
+            }),
+            json!({
+                "id": "chatcmpl-123",
+                "model": "gpt-4o",
+                "choices": [{"delta": {}}],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_codex_stream_events_auto(&events).unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 50);
+        assert_eq!(usage.model, Some("gpt-4o".to_string()));
     }
 }
