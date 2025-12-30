@@ -193,7 +193,7 @@ impl ProxyService {
                 self.start().await?;
             }
 
-            // 2) 已接管则直接返回（幂等）
+            // 2) 已接管则直接返回（幂等）；但如果缺少备份或占位符残留，需要重建接管
             let current_config = self
                 .db
                 .get_proxy_config_for_app(app_type_str)
@@ -201,7 +201,22 @@ impl ProxyService {
                 .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
 
             if current_config.enabled {
-                return Ok(());
+                let has_backup = match self.db.get_live_backup(app_type_str).await {
+                    Ok(v) => v.is_some(),
+                    Err(e) => {
+                        log::warn!("读取 {app_type_str} 备份失败（将继续重建接管）: {e}");
+                        false
+                    }
+                };
+                let live_taken_over = self.detect_takeover_in_live_config_for_app(&app);
+
+                if has_backup || live_taken_over {
+                    return Ok(());
+                }
+
+                log::warn!(
+                    "{app_type_str} 标记为已接管，但缺少备份或占位符，正在重新接管并补齐备份"
+                );
             }
 
             // 3) 备份 Live 配置（严格：目标 app 不存在则报错）
@@ -1063,7 +1078,7 @@ impl ProxyService {
         }
     }
 
-    fn detect_takeover_in_live_config_for_app(&self, app_type: &AppType) -> bool {
+    pub fn detect_takeover_in_live_config_for_app(&self, app_type: &AppType) -> bool {
         match app_type {
             AppType::Claude => match self.read_claude_live() {
                 Ok(config) => Self::is_claude_live_taken_over(&config),
@@ -1257,10 +1272,8 @@ impl ProxyService {
 
     /// 检查是否处于 Live 接管模式
     pub async fn is_takeover_active(&self) -> Result<bool, String> {
-        self.db
-            .is_live_takeover_active()
-            .await
-            .map_err(|e| format!("检查接管状态失败: {e}"))
+        let status = self.get_takeover_status().await?;
+        Ok(status.claude || status.codex || status.gemini)
     }
 
     /// 从异常退出中恢复（启动时调用）
