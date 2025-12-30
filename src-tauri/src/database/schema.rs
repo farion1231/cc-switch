@@ -765,9 +765,9 @@ impl Database {
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
     fn seed_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_data = [
-            // Claude 4.5 系列
+            // Claude 4.5 系列 (Latest Models)
             (
-                "claude-opus-4-5",
+                "claude-opus-4-5-20251101",
                 "Claude Opus 4.5",
                 "5",
                 "25",
@@ -775,7 +775,7 @@ impl Database {
                 "6.25",
             ),
             (
-                "claude-sonnet-4-5",
+                "claude-sonnet-4-5-20250929",
                 "Claude Sonnet 4.5",
                 "3",
                 "15",
@@ -783,16 +783,24 @@ impl Database {
                 "3.75",
             ),
             (
-                "claude-haiku-4-5",
+                "claude-haiku-4-5-20251001",
                 "Claude Haiku 4.5",
                 "1",
                 "5",
                 "0.10",
                 "1.25",
             ),
-            // Claude 4.1 系列
+            // Claude 4 系列 (Legacy Models)
             (
-                "claude-opus-4-1",
+                "claude-opus-4-20250514",
+                "Claude Opus 4",
+                "15",
+                "75",
+                "1.50",
+                "18.75",
+            ),
+            (
+                "claude-opus-4-1-20250805",
                 "Claude Opus 4.1",
                 "15",
                 "75",
@@ -800,17 +808,8 @@ impl Database {
                 "18.75",
             ),
             (
-                "claude-sonnet-4-1",
-                "Claude Sonnet 4.1",
-                "3",
-                "15",
-                "0.30",
-                "3.75",
-            ),
-            // Claude 3.7 系列
-            (
-                "claude-sonnet-3-7",
-                "Claude Sonnet 3.7",
+                "claude-sonnet-4-20250514",
+                "Claude Sonnet 4",
                 "3",
                 "15",
                 "0.30",
@@ -818,38 +817,76 @@ impl Database {
             ),
             // Claude 3.5 系列
             (
-                "claude-sonnet-3-5",
-                "Claude Sonnet 3.5",
-                "3",
-                "15",
-                "0.30",
-                "3.75",
-            ),
-            (
-                "claude-haiku-3-5",
-                "Claude Haiku 3.5",
+                "claude-3-5-haiku-20241022",
+                "Claude 3.5 Haiku",
                 "0.80",
                 "4",
                 "0.08",
                 "1",
             ),
-            // GPT-5 系列（model_id 使用短横线格式）
+            (
+                "claude-3-5-sonnet-20241022",
+                "Claude 3.5 Sonnet",
+                "3",
+                "15",
+                "0.30",
+                "3.75",
+            ),
+            // GPT-5.2 系列
+            ("gpt-5.2", "GPT-5.2", "1.75", "14", "0.175", "0"),
+            ("gpt-5.2-low", "GPT-5.2", "1.75", "14", "0.175", "0"),
+            ("gpt-5.2-medium", "GPT-5.2", "1.75", "14", "0.175", "0"),
+            ("gpt-5.2-high", "GPT-5.2", "1.75", "14", "0.175", "0"),
+            ("gpt-5.2-xhigh", "GPT-5.2", "1.75", "14", "0.175", "0"),
+            ("gpt-5.2-codex", "GPT-5.2 Codex", "1.75", "14", "0.175", "0"),
+            ("gpt-5.2-codex-low", "GPT-5.2 Codex", "1.75", "14", "0.175", "0"),
+            ("gpt-5.2-codex-medium", "GPT-5.2 Codex", "1.75", "14", "0.175", "0"),
+            ("gpt-5.2-codex-high", "GPT-5.2 Codex", "1.75", "14", "0.175", "0"),
+            ("gpt-5.2-codex-xhigh", "GPT-5.2 Codex", "1.75", "14", "0.175", "0"),
+            // GPT-5.1 系列
+            ("gpt-5.1", "GPT-5.1", "1.25", "10", "0.125", "0"),
+            ("gpt-5.1-low", "GPT-5.1", "1.25", "10", "0.125", "0"),
+            ("gpt-5.1-medium", "GPT-5.1", "1.25", "10", "0.125", "0"),
+            ("gpt-5.1-high", "GPT-5.1", "1.25", "10", "0.125", "0"),
+            ("gpt-5.1-minimal", "GPT-5.1", "1.25", "10", "0.125", "0"),
+            ("gpt-5.1-codex", "GPT-5.1 Codex", "1.25", "10", "0.125", "0"),
+            ("gpt-5.1-codex-mini", "GPT-5.1 Codex", "1.25", "10", "0.125", "0"),
+            ("gpt-5.1-codex-max", "GPT-5.1 Codex", "1.25", "10", "0.125", "0"),
+            ("gpt-5.1-codex-max-high", "GPT-5.1 Codex", "1.25", "10", "0.125", "0"),
+            ("gpt-5.1-codex-max-xhigh", "GPT-5.1 Codex", "1.25", "10", "0.125", "0"),
+            // GPT-5 系列
             ("gpt-5", "GPT-5", "1.25", "10", "0.125", "0"),
-            ("gpt-5-1", "GPT-5.1", "1.25", "10", "0.125", "0"),
+            ("gpt-5-low", "GPT-5", "1.25", "10", "0.125", "0"),
+            ("gpt-5-medium", "GPT-5", "1.25", "10", "0.125", "0"),
+            ("gpt-5-high", "GPT-5", "1.25", "10", "0.125", "0"),
+            ("gpt-5-minimal", "GPT-5", "1.25", "10", "0.125", "0"),
             ("gpt-5-codex", "GPT-5 Codex", "1.25", "10", "0.125", "0"),
-            ("gpt-5-1-codex", "GPT-5.1 Codex", "1.25", "10", "0.125", "0"),
+            ("gpt-5-codex-low", "GPT-5 Codex", "1.25", "10", "0.125", "0"),
+            ("gpt-5-codex-medium", "GPT-5 Codex", "1.25", "10", "0.125", "0"),
+            ("gpt-5-codex-high", "GPT-5 Codex", "1.25", "10", "0.125", "0"),
+            ("gpt-5-codex-mini", "GPT-5 Codex", "1.25", "10", "0.125", "0"),
+            ("gpt-5-codex-mini-medium", "GPT-5 Codex", "1.25", "10", "0.125", "0"),
+            ("gpt-5-codex-mini-high", "GPT-5 Codex", "1.25", "10", "0.125", "0"),
             // Gemini 3 系列
             (
                 "gemini-3-pro-preview",
                 "Gemini 3 Pro Preview",
                 "2",
                 "12",
-                "0",
+                "0.2",
                 "0",
             ),
-            // Gemini 2.5 系列（model_id 使用短横线格式）
             (
-                "gemini-2-5-pro",
+                "gemini-3-flash-preview",
+                "Gemini 3 Flash Preview",
+                "0.5",
+                "3",
+                "0.05",
+                "0",
+            ),
+            // Gemini 2.5 系列
+            (
+                "gemini-2.5-pro",
                 "Gemini 2.5 Pro",
                 "1.25",
                 "10",
@@ -857,7 +894,7 @@ impl Database {
                 "0",
             ),
             (
-                "gemini-2-5-flash",
+                "gemini-2.5-flash",
                 "Gemini 2.5 Flash",
                 "0.3",
                 "2.5",
