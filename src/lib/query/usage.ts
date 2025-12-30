@@ -24,6 +24,8 @@ export function useUsageSummary(startDate?: number, endDate?: number) {
   return useQuery({
     queryKey: usageKeys.summary(startDate, endDate),
     queryFn: () => usageApi.getUsageSummary(startDate, endDate),
+    refetchInterval: 30000, // 每30秒自动刷新
+    refetchIntervalInBackground: false, // 后台不刷新
   });
 }
 
@@ -31,6 +33,8 @@ export function useUsageTrends(days: number) {
   return useQuery({
     queryKey: usageKeys.trends(days),
     queryFn: () => usageApi.getUsageTrends(days),
+    refetchInterval: 30000, // 每30秒自动刷新
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -38,6 +42,8 @@ export function useProviderStats() {
   return useQuery({
     queryKey: usageKeys.providerStats(),
     queryFn: usageApi.getProviderStats,
+    refetchInterval: 30000, // 每30秒自动刷新
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -45,6 +51,8 @@ export function useModelStats() {
   return useQuery({
     queryKey: usageKeys.modelStats(),
     queryFn: usageApi.getModelStats,
+    refetchInterval: 30000, // 每30秒自动刷新
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -56,6 +64,8 @@ export function useRequestLogs(
   return useQuery({
     queryKey: usageKeys.logs(filters, page, pageSize),
     queryFn: () => usageApi.getRequestLogs(filters, page, pageSize),
+    refetchInterval: 30000, // 每30秒自动刷新
+    refetchIntervalInBackground: false,
   });
 }
 
