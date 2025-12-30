@@ -951,22 +951,15 @@ mod tests {
         // 准备额外定价数据，覆盖前缀/后缀清洗场景
         conn.execute(
             "INSERT OR REPLACE INTO model_pricing (
-                model_id, input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million, currency
-            ) VALUES (?, ?, ?, ?, ?, 'usd')",
-            params!["claude-haiku-4.5", "1.0", "2.0", "0.0", "0.0"],
-        )?;
-        conn.execute(
-            "INSERT OR REPLACE INTO model_pricing (
-                model_id, input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million, currency
-            ) VALUES (?, ?, ?, ?, ?, 'usd')",
-            params!["kimi-k2-0905", "1.0", "1.0", "0.0", "0.0"],
+                model_id, display_name, input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+            ) VALUES (?, ?, ?, ?, ?, ?)",
+            params!["claude-haiku-4.5", "Claude Haiku 4.5", "1.0", "2.0", "0.0", "0.0"],
         )?;
 
-        // 测试精确匹配（必须存在同名条目）
-        let result = find_model_pricing_row(&conn, "claude-sonnet-4-5")?;
-        assert!(result.is_some(), "应该能精确匹配 claude-sonnet-4-5");
+        // 测试精确匹配（seed_model_pricing 已预置 claude-sonnet-4-5-20250929）
+        let result = find_model_pricing_row(&conn, "claude-sonnet-4-5-20250929")?;
+        assert!(result.is_some(), "应该能精确匹配 claude-sonnet-4-5-20250929");
 
         // 清洗：去除前缀和冒号后缀
         let result = find_model_pricing_row(&conn, "anthropic/claude-haiku-4.5")?;

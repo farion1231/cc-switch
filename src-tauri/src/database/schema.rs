@@ -992,6 +992,68 @@ impl Database {
                 "0.03",
                 "0",
             ),
+            // ====== 国产模型 (CNY/1M tokens) ======
+            // Doubao (字节跳动)
+            (
+                "doubao-seed-code",
+                "Doubao Seed Code",
+                "1.20",
+                "8.00",
+                "0.24",
+                "0",
+            ),
+            // DeepSeek 系列
+            (
+                "deepseek-v3.2",
+                "DeepSeek V3.2",
+                "2.00",
+                "3.00",
+                "0.40",
+                "0",
+            ),
+            (
+                "deepseek-v3.1",
+                "DeepSeek V3.1",
+                "4.00",
+                "12.00",
+                "0.80",
+                "0",
+            ),
+            ("deepseek-v3", "DeepSeek V3", "2.00", "8.00", "0.40", "0"),
+            // Kimi (月之暗面)
+            (
+                "kimi-k2-thinking",
+                "Kimi K2 Thinking",
+                "4.00",
+                "16.00",
+                "1.00",
+                "0",
+            ),
+            ("kimi-k2-0905", "Kimi K2", "4.00", "16.00", "1.00", "0"),
+            (
+                "kimi-k2-turbo",
+                "Kimi K2 Turbo",
+                "8.00",
+                "58.00",
+                "1.00",
+                "0",
+            ),
+            // MiniMax 系列
+            ("minimax-m2.1", "MiniMax M2.1", "2.10", "8.40", "0.21", "0"),
+            (
+                "minimax-m2.1-lightning",
+                "MiniMax M2.1 Lightning",
+                "2.10",
+                "16.80",
+                "0.21",
+                "0",
+            ),
+            ("minimax-m2", "MiniMax M2", "2.10", "8.40", "0.21", "0"),
+            // GLM (智谱)
+            ("glm-4.7", "GLM-4.7", "2.00", "8.00", "0.40", "0"),
+            ("glm-4.6", "GLM-4.6", "2.00", "8.00", "0.40", "0"),
+            // Mimo (小米)
+            ("mimo-v2-flash", "Mimo V2 Flash", "0", "0", "0", "0"),
         ];
 
         for (model_id, display_name, input, output, cache_read, cache_creation) in pricing_data {
