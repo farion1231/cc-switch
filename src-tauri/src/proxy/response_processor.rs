@@ -112,6 +112,19 @@ pub async fn handle_non_streaming(
 
             spawn_log_usage(state, ctx, usage, &model, status.as_u16(), false);
         } else {
+            let model = json_value
+                .get("model")
+                .and_then(|m| m.as_str())
+                .unwrap_or(&ctx.request_model)
+                .to_string();
+            spawn_log_usage(
+                state,
+                ctx,
+                TokenUsage::default(),
+                &model,
+                status.as_u16(),
+                false,
+            );
             log::debug!(
                 "[{}] 未能解析 usage 信息，跳过记录",
                 parser_config.app_type_str
@@ -122,6 +135,14 @@ pub async fn handle_non_streaming(
             "[{}] <<< 响应 (非 JSON): {} bytes",
             ctx.tag,
             body_bytes.len()
+        );
+        spawn_log_usage(
+            state,
+            ctx,
+            TokenUsage::default(),
+            &ctx.request_model,
+            status.as_u16(),
+            false,
         );
     }
 
@@ -267,6 +288,25 @@ fn create_usage_collector(
                 .await;
             });
         } else {
+            let model = model_extractor(&events, &request_model);
+            let latency_ms = start_time.elapsed().as_millis() as u64;
+            let state = state.clone();
+            let provider_id = provider_id.clone();
+
+            tokio::spawn(async move {
+                log_usage_internal(
+                    &state,
+                    &provider_id,
+                    app_type_str,
+                    &model,
+                    TokenUsage::default(),
+                    latency_ms,
+                    first_token_ms,
+                    true, // is_streaming
+                    status_code,
+                )
+                .await;
+            });
             log::debug!("[{tag}] 流式响应缺少 usage 统计，跳过消费记录");
         }
     })
@@ -337,6 +377,14 @@ async fn log_usage_internal(
     };
 
     let request_id = uuid::Uuid::new_v4().to_string();
+
+    log::debug!(
+        "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, input={}, output={}, cache_read={}, cache_creation={}",
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.cache_read_tokens,
+        usage.cache_creation_tokens
+    );
 
     if let Err(e) = logger.log_with_calculation(
         request_id,

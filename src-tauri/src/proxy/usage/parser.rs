@@ -163,13 +163,21 @@ impl TokenUsage {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        let cached_tokens = usage
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_u64())
+            .or_else(|| {
+                usage
+                    .get("input_tokens_details")
+                    .and_then(|d| d.get("cached_tokens"))
+                    .and_then(|v| v.as_u64())
+            })
+            .unwrap_or(0) as u32;
+
         Some(Self {
             input_tokens: input_tokens? as u32,
             output_tokens: output_tokens? as u32,
-            cache_read_tokens: usage
-                .get("cache_read_input_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+            cache_read_tokens: cached_tokens,
             cache_creation_tokens: usage
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
@@ -188,11 +196,16 @@ impl TokenUsage {
         let input_tokens = usage.get("input_tokens")?.as_u64()? as u32;
         let output_tokens = usage.get("output_tokens")?.as_u64()? as u32;
 
-        // 获取 cached_tokens (可能在 input_tokens_details 中)
+        // 获取 cached_tokens (可能在 cache_read_input_tokens 或 input_tokens_details 中)
         let cached_tokens = usage
-            .get("input_tokens_details")
-            .and_then(|d| d.get("cached_tokens"))
+            .get("cache_read_input_tokens")
             .and_then(|v| v.as_u64())
+            .or_else(|| {
+                usage
+                    .get("input_tokens_details")
+                    .and_then(|d| d.get("cached_tokens"))
+                    .and_then(|v| v.as_u64())
+            })
             .unwrap_or(0) as u32;
 
         // 调整 input_tokens: 减去 cached_tokens
@@ -500,6 +513,25 @@ mod tests {
     }
 
     #[test]
+    fn test_codex_response_parsing_cached_tokens_in_details() {
+        let response = json!({
+            "usage": {
+                "input_tokens": 1000,
+                "output_tokens": 500,
+                "input_tokens_details": {
+                    "cached_tokens": 300
+                }
+            }
+        });
+
+        let usage = TokenUsage::from_codex_response(&response).unwrap();
+        // 非调整模式：input_tokens 保持原值，但应记录缓存命中
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 500);
+        assert_eq!(usage.cache_read_tokens, 300);
+    }
+
+    #[test]
     fn test_codex_response_adjusted() {
         let response = json!({
             "usage": {
@@ -532,6 +564,22 @@ mod tests {
         assert_eq!(usage.input_tokens, 1000);
         assert_eq!(usage.output_tokens, 500);
         assert_eq!(usage.cache_read_tokens, 0);
+    }
+
+    #[test]
+    fn test_codex_response_adjusted_cache_read_input_tokens() {
+        let response = json!({
+            "usage": {
+                "input_tokens": 1000,
+                "output_tokens": 500,
+                "cache_read_input_tokens": 200
+            }
+        });
+
+        let usage = TokenUsage::from_codex_response_adjusted(&response).unwrap();
+        assert_eq!(usage.input_tokens, 800);
+        assert_eq!(usage.output_tokens, 500);
+        assert_eq!(usage.cache_read_tokens, 200);
     }
 
     #[test]
