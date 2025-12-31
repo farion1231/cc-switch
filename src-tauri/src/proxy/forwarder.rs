@@ -487,28 +487,16 @@ impl RequestForwarder {
         // 构建请求
         let mut request = self.client.post(&url);
 
-        // 只透传必要的 Headers（白名单模式）
-        let allowed_headers = [
-            "accept",
-            "user-agent",
-            "x-request-id",
-            "x-stainless-arch",
-            "x-stainless-lang",
-            "x-stainless-os",
-            "x-stainless-package-version",
-            "x-stainless-runtime",
-            "x-stainless-runtime-version",
-        ];
+        // 请求头黑名单：仅跳过会被覆盖或可能失效的字段（认证、Host、长度）
+        let skip_headers = ["authorization", "x-api-key", "host", "content-length"];
 
         for (key, value) in headers {
             let key_str = key.as_str().to_lowercase();
-            if allowed_headers.contains(&key_str.as_str()) {
-                request = request.header(key, value);
+            if skip_headers.contains(&key_str.as_str()) {
+                continue;
             }
+            request = request.header(key, value);
         }
-
-        // 确保 Content-Type 是 json
-        request = request.header("Content-Type", "application/json");
 
         // 使用适配器添加认证头
         if let Some(auth) = adapter.extract_auth(provider) {

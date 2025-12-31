@@ -954,12 +954,22 @@ mod tests {
                 model_id, display_name, input_cost_per_million, output_cost_per_million,
                 cache_read_cost_per_million, cache_creation_cost_per_million
             ) VALUES (?, ?, ?, ?, ?, ?)",
-            params!["claude-haiku-4.5", "Claude Haiku 4.5", "1.0", "2.0", "0.0", "0.0"],
+            params![
+                "claude-haiku-4.5",
+                "Claude Haiku 4.5",
+                "1.0",
+                "2.0",
+                "0.0",
+                "0.0"
+            ],
         )?;
 
         // 测试精确匹配（seed_model_pricing 已预置 claude-sonnet-4-5-20250929）
         let result = find_model_pricing_row(&conn, "claude-sonnet-4-5-20250929")?;
-        assert!(result.is_some(), "应该能精确匹配 claude-sonnet-4-5-20250929");
+        assert!(
+            result.is_some(),
+            "应该能精确匹配 claude-sonnet-4-5-20250929"
+        );
 
         // 清洗：去除前缀和冒号后缀
         let result = find_model_pricing_row(&conn, "anthropic/claude-haiku-4.5")?;
