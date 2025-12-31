@@ -5,8 +5,7 @@ import type { LogFilters } from "@/types/usage";
 // Query keys
 export const usageKeys = {
   all: ["usage"] as const,
-  summary: (startDate?: number, endDate?: number) =>
-    [...usageKeys.all, "summary", startDate, endDate] as const,
+  summary: (days: number) => [...usageKeys.all, "summary", days] as const,
   trends: (days: number) => [...usageKeys.all, "trends", days] as const,
   providerStats: () => [...usageKeys.all, "provider-stats"] as const,
   modelStats: () => [...usageKeys.all, "model-stats"] as const,
@@ -19,11 +18,20 @@ export const usageKeys = {
     [...usageKeys.all, "limits", providerId, appType] as const,
 };
 
+const getWindow = (days: number) => {
+  const endDate = Math.floor(Date.now() / 1000);
+  const startDate = endDate - days * 24 * 60 * 60;
+  return { startDate, endDate };
+};
+
 // Hooks
-export function useUsageSummary(startDate?: number, endDate?: number) {
+export function useUsageSummary(days: number) {
   return useQuery({
-    queryKey: usageKeys.summary(startDate, endDate),
-    queryFn: () => usageApi.getUsageSummary(startDate, endDate),
+    queryKey: usageKeys.summary(days),
+    queryFn: () => {
+      const { startDate, endDate } = getWindow(days);
+      return usageApi.getUsageSummary(startDate, endDate);
+    },
     refetchInterval: 30000, // 每30秒自动刷新
     refetchIntervalInBackground: false, // 后台不刷新
   });
@@ -32,7 +40,10 @@ export function useUsageSummary(startDate?: number, endDate?: number) {
 export function useUsageTrends(days: number) {
   return useQuery({
     queryKey: usageKeys.trends(days),
-    queryFn: () => usageApi.getUsageTrends(days),
+    queryFn: () => {
+      const { startDate, endDate } = getWindow(days);
+      return usageApi.getUsageTrends(startDate, endDate);
+    },
     refetchInterval: 30000, // 每30秒自动刷新
     refetchIntervalInBackground: false,
   });

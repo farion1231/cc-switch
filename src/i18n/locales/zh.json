@@ -423,7 +423,7 @@
     "cost": "成本",
     "perMillion": "(每百万)",
     "trends": "使用趋势",
-    "rangeToday": "今天 (按小时)",
+    "rangeToday": "过去 24 小时 (按小时)",
     "rangeLast7Days": "过去 7 天",
     "rangeLast30Days": "过去 30 天",
     "totalTokens": "总 Token 数",

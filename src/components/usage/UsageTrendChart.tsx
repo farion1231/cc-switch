@@ -41,7 +41,12 @@ export function UsageTrendChart({ days }: UsageTrendChartProps) {
       return {
         rawDate: stat.date,
         label: isToday
-          ? pointDate.toLocaleTimeString(dateLocale, { hour: "2-digit" })
+          ? pointDate.toLocaleString(dateLocale, {
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
           : pointDate.toLocaleDateString(dateLocale, {
               month: "2-digit",
               day: "2-digit",
@@ -55,26 +60,7 @@ export function UsageTrendChart({ days }: UsageTrendChartProps) {
       };
     }) || [];
 
-  const hourlyData = (() => {
-    if (!isToday) return chartData;
-    const map = new Map<number, (typeof chartData)[number]>();
-    chartData.forEach((point) => {
-      map.set(point.hour ?? 0, point);
-    });
-    return Array.from({ length: 24 }, (_, hour) => {
-      const bucket = map.get(hour);
-      return {
-        label: `${hour.toString().padStart(2, "0")}:00`,
-        inputTokens: bucket?.inputTokens ?? 0,
-        outputTokens: bucket?.outputTokens ?? 0,
-        cacheCreationTokens: bucket?.cacheCreationTokens ?? 0,
-        cacheReadTokens: bucket?.cacheReadTokens ?? 0,
-        cost: bucket?.cost ?? 0,
-      };
-    });
-  })();
-
-  const displayData = isToday ? hourlyData : chartData;
+  const displayData = chartData;
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {

@@ -423,7 +423,7 @@
     "cost": "Cost",
     "perMillion": "(per million)",
     "trends": "Usage Trends",
-    "rangeToday": "Today (hourly)",
+    "rangeToday": "Last 24 hours (hourly)",
     "rangeLast7Days": "Last 7 days",
     "rangeLast30Days": "Last 30 days",
     "totalTokens": "Total Tokens",

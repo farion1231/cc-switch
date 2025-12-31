@@ -423,7 +423,7 @@
     "cost": "コスト",
     "perMillion": "(100万あたり)",
     "trends": "利用トレンド",
-    "rangeToday": "今日 (時間別)",
+    "rangeToday": "直近24時間 (時間別)",
     "rangeLast7Days": "過去7日間",
     "rangeLast30Days": "過去30日間",
     "totalTokens": "総トークン数",

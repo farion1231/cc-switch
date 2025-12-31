@@ -4,7 +4,7 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use chrono::{Duration, Local, TimeZone};
+use chrono::{Local, TimeZone};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -181,145 +181,114 @@ impl Database {
         Ok(result)
     }
 
-    /// 获取每日趋势
-    pub fn get_daily_trends(&self, days: u32) -> Result<Vec<DailyStats>, AppError> {
+    /// 获取每日趋势（滑动窗口，<=24h 按小时，>24h 按天，窗口与汇总一致）
+    pub fn get_daily_trends(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<Vec<DailyStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        if days <= 1 {
-            let today = Local::now().date_naive();
-            let start_of_today = today.and_hms_opt(0, 0, 0).unwrap();
-            // 使用 earliest() 处理 DST 切换时的歧义时间，fallback 到当前时间减一天
-            let start_ts = Local
-                .from_local_datetime(&start_of_today)
-                .earliest()
-                .unwrap_or_else(|| Local::now() - Duration::days(1))
-                .timestamp();
+        let end_ts = end_date.unwrap_or_else(|| Local::now().timestamp());
+        let mut start_ts = start_date.unwrap_or_else(|| end_ts - 24 * 60 * 60);
 
-            let sql = "SELECT 
-                    strftime('%Y-%m-%dT%H:00:00', datetime(created_at, 'unixepoch', 'localtime')) as bucket,
-                    COUNT(*) as request_count,
-                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
-                    COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
-                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                    COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
-                    COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens
-                 FROM proxy_request_logs
-                 WHERE created_at >= ?
-                 GROUP BY bucket
-                 ORDER BY bucket ASC";
-
-            let mut stmt = conn.prepare(sql)?;
-            let rows = stmt.query_map([start_ts], |row| {
-                Ok(DailyStats {
-                    date: row.get(0)?,
-                    request_count: row.get::<_, i64>(1)? as u64,
-                    total_cost: format!("{:.6}", row.get::<_, f64>(2)?),
-                    total_tokens: row.get::<_, i64>(3)? as u64,
-                    total_input_tokens: row.get::<_, i64>(4)? as u64,
-                    total_output_tokens: row.get::<_, i64>(5)? as u64,
-                    total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
-                    total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
-                })
-            })?;
-
-            let mut buckets: HashMap<String, DailyStats> = HashMap::new();
-            for row in rows {
-                let stat = row?;
-                buckets.insert(stat.date.clone(), stat);
-            }
-
-            let mut stats = Vec::new();
-            for hour in 0..24 {
-                let bucket = today
-                    .and_hms_opt(hour, 0, 0)
-                    .unwrap()
-                    .format("%Y-%m-%dT%H:00:00")
-                    .to_string();
-
-                if let Some(stat) = buckets.remove(&bucket) {
-                    stats.push(stat);
-                } else {
-                    stats.push(DailyStats {
-                        date: bucket,
-                        request_count: 0,
-                        total_cost: "0.000000".to_string(),
-                        total_tokens: 0,
-                        total_input_tokens: 0,
-                        total_output_tokens: 0,
-                        total_cache_creation_tokens: 0,
-                        total_cache_read_tokens: 0,
-                    });
-                }
-            }
-            Ok(stats)
-        } else {
-            let today = Local::now().date_naive();
-            let start_day = today - Duration::days((days.saturating_sub(1)) as i64);
-            let start_of_window = start_day.and_hms_opt(0, 0, 0).unwrap();
-            // 使用 earliest() 处理 DST 切换时的歧义时间，fallback 到当前时间减 days 天
-            let start_ts = Local
-                .from_local_datetime(&start_of_window)
-                .earliest()
-                .unwrap_or_else(|| Local::now() - Duration::days(days as i64))
-                .timestamp();
-
-            let sql = "SELECT 
-                    strftime('%Y-%m-%dT00:00:00', datetime(created_at, 'unixepoch', 'localtime')) as bucket,
-                    COUNT(*) as request_count,
-                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
-                    COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
-                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                    COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
-                    COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens
-                 FROM proxy_request_logs
-                 WHERE created_at >= ?
-                 GROUP BY bucket
-                 ORDER BY bucket ASC";
-
-            let mut stmt = conn.prepare(sql)?;
-            let rows = stmt.query_map([start_ts], |row| {
-                Ok(DailyStats {
-                    date: row.get(0)?,
-                    request_count: row.get::<_, i64>(1)? as u64,
-                    total_cost: format!("{:.6}", row.get::<_, f64>(2)?),
-                    total_tokens: row.get::<_, i64>(3)? as u64,
-                    total_input_tokens: row.get::<_, i64>(4)? as u64,
-                    total_output_tokens: row.get::<_, i64>(5)? as u64,
-                    total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
-                    total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
-                })
-            })?;
-
-            let mut map = HashMap::new();
-            for row in rows {
-                let stat = row?;
-                map.insert(stat.date.clone(), stat);
-            }
-
-            let mut stats = Vec::new();
-
-            for i in 0..days {
-                let day = start_day + Duration::days(i as i64);
-                let key = day.format("%Y-%m-%dT00:00:00").to_string();
-                if let Some(stat) = map.remove(&key) {
-                    stats.push(stat);
-                } else {
-                    stats.push(DailyStats {
-                        date: key,
-                        request_count: 0,
-                        total_cost: "0.000000".to_string(),
-                        total_tokens: 0,
-                        total_input_tokens: 0,
-                        total_output_tokens: 0,
-                        total_cache_creation_tokens: 0,
-                        total_cache_read_tokens: 0,
-                    });
-                }
-            }
-            Ok(stats)
+        if start_ts >= end_ts {
+            start_ts = end_ts - 24 * 60 * 60;
         }
+
+        let duration = end_ts - start_ts;
+        let bucket_seconds: i64 = if duration <= 24 * 60 * 60 {
+            60 * 60
+        } else {
+            24 * 60 * 60
+        };
+        let mut bucket_count: i64 = if duration <= 0 {
+            1
+        } else {
+            ((duration as f64) / bucket_seconds as f64).ceil() as i64
+        };
+
+        // 固定 24 小时窗口为 24 个小时桶，避免浮点误差
+        if bucket_seconds == 60 * 60 {
+            bucket_count = 24;
+        }
+
+        if bucket_count < 1 {
+            bucket_count = 1;
+        }
+
+        let sql = "
+            SELECT 
+                CAST((created_at - ?1) / ?3 AS INTEGER) as bucket_idx,
+                COUNT(*) as request_count,
+                COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
+                COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
+                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens
+            FROM proxy_request_logs
+            WHERE created_at >= ?1 AND created_at <= ?2
+            GROUP BY bucket_idx
+            ORDER BY bucket_idx ASC";
+
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map(params![start_ts, end_ts, bucket_seconds], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                DailyStats {
+                    date: String::new(),
+                    request_count: row.get::<_, i64>(1)? as u64,
+                    total_cost: format!("{:.6}", row.get::<_, f64>(2)?),
+                    total_tokens: row.get::<_, i64>(3)? as u64,
+                    total_input_tokens: row.get::<_, i64>(4)? as u64,
+                    total_output_tokens: row.get::<_, i64>(5)? as u64,
+                    total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
+                    total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
+                },
+            ))
+        })?;
+
+        let mut map: HashMap<i64, DailyStats> = HashMap::new();
+        for row in rows {
+            let (mut bucket_idx, stat) = row?;
+            if bucket_idx < 0 {
+                continue;
+            }
+            if bucket_idx >= bucket_count {
+                bucket_idx = bucket_count - 1;
+            }
+            map.insert(bucket_idx, stat);
+        }
+
+        let mut stats = Vec::with_capacity(bucket_count as usize);
+        for i in 0..bucket_count {
+            let bucket_start_ts = start_ts + i * bucket_seconds;
+            let bucket_start = Local
+                .timestamp_opt(bucket_start_ts, 0)
+                .single()
+                .unwrap_or_else(Local::now);
+
+            let date = bucket_start.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+            if let Some(mut stat) = map.remove(&i) {
+                stat.date = date;
+                stats.push(stat);
+            } else {
+                stats.push(DailyStats {
+                    date,
+                    request_count: 0,
+                    total_cost: "0.000000".to_string(),
+                    total_tokens: 0,
+                    total_input_tokens: 0,
+                    total_output_tokens: 0,
+                    total_cache_creation_tokens: 0,
+                    total_cache_read_tokens: 0,
+                });
+            }
+        }
+
+        Ok(stats)
     }
 
     /// 获取 Provider 统计
