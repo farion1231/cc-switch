@@ -3,7 +3,7 @@
 //! 负责将请求转发到上游Provider，支持故障转移
 
 use super::{
-    body_filter::filter_private_params,
+    body_filter::filter_private_params_with_whitelist,
     error::*,
     failover_switch::FailoverSwitchManager,
     provider_router::ProviderRouter,
@@ -23,11 +23,12 @@ use tokio::sync::RwLock;
 /// 参考 Claude Code Hub 设计，过滤以下类别：
 /// 1. 认证类（会被覆盖）
 /// 2. 连接类（由 HTTP 客户端管理）
-/// 3. 客户端 IP 类（隐私保护）
-/// 4. 代理转发类
-/// 5. CDN/云服务商特定头
-/// 6. 请求追踪类
-/// 7. 浏览器特定头（可能被上游检测）
+/// 3. 代理转发类
+/// 4. CDN/云服务商特定头
+/// 5. 请求追踪类
+/// 6. 浏览器特定头（可能被上游检测）
+///
+/// 注意：客户端 IP 类（x-forwarded-for, x-real-ip）默认透传
 const HEADER_BLACKLIST: &[&str] = &[
     // 认证类（会被覆盖）
     "authorization",
@@ -39,14 +40,7 @@ const HEADER_BLACKLIST: &[&str] = &[
     "transfer-encoding",
     // 编码类（会被覆盖为 identity）
     "accept-encoding",
-    // 客户端 IP 类（隐私保护）
-    "x-forwarded-for",
-    "x-real-ip",
-    "x-client-ip",
-    "x-originating-ip",
-    "x-remote-ip",
-    "x-remote-addr",
-    // 代理转发类
+    // 代理转发类（保留 x-forwarded-for 和 x-real-ip）
     "x-forwarded-host",
     "x-forwarded-port",
     "x-forwarded-proto",
@@ -84,6 +78,9 @@ const HEADER_BLACKLIST: &[&str] = &[
     "accept-language",
     // anthropic-beta 单独处理，避免重复
     "anthropic-beta",
+    // 客户端 IP 单独处理（默认透传）
+    "x-forwarded-for",
+    "x-real-ip",
 ];
 
 pub struct ForwardResult {
@@ -490,7 +487,8 @@ impl RequestForwarder {
         };
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
-        let filtered_body = filter_private_params(request_body);
+        // 默认使用空白名单，过滤所有 _ 前缀字段
+        let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
 
         // ========== 请求体日志（截断显示） ==========
         let body_str = serde_json::to_string_pretty(&filtered_body)
@@ -557,29 +555,29 @@ impl RequestForwarder {
             }
         }
 
-        // 处理 anthropic-beta Header
-        // 必须移除 claude-code-xxxx 标记，上游服务 (free.duckcoding.com) 似乎会拒绝包含此 tag 的请求
-        // 报错信息: "请勿在 Claude Code CLI 之外使用接口" (paradoxically triggered when this tag is present)
+        // 处理 anthropic-beta Header（透传）
+        // 参考 Claude Code Hub 的实现，直接透传客户端的 beta 标记
         if let Some(beta) = headers.get("anthropic-beta") {
-            let beta_str = beta.to_str().unwrap_or("");
-            let filtered_beta: Vec<&str> = beta_str
-                .split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.contains("claude-code"))
-                .collect();
+            if let Ok(beta_str) = beta.to_str() {
+                request = request.header("anthropic-beta", beta_str);
+                passed_headers.push(("anthropic-beta".to_string(), beta_str.to_string()));
+                log::info!("[{}] 透传 anthropic-beta: {}", adapter.name(), beta_str);
+            }
+        }
 
-            if !filtered_beta.is_empty() {
-                let new_beta_value = filtered_beta.join(",");
-                request = request.header("anthropic-beta", &new_beta_value);
-                passed_headers.push(("anthropic-beta".to_string(), new_beta_value.clone()));
-                log::info!(
-                    "[{}] 处理 anthropic-beta: {} -> {}",
-                    adapter.name(),
-                    beta_str,
-                    new_beta_value
-                );
-            } else {
-                log::info!("[{}] 过滤后 anthropic-beta 为空，跳过发送", adapter.name());
+        // 客户端 IP 透传（默认开启）
+        if let Some(xff) = headers.get("x-forwarded-for") {
+            if let Ok(xff_str) = xff.to_str() {
+                request = request.header("x-forwarded-for", xff_str);
+                passed_headers.push(("x-forwarded-for".to_string(), xff_str.to_string()));
+                log::debug!("[{}] 透传 x-forwarded-for: {}", adapter.name(), xff_str);
+            }
+        }
+        if let Some(real_ip) = headers.get("x-real-ip") {
+            if let Ok(real_ip_str) = real_ip.to_str() {
+                request = request.header("x-real-ip", real_ip_str);
+                passed_headers.push(("x-real-ip".to_string(), real_ip_str.to_string()));
+                log::debug!("[{}] 透传 x-real-ip: {}", adapter.name(), real_ip_str);
             }
         }
 
@@ -612,6 +610,21 @@ impl RequestForwarder {
                 adapter.name(),
                 provider.name
             );
+        }
+
+        // anthropic-version 透传：优先使用客户端的版本号
+        // 参考 Claude Code Hub：透传客户端值而非固定版本
+        if let Some(version) = headers.get("anthropic-version") {
+            if let Ok(version_str) = version.to_str() {
+                // 覆盖适配器设置的默认版本
+                request = request.header("anthropic-version", version_str);
+                passed_headers.push(("anthropic-version".to_string(), version_str.to_string()));
+                log::info!(
+                    "[{}] 透传 anthropic-version: {}",
+                    adapter.name(),
+                    version_str
+                );
+            }
         }
 
         // ========== 最终发送的 Headers 日志 ==========

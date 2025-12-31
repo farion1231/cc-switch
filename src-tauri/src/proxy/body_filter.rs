@@ -4,6 +4,7 @@
 //!
 //! ## 过滤规则
 //! - 以 `_` 开头的字段被视为私有参数，会被递归过滤
+//! - 支持白名单机制，允许透传特定的 `_` 前缀字段
 //! - 支持嵌套对象和数组的深度过滤
 //!
 //! ## 使用场景
@@ -13,6 +14,7 @@
 //! - `_client_version`: 客户端版本
 
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// 过滤私有参数（以 `_` 开头的字段）
 ///
@@ -34,22 +36,64 @@ use serde_json::Value;
 /// let output = filter_private_params(input);
 /// // output 中不包含 _internal_id 和 _token
 /// ```
+#[cfg(test)]
 pub fn filter_private_params(body: Value) -> Value {
-    filter_recursive(body, &mut Vec::new())
+    filter_private_params_with_whitelist(body, &[])
+}
+
+/// 过滤私有参数（支持白名单）
+///
+/// 递归遍历 JSON 结构，移除所有以下划线开头的字段，
+/// 但保留白名单中指定的字段。
+///
+/// # Arguments
+/// * `body` - 原始请求体
+/// * `whitelist` - 白名单字段列表（不过滤这些字段）
+///
+/// # Returns
+/// 过滤后的请求体
+///
+/// # Example
+/// ```ignore
+/// let input = json!({
+///     "model": "claude-3",
+///     "_metadata": {"key": "value"},  // 白名单中，保留
+///     "_internal_id": "abc123"        // 不在白名单中，过滤
+/// });
+/// let output = filter_private_params_with_whitelist(input, &["_metadata"]);
+/// // output 包含 _metadata，不包含 _internal_id
+/// ```
+pub fn filter_private_params_with_whitelist(body: Value, whitelist: &[String]) -> Value {
+    let whitelist_set: HashSet<&str> = whitelist.iter().map(|s| s.as_str()).collect();
+    filter_recursive_with_whitelist(body, &mut Vec::new(), &whitelist_set)
 }
 
 /// 递归过滤实现
+#[cfg(test)]
 fn filter_recursive(value: Value, removed_keys: &mut Vec<String>) -> Value {
+    filter_recursive_with_whitelist(value, removed_keys, &HashSet::new())
+}
+
+/// 递归过滤实现（支持白名单）
+fn filter_recursive_with_whitelist(
+    value: Value,
+    removed_keys: &mut Vec<String>,
+    whitelist: &HashSet<&str>,
+) -> Value {
     match value {
         Value::Object(map) => {
             let filtered: serde_json::Map<String, Value> = map
                 .into_iter()
                 .filter_map(|(key, val)| {
-                    if key.starts_with('_') {
+                    // 以 _ 开头且不在白名单中的字段被过滤
+                    if key.starts_with('_') && !whitelist.contains(key.as_str()) {
                         removed_keys.push(key);
                         None
                     } else {
-                        Some((key, filter_recursive(val, removed_keys)))
+                        Some((
+                            key,
+                            filter_recursive_with_whitelist(val, removed_keys, whitelist),
+                        ))
                     }
                 })
                 .collect();
@@ -64,7 +108,7 @@ fn filter_recursive(value: Value, removed_keys: &mut Vec<String>) -> Value {
         }
         Value::Array(arr) => Value::Array(
             arr.into_iter()
-                .map(|v| filter_recursive(v, removed_keys))
+                .map(|v| filter_recursive_with_whitelist(v, removed_keys, whitelist))
                 .collect(),
         ),
         other => other,
@@ -202,5 +246,58 @@ mod tests {
         assert_eq!(filter_private_params(json!("string")), json!("string"));
         assert_eq!(filter_private_params(json!(true)), json!(true));
         assert_eq!(filter_private_params(json!(null)), json!(null));
+    }
+
+    #[test]
+    fn test_whitelist_preserves_private_params() {
+        let input = json!({
+            "model": "claude-3",
+            "_metadata": {"key": "value"},
+            "_internal_id": "abc123",
+            "_stream_options": {"include_usage": true}
+        });
+
+        let whitelist = vec!["_metadata".to_string(), "_stream_options".to_string()];
+        let output = filter_private_params_with_whitelist(input, &whitelist);
+
+        // 白名单中的字段保留
+        assert!(output.get("_metadata").is_some());
+        assert!(output.get("_stream_options").is_some());
+        // 不在白名单中的私有字段被过滤
+        assert!(output.get("_internal_id").is_none());
+        // 普通字段保留
+        assert!(output.get("model").is_some());
+    }
+
+    #[test]
+    fn test_whitelist_nested() {
+        let input = json!({
+            "data": {
+                "_allowed": "keep",
+                "_forbidden": "remove",
+                "normal": "value"
+            }
+        });
+
+        let whitelist = vec!["_allowed".to_string()];
+        let output = filter_private_params_with_whitelist(input, &whitelist);
+
+        let data = output.get("data").unwrap();
+        assert!(data.get("_allowed").is_some());
+        assert!(data.get("_forbidden").is_none());
+        assert!(data.get("normal").is_some());
+    }
+
+    #[test]
+    fn test_empty_whitelist_same_as_default() {
+        let input = json!({
+            "model": "claude-3",
+            "_internal_id": "abc123"
+        });
+
+        let output1 = filter_private_params(input.clone());
+        let output2 = filter_private_params_with_whitelist(input, &[]);
+
+        assert_eq!(output1, output2);
     }
 }
