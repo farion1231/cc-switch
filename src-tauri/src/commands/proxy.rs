@@ -184,17 +184,18 @@ pub async fn reset_circuit_breaker(
         .await?;
 
     // 3. 检查是否应该切回优先级更高的供应商（从 proxy_config 表读取）
-    let auto_failover_enabled = match db.get_proxy_config_for_app(&app_type).await {
-        Ok(config) => config.auto_failover_enabled,
+    // 只有当该应用已被代理接管（enabled=true）且开启了自动故障转移时才执行
+    let (app_enabled, auto_failover_enabled) = match db.get_proxy_config_for_app(&app_type).await {
+        Ok(config) => (config.enabled, config.auto_failover_enabled),
         Err(e) => {
             log::error!(
-                "[{app_type}] Failed to read proxy_config for auto_failover_enabled: {e}, defaulting to disabled"
+                "[{app_type}] Failed to read proxy_config: {e}, defaulting to disabled"
             );
-            false
+            (false, false)
         }
     };
 
-    if auto_failover_enabled && state.proxy_service.is_running().await {
+    if app_enabled && auto_failover_enabled && state.proxy_service.is_running().await {
         // 获取当前供应商 ID
         let current_id = db
             .get_current_provider(&app_type)

@@ -150,31 +150,29 @@ impl RequestContext {
     /// 使用共享的 ProviderRouter，确保熔断器状态跨请求保持
     ///
     /// 配置生效规则：
-    /// - 故障转移开启：超时配置和重试次数正常生效（0 表示禁用超时/不重试直接故障转移）
-    /// - 故障转移关闭：超时配置和重试次数不生效（全部传入 0）
+    /// - 故障转移开启：超时配置正常生效（0 表示禁用超时）
+    /// - 故障转移关闭：超时配置不生效（全部传入 0）
     pub fn create_forwarder(&self, state: &ProxyState) -> RequestForwarder {
-        let (non_streaming_timeout, max_retries, first_byte_timeout, idle_timeout) =
+        let (non_streaming_timeout, first_byte_timeout, idle_timeout) =
             if self.app_config.auto_failover_enabled {
-                // 故障转移开启：使用配置的值（0 = 禁用超时 / 不重试直接故障转移）
+                // 故障转移开启：使用配置的值（0 = 禁用超时）
                 (
                     self.app_config.non_streaming_timeout as u64,
-                    self.app_config.max_retries as u8,
                     self.app_config.streaming_first_byte_timeout as u64,
                     self.app_config.streaming_idle_timeout as u64,
                 )
             } else {
-                // 故障转移关闭：不启用超时和重试配置
+                // 故障转移关闭：不启用超时配置
                 log::info!(
-                    "[{}] Failover disabled, timeout and retry configs are bypassed",
+                    "[{}] Failover disabled, timeout configs are bypassed",
                     self.tag
                 );
-                (0, 0, 0, 0)
+                (0, 0, 0)
             };
 
         RequestForwarder::new(
             state.provider_router.clone(),
             non_streaming_timeout,
-            max_retries,
             state.status.clone(),
             state.current_providers.clone(),
             state.failover_manager.clone(),

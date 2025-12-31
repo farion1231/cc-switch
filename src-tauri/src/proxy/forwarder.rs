@@ -1,6 +1,6 @@
 //! 请求转发器
 //!
-//! 负责将请求转发到上游Provider，支持重试和故障转移
+//! 负责将请求转发到上游Provider，支持故障转移
 
 use super::{
     error::*,
@@ -31,8 +31,6 @@ pub struct RequestForwarder {
     client: Client,
     /// 共享的 ProviderRouter（持有熔断器状态）
     router: Arc<ProviderRouter>,
-    /// 单个 Provider 内的最大重试次数
-    max_retries: u8,
     status: Arc<RwLock<ProxyStatus>>,
     current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     /// 故障转移切换管理器
@@ -48,7 +46,6 @@ impl RequestForwarder {
     pub fn new(
         router: Arc<ProviderRouter>,
         non_streaming_timeout: u64,
-        max_retries: u8,
         status: Arc<RwLock<ProxyStatus>>,
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
         failover_manager: Arc<FailoverSwitchManager>,
@@ -77,66 +74,12 @@ impl RequestForwarder {
         Self {
             client,
             router,
-            max_retries,
             status,
             current_providers,
             failover_manager,
             app_handle,
             current_provider_id_at_start,
         }
-    }
-
-    /// 对单个 Provider 执行请求（带重试）
-    ///
-    /// 在同一个 Provider 上最多重试 max_retries 次，使用指数退避
-    async fn forward_with_provider_retry(
-        &self,
-        provider: &Provider,
-        endpoint: &str,
-        body: &Value,
-        headers: &axum::http::HeaderMap,
-        adapter: &dyn ProviderAdapter,
-    ) -> Result<Response, ProxyError> {
-        let mut last_error = None;
-
-        for attempt in 0..=self.max_retries {
-            if attempt > 0 {
-                // 指数退避：100ms, 200ms, 400ms, ...
-                let delay_ms = 100 * 2u64.pow(attempt as u32 - 1);
-                log::info!(
-                    "[{}] 重试第 {}/{} 次（等待 {}ms）",
-                    adapter.name(),
-                    attempt,
-                    self.max_retries,
-                    delay_ms
-                );
-                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-            }
-
-            match self
-                .forward(provider, endpoint, body, headers, adapter)
-                .await
-            {
-                Ok(response) => return Ok(response),
-                Err(e) => {
-                    // 只有“同一 Provider 内可重试”的错误才继续重试
-                    if !self.should_retry_same_provider(&e) {
-                        return Err(e);
-                    }
-
-                    log::debug!(
-                        "[{}] Provider {} 第 {} 次请求失败: {}",
-                        adapter.name(),
-                        provider.name,
-                        attempt + 1,
-                        e
-                    );
-                    last_error = Some(e);
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or(ProxyError::MaxRetriesExceeded))
     }
 
     /// 转发请求（带故障转移）
@@ -224,9 +167,9 @@ impl RequestForwarder {
 
             let start = Instant::now();
 
-            // 转发请求（带单 Provider 内重试）
+            // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self
-                .forward_with_provider_retry(provider, endpoint, &body, &headers, adapter.as_ref())
+                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
                 .await
             {
                 Ok(response) => {
@@ -551,25 +494,6 @@ impl RequestForwarder {
         }
     }
 
-    /// 分类ProxyError
-    ///
-    /// 决定哪些错误应该触发故障转移到下一个 Provider
-    ///
-    /// 设计原则：既然用户配置了多个供应商，就应该让所有供应商都尝试一遍。
-    /// 只有明确是客户端中断的情况才不重试。
-    fn should_retry_same_provider(&self, error: &ProxyError) -> bool {
-        match error {
-            // 网络类错误：短暂抖动时同一 Provider 内重试有意义
-            ProxyError::Timeout(_) => true,
-            ProxyError::ForwardFailed(_) => true,
-            // 上游 HTTP 错误：只对“可能瞬态”的状态码做同 Provider 重试（其余交给 failover）
-            ProxyError::UpstreamError { status, .. } => {
-                *status == 408 || *status == 429 || *status >= 500
-            }
-            _ => false,
-        }
-    }
-
     fn categorize_proxy_error(&self, error: &ProxyError) -> ErrorCategory {
         match error {
             // 网络和上游错误：都应该尝试下一个供应商
@@ -585,7 +509,6 @@ impl RequestForwarder {
             ProxyError::TransformError(_) => ErrorCategory::Retryable,
             ProxyError::AuthError(_) => ErrorCategory::Retryable,
             ProxyError::StreamIdleTimeout(_) => ErrorCategory::Retryable,
-            ProxyError::MaxRetriesExceeded => ErrorCategory::Retryable,
             // 无可用供应商：所有供应商都试过了，无法重试
             ProxyError::NoAvailableProvider => ErrorCategory::NonRetryable,
             // 其他错误（数据库/内部错误等）：不是换供应商能解决的问题
