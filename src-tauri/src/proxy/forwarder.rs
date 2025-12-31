@@ -3,6 +3,7 @@
 //! 负责将请求转发到上游Provider，支持故障转移
 
 use super::{
+    body_filter::filter_private_params,
     error::*,
     failover_switch::FailoverSwitchManager,
     provider_router::ProviderRouter,
@@ -16,6 +17,74 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
+
+/// Headers 黑名单 - 不透传到上游的 Headers
+///
+/// 参考 Claude Code Hub 设计，过滤以下类别：
+/// 1. 认证类（会被覆盖）
+/// 2. 连接类（由 HTTP 客户端管理）
+/// 3. 客户端 IP 类（隐私保护）
+/// 4. 代理转发类
+/// 5. CDN/云服务商特定头
+/// 6. 请求追踪类
+/// 7. 浏览器特定头（可能被上游检测）
+const HEADER_BLACKLIST: &[&str] = &[
+    // 认证类（会被覆盖）
+    "authorization",
+    "x-api-key",
+    // 连接类
+    "host",
+    "content-length",
+    "connection",
+    "transfer-encoding",
+    // 编码类（会被覆盖为 identity）
+    "accept-encoding",
+    // 客户端 IP 类（隐私保护）
+    "x-forwarded-for",
+    "x-real-ip",
+    "x-client-ip",
+    "x-originating-ip",
+    "x-remote-ip",
+    "x-remote-addr",
+    // 代理转发类
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-forwarded-proto",
+    "forwarded",
+    // CDN/云服务商特定头
+    "cf-connecting-ip",
+    "cf-ipcountry",
+    "cf-ray",
+    "cf-visitor",
+    "true-client-ip",
+    "fastly-client-ip",
+    "x-azure-clientip",
+    "x-azure-fdid",
+    "x-azure-ref",
+    "akamai-origin-hop",
+    "x-akamai-config-log-detail",
+    // 请求追踪类
+    "x-request-id",
+    "x-correlation-id",
+    "x-trace-id",
+    "x-amzn-trace-id",
+    "x-b3-traceid",
+    "x-b3-spanid",
+    "x-b3-parentspanid",
+    "x-b3-sampled",
+    "traceparent",
+    "tracestate",
+    // 浏览器特定头（可能被上游检测为非 CLI 请求）
+    "sec-fetch-mode",
+    "sec-fetch-site",
+    "sec-fetch-dest",
+    "sec-ch-ua",
+    "sec-ch-ua-mobile",
+    "sec-ch-ua-platform",
+    "accept-language",
+    // anthropic-beta 单独处理，避免重复
+    "anthropic-beta",
+];
 
 pub struct ForwardResult {
     pub response: Response,
@@ -420,6 +489,27 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
+        let filtered_body = filter_private_params(request_body);
+
+        // ========== 请求体日志（截断显示） ==========
+        let body_str = serde_json::to_string_pretty(&filtered_body)
+            .unwrap_or_else(|_| filtered_body.to_string());
+        let body_preview = if body_str.len() > 2000 {
+            format!(
+                "{}...\n[截断，总长度: {} 字符]",
+                &body_str[..2000],
+                body_str.len()
+            )
+        } else {
+            body_str
+        };
+        log::info!(
+            "[{}] ====== 最终请求体 ======\n{}",
+            adapter.name(),
+            body_preview
+        );
+
         log::info!(
             "[{}] 转发请求: {} -> {}",
             adapter.name(),
@@ -430,16 +520,73 @@ impl RequestForwarder {
         // 构建请求
         let mut request = self.client.post(&url);
 
-        // 请求头黑名单：仅跳过会被覆盖或可能失效的字段（认证、Host、长度）
-        let skip_headers = ["authorization", "x-api-key", "host", "content-length"];
+        // ========== 详细 Headers 日志 ==========
+        log::info!("[{}] ====== 客户端原始 Headers ======", adapter.name());
+        for (key, value) in headers {
+            log::info!(
+                "[{}]   {}: {:?}",
+                adapter.name(),
+                key.as_str(),
+                value.to_str().unwrap_or("<binary>")
+            );
+        }
+
+        // 过滤黑名单 Headers，保护隐私并避免冲突
+        let mut filtered_headers: Vec<String> = Vec::new();
+        let mut passed_headers: Vec<(String, String)> = Vec::new();
 
         for (key, value) in headers {
             let key_str = key.as_str().to_lowercase();
-            if skip_headers.contains(&key_str.as_str()) {
+            if HEADER_BLACKLIST.contains(&key_str.as_str()) {
+                filtered_headers.push(key_str);
                 continue;
             }
+            let value_str = value.to_str().unwrap_or("<binary>").to_string();
+            passed_headers.push((key.as_str().to_string(), value_str.clone()));
             request = request.header(key, value);
         }
+
+        if !filtered_headers.is_empty() {
+            log::info!(
+                "[{}] ====== 被过滤的 Headers ({}) ======",
+                adapter.name(),
+                filtered_headers.len()
+            );
+            for h in &filtered_headers {
+                log::info!("[{}]   - {}", adapter.name(), h);
+            }
+        }
+
+        // 处理 anthropic-beta Header
+        // 必须移除 claude-code-xxxx 标记，上游服务 (free.duckcoding.com) 似乎会拒绝包含此 tag 的请求
+        // 报错信息: "请勿在 Claude Code CLI 之外使用接口" (paradoxically triggered when this tag is present)
+        if let Some(beta) = headers.get("anthropic-beta") {
+            let beta_str = beta.to_str().unwrap_or("");
+            let filtered_beta: Vec<&str> = beta_str
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.contains("claude-code"))
+                .collect();
+
+            if !filtered_beta.is_empty() {
+                let new_beta_value = filtered_beta.join(",");
+                request = request.header("anthropic-beta", &new_beta_value);
+                passed_headers.push(("anthropic-beta".to_string(), new_beta_value.clone()));
+                log::info!(
+                    "[{}] 处理 anthropic-beta: {} -> {}",
+                    adapter.name(),
+                    beta_str,
+                    new_beta_value
+                );
+            } else {
+                log::info!("[{}] 过滤后 anthropic-beta 为空，跳过发送", adapter.name());
+            }
+        }
+
+        // 禁用压缩，避免 gzip 流式响应解析错误
+        // 参考 CCH: undici 在连接提前关闭时会对不完整的 gzip 流抛出错误
+        request = request.header("accept-encoding", "identity");
+        passed_headers.push(("accept-encoding".to_string(), "identity".to_string()));
 
         // 使用适配器添加认证头
         if let Some(auth) = adapter.extract_auth(provider) {
@@ -450,6 +597,15 @@ impl RequestForwarder {
                 auth.masked_key()
             );
             request = adapter.add_auth_headers(request, &auth);
+            // 记录认证头（脱敏）
+            passed_headers.push((
+                "authorization".to_string(),
+                format!("Bearer {}...", &auth.api_key[..8.min(auth.api_key.len())]),
+            ));
+            passed_headers.push((
+                "x-api-key".to_string(),
+                format!("{}...", &auth.api_key[..8.min(auth.api_key.len())]),
+            ));
         } else {
             log::error!(
                 "[{}] 未找到 API Key！Provider: {}",
@@ -458,9 +614,19 @@ impl RequestForwarder {
             );
         }
 
+        // ========== 最终发送的 Headers 日志 ==========
+        log::info!(
+            "[{}] ====== 最终发送的 Headers ({}) ======",
+            adapter.name(),
+            passed_headers.len()
+        );
+        for (k, v) in &passed_headers {
+            log::info!("[{}]   {}: {}", adapter.name(), k, v);
+        }
+
         // 发送请求
         log::info!("[{}] 发送请求到: {}", adapter.name(), url);
-        let response = request.json(&request_body).send().await.map_err(|e| {
+        let response = request.json(&filtered_body).send().await.map_err(|e| {
             log::error!("[{}] 请求失败: {}", adapter.name(), e);
             if e.is_timeout() {
                 ProxyError::Timeout(format!("请求超时: {e}"))

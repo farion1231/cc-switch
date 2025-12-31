@@ -2,6 +2,7 @@
 //!
 //! 提供本地HTTP代理服务，支持多Provider故障转移和请求透传
 
+pub mod body_filter;
 pub mod circuit_breaker;
 pub mod error;
 pub mod error_mapper;
