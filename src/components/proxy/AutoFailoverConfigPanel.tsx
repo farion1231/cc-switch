@@ -142,12 +142,13 @@ export function AutoFailoverConfigPanel({
                 min="0"
                 max="10"
                 value={formData.maxRetries}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
                   setFormData({
                     ...formData,
-                    maxRetries: parseInt(e.target.value) || 3,
-                  })
-                }
+                    maxRetries: isNaN(val) ? 0 : val,
+                  });
+                }}
                 disabled={isDisabled}
               />
               <p className="text-xs text-muted-foreground">
@@ -168,12 +169,13 @@ export function AutoFailoverConfigPanel({
                 min="1"
                 max="20"
                 value={formData.circuitFailureThreshold}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
                   setFormData({
                     ...formData,
-                    circuitFailureThreshold: parseInt(e.target.value) || 5,
-                  })
-                }
+                    circuitFailureThreshold: isNaN(val) ? 1 : Math.max(1, val),
+                  });
+                }}
                 disabled={isDisabled}
               />
               <p className="text-xs text-muted-foreground">
@@ -206,12 +208,13 @@ export function AutoFailoverConfigPanel({
                 min="0"
                 max="180"
                 value={formData.streamingFirstByteTimeout}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
                   setFormData({
                     ...formData,
-                    streamingFirstByteTimeout: parseInt(e.target.value) || 30,
-                  })
-                }
+                    streamingFirstByteTimeout: isNaN(val) ? 0 : val,
+                  });
+                }}
                 disabled={isDisabled}
               />
               <p className="text-xs text-muted-foreground">
@@ -232,12 +235,13 @@ export function AutoFailoverConfigPanel({
                 min="0"
                 max="600"
                 value={formData.streamingIdleTimeout}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
                   setFormData({
                     ...formData,
-                    streamingIdleTimeout: parseInt(e.target.value) || 60,
-                  })
-                }
+                    streamingIdleTimeout: isNaN(val) ? 0 : val,
+                  });
+                }}
                 disabled={isDisabled}
               />
               <p className="text-xs text-muted-foreground">
@@ -258,12 +262,13 @@ export function AutoFailoverConfigPanel({
                 min="0"
                 max="1800"
                 value={formData.nonStreamingTimeout}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
                   setFormData({
                     ...formData,
-                    nonStreamingTimeout: parseInt(e.target.value) || 300,
-                  })
-                }
+                    nonStreamingTimeout: isNaN(val) ? 0 : val,
+                  });
+                }}
                 disabled={isDisabled}
               />
               <p className="text-xs text-muted-foreground">
@@ -293,12 +298,13 @@ export function AutoFailoverConfigPanel({
                 min="1"
                 max="10"
                 value={formData.circuitSuccessThreshold}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
                   setFormData({
                     ...formData,
-                    circuitSuccessThreshold: parseInt(e.target.value) || 2,
-                  })
-                }
+                    circuitSuccessThreshold: isNaN(val) ? 1 : Math.max(1, val),
+                  });
+                }}
                 disabled={isDisabled}
               />
               <p className="text-xs text-muted-foreground">
@@ -319,12 +325,13 @@ export function AutoFailoverConfigPanel({
                 min="10"
                 max="300"
                 value={formData.circuitTimeoutSeconds}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
                   setFormData({
                     ...formData,
-                    circuitTimeoutSeconds: parseInt(e.target.value) || 60,
-                  })
-                }
+                    circuitTimeoutSeconds: isNaN(val) ? 10 : Math.max(10, val),
+                  });
+                }}
                 disabled={isDisabled}
               />
               <p className="text-xs text-muted-foreground">
@@ -346,13 +353,13 @@ export function AutoFailoverConfigPanel({
                 max="100"
                 step="5"
                 value={Math.round(formData.circuitErrorRateThreshold * 100)}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
                   setFormData({
                     ...formData,
-                    circuitErrorRateThreshold:
-                      (parseInt(e.target.value) || 50) / 100,
-                  })
-                }
+                    circuitErrorRateThreshold: isNaN(val) ? 0.5 : val / 100,
+                  });
+                }}
                 disabled={isDisabled}
               />
               <p className="text-xs text-muted-foreground">
@@ -373,12 +380,13 @@ export function AutoFailoverConfigPanel({
                 min="5"
                 max="100"
                 value={formData.circuitMinRequests}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
                   setFormData({
                     ...formData,
-                    circuitMinRequests: parseInt(e.target.value) || 10,
-                  })
-                }
+                    circuitMinRequests: isNaN(val) ? 5 : Math.max(5, val),
+                  });
+                }}
                 disabled={isDisabled}
               />
               <p className="text-xs text-muted-foreground">
