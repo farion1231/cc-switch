@@ -188,9 +188,7 @@ pub async fn reset_circuit_breaker(
     let (app_enabled, auto_failover_enabled) = match db.get_proxy_config_for_app(&app_type).await {
         Ok(config) => (config.enabled, config.auto_failover_enabled),
         Err(e) => {
-            log::error!(
-                "[{app_type}] Failed to read proxy_config: {e}, defaulting to disabled"
-            );
+            log::error!("[{app_type}] Failed to read proxy_config: {e}, defaulting to disabled");
             (false, false)
         }
     };

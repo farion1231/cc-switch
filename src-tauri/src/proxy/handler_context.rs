@@ -95,7 +95,13 @@ impl RequestContext {
             .provider_router
             .select_providers(app_type_str)
             .await
-            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+            .map_err(|e| match e {
+                crate::error::AppError::AllProvidersCircuitOpen => {
+                    ProxyError::AllProvidersCircuitOpen
+                }
+                crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
+                _ => ProxyError::DatabaseError(e.to_string()),
+            })?;
 
         let provider = providers
             .first()

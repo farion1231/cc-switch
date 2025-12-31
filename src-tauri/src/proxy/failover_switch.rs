@@ -86,17 +86,13 @@ impl FailoverSwitchManager {
         let app_enabled = match self.db.get_proxy_config_for_app(app_type).await {
             Ok(config) => config.enabled,
             Err(e) => {
-                log::warn!(
-                    "[Failover] 无法读取 {app_type} 配置: {e}，跳过切换"
-                );
+                log::warn!("[Failover] 无法读取 {app_type} 配置: {e}，跳过切换");
                 return Ok(false);
             }
         };
 
         if !app_enabled {
-            log::info!(
-                "[Failover] {app_type} 未被代理接管（enabled=false），跳过切换"
-            );
+            log::info!("[Failover] {app_type} 未被代理接管（enabled=false），跳过切换");
             return Ok(false);
         }
 
