@@ -264,6 +264,7 @@ fn create_usage_collector(
     let start_time = ctx.start_time;
     let stream_parser = parser_config.stream_parser;
     let model_extractor = parser_config.model_extractor;
+    let session_id = ctx.session_id.clone();
 
     SseUsageCollector::new(start_time, move |events, first_token_ms| {
         if let Some(usage) = stream_parser(&events) {
@@ -272,6 +273,7 @@ fn create_usage_collector(
 
             let state = state.clone();
             let provider_id = provider_id.clone();
+            let session_id = session_id.clone();
 
             tokio::spawn(async move {
                 log_usage_internal(
@@ -284,6 +286,7 @@ fn create_usage_collector(
                     first_token_ms,
                     true, // is_streaming
                     status_code,
+                    Some(session_id),
                 )
                 .await;
             });
@@ -292,6 +295,7 @@ fn create_usage_collector(
             let latency_ms = start_time.elapsed().as_millis() as u64;
             let state = state.clone();
             let provider_id = provider_id.clone();
+            let session_id = session_id.clone();
 
             tokio::spawn(async move {
                 log_usage_internal(
@@ -304,6 +308,7 @@ fn create_usage_collector(
                     first_token_ms,
                     true, // is_streaming
                     status_code,
+                    Some(session_id),
                 )
                 .await;
             });
@@ -326,6 +331,7 @@ fn spawn_log_usage(
     let app_type_str = ctx.app_type_str.to_string();
     let model = model.to_string();
     let latency_ms = ctx.latency_ms();
+    let session_id = ctx.session_id.clone();
 
     tokio::spawn(async move {
         log_usage_internal(
@@ -338,6 +344,7 @@ fn spawn_log_usage(
             None,
             is_streaming,
             status_code,
+            Some(session_id),
         )
         .await;
     });
@@ -355,6 +362,7 @@ async fn log_usage_internal(
     first_token_ms: Option<u64>,
     is_streaming: bool,
     status_code: u16,
+    session_id: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -379,7 +387,8 @@ async fn log_usage_internal(
     let request_id = uuid::Uuid::new_v4().to_string();
 
     log::debug!(
-        "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, input={}, output={}, cache_read={}, cache_creation={}",
+        "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, session={}, input={}, output={}, cache_read={}, cache_creation={}",
+        session_id.as_deref().unwrap_or("none"),
         usage.input_tokens,
         usage.output_tokens,
         usage.cache_read_tokens,
@@ -396,7 +405,7 @@ async fn log_usage_internal(
         latency_ms,
         first_token_ms,
         status_code,
-        None,
+        session_id,
         None, // provider_type
         is_streaming,
     ) {

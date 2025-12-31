@@ -5,8 +5,10 @@
 use crate::app_config::AppType;
 use crate::provider::Provider;
 use crate::proxy::{
-    forwarder::RequestForwarder, server::ProxyState, types::AppProxyConfig, ProxyError,
+    extract_session_id, forwarder::RequestForwarder, server::ProxyState, types::AppProxyConfig,
+    ProxyError,
 };
+use axum::http::HeaderMap;
 use std::time::Instant;
 
 /// 流式超时配置
@@ -26,6 +28,7 @@ pub struct StreamingTimeoutConfig {
 /// - 选中的 Provider 列表（用于故障转移）
 /// - 请求模型名称
 /// - 日志标签
+/// - Session ID（用于日志关联）
 pub struct RequestContext {
     /// 请求开始时间
     pub start_time: Instant,
@@ -35,7 +38,7 @@ pub struct RequestContext {
     pub provider: Provider,
     /// 完整的 Provider 列表（用于故障转移）
     providers: Vec<Provider>,
-    /// 请求开始时的“当前供应商”（用于判断是否需要同步 UI/托盘）
+    /// 请求开始时的"当前供应商"（用于判断是否需要同步 UI/托盘）
     ///
     /// 这里使用本地 settings 的设备级 current provider。
     /// 代理模式下如果实际使用的 provider 与此不一致，会触发切换以确保 UI 始终准确。
@@ -49,6 +52,8 @@ pub struct RequestContext {
     /// 应用类型（预留，目前通过 app_type_str 使用）
     #[allow(dead_code)]
     pub app_type: AppType,
+    /// Session ID（从客户端请求提取或新生成）
+    pub session_id: String,
 }
 
 impl RequestContext {
@@ -57,6 +62,7 @@ impl RequestContext {
     /// # Arguments
     /// * `state` - 代理服务器状态
     /// * `body` - 请求体 JSON
+    /// * `headers` - 请求头（用于提取 Session ID）
     /// * `app_type` - 应用类型
     /// * `tag` - 日志标签
     /// * `app_type_str` - 应用类型字符串
@@ -66,6 +72,7 @@ impl RequestContext {
     pub async fn new(
         state: &ProxyState,
         body: &serde_json::Value,
+        headers: &HeaderMap,
         app_type: AppType,
         tag: &'static str,
         app_type_str: &'static str,
@@ -89,6 +96,18 @@ impl RequestContext {
             .unwrap_or("unknown")
             .to_string();
 
+        // 提取 Session ID
+        let session_result = extract_session_id(headers, body, app_type_str);
+        let session_id = session_result.session_id.clone();
+
+        log::debug!(
+            "[{}] Session ID: {} (from {:?}, client_provided: {})",
+            tag,
+            session_id,
+            session_result.source,
+            session_result.client_provided
+        );
+
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
         let providers = state
@@ -109,11 +128,12 @@ impl RequestContext {
             .ok_or(ProxyError::NoAvailableProvider)?;
 
         log::info!(
-            "[{}] Provider: {}, model: {}, failover chain: {} providers",
+            "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
             tag,
             provider.name,
             request_model,
-            providers.len()
+            providers.len(),
+            session_id
         );
 
         Ok(Self {
@@ -126,6 +146,7 @@ impl RequestContext {
             tag,
             app_type_str,
             app_type,
+            session_id,
         })
     }
 
