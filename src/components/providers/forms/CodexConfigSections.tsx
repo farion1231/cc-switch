@@ -47,7 +47,7 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
     <div className="space-y-2">
       <label
         htmlFor="codexAuth"
-        className="block text-sm font-medium text-gray-900 dark:text-gray-100"
+        className="block text-sm font-medium text-foreground"
       >
         {t("codexConfig.authJson")}
       </label>
@@ -67,7 +67,7 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
       )}
 
       {!error && (
-        <p className="text-xs text-gray-500 dark:text-gray-400">
+        <p className="text-xs text-muted-foreground">
           {t("codexConfig.authJsonHint")}
         </p>
       )}
@@ -120,12 +120,12 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       <div className="flex items-center justify-between">
         <label
           htmlFor="codexConfig"
-          className="block text-sm font-medium text-gray-900 dark:text-gray-100"
+          className="block text-sm font-medium text-foreground"
         >
           {t("codexConfig.configToml")}
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
           <input
             type="checkbox"
             checked={useCommonConfig}
@@ -167,7 +167,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       )}
 
       {!configError && (
-        <p className="text-xs text-gray-500 dark:text-gray-400">
+        <p className="text-xs text-muted-foreground">
           {t("codexConfig.configTomlHint")}
         </p>
       )}

@@ -20,6 +20,7 @@ import {
   geminiProviderPresets,
   type GeminiProviderPreset,
 } from "@/config/geminiProviderPresets";
+import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import { applyTemplateValues } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
@@ -72,6 +73,8 @@ interface ProviderFormProps {
   submitLabel: string;
   onSubmit: (values: ProviderFormValues) => void;
   onCancel: () => void;
+  onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
+  onManageUniversalProviders?: () => void;
   initialData?: {
     name?: string;
     websiteUrl?: string;
@@ -91,6 +94,8 @@ export function ProviderForm({
   submitLabel,
   onSubmit,
   onCancel,
+  onUniversalPresetSelect,
+  onManageUniversalProviders,
   initialData,
   showButtons = true,
 }: ProviderFormProps) {
@@ -162,6 +167,8 @@ export function ProviderForm({
     mode: "onSubmit",
   });
 
+  const settingsConfigValue = form.watch("settingsConfig");
+
   // 使用 API Key hook
   const {
     apiKey,
@@ -187,9 +194,10 @@ export function ProviderForm({
     },
   });
 
-  // 使用 Model hook（新：主模型 + Haiku/Sonnet/Opus 默认模型）
+  // 使用 Model hook（新：主模型 + 推理模型 + Haiku/Sonnet/Opus 默认模型）
   const {
     claudeModel,
+    reasoningModel,
     defaultHaikuModel,
     defaultSonnetModel,
     defaultOpusModel,
@@ -198,6 +206,53 @@ export function ProviderForm({
     settingsConfig: form.watch("settingsConfig"),
     onConfigChange: (config) => form.setValue("settingsConfig", config),
   });
+
+  const isOpenRouterProvider = useMemo(() => {
+    if (appId !== "claude") return false;
+    const normalized = baseUrl.trim().toLowerCase();
+    if (normalized.includes("openrouter.ai")) {
+      return true;
+    }
+    try {
+      const config = JSON.parse(settingsConfigValue || "{}");
+      const envUrl = config?.env?.ANTHROPIC_BASE_URL;
+      return typeof envUrl === "string" && envUrl.includes("openrouter.ai");
+    } catch {
+      return false;
+    }
+  }, [appId, baseUrl, settingsConfigValue]);
+
+  const openRouterCompatEnabled = useMemo(() => {
+    if (!isOpenRouterProvider) return false;
+    try {
+      const config = JSON.parse(settingsConfigValue || "{}");
+      const raw = config?.openrouter_compat_mode;
+      if (typeof raw === "boolean") return raw;
+      if (typeof raw === "number") return raw !== 0;
+      if (typeof raw === "string") {
+        const normalized = raw.trim().toLowerCase();
+        return normalized === "true" || normalized === "1";
+      }
+    } catch {
+      // ignore
+    }
+    return true;
+  }, [isOpenRouterProvider, settingsConfigValue]);
+
+  const handleOpenRouterCompatChange = useCallback(
+    (enabled: boolean) => {
+      try {
+        const currentConfig = JSON.parse(
+          form.getValues("settingsConfig") || "{}",
+        );
+        currentConfig.openrouter_compat_mode = enabled;
+        form.setValue("settingsConfig", JSON.stringify(currentConfig, null, 2));
+      } catch {
+        // ignore
+      }
+    },
+    [form],
+  );
 
   // 使用 Codex 配置 hook (仅 Codex 模式)
   const {
@@ -753,6 +808,8 @@ export function ProviderForm({
             categoryKeys={categoryKeys}
             presetCategoryLabels={presetCategoryLabels}
             onPresetChange={handlePresetChange}
+            onUniversalPresetSelect={onUniversalPresetSelect}
+            onManageUniversalProviders={onManageUniversalProviders}
             category={category}
           />
         )}
@@ -789,11 +846,15 @@ export function ProviderForm({
             }
             shouldShowModelSelector={category !== "official"}
             claudeModel={claudeModel}
+            reasoningModel={reasoningModel}
             defaultHaikuModel={defaultHaikuModel}
             defaultSonnetModel={defaultSonnetModel}
             defaultOpusModel={defaultOpusModel}
             onModelChange={handleModelChange}
             speedTestEndpoints={speedTestEndpoints}
+            showOpenRouterCompatToggle={isOpenRouterProvider}
+            openRouterCompatEnabled={openRouterCompatEnabled}
+            onOpenRouterCompatChange={handleOpenRouterCompatChange}
           />
         )}
 

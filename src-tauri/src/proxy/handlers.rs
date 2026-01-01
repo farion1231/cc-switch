@@ -61,7 +61,8 @@ pub async fn handle_messages(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
-    let mut ctx = RequestContext::new(&state, &body, AppType::Claude, "Claude", "claude").await?;
+    let mut ctx =
+        RequestContext::new(&state, &body, &headers, AppType::Claude, "Claude", "claude").await?;
 
     let is_stream = body
         .get("stream")
@@ -170,10 +171,14 @@ async fn handle_claude_transform(
             })
         };
 
+        // 获取流式超时配置
+        let timeout_config = ctx.streaming_timeout_config();
+
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
             "Claude/OpenRouter",
             Some(usage_collector),
+            timeout_config,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -301,7 +306,8 @@ pub async fn handle_chat_completions(
 ) -> Result<axum::response::Response, ProxyError> {
     log::info!("[Codex] ====== /v1/chat/completions 请求开始 ======");
 
-    let mut ctx = RequestContext::new(&state, &body, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx =
+        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
 
     let is_stream = body
         .get("stream")
@@ -349,7 +355,8 @@ pub async fn handle_responses(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
-    let mut ctx = RequestContext::new(&state, &body, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx =
+        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
 
     let is_stream = body
         .get("stream")
@@ -397,7 +404,7 @@ pub async fn handle_gemini(
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     // Gemini 的模型名称在 URI 中
-    let mut ctx = RequestContext::new(&state, &body, AppType::Gemini, "Gemini", "gemini")
+    let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
         .await?
         .with_model_from_uri(&uri);
 
@@ -461,7 +468,7 @@ fn log_forward_error(
     let request_id = uuid::Uuid::new_v4().to_string();
 
     if let Err(e) = logger.log_error_with_context(
-        request_id.clone(),
+        request_id,
         ctx.provider.id.clone(),
         ctx.app_type_str.to_string(),
         ctx.request_model.clone(),
@@ -469,7 +476,7 @@ fn log_forward_error(
         error_message,
         ctx.latency_ms(),
         is_streaming,
-        Some(request_id),
+        Some(ctx.session_id.clone()),
         None,
     ) {
         log::warn!("记录失败请求日志失败: {e}");

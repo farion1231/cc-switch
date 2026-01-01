@@ -31,13 +31,26 @@ pub struct UsageParserConfig {
 // 模型提取器实现
 // ============================================================================
 
-/// Claude 流式响应模型提取（直接使用请求模型）
-fn claude_model_extractor(_events: &[Value], request_model: &str) -> String {
+/// Claude 流式响应模型提取（优先使用 usage.model）
+fn claude_model_extractor(events: &[Value], request_model: &str) -> String {
+    // 首先尝试从解析的 usage 中获取模型
+    if let Some(usage) = TokenUsage::from_claude_stream_events(events) {
+        if let Some(model) = usage.model {
+            return model;
+        }
+    }
     request_model.to_string()
 }
 
-/// OpenAI Chat Completions 流式响应模型提取
+/// OpenAI Chat Completions 流式响应模型提取（优先使用 usage.model）
 fn openai_model_extractor(events: &[Value], request_model: &str) -> String {
+    // 首先尝试从解析的 usage 中获取模型
+    if let Some(usage) = TokenUsage::from_openai_stream_events(events) {
+        if let Some(model) = usage.model {
+            return model;
+        }
+    }
+    // 回退：从事件中直接提取
     events
         .iter()
         .find_map(|e| e.get("model")?.as_str())
@@ -45,8 +58,15 @@ fn openai_model_extractor(events: &[Value], request_model: &str) -> String {
         .to_string()
 }
 
-/// Codex Responses API 流式响应模型提取
-fn codex_model_extractor(events: &[Value], request_model: &str) -> String {
+/// Codex 智能流式响应模型提取（自动检测格式）
+fn codex_auto_model_extractor(events: &[Value], request_model: &str) -> String {
+    // 首先尝试从解析的 usage 中获取模型
+    if let Some(usage) = TokenUsage::from_codex_stream_events_auto(events) {
+        if let Some(model) = usage.model {
+            return model;
+        }
+    }
+    // 回退：从 response.completed 事件中提取
     events
         .iter()
         .find_map(|e| {
@@ -55,6 +75,10 @@ fn codex_model_extractor(events: &[Value], request_model: &str) -> String {
             } else {
                 None
             }
+        })
+        .or_else(|| {
+            // 再回退：从 OpenAI 格式事件中提取
+            events.iter().find_map(|e| e.get("model")?.as_str())
         })
         .unwrap_or(request_model)
         .to_string()
@@ -91,11 +115,11 @@ pub const OPENAI_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
     app_type_str: "codex",
 };
 
-/// Codex Responses API 解析配置（用于 /v1/responses）
+/// Codex 智能解析配置（自动检测 OpenAI 或 Codex 格式）
 pub const CODEX_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
-    stream_parser: TokenUsage::from_codex_stream_events,
-    response_parser: TokenUsage::from_codex_response,
-    model_extractor: codex_model_extractor,
+    stream_parser: TokenUsage::from_codex_stream_events_auto,
+    response_parser: TokenUsage::from_codex_response_auto,
+    model_extractor: codex_auto_model_extractor,
     app_type_str: "codex",
 };
 

@@ -48,6 +48,24 @@ impl ClaudeAdapter {
         false
     }
 
+    /// 检测 OpenRouter 是否启用兼容模式
+    fn is_openrouter_compat_enabled(&self, provider: &Provider) -> bool {
+        if !self.is_openrouter(provider) {
+            return false;
+        }
+
+        let raw = provider.settings_config.get("openrouter_compat_mode");
+        match raw {
+            Some(serde_json::Value::Bool(enabled)) => *enabled,
+            Some(serde_json::Value::Number(num)) => num.as_i64().unwrap_or(0) != 0,
+            Some(serde_json::Value::String(value)) => {
+                let normalized = value.trim().to_lowercase();
+                normalized == "true" || normalized == "1"
+            }
+            _ => true,
+        }
+    }
+
     /// 检测是否为仅 Bearer 认证模式
     fn is_bearer_only_mode(&self, provider: &Provider) -> bool {
         // 检查 settings_config 中的 auth_mode
@@ -197,11 +215,7 @@ impl ProviderAdapter for ClaudeAdapter {
         // 映射到 `/v1/chat/completions`，并做 Anthropic ↔ OpenAI 的格式转换。
         //
         // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
-        // 如需回退旧逻辑，可恢复下面这段分支：
-        //
-        // if base_url.contains("openrouter.ai") {
-        //     return format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
-        // }
+        // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
 
         format!(
             "{}/{}",
@@ -235,8 +249,7 @@ impl ProviderAdapter for ClaudeAdapter {
         // Anthropic ↔ OpenAI 的格式转换。
         //
         // 如果未来需要回退到旧的 OpenAI Chat Completions 方案，可恢复下面这行：
-        // self.is_openrouter(_provider)
-        false
+        self.is_openrouter_compat_enabled(_provider)
     }
 
     fn transform_request(
@@ -430,6 +443,14 @@ mod tests {
                 "ANTHROPIC_BASE_URL": "https://openrouter.ai/api"
             }
         }));
-        assert!(!adapter.needs_transform(&openrouter_provider));
+        assert!(adapter.needs_transform(&openrouter_provider));
+
+        let openrouter_disabled = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api"
+            },
+            "openrouter_compat_mode": false
+        }));
+        assert!(!adapter.needs_transform(&openrouter_disabled));
     }
 }

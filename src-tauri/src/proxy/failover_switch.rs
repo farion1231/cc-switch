@@ -81,6 +81,21 @@ impl FailoverSwitchManager {
         provider_id: &str,
         provider_name: &str,
     ) -> Result<bool, AppError> {
+        // 检查该应用是否已被代理接管（enabled=true）
+        // 只有被接管的应用才允许执行故障转移切换
+        let app_enabled = match self.db.get_proxy_config_for_app(app_type).await {
+            Ok(config) => config.enabled,
+            Err(e) => {
+                log::warn!("[Failover] 无法读取 {app_type} 配置: {e}，跳过切换");
+                return Ok(false);
+            }
+        };
+
+        if !app_enabled {
+            log::info!("[Failover] {app_type} 未被代理接管（enabled=false），跳过切换");
+            return Ok(false);
+        }
+
         log::info!("[Failover] 开始切换供应商: {app_type} -> {provider_name} ({provider_id})");
 
         // 1. 更新数据库 is_current

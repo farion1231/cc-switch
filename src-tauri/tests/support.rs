@@ -49,6 +49,7 @@ pub fn test_mutex() -> &'static Mutex<()> {
 }
 
 /// 创建测试用的 AppState，包含一个空的数据库
+#[allow(dead_code)]
 pub fn create_test_state() -> Result<AppState, Box<dyn std::error::Error>> {
     let db = Arc::new(Database::init()?);
     let proxy_service = ProxyService::new(db.clone());
@@ -56,6 +57,7 @@ pub fn create_test_state() -> Result<AppState, Box<dyn std::error::Error>> {
 }
 
 /// 创建测试用的 AppState，并从 MultiAppConfig 迁移数据
+#[allow(dead_code)]
 pub fn create_test_state_with_config(
     config: &MultiAppConfig,
 ) -> Result<AppState, Box<dyn std::error::Error>> {

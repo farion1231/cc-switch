@@ -312,7 +312,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             {isLoadingTools ? t("common.refreshing") : t("common.refresh")}
           </Button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3 px-1">
           {["claude", "codex", "gemini"].map((toolName, index) => {
             const tool = toolVersions.find((item) => item.name === toolName);
             const displayName = tool?.name ?? toolName;

@@ -34,26 +34,19 @@ impl ProviderRouter {
     /// - 故障转移开启时：完全按照故障转移队列顺序返回，忽略当前供应商设置
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
+        let mut total_providers = 0usize;
+        let mut circuit_open_count = 0usize;
 
-        // 检查该应用的自动故障转移开关是否开启
-        let failover_key = format!("auto_failover_enabled_{app_type}");
-        let auto_failover_enabled = match self.db.get_setting(&failover_key) {
-            Ok(Some(value)) => {
-                let enabled = value == "true";
-                log::info!(
-                    "[{app_type}] Failover setting '{failover_key}' = '{value}', enabled: {enabled}"
-                );
+        // 检查该应用的自动故障转移开关是否开启（从 proxy_config 表读取）
+        let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
+            Ok(config) => {
+                let enabled = config.auto_failover_enabled;
+                log::info!("[{app_type}] Failover enabled from proxy_config: {enabled}");
                 enabled
-            }
-            Ok(None) => {
-                log::warn!(
-                    "[{app_type}] Failover setting '{failover_key}' not found in database, defaulting to disabled"
-                );
-                false
             }
             Err(e) => {
                 log::error!(
-                    "[{app_type}] Failed to read failover setting '{failover_key}': {e}, defaulting to disabled"
+                    "[{app_type}] Failed to read proxy_config for auto_failover_enabled: {e}, defaulting to disabled"
                 );
                 false
             }
@@ -62,18 +55,26 @@ impl ProviderRouter {
         if auto_failover_enabled {
             // 故障转移开启：使用 in_failover_queue 标记的供应商，按 sort_index 排序
             let failover_providers = self.db.get_failover_providers(app_type)?;
+            total_providers = failover_providers.len();
+            log::debug!("[{app_type}] Found {total_providers} failover queue provider(s)");
             log::info!(
-                "[{}] Failover enabled, using queue order ({} items)",
-                app_type,
-                failover_providers.len()
+                "[{app_type}] Failover enabled, using queue order ({total_providers} items)"
             );
 
             for provider in failover_providers {
                 // 检查熔断器状态
                 let circuit_key = format!("{}:{}", app_type, provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+                let state = breaker.get_state().await;
 
                 if breaker.is_available().await {
+                    log::debug!(
+                        "[{}] Queue provider available: {} ({}) (state: {:?})",
+                        app_type,
+                        provider.name,
+                        provider.id,
+                        state
+                    );
                     log::info!(
                         "[{}] Queue provider available: {} ({}) at sort_index {:?}",
                         app_type,
@@ -83,45 +84,49 @@ impl ProviderRouter {
                     );
                     result.push(provider);
                 } else {
+                    circuit_open_count += 1;
                     log::debug!(
-                        "[{}] Queue provider {} circuit breaker open, skipping",
+                        "[{}] Queue provider {} circuit breaker open (state: {:?}), skipping",
                         app_type,
-                        provider.name
+                        provider.name,
+                        state
                     );
                 }
             }
         } else {
-            // 故障转移关闭：仅使用当前供应商
-            log::info!("[{app_type}] Failover disabled, using current provider only");
+            // 故障转移关闭：仅使用当前供应商，跳过熔断器检查
+            // 原因：单 Provider 场景下，熔断器打开会导致所有请求失败，用户体验差
+            log::info!("[{app_type}] Failover disabled, using current provider only (circuit breaker bypassed)");
 
             if let Some(current_id) = self.db.get_current_provider(app_type)? {
                 if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
-                    let circuit_key = format!("{}:{}", app_type, current.id);
-                    let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
-
-                    if breaker.is_available().await {
-                        log::info!(
-                            "[{}] Current provider available: {} ({})",
-                            app_type,
-                            current.name,
-                            current.id
-                        );
-                        result.push(current);
-                    } else {
-                        log::warn!(
-                            "[{}] Current provider {} circuit breaker open",
-                            app_type,
-                            current.name
-                        );
-                    }
+                    log::info!(
+                        "[{}] Current provider: {} ({})",
+                        app_type,
+                        current.name,
+                        current.id
+                    );
+                    total_providers = 1;
+                    result.push(current);
+                } else {
+                    log::debug!(
+                        "[{app_type}] Current provider id {current_id} not found in database"
+                    );
                 }
+            } else {
+                log::debug!("[{app_type}] No current provider configured");
             }
         }
 
         if result.is_empty() {
-            return Err(AppError::Config(format!(
-                "No available provider for {app_type} (all circuit breakers open or no providers configured)"
-            )));
+            // 区分两种情况：全部熔断 vs 未配置供应商
+            if total_providers > 0 && circuit_open_count == total_providers {
+                log::warn!("[{app_type}] 所有 {total_providers} 个供应商均已熔断，无可用渠道");
+                return Err(AppError::AllProvidersCircuitOpen);
+            } else {
+                log::warn!("[{app_type}] 未配置供应商或故障转移队列为空");
+                return Err(AppError::NoProvidersConfigured);
+            }
         }
 
         log::info!(
@@ -156,9 +161,16 @@ impl ProviderRouter {
         success: bool,
         error_msg: Option<String>,
     ) -> Result<(), AppError> {
-        // 1. 获取熔断器配置（用于更新健康状态和判断是否禁用）
-        let config = self.db.get_circuit_breaker_config().await.ok();
-        let failure_threshold = config.map(|c| c.failure_threshold).unwrap_or(5);
+        // 1. 按应用独立获取熔断器配置（用于更新健康状态和判断是否禁用）
+        let failure_threshold = match self.db.get_proxy_config_for_app(app_type).await {
+            Ok(app_config) => app_config.circuit_failure_threshold,
+            Err(e) => {
+                log::warn!(
+                    "Failed to load circuit config for {app_type}, using default threshold: {e}"
+                );
+                5 // 默认值
+            }
+        };
 
         // 2. 更新熔断器状态
         let circuit_key = format!("{app_type}:{provider_id}");
@@ -255,12 +267,34 @@ impl ProviderRouter {
             return breaker.clone();
         }
 
-        // 从数据库加载配置
-        let config = self
-            .db
-            .get_circuit_breaker_config()
-            .await
-            .unwrap_or_default();
+        // 从 key 中提取 app_type (格式: "app_type:provider_id")
+        let app_type = key.split(':').next().unwrap_or("claude");
+
+        // 按应用独立读取熔断器配置
+        let config = match self.db.get_proxy_config_for_app(app_type).await {
+            Ok(app_config) => {
+                log::debug!(
+                    "Loading circuit breaker config for {key} (app={app_type}): \
+                    failure_threshold={}, success_threshold={}, timeout={}s",
+                    app_config.circuit_failure_threshold,
+                    app_config.circuit_success_threshold,
+                    app_config.circuit_timeout_seconds
+                );
+                crate::proxy::circuit_breaker::CircuitBreakerConfig {
+                    failure_threshold: app_config.circuit_failure_threshold,
+                    success_threshold: app_config.circuit_success_threshold,
+                    timeout_seconds: app_config.circuit_timeout_seconds as u64,
+                    error_rate_threshold: app_config.circuit_error_rate_threshold,
+                    min_requests: app_config.circuit_min_requests,
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to load circuit breaker config for {key} (app={app_type}): {e}, using default"
+                );
+                crate::proxy::circuit_breaker::CircuitBreakerConfig::default()
+            }
+        };
 
         log::debug!("Creating new circuit breaker for {key} with config: {config:?}");
 
@@ -325,8 +359,11 @@ mod tests {
 
         db.add_to_failover_queue("claude", "b").unwrap();
         db.add_to_failover_queue("claude", "a").unwrap();
-        db.set_setting("auto_failover_enabled_claude", "true")
-            .unwrap();
+
+        // 启用自动故障转移（使用新的 proxy_config API）
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
 
         let router = ProviderRouter::new(db.clone());
         let providers = router.select_providers("claude").await.unwrap();
@@ -359,8 +396,11 @@ mod tests {
 
         db.add_to_failover_queue("claude", "a").unwrap();
         db.add_to_failover_queue("claude", "b").unwrap();
-        db.set_setting("auto_failover_enabled_claude", "true")
-            .unwrap();
+
+        // 启用自动故障转移（使用新的 proxy_config API）
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
 
         let router = ProviderRouter::new(db.clone());
 

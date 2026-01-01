@@ -66,6 +66,8 @@
     "exitEditMode": "退出编辑模式"
   },
   "provider": {
+    "tabProvider": "供应商",
+    "tabUniversal": "统一供应商",
     "noProviders": "还没有添加任何供应商",
     "noProvidersDescription": "点击右上角的\"添加供应商\"按钮开始配置您的第一个API供应商",
     "currentlyUsing": "当前使用",
@@ -353,6 +355,10 @@
     "visitWebsite": "访问 {{url}}",
     "anthropicModel": "主模型",
     "anthropicSmallFastModel": "快速模型",
+    "anthropicReasoningModel": "推理模型 (Thinking)",
+    "reasoningModelPlaceholder": "如 claude-sonnet-4-20250514",
+    "openrouterCompatMode": "OpenRouter 兼容模式",
+    "openrouterCompatModeHint": "使用 OpenAI Chat Completions 接口并转换为 Anthropic SSE。",
     "anthropicDefaultHaikuModel": "Haiku 默认模型",
     "anthropicDefaultSonnetModel": "Sonnet 默认模型",
     "anthropicDefaultOpusModel": "Opus 默认模型",
@@ -430,7 +436,7 @@
     "cost": "成本",
     "perMillion": "(每百万)",
     "trends": "使用趋势",
-    "rangeToday": "今天 (按小时)",
+    "rangeToday": "过去 24 小时 (按小时)",
     "rangeLast7Days": "过去 7 天",
     "rangeLast30Days": "过去 30 天",
     "totalTokens": "总 Token 数",
@@ -443,8 +449,8 @@
     "billingModel": "计费模型",
     "inputTokens": "输入",
     "outputTokens": "输出",
-    "cacheReadTokens": "缓存读取",
-    "cacheCreationTokens": "缓存写入",
+    "cacheReadTokens": "缓存命中",
+    "cacheCreationTokens": "缓存创建",
     "timingInfo": "用时/首字",
     "status": "状态",
     "noData": "暂无数据",
@@ -460,8 +466,8 @@
     "displayName": "显示名称",
     "inputCost": "输入成本",
     "outputCost": "输出成本",
-    "cacheReadCost": "缓存读取",
-    "cacheWriteCost": "缓存写入",
+    "cacheReadCost": "缓存命中",
+    "cacheWriteCost": "缓存创建",
     "deleteConfirmTitle": "确认删除",
     "deleteConfirmDesc": "确定要删除此模型定价配置吗？此操作无法撤销。",
     "queryFailed": "查询失败",
@@ -488,8 +494,8 @@
     "timeRange": "时间范围",
     "input": "Input",
     "output": "Output",
-    "cacheWrite": "Write",
-    "cacheRead": "Read"
+    "cacheWrite": "创建",
+    "cacheRead": "命中"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -994,12 +1000,85 @@
       }
     },
     "settings": {
+      "title": "代理服务设置",
+      "description": "配置本地代理服务器的监听地址、端口和运行参数，保存后立即生效。",
+      "alert": {
+        "autoApply": "保存后将自动同步到正在运行的代理服务，无需手动重启。"
+      },
+      "basic": {
+        "title": "基础设置",
+        "description": "配置代理服务监听的地址与端口。"
+      },
+      "advanced": {
+        "title": "高级参数",
+        "description": "控制请求的稳定性和日志记录。"
+      },
+      "timeout": {
+        "title": "超时设置",
+        "description": "配置流式和非流式请求的超时时间。"
+      },
+      "fields": {
+        "listenAddress": {
+          "label": "监听地址",
+          "placeholder": "127.0.0.1",
+          "description": "代理服务器监听的 IP 地址（推荐 127.0.0.1）"
+        },
+        "listenPort": {
+          "label": "监听端口",
+          "placeholder": "5000",
+          "description": "代理服务器监听的端口号（1024 ~ 65535）"
+        },
+        "maxRetries": {
+          "label": "最大重试次数",
+          "placeholder": "3",
+          "description": "请求失败时的重试次数（0 ~ 10）"
+        },
+        "requestTimeout": {
+          "label": "请求超时（秒）",
+          "placeholder": "0（不限）或 300",
+          "description": "单个请求的最大等待时间（0 表示不限制，或设置 10 ~ 600 秒）"
+        },
+        "enableLogging": {
+          "label": "启用日志记录",
+          "description": "记录所有代理请求，便于排查问题"
+        },
+        "streamingFirstByteTimeout": {
+          "label": "流式首字超时（秒）",
+          "description": "等待首个数据块的最大时间"
+        },
+        "streamingIdleTimeout": {
+          "label": "流式静默超时（秒）",
+          "description": "数据块之间的最大间隔"
+        },
+        "nonStreamingTimeout": {
+          "label": "非流式超时（秒）",
+          "description": "非流式请求的总超时时间"
+        }
+      },
+      "validation": {
+        "addressInvalid": "请输入有效的IP地址",
+        "portMin": "端口必须大于1024",
+        "portMax": "端口必须小于65535",
+        "retryMin": "重试次数不能为负",
+        "retryMax": "重试次数不能超过10",
+        "timeoutNonNegative": "超时时间不能为负数",
+        "timeoutMax": "超时时间最多600秒",
+        "timeoutRange": "请输入 0 或 10-600 之间的数值",
+        "streamingTimeoutMin": "超时时间至少5秒",
+        "streamingTimeoutMax": "超时时间最多300秒"
+      },
+      "actions": {
+        "save": "保存配置"
+      },
       "toast": {
         "saved": "代理配置已保存",
         "saveFailed": "保存失败: {{error}}"
       }
     },
     "switchFailed": "切换失败: {{error}}",
+    "failover": {
+      "proxyRequired": "需要先启动代理服务才能配置故障转移"
+    },
     "failoverQueue": {
       "title": "故障转移队列",
       "description": "管理各应用的供应商故障转移顺序",
@@ -1026,7 +1105,7 @@
       "failureThresholdHint": "连续失败多少次后打开熔断器（建议: 3-10）",
       "timeout": "恢复等待时间（秒）",
       "timeoutHint": "熔断器打开后，等待多久后尝试恢复（建议: 30-120）",
-      "circuitBreakerSettings": "熔断器高级设置",
+      "circuitBreakerSettings": "熔断器设置",
       "successThreshold": "恢复成功阈值",
       "successThresholdHint": "半开状态下成功多少次后关闭熔断器",
       "errorRate": "错误率阈值 (%)",
@@ -1055,5 +1134,65 @@
     "timeout": "超时时间（秒）",
     "maxRetries": "最大重试次数",
     "degradedThreshold": "降级阈值（毫秒）"
+  },
+  "proxyConfig": {
+    "proxyEnabled": "代理总开关",
+    "appTakeover": "代理启用",
+    "perAppConfig": "应用配置",
+    "circuitBreaker": "熔断器配置",
+    "circuitBreakerSettings": "熔断器设置",
+    "failureThreshold": "失败阈值",
+    "successThreshold": "恢复阈值",
+    "recoveryTimeout": "恢复等待时间",
+    "errorRateThreshold": "错误率阈值",
+    "minRequests": "最小请求数",
+    "timeoutConfig": "超时配置",
+    "streamingFirstByte": "流式首字节超时",
+    "streamingIdle": "流式静默超时",
+    "nonStreaming": "非流式超时"
+  },
+  "universalProvider": {
+    "title": "统一供应商",
+    "description": "统一供应商可以同时管理 Claude、Codex 和 Gemini 的配置。修改后会自动同步到所有启用的应用。",
+    "add": "添加统一供应商",
+    "edit": "编辑统一供应商",
+    "empty": "还没有统一供应商",
+    "emptyHint": "点击下方「添加统一供应商」按钮创建一个",
+    "selectPreset": "选择预设类型",
+    "name": "名称",
+    "namePlaceholder": "例如：我的 NewAPI",
+    "baseUrl": "API 地址",
+    "apiKey": "API Key",
+    "websiteUrl": "官网地址",
+    "websiteUrlPlaceholder": "https://example.com（可选，用于在列表中显示）",
+    "notes": "备注",
+    "notesPlaceholder": "可选：添加备注信息",
+    "enabledApps": "启用的应用",
+    "modelConfig": "模型配置",
+    "model": "模型",
+    "sync": "同步到应用",
+    "synced": "已同步到所有应用",
+    "syncError": "同步失败",
+    "noAppsEnabled": "未启用任何应用",
+    "added": "统一供应商已添加",
+    "addedAndSynced": "统一供应商已添加并同步",
+    "updated": "统一供应商已更新",
+    "deleted": "统一供应商已删除",
+    "addSuccess": "统一供应商添加成功",
+    "addFailed": "统一供应商添加失败",
+    "manage": "管理",
+    "loadError": "加载统一供应商失败",
+    "saveError": "保存统一供应商失败",
+    "deleteError": "删除统一供应商失败",
+    "deleteConfirmTitle": "删除统一供应商",
+    "deleteConfirmDescription": "确定要删除 \"{{name}}\" 吗？这将同时删除它在各应用中生成的供应商配置。",
+    "syncConfirmTitle": "同步统一供应商",
+    "syncConfirmDescription": "同步 \"{{name}}\" 将会覆盖 Claude、Codex 和 Gemini 中关联的供应商配置。确定要继续吗？",
+    "syncConfirm": "同步",
+    "saveAndSync": "保存并同步",
+    "savedAndSynced": "已保存并同步到所有应用",
+    "saveAndSyncError": "保存并同步失败",
+    "configJsonPreview": "配置 JSON 预览",
+    "configJsonPreviewHint": "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）"
   }
 }

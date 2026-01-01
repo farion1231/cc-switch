@@ -66,6 +66,8 @@
     "exitEditMode": "Exit Edit Mode"
   },
   "provider": {
+    "tabProvider": "Provider",
+    "tabUniversal": "Universal",
     "noProviders": "No providers added yet",
     "noProvidersDescription": "Click the \"Add Provider\" button in the top right to configure your first API provider",
     "currentlyUsing": "Currently Using",
@@ -353,6 +355,10 @@
     "visitWebsite": "Visit {{url}}",
     "anthropicModel": "Main Model",
     "anthropicSmallFastModel": "Fast Model",
+    "anthropicReasoningModel": "Reasoning Model (Thinking)",
+    "reasoningModelPlaceholder": "e.g. claude-sonnet-4-20250514",
+    "openrouterCompatMode": "OpenRouter Compatibility Mode",
+    "openrouterCompatModeHint": "Use OpenAI Chat Completions interface and convert to Anthropic SSE.",
     "anthropicDefaultHaikuModel": "Default Haiku Model",
     "anthropicDefaultSonnetModel": "Default Sonnet Model",
     "anthropicDefaultOpusModel": "Default Opus Model",
@@ -430,7 +436,7 @@
     "cost": "Cost",
     "perMillion": "(per million)",
     "trends": "Usage Trends",
-    "rangeToday": "Today (hourly)",
+    "rangeToday": "Last 24 hours (hourly)",
     "rangeLast7Days": "Last 7 days",
     "rangeLast30Days": "Last 30 days",
     "totalTokens": "Total Tokens",
@@ -443,8 +449,8 @@
     "billingModel": "Billing Model",
     "inputTokens": "Input",
     "outputTokens": "Output",
-    "cacheReadTokens": "Cache Read",
-    "cacheCreationTokens": "Cache Write",
+    "cacheReadTokens": "Cache Hit",
+    "cacheCreationTokens": "Cache Creation",
     "timingInfo": "Duration/TTFT",
     "status": "Status",
     "noData": "No data",
@@ -460,8 +466,8 @@
     "displayName": "Display Name",
     "inputCost": "Input Cost",
     "outputCost": "Output Cost",
-    "cacheReadCost": "Cache Read",
-    "cacheWriteCost": "Cache Write",
+    "cacheReadCost": "Cache Hit",
+    "cacheWriteCost": "Cache Creation",
     "deleteConfirmTitle": "Confirm Delete",
     "deleteConfirmDesc": "Are you sure you want to delete this model pricing? This action cannot be undone.",
     "queryFailed": "Query failed",
@@ -488,8 +494,8 @@
     "timeRange": "Time Range",
     "input": "Input",
     "output": "Output",
-    "cacheWrite": "Write",
-    "cacheRead": "Read"
+    "cacheWrite": "Creation",
+    "cacheRead": "Hit"
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -994,12 +1000,85 @@
       }
     },
     "settings": {
+      "title": "Proxy Service Settings",
+      "description": "Configure local proxy server listening address, port and runtime parameters. Changes take effect immediately after saving.",
+      "alert": {
+        "autoApply": "Changes will be automatically synced to the running proxy service without manual restart."
+      },
+      "basic": {
+        "title": "Basic Settings",
+        "description": "Configure proxy service listening address and port."
+      },
+      "advanced": {
+        "title": "Advanced Parameters",
+        "description": "Control request stability and logging."
+      },
+      "timeout": {
+        "title": "Timeout Settings",
+        "description": "Configure timeout for streaming and non-streaming requests."
+      },
+      "fields": {
+        "listenAddress": {
+          "label": "Listen Address",
+          "placeholder": "127.0.0.1",
+          "description": "IP address the proxy server listens on (recommended: 127.0.0.1)"
+        },
+        "listenPort": {
+          "label": "Listen Port",
+          "placeholder": "5000",
+          "description": "Port number the proxy server listens on (1024 ~ 65535)"
+        },
+        "maxRetries": {
+          "label": "Max Retries",
+          "placeholder": "3",
+          "description": "Number of retries on request failure (0 ~ 10)"
+        },
+        "requestTimeout": {
+          "label": "Request Timeout (sec)",
+          "placeholder": "0 (unlimited) or 300",
+          "description": "Maximum wait time for a single request (0 = unlimited, or 10 ~ 600 seconds)"
+        },
+        "enableLogging": {
+          "label": "Enable Logging",
+          "description": "Log all proxy requests for troubleshooting"
+        },
+        "streamingFirstByteTimeout": {
+          "label": "Streaming First Byte Timeout (sec)",
+          "description": "Maximum time to wait for the first data chunk"
+        },
+        "streamingIdleTimeout": {
+          "label": "Streaming Idle Timeout (sec)",
+          "description": "Maximum interval between data chunks"
+        },
+        "nonStreamingTimeout": {
+          "label": "Non-Streaming Timeout (sec)",
+          "description": "Total timeout for non-streaming requests"
+        }
+      },
+      "validation": {
+        "addressInvalid": "Please enter a valid IP address",
+        "portMin": "Port must be greater than 1024",
+        "portMax": "Port must be less than 65535",
+        "retryMin": "Retry count cannot be negative",
+        "retryMax": "Retry count cannot exceed 10",
+        "timeoutNonNegative": "Timeout cannot be negative",
+        "timeoutMax": "Timeout cannot exceed 600 seconds",
+        "timeoutRange": "Please enter 0 or a value between 10-600",
+        "streamingTimeoutMin": "Timeout must be at least 5 seconds",
+        "streamingTimeoutMax": "Timeout cannot exceed 300 seconds"
+      },
+      "actions": {
+        "save": "Save Configuration"
+      },
       "toast": {
         "saved": "Proxy configuration saved",
         "saveFailed": "Save failed: {{error}}"
       }
     },
     "switchFailed": "Switch failed: {{error}}",
+    "failover": {
+      "proxyRequired": "Proxy service must be started to configure failover"
+    },
     "failoverQueue": {
       "title": "Failover Queue",
       "description": "Manage failover order for each app's providers",
@@ -1026,7 +1105,7 @@
       "failureThresholdHint": "Open circuit breaker after this many consecutive failures (recommended: 3-10)",
       "timeout": "Recovery Wait Time (seconds)",
       "timeoutHint": "Wait this long before trying to recover after circuit opens (recommended: 30-120)",
-      "circuitBreakerSettings": "Circuit Breaker Advanced Settings",
+      "circuitBreakerSettings": "Circuit Breaker Settings",
       "successThreshold": "Recovery Success Threshold",
       "successThresholdHint": "Close circuit breaker after this many successes in half-open state",
       "errorRate": "Error Rate Threshold (%)",
@@ -1055,5 +1134,65 @@
     "timeout": "Timeout (seconds)",
     "maxRetries": "Max Retries",
     "degradedThreshold": "Degraded Threshold (ms)"
+  },
+  "proxyConfig": {
+    "proxyEnabled": "Proxy Enabled",
+    "appTakeover": "Proxy Enabled",
+    "perAppConfig": "Per-App Config",
+    "circuitBreaker": "Circuit Breaker",
+    "circuitBreakerSettings": "Circuit Breaker Settings",
+    "failureThreshold": "Failure Threshold",
+    "successThreshold": "Success Threshold",
+    "recoveryTimeout": "Recovery Timeout",
+    "errorRateThreshold": "Error Rate Threshold",
+    "minRequests": "Min Requests",
+    "timeoutConfig": "Timeout Config",
+    "streamingFirstByte": "Streaming First Byte Timeout",
+    "streamingIdle": "Streaming Idle Timeout",
+    "nonStreaming": "Non-Streaming Timeout"
+  },
+  "universalProvider": {
+    "title": "Universal Provider",
+    "description": "Universal providers manage Claude, Codex, and Gemini configurations simultaneously. Changes are automatically synced to all enabled apps.",
+    "add": "Add Universal Provider",
+    "edit": "Edit Universal Provider",
+    "empty": "No universal providers yet",
+    "emptyHint": "Click the \"Add Universal Provider\" button below to create one",
+    "selectPreset": "Select Preset Type",
+    "name": "Name",
+    "namePlaceholder": "e.g., My NewAPI",
+    "baseUrl": "API URL",
+    "apiKey": "API Key",
+    "websiteUrl": "Website URL",
+    "websiteUrlPlaceholder": "https://example.com (optional, displayed in the list)",
+    "notes": "Notes",
+    "notesPlaceholder": "Optional: Add notes",
+    "enabledApps": "Enabled Apps",
+    "modelConfig": "Model Configuration",
+    "model": "Model",
+    "sync": "Sync to Apps",
+    "synced": "Synced to all apps",
+    "syncError": "Sync failed",
+    "noAppsEnabled": "No apps enabled",
+    "added": "Universal provider added",
+    "addedAndSynced": "Universal provider added and synced",
+    "updated": "Universal provider updated",
+    "deleted": "Universal provider deleted",
+    "addSuccess": "Universal provider added successfully",
+    "addFailed": "Failed to add universal provider",
+    "manage": "Manage",
+    "loadError": "Failed to load universal providers",
+    "saveError": "Failed to save universal provider",
+    "deleteError": "Failed to delete universal provider",
+    "deleteConfirmTitle": "Delete Universal Provider",
+    "deleteConfirmDescription": "Are you sure you want to delete \"{{name}}\"? This will also delete its generated provider configurations in each app.",
+    "syncConfirmTitle": "Sync Universal Provider",
+    "syncConfirmDescription": "Syncing \"{{name}}\" will overwrite the associated provider configurations in Claude, Codex, and Gemini. Do you want to continue?",
+    "syncConfirm": "Sync",
+    "saveAndSync": "Save & Sync",
+    "savedAndSynced": "Saved and synced to all apps",
+    "saveAndSyncError": "Failed to save and sync",
+    "configJsonPreview": "Config JSON Preview",
+    "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)"
   }
 }

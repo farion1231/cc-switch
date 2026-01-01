@@ -2,7 +2,7 @@
 
 # All-in-One Assistant for Claude Code, Codex & Gemini CLI
 
-[![Version](https://img.shields.io/badge/version-3.8.2-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.8.3-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![Downloads](https://img.shields.io/endpoint?url=https://api.pinstudios.net/api/badges/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
@@ -15,7 +15,7 @@ English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Changelog](CHANG
 
 ## ❤️Sponsor
 
-![Zhipu GLM](assets/partners/banners/glm-en.jpg)
+[![Zhipu GLM](assets/partners/banners/glm-en.jpg)](https://z.ai/subscribe?ic=8JVLJQFSKB)
 
 This project is sponsored by Z.ai, supporting us with their GLM CODING PLAN.GLM CODING PLAN is a subscription service designed for AI coding, starting at just $3/month. It provides access to their flagship GLM-4.6 model across 10+ popular AI coding tools (Claude Code, Cline, Roo Code, etc.), offering developers top-tier, fast, and stable coding experiences.Get 10% OFF the GLM CODING PLAN with [this link](https://z.ai/subscribe?ic=8JVLJQFSKB)!
 
@@ -23,19 +23,18 @@ This project is sponsored by Z.ai, supporting us with their GLM CODING PLAN.GLM 
 
 <table>
 <tr>
-<td width="180"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></td>
+<td width="180"><a href="https://www.packyapi.com/register?aff=cc-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
 <td>Thanks to PackyCode for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relay services for Claude Code, Codex, Gemini, and more. PackyCode provides special discounts for our software users: register using <a href="https://www.packyapi.com/register?aff=cc-switch">this link</a> and enter the "cc-switch" promo code during recharge to get 10% off.</td>
 </tr>
 
 <tr>
-<td width="180"><img src="assets/partners/logos/sds-en.png" alt="ShanDianShuo" width="150"></td>
-<td>Thanks to ShanDianShuo for sponsoring this project! ShanDianShuo is a local-first AI voice input: Millisecond latency, data stays on device, 4x faster than typing, AI-powered correction, Privacy-first, completely free. Doubles your coding efficiency with Claude Code! <a href="https://www.shandianshuo.cn">Free download</a> for Mac/Win</td>
+<td width="180"><a href="https://aigocode.com/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
+<td>Thanks to AIGoCode for sponsoring this project! AIGoCode is an all-in-one platform that integrates Claude Code, Codex, and the latest Gemini models, providing you with stable, efficient, and highly cost-effective AI coding services. The platform offers flexible subscription plans, zero risk of account suspension, direct access with no VPN required, and lightning-fast responses. AIGoCode has prepared a special benefit for CC Switch users: if you register via <a href="https://aigocode.com/invite/CC-SWITCH">this link</a>, you'll receive an extra 10% bonus credit on your first top-up!</td>
 </tr>
 
 <tr>
-<td width="180"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></td>
-<td>Thanks to AIGoCode for sponsoring this project! AIGoCode is an all-in-one platform that integrates Claude Code, Codex, and the latest Gemini models, providing you with stable, efficient, and highly cost-effective AI coding services. The platform offers flexible subscription plans, zero risk of account suspension, direct access with no VPN required, and lightning-fast responses.AIGoCode has prepared a special benefit for CC Switch users: if you register via <a href="https://aigocode.com/invite/CC-SWITCH">this link</a>, you’ll receive an extra 10% bonus credit on your first top-up!
-</td>
+<td width="180"><a href="https://www.dmxapi.cn/register?aff=bUHu"><img src="assets/partners/logos/dmx-en.jpg" alt="DMXAPI" width="150"></a></td>
+<td>Thanks to DMXAPI for sponsoring this project! DMXAPI provides global large model API services to 200+ enterprise users. One API key for all global models. Features include: instant invoicing, unlimited concurrency, starting from $0.15, 24/7 technical support. GPT/Claude/Gemini all at 32% off, domestic models 20-50% off, Claude Code exclusive models at 66% off! <a href="https://www.dmxapi.cn/register?aff=bUHu">Register here</a></td>
 </tr>
 
 </table>
@@ -48,7 +47,7 @@ This project is sponsored by Z.ai, supporting us with their GLM CODING PLAN.GLM 
 
 ## Features
 
-### Current Version: v3.8.2 | [Full Changelog](CHANGELOG.md) | [Release Notes](docs/release-note-v3.8.0-en.md)
+### Current Version: v3.8.3 | [Full Changelog](CHANGELOG.md) | [Release Notes](docs/release-note-v3.8.0-en.md)
 
 **v3.8.0 Major Update (2025-11-28)**
 

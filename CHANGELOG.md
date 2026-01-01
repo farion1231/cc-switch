@@ -5,6 +5,64 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0-3] - 2025-12-29
+
+### Beta Release
+
+Third beta release with important bug fixes for Windows compatibility, UI improvements, and new features.
+
+### Added
+
+- **Universal Provider** - Support for universal provider configurations (#348)
+- **Provider Search Filter** - Quick filter to find providers by name (#435)
+- **Keyboard Shortcut** - Open settings with Command+comma / Ctrl+comma (#436)
+- **Xiaomi MiMo Icon** - Added MiMo icon and Claude provider configuration (#470)
+- **Usage Model Extraction** - Extract model info from usage statistics (#455)
+- **Skip First-Run Confirmation** - Option to skip Claude Code first-run confirmation dialog
+- **Exit Animations** - Added exit animation to FullScreenPanel dialogs
+- **Fade Transitions** - Smooth fade transitions for app/view/panel switching
+
+### Fixed
+
+#### Windows
+- Wrap npx/npm commands with `cmd /c` for MCP export
+- Prevent terminal windows from appearing during version check
+
+#### macOS
+- Use .app bundle path for autostart to prevent terminal window popup
+
+#### UI
+- Resolve Dialog/Modal not opening on first click (#492)
+- Improve dark mode text contrast for form labels
+- Reduce header spacing and fix layout shift on view switch
+- Prevent header layout shift when switching views
+
+#### Database & Schema
+- Add missing base columns migration for proxy_config
+- Add backward compatibility check for proxy_config seed insert
+
+#### Other
+- Use local timezone and robust DST handling in usage stats (#500)
+- Remove deprecated `sync_enabled_to_codex` call
+- Gracefully handle invalid Codex config.toml during MCP sync
+- Add missing translations for reasoning model and OpenRouter compat mode
+
+### Improved
+
+- **macOS Tray** - Use macOS tray template icon
+- **Header Alignment** - Remove macOS titlebar tint, align custom header
+- **Shadow Removal** - Cleaner UI by removing shadow styles
+- **Code Inspector** - Added code-inspector-plugin for development
+- **i18n** - Complete internationalization for usage panel and settings
+- **Sponsor Logos** - Made sponsor logos clickable
+
+### Stats
+
+- 35 commits since v3.9.0-2
+- 5 files changed in test/lint fixes
+
+---
+
 ## [3.9.0-1] - 2025-12-18
 
 ### Beta Release

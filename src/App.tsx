@@ -34,6 +34,7 @@ import {
   type ActivateConfigSetOptions,
 } from "@/hooks/useConfigSets";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
+import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import { AppSwitcher } from "@/components/AppSwitcher";
@@ -51,6 +52,7 @@ import PromptPanel from "@/components/prompts/PromptPanel";
 import { SkillsPage } from "@/components/skills/SkillsPage";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
+import { UniversalProviderPanel } from "@/components/universal";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -61,7 +63,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-type View = "providers" | "settings" | "prompts" | "skills" | "mcp" | "agents";
+type View =
+  | "providers"
+  | "settings"
+  | "prompts"
+  | "skills"
+  | "mcp"
+  | "agents"
+  | "universal";
 
 const DRAG_BAR_HEIGHT = 28; // px
 const HEADER_HEIGHT = 64; // px
@@ -129,6 +138,9 @@ function App() {
   const usageProviderData =
     (usageProviderId ? providers[usageProviderId] : null) ??
     usageProviderSnapshot;
+  // 使用 Hook 保存最后有效值，用于动画退出期间保持内容显示
+  const effectiveEditingProvider = useLastValidValue(editingProviderData);
+  const effectiveUsageProvider = useLastValidValue(usageProviderData);
   const isEditingDialogOpen = editingProviderId !== null;
   const isUsageModalOpen = usageProviderId !== null;
   // Skills 功能仅支持 Claude 和 Codex
@@ -174,6 +186,38 @@ function App() {
       unsubscribe?.();
     };
   }, [activeApp, refetch]);
+
+  // 监听统一供应商同步事件，刷新所有应用的供应商列表
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
+    const setupListener = async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unsubscribe = await listen("universal-provider-synced", async () => {
+          // 统一供应商同步后刷新所有应用的供应商列表
+          // 使用 invalidateQueries 使所有 providers 查询失效
+          await queryClient.invalidateQueries({ queryKey: ["providers"] });
+          // 同时更新托盘菜单
+          try {
+            await providersApi.updateTrayMenu();
+          } catch (error) {
+            console.error("[App] Failed to update tray menu", error);
+          }
+        });
+      } catch (error) {
+        console.error(
+          "[App] Failed to subscribe universal-provider-synced event",
+          error,
+        );
+      }
+    };
+
+    setupListener();
+    return () => {
+      unsubscribe?.();
+    };
+  }, [queryClient]);
 
   // 应用启动时检测所有应用的环境变量冲突
   useEffect(() => {
@@ -268,11 +312,15 @@ function App() {
     async (setId: string, options?: ActivateConfigSetOptions) => {
       const activated = await activateConfigSet(setId, options);
       if (activated) {
+        await Promise.allSettled([
+          queryClient.invalidateQueries({ queryKey: ["providers"] }),
+          queryClient.invalidateQueries({ queryKey: ["mcp"] }),
+        ]);
         await refetch();
       }
       return activated;
     },
-    [activateConfigSet, refetch],
+    [activateConfigSet, queryClient, refetch],
   );
 
   const handleSwitchProvider = useCallback(
@@ -299,6 +347,88 @@ function App() {
       switchProvider,
     ],
   );
+
+  useEffect(() => {
+    const handleGlobalShortcut = (event: KeyboardEvent) => {
+      if (event.key !== "," || !(event.metaKey || event.ctrlKey)) {
+        return;
+      }
+      event.preventDefault();
+      setCurrentView("settings");
+    };
+
+    window.addEventListener("keydown", handleGlobalShortcut);
+    return () => {
+      window.removeEventListener("keydown", handleGlobalShortcut);
+    };
+  }, []);
+
+  const EnvironmentSwitcher = () => {
+    if (!configSets.length) return null;
+
+    if (!hasMultipleConfigSets) {
+      return (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled
+          className="flex items-center gap-2 rounded-lg border-border-default/50 px-3 text-sm"
+        >
+          <Globe2 className="h-4 w-4" />
+          <span className="max-w-[9rem] truncate text-left">
+            {environmentLabel}
+          </span>
+        </Button>
+      );
+    }
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isConfigSetActivating}
+            className="flex items-center gap-2 rounded-lg border-border-default/50 px-3 text-sm"
+          >
+            {isConfigSetActivating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Globe2 className="h-4 w-4" />
+            )}
+            <span className="max-w-[9rem] truncate text-left">
+              {environmentLabel}
+            </span>
+            <ChevronDown className="h-3 w-3 opacity-70" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-52">
+          <DropdownMenuLabel className="text-xs text-muted-foreground">
+            {t("provider.selectEnvironment", {
+              defaultValue: "选择环境",
+            })}
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {configSets.map((set) => (
+            <DropdownMenuItem
+              key={set.id}
+              onSelect={(event) => {
+                event.preventDefault();
+                if (set.id === activeConfigSetId) return;
+                void activateEnvironment(set.id);
+              }}
+              className="flex items-center justify-between gap-2"
+            >
+              <span className="truncate">{set.name}</span>
+              {set.id === activeConfigSetId ? (
+                <Check className="h-3 w-3 text-primary" />
+              ) : null}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
 
   // 打开网站链接
   const handleOpenWebsite = async (url: string) => {
@@ -436,11 +566,18 @@ function App() {
             <UnifiedMcpPanel
               ref={mcpPanelRef}
               onOpenChange={() => setCurrentView("providers")}
+              activeConfigSetId={activeConfigSetId}
             />
           );
         case "agents":
           return (
             <AgentsPanel onOpenChange={() => setCurrentView("providers")} />
+          );
+        case "universal":
+          return (
+            <div className="mx-auto max-w-[56rem] px-5 pt-4">
+              <UniversalProviderPanel />
+            </div>
           );
         default:
           return (
@@ -575,6 +712,10 @@ function App() {
                   {currentView === "skills" && t("skills.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
                   {currentView === "agents" && t("agents.title")}
+                  {currentView === "universal" &&
+                    t("universalProvider.title", {
+                      defaultValue: "统一供应商",
+                    })}
                 </h1>
               </div>
             ) : (
@@ -622,16 +763,6 @@ function App() {
                 <Plus className="w-5 h-5" />
               </Button>
             )}
-            {currentView === "mcp" && (
-              <Button
-                size="icon"
-                onClick={() => mcpPanelRef.current?.openAdd()}
-                className={`ml-auto ${addActionButtonClass}`}
-                title={t("mcp.unifiedPanel.addServer")}
-              >
-                <Plus className="w-5 h-5" />
-              </Button>
-            )}
             {currentView === "skills" && (
               <>
                 <Button
@@ -659,52 +790,7 @@ function App() {
                 <div className="flex items-center gap-2">
                   <ProxyToggle activeApp={activeApp} />
                   <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
-                  {hasMultipleConfigSets ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={isConfigSetActivating}
-                          className="flex items-center gap-2 rounded-lg border-border-default/50 px-3 text-sm"
-                        >
-                          {isConfigSetActivating ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Globe2 className="h-4 w-4" />
-                          )}
-                          <span className="max-w-[9rem] truncate text-left">
-                            {environmentLabel}
-                          </span>
-                          <ChevronDown className="h-3 w-3 opacity-70" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="start" className="w-52">
-                        <DropdownMenuLabel className="text-xs text-muted-foreground">
-                          {t("provider.selectEnvironment", {
-                            defaultValue: "选择环境",
-                          })}
-                        </DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        {configSets.map((set) => (
-                          <DropdownMenuItem
-                            key={set.id}
-                            onSelect={(event) => {
-                              event.preventDefault();
-                              if (set.id === activeConfigSetId) return;
-                              void activateEnvironment(set.id);
-                            }}
-                            className="flex items-center justify-between gap-2"
-                          >
-                            <span className="truncate">{set.name}</span>
-                            {set.id === activeConfigSetId ? (
-                              <Check className="h-3 w-3 text-primary" />
-                            ) : null}
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : null}
+                  <EnvironmentSwitcher />
                 </div>
 
                 <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
@@ -764,14 +850,25 @@ function App() {
                 </Button>
               </>
             )}
+            {currentView === "mcp" && (
+              <div className="flex items-center gap-2">
+                <EnvironmentSwitcher />
+                <Button
+                  size="icon"
+                  onClick={() => mcpPanelRef.current?.openAdd()}
+                  className={`ml-auto ${addActionButtonClass}`}
+                  title={t("mcp.unifiedPanel.addServer")}
+                >
+                  <Plus className="w-5 h-5" />
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </header>
 
       <main className="flex-1 pb-12 animate-fade-in ">
-        <div className="pb-12">
-          {renderContent()}
-        </div>
+        <div className="pb-12">{renderContent()}</div>
       </main>
 
       <AddProviderDialog
@@ -783,7 +880,7 @@ function App() {
 
       <EditProviderDialog
         open={isEditingDialogOpen}
-        provider={editingProviderData}
+        provider={effectiveEditingProvider}
         onOpenChange={(open) => {
           if (!open) {
             setEditingProviderId(null);
@@ -794,15 +891,15 @@ function App() {
         isProxyTakeover={isProxyRunning && isCurrentAppTakeoverActive}
       />
 
-      {usageProviderData && (
+      {effectiveUsageProvider && (
         <UsageScriptModal
-          provider={usageProviderData}
+          provider={effectiveUsageProvider}
           appId={activeApp}
           isOpen={isUsageModalOpen}
           onClose={() => setUsageProviderId(null)}
           onSave={(script) => {
-            if (usageProviderData) {
-              void saveUsageScript(usageProviderData, script);
+            if (effectiveUsageProvider) {
+              void saveUsageScript(effectiveUsageProvider, script);
             }
           }}
         />

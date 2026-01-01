@@ -12,13 +12,7 @@ interface UsageSummaryCardsProps {
 export function UsageSummaryCards({ days }: UsageSummaryCardsProps) {
   const { t } = useTranslation();
 
-  const { startDate, endDate } = useMemo(() => {
-    const end = Math.floor(Date.now() / 1000);
-    const start = end - days * 24 * 60 * 60;
-    return { startDate: start, endDate: end };
-  }, [days]);
-
-  const { data: summary, isLoading } = useUsageSummary(startDate, endDate);
+  const { data: summary, isLoading } = useUsageSummary(days);
 
   const stats = useMemo(() => {
     const totalRequests = summary?.totalRequests ?? 0;

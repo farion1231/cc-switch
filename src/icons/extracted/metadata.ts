@@ -198,6 +198,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["mistral"],
     defaultColor: "#FF7000",
   },
+  newapi: {
+    name: "newapi",
+    displayName: "newapi",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
   notion: {
     name: "notion",
     displayName: "notion",
@@ -330,6 +337,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["aihubmix", "hub", "mix", "aggregator"],
     defaultColor: "#006FFB",
+  },
+  xiaomimimo: {
+    name: "xiaomimimo",
+    displayName: "Xiaomi MiMo",
+    category: "ai-provider",
+    keywords: ["xiaomimimo", "xiaomi", "mimo"],
+    defaultColor: "#000000",
   },
 };
 

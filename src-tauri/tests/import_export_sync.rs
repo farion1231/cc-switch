@@ -76,19 +76,8 @@ fn sync_codex_provider_writes_auth_and_config() {
 
     let mut config = MultiAppConfig::default();
 
-    // 添加入测 MCP 启用项，确保 sync_enabled_to_codex 会写入 TOML
-    config.mcp.codex.servers.insert(
-        "echo-server".into(),
-        json!({
-            "id": "echo-server",
-            "enabled": true,
-            "server": {
-                "type": "stdio",
-                "command": "echo",
-                "args": ["hello"]
-            }
-        }),
-    );
+    // 注意：v3.7.0 后 MCP 同步由 McpService 独立处理，不再通过 provider 切换触发
+    // 此测试仅验证 auth.json 和 config.toml 基础配置的写入
 
     let provider_config = json!({
         "auth": {
@@ -133,9 +122,10 @@ fn sync_codex_provider_writes_auth_and_config() {
     );
 
     let toml_text = fs::read_to_string(&config_path).expect("read config.toml");
+    // 验证基础配置正确写入
     assert!(
-        toml_text.contains("command = \"echo\""),
-        "config.toml should contain serialized enabled MCP server"
+        toml_text.contains("base_url"),
+        "config.toml should contain base_url from provider config"
     );
 
     // 当前供应商应同步最新 config 文本

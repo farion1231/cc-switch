@@ -3,6 +3,7 @@
 //! 使用流式 API 进行快速健康检查，只需接收首个 chunk 即判定成功。
 
 use futures::StreamExt;
+use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -141,15 +142,17 @@ impl StreamCheckService {
             .build()
             .map_err(|e| AppError::Message(format!("创建客户端失败: {e}")))?;
 
+        let model_to_test = Self::resolve_test_model(app_type, provider, config);
+
         let result = match app_type {
             AppType::Claude => {
-                Self::check_claude_stream(&client, &base_url, &auth, &config.claude_model).await
+                Self::check_claude_stream(&client, &base_url, &auth, &model_to_test).await
             }
             AppType::Codex => {
-                Self::check_codex_stream(&client, &base_url, &auth, &config.codex_model).await
+                Self::check_codex_stream(&client, &base_url, &auth, &model_to_test).await
             }
             AppType::Gemini => {
-                Self::check_gemini_stream(&client, &base_url, &auth, &config.gemini_model).await
+                Self::check_gemini_stream(&client, &base_url, &auth, &model_to_test).await
             }
         };
 
@@ -378,6 +381,48 @@ impl StreamCheckService {
         } else {
             AppError::Message(e.to_string())
         }
+    }
+
+    fn resolve_test_model(
+        app_type: &AppType,
+        provider: &Provider,
+        config: &StreamCheckConfig,
+    ) -> String {
+        match app_type {
+            AppType::Claude => Self::extract_env_model(provider, "ANTHROPIC_MODEL")
+                .unwrap_or_else(|| config.claude_model.clone()),
+            AppType::Codex => {
+                Self::extract_codex_model(provider).unwrap_or_else(|| config.codex_model.clone())
+            }
+            AppType::Gemini => Self::extract_env_model(provider, "GEMINI_MODEL")
+                .unwrap_or_else(|| config.gemini_model.clone()),
+        }
+    }
+
+    fn extract_env_model(provider: &Provider, key: &str) -> Option<String> {
+        provider
+            .settings_config
+            .get("env")
+            .and_then(|env| env.get(key))
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    fn extract_codex_model(provider: &Provider) -> Option<String> {
+        let config_text = provider
+            .settings_config
+            .get("config")
+            .and_then(|value| value.as_str())?;
+        if config_text.trim().is_empty() {
+            return None;
+        }
+
+        let re = Regex::new(r#"^model\s*=\s*["']([^"']+)["']"#).ok()?;
+        re.captures(config_text)
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|value| !value.is_empty())
     }
 }
 

@@ -286,7 +286,10 @@ export function useConfigSets(): UseConfigSetsResult {
       try {
         await saveMutation.mutateAsync(payload);
 
-        const syncResult = await syncCurrentProvidersLiveSafe();
+        const syncResult = await syncCurrentProvidersLiveSafe({
+          // 切换环境时不应用上一环境的 MCP 配置到新环境，避免覆盖
+          syncMcp: false,
+        });
         if (!syncResult.ok) {
           console.warn(
             "[useConfigSets] Failed to sync providers after environment switch",

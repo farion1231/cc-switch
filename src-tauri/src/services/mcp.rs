@@ -1,31 +1,169 @@
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::app_config::{AppType, McpServer};
+use crate::app_config::{AppType, McpApps, McpServer};
 use crate::error::AppError;
 use crate::mcp;
+use crate::settings;
 use crate::store::AppState;
 
 /// MCP 相关业务逻辑（v3.7.0 统一结构）
 pub struct McpService;
 
 impl McpService {
+    const DEFAULT_ENV_ID: &'static str = "default";
+
+    /// 获取当前激活的配置环境 ID（空值时回落为 "default"）
+    fn active_env_id() -> String {
+        settings::get_settings()
+            .active_config_directory_set_id
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| Self::DEFAULT_ENV_ID.to_string())
+    }
+
+    /// 读取指定环境的 MCP 启用状态映射
+    fn load_env_apps(env_id: &str) -> HashMap<String, crate::app_config::McpApps> {
+        settings::get_mcp_apps_for_env(env_id).unwrap_or_default()
+    }
+
+    /// 持久化指定环境的 MCP 启用状态映射
+    fn persist_env_apps(
+        env_id: &str,
+        apps: HashMap<String, crate::app_config::McpApps>,
+    ) -> Result<(), AppError> {
+        settings::set_mcp_apps_for_env(env_id, apps)
+    }
+
+    /// 从当前环境的 live 配置推断各服务器的启用状态（仅针对已知服务器）
+    fn detect_env_apps_from_live(
+        known_servers: &IndexMap<String, McpServer>,
+    ) -> HashMap<String, crate::app_config::McpApps> {
+        let mut env_apps: HashMap<String, crate::app_config::McpApps> = HashMap::new();
+
+        if let Ok(map) = crate::claude_mcp::read_mcp_servers_map() {
+            for id in map.keys() {
+                if known_servers.contains_key(id) {
+                    env_apps.entry(id.clone()).or_default().claude = true;
+                }
+            }
+        }
+
+        if let Ok(text) = crate::codex_config::read_and_validate_codex_config_text() {
+            for id in Self::extract_codex_mcp_ids(&text) {
+                if known_servers.contains_key(&id) {
+                    env_apps.entry(id).or_default().codex = true;
+                }
+            }
+        }
+
+        if let Ok(map) = crate::gemini_mcp::read_mcp_servers_map() {
+            for id in map.keys() {
+                if known_servers.contains_key(id) {
+                    env_apps.entry(id.clone()).or_default().gemini = true;
+                }
+            }
+        }
+
+        env_apps
+    }
+
+    /// 从 Codex 配置文本提取 MCP server ID（支持 mcp.servers 与 mcp_servers）
+    fn extract_codex_mcp_ids(text: &str) -> Vec<String> {
+        let mut ids: HashSet<String> = HashSet::new();
+
+        if let Ok(root) = toml::from_str::<toml::Table>(text) {
+            if let Some(mcp_tbl) = root.get("mcp").and_then(|v| v.as_table()) {
+                if let Some(servers) = mcp_tbl.get("servers").and_then(|v| v.as_table()) {
+                    ids.extend(servers.keys().cloned());
+                }
+            }
+
+            if let Some(servers) = root.get("mcp_servers").and_then(|v| v.as_table()) {
+                ids.extend(servers.keys().cloned());
+            }
+        }
+
+        ids.into_iter().collect()
+    }
+
     /// 获取所有 MCP 服务器（统一结构）
     pub fn get_all_servers(state: &AppState) -> Result<IndexMap<String, McpServer>, AppError> {
-        state.db.get_all_mcp_servers()
+        let settings_snapshot = settings::get_settings();
+        let env_id = settings_snapshot
+            .active_config_directory_set_id
+            .as_ref()
+            .and_then(|s| {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+            .unwrap_or_else(|| Self::DEFAULT_ENV_ID.to_string());
+        let has_multiple_envs = settings_snapshot.config_directory_sets.len() > 1;
+
+        let mut servers = state.db.get_all_mcp_servers()?;
+
+        // 优先使用已存储的环境启用状态，否则尝试从当前环境的 live 配置推断
+        let mut env_apps = settings_snapshot
+            .mcp_env_apps
+            .get(&env_id)
+            .cloned()
+            .unwrap_or_default();
+        let mut should_persist = false;
+
+        if env_apps.is_empty() {
+            let detected = Self::detect_env_apps_from_live(&servers);
+            if !detected.is_empty() {
+                env_apps = detected;
+                should_persist = true;
+            }
+        }
+
+        for (id, server) in servers.iter_mut() {
+            if let Some(apps) = env_apps.get(id) {
+                server.apps = apps.clone();
+            } else if has_multiple_envs {
+                // 多环境下未记录的服务器默认禁用，避免继承其它环境的状态
+                server.apps = McpApps::default();
+                env_apps.insert(id.clone(), server.apps.clone());
+                should_persist = true;
+            } else {
+                // 单环境场景保持原有行为：沿用数据库中的启用状态
+                env_apps.insert(id.clone(), server.apps.clone());
+                should_persist = true;
+            }
+        }
+
+        if should_persist {
+            Self::persist_env_apps(&env_id, env_apps)?;
+        }
+
+        Ok(servers)
     }
 
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
+        let env_id = Self::active_env_id();
+        let mut env_apps = Self::load_env_apps(&env_id);
+
         // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）
-        let prev_apps = state
-            .db
-            .get_all_mcp_servers()?
+        let prev_apps = env_apps
             .get(&server.id)
-            .map(|s| s.apps.clone())
+            .cloned()
+            .or_else(|| {
+                state
+                    .db
+                    .get_all_mcp_servers()
+                    .ok()
+                    .and_then(|map| map.get(&server.id).cloned().map(|s| s.apps))
+            })
             .unwrap_or_default();
 
+        env_apps.insert(server.id.clone(), server.apps.clone());
         state.db.save_mcp_server(&server)?;
+        Self::persist_env_apps(&env_id, env_apps)?;
 
         // 处理禁用：若旧版本启用但新版本取消，则需要从该应用的 live 配置移除
         if prev_apps.claude && !server.apps.claude {
@@ -50,6 +188,7 @@ impl McpService {
 
         if let Some(server) = server {
             state.db.delete_mcp_server(id)?;
+            settings::remove_mcp_server_from_envs(id)?;
 
             // 从所有应用的 live 配置中移除
             Self::remove_server_from_all_apps(state, id, &server)?;
@@ -66,10 +205,21 @@ impl McpService {
         app: AppType,
         enabled: bool,
     ) -> Result<(), AppError> {
+        let env_id = Self::active_env_id();
+        let mut env_apps = Self::load_env_apps(&env_id);
         let mut servers = state.db.get_all_mcp_servers()?;
 
         if let Some(server) = servers.get_mut(server_id) {
-            server.apps.set_enabled_for(&app, enabled);
+            let mut apps = env_apps
+                .get(server_id)
+                .cloned()
+                .unwrap_or(server.apps.clone());
+
+            apps.set_enabled_for(&app, enabled);
+            env_apps.insert(server_id.to_string(), apps.clone());
+            Self::persist_env_apps(&env_id, env_apps)?;
+
+            server.apps = apps;
             state.db.save_mcp_server(server)?;
 
             // 同步到对应应用
@@ -143,9 +293,26 @@ impl McpService {
     pub fn sync_all_enabled(state: &AppState) -> Result<(), AppError> {
         let servers = Self::get_all_servers(state)?;
 
-        for server in servers.values() {
-            Self::sync_server_to_apps(state, server)?;
+        let mut claude_map = HashMap::new();
+        let mut codex_map = HashMap::new();
+        let mut gemini_map = HashMap::new();
+
+        for (id, server) in servers.iter() {
+            if server.apps.claude {
+                claude_map.insert(id.clone(), server.server.clone());
+            }
+            if server.apps.codex {
+                codex_map.insert(id.clone(), server.server.clone());
+            }
+            if server.apps.gemini {
+                gemini_map.insert(id.clone(), server.server.clone());
+            }
         }
+
+        // 全量覆盖各应用的 mcpServers，避免切换多环境时遗留旧配置
+        mcp::sync_servers_map_to_claude(&claude_map)?;
+        mcp::sync_servers_map_to_codex(&codex_map)?;
+        mcp::sync_servers_map_to_gemini(&gemini_map)?;
 
         Ok(())
     }

@@ -46,6 +46,14 @@ pub fn sync_enabled_to_gemini(config: &MultiAppConfig) -> Result<(), AppError> {
     crate::gemini_mcp::set_mcp_servers_map(&enabled)
 }
 
+/// 将给定的 MCP 服务器列表全量写入 Gemini 配置（覆盖 mcpServers）
+pub fn sync_servers_map_to_gemini(servers: &HashMap<String, Value>) -> Result<(), AppError> {
+    if !should_sync_gemini_mcp() {
+        return Ok(());
+    }
+    crate::gemini_mcp::set_mcp_servers_map(servers)
+}
+
 /// 从 Gemini MCP 配置导入到统一结构（v3.7.0+）
 /// 已存在的服务器将启用 Gemini 应用，不覆盖其他字段和应用状态
 pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError> {

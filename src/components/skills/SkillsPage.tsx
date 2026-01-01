@@ -231,10 +231,10 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
               </div>
             ) : skills.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-64 text-center">
-                <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                <p className="text-lg font-medium text-foreground">
                   {t("skills.empty")}
                 </p>
-                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                <p className="mt-2 text-sm text-muted-foreground">
                   {t("skills.emptyDescription")}
                 </p>
                 <Button
@@ -306,10 +306,10 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                 {/* 技能列表或无结果提示 */}
                 {filteredSkills.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-48 text-center">
-                    <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                    <p className="text-lg font-medium text-foreground">
                       {t("skills.noResults")}
                     </p>
-                    <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                    <p className="mt-2 text-sm text-muted-foreground">
                       {t("skills.emptyDescription")}
                     </p>
                   </div>

@@ -248,12 +248,18 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         if tool_path.exists() {
             // 构建 PATH 环境变量，确保 node 可被找到
             let current_path = std::env::var("PATH").unwrap_or_default();
+
+            #[cfg(target_os = "windows")]
+            let new_path = format!("{};{}", path.display(), current_path);
+
+            #[cfg(not(target_os = "windows"))]
             let new_path = format!("{}:{}", path.display(), current_path);
 
             #[cfg(target_os = "windows")]
             let output = {
-                Command::new(&tool_path)
-                    .arg("--version")
+                // 使用 cmd /C 包装执行，确保子进程也在隐藏的控制台中运行
+                Command::new("cmd")
+                    .args(["/C", &format!("\"{}\" --version", tool_path.display())])
                     .env("PATH", &new_path)
                     .creation_flags(CREATE_NO_WINDOW)
                     .output()

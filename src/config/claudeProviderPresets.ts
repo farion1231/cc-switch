@@ -391,4 +391,22 @@ export const providerPresets: ProviderPreset[] = [
     icon: "openrouter",
     iconColor: "#6566F1",
   },
+  {
+    name: "Xiaomi MiMo",
+    websiteUrl: "https://platform.xiaomimimo.com",
+    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.xiaomimimo.com/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "mimo-v2-flash",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2-flash",
+      },
+    },
+    category: "cn_official",
+    icon: "xiaomimimo",
+    iconColor: "#000000",
+  },
 ];

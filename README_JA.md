@@ -2,7 +2,7 @@
 
 # Claude Code / Codex / Gemini CLI オールインワン・アシスタント
 
-[![Version](https://img.shields.io/badge/version-3.8.2-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.8.3-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![Downloads](https://img.shields.io/endpoint?url=https://api.pinstudios.net/api/badges/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
@@ -15,7 +15,7 @@
 
 ## ❤️スポンサー
 
-![Zhipu GLM](assets/partners/banners/glm-en.jpg)
+[![Zhipu GLM](assets/partners/banners/glm-en.jpg)](https://z.ai/subscribe?ic=8JVLJQFSKB)
 
 本プロジェクトは Z.ai の GLM CODING PLAN による支援を受けています。GLM CODING PLAN は AI コーディング向けのサブスクリプションで、月額わずか 3 ドルから。Claude Code、Cline、Roo Code など 10 以上の人気 AI コーディングツールでフラッグシップモデル GLM-4.6 を利用でき、速く安定した開発体験を提供します。[このリンク](https://z.ai/subscribe?ic=8JVLJQFSKB) から申し込むと 10% オフになります！
 
@@ -23,20 +23,18 @@
 
 <table>
 <tr>
-<td width="180"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></td>
+<td width="180"><a href="https://www.packyapi.com/register?aff=cc-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
 <td>PackyCode のご支援に感謝します！PackyCode は Claude Code、Codex、Gemini などのリレーサービスを提供する信頼性の高い API 中継プラットフォームです。本ソフト利用者向けに特別割引があります：<a href="https://www.packyapi.com/register?aff=cc-switch">このリンク</a>で登録し、チャージ時に「cc-switch」クーポンを入力すると 10% オフになります。</td>
 </tr>
 
 <tr>
-<td width="180"><img src="assets/partners/logos/sds-en.png" alt="ShanDianShuo" width="150"></td>
-<td>ShanDianShuo のご支援に感謝します！ShanDianShuo はローカルファーストの音声入力ツールで、ミリ秒遅延・データは端末から外に出ず・キーボード入力の 4 倍の速度・AI 自動補正・プライバシー優先で完全無料。Claude Code と組み合わせればコーディング効率が倍増します。<a href="https://www.shandianshuo.cn">Mac/Win 版を無料ダウンロード</a></td>
+<td width="180"><a href="https://aigocode.com/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
+<td>本プロジェクトは AIGoCode のスポンサー提供でお届けしています。AIGoCode は、Claude Code・Codex・最新の Gemini モデルを統合したオールインワンのAIコーディングプラットフォームで、安定性・高速性・コストパフォーマンスに優れた開発サービスを提供します。柔軟なサブスクリプションプランを備え、レスポンスも非常に高速です。さらに、CC Switch ユーザー向けの特典として、<a href="https://aigocode.com/invite/CC-SWITCH">このリンク</a>から登録すると、初回チャージ時に10％分のボーナスクレジットが付与されます！</td>
 </tr>
 
 <tr>
-<td width="180"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></td>
-<td>本プロジェクトは AIGoCode のスポンサー提供でお届けしています。AIGoCode は、Claude Code・Codex・最新の Gemini モデルを統合したオールインワンのAIコーディングプラットフォームで、安定性・高速性・コストパフォーマンスに優れた開発サービスを提供します。柔軟なサブスクリプションプランを備え、レスポンスも非常に高速です。さらに、CC Switch ユーザー向けの特典として、<a href="https://aigocode.com/invite/CC-SWITCH">このリンク</a>から登録すると、初回チャージ時に10％分のボーナスクレジットが付与されます！
-
-</td>
+<td width="180"><a href="https://www.dmxapi.cn/register?aff=bUHu"><img src="assets/partners/logos/dmx-en.jpg" alt="DMXAPI" width="150"></a></td>
+<td>DMXAPI のご支援に感謝します！DMXAPI は 200 社以上の企業ユーザーにグローバル大規模モデル API サービスを提供しています。1 つの API キーで全世界のモデルにアクセス可能。即時請求書発行、同時接続数無制限、最低 $0.15 から、24 時間年中無休のテクニカルサポート。GPT/Claude/Gemini が全て 32% オフ、国内モデルは 20〜50% オフ、Claude Code 専用モデルは 66% オフ実施中！<a href="https://www.dmxapi.cn/register?aff=bUHu">登録はこちら</a></td>
 </tr>
 
 </table>
@@ -49,7 +47,7 @@
 
 ## 特長
 
-### 現在のバージョン：v3.8.2 | [完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-note-v3.8.0-en.md)
+### 現在のバージョン：v3.8.3 | [完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-note-v3.8.0-en.md)
 
 **v3.8.0 メジャーアップデート (2025-11-28)**
 

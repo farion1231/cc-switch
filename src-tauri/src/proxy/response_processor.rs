@@ -3,8 +3,11 @@
 //! 统一处理流式和非流式 API 响应
 
 use super::{
-    handler_config::UsageParserConfig, handler_context::RequestContext, server::ProxyState,
-    usage::parser::TokenUsage, ProxyError,
+    handler_config::UsageParserConfig,
+    handler_context::{RequestContext, StreamingTimeoutConfig},
+    server::ProxyState,
+    usage::parser::TokenUsage,
+    ProxyError,
 };
 use axum::response::Response;
 use bytes::Bytes;
@@ -17,6 +20,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    time::Duration,
 };
 use tokio::sync::Mutex;
 
@@ -60,8 +64,12 @@ pub async fn handle_streaming(
     // 创建使用量收集器
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), parser_config);
 
-    // 创建带日志的透传流
-    let logged_stream = create_logged_passthrough_stream(stream, ctx.tag, Some(usage_collector));
+    // 获取流式超时配置
+    let timeout_config = ctx.streaming_timeout_config();
+
+    // 创建带日志和超时的透传流
+    let logged_stream =
+        create_logged_passthrough_stream(stream, ctx.tag, Some(usage_collector), timeout_config);
 
     let body = axum::body::Body::from_stream(logged_stream);
     builder.body(body).unwrap()
@@ -93,13 +101,30 @@ pub async fn handle_non_streaming(
 
         // 解析使用量
         if let Some(usage) = (parser_config.response_parser)(&json_value) {
+            // 优先使用 usage 中解析出的模型名称，其次使用响应中的 model 字段，最后回退到请求模型
+            let model = if let Some(ref m) = usage.model {
+                m.clone()
+            } else if let Some(m) = json_value.get("model").and_then(|m| m.as_str()) {
+                m.to_string()
+            } else {
+                ctx.request_model.clone()
+            };
+
+            spawn_log_usage(state, ctx, usage, &model, status.as_u16(), false);
+        } else {
             let model = json_value
                 .get("model")
                 .and_then(|m| m.as_str())
-                .unwrap_or(&ctx.request_model);
-
-            spawn_log_usage(state, ctx, usage, model, status.as_u16(), false);
-        } else {
+                .unwrap_or(&ctx.request_model)
+                .to_string();
+            spawn_log_usage(
+                state,
+                ctx,
+                TokenUsage::default(),
+                &model,
+                status.as_u16(),
+                false,
+            );
             log::debug!(
                 "[{}] 未能解析 usage 信息，跳过记录",
                 parser_config.app_type_str
@@ -110,6 +135,14 @@ pub async fn handle_non_streaming(
             "[{}] <<< 响应 (非 JSON): {} bytes",
             ctx.tag,
             body_bytes.len()
+        );
+        spawn_log_usage(
+            state,
+            ctx,
+            TokenUsage::default(),
+            &ctx.request_model,
+            status.as_u16(),
+            false,
         );
     }
 
@@ -231,6 +264,7 @@ fn create_usage_collector(
     let start_time = ctx.start_time;
     let stream_parser = parser_config.stream_parser;
     let model_extractor = parser_config.model_extractor;
+    let session_id = ctx.session_id.clone();
 
     SseUsageCollector::new(start_time, move |events, first_token_ms| {
         if let Some(usage) = stream_parser(&events) {
@@ -239,6 +273,7 @@ fn create_usage_collector(
 
             let state = state.clone();
             let provider_id = provider_id.clone();
+            let session_id = session_id.clone();
 
             tokio::spawn(async move {
                 log_usage_internal(
@@ -251,10 +286,32 @@ fn create_usage_collector(
                     first_token_ms,
                     true, // is_streaming
                     status_code,
+                    Some(session_id),
                 )
                 .await;
             });
         } else {
+            let model = model_extractor(&events, &request_model);
+            let latency_ms = start_time.elapsed().as_millis() as u64;
+            let state = state.clone();
+            let provider_id = provider_id.clone();
+            let session_id = session_id.clone();
+
+            tokio::spawn(async move {
+                log_usage_internal(
+                    &state,
+                    &provider_id,
+                    app_type_str,
+                    &model,
+                    TokenUsage::default(),
+                    latency_ms,
+                    first_token_ms,
+                    true, // is_streaming
+                    status_code,
+                    Some(session_id),
+                )
+                .await;
+            });
             log::debug!("[{tag}] 流式响应缺少 usage 统计，跳过消费记录");
         }
     })
@@ -274,6 +331,7 @@ fn spawn_log_usage(
     let app_type_str = ctx.app_type_str.to_string();
     let model = model.to_string();
     let latency_ms = ctx.latency_ms();
+    let session_id = ctx.session_id.clone();
 
     tokio::spawn(async move {
         log_usage_internal(
@@ -286,6 +344,7 @@ fn spawn_log_usage(
             None,
             is_streaming,
             status_code,
+            Some(session_id),
         )
         .await;
     });
@@ -303,6 +362,7 @@ async fn log_usage_internal(
     first_token_ms: Option<u64>,
     is_streaming: bool,
     status_code: u16,
+    session_id: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -326,6 +386,15 @@ async fn log_usage_internal(
 
     let request_id = uuid::Uuid::new_v4().to_string();
 
+    log::debug!(
+        "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, session={}, input={}, output={}, cache_read={}, cache_creation={}",
+        session_id.as_deref().unwrap_or("none"),
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.cache_read_tokens,
+        usage.cache_creation_tokens
+    );
+
     if let Err(e) = logger.log_with_calculation(
         request_id,
         provider_id.to_string(),
@@ -336,7 +405,7 @@ async fn log_usage_internal(
         latency_ms,
         first_token_ms,
         status_code,
-        None,
+        session_id,
         None, // provider_type
         is_streaming,
     ) {
@@ -344,21 +413,60 @@ async fn log_usage_internal(
     }
 }
 
-/// 创建带日志记录的透传流
+/// 创建带日志记录和超时控制的透传流
 pub fn create_logged_passthrough_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
     usage_collector: Option<SseUsageCollector>,
+    timeout_config: StreamingTimeoutConfig,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
         let mut collector = usage_collector;
+        let mut is_first_chunk = true;
+
+        // 超时配置
+        let first_byte_timeout = if timeout_config.first_byte_timeout > 0 {
+            Some(Duration::from_secs(timeout_config.first_byte_timeout))
+        } else {
+            None
+        };
+        let idle_timeout = if timeout_config.idle_timeout > 0 {
+            Some(Duration::from_secs(timeout_config.idle_timeout))
+        } else {
+            None
+        };
 
         tokio::pin!(stream);
 
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(bytes) => {
+        loop {
+            // 选择超时时间：首字节超时或静默期超时
+            let timeout_duration = if is_first_chunk {
+                first_byte_timeout
+            } else {
+                idle_timeout
+            };
+
+            let chunk_result = match timeout_duration {
+                Some(duration) => {
+                    match tokio::time::timeout(duration, stream.next()).await {
+                        Ok(Some(chunk)) => Some(chunk),
+                        Ok(None) => None, // 流结束
+                        Err(_) => {
+                            // 超时
+                            let timeout_type = if is_first_chunk { "首字节" } else { "静默期" };
+                            log::error!("[{tag}] 流式响应{}超时 ({}秒)", timeout_type, duration.as_secs());
+                            yield Err(std::io::Error::other(format!("流式响应{timeout_type}超时")));
+                            break;
+                        }
+                    }
+                }
+                None => stream.next().await, // 无超时限制
+            };
+
+            match chunk_result {
+                Some(Ok(bytes)) => {
+                    is_first_chunk = false;
                     let text = String::from_utf8_lossy(&bytes);
                     buffer.push_str(&text);
 
@@ -394,9 +502,13 @@ pub fn create_logged_passthrough_stream(
 
                     yield Ok(bytes);
                 }
-                Err(e) => {
+                Some(Err(e)) => {
                     log::error!("[{tag}] 流错误: {e}");
                     yield Err(std::io::Error::other(e.to_string()));
+                    break;
+                }
+                None => {
+                    // 流正常结束
                     break;
                 }
             }

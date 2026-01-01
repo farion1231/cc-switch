@@ -191,11 +191,11 @@ export function EnvWarningBanner({
                           <div className="flex-1 min-w-0">
                             <label
                               htmlFor={key}
-                              className="block text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer"
+                              className="block text-sm font-medium text-foreground cursor-pointer"
                             >
                               {conflict.varName}
                             </label>
-                            <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 break-all">
+                            <p className="text-xs text-muted-foreground mt-1 break-all">
                               {t("env.field.value")}: {conflict.varValue}
                             </p>
                             <p className="text-xs text-muted-foreground mt-1">

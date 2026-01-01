@@ -53,7 +53,6 @@ const LEGACY_SCHEMA_SQL: &str = r#"
 
 #[derive(Debug)]
 struct ColumnInfo {
-    name: String,
     r#type: String,
     notnull: i64,
     default: Option<String>,
@@ -65,10 +64,9 @@ fn get_column_info(conn: &Connection, table: &str, column: &str) -> ColumnInfo {
         .expect("prepare pragma");
     let mut rows = stmt.query([]).expect("query pragma");
     while let Some(row) = rows.next().expect("read row") {
-        let name: String = row.get(1).expect("name");
-        if name.eq_ignore_ascii_case(column) {
+        let column_name: String = row.get(1).expect("name");
+        if column_name.eq_ignore_ascii_case(column) {
             return ColumnInfo {
-                name,
                 r#type: row.get::<_, String>(2).expect("type"),
                 notnull: row.get::<_, i64>(3).expect("notnull"),
                 default: row.get::<_, Option<String>>(4).ok().flatten(),
@@ -202,6 +200,53 @@ fn migration_aligns_column_defaults_and_types() {
 }
 
 #[test]
+fn create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    // 模拟测试版 v2：user_version=2，但 proxy_config 仍是单例结构（无 app_type）
+    Database::set_user_version(&conn, 2).expect("set user_version");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE proxy_config (
+            id INTEGER PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+            listen_port INTEGER NOT NULL DEFAULT 5000,
+            max_retries INTEGER NOT NULL DEFAULT 3,
+            request_timeout INTEGER NOT NULL DEFAULT 300,
+            enable_logging INTEGER NOT NULL DEFAULT 1,
+            target_app TEXT NOT NULL DEFAULT 'claude',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO proxy_config (id, enabled) VALUES (1, 1);
+        "#,
+    )
+    .expect("seed legacy proxy_config");
+
+    Database::create_tables_on_conn(&conn).expect("create tables should repair proxy_config");
+
+    assert!(
+        Database::has_column(&conn, "proxy_config", "app_type").expect("check app_type"),
+        "proxy_config should be migrated to per-app structure"
+    );
+
+    let count: i32 = conn
+        .query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r.get(0))
+        .expect("count rows");
+    assert_eq!(count, 3, "per-app proxy_config should have 3 rows");
+
+    // 新结构下应能按 app_type 查询
+    let _: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("query by app_type");
+}
+
+#[test]
 fn dry_run_does_not_write_to_disk() {
     // Create minimal valid config for migration
     let mut apps = HashMap::new();
@@ -249,9 +294,10 @@ fn dry_run_validates_schema_compatibility() {
         },
     );
 
-    let mut manager = ProviderManager::default();
-    manager.providers = providers;
-    manager.current = "test-provider".to_string();
+    let manager = ProviderManager {
+        providers,
+        current: "test-provider".to_string(),
+    };
 
     let mut apps = HashMap::new();
     apps.insert("claude".to_string(), manager);

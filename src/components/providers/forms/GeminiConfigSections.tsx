@@ -47,7 +47,7 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
     <div className="space-y-2">
       <label
         htmlFor="geminiEnv"
-        className="block text-sm font-medium text-gray-900 dark:text-gray-100"
+        className="block text-sm font-medium text-foreground"
       >
         {t("geminiConfig.envFile", { defaultValue: "环境变量 (.env)" })}
       </label>
@@ -69,7 +69,7 @@ GEMINI_MODEL=gemini-3-pro-preview`}
       )}
 
       {!error && (
-        <p className="text-xs text-gray-500 dark:text-gray-400">
+        <p className="text-xs text-muted-foreground">
           {t("geminiConfig.envFileHint", {
             defaultValue: "使用 .env 格式配置 Gemini 环境变量",
           })}
@@ -124,14 +124,14 @@ export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
       <div className="flex items-center justify-between">
         <label
           htmlFor="geminiConfig"
-          className="block text-sm font-medium text-gray-900 dark:text-gray-100"
+          className="block text-sm font-medium text-foreground"
         >
           {t("geminiConfig.configJson", {
             defaultValue: "配置文件 (config.json)",
           })}
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
           <input
             type="checkbox"
             checked={useCommonConfig}
@@ -180,7 +180,7 @@ export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
       )}
 
       {!configError && (
-        <p className="text-xs text-gray-500 dark:text-gray-400">
+        <p className="text-xs text-muted-foreground">
           {t("geminiConfig.configJsonHint", {
             defaultValue: "使用 JSON 格式配置 Gemini 扩展参数（可选）",
           })}

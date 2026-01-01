@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
+import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField } from "./shared";
@@ -39,12 +40,14 @@ interface ClaudeFormFieldsProps {
   // Model Selector
   shouldShowModelSelector: boolean;
   claudeModel: string;
+  reasoningModel: string;
   defaultHaikuModel: string;
   defaultSonnetModel: string;
   defaultOpusModel: string;
   onModelChange: (
     field:
       | "ANTHROPIC_MODEL"
+      | "ANTHROPIC_REASONING_MODEL"
       | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
       | "ANTHROPIC_DEFAULT_SONNET_MODEL"
       | "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -53,6 +56,11 @@ interface ClaudeFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+
+  // OpenRouter Compat
+  showOpenRouterCompatToggle: boolean;
+  openRouterCompatEnabled: boolean;
+  onOpenRouterCompatChange: (enabled: boolean) => void;
 }
 
 export function ClaudeFormFields({
@@ -77,11 +85,15 @@ export function ClaudeFormFields({
   onCustomEndpointsChange,
   shouldShowModelSelector,
   claudeModel,
+  reasoningModel,
   defaultHaikuModel,
   defaultSonnetModel,
   defaultOpusModel,
   onModelChange,
   speedTestEndpoints,
+  showOpenRouterCompatToggle,
+  openRouterCompatEnabled,
+  onOpenRouterCompatChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -162,6 +174,28 @@ export function ClaudeFormFields({
         />
       )}
 
+      {showOpenRouterCompatToggle && (
+        <div className="flex items-center justify-between rounded-lg border border-white/10 bg-background/60 p-4">
+          <div className="space-y-1">
+            <FormLabel>
+              {t("providerForm.openrouterCompatMode", {
+                defaultValue: "OpenRouter 兼容模式",
+              })}
+            </FormLabel>
+            <p className="text-xs text-muted-foreground">
+              {t("providerForm.openrouterCompatModeHint", {
+                defaultValue:
+                  "使用 OpenAI Chat Completions 接口并转换为 Anthropic SSE。",
+              })}
+            </p>
+          </div>
+          <Switch
+            checked={openRouterCompatEnabled}
+            onCheckedChange={onOpenRouterCompatChange}
+          />
+        </div>
+      )}
+
       {/* 模型选择器 */}
       {shouldShowModelSelector && (
         <div className="space-y-3">
@@ -179,6 +213,27 @@ export function ClaudeFormFields({
                   onModelChange("ANTHROPIC_MODEL", e.target.value)
                 }
                 placeholder={t("providerForm.modelPlaceholder", {
+                  defaultValue: "",
+                })}
+                autoComplete="off"
+              />
+            </div>
+
+            {/* 推理模型 */}
+            <div className="space-y-2">
+              <FormLabel htmlFor="reasoningModel">
+                {t("providerForm.anthropicReasoningModel", {
+                  defaultValue: "推理模型 (Thinking)",
+                })}
+              </FormLabel>
+              <Input
+                id="reasoningModel"
+                type="text"
+                value={reasoningModel}
+                onChange={(e) =>
+                  onModelChange("ANTHROPIC_REASONING_MODEL", e.target.value)
+                }
+                placeholder={t("providerForm.reasoningModelPlaceholder", {
                   defaultValue: "",
                 })}
                 autoComplete="off"

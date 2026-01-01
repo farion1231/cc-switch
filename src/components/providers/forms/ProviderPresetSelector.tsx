@@ -1,11 +1,16 @@
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
-import { Zap, Star } from "lucide-react";
+import { Zap, Star, Layers, Settings2 } from "lucide-react";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
 import type { ProviderCategory } from "@/types";
+import {
+  universalProviderPresets,
+  type UniversalProviderPreset,
+} from "@/config/universalProviderPresets";
+import { ProviderIcon } from "@/components/ProviderIcon";
 
 type PresetEntry = {
   id: string;
@@ -18,6 +23,8 @@ interface ProviderPresetSelectorProps {
   categoryKeys: string[];
   presetCategoryLabels: Record<string, string>;
   onPresetChange: (value: string) => void;
+  onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
+  onManageUniversalProviders?: () => void;
   category?: ProviderCategory; // 当前选中的分类
 }
 
@@ -27,6 +34,8 @@ export function ProviderPresetSelector({
   categoryKeys,
   presetCategoryLabels,
   onPresetChange,
+  onUniversalPresetSelect,
+  onManageUniversalProviders,
   category,
 }: ProviderPresetSelectorProps) {
   const { t } = useTranslation();
@@ -164,6 +173,49 @@ export function ProviderPresetSelector({
           });
         })}
       </div>
+
+      {/* 统一供应商预设（新的一行） */}
+      {onUniversalPresetSelect && universalProviderPresets.length > 0 && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            {universalProviderPresets.map((preset) => (
+              <button
+                key={`universal-${preset.providerType}`}
+                type="button"
+                onClick={() => onUniversalPresetSelect(preset)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 relative"
+                title={t("universalProvider.hint", {
+                  defaultValue:
+                    "跨应用统一配置，自动同步到 Claude/Codex/Gemini",
+                })}
+              >
+                <ProviderIcon icon={preset.icon} name={preset.name} size={14} />
+                {preset.name}
+                <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
+                  <Layers className="h-2.5 w-2.5" />
+                </span>
+              </button>
+            ))}
+            {/* 管理统一供应商按钮 */}
+            {onManageUniversalProviders && (
+              <button
+                type="button"
+                onClick={onManageUniversalProviders}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80"
+                title={t("universalProvider.manage", {
+                  defaultValue: "管理统一供应商",
+                })}
+              >
+                <Settings2 className="h-4 w-4" />
+                {t("universalProvider.manage", {
+                  defaultValue: "管理",
+                })}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
       <p className="text-xs text-muted-foreground">{getCategoryHint()}</p>
     </div>
   );

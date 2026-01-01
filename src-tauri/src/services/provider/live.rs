@@ -3,8 +3,10 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::fs;
 
 use serde_json::{json, Value};
+use toml_edit::DocumentMut;
 
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
@@ -114,7 +116,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let auth_path = get_codex_auth_path();
             write_json_file(&auth_path, auth)?;
             let config_path = get_codex_config_path();
-            std::fs::write(&config_path, config_str).map_err(|e| AppError::io(&config_path, e))?;
+            fs::write(&config_path, config_str).map_err(|e| AppError::io(&config_path, e))?;
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
@@ -129,7 +131,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 /// 使用有效的当前供应商 ID（验证过存在性）。
 /// 优先从本地 settings 读取，验证后 fallback 到数据库的 is_current 字段。
 /// 这确保了配置导入后无效 ID 会自动 fallback 到数据库。
-pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
+pub fn sync_current_to_live_with_options(state: &AppState, sync_mcp: bool) -> Result<(), AppError> {
     for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
         // Use validated effective current provider
         let current_id =
@@ -140,15 +142,77 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
-            write_live_snapshot(&app_type, provider)?;
+            if !sync_mcp && matches!(app_type, AppType::Codex) {
+                write_codex_live_preserving_mcp(provider)?;
+            } else {
+                write_live_snapshot(&app_type, provider)?;
+            }
         }
         // Note: get_effective_current_provider already validates existence,
         // so providers.get() should always succeed here
     }
 
-    // MCP sync
-    McpService::sync_all_enabled(state)?;
+    if sync_mcp {
+        // MCP sync
+        McpService::sync_all_enabled(state)?;
+    }
     Ok(())
+}
+
+/// 保持原有 API：默认同步 MCP
+pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
+    sync_current_to_live_with_options(state, true)
+}
+
+/// Codex 环境切换时保留目标环境现有的 MCP 配置，避免被上一环境覆盖
+fn write_codex_live_preserving_mcp(provider: &Provider) -> Result<(), AppError> {
+    let obj = provider
+        .settings_config
+        .as_object()
+        .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
+    let auth = obj
+        .get("auth")
+        .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
+    let config_str = obj.get("config").and_then(|v| v.as_str()).ok_or_else(|| {
+        AppError::Config("Codex 供应商配置缺少 'config' 字段或不是字符串".to_string())
+    })?;
+
+    let config_path = get_codex_config_path();
+    let merged_config = merge_codex_config_preserving_mcp(config_str, &config_path)?;
+
+    let auth_path = get_codex_auth_path();
+    write_json_file(&auth_path, auth)?;
+    fs::write(&config_path, merged_config).map_err(|e| AppError::io(&config_path, e))?;
+
+    Ok(())
+}
+
+/// 合并 Codex 配置：丢弃上一环境的 [mcp_servers]，保留目标环境现有的 MCP 配置
+fn merge_codex_config_preserving_mcp(
+    provider_config_text: &str,
+    config_path: &std::path::Path,
+) -> Result<String, AppError> {
+    // 先校验传入的配置文本
+    toml::from_str::<toml::Table>(provider_config_text)
+        .map_err(|e| AppError::toml(config_path, e))?;
+
+    let mut provider_doc = provider_config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Config(format!("解析 Codex 配置失败: {e}")))?;
+
+    // 不携带上一环境的 MCP 配置
+    provider_doc.as_table_mut().remove("mcp_servers");
+
+    // 若目标环境已有 mcp_servers，则沿用现有配置
+    if let Ok(existing_text) = fs::read_to_string(config_path) {
+        if let Ok(mut existing_doc) = existing_text.parse::<DocumentMut>() {
+            if let Some(existing_mcp) = existing_doc.as_table_mut().remove("mcp_servers") {
+                provider_doc["mcp_servers"] = existing_mcp;
+            }
+        }
+    }
+
+    Ok(provider_doc.to_string())
 }
 
 /// Read current live settings for an app type

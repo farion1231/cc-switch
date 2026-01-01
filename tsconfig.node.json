@@ -9,7 +9,12 @@
     "esModuleInterop": true,
     "target": "ES2020",
     "strict": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["vite.config.mts", "vitest.config.ts"]
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts"
+  ]
 }

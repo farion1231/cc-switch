@@ -43,7 +43,22 @@ impl ProxyService {
 
     /// 启动代理服务器
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
-        // 1. 获取配置
+        // 1. 启动时自动设置 proxy_enabled = true
+        let mut global_config = self
+            .db
+            .get_global_proxy_config()
+            .await
+            .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
+
+        if !global_config.proxy_enabled {
+            global_config.proxy_enabled = true;
+            self.db
+                .update_global_proxy_config(global_config.clone())
+                .await
+                .map_err(|e| format!("更新代理总开关失败: {e}"))?;
+        }
+
+        // 2. 获取配置
         let config = self
             .db
             .get_proxy_config()
@@ -115,14 +130,7 @@ impl ProxyService {
             return Err(e);
         }
 
-        // 5. 设置 settings 表中所有应用的接管状态（用于重启后自动恢复）
-        for app in ["claude", "codex", "gemini"] {
-            if let Err(e) = self.db.set_proxy_takeover_enabled(app, true) {
-                log::warn!("设置 {app} 接管状态失败: {e}");
-            }
-        }
-
-        // 6. 启动代理服务器
+        // 5. 启动代理服务器
         match self.start().await {
             Ok(info) => Ok(info),
             Err(e) => {
@@ -132,8 +140,6 @@ impl ProxyService {
                     Ok(()) => {
                         let _ = self.db.set_live_takeover_active(false).await;
                         let _ = self.db.delete_all_live_backups().await;
-                        // 清除 settings 状态
-                        let _ = self.db.clear_all_proxy_takeover();
                     }
                     Err(restore_err) => {
                         log::error!("恢复原始配置失败，将保留备份以便下次启动恢复: {restore_err}");
@@ -146,29 +152,30 @@ impl ProxyService {
 
     /// 获取各应用的接管状态（是否改写该应用的 Live 配置指向本地代理）
     pub async fn get_takeover_status(&self) -> Result<ProxyTakeoverStatus, String> {
-        let claude = self
+        // 从 proxy_config.enabled 读取（优先），兼容旧的 live_backup 备份检测
+        let claude_enabled = self
             .db
-            .get_live_backup("claude")
+            .get_proxy_config_for_app("claude")
             .await
-            .map_err(|e| format!("获取 Claude 接管状态失败: {e}"))?
-            .is_some();
-        let codex = self
+            .map(|c| c.enabled)
+            .unwrap_or(false);
+        let codex_enabled = self
             .db
-            .get_live_backup("codex")
+            .get_proxy_config_for_app("codex")
             .await
-            .map_err(|e| format!("获取 Codex 接管状态失败: {e}"))?
-            .is_some();
-        let gemini = self
+            .map(|c| c.enabled)
+            .unwrap_or(false);
+        let gemini_enabled = self
             .db
-            .get_live_backup("gemini")
+            .get_proxy_config_for_app("gemini")
             .await
-            .map_err(|e| format!("获取 Gemini 接管状态失败: {e}"))?
-            .is_some();
+            .map(|c| c.enabled)
+            .unwrap_or(false);
 
         Ok(ProxyTakeoverStatus {
-            claude,
-            codex,
-            gemini,
+            claude: claude_enabled,
+            codex: codex_enabled,
+            gemini: gemini_enabled,
         })
     }
 
@@ -186,15 +193,30 @@ impl ProxyService {
                 self.start().await?;
             }
 
-            // 2) 已接管则直接返回（幂等）
-            if self
+            // 2) 已接管则直接返回（幂等）；但如果缺少备份或占位符残留，需要重建接管
+            let current_config = self
                 .db
-                .get_live_backup(app_type_str)
+                .get_proxy_config_for_app(app_type_str)
                 .await
-                .map_err(|e| format!("检查 {app_type_str} Live 备份失败: {e}"))?
-                .is_some()
-            {
-                return Ok(());
+                .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
+
+            if current_config.enabled {
+                let has_backup = match self.db.get_live_backup(app_type_str).await {
+                    Ok(v) => v.is_some(),
+                    Err(e) => {
+                        log::warn!("读取 {app_type_str} 备份失败（将继续重建接管）: {e}");
+                        false
+                    }
+                };
+                let live_taken_over = self.detect_takeover_in_live_config_for_app(&app);
+
+                if has_backup || live_taken_over {
+                    return Ok(());
+                }
+
+                log::warn!(
+                    "{app_type_str} 标记为已接管，但缺少备份或占位符，正在重新接管并补齐备份"
+                );
             }
 
             // 3) 备份 Live 配置（严格：目标 app 不存在则报错）
@@ -223,25 +245,32 @@ impl ProxyService {
                 return Err(e);
             }
 
-            // 6) 设置 settings 表中的接管状态
+            // 6) 设置 proxy_config.enabled = true
+            let mut updated_config = self
+                .db
+                .get_proxy_config_for_app(app_type_str)
+                .await
+                .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
+            updated_config.enabled = true;
             self.db
-                .set_proxy_takeover_enabled(app_type_str, true)
-                .map_err(|e| format!("设置 {app_type_str} 接管状态失败: {e}"))?;
+                .update_proxy_config_for_app(updated_config)
+                .await
+                .map_err(|e| format!("设置 {app_type_str} enabled 状态失败: {e}"))?;
 
             // 7) 兼容旧逻辑：写入 any-of 标志（失败不影响功能）
             let _ = self.db.set_live_takeover_active(true).await;
             return Ok(());
         }
 
-        // 关闭接管：无备份则视为未接管（幂等）
-        let has_backup = self
+        // 关闭接管：检查 enabled 状态
+        let current_config = self
             .db
-            .get_live_backup(app_type_str)
+            .get_proxy_config_for_app(app_type_str)
             .await
-            .map_err(|e| format!("检查 {app_type_str} Live 备份失败: {e}"))?
-            .is_some();
-        if !has_backup {
-            return Ok(());
+            .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
+
+        if !current_config.enabled {
+            return Ok(()); // 未接管，幂等返回
         }
 
         // 1) 恢复 Live 配置
@@ -253,10 +282,17 @@ impl ProxyService {
             .await
             .map_err(|e| format!("删除 {app_type_str} Live 备份失败: {e}"))?;
 
-        // 3) 清除 settings 表中该应用的接管状态
+        // 3) 设置 proxy_config.enabled = false
+        let mut updated_config = self
+            .db
+            .get_proxy_config_for_app(app_type_str)
+            .await
+            .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
+        updated_config.enabled = false;
         self.db
-            .set_proxy_takeover_enabled(app_type_str, false)
-            .map_err(|e| format!("清除 {app_type_str} 接管状态失败: {e}"))?;
+            .update_proxy_config_for_app(updated_config)
+            .await
+            .map_err(|e| format!("清除 {app_type_str} enabled 状态失败: {e}"))?;
 
         // 4) 清除该应用的健康状态（关闭代理时重置队列状态）
         self.db
@@ -265,12 +301,14 @@ impl ProxyService {
             .map_err(|e| format!("清除 {app_type_str} 健康状态失败: {e}"))?;
 
         // 5) 若无其它接管，更新旧标志，并停止代理服务
-        let has_any_backup = self
+        // 检查是否还有其它 app 的 enabled = true
+        let any_enabled = self
             .db
-            .has_any_live_backup()
+            .is_live_takeover_active()
             .await
-            .map_err(|e| format!("检查 Live 备份失败: {e}"))?;
-        if !has_any_backup {
+            .map_err(|e| format!("检查接管状态失败: {e}"))?;
+
+        if !any_enabled {
             let _ = self.db.set_live_takeover_active(false).await;
 
             if self.is_running().await {
@@ -502,6 +540,20 @@ impl ProxyService {
                 .await
                 .map_err(|e| format!("停止代理服务器失败: {e}"))?;
 
+            // 停止时设置 proxy_enabled = false
+            let mut global_config = self
+                .db
+                .get_global_proxy_config()
+                .await
+                .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
+
+            if global_config.proxy_enabled {
+                global_config.proxy_enabled = false;
+                if let Err(e) = self.db.update_global_proxy_config(global_config).await {
+                    log::warn!("更新代理总开关失败: {e}");
+                }
+            }
+
             log::info!("代理服务器已停止");
             Ok(())
         } else {
@@ -527,10 +579,17 @@ impl ProxyService {
             .await
             .map_err(|e| format!("清除接管状态失败: {e}"))?;
 
-        // 4. 清除 settings 表中的代理状态（用户手动关闭，不需要下次自动恢复）
-        self.db
-            .clear_all_proxy_takeover()
-            .map_err(|e| format!("清除代理状态失败: {e}"))?;
+        // 4. 清除所有应用的 enabled 状态（用户手动关闭，不需要下次自动恢复）
+        for app_type in ["claude", "codex", "gemini"] {
+            if let Ok(mut config) = self.db.get_proxy_config_for_app(app_type).await {
+                if config.enabled {
+                    config.enabled = false;
+                    if let Err(e) = self.db.update_proxy_config_for_app(config).await {
+                        log::warn!("清除 {app_type} enabled 状态失败: {e}");
+                    }
+                }
+            }
+        }
 
         // 5. 删除备份
         self.db
@@ -562,7 +621,7 @@ impl ProxyService {
         self.restore_live_configs().await?;
 
         // 3. 更新 proxy_config 表中的 live_takeover_active 标志（兼容旧版）
-        //    注意：仅更新 proxy_config 表，不清除 settings 表中的 proxy_takeover_* 状态
+        //    注意：保留 proxy_config.enabled 状态，下次启动时自动恢复
         if let Ok(mut config) = self.db.get_proxy_config().await {
             config.live_takeover_active = false;
             let _ = self.db.update_proxy_config(config).await;
@@ -1019,7 +1078,7 @@ impl ProxyService {
         }
     }
 
-    fn detect_takeover_in_live_config_for_app(&self, app_type: &AppType) -> bool {
+    pub fn detect_takeover_in_live_config_for_app(&self, app_type: &AppType) -> bool {
         match app_type {
             AppType::Claude => match self.read_claude_live() {
                 Ok(config) => Self::is_claude_live_taken_over(&config),
@@ -1213,10 +1272,8 @@ impl ProxyService {
 
     /// 检查是否处于 Live 接管模式
     pub async fn is_takeover_active(&self) -> Result<bool, String> {
-        self.db
-            .is_live_takeover_active()
-            .await
-            .map_err(|e| format!("检查接管状态失败: {e}"))
+        let status = self.get_takeover_status().await?;
+        Ok(status.claude || status.codex || status.gemini)
     }
 
     /// 从异常退出中恢复（启动时调用）

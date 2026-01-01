@@ -20,7 +20,10 @@ use crate::settings::CustomEndpoint;
 use crate::store::AppState;
 
 // Re-export sub-module functions for external access
-pub use live::{import_default_config, read_live_settings, sync_current_to_live};
+pub use live::{
+    import_default_config, read_live_settings, sync_current_to_live,
+    sync_current_to_live_with_options,
+};
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::write_live_snapshot;
@@ -217,9 +220,12 @@ impl ProviderService {
                 .flatten()
                 .is_some();
         let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
+        let live_taken_over = state
+            .proxy_service
+            .detect_takeover_in_live_config_for_app(&app_type);
 
         // Hot-switch only when BOTH: this app is taken over AND proxy server is actually running
-        let should_hot_switch = is_app_taken_over && is_proxy_running;
+        let should_hot_switch = (is_app_taken_over || live_taken_over) && is_proxy_running;
 
         if should_hot_switch {
             // Proxy takeover mode: hot-switch only, don't write Live config
@@ -303,6 +309,14 @@ impl ProviderService {
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)
+    }
+
+    /// Sync current provider to live configuration with options
+    pub fn sync_current_to_live_with_options(
+        state: &AppState,
+        sync_mcp: bool,
+    ) -> Result<(), AppError> {
+        sync_current_to_live_with_options(state, sync_mcp)
     }
 
     /// Import default configuration from live files (re-export)
@@ -689,4 +703,141 @@ pub struct ProviderSortUpdate {
     pub id: String,
     #[serde(rename = "sortIndex")]
     pub sort_index: usize,
+}
+
+// ============================================================================
+// 统一供应商（Universal Provider）服务方法
+// ============================================================================
+
+use crate::provider::UniversalProvider;
+use std::collections::HashMap;
+
+impl ProviderService {
+    /// 获取所有统一供应商
+    pub fn list_universal(
+        state: &AppState,
+    ) -> Result<HashMap<String, UniversalProvider>, AppError> {
+        state.db.get_all_universal_providers()
+    }
+
+    /// 获取单个统一供应商
+    pub fn get_universal(
+        state: &AppState,
+        id: &str,
+    ) -> Result<Option<UniversalProvider>, AppError> {
+        state.db.get_universal_provider(id)
+    }
+
+    /// 添加或更新统一供应商（不自动同步，需手动调用 sync_universal_to_apps）
+    pub fn upsert_universal(
+        state: &AppState,
+        provider: UniversalProvider,
+    ) -> Result<bool, AppError> {
+        // 保存统一供应商
+        state.db.save_universal_provider(&provider)?;
+
+        Ok(true)
+    }
+
+    /// 删除统一供应商
+    pub fn delete_universal(state: &AppState, id: &str) -> Result<bool, AppError> {
+        // 获取统一供应商（用于删除生成的子供应商）
+        let provider = state.db.get_universal_provider(id)?;
+
+        // 删除统一供应商
+        state.db.delete_universal_provider(id)?;
+
+        // 删除生成的子供应商
+        if let Some(p) = provider {
+            if p.apps.claude {
+                let claude_id = format!("universal-claude-{id}");
+                let _ = state.db.delete_provider("claude", &claude_id);
+            }
+            if p.apps.codex {
+                let codex_id = format!("universal-codex-{id}");
+                let _ = state.db.delete_provider("codex", &codex_id);
+            }
+            if p.apps.gemini {
+                let gemini_id = format!("universal-gemini-{id}");
+                let _ = state.db.delete_provider("gemini", &gemini_id);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// 同步统一供应商到各应用
+    pub fn sync_universal_to_apps(state: &AppState, id: &str) -> Result<bool, AppError> {
+        let provider = state
+            .db
+            .get_universal_provider(id)?
+            .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?;
+
+        // 同步到 Claude
+        if let Some(mut claude_provider) = provider.to_claude_provider() {
+            // 合并已有配置
+            if let Some(existing) = state.db.get_provider_by_id(&claude_provider.id, "claude")? {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &claude_provider.settings_config);
+                claude_provider.settings_config = merged;
+            }
+            state.db.save_provider("claude", &claude_provider)?;
+        } else {
+            // 如果禁用了 Claude，删除对应的子供应商
+            let claude_id = format!("universal-claude-{id}");
+            let _ = state.db.delete_provider("claude", &claude_id);
+        }
+
+        // 同步到 Codex
+        if let Some(mut codex_provider) = provider.to_codex_provider() {
+            // 合并已有配置
+            if let Some(existing) = state.db.get_provider_by_id(&codex_provider.id, "codex")? {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &codex_provider.settings_config);
+                codex_provider.settings_config = merged;
+            }
+            state.db.save_provider("codex", &codex_provider)?;
+        } else {
+            let codex_id = format!("universal-codex-{id}");
+            let _ = state.db.delete_provider("codex", &codex_id);
+        }
+
+        // 同步到 Gemini
+        if let Some(mut gemini_provider) = provider.to_gemini_provider() {
+            // 合并已有配置
+            if let Some(existing) = state.db.get_provider_by_id(&gemini_provider.id, "gemini")? {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &gemini_provider.settings_config);
+                gemini_provider.settings_config = merged;
+            }
+            state.db.save_provider("gemini", &gemini_provider)?;
+        } else {
+            let gemini_id = format!("universal-gemini-{id}");
+            let _ = state.db.delete_provider("gemini", &gemini_id);
+        }
+
+        Ok(true)
+    }
+
+    /// 递归合并 JSON：base 为底，patch 覆盖同名字段
+    fn merge_json(base: &mut serde_json::Value, patch: &serde_json::Value) {
+        use serde_json::Value;
+
+        match (base, patch) {
+            (Value::Object(base_map), Value::Object(patch_map)) => {
+                for (k, v_patch) in patch_map {
+                    match base_map.get_mut(k) {
+                        Some(v_base) => Self::merge_json(v_base, v_patch),
+                        None => {
+                            base_map.insert(k.clone(), v_patch.clone());
+                        }
+                    }
+                }
+            }
+            // 其它类型：直接覆盖
+            (base_val, patch_val) => {
+                *base_val = patch_val.clone();
+            }
+        }
+    }
 }

@@ -66,6 +66,8 @@
     "exitEditMode": "編集モードを終了"
   },
   "provider": {
+    "tabProvider": "プロバイダー",
+    "tabUniversal": "統一プロバイダー",
     "noProviders": "まだプロバイダーがありません",
     "noProvidersDescription": "右上の「プロバイダーを追加」を押して最初の API プロバイダーを登録してください",
     "currentlyUsing": "現在使用中",
@@ -353,6 +355,10 @@
     "visitWebsite": "{{url}} を開く",
     "anthropicModel": "メインモデル",
     "anthropicSmallFastModel": "高速モデル",
+    "anthropicReasoningModel": "推論モデル（Thinking）",
+    "reasoningModelPlaceholder": "例: claude-sonnet-4-20250514",
+    "openrouterCompatMode": "OpenRouter 互換モード",
+    "openrouterCompatModeHint": "OpenAI Chat Completions インターフェースを使用し、Anthropic SSE に変換します。",
     "anthropicDefaultHaikuModel": "既定 Haiku モデル",
     "anthropicDefaultSonnetModel": "既定 Sonnet モデル",
     "anthropicDefaultOpusModel": "既定 Opus モデル",
@@ -430,7 +436,7 @@
     "cost": "コスト",
     "perMillion": "(100万あたり)",
     "trends": "利用トレンド",
-    "rangeToday": "今日 (時間別)",
+    "rangeToday": "直近24時間 (時間別)",
     "rangeLast7Days": "過去7日間",
     "rangeLast30Days": "過去30日間",
     "totalTokens": "総トークン数",
@@ -443,8 +449,8 @@
     "billingModel": "課金モデル",
     "inputTokens": "入力",
     "outputTokens": "出力",
-    "cacheReadTokens": "キャッシュ読取",
-    "cacheCreationTokens": "キャッシュ書込",
+    "cacheReadTokens": "キャッシュヒット",
+    "cacheCreationTokens": "キャッシュ作成",
     "timingInfo": "応答時間/TTFT",
     "status": "ステータス",
     "noData": "データなし",
@@ -460,8 +466,8 @@
     "displayName": "表示名",
     "inputCost": "入力コスト",
     "outputCost": "出力コスト",
-    "cacheReadCost": "キャッシュ読取",
-    "cacheWriteCost": "キャッシュ書込",
+    "cacheReadCost": "キャッシュヒット",
+    "cacheWriteCost": "キャッシュ作成",
     "deleteConfirmTitle": "削除の確認",
     "deleteConfirmDesc": "このモデル料金を削除しますか？この操作は元に戻せません。",
     "queryFailed": "照会に失敗しました",
@@ -488,8 +494,8 @@
     "timeRange": "期間",
     "input": "Input",
     "output": "Output",
-    "cacheWrite": "Write",
-    "cacheRead": "Read"
+    "cacheWrite": "作成",
+    "cacheRead": "ヒット"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -994,12 +1000,85 @@
       }
     },
     "settings": {
+      "title": "プロキシサービス設定",
+      "description": "ローカルプロキシサーバーのリッスンアドレス、ポート、実行パラメータを設定します。保存後すぐに反映されます。",
+      "alert": {
+        "autoApply": "変更は実行中のプロキシサービスに自動的に同期され、手動での再起動は不要です。"
+      },
+      "basic": {
+        "title": "基本設定",
+        "description": "プロキシサービスのリッスンアドレスとポートを設定します。"
+      },
+      "advanced": {
+        "title": "詳細パラメータ",
+        "description": "リクエストの安定性とログ記録を制御します。"
+      },
+      "timeout": {
+        "title": "タイムアウト設定",
+        "description": "ストリーミングと非ストリーミングリクエストのタイムアウトを設定します。"
+      },
+      "fields": {
+        "listenAddress": {
+          "label": "リッスンアドレス",
+          "placeholder": "127.0.0.1",
+          "description": "プロキシサーバーがリッスンするIPアドレス（推奨: 127.0.0.1）"
+        },
+        "listenPort": {
+          "label": "リッスンポート",
+          "placeholder": "5000",
+          "description": "プロキシサーバーがリッスンするポート番号（1024 ~ 65535）"
+        },
+        "maxRetries": {
+          "label": "最大リトライ回数",
+          "placeholder": "3",
+          "description": "リクエスト失敗時のリトライ回数（0 ~ 10）"
+        },
+        "requestTimeout": {
+          "label": "リクエストタイムアウト（秒）",
+          "placeholder": "0（無制限）または 300",
+          "description": "単一リクエストの最大待機時間（0 = 無制限、または 10 ~ 600 秒）"
+        },
+        "enableLogging": {
+          "label": "ログ記録を有効化",
+          "description": "トラブルシューティングのためにすべてのプロキシリクエストを記録"
+        },
+        "streamingFirstByteTimeout": {
+          "label": "ストリーミング初回バイトタイムアウト（秒）",
+          "description": "最初のデータチャンクを待つ最大時間"
+        },
+        "streamingIdleTimeout": {
+          "label": "ストリーミングアイドルタイムアウト（秒）",
+          "description": "データチャンク間の最大間隔"
+        },
+        "nonStreamingTimeout": {
+          "label": "非ストリーミングタイムアウト（秒）",
+          "description": "非ストリーミングリクエストの総タイムアウト"
+        }
+      },
+      "validation": {
+        "addressInvalid": "有効なIPアドレスを入力してください",
+        "portMin": "ポートは1024より大きい必要があります",
+        "portMax": "ポートは65535より小さい必要があります",
+        "retryMin": "リトライ回数は負の値にできません",
+        "retryMax": "リトライ回数は10を超えることはできません",
+        "timeoutNonNegative": "タイムアウトは負の値にできません",
+        "timeoutMax": "タイムアウトは600秒を超えることはできません",
+        "timeoutRange": "0または10-600の間の値を入力してください",
+        "streamingTimeoutMin": "タイムアウトは少なくとも5秒必要です",
+        "streamingTimeoutMax": "タイムアウトは300秒を超えることはできません"
+      },
+      "actions": {
+        "save": "設定を保存"
+      },
       "toast": {
         "saved": "プロキシ設定を保存しました",
         "saveFailed": "保存に失敗しました: {{error}}"
       }
     },
     "switchFailed": "切り替えに失敗しました: {{error}}",
+    "failover": {
+      "proxyRequired": "フェイルオーバーを設定するには、プロキシサービスを先に起動する必要があります"
+    },
     "failoverQueue": {
       "title": "フェイルオーバーキュー",
       "description": "各アプリのプロバイダーのフェイルオーバー順序を管理します",
@@ -1026,7 +1105,7 @@
       "failureThresholdHint": "この回数連続で失敗するとサーキットブレーカーが開きます（推奨: 3-10）",
       "timeout": "回復待ち時間（秒）",
       "timeoutHint": "サーキットが開いた後、回復を試みるまでの待ち時間（推奨: 30-120）",
-      "circuitBreakerSettings": "サーキットブレーカー詳細設定",
+      "circuitBreakerSettings": "サーキットブレーカー設定",
       "successThreshold": "回復成功しきい値",
       "successThresholdHint": "半開状態でこの回数成功するとサーキットブレーカーが閉じます",
       "errorRate": "エラー率しきい値 (%)",
@@ -1055,5 +1134,64 @@
     "timeout": "タイムアウト（秒）",
     "maxRetries": "最大リトライ回数",
     "degradedThreshold": "劣化しきい値（ミリ秒）"
+  },
+  "proxyConfig": {
+    "proxyEnabled": "プロキシ有効",
+    "appTakeover": "プロキシ有効",
+    "perAppConfig": "アプリ別設定",
+    "circuitBreaker": "サーキットブレーカー",
+    "circuitBreakerSettings": "サーキットブレーカー設定",
+    "failureThreshold": "失敗閾値",
+    "successThreshold": "回復閾値",
+    "recoveryTimeout": "回復待機時間",
+    "errorRateThreshold": "エラー率閾値",
+    "minRequests": "最小リクエスト数",
+    "timeoutConfig": "タイムアウト設定",
+    "streamingFirstByte": "ストリーミング初回バイトタイムアウト",
+    "streamingIdle": "ストリーミングアイドルタイムアウト",
+    "nonStreaming": "非ストリーミングタイムアウト"
+  },
+  "universalProvider": {
+    "title": "統合プロバイダー",
+    "description": "統合プロバイダーは Claude、Codex、Gemini の設定を同時に管理します。変更は有効なすべてのアプリに自動的に同期されます。",
+    "add": "統合プロバイダーを追加",
+    "edit": "統合プロバイダーを編集",
+    "empty": "統合プロバイダーがありません",
+    "emptyHint": "下の「統合プロバイダーを追加」ボタンをクリックして作成してください",
+    "selectPreset": "プリセットタイプを選択",
+    "name": "名前",
+    "namePlaceholder": "例：私の NewAPI",
+    "baseUrl": "API URL",
+    "apiKey": "API キー",
+    "websiteUrl": "ウェブサイト URL",
+    "websiteUrlPlaceholder": "https://example.com（オプション、リストに表示されます）",
+    "notes": "メモ",
+    "notesPlaceholder": "オプション：メモを追加",
+    "enabledApps": "有効なアプリ",
+    "modelConfig": "モデル設定",
+    "model": "モデル",
+    "sync": "アプリに同期",
+    "synced": "すべてのアプリに同期しました",
+    "syncError": "同期に失敗しました",
+    "noAppsEnabled": "有効なアプリがありません",
+    "added": "統合プロバイダーを追加しました",
+    "updated": "統合プロバイダーを更新しました",
+    "deleted": "統合プロバイダーを削除しました",
+    "addSuccess": "統合プロバイダーを追加しました",
+    "addFailed": "統合プロバイダーの追加に失敗しました",
+    "manage": "管理",
+    "loadError": "統合プロバイダーの読み込みに失敗しました",
+    "saveError": "統合プロバイダーの保存に失敗しました",
+    "deleteError": "統合プロバイダーの削除に失敗しました",
+    "deleteConfirmTitle": "統合プロバイダーを削除",
+    "deleteConfirmDescription": "「{{name}}」を削除してもよろしいですか？各アプリで生成されたプロバイダー設定も削除されます。",
+    "syncConfirmTitle": "統合プロバイダーを同期",
+    "syncConfirmDescription": "「{{name}}」を同期すると、Claude、Codex、Gemini の関連プロバイダー設定が上書きされます。続行しますか？",
+    "syncConfirm": "同期",
+    "saveAndSync": "保存して同期",
+    "savedAndSynced": "すべてのアプリに保存・同期されました",
+    "saveAndSyncError": "保存と同期に失敗しました",
+    "configJsonPreview": "設定 JSON プレビュー",
+    "configJsonPreviewHint": "以下は各アプリに同期される設定内容です（表示されているフィールドのみ上書きされ、他のカスタム設定は保持されます）"
   }
 }
