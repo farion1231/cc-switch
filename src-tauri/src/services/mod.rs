@@ -8,6 +8,7 @@ pub mod proxy;
 pub mod skill;
 pub mod speedtest;
 pub mod stream_check;
+pub mod tps_test;
 pub mod usage_stats;
 
 pub use config::ConfigService;

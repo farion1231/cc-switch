@@ -3,6 +3,7 @@ import {
   Check,
   Copy,
   Edit,
+  Gauge,
   Loader2,
   Play,
   Plus,
@@ -16,11 +17,13 @@ import { cn } from "@/lib/utils";
 interface ProviderActionsProps {
   isCurrent: boolean;
   isTesting?: boolean;
+  isTpsTesting?: boolean;
   isProxyTakeover?: boolean;
   onSwitch: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
+  onTpsTest?: () => void;
   onConfigureUsage: () => void;
   onDelete: () => void;
   // 故障转移相关
@@ -32,11 +35,13 @@ interface ProviderActionsProps {
 export function ProviderActions({
   isCurrent,
   isTesting,
+  isTpsTesting,
   isProxyTakeover = false,
   onSwitch,
   onEdit,
   onDuplicate,
   onTest,
+  onTpsTest,
   onConfigureUsage,
   onDelete,
   // 故障转移相关
@@ -157,6 +162,23 @@ export function ProviderActions({
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <TestTube2 className="h-4 w-4" />
+            )}
+          </Button>
+        )}
+
+        {onTpsTest && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onTpsTest}
+            disabled={isTpsTesting}
+            title={t("tpsTest.testProvider", { defaultValue: "TPS 测试" })}
+            className={iconButtonClass}
+          >
+            {isTpsTesting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Gauge className="h-4 w-4" />
             )}
           </Button>
         )}

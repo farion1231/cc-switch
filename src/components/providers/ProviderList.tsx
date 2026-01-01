@@ -17,8 +17,10 @@ import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
+import type { TpsTestResult } from "@/lib/api/model-test";
 import { useDragSort } from "@/hooks/useDragSort";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
+import { useTpsTest } from "@/hooks/useTpsTest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 import {
@@ -73,6 +75,10 @@ export function ProviderList({
   // 流式健康检查
   const { checkProvider, isChecking } = useStreamCheck(appId);
 
+  // TPS 测试
+  const { testProvider: testTps, isTesting: isTpsTesting, getLastResult } =
+    useTpsTest(appId);
+
   // 故障转移相关
   const { data: isAutoFailoverEnabled } = useAutoFailoverEnabled(appId);
   const { data: failoverQueue } = useFailoverQueue(appId);
@@ -118,6 +124,10 @@ export function ProviderList({
 
   const handleTest = (provider: Provider) => {
     checkProvider(provider.id, provider.name);
+  };
+
+  const handleTpsTest = (provider: Provider) => {
+    testTps(provider.id, provider.name);
   };
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -205,6 +215,9 @@ export function ProviderList({
               onOpenWebsite={onOpenWebsite}
               onTest={handleTest}
               isTesting={isChecking(provider.id)}
+              onTpsTest={handleTpsTest}
+              isTpsTesting={isTpsTesting(provider.id)}
+              tpsResult={getLastResult(provider.id)}
               isProxyRunning={isProxyRunning}
               isProxyTakeover={isProxyTakeover}
               // 故障转移相关：联动状态
@@ -313,6 +326,9 @@ interface SortableProviderCardProps {
   onOpenWebsite: (url: string) => void;
   onTest: (provider: Provider) => void;
   isTesting: boolean;
+  onTpsTest: (provider: Provider) => void;
+  isTpsTesting: boolean;
+  tpsResult?: TpsTestResult;
   isProxyRunning: boolean;
   isProxyTakeover: boolean;
   // 故障转移相关
@@ -335,6 +351,9 @@ function SortableProviderCard({
   onOpenWebsite,
   onTest,
   isTesting,
+  onTpsTest,
+  isTpsTesting,
+  tpsResult,
   isProxyRunning,
   isProxyTakeover,
   isAutoFailoverEnabled,
@@ -373,6 +392,9 @@ function SortableProviderCard({
         onOpenWebsite={onOpenWebsite}
         onTest={onTest}
         isTesting={isTesting}
+        onTpsTest={onTpsTest}
+        isTpsTesting={isTpsTesting}
+        tpsResult={tpsResult}
         isProxyRunning={isProxyRunning}
         isProxyTakeover={isProxyTakeover}
         dragHandleProps={{

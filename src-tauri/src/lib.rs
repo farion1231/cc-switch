@@ -693,6 +693,8 @@ pub fn run() {
             commands::stream_check_all_providers,
             commands::get_stream_check_config,
             commands::save_stream_check_config,
+            // Provider TPS test
+            commands::tps_test_provider,
             commands::get_tool_versions,
             // Universal Provider management
             commands::get_universal_providers,

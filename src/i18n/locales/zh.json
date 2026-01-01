@@ -1122,6 +1122,16 @@
     "maxRetries": "最大重试次数",
     "degradedThreshold": "降级阈值（毫秒）"
   },
+  "tpsTest": {
+    "testProvider": "TPS 测试",
+    "tps": "TPS",
+    "outputTokens": "输出",
+    "responseTime": "耗时",
+    "estimated": "估算",
+    "failedInline": "TPS 测试失败: {{error}}",
+    "failedToast": "{{name}} TPS 测试失败: {{error}}",
+    "errorToast": "{{name}} TPS 测试出错: {{error}}"
+  },
   "proxyConfig": {
     "proxyEnabled": "代理总开关",
     "appTakeover": "代理启用",

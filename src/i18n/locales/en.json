@@ -1122,6 +1122,16 @@
     "maxRetries": "Max Retries",
     "degradedThreshold": "Degraded Threshold (ms)"
   },
+  "tpsTest": {
+    "testProvider": "TPS Test",
+    "tps": "TPS",
+    "outputTokens": "Output",
+    "responseTime": "Time",
+    "estimated": "Estimated",
+    "failedInline": "TPS test failed: {{error}}",
+    "failedToast": "{{name}} TPS test failed: {{error}}",
+    "errorToast": "{{name}} TPS test error: {{error}}"
+  },
   "proxyConfig": {
     "proxyEnabled": "Proxy Enabled",
     "appTakeover": "Proxy Enabled",

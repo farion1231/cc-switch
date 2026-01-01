@@ -25,6 +25,22 @@ export interface StreamCheckResult {
   retryCount: number;
 }
 
+// ===== TPS 测试类型 =====
+
+export type TokenSource = "usage" | "estimated";
+
+export interface TpsTestResult {
+  success: boolean;
+  message: string;
+  modelUsed: string;
+  httpStatus?: number;
+  responseTimeMs: number;
+  outputTokens?: number;
+  tokensPerSecond?: number;
+  tokenSource?: TokenSource;
+  testedAt: number;
+}
+
 // ===== 流式健康检查 API =====
 
 /**
@@ -61,4 +77,16 @@ export async function saveStreamCheckConfig(
   config: StreamCheckConfig,
 ): Promise<void> {
   return invoke("save_stream_check_config", { config });
+}
+
+// ===== TPS 测试 API =====
+
+/**
+ * TPS 测试（单个供应商）
+ */
+export async function tpsTestProvider(
+  appType: AppId,
+  providerId: string,
+): Promise<TpsTestResult> {
+  return invoke("tps_test_provider", { appType, providerId });
 }

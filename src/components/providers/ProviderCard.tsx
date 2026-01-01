@@ -7,6 +7,7 @@ import type {
 } from "@dnd-kit/core";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
+import type { TpsTestResult } from "@/lib/api/model-test";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -34,6 +35,9 @@ interface ProviderCardProps {
   onDuplicate: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   isTesting?: boolean;
+  onTpsTest?: (provider: Provider) => void;
+  isTpsTesting?: boolean;
+  tpsResult?: TpsTestResult;
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
   dragHandleProps?: DragHandleProps;
@@ -92,6 +96,9 @@ export function ProviderCard({
   onDuplicate,
   onTest,
   isTesting,
+  onTpsTest,
+  isTpsTesting,
+  tpsResult,
   isProxyRunning,
   isProxyTakeover = false,
   dragHandleProps,
@@ -276,12 +283,52 @@ export function ProviderCard({
                 <span className="truncate">{displayUrl}</span>
               </button>
             )}
+
+            {tpsResult && (
+              <div
+                className="text-xs text-muted-foreground max-w-[320px]"
+                title={tpsResult.message}
+              >
+                {tpsResult.success ? (
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="font-medium text-foreground/80">
+                      {t("tpsTest.tps", { defaultValue: "TPS" })}:{" "}
+                      {typeof tpsResult.tokensPerSecond === "number"
+                        ? tpsResult.tokensPerSecond.toFixed(2)
+                        : "-"}
+                    </span>
+                    {tpsResult.tokenSource === "estimated" && (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
+                        {t("tpsTest.estimated", { defaultValue: "估算" })}
+                      </span>
+                    )}
+                    <span>
+                      {t("tpsTest.outputTokens", { defaultValue: "输出" })}:{" "}
+                      {typeof tpsResult.outputTokens === "number"
+                        ? tpsResult.outputTokens
+                        : "-"}
+                    </span>
+                    <span>
+                      {t("tpsTest.responseTime", { defaultValue: "耗时" })}:{" "}
+                      {tpsResult.responseTimeMs}ms
+                    </span>
+                  </div>
+                ) : (
+                  <span className="line-clamp-1">
+                    {t("tpsTest.failedInline", {
+                      error: tpsResult.message,
+                      defaultValue: `TPS 测试失败: ${tpsResult.message}`,
+                    })}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
         <div className="relative flex items-center ml-auto min-w-0">
           {/* 用量信息区域 - hover 时向左移动，为操作按钮腾出空间 */}
-          <div className="ml-auto transition-transform duration-200 group-hover:-translate-x-[14.5rem] group-focus-within:-translate-x-[14.5rem] sm:group-hover:-translate-x-[16rem] sm:group-focus-within:-translate-x-[16rem]">
+          <div className="ml-auto transition-transform duration-200 group-hover:-translate-x-[16.5rem] group-focus-within:-translate-x-[16.5rem] sm:group-hover:-translate-x-[18rem] sm:group-focus-within:-translate-x-[18rem]">
             <div className="flex items-center gap-1">
               {/* 多套餐时显示套餐数量，单套餐时显示详细信息 */}
               {hasMultiplePlans ? (
@@ -332,11 +379,13 @@ export function ProviderCard({
             <ProviderActions
               isCurrent={isCurrent}
               isTesting={isTesting}
+              isTpsTesting={isTpsTesting}
               isProxyTakeover={isProxyTakeover}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={onTest ? () => onTest(provider) : undefined}
+              onTpsTest={onTpsTest ? () => onTpsTest(provider) : undefined}
               onConfigureUsage={() => onConfigureUsage(provider)}
               onDelete={() => onDelete(provider)}
               // 故障转移相关
