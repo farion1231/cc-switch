@@ -27,7 +27,7 @@ vi.mock("@/components/providers/ProviderCard", () => ({
       <div data-testid={`provider-card-${provider.id}`}>
         <button
           data-testid={`switch-${provider.id}`}
-          onClick={() => onSwitch(provider)}
+          onClick={() => onSwitch(undefined)}
         >
           switch
         </button>
@@ -239,7 +239,7 @@ describe("ProviderList Component", () => {
     fireEvent.click(screen.getByTestId("usage-b"));
     fireEvent.click(screen.getByTestId("delete-a"));
 
-    expect(handleSwitch).toHaveBeenCalledWith(providerB);
+    expect(handleSwitch).toHaveBeenCalledWith(providerB, undefined);
     expect(handleEdit).toHaveBeenCalledWith(providerB);
     expect(handleDuplicate).toHaveBeenCalledWith(providerB);
     expect(handleUsage).toHaveBeenCalledWith(providerB);

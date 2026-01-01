@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -13,6 +13,10 @@ import {
   Wrench,
   Server,
   RefreshCw,
+  Globe2,
+  ChevronDown,
+  Loader2,
+  Check,
 } from "lucide-react";
 import type { Provider } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -25,6 +29,10 @@ import {
 } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
+import {
+  useConfigSets,
+  type ActivateConfigSetOptions,
+} from "@/hooks/useConfigSets";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -46,6 +54,14 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type View =
   | "providers"
@@ -68,15 +84,25 @@ function App() {
   const [currentView, setCurrentView] = useState<View>("providers");
   const [isAddOpen, setIsAddOpen] = useState(false);
 
-  const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
-  const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
+  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [usageProviderId, setUsageProviderId] = useState<string | null>(null);
+  const [editingProviderSnapshot, setEditingProviderSnapshot] =
+    useState<Provider | null>(null);
+  const [usageProviderSnapshot, setUsageProviderSnapshot] =
+    useState<Provider | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Provider | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
 
-  // 使用 Hook 保存最后有效值，用于动画退出期间保持内容显示
-  const effectiveEditingProvider = useLastValidValue(editingProvider);
-  const effectiveUsageProvider = useLastValidValue(usageProvider);
+  const handleOpenEditProvider = useCallback((provider: Provider) => {
+    setEditingProviderSnapshot(provider);
+    setEditingProviderId(provider.id);
+  }, []);
+
+  const handleOpenUsageModal = useCallback((provider: Provider) => {
+    setUsageProviderSnapshot(provider);
+    setUsageProviderId(provider.id);
+  }, []);
 
   const promptPanelRef = useRef<any>(null);
   const mcpPanelRef = useRef<any>(null);
@@ -106,6 +132,17 @@ function App() {
   });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
+  const editingProviderData =
+    (editingProviderId ? providers[editingProviderId] : null) ??
+    editingProviderSnapshot;
+  const usageProviderData =
+    (usageProviderId ? providers[usageProviderId] : null) ??
+    usageProviderSnapshot;
+  // 使用 Hook 保存最后有效值，用于动画退出期间保持内容显示
+  const effectiveEditingProvider = useLastValidValue(editingProviderData);
+  const effectiveUsageProvider = useLastValidValue(usageProviderData);
+  const isEditingDialogOpen = editingProviderId !== null;
+  const isUsageModalOpen = usageProviderId !== null;
   // Skills 功能仅支持 Claude 和 Codex
   const hasSkillsSupport = activeApp === "claude" || activeApp === "codex";
 
@@ -116,7 +153,15 @@ function App() {
     switchProvider,
     deleteProvider,
     saveUsageScript,
+    isLoading: isProviderActionPending,
   } = useProviderActions(activeApp);
+
+  const {
+    configSets,
+    activeConfigSetId,
+    isActivating: isConfigSetActivating,
+    activateConfigSet,
+  } = useConfigSets();
 
   // 监听来自托盘菜单的切换事件
   useEffect(() => {
@@ -251,6 +296,58 @@ function App() {
     checkEnvOnSwitch();
   }, [activeApp]);
 
+  const isSwitchingProvider = isProviderActionPending || isConfigSetActivating;
+
+  const activeEnvironment = useMemo(
+    () =>
+      configSets.find((set) => set.id === activeConfigSetId) ?? configSets[0],
+    [configSets, activeConfigSetId],
+  );
+  const environmentLabel =
+    activeEnvironment?.name ??
+    t("settings.configSetDefaultName", { defaultValue: "默认环境" });
+  const hasMultipleConfigSets = configSets.length > 1;
+
+  const activateEnvironment = useCallback(
+    async (setId: string, options?: ActivateConfigSetOptions) => {
+      const activated = await activateConfigSet(setId, options);
+      if (activated) {
+        await Promise.allSettled([
+          queryClient.invalidateQueries({ queryKey: ["providers"] }),
+          queryClient.invalidateQueries({ queryKey: ["mcp"] }),
+        ]);
+        await refetch();
+      }
+      return activated;
+    },
+    [activateConfigSet, queryClient, refetch],
+  );
+
+  const handleSwitchProvider = useCallback(
+    async (provider: Provider, targetSetId?: string) => {
+      const fallbackSetId =
+        activeConfigSetId ?? (configSets.length > 0 ? configSets[0].id : undefined);
+      const desiredSetId = targetSetId ?? fallbackSetId;
+
+      if (desiredSetId && desiredSetId !== activeConfigSetId) {
+        const activated = await activateEnvironment(desiredSetId, {
+          silent: true,
+        });
+        if (!activated) {
+          return;
+        }
+      }
+
+      await switchProvider(provider);
+    },
+    [
+      activateEnvironment,
+      activeConfigSetId,
+      configSets,
+      switchProvider,
+    ],
+  );
+
   useEffect(() => {
     const handleGlobalShortcut = (event: KeyboardEvent) => {
       if (event.key !== "," || !(event.metaKey || event.ctrlKey)) {
@@ -265,6 +362,73 @@ function App() {
       window.removeEventListener("keydown", handleGlobalShortcut);
     };
   }, []);
+
+  const EnvironmentSwitcher = () => {
+    if (!configSets.length) return null;
+
+    if (!hasMultipleConfigSets) {
+      return (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled
+          className="flex items-center gap-2 rounded-lg border-border-default/50 px-3 text-sm"
+        >
+          <Globe2 className="h-4 w-4" />
+          <span className="max-w-[9rem] truncate text-left">
+            {environmentLabel}
+          </span>
+        </Button>
+      );
+    }
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isConfigSetActivating}
+            className="flex items-center gap-2 rounded-lg border-border-default/50 px-3 text-sm"
+          >
+            {isConfigSetActivating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Globe2 className="h-4 w-4" />
+            )}
+            <span className="max-w-[9rem] truncate text-left">
+              {environmentLabel}
+            </span>
+            <ChevronDown className="h-3 w-3 opacity-70" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-52">
+          <DropdownMenuLabel className="text-xs text-muted-foreground">
+            {t("provider.selectEnvironment", {
+              defaultValue: "选择环境",
+            })}
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {configSets.map((set) => (
+            <DropdownMenuItem
+              key={set.id}
+              onSelect={(event) => {
+                event.preventDefault();
+                if (set.id === activeConfigSetId) return;
+                void activateEnvironment(set.id);
+              }}
+              className="flex items-center justify-between gap-2"
+            >
+              <span className="truncate">{set.name}</span>
+              {set.id === activeConfigSetId ? (
+                <Check className="h-3 w-3 text-primary" />
+              ) : null}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
 
   // 打开网站链接
   const handleOpenWebsite = async (url: string) => {
@@ -283,7 +447,7 @@ function App() {
   // 编辑供应商
   const handleEditProvider = async (provider: Provider) => {
     await updateProvider(provider);
-    setEditingProvider(null);
+    setEditingProviderId(null);
   };
 
   // 确认删除供应商
@@ -402,6 +566,7 @@ function App() {
             <UnifiedMcpPanel
               ref={mcpPanelRef}
               onOpenChange={() => setCurrentView("providers")}
+              activeConfigSetId={activeConfigSetId}
             />
           );
         case "agents":
@@ -433,18 +598,21 @@ function App() {
                       currentProviderId={currentProviderId}
                       appId={activeApp}
                       isLoading={isLoading}
+                      onSwitch={handleSwitchProvider}
                       isProxyRunning={isProxyRunning}
                       isProxyTakeover={
                         isProxyRunning && isCurrentAppTakeoverActive
                       }
                       activeProviderId={activeProviderId}
-                      onSwitch={switchProvider}
-                      onEdit={setEditingProvider}
+                      onEdit={handleOpenEditProvider}
                       onDelete={setConfirmDelete}
                       onDuplicate={handleDuplicateProvider}
-                      onConfigureUsage={setUsageProvider}
+                      onConfigureUsage={handleOpenUsageModal}
                       onOpenWebsite={handleOpenWebsite}
                       onCreate={() => setIsAddOpen(true)}
+                      configSets={configSets}
+                      activeConfigSetId={activeConfigSetId}
+                      isSwitching={isSwitchingProvider}
                     />
                   </motion.div>
                 </AnimatePresence>
@@ -519,7 +687,7 @@ function App() {
         }
       >
         <div
-          className="mx-auto flex h-full max-w-[56rem] flex-wrap items-center justify-between gap-2 px-6"
+          className="mx-auto flex h-full max-w-[56rem] flex-nowrap items-center justify-between gap-2 px-6"
           data-tauri-drag-region
           style={{ WebkitAppRegion: "drag" } as any}
         >
@@ -595,16 +763,6 @@ function App() {
                 <Plus className="w-5 h-5" />
               </Button>
             )}
-            {currentView === "mcp" && (
-              <Button
-                size="icon"
-                onClick={() => mcpPanelRef.current?.openAdd()}
-                className={`ml-auto ${addActionButtonClass}`}
-                title={t("mcp.unifiedPanel.addServer")}
-              >
-                <Plus className="w-5 h-5" />
-              </Button>
-            )}
             {currentView === "skills" && (
               <>
                 <Button
@@ -629,9 +787,11 @@ function App() {
             )}
             {currentView === "providers" && (
               <>
-                <ProxyToggle activeApp={activeApp} />
-
-                <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
+                <div className="flex items-center gap-2">
+                  <ProxyToggle activeApp={activeApp} />
+                  <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
+                  <EnvironmentSwitcher />
+                </div>
 
                 <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
                   <Button
@@ -690,6 +850,19 @@ function App() {
                 </Button>
               </>
             )}
+            {currentView === "mcp" && (
+              <div className="flex items-center gap-2">
+                <EnvironmentSwitcher />
+                <Button
+                  size="icon"
+                  onClick={() => mcpPanelRef.current?.openAdd()}
+                  className={`ml-auto ${addActionButtonClass}`}
+                  title={t("mcp.unifiedPanel.addServer")}
+                >
+                  <Plus className="w-5 h-5" />
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -706,11 +879,11 @@ function App() {
       />
 
       <EditProviderDialog
-        open={Boolean(editingProvider)}
+        open={isEditingDialogOpen}
         provider={effectiveEditingProvider}
         onOpenChange={(open) => {
           if (!open) {
-            setEditingProvider(null);
+            setEditingProviderId(null);
           }
         }}
         onSubmit={handleEditProvider}
@@ -722,11 +895,11 @@ function App() {
         <UsageScriptModal
           provider={effectiveUsageProvider}
           appId={activeApp}
-          isOpen={Boolean(usageProvider)}
-          onClose={() => setUsageProvider(null)}
+          isOpen={isUsageModalOpen}
+          onClose={() => setUsageProviderId(null)}
           onSave={(script) => {
-            if (usageProvider) {
-              void saveUsageScript(usageProvider, script);
+            if (effectiveUsageProvider) {
+              void saveUsageScript(effectiveUsageProvider, script);
             }
           }}
         />

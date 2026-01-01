@@ -93,8 +93,10 @@ export const settingsApi = {
     return await invoke("import_config_from_file", { filePath });
   },
 
-  async syncCurrentProvidersLive(): Promise<void> {
-    const result = (await invoke("sync_current_providers_live")) as {
+  async syncCurrentProvidersLive(options?: { syncMcp?: boolean }): Promise<void> {
+    const payload =
+      options?.syncMcp === undefined ? {} : { sync_mcp: options.syncMcp };
+    const result = (await invoke("sync_current_providers_live", payload)) as {
       success?: boolean;
       message?: string;
     };

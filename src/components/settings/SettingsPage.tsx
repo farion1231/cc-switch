@@ -67,6 +67,7 @@ export function SettingsPage({
     isPortable,
     appConfigDir,
     resolvedDirs,
+    configDirectorySets,
     updateSettings,
     updateDirectory,
     updateAppConfigDir,
@@ -74,6 +75,12 @@ export function SettingsPage({
     browseAppConfigDir,
     resetDirectory,
     resetAppConfigDir,
+    addConfigDirectorySet,
+    removeConfigDirectorySet,
+    updateConfigDirectorySet,
+    updateConfigDirectorySetDirectory,
+    browseConfigDirectorySet,
+    resetConfigDirectorySet,
     saveSettings,
     autoSaveSettings,
     requiresRestart,
@@ -283,6 +290,17 @@ export function SettingsPage({
                           onDirectoryChange={updateDirectory}
                           onBrowseDirectory={browseDirectory}
                           onResetDirectory={resetDirectory}
+                          configSets={configDirectorySets}
+                          onConfigSetNameChange={(setId, name) =>
+                            updateConfigDirectorySet(setId, { name })
+                          }
+                          onAddConfigSet={addConfigDirectorySet}
+                          onRemoveConfigSet={removeConfigDirectorySet}
+                          onConfigSetDirectoryChange={
+                            updateConfigDirectorySetDirectory
+                          }
+                          onBrowseConfigSetDirectory={browseConfigDirectorySet}
+                          onResetConfigSetDirectory={resetConfigDirectorySet}
                         />
                       </AccordionContent>
                     </AccordionItem>
