@@ -3,7 +3,6 @@
 //! 负责将请求转发到上游Provider，支持故障转移
 
 use super::{
-    body_filter::filter_private_params_with_whitelist,
     error::*,
     failover_switch::FailoverSwitchManager,
     provider_router::ProviderRouter,
@@ -486,28 +485,6 @@ impl RequestForwarder {
             mapped_body
         };
 
-        // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
-        // 默认使用空白名单，过滤所有 _ 前缀字段
-        let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
-
-        // ========== 请求体日志（截断显示） ==========
-        let body_str = serde_json::to_string_pretty(&filtered_body)
-            .unwrap_or_else(|_| filtered_body.to_string());
-        let body_preview = if body_str.len() > 2000 {
-            format!(
-                "{}...\n[截断，总长度: {} 字符]",
-                &body_str[..2000],
-                body_str.len()
-            )
-        } else {
-            body_str
-        };
-        log::info!(
-            "[{}] ====== 最终请求体 ======\n{}",
-            adapter.name(),
-            body_preview
-        );
-
         log::info!(
             "[{}] 转发请求: {} -> {}",
             adapter.name(),
@@ -639,7 +616,7 @@ impl RequestForwarder {
 
         // 发送请求
         log::info!("[{}] 发送请求到: {}", adapter.name(), url);
-        let response = request.json(&filtered_body).send().await.map_err(|e| {
+        let response = request.json(&request_body).send().await.map_err(|e| {
             log::error!("[{}] 请求失败: {}", adapter.name(), e);
             if e.is_timeout() {
                 ProxyError::Timeout(format!("请求超时: {e}"))
