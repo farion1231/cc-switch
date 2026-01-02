@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::proxy::custom_headers::apply_custom_headers_to_request;
 use crate::proxy::providers::{get_adapter, AuthInfo};
 
 /// 健康状态枚举
@@ -146,13 +147,13 @@ impl StreamCheckService {
 
         let result = match app_type {
             AppType::Claude => {
-                Self::check_claude_stream(&client, &base_url, &auth, &model_to_test).await
+                Self::check_claude_stream(provider, &client, &base_url, &auth, &model_to_test).await
             }
             AppType::Codex => {
-                Self::check_codex_stream(&client, &base_url, &auth, &model_to_test).await
+                Self::check_codex_stream(provider, &client, &base_url, &auth, &model_to_test).await
             }
             AppType::Gemini => {
-                Self::check_gemini_stream(&client, &base_url, &auth, &model_to_test).await
+                Self::check_gemini_stream(provider, &client, &base_url, &auth, &model_to_test).await
             }
         };
 
@@ -189,6 +190,7 @@ impl StreamCheckService {
 
     /// Claude 流式检查
     async fn check_claude_stream(
+        provider: &Provider,
         client: &Client,
         base_url: &str,
         auth: &AuthInfo,
@@ -208,13 +210,18 @@ impl StreamCheckService {
             "stream": true
         });
 
-        let response = client
+        let request = client
             .post(&url)
             .header("x-api-key", &auth.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
+            .json(&body);
+
+        let mut built = request.build().map_err(|e| AppError::Message(e.to_string()))?;
+        apply_custom_headers_to_request(provider, &mut built);
+
+        let response = client
+            .execute(built)
             .await
             .map_err(Self::map_request_error)?;
 
@@ -239,6 +246,7 @@ impl StreamCheckService {
 
     /// Codex 流式检查
     async fn check_codex_stream(
+        provider: &Provider,
         client: &Client,
         base_url: &str,
         auth: &AuthInfo,
@@ -271,12 +279,17 @@ impl StreamCheckService {
             body["reasoning_effort"] = json!(effort);
         }
 
-        let response = client
+        let request = client
             .post(&url)
             .header("Authorization", format!("Bearer {}", auth.api_key))
             .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
+            .json(&body);
+
+        let mut built = request.build().map_err(|e| AppError::Message(e.to_string()))?;
+        apply_custom_headers_to_request(provider, &mut built);
+
+        let response = client
+            .execute(built)
             .await
             .map_err(Self::map_request_error)?;
 
@@ -300,6 +313,7 @@ impl StreamCheckService {
 
     /// Gemini 流式检查
     async fn check_gemini_stream(
+        provider: &Provider,
         client: &Client,
         base_url: &str,
         auth: &AuthInfo,
@@ -316,12 +330,17 @@ impl StreamCheckService {
             "stream": true
         });
 
-        let response = client
+        let request = client
             .post(&url)
             .header("Authorization", format!("Bearer {}", auth.api_key))
             .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
+            .json(&body);
+
+        let mut built = request.build().map_err(|e| AppError::Message(e.to_string()))?;
+        apply_custom_headers_to_request(provider, &mut built);
+
+        let response = client
+            .execute(built)
             .await
             .map_err(Self::map_request_error)?;
 

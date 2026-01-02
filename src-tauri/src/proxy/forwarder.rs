@@ -3,6 +3,7 @@
 //! 负责将请求转发到上游Provider，支持故障转移
 
 use super::{
+    custom_headers::apply_custom_headers_to_request,
     error::*,
     failover_switch::FailoverSwitchManager,
     provider_router::ProviderRouter,
@@ -12,7 +13,6 @@ use super::{
 };
 use crate::{app_config::AppType, provider::Provider};
 use reqwest::{Client, Response};
-use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -83,18 +83,6 @@ const HEADER_BLACKLIST: &[&str] = &[
     "x-real-ip",
 ];
 
-const CUSTOM_HEADERS_PROTOCOL_RESERVED: &[&str] = &[
-    "connection",
-    "proxy-connection",
-    "keep-alive",
-    "transfer-encoding",
-    "upgrade",
-    "te",
-    "trailer",
-    "content-length",
-    "host",
-];
-
 const SENSITIVE_HEADERS_FOR_LOG: &[&str] = &["authorization", "x-api-key", "x-goog-api-key"];
 
 fn mask_header_value_for_log(header_name_lower: &str, value: &str) -> String {
@@ -109,47 +97,6 @@ fn mask_header_value_for_log(header_name_lower: &str, value: &str) -> String {
 
     let prefix: String = trimmed.chars().take(8).collect();
     format!("{prefix}...")
-}
-
-fn apply_provider_custom_headers(provider: &Provider, request: &mut reqwest::Request) -> usize {
-    let Some(obj) = provider
-        .settings_config
-        .get("custom_headers")
-        .and_then(|v| v.as_object())
-    else {
-        return 0;
-    };
-
-    let mut applied = 0usize;
-
-    for (key, value) in obj {
-        let key_trimmed = key.trim();
-        if key_trimmed.is_empty() {
-            continue;
-        }
-
-        let key_lower = key_trimmed.to_ascii_lowercase();
-        if CUSTOM_HEADERS_PROTOCOL_RESERVED.contains(&key_lower.as_str()) {
-            continue;
-        }
-
-        let Some(value_str) = value.as_str() else {
-            continue;
-        };
-
-        let Ok(header_name) = HeaderName::from_bytes(key_trimmed.as_bytes()) else {
-            continue;
-        };
-
-        let Ok(header_value) = HeaderValue::from_str(value_str) else {
-            continue;
-        };
-
-        request.headers_mut().insert(header_name, header_value);
-        applied += 1;
-    }
-
-    applied
 }
 
 pub struct ForwardResult {
@@ -663,7 +610,7 @@ impl RequestForwarder {
             ProxyError::ForwardFailed(e.to_string())
         })?;
 
-        let applied_custom_headers = apply_provider_custom_headers(provider, &mut built);
+        let applied_custom_headers = apply_custom_headers_to_request(provider, &mut built);
         if applied_custom_headers > 0 {
             log::info!(
                 "[{}] 已应用 Provider 自定义请求头: {}",
@@ -744,56 +691,5 @@ impl RequestForwarder {
             // 其他错误（数据库/内部错误等）：不是换供应商能解决的问题
             _ => ErrorCategory::NonRetryable,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn make_provider(settings_config: Value) -> Provider {
-        Provider::with_id("p1".to_string(), "P1".to_string(), settings_config, None)
-    }
-
-    #[test]
-    fn test_apply_provider_custom_headers_overrides_and_filters_protocol_reserved() {
-        let provider = make_provider(json!({
-            "custom_headers": {
-                "X-Tenant-Id": "abc",
-                "Authorization": "Bearer provider",
-                "Content-Length": "123"
-            }
-        }));
-
-        let url = reqwest::Url::parse("https://example.com").unwrap();
-        let mut request = reqwest::Request::new(reqwest::Method::POST, url);
-        request.headers_mut().insert(
-            HeaderName::from_static("authorization"),
-            HeaderValue::from_static("Bearer system"),
-        );
-
-        let applied = apply_provider_custom_headers(&provider, &mut request);
-
-        assert_eq!(applied, 2);
-        assert_eq!(
-            request
-                .headers()
-                .get("authorization")
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "Bearer provider"
-        );
-        assert_eq!(
-            request
-                .headers()
-                .get("x-tenant-id")
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "abc"
-        );
-        assert!(request.headers().get("content-length").is_none());
     }
 }

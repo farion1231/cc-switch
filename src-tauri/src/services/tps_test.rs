@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::app_config::AppType;
 use crate::provider::Provider;
+use crate::proxy::custom_headers::apply_custom_headers_to_request;
 use crate::proxy::providers::get_adapter;
 use crate::proxy::usage::parser::TokenUsage;
 
@@ -97,13 +98,20 @@ impl TpsTestService {
             AppType::Claude => {
                 Self::call_claude(&client, &base_url, &auth, provider, &model_to_test).await
             }
-            AppType::Codex => {
-                Self::call_openai_chat(&client, &base_url, &auth, &model_to_test, true).await
-            }
+            AppType::Codex => Self::call_openai_chat(
+                &client,
+                &base_url,
+                &auth,
+                provider,
+                &model_to_test,
+                true,
+            )
+            .await,
             AppType::Gemini => Self::call_gemini_generate_content(
                 &client,
                 &base_url,
                 &auth,
+                provider,
                 &model_to_test,
             )
             .await,
@@ -227,8 +235,13 @@ impl TpsTestService {
 
         let request = client.post(&url).header("Content-Type", "application/json");
         let request = adapter.add_auth_headers(request, auth).json(&body);
+        let mut built = match request.build() {
+            Ok(r) => r,
+            Err(e) => return (Err("构建请求失败".to_string()), Err(e.to_string())),
+        };
+        apply_custom_headers_to_request(provider, &mut built);
 
-        let response = match request.send().await {
+        let response = match client.execute(built).await {
             Ok(r) => r,
             Err(e) => return (Err(Self::map_request_error(e)), Err("".to_string())),
         };
@@ -253,6 +266,7 @@ impl TpsTestService {
         client: &Client,
         base_url: &str,
         auth: &crate::proxy::providers::AuthInfo,
+        provider: &Provider,
         model: &str,
         is_codex: bool,
     ) -> (Result<u16, String>, Result<Value, String>) {
@@ -278,8 +292,13 @@ impl TpsTestService {
 
         let request = client.post(&url).header("Content-Type", "application/json");
         let request = adapter.add_auth_headers(request, auth).json(&body);
+        let mut built = match request.build() {
+            Ok(r) => r,
+            Err(e) => return (Err("构建请求失败".to_string()), Err(e.to_string())),
+        };
+        apply_custom_headers_to_request(provider, &mut built);
 
-        let response = match request.send().await {
+        let response = match client.execute(built).await {
             Ok(r) => r,
             Err(e) => return (Err(Self::map_request_error(e)), Err("".to_string())),
         };
@@ -304,6 +323,7 @@ impl TpsTestService {
         client: &Client,
         base_url: &str,
         auth: &crate::proxy::providers::AuthInfo,
+        provider: &Provider,
         model: &str,
     ) -> (Result<u16, String>, Result<Value, String>) {
         let adapter = get_adapter(&AppType::Gemini);
@@ -325,8 +345,13 @@ impl TpsTestService {
 
         let request = client.post(&url).header("Content-Type", "application/json");
         let request = adapter.add_auth_headers(request, auth).json(&body);
+        let mut built = match request.build() {
+            Ok(r) => r,
+            Err(e) => return (Err("构建请求失败".to_string()), Err(e.to_string())),
+        };
+        apply_custom_headers_to_request(provider, &mut built);
 
-        let response = match request.send().await {
+        let response = match client.execute(built).await {
             Ok(r) => r,
             Err(e) => return (Err(Self::map_request_error(e)), Err("".to_string())),
         };
