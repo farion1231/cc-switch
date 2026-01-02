@@ -59,9 +59,9 @@
       }
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4MDI4QzlBNTczOTI4RTMKUldUaktEbFhtb3dDeUM5US9kT0FmdGR5Ti9vQzcwa2dTMlpibDVDUmQ2M0VGTzVOWnd0SGpFVlEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVBMTY2NzY5MEM3MjM1M0EKUldRNk5YSU1hV2NXNnJ2OVJra0d6NkExWEhzMGNaTGZvZDdmVFNJb1h6L21Oa0xORVJiZmx2VFQK",
       "endpoints": [
-        "https://github.com/farion1231/cc-switch/releases/latest/download/latest.json"
+        "https://github.com/exqlnet/cc-switch/releases/latest/download/latest.json"
       ]
     }
   }

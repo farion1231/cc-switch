@@ -92,7 +92,7 @@ jobs:
         run: |
           # 调试：检查 Secret 是否存在
           if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-            echo "⚠️ 未配置 TAURI_SIGNING_PRIVATE_KEY，跳过 Updater 签名（将不会生成 .sig，也不会生成/更新 latest.json）"
+            echo "未配置 TAURI_SIGNING_PRIVATE_KEY，跳过 Updater 签名（不会生成 .sig，也不会生成/更新 latest.json）"
             exit 0
           fi
           
@@ -162,7 +162,7 @@ jobs:
           mkdir -p release-assets
           VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
           echo "Looking for updater artifact (.tar.gz) and .app for zip..."
-          TAR_GZ=""; APP_PATH=""
+          TAR_GZ=""; APP_PATH=""; DMG=""
           for path in \
             "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
             "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" \
@@ -171,6 +171,15 @@ jobs:
             if [ -d "$path" ]; then
               [ -z "$TAR_GZ" ] && TAR_GZ=$(find "$path" -maxdepth 1 -name "*.tar.gz" -type f | head -1 || true)
               [ -z "$APP_PATH" ] && APP_PATH=$(find "$path" -maxdepth 1 -name "*.app" -type d | head -1 || true)
+            fi
+          done
+          for path in \
+            "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg" \
+            "src-tauri/target/universal-apple-darwin/release/bundle/dmg" \
+            "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg" \
+            "src-tauri/target/release/bundle/dmg"; do
+            if [ -d "$path" ]; then
+              [ -z "$DMG" ] && DMG=$(find "$path" -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
             fi
           done
           if [ -z "$TAR_GZ" ]; then
@@ -191,6 +200,13 @@ jobs:
             echo "macOS zip ready: $NEW_ZIP"
           else
             echo "No .app found to zip (optional)" >&2
+          fi
+          if [ -n "$DMG" ]; then
+            NEW_DMG="CC-Switch-${VERSION}-macOS-aarch64.dmg"
+            cp "$DMG" "release-assets/$NEW_DMG"
+            echo "macOS dmg copied: $NEW_DMG"
+          else
+            echo "No .dmg found (optional)"
           fi
 
       - name: Prepare Windows Assets
@@ -377,12 +393,10 @@ jobs:
             echo '  "platforms": {'
             first=1
             if [ -n "$mac_url" ] && [ -n "$mac_sig" ]; then
-              # 为兼容 arm64 / x64，重复写入两个键，指向同一 universal 包
-              for key in darwin-aarch64 darwin-x86_64; do
-                [ $first -eq 0 ] && echo ','
-                echo "    \"$key\": {\"signature\": \"$mac_sig\", \"url\": \"$mac_url\"}"
-                first=0
-              done
+              # 本工作流 macOS 仅构建 aarch64
+              [ $first -eq 0 ] && echo ','
+              echo "    \"darwin-aarch64\": {\"signature\": \"$mac_sig\", \"url\": \"$mac_url\"}"
+              first=0
             fi
             if [ -n "$win_url" ] && [ -n "$win_sig" ]; then
               [ $first -eq 0 ] && echo ','
