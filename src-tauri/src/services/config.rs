@@ -177,9 +177,18 @@ impl ConfigService {
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
 
-        write_json_file(&settings_path, &provider.settings_config)?;
+        let mut settings = provider.settings_config.clone();
+        if let Some(obj) = settings.as_object_mut() {
+            obj.remove("custom_headers");
+        }
+        write_json_file(&settings_path, &settings)?;
 
-        let live_after = read_json_file::<serde_json::Value>(&settings_path)?;
+        let mut live_after = read_json_file::<serde_json::Value>(&settings_path)?;
+        if let Some(custom_headers) = provider.settings_config.get("custom_headers") {
+            if let Some(obj) = live_after.as_object_mut() {
+                obj.insert("custom_headers".to_string(), custom_headers.clone());
+            }
+        }
         if let Some(manager) = config.get_manager_mut(&AppType::Claude) {
             if let Some(target) = manager.providers.get_mut(provider_id) {
                 target.settings_config = live_after;
@@ -209,6 +218,11 @@ impl ConfigService {
         let mut live_after = env_to_json(&live_after_env);
         if let Some(obj) = live_after.as_object_mut() {
             obj.insert("config".to_string(), live_after_config);
+        }
+        if let Some(custom_headers) = provider.settings_config.get("custom_headers") {
+            if let Some(obj) = live_after.as_object_mut() {
+                obj.insert("custom_headers".to_string(), custom_headers.clone());
+            }
         }
 
         if let Some(manager) = config.get_manager_mut(&AppType::Gemini) {

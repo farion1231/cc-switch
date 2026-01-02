@@ -4,7 +4,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
+import {
+  Form,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { AppId } from "@/lib/api";
 import type { ProviderCategory, ProviderMeta } from "@/types";
@@ -32,6 +39,7 @@ import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
+import { Plus, Trash2 } from "lucide-react";
 import {
   useProviderCategory,
   useApiKeyState,
@@ -65,6 +73,12 @@ const GEMINI_DEFAULT_CONFIG = JSON.stringify(
 type PresetEntry = {
   id: string;
   preset: ProviderPreset | CodexProviderPreset | GeminiProviderPreset;
+};
+
+type CustomHeaderRow = {
+  id: string;
+  key: string;
+  value: string;
 };
 
 interface ProviderFormProps {
@@ -101,6 +115,25 @@ export function ProviderForm({
 }: ProviderFormProps) {
   const { t } = useTranslation();
   const isEditMode = Boolean(initialData);
+
+  const buildCustomHeaderRows = useCallback(
+    (raw: unknown): CustomHeaderRow[] => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+      const record = raw as Record<string, unknown>;
+      return Object.entries(record).flatMap(([key, value], index) => {
+        if (typeof value !== "string") return [];
+        return [{ id: `${Date.now()}_${index}`, key, value }];
+      });
+    },
+    [],
+  );
+
+  const [customHeaderRows, setCustomHeaderRows] = useState<CustomHeaderRow[]>(
+    () =>
+      buildCustomHeaderRows(
+        (initialData?.settingsConfig as any)?.custom_headers,
+      ),
+  );
 
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     initialData ? null : "custom",
@@ -141,7 +174,14 @@ export function ProviderForm({
     if (!initialData) {
       setDraftCustomEndpoints([]);
     }
-  }, [appId, initialData]);
+
+    // appId 或 initialData 变化时重置自定义请求头
+    setCustomHeaderRows(
+      buildCustomHeaderRows(
+        (initialData?.settingsConfig as any)?.custom_headers,
+      ),
+    );
+  }, [appId, buildCustomHeaderRows, initialData]);
 
   const defaultValues: ProviderFormData = useMemo(
     () => ({
@@ -537,15 +577,27 @@ export function ProviderForm({
     }
 
     let settingsConfig: string;
+    const customHeaders: Record<string, string> = customHeaderRows.reduce(
+      (acc, row) => {
+        const key = row.key.trim();
+        if (!key) return acc;
+        acc[key] = row.value;
+        return acc;
+      },
+      {} as Record<string, string>,
+    );
 
     // Codex: 组合 auth 和 config
     if (appId === "codex") {
       try {
         const authJson = JSON.parse(codexAuth);
-        const configObj = {
+        const configObj: Record<string, unknown> = {
           auth: authJson,
           config: codexConfig ?? "",
         };
+        if (Object.keys(customHeaders).length > 0) {
+          configObj.custom_headers = customHeaders;
+        }
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
         // 如果解析失败，使用表单中的配置
@@ -556,10 +608,13 @@ export function ProviderForm({
       try {
         const envObj = envStringToObj(geminiEnv);
         const configObj = geminiConfig.trim() ? JSON.parse(geminiConfig) : {};
-        const combined = {
+        const combined: Record<string, unknown> = {
           env: envObj,
           config: configObj,
         };
+        if (Object.keys(customHeaders).length > 0) {
+          combined.custom_headers = customHeaders;
+        }
         settingsConfig = JSON.stringify(combined);
       } catch (err) {
         // 如果解析失败，使用表单中的配置
@@ -567,7 +622,17 @@ export function ProviderForm({
       }
     } else {
       // Claude: 使用表单配置
-      settingsConfig = values.settingsConfig.trim();
+      try {
+        const parsed = JSON.parse(values.settingsConfig.trim());
+        if (Object.keys(customHeaders).length > 0) {
+          parsed.custom_headers = customHeaders;
+        } else {
+          delete parsed.custom_headers;
+        }
+        settingsConfig = JSON.stringify(parsed);
+      } catch {
+        settingsConfig = values.settingsConfig.trim();
+      }
     }
 
     const payload: ProviderFormValues = {
@@ -715,6 +780,7 @@ export function ProviderForm({
     if (value === "custom") {
       setActivePreset(null);
       form.reset(defaultValues);
+      setCustomHeaderRows([]);
 
       // Codex 自定义模式：加载模板
       if (appId === "codex") {
@@ -747,6 +813,7 @@ export function ProviderForm({
 
       // 重置 Codex 配置
       resetCodexConfig(auth, config);
+      setCustomHeaderRows([]);
 
       // 更新表单其他字段
       form.reset({
@@ -763,6 +830,8 @@ export function ProviderForm({
       const preset = entry.preset as GeminiProviderPreset;
       const env = (preset.settingsConfig as any)?.env ?? {};
       const config = (preset.settingsConfig as any)?.config ?? {};
+      const rawHeaders = (preset.settingsConfig as any)?.custom_headers;
+      setCustomHeaderRows(buildCustomHeaderRows(rawHeaders));
 
       // 重置 Gemini 配置
       resetGeminiConfig(env, config);
@@ -783,6 +852,8 @@ export function ProviderForm({
       preset.settingsConfig,
       preset.templateValues,
     );
+    const rawHeaders = (config as any)?.custom_headers;
+    setCustomHeaderRows(buildCustomHeaderRows(rawHeaders));
 
     form.reset({
       name: preset.name,
@@ -911,6 +982,102 @@ export function ProviderForm({
             speedTestEndpoints={speedTestEndpoints}
           />
         )}
+
+        {/* Provider 自定义请求头（仅用于 Proxy 转发） */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <FormLabel>
+              {t("providerForm.customHeaders.title", {
+                defaultValue: "自定义请求头",
+              })}
+            </FormLabel>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() =>
+                setCustomHeaderRows((prev) => [
+                  ...prev,
+                  { id: `${Date.now()}`, key: "", value: "" },
+                ])
+              }
+            >
+              <Plus className="h-4 w-4" />
+              {t("providerForm.customHeaders.add", {
+                defaultValue: "添加请求头",
+              })}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.customHeaders.hint", {
+              defaultValue:
+                "仅对代理转发上游请求生效；同名请求头以此处配置为准；部分协议级请求头会被自动忽略。",
+            })}
+          </p>
+
+          {customHeaderRows.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+              {t("providerForm.customHeaders.empty", {
+                defaultValue: "未配置任何自定义请求头",
+              })}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {customHeaderRows.map((row) => (
+                <div key={row.id} className="flex gap-2">
+                  <Input
+                    value={row.key}
+                    onChange={(e) =>
+                      setCustomHeaderRows((prev) =>
+                        prev.map((r) =>
+                          r.id === row.id ? { ...r, key: e.target.value } : r,
+                        ),
+                      )
+                    }
+                    placeholder={t(
+                      "providerForm.customHeaders.keyPlaceholder",
+                      {
+                        defaultValue: "X-Tenant-Id",
+                      },
+                    )}
+                  />
+                  <Input
+                    value={row.value}
+                    onChange={(e) =>
+                      setCustomHeaderRows((prev) =>
+                        prev.map((r) =>
+                          r.id === row.id ? { ...r, value: e.target.value } : r,
+                        ),
+                      )
+                    }
+                    placeholder={t(
+                      "providerForm.customHeaders.valuePlaceholder",
+                      {
+                        defaultValue: "abc",
+                      },
+                    )}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="shrink-0"
+                    onClick={() =>
+                      setCustomHeaderRows((prev) =>
+                        prev.filter((r) => r.id !== row.id),
+                      )
+                    }
+                    aria-label={t("providerForm.customHeaders.remove", {
+                      defaultValue: "删除",
+                    })}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
         {appId === "codex" ? (

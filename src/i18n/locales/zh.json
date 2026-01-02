@@ -356,7 +356,16 @@
     "categoryOfficial": "官方",
     "categoryCnOfficial": "开源官方",
     "categoryAggregation": "聚合服务",
-    "categoryThirdParty": "第三方"
+    "categoryThirdParty": "第三方",
+    "customHeaders": {
+      "title": "自定义请求头",
+      "add": "添加请求头",
+      "hint": "仅对代理转发上游请求生效；同名请求头以此处配置为准；部分协议级请求头会被自动忽略。",
+      "empty": "未配置任何自定义请求头",
+      "keyPlaceholder": "X-Tenant-Id",
+      "valuePlaceholder": "abc",
+      "remove": "删除"
+    }
   },
   "endpointTest": {
     "title": "请求地址管理",

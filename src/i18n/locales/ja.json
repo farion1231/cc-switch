@@ -356,7 +356,16 @@
     "categoryOfficial": "公式",
     "categoryCnOfficial": "オープンソース公式",
     "categoryAggregation": "アグリゲーター",
-    "categoryThirdParty": "サードパーティ"
+    "categoryThirdParty": "サードパーティ",
+    "customHeaders": {
+      "title": "カスタムヘッダー",
+      "add": "ヘッダーを追加",
+      "hint": "プロキシによる上流リクエスト転送時のみ有効です。同名ヘッダーはここでの設定が優先されます。一部のプロトコル系ヘッダーは自動的に無視されます。",
+      "empty": "カスタムヘッダーは未設定です",
+      "keyPlaceholder": "X-Tenant-Id",
+      "valuePlaceholder": "abc",
+      "remove": "削除"
+    }
   },
   "endpointTest": {
     "title": "API エンドポイント管理",

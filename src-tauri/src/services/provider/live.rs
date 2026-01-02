@@ -97,7 +97,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            write_json_file(&path, &provider.settings_config)?;
+            let mut settings = provider.settings_config.clone();
+            if let Some(obj) = settings.as_object_mut() {
+                obj.remove("custom_headers");
+            }
+            write_json_file(&path, &settings)?;
         }
         AppType::Codex => {
             let obj = provider

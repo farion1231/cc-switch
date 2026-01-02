@@ -12,6 +12,7 @@ use super::{
 };
 use crate::{app_config::AppType, provider::Provider};
 use reqwest::{Client, Response};
+use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -81,6 +82,75 @@ const HEADER_BLACKLIST: &[&str] = &[
     "x-forwarded-for",
     "x-real-ip",
 ];
+
+const CUSTOM_HEADERS_PROTOCOL_RESERVED: &[&str] = &[
+    "connection",
+    "proxy-connection",
+    "keep-alive",
+    "transfer-encoding",
+    "upgrade",
+    "te",
+    "trailer",
+    "content-length",
+    "host",
+];
+
+const SENSITIVE_HEADERS_FOR_LOG: &[&str] = &["authorization", "x-api-key", "x-goog-api-key"];
+
+fn mask_header_value_for_log(header_name_lower: &str, value: &str) -> String {
+    if !SENSITIVE_HEADERS_FOR_LOG.contains(&header_name_lower) {
+        return value.to_string();
+    }
+
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "<empty>".to_string();
+    }
+
+    let prefix: String = trimmed.chars().take(8).collect();
+    format!("{prefix}...")
+}
+
+fn apply_provider_custom_headers(provider: &Provider, request: &mut reqwest::Request) -> usize {
+    let Some(obj) = provider
+        .settings_config
+        .get("custom_headers")
+        .and_then(|v| v.as_object())
+    else {
+        return 0;
+    };
+
+    let mut applied = 0usize;
+
+    for (key, value) in obj {
+        let key_trimmed = key.trim();
+        if key_trimmed.is_empty() {
+            continue;
+        }
+
+        let key_lower = key_trimmed.to_ascii_lowercase();
+        if CUSTOM_HEADERS_PROTOCOL_RESERVED.contains(&key_lower.as_str()) {
+            continue;
+        }
+
+        let Some(value_str) = value.as_str() else {
+            continue;
+        };
+
+        let Ok(header_name) = HeaderName::from_bytes(key_trimmed.as_bytes()) else {
+            continue;
+        };
+
+        let Ok(header_value) = HeaderValue::from_str(value_str) else {
+            continue;
+        };
+
+        request.headers_mut().insert(header_name, header_value);
+        applied += 1;
+    }
+
+    applied
+}
 
 pub struct ForwardResult {
     pub response: Response,
@@ -508,7 +578,6 @@ impl RequestForwarder {
 
         // 过滤黑名单 Headers，保护隐私并避免冲突
         let mut filtered_headers: Vec<String> = Vec::new();
-        let mut passed_headers: Vec<(String, String)> = Vec::new();
 
         for (key, value) in headers {
             let key_str = key.as_str().to_lowercase();
@@ -516,8 +585,6 @@ impl RequestForwarder {
                 filtered_headers.push(key_str);
                 continue;
             }
-            let value_str = value.to_str().unwrap_or("<binary>").to_string();
-            passed_headers.push((key.as_str().to_string(), value_str.clone()));
             request = request.header(key, value);
         }
 
@@ -537,7 +604,6 @@ impl RequestForwarder {
         if let Some(beta) = headers.get("anthropic-beta") {
             if let Ok(beta_str) = beta.to_str() {
                 request = request.header("anthropic-beta", beta_str);
-                passed_headers.push(("anthropic-beta".to_string(), beta_str.to_string()));
                 log::info!("[{}] 透传 anthropic-beta: {}", adapter.name(), beta_str);
             }
         }
@@ -546,14 +612,12 @@ impl RequestForwarder {
         if let Some(xff) = headers.get("x-forwarded-for") {
             if let Ok(xff_str) = xff.to_str() {
                 request = request.header("x-forwarded-for", xff_str);
-                passed_headers.push(("x-forwarded-for".to_string(), xff_str.to_string()));
                 log::debug!("[{}] 透传 x-forwarded-for: {}", adapter.name(), xff_str);
             }
         }
         if let Some(real_ip) = headers.get("x-real-ip") {
             if let Ok(real_ip_str) = real_ip.to_str() {
                 request = request.header("x-real-ip", real_ip_str);
-                passed_headers.push(("x-real-ip".to_string(), real_ip_str.to_string()));
                 log::debug!("[{}] 透传 x-real-ip: {}", adapter.name(), real_ip_str);
             }
         }
@@ -561,7 +625,6 @@ impl RequestForwarder {
         // 禁用压缩，避免 gzip 流式响应解析错误
         // 参考 CCH: undici 在连接提前关闭时会对不完整的 gzip 流抛出错误
         request = request.header("accept-encoding", "identity");
-        passed_headers.push(("accept-encoding".to_string(), "identity".to_string()));
 
         // 使用适配器添加认证头
         if let Some(auth) = adapter.extract_auth(provider) {
@@ -572,15 +635,6 @@ impl RequestForwarder {
                 auth.masked_key()
             );
             request = adapter.add_auth_headers(request, &auth);
-            // 记录认证头（脱敏）
-            passed_headers.push((
-                "authorization".to_string(),
-                format!("Bearer {}...", &auth.api_key[..8.min(auth.api_key.len())]),
-            ));
-            passed_headers.push((
-                "x-api-key".to_string(),
-                format!("{}...", &auth.api_key[..8.min(auth.api_key.len())]),
-            ));
         } else {
             log::error!(
                 "[{}] 未找到 API Key！Provider: {}",
@@ -595,7 +649,6 @@ impl RequestForwarder {
             if let Ok(version_str) = version.to_str() {
                 // 覆盖适配器设置的默认版本
                 request = request.header("anthropic-version", version_str);
-                passed_headers.push(("anthropic-version".to_string(), version_str.to_string()));
                 log::info!(
                     "[{}] 透传 anthropic-version: {}",
                     adapter.name(),
@@ -604,19 +657,40 @@ impl RequestForwarder {
             }
         }
 
+        // 构建请求并应用 Provider 自定义请求头（优先级最高）
+        let mut built = request.json(&request_body).build().map_err(|e| {
+            log::error!("[{}] 构建请求失败: {}", adapter.name(), e);
+            ProxyError::ForwardFailed(e.to_string())
+        })?;
+
+        let applied_custom_headers = apply_provider_custom_headers(provider, &mut built);
+        if applied_custom_headers > 0 {
+            log::info!(
+                "[{}] 已应用 Provider 自定义请求头: {}",
+                adapter.name(),
+                applied_custom_headers
+            );
+        }
+
         // ========== 最终发送的 Headers 日志 ==========
         log::info!(
-            "[{}] ====== 最终发送的 Headers ({}) ======",
-            adapter.name(),
-            passed_headers.len()
+            "[{}] ====== 最终发送的 Headers ======",
+            adapter.name()
         );
-        for (k, v) in &passed_headers {
-            log::info!("[{}]   {}: {}", adapter.name(), k, v);
+        for (k, v) in built.headers().iter() {
+            let key_lower = k.as_str().to_ascii_lowercase();
+            let value_str = v.to_str().unwrap_or("<binary>");
+            log::info!(
+                "[{}]   {}: {}",
+                adapter.name(),
+                k.as_str(),
+                mask_header_value_for_log(&key_lower, value_str)
+            );
         }
 
         // 发送请求
         log::info!("[{}] 发送请求到: {}", adapter.name(), url);
-        let response = request.json(&request_body).send().await.map_err(|e| {
+        let response = self.client.execute(built).await.map_err(|e| {
             log::error!("[{}] 请求失败: {}", adapter.name(), e);
             if e.is_timeout() {
                 ProxyError::Timeout(format!("请求超时: {e}"))
@@ -670,5 +744,56 @@ impl RequestForwarder {
             // 其他错误（数据库/内部错误等）：不是换供应商能解决的问题
             _ => ErrorCategory::NonRetryable,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_provider(settings_config: Value) -> Provider {
+        Provider::with_id("p1".to_string(), "P1".to_string(), settings_config, None)
+    }
+
+    #[test]
+    fn test_apply_provider_custom_headers_overrides_and_filters_protocol_reserved() {
+        let provider = make_provider(json!({
+            "custom_headers": {
+                "X-Tenant-Id": "abc",
+                "Authorization": "Bearer provider",
+                "Content-Length": "123"
+            }
+        }));
+
+        let url = reqwest::Url::parse("https://example.com").unwrap();
+        let mut request = reqwest::Request::new(reqwest::Method::POST, url);
+        request.headers_mut().insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer system"),
+        );
+
+        let applied = apply_provider_custom_headers(&provider, &mut request);
+
+        assert_eq!(applied, 2);
+        assert_eq!(
+            request
+                .headers()
+                .get("authorization")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "Bearer provider"
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("x-tenant-id")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "abc"
+        );
+        assert!(request.headers().get("content-length").is_none());
     }
 }

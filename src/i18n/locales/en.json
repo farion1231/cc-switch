@@ -356,7 +356,16 @@
     "categoryOfficial": "Official",
     "categoryCnOfficial": "Opensource Official",
     "categoryAggregation": "Aggregation",
-    "categoryThirdParty": "Third Party"
+    "categoryThirdParty": "Third Party",
+    "customHeaders": {
+      "title": "Custom Headers",
+      "add": "Add Header",
+      "hint": "Applies only to proxy forwarding upstream requests; this configuration wins for same-name headers; some protocol-level headers will be ignored automatically.",
+      "empty": "No custom headers configured",
+      "keyPlaceholder": "X-Tenant-Id",
+      "valuePlaceholder": "abc",
+      "remove": "Remove"
+    }
   },
   "endpointTest": {
     "title": "API Endpoint Management",
