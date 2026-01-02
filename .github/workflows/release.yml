@@ -198,6 +198,7 @@ jobs:
             ditto -c -k --sequesterRsrc --keepParent "$APP_NAME" "$NEW_ZIP"
             mv "$NEW_ZIP" "$GITHUB_WORKSPACE/release-assets/"
             echo "macOS zip ready: $NEW_ZIP"
+            cd "$GITHUB_WORKSPACE"
           else
             echo "No .app found to zip (optional)" >&2
           fi
