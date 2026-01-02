@@ -92,9 +92,8 @@ jobs:
         run: |
           # 调试：检查 Secret 是否存在
           if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-            echo "❌ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在" >&2
-            echo "请检查 GitHub 仓库 Settings > Secrets and variables > Actions" >&2
-            exit 1
+            echo "⚠️ 未配置 TAURI_SIGNING_PRIVATE_KEY，跳过 Updater 签名（将不会生成 .sig，也不会生成/更新 latest.json）"
+            exit 0
           fi
           
           RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
@@ -145,7 +144,7 @@ jobs:
 
       - name: Build Tauri App (macOS)
         if: runner.os == 'macOS'
-        run: pnpm tauri build --target universal-apple-darwin
+        run: pnpm tauri build --target aarch64-apple-darwin
 
       - name: Build Tauri App (Windows)
         if: runner.os == 'Windows'
@@ -341,6 +340,10 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          if ! ls -1 dl/*.sig >/dev/null 2>&1; then
+            echo "未发现任何 .sig 资产，跳过 latest.json 生成与上传"
+            exit 0
+          fi
           VERSION="${TAG#v}"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           base_url="https://github.com/$REPO/releases/download/$TAG"
