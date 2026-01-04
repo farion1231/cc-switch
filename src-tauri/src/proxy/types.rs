@@ -28,11 +28,11 @@ pub struct ProxyConfig {
 }
 
 fn default_streaming_first_byte_timeout() -> u64 {
-    30
+    60
 }
 
 fn default_streaming_idle_timeout() -> u64 {
-    60
+    120
 }
 
 fn default_non_streaming_timeout() -> u64 {
@@ -45,11 +45,11 @@ impl Default for ProxyConfig {
             listen_address: "127.0.0.1".to_string(),
             listen_port: 15721, // 使用较少占用的高位端口
             max_retries: 3,
-            request_timeout: 300,
+            request_timeout: 600,
             enable_logging: true,
             live_takeover_active: false,
-            streaming_first_byte_timeout: 30,
-            streaming_idle_timeout: 60,
+            streaming_first_byte_timeout: 60,
+            streaming_idle_timeout: 120,
             non_streaming_timeout: 600,
         }
     }

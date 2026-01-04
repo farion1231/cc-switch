@@ -49,10 +49,10 @@ pub struct CircuitBreakerConfig {
 impl Default for CircuitBreakerConfig {
     fn default() -> Self {
         Self {
-            failure_threshold: 5,
+            failure_threshold: 4,
             success_threshold: 2,
             timeout_seconds: 60,
-            error_rate_threshold: 0.5,
+            error_rate_threshold: 0.6,
             min_requests: 10,
         }
     }

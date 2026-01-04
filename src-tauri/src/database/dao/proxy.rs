@@ -121,13 +121,13 @@ impl Database {
                     enabled: false,
                     auto_failover_enabled: false,
                     max_retries: 3,
-                    streaming_first_byte_timeout: 30,
-                    streaming_idle_timeout: 60,
-                    non_streaming_timeout: 300,
-                    circuit_failure_threshold: 5,
+                    streaming_first_byte_timeout: 60,
+                    streaming_idle_timeout: 120,
+                    non_streaming_timeout: 600,
+                    circuit_failure_threshold: 4,
                     circuit_success_threshold: 2,
                     circuit_timeout_seconds: 60,
-                    circuit_error_rate_threshold: 0.5,
+                    circuit_error_rate_threshold: 0.6,
                     circuit_min_requests: 10,
                 })
             }
@@ -210,12 +210,12 @@ impl Database {
                         listen_address: row.get(0)?,
                         listen_port: row.get::<_, i32>(1)? as u16,
                         max_retries: row.get::<_, i32>(2)? as u8,
-                        request_timeout: 300, // 废弃字段，返回默认值
+                        request_timeout: 600, // 废弃字段，返回默认值
                         enable_logging: row.get::<_, i32>(3)? != 0,
                         live_takeover_active: false, // 废弃字段
-                        streaming_first_byte_timeout: row.get::<_, i32>(4).unwrap_or(30) as u64,
-                        streaming_idle_timeout: row.get::<_, i32>(5).unwrap_or(60) as u64,
-                        non_streaming_timeout: row.get::<_, i32>(6).unwrap_or(300) as u64,
+                        streaming_first_byte_timeout: row.get::<_, i32>(4).unwrap_or(60) as u64,
+                        streaming_idle_timeout: row.get::<_, i32>(5).unwrap_or(120) as u64,
+                        non_streaming_timeout: row.get::<_, i32>(6).unwrap_or(600) as u64,
                     })
                 },
             )
