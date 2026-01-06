@@ -323,7 +323,7 @@ impl SkillService {
         // 获取 skill 信息
         let skill = db
             .get_installed_skill(id)?
-            .ok_or_else(|| anyhow!("Skill not found: {}", id))?;
+            .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
         // 从所有应用目录删除
         for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
@@ -353,7 +353,7 @@ impl SkillService {
         // 获取当前 skill
         let mut skill = db
             .get_installed_skill(id)?
-            .ok_or_else(|| anyhow!("Skill not found: {}", id))?;
+            .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
         // 更新状态
         skill.apps.set_enabled_for(app, enabled);
@@ -521,7 +521,7 @@ impl SkillService {
 
             // 创建记录
             let skill = InstalledSkill {
-                id: format!("local:{}", dir_name),
+                id: format!("local:{dir_name}"),
                 name,
                 description,
                 directory: dir_name,
@@ -551,7 +551,7 @@ impl SkillService {
         let source = ssot_dir.join(directory);
 
         if !source.exists() {
-            return Err(anyhow!("Skill 不存在于 SSOT: {}", directory));
+            return Err(anyhow!("Skill 不存在于 SSOT: {directory}"));
         }
 
         let app_dir = Self::get_app_skills_dir(app)?;
@@ -566,7 +566,7 @@ impl SkillService {
 
         Self::copy_dir_recursive(&source, &dest)?;
 
-        log::debug!("Skill {} 已复制到 {:?}", directory, app);
+        log::debug!("Skill {directory} 已复制到 {app:?}");
 
         Ok(())
     }
@@ -578,7 +578,7 @@ impl SkillService {
 
         if skill_path.exists() {
             fs::remove_dir_all(&skill_path)?;
-            log::debug!("Skill {} 已从 {:?} 删除", directory, app);
+            log::debug!("Skill {directory} 已从 {app:?} 删除");
         }
 
         Ok(())
@@ -1044,7 +1044,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
         };
 
         let skill = InstalledSkill {
-            id: format!("local:{}", directory),
+            id: format!("local:{directory}"),
             name,
             description,
             directory,
@@ -1060,7 +1060,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
         count += 1;
     }
 
-    log::info!("Skills 迁移完成，共 {} 个", count);
+    log::info!("Skills 迁移完成，共 {count} 个");
 
     Ok(count)
 }

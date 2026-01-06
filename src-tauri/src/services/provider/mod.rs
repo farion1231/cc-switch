@@ -374,7 +374,7 @@ impl ProviderService {
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let provider = providers
             .get(&current_id)
-            .ok_or_else(|| AppError::Message(format!("Provider {} not found", current_id)))?;
+            .ok_or_else(|| AppError::Message(format!("Provider {current_id} not found")))?;
 
         match app_type {
             AppType::Claude => Self::extract_claude_common_config(&provider.settings_config),
