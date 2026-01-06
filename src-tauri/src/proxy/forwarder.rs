@@ -20,23 +20,17 @@ use tokio::sync::RwLock;
 
 /// Headers 黑名单 - 不透传到上游的 Headers
 ///
-/// 参考 Claude Code Hub 设计，过滤以下类别：
-/// 1. 认证类（会被覆盖）
-/// 2. 连接类（由 HTTP 客户端管理）
-/// 3. 代理转发类
-/// 4. CDN/云服务商特定头
-/// 5. 请求追踪类
-/// 6. 浏览器特定头（可能被上游检测）
+/// 精简版黑名单，只过滤必须覆盖或可能导致问题的 header
+/// 参考成功透传的请求，保留更多原始 header
 ///
 /// 注意：客户端 IP 类（x-forwarded-for, x-real-ip）默认透传
 const HEADER_BLACKLIST: &[&str] = &[
     // 认证类（会被覆盖）
     "authorization",
     "x-api-key",
-    // 连接类
+    // 连接类（由 HTTP 客户端管理）
     "host",
     "content-length",
-    "connection",
     "transfer-encoding",
     // 编码类（会被覆盖为 identity）
     "accept-encoding",
@@ -68,16 +62,9 @@ const HEADER_BLACKLIST: &[&str] = &[
     "x-b3-sampled",
     "traceparent",
     "tracestate",
-    // 浏览器特定头（可能被上游检测为非 CLI 请求）
-    "sec-fetch-mode",
-    "sec-fetch-site",
-    "sec-fetch-dest",
-    "sec-ch-ua",
-    "sec-ch-ua-mobile",
-    "sec-ch-ua-platform",
-    "accept-language",
-    // anthropic-beta 单独处理，避免重复
+    // anthropic 特定头单独处理，避免重复
     "anthropic-beta",
+    "anthropic-version",
     // 客户端 IP 单独处理（默认透传）
     "x-forwarded-for",
     "x-real-ip",
@@ -555,15 +542,29 @@ impl RequestForwarder {
             }
         }
 
-        // 处理 anthropic-beta Header（透传）
-        // 参考 Claude Code Hub 的实现，直接透传客户端的 beta 标记
-        if let Some(beta) = headers.get("anthropic-beta") {
+        // 处理 anthropic-beta Header
+        // 关键：确保包含 claude-code-20250219 标记，这是上游服务验证请求来源的依据
+        // 如果客户端发送的 beta 标记中没有包含 claude-code-20250219，需要补充
+        const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
+        let beta_value = if let Some(beta) = headers.get("anthropic-beta") {
             if let Ok(beta_str) = beta.to_str() {
-                request = request.header("anthropic-beta", beta_str);
-                passed_headers.push(("anthropic-beta".to_string(), beta_str.to_string()));
-                log::info!("[{}] 透传 anthropic-beta: {}", adapter.name(), beta_str);
+                // 检查是否已包含 claude-code-20250219
+                if beta_str.contains(CLAUDE_CODE_BETA) {
+                    beta_str.to_string()
+                } else {
+                    // 补充 claude-code-20250219
+                    format!("{CLAUDE_CODE_BETA},{beta_str}")
+                }
+            } else {
+                CLAUDE_CODE_BETA.to_string()
             }
-        }
+        } else {
+            // 如果客户端没有发送，使用默认值
+            CLAUDE_CODE_BETA.to_string()
+        };
+        request = request.header("anthropic-beta", &beta_value);
+        passed_headers.push(("anthropic-beta".to_string(), beta_value.clone()));
+        log::info!("[{}] 设置 anthropic-beta: {}", adapter.name(), beta_value);
 
         // 客户端 IP 透传（默认开启）
         if let Some(xff) = headers.get("x-forwarded-for") {
@@ -612,20 +613,19 @@ impl RequestForwarder {
             );
         }
 
-        // anthropic-version 透传：优先使用客户端的版本号
-        // 参考 Claude Code Hub：透传客户端值而非固定版本
-        if let Some(version) = headers.get("anthropic-version") {
-            if let Ok(version_str) = version.to_str() {
-                // 覆盖适配器设置的默认版本
-                request = request.header("anthropic-version", version_str);
-                passed_headers.push(("anthropic-version".to_string(), version_str.to_string()));
-                log::info!(
-                    "[{}] 透传 anthropic-version: {}",
-                    adapter.name(),
-                    version_str
-                );
-            }
-        }
+        // anthropic-version 统一处理：优先使用客户端的版本号，否则使用默认值
+        // 注意：只设置一次，避免重复
+        let version_str = headers
+            .get("anthropic-version")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("2023-06-01");
+        request = request.header("anthropic-version", version_str);
+        passed_headers.push(("anthropic-version".to_string(), version_str.to_string()));
+        log::info!(
+            "[{}] 设置 anthropic-version: {}",
+            adapter.name(),
+            version_str
+        );
 
         // ========== 最终发送的 Headers 日志 ==========
         log::info!(
