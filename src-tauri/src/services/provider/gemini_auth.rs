@@ -69,6 +69,7 @@ pub(crate) fn detect_gemini_auth_type(provider: &Provider) -> GeminiAuthType {
     if let Some(base_url) = provider
         .settings_config
         .pointer("/env/GOOGLE_GEMINI_BASE_URL")
+        .or_else(|| provider.settings_config.pointer("/env/GEMINI_BASE_URL"))
         .and_then(|v| v.as_str())
     {
         if contains_packycode_keyword(base_url) {

@@ -62,7 +62,8 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
   if (config && typeof config === "object") {
     const envBase =
       (config as Record<string, any>)?.env?.ANTHROPIC_BASE_URL ||
-      (config as Record<string, any>)?.env?.GOOGLE_GEMINI_BASE_URL;
+      (config as Record<string, any>)?.env?.GOOGLE_GEMINI_BASE_URL ||
+      (config as Record<string, any>)?.env?.GEMINI_BASE_URL;
     if (typeof envBase === "string" && envBase.trim()) {
       return envBase;
     }

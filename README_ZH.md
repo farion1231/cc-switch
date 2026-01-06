@@ -268,7 +268,7 @@ flatpak run com.ccswitch.desktop
 
 - Live 配置：`~/.gemini/.env`（API Key）+ `~/.gemini/settings.json`（保存认证模式）
 - API key 字段：`.env` 文件中的 `GEMINI_API_KEY` 或 `GOOGLE_GEMINI_API_KEY`
-- 环境变量：支持 `GOOGLE_GEMINI_BASE_URL`、`GEMINI_MODEL` 等自定义变量
+- 环境变量：支持 `GOOGLE_GEMINI_BASE_URL`、`GEMINI_BASE_URL`、`GEMINI_MODEL` 等自定义变量
 - MCP 服务器：`~/.gemini/settings.json` → `mcpServers`
 - 托盘快速切换：每次切换供应商都会重写 `~/.gemini/.env`，无需重启 Gemini CLI 即可生效
 

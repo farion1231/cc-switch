@@ -100,6 +100,7 @@ fn extract_base_url_from_provider(provider: &crate::provider::Provider) -> Optio
         // Try multiple possible base URL fields
         env.get("ANTHROPIC_BASE_URL")
             .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL"))
+            .or_else(|| env.get("GEMINI_BASE_URL"))
             .and_then(|v| v.as_str())
             .map(|s| s.trim_end_matches('/').to_string())
     } else {

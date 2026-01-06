@@ -870,15 +870,17 @@ impl ProxyService {
             log::info!("Codex Live 配置已接管，代理地址: {proxy_codex_base_url}");
         }
 
-        // Gemini: 修改 GOOGLE_GEMINI_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
+        // Gemini: 修改 GOOGLE_GEMINI_BASE_URL 和 GEMINI_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
         if let Ok(mut live_config) = self.read_gemini_live() {
             if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                 env.insert("GOOGLE_GEMINI_BASE_URL".to_string(), json!(&proxy_url));
+                env.insert("GEMINI_BASE_URL".to_string(), json!(&proxy_url));
                 // 使用占位符，避免显示缺少 key 的警告
                 env.insert("GEMINI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
             } else {
                 live_config["env"] = json!({
                     "GOOGLE_GEMINI_BASE_URL": &proxy_url,
+                    "GEMINI_BASE_URL": &proxy_url,
                     "GEMINI_API_KEY": PROXY_TOKEN_PLACEHOLDER
                 });
             }
@@ -956,10 +958,12 @@ impl ProxyService {
 
                 if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                     env.insert("GOOGLE_GEMINI_BASE_URL".to_string(), json!(&proxy_url));
+                    env.insert("GEMINI_BASE_URL".to_string(), json!(&proxy_url));
                     env.insert("GEMINI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
                 } else {
                     live_config["env"] = json!({
                         "GOOGLE_GEMINI_BASE_URL": &proxy_url,
+                        "GEMINI_BASE_URL": &proxy_url,
                         "GEMINI_API_KEY": PROXY_TOKEN_PLACEHOLDER
                     });
                 }
@@ -1039,10 +1043,12 @@ impl ProxyService {
                 if let Ok(mut live_config) = self.read_gemini_live() {
                     if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                         env.insert("GOOGLE_GEMINI_BASE_URL".to_string(), json!(&proxy_url));
+                        env.insert("GEMINI_BASE_URL".to_string(), json!(&proxy_url));
                         env.insert("GEMINI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
                     } else {
                         live_config["env"] = json!({
                             "GOOGLE_GEMINI_BASE_URL": &proxy_url,
+                            "GEMINI_BASE_URL": &proxy_url,
                             "GEMINI_API_KEY": PROXY_TOKEN_PLACEHOLDER
                         });
                     }
@@ -1350,6 +1356,15 @@ impl ProxyService {
             .unwrap_or(false)
         {
             env.remove("GOOGLE_GEMINI_BASE_URL");
+        }
+
+        if env
+            .get("GEMINI_BASE_URL")
+            .and_then(|v| v.as_str())
+            .map(Self::is_local_proxy_url)
+            .unwrap_or(false)
+        {
+            env.remove("GEMINI_BASE_URL");
         }
 
         self.write_gemini_live(&config)?;

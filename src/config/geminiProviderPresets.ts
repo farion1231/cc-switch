@@ -56,6 +56,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://www.packyapi.com",
+        GEMINI_BASE_URL: "https://www.packyapi.com",
         GEMINI_MODEL: "gemini-3-pro",
       },
     },
@@ -78,6 +79,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.cubence.com",
+        GEMINI_BASE_URL: "https://api.cubence.com",
         GEMINI_MODEL: "gemini-3-pro",
       },
     },
@@ -103,6 +105,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aigocode.com/gemini",
+        GEMINI_BASE_URL: "https://api.aigocode.com/gemini",
         GEMINI_MODEL: "gemini-3-pro",
       },
     },
@@ -123,6 +126,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://openrouter.ai/api",
+        GEMINI_BASE_URL: "https://openrouter.ai/api",
         GEMINI_MODEL: "gemini-3-pro-preview",
       },
     },
@@ -139,6 +143,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "",
+        GEMINI_BASE_URL: "",
         GEMINI_MODEL: "gemini-3-pro",
       },
     },

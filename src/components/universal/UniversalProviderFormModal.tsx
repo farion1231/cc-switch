@@ -176,6 +176,7 @@ requires_openai_auth = true`;
     return {
       env: {
         GOOGLE_GEMINI_BASE_URL: baseUrl,
+        GEMINI_BASE_URL: baseUrl,
         GEMINI_API_KEY: apiKey,
         GEMINI_MODEL: model,
       },

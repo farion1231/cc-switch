@@ -54,6 +54,7 @@ const GEMINI_DEFAULT_CONFIG = JSON.stringify(
   {
     env: {
       GOOGLE_GEMINI_BASE_URL: "",
+      GEMINI_BASE_URL: "",
       GEMINI_API_KEY: "",
       GEMINI_MODEL: "gemini-3-pro-preview",
     },
@@ -422,7 +423,9 @@ export function ProviderForm({
       try {
         const config = JSON.parse(form.watch("settingsConfig") || "{}");
         if (!config.env) config.env = {};
-        config.env.GOOGLE_GEMINI_BASE_URL = url.trim().replace(/\/+$/, "");
+        const sanitized = url.trim().replace(/\/+$/, "");
+        config.env.GOOGLE_GEMINI_BASE_URL = sanitized;
+        config.env.GEMINI_BASE_URL = sanitized;
         form.setValue("settingsConfig", JSON.stringify(config, null, 2));
       } catch {
         // ignore

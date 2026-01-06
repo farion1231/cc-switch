@@ -268,7 +268,7 @@ flatpak run com.ccswitch.desktop
 
 - ライブ設定: `~/.gemini/.env`（API キー）+ `~/.gemini/settings.json`（認証モード）
 - API キーフィールド: `.env` 内の `GEMINI_API_KEY` または `GOOGLE_GEMINI_API_KEY`
-- 環境変数: `GOOGLE_GEMINI_BASE_URL`、`GEMINI_MODEL` などをサポート
+- 環境変数: `GOOGLE_GEMINI_BASE_URL`、`GEMINI_BASE_URL`、`GEMINI_MODEL` などをサポート
 - MCP サーバー: `~/.gemini/settings.json` → `mcpServers`
 - トレイでのクイックスイッチ: プロバイダ切り替えごとに `~/.gemini/.env` を書き換えるため Gemini CLI の再起動は不要
 

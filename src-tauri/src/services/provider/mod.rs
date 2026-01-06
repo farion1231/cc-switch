@@ -504,7 +504,7 @@ impl ProviderService {
         let mut snippet = serde_json::Map::new();
         if let Some(env) = env {
             for (key, value) in env {
-                if key == "GOOGLE_GEMINI_BASE_URL" || key == "GEMINI_API_KEY" {
+                if key == "GOOGLE_GEMINI_BASE_URL" || key == "GEMINI_BASE_URL" || key == "GEMINI_API_KEY" {
                     continue;
                 }
                 let Value::String(v) = value else {
@@ -821,6 +821,7 @@ impl ProviderService {
 
                 let base_url = env_map
                     .get("GOOGLE_GEMINI_BASE_URL")
+                    .or_else(|| env_map.get("GEMINI_BASE_URL"))
                     .cloned()
                     .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string());
 

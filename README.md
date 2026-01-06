@@ -268,7 +268,7 @@ flatpak run com.ccswitch.desktop
 
 - Live config: `~/.gemini/.env` (API key) + `~/.gemini/settings.json` (auth mode)
 - API key field: `GEMINI_API_KEY` or `GOOGLE_GEMINI_API_KEY` in `.env`
-- Environment variables: Support `GOOGLE_GEMINI_BASE_URL`, `GEMINI_MODEL`, etc.
+- Environment variables: Support `GOOGLE_GEMINI_BASE_URL`, `GEMINI_BASE_URL`, `GEMINI_MODEL`, etc.
 - MCP servers: `~/.gemini/settings.json` → `mcpServers`
 - Tray quick switch: Each provider switch rewrites `~/.gemini/.env`, no need to restart Gemini CLI
 

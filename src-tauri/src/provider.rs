@@ -434,6 +434,7 @@ requires_openai_auth = true"#
         let settings_config = serde_json::json!({
             "env": {
                 "GOOGLE_GEMINI_BASE_URL": self.base_url,
+                "GEMINI_BASE_URL": self.base_url,
                 "GEMINI_API_KEY": self.api_key,
                 "GEMINI_MODEL": model,
             }
