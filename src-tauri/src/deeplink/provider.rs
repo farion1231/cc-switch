@@ -525,7 +525,11 @@ fn merge_gemini_config(
     }
 
     if request.endpoint.is_none() || request.endpoint.as_ref().unwrap().is_empty() {
-        if let Some(base_url) = config.get("GEMINI_BASE_URL").and_then(|v| v.as_str()) {
+        if let Some(base_url) = config
+            .get("GEMINI_BASE_URL")
+            .or_else(|| config.get("GOOGLE_GEMINI_BASE_URL"))
+            .and_then(|v| v.as_str())
+        {
             request.endpoint = Some(base_url.to_string());
         }
     }

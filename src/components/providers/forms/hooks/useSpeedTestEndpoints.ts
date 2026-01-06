@@ -62,11 +62,16 @@ export function useSpeedTestEndpoints({
     // 2. 编辑模式：初始数据中的 URL
     if (initialData && typeof initialData.settingsConfig === "object") {
       const configEnv = initialData.settingsConfig as {
-        env?: { ANTHROPIC_BASE_URL?: string; GOOGLE_GEMINI_BASE_URL?: string };
+        env?: {
+    ANTHROPIC_BASE_URL?: string;
+    GOOGLE_GEMINI_BASE_URL?: string;
+    GEMINI_BASE_URL?: string;
+  };
       };
       const envUrls = [
         configEnv.env?.ANTHROPIC_BASE_URL,
         configEnv.env?.GOOGLE_GEMINI_BASE_URL,
+        configEnv.env?.GEMINI_BASE_URL,
       ];
       envUrls.forEach((u) => {
         if (typeof u === "string") add(u);
@@ -78,7 +83,12 @@ export function useSpeedTestEndpoints({
       const entry = presetEntries.find((item) => item.id === selectedPresetId);
       if (entry) {
         const preset = entry.preset as ProviderPreset & {
-          settingsConfig?: { env?: { GOOGLE_GEMINI_BASE_URL?: string } };
+          settingsConfig?: {
+            env?: {
+              GOOGLE_GEMINI_BASE_URL?: string;
+              GEMINI_BASE_URL?: string;
+            };
+          };
           endpointCandidates?: string[];
         };
         // 添加预设自己的 baseUrl（兼容 Claude/Gemini）
@@ -86,11 +96,13 @@ export function useSpeedTestEndpoints({
           env?: {
             ANTHROPIC_BASE_URL?: string;
             GOOGLE_GEMINI_BASE_URL?: string;
+            GEMINI_BASE_URL?: string;
           };
         };
         const presetUrls = [
           presetEnv?.env?.ANTHROPIC_BASE_URL,
           presetEnv?.env?.GOOGLE_GEMINI_BASE_URL,
+          presetEnv?.env?.GEMINI_BASE_URL,
         ];
         presetUrls.forEach((u) => add(u));
         // 添加预设的候选端点

@@ -27,6 +27,7 @@ export function useGeminiConfigState({
     (envObj: Record<string, unknown>): string => {
       const priorityKeys = [
         "GOOGLE_GEMINI_BASE_URL",
+        "GEMINI_BASE_URL",
         "GEMINI_API_KEY",
         "GEMINI_MODEL",
       ];
@@ -93,6 +94,8 @@ export function useGeminiConfigState({
       }
       if (typeof env.GOOGLE_GEMINI_BASE_URL === "string") {
         setGeminiBaseUrl(env.GOOGLE_GEMINI_BASE_URL);
+      } else if (typeof env.GEMINI_BASE_URL === "string") {
+        setGeminiBaseUrl(env.GEMINI_BASE_URL);
       }
       if (typeof env.GEMINI_MODEL === "string") {
         setGeminiModel(env.GEMINI_MODEL);
@@ -104,7 +107,8 @@ export function useGeminiConfigState({
   useEffect(() => {
     const envObj = envStringToObj(geminiEnv);
     const extractedKey = envObj.GEMINI_API_KEY || "";
-    const extractedBaseUrl = envObj.GOOGLE_GEMINI_BASE_URL || "";
+    const extractedBaseUrl =
+      envObj.GOOGLE_GEMINI_BASE_URL || envObj.GEMINI_BASE_URL || "";
     const extractedModel = envObj.GEMINI_MODEL || "";
 
     if (extractedKey !== geminiApiKey) {
@@ -172,6 +176,7 @@ export function useGeminiConfigState({
 
       const envObj = envStringToObj(geminiEnv);
       envObj.GOOGLE_GEMINI_BASE_URL = sanitized;
+      envObj.GEMINI_BASE_URL = sanitized;
       const newEnv = envObjToString(envObj);
       setGeminiEnv(newEnv);
     },
@@ -226,6 +231,8 @@ export function useGeminiConfigState({
 
       if (typeof env.GOOGLE_GEMINI_BASE_URL === "string") {
         setGeminiBaseUrl(env.GOOGLE_GEMINI_BASE_URL);
+      } else if (typeof env.GEMINI_BASE_URL === "string") {
+        setGeminiBaseUrl(env.GEMINI_BASE_URL);
       } else {
         setGeminiBaseUrl("");
       }

@@ -154,7 +154,11 @@ impl ProviderAdapter for GeminiAdapter {
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
         // 从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
-            if let Some(url) = env.get("GOOGLE_GEMINI_BASE_URL").and_then(|v| v.as_str()) {
+            if let Some(url) = env
+                .get("GOOGLE_GEMINI_BASE_URL")
+                .or_else(|| env.get("GEMINI_BASE_URL"))
+                .and_then(|v| v.as_str())
+            {
                 return Ok(url.trim_end_matches('/').to_string());
             }
         }
@@ -260,6 +264,19 @@ mod tests {
         let provider = create_provider(json!({
             "env": {
                 "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta"
+            }
+        }));
+
+        let url = adapter.extract_base_url(&provider).unwrap();
+        assert_eq!(url, "https://generativelanguage.googleapis.com/v1beta");
+    }
+
+    #[test]
+    fn test_extract_base_url_from_env_gemini_base_url() {
+        let adapter = GeminiAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta"
             }
         }));
 
