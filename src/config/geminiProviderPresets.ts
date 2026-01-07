@@ -56,6 +56,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://www.packyapi.com",
+        GEMINI_BASE_URL: "https://www.packyapi.com",
         GEMINI_MODEL: "gemini-3-pro-preview",
       },
     },
@@ -77,6 +78,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "",
+        GEMINI_BASE_URL: "",
         GEMINI_MODEL: "gemini-3-pro-preview",
       },
     },

@@ -174,6 +174,8 @@ export function AddProviderDialog({
           const env = parsedConfig.env as Record<string, any> | undefined;
           if (env?.GOOGLE_GEMINI_BASE_URL) {
             addUrl(env.GOOGLE_GEMINI_BASE_URL);
+          } else if (env?.GEMINI_BASE_URL) {
+            addUrl(env.GEMINI_BASE_URL);
           }
         }
 
