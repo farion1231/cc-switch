@@ -1,0 +1,6 @@
+[submodule "external/Antigravity-Manager"]
+	path = external/Antigravity-Manager
+	url = https://github.com/lbjlaq/Antigravity-Manager.git
+[submodule "external/cc-switch"]
+	path = external/cc-switch
+	url = https://github.com/farion1231/cc-switch.git
