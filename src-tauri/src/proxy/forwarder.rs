@@ -542,29 +542,31 @@ impl RequestForwarder {
             }
         }
 
-        // 处理 anthropic-beta Header
+        // 处理 anthropic-beta Header（仅 Claude）
         // 关键：确保包含 claude-code-20250219 标记，这是上游服务验证请求来源的依据
         // 如果客户端发送的 beta 标记中没有包含 claude-code-20250219，需要补充
-        const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
-        let beta_value = if let Some(beta) = headers.get("anthropic-beta") {
-            if let Ok(beta_str) = beta.to_str() {
-                // 检查是否已包含 claude-code-20250219
-                if beta_str.contains(CLAUDE_CODE_BETA) {
-                    beta_str.to_string()
+        if adapter.name() == "Claude" {
+            const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
+            let beta_value = if let Some(beta) = headers.get("anthropic-beta") {
+                if let Ok(beta_str) = beta.to_str() {
+                    // 检查是否已包含 claude-code-20250219
+                    if beta_str.contains(CLAUDE_CODE_BETA) {
+                        beta_str.to_string()
+                    } else {
+                        // 补充 claude-code-20250219
+                        format!("{CLAUDE_CODE_BETA},{beta_str}")
+                    }
                 } else {
-                    // 补充 claude-code-20250219
-                    format!("{CLAUDE_CODE_BETA},{beta_str}")
+                    CLAUDE_CODE_BETA.to_string()
                 }
             } else {
+                // 如果客户端没有发送，使用默认值
                 CLAUDE_CODE_BETA.to_string()
-            }
-        } else {
-            // 如果客户端没有发送，使用默认值
-            CLAUDE_CODE_BETA.to_string()
-        };
-        request = request.header("anthropic-beta", &beta_value);
-        passed_headers.push(("anthropic-beta".to_string(), beta_value.clone()));
-        log::info!("[{}] 设置 anthropic-beta: {}", adapter.name(), beta_value);
+            };
+            request = request.header("anthropic-beta", &beta_value);
+            passed_headers.push(("anthropic-beta".to_string(), beta_value.clone()));
+            log::info!("[{}] 设置 anthropic-beta: {}", adapter.name(), beta_value);
+        }
 
         // 客户端 IP 透传（默认开启）
         if let Some(xff) = headers.get("x-forwarded-for") {
@@ -613,19 +615,21 @@ impl RequestForwarder {
             );
         }
 
-        // anthropic-version 统一处理：优先使用客户端的版本号，否则使用默认值
+        // anthropic-version 统一处理（仅 Claude）：优先使用客户端的版本号，否则使用默认值
         // 注意：只设置一次，避免重复
-        let version_str = headers
-            .get("anthropic-version")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("2023-06-01");
-        request = request.header("anthropic-version", version_str);
-        passed_headers.push(("anthropic-version".to_string(), version_str.to_string()));
-        log::info!(
-            "[{}] 设置 anthropic-version: {}",
-            adapter.name(),
-            version_str
-        );
+        if adapter.name() == "Claude" {
+            let version_str = headers
+                .get("anthropic-version")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("2023-06-01");
+            request = request.header("anthropic-version", version_str);
+            passed_headers.push(("anthropic-version".to_string(), version_str.to_string()));
+            log::info!(
+                "[{}] 设置 anthropic-version: {}",
+                adapter.name(),
+                version_str
+            );
+        }
 
         // ========== 最终发送的 Headers 日志 ==========
         log::info!(

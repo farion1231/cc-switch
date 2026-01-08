@@ -425,15 +425,33 @@ mod tests {
     #[test]
     fn test_build_url_anthropic() {
         let adapter = ClaudeAdapter::new();
+        // /v1/messages 端点会自动添加 ?beta=true 参数
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages");
-        assert_eq!(url, "https://api.anthropic.com/v1/messages");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
     }
 
     #[test]
     fn test_build_url_openrouter() {
         let adapter = ClaudeAdapter::new();
+        // /v1/messages 端点会自动添加 ?beta=true 参数
         let url = adapter.build_url("https://openrouter.ai/api", "/v1/messages");
-        assert_eq!(url, "https://openrouter.ai/api/v1/messages");
+        assert_eq!(url, "https://openrouter.ai/api/v1/messages?beta=true");
+    }
+
+    #[test]
+    fn test_build_url_no_beta_for_other_endpoints() {
+        let adapter = ClaudeAdapter::new();
+        // 非 /v1/messages 端点不添加 ?beta=true
+        let url = adapter.build_url("https://api.anthropic.com", "/v1/complete");
+        assert_eq!(url, "https://api.anthropic.com/v1/complete");
+    }
+
+    #[test]
+    fn test_build_url_preserve_existing_query() {
+        let adapter = ClaudeAdapter::new();
+        // 已有查询参数时不重复添加
+        let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages?foo=bar");
     }
 
     #[test]
