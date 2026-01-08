@@ -291,7 +291,10 @@ async fn handle_claude_transform(
     );
 
     let body = axum::body::Body::from(response_body);
-    Ok(builder.body(body).unwrap())
+    builder.body(body).map_err(|e| {
+        log::error!("[Claude] 构建响应失败: {e}");
+        ProxyError::Internal(format!("Failed to build response: {e}"))
+    })
 }
 
 // ============================================================================

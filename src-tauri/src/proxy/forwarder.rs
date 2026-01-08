@@ -81,7 +81,8 @@ pub struct ForwardError {
 }
 
 pub struct RequestForwarder {
-    client: Client,
+    client: Option<Client>,
+    client_init_error: Option<String>,
     /// 共享的 ProviderRouter（持有熔断器状态）
     router: Arc<ProviderRouter>,
     status: Arc<RwLock<ProxyStatus>>,
@@ -111,21 +112,51 @@ impl RequestForwarder {
         // 参考 Claude Code Hub 的 undici 全局超时设计
         const GLOBAL_TIMEOUT_SECS: u64 = 1800;
 
-        let mut client_builder = Client::builder();
-        if non_streaming_timeout > 0 {
-            // 使用配置的非流式超时
-            client_builder = client_builder.timeout(Duration::from_secs(non_streaming_timeout));
+        let timeout_secs = if non_streaming_timeout > 0 {
+            non_streaming_timeout
         } else {
-            // 禁用超时时使用全局超时作为保底
-            client_builder = client_builder.timeout(Duration::from_secs(GLOBAL_TIMEOUT_SECS));
-        }
+            GLOBAL_TIMEOUT_SECS
+        };
 
-        let client = client_builder
+        // 注意：这里不能用 expect/unwrap。
+        // release 配置为 panic=abort，一旦 build 失败会导致整个应用闪退。
+        // 常见原因：用户环境变量里存在不合法/不支持的代理（HTTP(S)_PROXY/ALL_PROXY 等）。
+        let (client, client_init_error) = match Client::builder()
+            .timeout(Duration::from_secs(timeout_secs))
             .build()
-            .expect("Failed to create HTTP client");
+        {
+            Ok(client) => (Some(client), None),
+            Err(e) => {
+                log::error!("Failed to create HTTP client (will fallback to no_proxy): {e}");
+
+                // 降级：忽略系统/环境代理，避免因代理配置问题导致整个应用崩溃
+                match Client::builder()
+                    .timeout(Duration::from_secs(timeout_secs))
+                    .no_proxy()
+                    .build()
+                {
+                    Ok(client) => {
+                        log::warn!("HTTP client created with no_proxy() fallback");
+                        (Some(client), Some(e.to_string()))
+                    }
+                    Err(fallback_err) => {
+                        log::error!(
+                            "Failed to create HTTP client even with no_proxy(): {fallback_err}"
+                        );
+                        (
+                            None,
+                            Some(format!(
+                                "Failed to create HTTP client: {e}; no_proxy fallback failed: {fallback_err}"
+                            )),
+                        )
+                    }
+                }
+            }
+        };
 
         Self {
             client,
+            client_init_error,
             router,
             status,
             current_providers,
@@ -503,7 +534,14 @@ impl RequestForwarder {
         );
 
         // 构建请求
-        let mut request = self.client.post(&url);
+        let client = self.client.as_ref().ok_or_else(|| {
+            ProxyError::ForwardFailed(
+                self.client_init_error
+                    .clone()
+                    .unwrap_or_else(|| "HTTP client is not initialized".to_string()),
+            )
+        })?;
+        let mut request = client.post(&url);
 
         // ========== 详细 Headers 日志 ==========
         log::info!("[{}] ====== 客户端原始 Headers ======", adapter.name());
@@ -599,14 +637,12 @@ impl RequestForwarder {
             );
             request = adapter.add_auth_headers(request, &auth);
             // 记录认证头（脱敏）
+            let key_preview: String = auth.api_key.chars().take(8).collect();
             passed_headers.push((
                 "authorization".to_string(),
-                format!("Bearer {}...", &auth.api_key[..8.min(auth.api_key.len())]),
+                format!("Bearer {}...", &key_preview),
             ));
-            passed_headers.push((
-                "x-api-key".to_string(),
-                format!("{}...", &auth.api_key[..8.min(auth.api_key.len())]),
-            ));
+            passed_headers.push(("x-api-key".to_string(), format!("{}...", &key_preview)));
         } else {
             log::error!(
                 "[{}] 未找到 API Key！Provider: {}",

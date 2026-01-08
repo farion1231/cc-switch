@@ -9,7 +9,7 @@ use super::{
     usage::parser::TokenUsage,
     ProxyError,
 };
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use rust_decimal::Decimal;
@@ -72,7 +72,13 @@ pub async fn handle_streaming(
         create_logged_passthrough_stream(stream, ctx.tag, Some(usage_collector), timeout_config);
 
     let body = axum::body::Body::from_stream(logged_stream);
-    builder.body(body).unwrap()
+    match builder.body(body) {
+        Ok(resp) => resp,
+        Err(e) => {
+            log::error!("[{}] 构建流式响应失败: {e}", ctx.tag);
+            ProxyError::Internal(format!("Failed to build streaming response: {e}")).into_response()
+        }
+    }
 }
 
 /// 处理非流式响应
@@ -155,7 +161,10 @@ pub async fn handle_non_streaming(
     }
 
     let body = axum::body::Body::from(body_bytes);
-    Ok(builder.body(body).unwrap())
+    builder.body(body).map_err(|e| {
+        log::error!("[{}] 构建响应失败: {e}", ctx.tag);
+        ProxyError::Internal(format!("Failed to build response: {e}"))
+    })
 }
 
 /// 通用响应处理入口
