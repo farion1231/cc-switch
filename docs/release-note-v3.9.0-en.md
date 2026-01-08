@@ -130,3 +130,32 @@ It introduces a local API proxy with per-app takeover, automatic failover, unive
 - Security improvements for the JavaScript executor and usage script execution (#151, thanks @luojiyin1987).
 - SQL import is restricted to CC Switch exported backups to reduce the risk of importing unsafe or incompatible SQL dumps.
 - Proxy takeover modifies CLI live configs; CC Switch will back up the live config before redirecting it to the local proxy. If you want to revert, disable takeover/stop the proxy and restore from the backup when needed.
+
+## Download & Installation
+
+### System Requirements
+
+- **Windows**: Windows 10 +
+- **MacOS**: MacOS 10.15 (Catalina) +
+- **Linux**: Ubuntu 22.04 + | Debian 11 + | Fedora 34 +
+
+### Download Links
+
+Visit [Releases](https://github.com/farion1231/cc-switch/releases/latest) to download:
+
+- **Windows**: `CC-Switch-v3.9.0-Windows.msi` or `-Portable.zip`
+- **MacOS**: `CC-Switch-v3.9.0-macOS.tar.gz` or `.zip`
+- **Linux**: `CC-Switch-v3.9.0-Linux.AppImage` or `.deb`
+
+### Homebrew (MacOS)
+
+```bash
+brew tap farion1231/ccswitch
+brew install --cask cc-switch
+```
+
+Update:
+
+```bash
+brew upgrade --cask cc-switch
+```

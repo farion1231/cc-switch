@@ -130,3 +130,32 @@ CC Switch v3.9.0 は v3.9 ベータ（`3.9.0-1`、`3.9.0-2`、`3.9.0-3`）の安
 - セキュリティ強化：JavaScript 実行器と使用量スクリプト実行に関するセキュリティ問題を修正（#151、@luojiyin1987 に感謝）。
 - SQL インポートは CC Switch がエクスポートしたバックアップのみに制限されます（安全性のため）。
 - プロキシのテイクオーバーは CLI の live 設定を変更します。CC Switch はリダイレクト前に live 設定をバックアップします。元に戻す場合はテイクオーバー無効化/プロキシ停止を行い、必要に応じてバックアップから復元してください。
+
+## ダウンロード & インストール
+
+### システム要件
+
+- **Windows**: Windows 10 +
+- **MacOS**: MacOS 10.15 (Catalina) +
+- **Linux**: Ubuntu 22.04 + | Debian 11 + | Fedora 34 +
+
+### ダウンロード
+
+[Releases](https://github.com/farion1231/cc-switch/releases/latest) から入手:
+
+- **Windows**: `CC-Switch-v3.9.0-Windows.msi` または `-Portable.zip`
+- **MacOS**: `CC-Switch-v3.9.0-macOS.tar.gz` または `.zip`
+- **Linux**: `CC-Switch-v3.9.0-Linux.AppImage` または `.deb`
+
+### Homebrew (MacOS)
+
+```bash
+brew tap farion1231/ccswitch
+brew install --cask cc-switch
+```
+
+アップデート:
+
+```bash
+brew upgrade --cask cc-switch
+```

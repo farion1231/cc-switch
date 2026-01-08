@@ -130,3 +130,34 @@ CC Switch v3.9.0 是 v3.9 测试版序列（`3.9.0-1`、`3.9.0-2`、`3.9.0-3`）
 - 安全增强：修复 JavaScript 执行器与用量脚本相关的安全问题（#151，感谢 @luojiyin1987）。
 - 为降低导入风险，SQL 导入被限制为仅允许导入 CC Switch 自己导出的备份。
 - Proxy 接管会修改 CLI 的 live 配置；CC Switch 会在重定向前自动备份 live 配置。如需回退，可关闭接管/停止代理，并在必要时从备份恢复。
+
+## 下载与安装
+
+### 系统要求
+
+- **Windows**：Windows 10 +
+- **macOS**：MacOS 10.15 (Catalina) +
+- **Linux**：Ubuntu 22.04 + | Debian 11 + | Fedora 34 +
+
+### 下载链接
+
+访问 [Releases](https://github.com/farion1231/cc-switch/releases/latest) 下载：
+
+- **Windows**：`CC-Switch-v3.9.0-Windows.msi` 或 `-Portable.zip`
+- **MacOS**：`CC-Switch-v3.9.0-macOS.tar.gz` 或 `.zip`
+- **Linux**：`CC-Switch-v3.9.0-Linux.AppImage` 或 `.deb`
+
+### Homebrew（MacOS）
+
+```bash
+brew tap farion1231/ccswitch
+brew install --cask cc-switch
+```
+
+更新：
+
+```bash
+brew upgrade --cask cc-switch
+```
+
+## 
