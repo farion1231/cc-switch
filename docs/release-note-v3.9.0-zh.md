@@ -136,7 +136,7 @@ CC Switch v3.9.0 是 v3.9 测试版序列（`3.9.0-1`、`3.9.0-2`、`3.9.0-3`）
 ### 系统要求
 
 - **Windows**：Windows 10 +
-- **macOS**：MacOS 10.15 (Catalina) +
+- **MacOS**：MacOS 10.15 (Catalina) +
 - **Linux**：Ubuntu 22.04 + | Debian 11 + | Fedora 34 +
 
 ### 下载链接
