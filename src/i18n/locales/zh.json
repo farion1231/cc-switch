@@ -1058,7 +1058,7 @@
         },
         "listenPort": {
           "label": "监听端口",
-          "placeholder": "5000",
+          "placeholder": "15721",
           "description": "代理服务器监听的端口号（1024 ~ 65535）"
         },
         "maxRetries": {
