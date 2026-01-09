@@ -511,10 +511,17 @@ impl RequestForwarder {
         // ========== 请求体日志（截断显示） ==========
         let body_str = serde_json::to_string_pretty(&filtered_body)
             .unwrap_or_else(|_| filtered_body.to_string());
-        let body_preview = if body_str.len() > 2000 {
+        const BODY_PREVIEW_MAX_BYTES: usize = 2000;
+        let body_preview = if body_str.len() > BODY_PREVIEW_MAX_BYTES {
+            // Rust 的 String 是 UTF-8，不能用固定字节下标直接切片，否则可能切到多字节字符中间导致 panic。
+            // 这里向左寻找最近的字符边界，确保截断安全。
+            let mut safe_cut = BODY_PREVIEW_MAX_BYTES;
+            while !body_str.is_char_boundary(safe_cut) {
+                safe_cut = safe_cut.saturating_sub(1);
+            }
             format!(
-                "{}...\n[截断，总长度: {} 字符]",
-                &body_str[..2000],
+                "{}...\n[截断，总长度: {} bytes]",
+                &body_str[..safe_cut],
                 body_str.len()
             )
         } else {
