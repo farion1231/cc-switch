@@ -77,7 +77,8 @@ objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 codegen-units = 1
 lto = "thin"
 opt-level = "s"
-panic = "abort"
+# 使用 unwind 以便 panic hook 能捕获 backtrace（abort 会直接终止无法捕获）
+panic = "unwind"
 strip = "symbols"
 
 [dev-dependencies]

@@ -13,6 +13,7 @@ mod gemini_config;
 mod gemini_mcp;
 mod init_status;
 mod mcp;
+mod panic_hook;
 mod prompt;
 mod prompt_files;
 mod provider;
@@ -150,6 +151,9 @@ fn macos_tray_icon() -> Option<Image<'static>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 设置 panic hook，在应用崩溃时记录日志到 ~/.cc-switch/crash.log
+    panic_hook::setup_panic_hook();
+
     let mut builder = tauri::Builder::default();
 
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -223,13 +227,34 @@ pub fn run() {
                     log::warn!("初始化 Updater 插件失败，已跳过：{e}");
                 }
             }
-            // 初始化日志
-            if cfg!(debug_assertions) {
+            // 初始化日志（Debug 和 Release 模式都启用 Info 级别）
+            // 日志同时输出到控制台和文件（~/.cc-switch/logs/）
+            {
+                use tauri_plugin_log::{Target, TargetKind, RotationStrategy, TimezoneStrategy};
+
+                // 日志文件存储到 ~/.cc-switch/logs/ 目录
+                let log_dir = crate::config::get_app_config_dir().join("logs");
+
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
+                        .targets([
+                            // 输出到控制台
+                            Target::new(TargetKind::Stdout),
+                            // 输出到日志文件
+                            Target::new(TargetKind::Folder {
+                                path: log_dir,
+                                file_name: Some("cc-switch".into()),
+                            }),
+                        ])
+                        .rotation_strategy(RotationStrategy::KeepAll)
+                        .max_file_size(5_000_000) // 5MB 单文件上限
+                        .timezone_strategy(TimezoneStrategy::UseLocal)
                         .build(),
                 )?;
+
+                // 清理旧日志文件，只保留最近 2 个
+                panic_hook::cleanup_old_logs();
             }
 
             // 预先刷新 Store 覆盖配置，确保 AppState 初始化时可读取到最新路径
