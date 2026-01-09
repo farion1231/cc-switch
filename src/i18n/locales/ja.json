@@ -1168,6 +1168,16 @@
     "maxRetries": "最大リトライ回数",
     "degradedThreshold": "劣化しきい値（ミリ秒）"
   },
+  "tpsTest": {
+    "testProvider": "TPS テスト",
+    "tps": "TPS",
+    "outputTokens": "出力",
+    "responseTime": "時間",
+    "estimated": "推定",
+    "failedInline": "TPS テスト失敗: {{error}}",
+    "failedToast": "{{name}} TPS テスト失敗: {{error}}",
+    "errorToast": "{{name}} TPS テストエラー: {{error}}"
+  },
   "proxyConfig": {
     "proxyEnabled": "プロキシ有効",
     "appTakeover": "プロキシ有効",
