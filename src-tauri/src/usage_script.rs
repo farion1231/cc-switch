@@ -269,7 +269,11 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
 
     if !status.is_success() {
         let preview = if text.len() > 200 {
-            format!("{}...", &text[..200])
+            let mut safe_cut = 200usize;
+            while !text.is_char_boundary(safe_cut) {
+                safe_cut = safe_cut.saturating_sub(1);
+            }
+            format!("{}...", &text[..safe_cut])
         } else {
             text.clone()
         };

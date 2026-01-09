@@ -441,8 +441,21 @@ impl ProxyService {
                                     }
                                     None => {
                                         // 至少写入一份可用的 Token
-                                        provider.settings_config["env"] =
-                                            json!({ token_key: token });
+                                        if provider.settings_config.is_null() {
+                                            provider.settings_config = json!({});
+                                        }
+
+                                        if let Some(root) = provider.settings_config.as_object_mut()
+                                        {
+                                            root.insert(
+                                                "env".to_string(),
+                                                json!({ token_key: token }),
+                                            );
+                                        } else {
+                                            log::warn!(
+                                                "Claude provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                            );
+                                        }
                                     }
                                 }
 
@@ -485,9 +498,20 @@ impl ProxyService {
                             {
                                 auth_obj.insert("OPENAI_API_KEY".to_string(), json!(token));
                             } else {
-                                provider.settings_config["auth"] = json!({
-                                    "OPENAI_API_KEY": token
-                                });
+                                if provider.settings_config.is_null() {
+                                    provider.settings_config = json!({});
+                                }
+
+                                if let Some(root) = provider.settings_config.as_object_mut() {
+                                    root.insert(
+                                        "auth".to_string(),
+                                        json!({ "OPENAI_API_KEY": token }),
+                                    );
+                                } else {
+                                    log::warn!(
+                                        "Codex provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                    );
+                                }
                             }
 
                             if let Err(e) = self.db.update_provider_settings_config(
@@ -526,9 +550,20 @@ impl ProxyService {
                             {
                                 env_obj.insert("GEMINI_API_KEY".to_string(), json!(token));
                             } else {
-                                provider.settings_config["env"] = json!({
-                                    "GEMINI_API_KEY": token
-                                });
+                                if provider.settings_config.is_null() {
+                                    provider.settings_config = json!({});
+                                }
+
+                                if let Some(root) = provider.settings_config.as_object_mut() {
+                                    root.insert(
+                                        "env".to_string(),
+                                        json!({ "GEMINI_API_KEY": token }),
+                                    );
+                                } else {
+                                    log::warn!(
+                                        "Gemini provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                    );
+                                }
                             }
 
                             if let Err(e) = self.db.update_provider_settings_config(
@@ -1526,7 +1561,30 @@ impl ProxyService {
         if !path.exists() {
             return Err("Claude 配置文件不存在".to_string());
         }
-        read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))
+
+        let mut value: Value =
+            read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))?;
+
+        if value.is_null() {
+            value = json!({});
+        }
+
+        if !value.is_object() {
+            let kind = match &value {
+                Value::Null => "null",
+                Value::Bool(_) => "boolean",
+                Value::Number(_) => "number",
+                Value::String(_) => "string",
+                Value::Array(_) => "array",
+                Value::Object(_) => "object",
+            };
+            return Err(format!(
+                "Claude 配置文件格式错误：根节点必须是 JSON 对象（当前为 {kind}），路径: {}",
+                path.display()
+            ));
+        }
+
+        Ok(value)
     }
 
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {

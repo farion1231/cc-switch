@@ -38,13 +38,20 @@ impl AuthInfo {
     ///
     /// 显示前4位和后4位，中间用 `...` 代替
     /// 如果 key 长度不足8位，则返回 `***`
+    #[allow(dead_code)]
     pub fn masked_key(&self) -> String {
-        if self.api_key.len() > 8 {
-            format!(
-                "{}...{}",
-                &self.api_key[..4],
-                &self.api_key[self.api_key.len() - 4..]
-            )
+        if self.api_key.chars().count() > 8 {
+            let prefix: String = self.api_key.chars().take(4).collect();
+            let suffix: String = self
+                .api_key
+                .chars()
+                .rev()
+                .take(4)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            format!("{prefix}...{suffix}")
         } else {
             "***".to_string()
         }
@@ -54,8 +61,17 @@ impl AuthInfo {
     #[allow(dead_code)]
     pub fn masked_access_token(&self) -> Option<String> {
         self.access_token.as_ref().map(|token| {
-            if token.len() > 8 {
-                format!("{}...{}", &token[..4], &token[token.len() - 4..])
+            if token.chars().count() > 8 {
+                let prefix: String = token.chars().take(4).collect();
+                let suffix: String = token
+                    .chars()
+                    .rev()
+                    .take(4)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                format!("{prefix}...{suffix}")
             } else {
                 "***".to_string()
             }
@@ -127,6 +143,13 @@ mod tests {
     }
 
     #[test]
+    fn test_masked_key_utf8_safe() {
+        let auth = AuthInfo::new("测试⚠️1234567890".to_string(), AuthStrategy::Bearer);
+        let masked = auth.masked_key();
+        assert!(!masked.is_empty());
+    }
+
+    #[test]
     fn test_auth_strategy_equality() {
         assert_eq!(AuthStrategy::Anthropic, AuthStrategy::Anthropic);
         assert_ne!(AuthStrategy::Anthropic, AuthStrategy::Bearer);
@@ -158,6 +181,14 @@ mod tests {
         let auth =
             AuthInfo::with_access_token("refresh".to_string(), "ya29.1234567890abcdef".to_string());
         assert_eq!(auth.masked_access_token(), Some("ya29...cdef".to_string()));
+    }
+
+    #[test]
+    fn test_masked_access_token_utf8_safe() {
+        let auth =
+            AuthInfo::with_access_token("refresh".to_string(), "令牌⚠️1234567890".to_string());
+        let masked = auth.masked_access_token().unwrap();
+        assert!(!masked.is_empty());
     }
 
     #[test]
