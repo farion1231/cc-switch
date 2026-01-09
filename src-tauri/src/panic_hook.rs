@@ -1,12 +1,13 @@
 //! Panic Hook 模块
 //!
-//! 在应用崩溃时捕获 panic 信息并记录到 `~/.cc-switch/crash.log` 文件中。
+//! 在应用崩溃时捕获 panic 信息并记录到 `<app_config_dir>/crash.log` 文件中（默认 `~/.cc-switch/crash.log`）。
 //! 便于用户和开发者诊断闪退问题。
 
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::panic;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// 应用版本号（从 Cargo.toml 读取）
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -14,20 +15,35 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 日志文件保留数量
 const LOG_FILES_TO_KEEP: usize = 2;
 
-/// 获取崩溃日志文件路径
-fn get_crash_log_path() -> PathBuf {
+static APP_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn init_app_config_dir(dir: PathBuf) {
+    let _ = APP_CONFIG_DIR.set(dir);
+}
+
+/// 获取默认应用配置目录（不会 panic）
+fn default_app_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".cc-switch")
-        .join("crash.log")
+}
+
+/// 获取应用配置目录（优先使用初始化时写入的值；不会 panic）
+fn get_app_config_dir() -> PathBuf {
+    APP_CONFIG_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(default_app_config_dir)
+}
+
+/// 获取崩溃日志文件路径
+fn get_crash_log_path() -> PathBuf {
+    get_app_config_dir().join("crash.log")
 }
 
 /// 获取日志目录路径
 pub fn get_log_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".cc-switch")
-        .join("logs")
+    get_app_config_dir().join("logs")
 }
 
 /// 清理旧日志文件，只保留最近 N 个

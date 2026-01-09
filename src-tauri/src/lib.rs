@@ -55,6 +55,37 @@ use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 
+fn redact_url_for_log(url_str: &str) -> String {
+    match url::Url::parse(url_str) {
+        Ok(url) => {
+            let mut output = format!("{}://", url.scheme());
+            if let Some(host) = url.host_str() {
+                output.push_str(host);
+            }
+            output.push_str(url.path());
+
+            let mut keys: Vec<String> = url.query_pairs().map(|(k, _)| k.to_string()).collect();
+            keys.sort();
+            keys.dedup();
+
+            if !keys.is_empty() {
+                output.push_str("?[keys:");
+                output.push_str(&keys.join(","));
+                output.push(']');
+            }
+
+            output
+        }
+        Err(_) => {
+            let base = url_str.split('#').next().unwrap_or(url_str);
+            match base.split_once('?') {
+                Some((prefix, _)) => format!("{prefix}?[redacted]"),
+                None => base.to_string(),
+            }
+        }
+    }
+}
+
 /// 统一处理 ccswitch:// 深链接 URL
 ///
 /// - 解析 URL
@@ -70,7 +101,9 @@ fn handle_deeplink_url(
         return false;
     }
 
-    log::info!("✓ Deep link URL detected from {source}: {url_str}");
+    let redacted_url = redact_url_for_log(url_str);
+    log::info!("✓ Deep link URL detected from {source}: {redacted_url}");
+    log::debug!("Deep link URL (raw) from {source}: {url_str}");
 
     match crate::deeplink::parse_deeplink_url(url_str) {
         Ok(request) => {
@@ -151,7 +184,7 @@ fn macos_tray_icon() -> Option<Image<'static>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 设置 panic hook，在应用崩溃时记录日志到 ~/.cc-switch/crash.log
+    // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
     panic_hook::setup_panic_hook();
 
     let mut builder = tauri::Builder::default();
@@ -160,9 +193,9 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             log::info!("=== Single Instance Callback Triggered ===");
-            log::info!("Args count: {}", args.len());
+            log::debug!("Args count: {}", args.len());
             for (i, arg) in args.iter().enumerate() {
-                log::info!("  arg[{i}]: {arg}");
+                log::debug!("  arg[{i}]: {}", redact_url_for_log(arg));
             }
 
             // Check for deep link URL in args (mainly for Windows/Linux command line)
@@ -216,6 +249,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
+            // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
+            app_store::refresh_app_config_dir_override(app.handle());
+            panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
+
             // 注册 Updater 插件（桌面端）
             #[cfg(desktop)]
             {
@@ -228,12 +265,11 @@ pub fn run() {
                 }
             }
             // 初始化日志（Debug 和 Release 模式都启用 Info 级别）
-            // 日志同时输出到控制台和文件（~/.cc-switch/logs/）
+            // 日志同时输出到控制台和文件（<app_config_dir>/logs/；若设置了覆盖则使用覆盖目录）
             {
-                use tauri_plugin_log::{Target, TargetKind, RotationStrategy, TimezoneStrategy};
+                use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
-                // 日志文件存储到 ~/.cc-switch/logs/ 目录
-                let log_dir = crate::config::get_app_config_dir().join("logs");
+                let log_dir = panic_hook::get_log_dir();
 
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -256,9 +292,6 @@ pub fn run() {
                 // 清理旧日志文件，只保留最近 2 个
                 panic_hook::cleanup_old_logs();
             }
-
-            // 预先刷新 Store 覆盖配置，确保 AppState 初始化时可读取到最新路径
-            app_store::refresh_app_config_dir_override(app.handle());
 
             // 初始化数据库
             let app_config_dir = crate::config::get_app_config_dir();
@@ -554,7 +587,7 @@ pub fn run() {
 
                     for (i, url) in urls.iter().enumerate() {
                         let url_str = url.as_str();
-                        log::info!("  URL[{i}]: {url_str}");
+                        log::debug!("  URL[{i}]: {}", redact_url_for_log(url_str));
 
                         if handle_deeplink_url(&app_handle, url_str, true, "on_open_url") {
                             break; // Process only first ccswitch:// URL
