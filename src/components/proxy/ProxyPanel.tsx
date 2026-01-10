@@ -389,9 +389,12 @@ export function ProxyPanel() {
                     id="listen-address"
                     value={listenAddress}
                     onChange={(e) => setListenAddress(e.target.value)}
-                    placeholder={t("proxy.settings.fields.listenAddress.placeholder", {
-                      defaultValue: "127.0.0.1",
-                    })}
+                    placeholder={t(
+                      "proxy.settings.fields.listenAddress.placeholder",
+                      {
+                        defaultValue: "127.0.0.1",
+                      },
+                    )}
                   />
                   <p className="text-xs text-muted-foreground">
                     {t("proxy.settings.fields.listenAddress.description", {
@@ -414,9 +417,12 @@ export function ProxyPanel() {
                     onChange={(e) =>
                       setListenPort(parseInt(e.target.value) || 15721)
                     }
-                    placeholder={t("proxy.settings.fields.listenPort.placeholder", {
-                      defaultValue: "15721",
-                    })}
+                    placeholder={t(
+                      "proxy.settings.fields.listenPort.placeholder",
+                      {
+                        defaultValue: "15721",
+                      },
+                    )}
                   />
                   <p className="text-xs text-muted-foreground">
                     {t("proxy.settings.fields.listenPort.description", {

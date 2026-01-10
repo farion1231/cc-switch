@@ -70,7 +70,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       "https://www.packyapi.com",
     ],
     icon: "packycode",
-  },  
+  },
   {
     name: "Cubence",
     websiteUrl: "https://cubence.com",

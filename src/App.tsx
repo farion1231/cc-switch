@@ -624,10 +624,12 @@ function App() {
                     <Settings className="w-4 h-4" />
                   </Button>
                 </div>
-                <UpdateBadge onClick={() => {
-                  setSettingsDefaultTab("about");
-                  setCurrentView("settings");
-                }} />
+                <UpdateBadge
+                  onClick={() => {
+                    setSettingsDefaultTab("about");
+                    setCurrentView("settings");
+                  }}
+                />
               </>
             )}
           </div>

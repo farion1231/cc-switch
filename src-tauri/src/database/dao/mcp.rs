@@ -73,8 +73,9 @@ impl Database {
             params![
                 server.id,
                 server.name,
-                serde_json::to_string(&server.server)
-                    .map_err(|e| AppError::Database(format!("Failed to serialize server config: {e}")))?,
+                serde_json::to_string(&server.server).map_err(|e| AppError::Database(format!(
+                    "Failed to serialize server config: {e}"
+                )))?,
                 server.description,
                 server.homepage,
                 server.docs,

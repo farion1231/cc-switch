@@ -220,8 +220,9 @@ impl Database {
                 WHERE id = ?13 AND app_type = ?14",
                 params![
                     provider.name,
-                    serde_json::to_string(&provider.settings_config)
-                        .map_err(|e| AppError::Database(format!("Failed to serialize settings_config: {e}")))?,
+                    serde_json::to_string(&provider.settings_config).map_err(|e| {
+                        AppError::Database(format!("Failed to serialize settings_config: {e}"))
+                    })?,
                     provider.website_url,
                     provider.category,
                     provider.created_at,
@@ -229,8 +230,9 @@ impl Database {
                     provider.notes,
                     provider.icon,
                     provider.icon_color,
-                    serde_json::to_string(&meta_clone)
-                        .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?,
+                    serde_json::to_string(&meta_clone).map_err(|e| AppError::Database(format!(
+                        "Failed to serialize meta: {e}"
+                    )))?,
                     is_current,
                     in_failover_queue,
                     provider.id,
@@ -328,8 +330,9 @@ impl Database {
         conn.execute(
             "UPDATE providers SET settings_config = ?1 WHERE id = ?2 AND app_type = ?3",
             params![
-                serde_json::to_string(settings_config)
-                    .map_err(|e| AppError::Database(format!("Failed to serialize settings_config: {e}")))?,
+                serde_json::to_string(settings_config).map_err(|e| AppError::Database(format!(
+                    "Failed to serialize settings_config: {e}"
+                )))?,
                 provider_id,
                 app_type
             ],
