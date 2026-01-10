@@ -17,10 +17,11 @@ export function ModelTestConfigPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [config, setConfig] = useState<StreamCheckConfig>({
-    timeoutSecs: 45,
-    maxRetries: 2,
-    degradedThresholdMs: 6000,
+  // 使用字符串状态以支持完全清空数字输入框
+  const [config, setConfig] = useState({
+    timeoutSecs: "45",
+    maxRetries: "2",
+    degradedThresholdMs: "6000",
     claudeModel: "claude-haiku-4-5-20251001",
     codexModel: "gpt-5.1-codex@low",
     geminiModel: "gemini-3-pro-preview",
@@ -35,7 +36,14 @@ export function ModelTestConfigPanel() {
       setIsLoading(true);
       setError(null);
       const data = await getStreamCheckConfig();
-      setConfig(data);
+      setConfig({
+        timeoutSecs: String(data.timeoutSecs),
+        maxRetries: String(data.maxRetries),
+        degradedThresholdMs: String(data.degradedThresholdMs),
+        claudeModel: data.claudeModel,
+        codexModel: data.codexModel,
+        geminiModel: data.geminiModel,
+      });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -44,9 +52,22 @@ export function ModelTestConfigPanel() {
   }
 
   async function handleSave() {
+    // 解析数字，空值使用默认值，0 是有效值
+    const parseNum = (val: string, defaultVal: number) => {
+      const n = parseInt(val);
+      return isNaN(n) ? defaultVal : n;
+    };
     try {
       setIsSaving(true);
-      await saveStreamCheckConfig(config);
+      const parsed: StreamCheckConfig = {
+        timeoutSecs: parseNum(config.timeoutSecs, 45),
+        maxRetries: parseNum(config.maxRetries, 2),
+        degradedThresholdMs: parseNum(config.degradedThresholdMs, 6000),
+        claudeModel: config.claudeModel,
+        codexModel: config.codexModel,
+        geminiModel: config.geminiModel,
+      };
+      await saveStreamCheckConfig(parsed);
       toast.success(t("streamCheck.configSaved"), {
         closeButton: true,
       });
@@ -132,10 +153,7 @@ export function ModelTestConfigPanel() {
               max={120}
               value={config.timeoutSecs}
               onChange={(e) =>
-                setConfig({
-                  ...config,
-                  timeoutSecs: parseInt(e.target.value) || 45,
-                })
+                setConfig({ ...config, timeoutSecs: e.target.value })
               }
             />
           </div>
@@ -149,10 +167,7 @@ export function ModelTestConfigPanel() {
               max={5}
               value={config.maxRetries}
               onChange={(e) =>
-                setConfig({
-                  ...config,
-                  maxRetries: parseInt(e.target.value) || 2,
-                })
+                setConfig({ ...config, maxRetries: e.target.value })
               }
             />
           </div>
@@ -169,10 +184,7 @@ export function ModelTestConfigPanel() {
               step={1000}
               value={config.degradedThresholdMs}
               onChange={(e) =>
-                setConfig({
-                  ...config,
-                  degradedThresholdMs: parseInt(e.target.value) || 6000,
-                })
+                setConfig({ ...config, degradedThresholdMs: e.target.value })
               }
             />
           </div>
