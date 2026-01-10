@@ -405,9 +405,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     // 请求地址候选（用于地址管理/测速）
-    endpointCandidates: [
-      "https://api.aigocode.com",
-    ],
+    endpointCandidates: ["https://api.aigocode.com"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "aigocode", // 促销信息 i18n key

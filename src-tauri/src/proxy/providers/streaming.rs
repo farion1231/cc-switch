@@ -75,8 +75,6 @@ pub fn create_anthropic_sse_stream(
         let mut current_block_type: Option<String> = None;
         let mut tool_call_id = None;
 
-        log::info!("[Claude/OpenRouter] ====== 开始流式响应转换 ======");
-
         tokio::pin!(stream);
 
         while let Some(chunk) = stream.next().await {
@@ -96,25 +94,18 @@ pub fn create_anthropic_sse_stream(
                         for l in line.lines() {
                             if let Some(data) = l.strip_prefix("data: ") {
                                 if data.trim() == "[DONE]" {
-                                    log::info!("[Claude/OpenRouter] <<< OpenAI SSE: [DONE]");
+                                    log::debug!("[Claude/OpenRouter] <<< OpenAI SSE: [DONE]");
                                     let event = json!({"type": "message_stop"});
                                     let sse_data = format!("event: message_stop\ndata: {}\n\n",
                                         serde_json::to_string(&event).unwrap_or_default());
-                                    log::info!("[Claude/OpenRouter] >>> Anthropic SSE: message_stop");
+                                    log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_stop");
                                     yield Ok(Bytes::from(sse_data));
                                     continue;
                                 }
 
                                 if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(data) {
-                                    // 记录原始 OpenAI 事件（格式化显示）
-                                    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(data) {
-                                        log::info!(
-                                            "[Claude/OpenRouter] <<< OpenAI SSE 事件:\n{}",
-                                            serde_json::to_string_pretty(&json_value).unwrap_or_else(|_| data.to_string())
-                                        );
-                                    } else {
-                                        log::info!("[Claude/OpenRouter] <<< OpenAI SSE 数据: {data}");
-                                    }
+                                    // 仅在 DEBUG 级别简短记录 SSE 事件
+                                    log::debug!("[Claude/OpenRouter] <<< SSE chunk received");
 
                                     if message_id.is_none() {
                                         message_id = Some(chunk.id.clone());

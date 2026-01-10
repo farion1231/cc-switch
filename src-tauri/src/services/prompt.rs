@@ -85,7 +85,7 @@ impl PromptService {
                         if !content_exists {
                             let timestamp = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
+                                .unwrap_or_default()
                                 .as_secs() as i64;
                             let backup_id = format!("backup-{timestamp}");
                             let backup_prompt = Prompt {

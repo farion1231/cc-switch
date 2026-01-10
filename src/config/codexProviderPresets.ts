@@ -181,7 +181,11 @@ requires_openai_auth = true`,
     apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
     category: "third_party",
     auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig("aigocode", "https://api.aigocode.com/openai", "gpt-5.2"),
+    config: generateThirdPartyConfig(
+      "aigocode",
+      "https://api.aigocode.com/openai",
+      "gpt-5.2",
+    ),
     endpointCandidates: ["https://api.aigocode.com"],
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "aigocode", // 促销信息 i18n key

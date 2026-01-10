@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "anyhow",
  "async-stream",

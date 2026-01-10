@@ -38,15 +38,15 @@ export function ProxyPanel() {
   const { data: globalConfig } = useGlobalProxyConfig();
   const updateGlobalConfig = useUpdateGlobalProxyConfig();
 
-  // 监听地址/端口的本地状态
+  // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
-  const [listenPort, setListenPort] = useState(15721);
+  const [listenPort, setListenPort] = useState("15721");
 
   // 同步全局配置到本地状态
   useEffect(() => {
     if (globalConfig) {
       setListenAddress(globalConfig.listenAddress);
-      setListenPort(globalConfig.listenPort);
+      setListenPort(String(globalConfig.listenPort));
     }
   }, [globalConfig]);
 
@@ -102,11 +102,13 @@ export function ProxyPanel() {
 
   const handleSaveBasicConfig = async () => {
     if (!globalConfig) return;
+    const port = parseInt(listenPort);
+    const validPort = isNaN(port) || port < 1024 || port > 65535 ? 15721 : port;
     try {
       await updateGlobalConfig.mutateAsync({
         ...globalConfig,
         listenAddress,
-        listenPort,
+        listenPort: validPort,
       });
       toast.success(
         t("proxy.settings.configSaved", { defaultValue: "代理配置已保存" }),
@@ -389,9 +391,12 @@ export function ProxyPanel() {
                     id="listen-address"
                     value={listenAddress}
                     onChange={(e) => setListenAddress(e.target.value)}
-                    placeholder={t("proxy.settings.fields.listenAddress.placeholder", {
-                      defaultValue: "127.0.0.1",
-                    })}
+                    placeholder={t(
+                      "proxy.settings.fields.listenAddress.placeholder",
+                      {
+                        defaultValue: "127.0.0.1",
+                      },
+                    )}
                   />
                   <p className="text-xs text-muted-foreground">
                     {t("proxy.settings.fields.listenAddress.description", {
@@ -411,12 +416,13 @@ export function ProxyPanel() {
                     id="listen-port"
                     type="number"
                     value={listenPort}
-                    onChange={(e) =>
-                      setListenPort(parseInt(e.target.value) || 15721)
-                    }
-                    placeholder={t("proxy.settings.fields.listenPort.placeholder", {
-                      defaultValue: "15721",
-                    })}
+                    onChange={(e) => setListenPort(e.target.value)}
+                    placeholder={t(
+                      "proxy.settings.fields.listenPort.placeholder",
+                      {
+                        defaultValue: "15721",
+                      },
+                    )}
                   />
                   <p className="text-xs text-muted-foreground">
                     {t("proxy.settings.fields.listenPort.description", {

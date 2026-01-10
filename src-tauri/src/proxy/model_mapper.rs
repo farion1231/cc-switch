@@ -127,7 +127,7 @@ pub fn apply_model_mapping(
         let mapped = mapping.map_model(original, has_thinking);
 
         if mapped != *original {
-            log::info!("[ModelMapper] 模型映射: {original} → {mapped}");
+            log::debug!("[ModelMapper] 模型映射: {original} → {mapped}");
             body["model"] = serde_json::json!(mapped);
             return (body, Some(original.clone()), Some(mapped));
         }
