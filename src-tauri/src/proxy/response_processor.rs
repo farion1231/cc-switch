@@ -46,8 +46,6 @@ pub async fn handle_streaming(
     state: &ProxyState,
     parser_config: &UsageParserConfig,
 ) -> Response {
-    log::info!("[{}] 流式透传响应 (SSE)", ctx.tag);
-
     let status = response.status();
     let mut builder = axum::response::Response::builder().status(status);
 
@@ -151,8 +149,6 @@ pub async fn handle_non_streaming(
             false,
         );
     }
-
-    log::info!("[{}] ====== 请求结束 ======", ctx.tag);
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
@@ -493,16 +489,16 @@ pub fn create_logged_passthrough_stream(
                                             if let Some(c) = &collector {
                                                 c.push(json_value.clone()).await;
                                             }
-                                            log::info!(
-                                                "[{}] <<< SSE 事件:\n{}",
+                                            log::debug!(
+                                                "[{}] <<< SSE 事件: {}",
                                                 tag,
-                                                serde_json::to_string_pretty(&json_value).unwrap_or_else(|_| data.to_string())
+                                                data.chars().take(100).collect::<String>()
                                             );
                                         } else {
-                                            log::info!("[{tag}] <<< SSE 数据: {data}");
+                                            log::debug!("[{tag}] <<< SSE 数据: {}", data.chars().take(100).collect::<String>());
                                         }
                                     } else {
-                                        log::info!("[{tag}] <<< SSE: [DONE]");
+                                        log::debug!("[{tag}] <<< SSE: [DONE]");
                                     }
                                 }
                             }
@@ -522,8 +518,6 @@ pub fn create_logged_passthrough_stream(
                 }
             }
         }
-
-        log::info!("[{}] ====== 流结束 ======", tag);
 
         if let Some(c) = collector.take() {
             c.finish().await;

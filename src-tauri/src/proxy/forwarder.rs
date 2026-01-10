@@ -305,6 +305,14 @@ impl RequestForwarder {
                                     Some(format!("Provider {} 失败: {}", provider.name, e));
                             }
 
+                            log::info!(
+                                "[{}] Provider {} 请求失败，切换到下一个 (已尝试 {}/{})",
+                                app_type_str,
+                                provider.name,
+                                attempted_providers,
+                                providers.len()
+                            );
+
                             last_error = Some(e);
                             last_provider = Some(provider.clone());
                             // 继续尝试下一个供应商
@@ -359,6 +367,10 @@ impl RequestForwarder {
                     (status.success_requests as f32 / status.total_requests as f32) * 100.0;
             }
         }
+
+        log::info!(
+            "[{app_type_str}] 所有 {attempted_providers} 个 Provider 均已尝试失败"
+        );
 
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),

@@ -127,7 +127,7 @@ impl RequestContext {
             .cloned()
             .ok_or(ProxyError::NoAvailableProvider)?;
 
-        log::info!(
+        log::debug!(
             "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
             tag,
             provider.name,
@@ -168,7 +168,6 @@ impl RequestContext {
             .unwrap_or("unknown")
             .to_string();
 
-        log::info!("[{}] 从 URI 提取模型: {}", self.tag, self.request_model);
         self
     }
 
@@ -190,7 +189,7 @@ impl RequestContext {
                 )
             } else {
                 // 故障转移关闭：不启用超时配置
-                log::info!(
+                log::debug!(
                     "[{}] Failover disabled, timeout configs are bypassed",
                     self.tag
                 );
