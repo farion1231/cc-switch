@@ -802,25 +802,25 @@ pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
 ) -> Result<Option<(String, String, String, String)>, AppError> {
-    // 1) 去除供应商前缀（/ 之前）与冒号后缀（: 之后），例如 moonshotai/kimi-k2-0905:exa → kimi-k2-0905
-    let without_prefix = model_id
+    // 清洗模型名称：去前缀(/)、去后缀(:)、@ 替换为 -
+    // 例如 moonshotai/gpt-5.2-codex@low:v2 → gpt-5.2-codex-low
+    let cleaned = model_id
         .rsplit_once('/')
-        .map(|(_, rest)| rest)
-        .unwrap_or(model_id);
-    let cleaned = without_prefix
+        .map_or(model_id, |(_, r)| r)
         .split(':')
         .next()
-        .map(str::trim)
-        .unwrap_or(without_prefix);
+        .unwrap_or(model_id)
+        .trim()
+        .replace('@', "-");
 
-    // 2) 精确匹配清洗后的名称
+    // 精确匹配清洗后的名称
     let exact = conn
         .query_row(
             "SELECT input_cost_per_million, output_cost_per_million,
                     cache_read_cost_per_million, cache_creation_cost_per_million
              FROM model_pricing
              WHERE model_id = ?1",
-            [cleaned],
+            [&cleaned],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -950,6 +950,13 @@ mod tests {
         assert!(
             result.is_some(),
             "带前缀+冒号后缀的模型应清洗后匹配到 kimi-k2-0905"
+        );
+
+        // 清洗：@ 替换为 -（seed_model_pricing 已预置 gpt-5.2-codex-low）
+        let result = find_model_pricing_row(&conn, "gpt-5.2-codex@low")?;
+        assert!(
+            result.is_some(),
+            "带 @ 分隔符的模型 gpt-5.2-codex@low 应能匹配到 gpt-5.2-codex-low"
         );
 
         // 测试不存在的模型
