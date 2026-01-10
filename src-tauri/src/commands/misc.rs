@@ -145,7 +145,8 @@ async fn fetch_npm_latest_version(client: &reqwest::Client, package: &str) -> Op
 /// 从版本输出中提取纯版本号
 fn extract_version(raw: &str) -> String {
     // 匹配 semver 格式: x.y.z 或 x.y.z-xxx
-    let re = regex::Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?").unwrap();
+    let re = regex::Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?")
+        .expect("Invalid version regex pattern");
     re.find(raw)
         .map(|m| m.as_str().to_string())
         .unwrap_or_else(|| raw.to_string())

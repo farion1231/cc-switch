@@ -409,27 +409,26 @@ fn merge_claude_config(
         })?;
 
     // Auto-fill API key if not provided in URL
-    if request.api_key.is_none() || request.api_key.as_ref().unwrap().is_empty() {
+    if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(token) = env.get("ANTHROPIC_AUTH_TOKEN").and_then(|v| v.as_str()) {
             request.api_key = Some(token.to_string());
         }
     }
 
     // Auto-fill endpoint if not provided in URL
-    if request.endpoint.is_none() || request.endpoint.as_ref().unwrap().is_empty() {
+    if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(base_url) = env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
             request.endpoint = Some(base_url.to_string());
         }
     }
 
     // Auto-fill homepage from endpoint if not provided
-    if (request.homepage.is_none() || request.homepage.as_ref().unwrap().is_empty())
-        && request.endpoint.is_some()
-        && !request.endpoint.as_ref().unwrap().is_empty()
-    {
-        request.homepage = infer_homepage_from_endpoint(request.endpoint.as_ref().unwrap());
-        if request.homepage.is_none() {
-            request.homepage = Some("https://anthropic.com".to_string());
+    if request.homepage.as_ref().is_none_or(|s| s.is_empty()) {
+        if let Some(endpoint) = request.endpoint.as_ref().filter(|s| !s.is_empty()) {
+            request.homepage = infer_homepage_from_endpoint(endpoint);
+            if request.homepage.is_none() {
+                request.homepage = Some("https://anthropic.com".to_string());
+            }
         }
     }
 
@@ -468,7 +467,7 @@ fn merge_codex_config(
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
     // Auto-fill API key from auth.OPENAI_API_KEY
-    if request.api_key.is_none() || request.api_key.as_ref().unwrap().is_empty() {
+    if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(api_key) = config
             .get("auth")
             .and_then(|v| v.get("OPENAI_API_KEY"))
@@ -483,7 +482,7 @@ fn merge_codex_config(
         // Parse TOML config string to extract base_url and model
         if let Ok(toml_value) = toml::from_str::<toml::Value>(config_str) {
             // Extract base_url from model_providers section
-            if request.endpoint.is_none() || request.endpoint.as_ref().unwrap().is_empty() {
+            if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
                 if let Some(base_url) = extract_codex_base_url(&toml_value) {
                     request.endpoint = Some(base_url);
                 }
@@ -499,13 +498,12 @@ fn merge_codex_config(
     }
 
     // Auto-fill homepage from endpoint
-    if (request.homepage.is_none() || request.homepage.as_ref().unwrap().is_empty())
-        && request.endpoint.is_some()
-        && !request.endpoint.as_ref().unwrap().is_empty()
-    {
-        request.homepage = infer_homepage_from_endpoint(request.endpoint.as_ref().unwrap());
-        if request.homepage.is_none() {
-            request.homepage = Some("https://openai.com".to_string());
+    if request.homepage.as_ref().is_none_or(|s| s.is_empty()) {
+        if let Some(endpoint) = request.endpoint.as_ref().filter(|s| !s.is_empty()) {
+            request.homepage = infer_homepage_from_endpoint(endpoint);
+            if request.homepage.is_none() {
+                request.homepage = Some("https://openai.com".to_string());
+            }
         }
     }
 
@@ -518,13 +516,13 @@ fn merge_gemini_config(
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
     // Gemini uses flat env structure
-    if request.api_key.is_none() || request.api_key.as_ref().unwrap().is_empty() {
+    if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(api_key) = config.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
             request.api_key = Some(api_key.to_string());
         }
     }
 
-    if request.endpoint.is_none() || request.endpoint.as_ref().unwrap().is_empty() {
+    if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(base_url) = config.get("GEMINI_BASE_URL").and_then(|v| v.as_str()) {
             request.endpoint = Some(base_url.to_string());
         }
@@ -538,13 +536,12 @@ fn merge_gemini_config(
     }
 
     // Auto-fill homepage from endpoint
-    if (request.homepage.is_none() || request.homepage.as_ref().unwrap().is_empty())
-        && request.endpoint.is_some()
-        && !request.endpoint.as_ref().unwrap().is_empty()
-    {
-        request.homepage = infer_homepage_from_endpoint(request.endpoint.as_ref().unwrap());
-        if request.homepage.is_none() {
-            request.homepage = Some("https://ai.google.dev".to_string());
+    if request.homepage.as_ref().is_none_or(|s| s.is_empty()) {
+        if let Some(endpoint) = request.endpoint.as_ref().filter(|s| !s.is_empty()) {
+            request.homepage = infer_homepage_from_endpoint(endpoint);
+            if request.homepage.is_none() {
+                request.homepage = Some("https://ai.google.dev".to_string());
+            }
         }
     }
 
