@@ -305,8 +305,8 @@ impl RequestForwarder {
                                     Some(format!("Provider {} 失败: {}", provider.name, e));
                             }
 
-                            log::info!(
-                                "[{}] Provider {} 请求失败，切换到下一个 (已尝试 {}/{})",
+                            log::warn!(
+                                "[{}] [FWD-001] Provider {} 失败，切换下一个 ({}/{})",
                                 app_type_str,
                                 provider.name,
                                 attempted_providers,
@@ -368,9 +368,7 @@ impl RequestForwarder {
             }
         }
 
-        log::info!(
-            "[{app_type_str}] 所有 {attempted_providers} 个 Provider 均已尝试失败"
-        );
+        log::warn!("[{app_type_str}] [FWD-002] 所有 Provider 均失败");
 
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),

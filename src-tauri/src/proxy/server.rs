@@ -95,7 +95,7 @@ impl ProxyServer {
             .await
             .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
 
-        log::info!("代理服务器启动于 {addr}");
+        log::info!("[SRV-001] 代理服务器启动于 {addr}");
 
         // 保存关闭句柄
         *self.shutdown_tx.write().await = Some(shutdown_tx);
@@ -146,9 +146,9 @@ impl ProxyServer {
         // 2. 等待服务器任务结束（带 5 秒超时保护）
         if let Some(handle) = self.server_handle.write().await.take() {
             match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
-                Ok(Ok(())) => log::info!("代理服务器已完全停止"),
-                Ok(Err(e)) => log::warn!("代理服务器任务异常终止: {e}"),
-                Err(_) => log::warn!("代理服务器停止超时（5秒），强制继续"),
+                Ok(Ok(())) => log::info!("[SRV-002] 代理服务器已完全停止"),
+                Ok(Err(e)) => log::warn!("[SRV-003] 代理服务器任务异常终止: {e}"),
+                Err(_) => log::warn!("[SRV-004] 代理服务器停止超时（5秒），强制继续"),
             }
         }
 

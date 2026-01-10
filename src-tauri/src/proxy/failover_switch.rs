@@ -86,17 +86,17 @@ impl FailoverSwitchManager {
         let app_enabled = match self.db.get_proxy_config_for_app(app_type).await {
             Ok(config) => config.enabled,
             Err(e) => {
-                log::warn!("[Failover] 无法读取 {app_type} 配置: {e}，跳过切换");
+                log::warn!("[FO-002] 无法读取 {app_type} 配置: {e}，跳过切换");
                 return Ok(false);
             }
         };
 
         if !app_enabled {
-            log::info!("[Failover] {app_type} 未被代理接管（enabled=false），跳过切换");
+            log::debug!("[Failover] {app_type} 未启用代理，跳过切换");
             return Ok(false);
         }
 
-        log::info!("[Failover] 开始切换供应商: {app_type} -> {provider_name} ({provider_id})");
+        log::info!("[FO-001] 切换: {app_type} → {provider_name}");
 
         // 1. 更新数据库 is_current
         self.db.set_current_provider(app_type, provider_id)?;
@@ -117,7 +117,7 @@ impl FailoverSwitchManager {
                         .update_live_backup_from_provider(app_type, &provider)
                         .await
                     {
-                        log::warn!("[Failover] 更新 Live 备份失败: {e}");
+                        log::warn!("[FO-003] Live 备份更新失败: {e}");
                     }
                 }
 
@@ -138,11 +138,9 @@ impl FailoverSwitchManager {
                 "source": "failover"  // 标识来源是故障转移
             });
             if let Err(e) = app.emit("provider-switched", event_data) {
-                log::error!("[Failover] 发射供应商切换事件失败: {e}");
+                log::error!("[Failover] 发射事件失败: {e}");
             }
         }
-
-        log::info!("[Failover] 供应商切换完成: {app_type} -> {provider_name} ({provider_id})");
 
         Ok(true)
     }
