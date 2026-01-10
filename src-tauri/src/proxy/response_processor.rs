@@ -97,12 +97,6 @@ pub async fn handle_non_streaming(
 
     // 解析并记录使用量
     if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
-        log::info!(
-            "[{}] <<< 响应 JSON:\n{}",
-            ctx.tag,
-            serde_json::to_string_pretty(&json_value).unwrap_or_default()
-        );
-
         // 解析使用量
         if let Some(usage) = (parser_config.response_parser)(&json_value) {
             // 优先使用 usage 中解析出的模型名称，其次使用响应中的 model 字段，最后回退到请求模型
@@ -135,7 +129,7 @@ pub async fn handle_non_streaming(
             );
         }
     } else {
-        log::info!(
+        log::debug!(
             "[{}] <<< 响应 (非 JSON): {} bytes",
             ctx.tag,
             body_bytes.len()
@@ -414,7 +408,7 @@ async fn log_usage_internal(
         None, // provider_type
         is_streaming,
     ) {
-        log::warn!("记录使用量失败: {e}");
+        log::warn!("[USG-001] 记录使用量失败: {e}");
     }
 }
 
