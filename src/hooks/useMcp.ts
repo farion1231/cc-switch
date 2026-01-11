@@ -6,9 +6,9 @@ import type { AppId } from "@/lib/api/types";
 /**
  * 查询所有 MCP 服务器（统一管理）
  */
-export function useAllMcpServers() {
+export function useAllMcpServers(activeConfigSetId?: string) {
   return useQuery({
-    queryKey: ["mcp", "all"],
+    queryKey: ["mcp", "all", activeConfigSetId ?? "default"],
     queryFn: () => mcpApi.getAllServers(),
   });
 }

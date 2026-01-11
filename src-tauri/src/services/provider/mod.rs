@@ -20,7 +20,7 @@ use crate::settings::CustomEndpoint;
 use crate::store::AppState;
 
 // Re-export sub-module functions for external access
-pub use live::{import_default_config, read_live_settings, sync_current_to_live};
+pub use live::{import_default_config, read_live_settings, sync_current_to_live, sync_current_to_live_with_options};
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::write_live_snapshot;
@@ -355,6 +355,14 @@ impl ProviderService {
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)
+    }
+
+    /// Sync current provider to live configuration with options
+    pub fn sync_current_to_live_with_options(
+        state: &AppState,
+        sync_mcp: bool,
+    ) -> Result<(), AppError> {
+        sync_current_to_live_with_options(state, sync_mcp)
     }
 
     /// Extract common config snippet from current provider

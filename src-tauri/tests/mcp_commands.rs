@@ -5,7 +5,7 @@ use serde_json::json;
 
 use cc_switch_lib::{
     get_claude_mcp_path, get_claude_settings_path, import_default_config_test_hook, AppError,
-    AppType, McpApps, McpServer, McpService, MultiAppConfig,
+    AppSettings, AppType, McpApps, McpServer, McpService, MultiAppConfig,
 };
 
 #[path = "support.rs"]
@@ -552,5 +552,126 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
     assert!(
         !home.join(".claude.json").exists(),
         "~/.claude.json should still not exist after skipped sync"
+    );
+}
+
+#[test]
+fn mcp_env_apps_are_isolated_between_config_sets() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    // 准备两个环境：default 与 wsl
+    let base_settings: AppSettings = serde_json::from_value(json!({
+        "configDirectorySets": [
+            { "id": "default", "name": "Default" },
+            { "id": "wsl", "name": "WSL" }
+        ],
+        "activeConfigDirectorySetId": "default"
+    }))
+    .expect("create base settings with two config sets");
+    cc_switch_lib::update_settings(base_settings).expect("seed settings file");
+
+    let state = support::create_test_state().expect("create test state");
+
+    // 在 default 环境启用 echo 服务器
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "echo".to_string(),
+            name: "echo".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("upsert server in default env");
+
+    let default_servers = McpService::get_all_servers(&state).expect("load default env servers");
+    assert!(
+        default_servers
+            .get("echo")
+            .expect("echo exists in default env")
+            .apps
+            .claude,
+        "echo should be enabled for Claude in default env",
+    );
+
+    // 切换到 wsl 环境后，不应自动启用 echo
+    let settings_path = home.join(".cc-switch").join("settings.json");
+    let mut settings: AppSettings = serde_json::from_str(
+        &fs::read_to_string(&settings_path).expect("read settings file after default upsert"),
+    )
+    .expect("parse settings file");
+    settings.active_config_directory_set_id = Some("wsl".to_string());
+    cc_switch_lib::update_settings(settings).expect("activate wsl env");
+
+    let wsl_servers = McpService::get_all_servers(&state).expect("load wsl env servers");
+    assert!(
+        !wsl_servers
+            .get("echo")
+            .expect("echo exists in wsl env")
+            .apps
+            .claude,
+        "enabling in default env should not auto-enable in wsl env"
+    );
+
+    // 回到 default，再新增一个服务器
+    let mut settings: AppSettings = serde_json::from_str(
+        &fs::read_to_string(&settings_path).expect("read settings before switching back"),
+    )
+    .expect("parse settings file");
+    settings.active_config_directory_set_id = Some("default".to_string());
+    cc_switch_lib::update_settings(settings).expect("switch back to default env");
+
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "new-server".to_string(),
+            name: "new-server".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "printf"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("upsert second server in default env");
+
+    // 在 wsl 环境应保持新服务器未启用
+    let mut settings: AppSettings = serde_json::from_str(
+        &fs::read_to_string(&settings_path).expect("read settings before activating wsl again"),
+    )
+    .expect("parse settings file");
+    settings.active_config_directory_set_id = Some("wsl".to_string());
+    cc_switch_lib::update_settings(settings).expect("activate wsl env again");
+
+    let wsl_servers_after_new =
+        McpService::get_all_servers(&state).expect("load wsl env after new server");
+    assert!(
+        !wsl_servers_after_new
+            .get("new-server")
+            .expect("new-server exists in wsl env")
+            .apps
+            .claude,
+        "new server created in default env should stay disabled in wsl env"
     );
 }

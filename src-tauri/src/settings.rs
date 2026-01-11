@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
-use crate::app_config::AppType;
+use crate::app_config::{AppType, McpApps};
 use crate::error::AppError;
 
 /// 自定义端点配置（历史兼容，实际存储在 provider.meta.custom_endpoints）
@@ -14,6 +15,25 @@ pub struct CustomEndpoint {
     pub added_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_used: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigDirectorySet {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gemini_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_claude: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_codex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_gemini: Option<String>,
 }
 
 /// 应用设置结构
@@ -47,6 +67,13 @@ pub struct AppSettings {
     pub codex_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_directory_sets: Vec<ConfigDirectorySet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_config_directory_set_id: Option<String>,
+    /// MCP 环境级应用启用状态（config set -> server id -> apps）
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub mcp_env_apps: HashMap<String, HashMap<String, McpApps>>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -84,9 +111,12 @@ impl Default for AppSettings {
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
+            config_directory_sets: Vec::new(),
+            active_config_directory_set_id: None,
             current_provider_claude: None,
             current_provider_codex: None,
             current_provider_gemini: None,
+            mcp_env_apps: HashMap::new(),
         }
     }
 }
@@ -128,6 +158,71 @@ impl AppSettings {
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "ja"))
             .map(|s| s.to_string());
+
+        self.active_config_directory_set_id = self
+            .active_config_directory_set_id
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        for (idx, set) in self.config_directory_sets.iter_mut().enumerate() {
+            let trimmed_id = set.id.trim();
+            if trimmed_id.is_empty() {
+                set.id = format!("configset-{}", idx + 1);
+            } else {
+                set.id = trimmed_id.to_string();
+            }
+
+            let trimmed_name = set.name.trim();
+            if trimmed_name.is_empty() {
+                set.name = format!("Config Set {}", idx + 1);
+            } else {
+                set.name = trimmed_name.to_string();
+            }
+
+            set.claude_config_dir = set
+                .claude_config_dir
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            set.codex_config_dir = set
+                .codex_config_dir
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            set.gemini_config_dir = set
+                .gemini_config_dir
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            set.current_provider_claude = set
+                .current_provider_claude
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            set.current_provider_codex = set
+                .current_provider_codex
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            set.current_provider_gemini = set
+                .current_provider_gemini
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+        }
     }
 
     fn load_from_file() -> Self {
@@ -197,7 +292,22 @@ pub fn get_settings() -> AppSettings {
 }
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
+    let active_set_id = new_settings.active_config_directory_set_id.clone();
+
     new_settings.normalize_paths();
+
+    if let Some(active_id) = active_set_id {
+        if let Some(target) = new_settings
+            .config_directory_sets
+            .iter()
+            .find(|set| set.id == active_id)
+        {
+            new_settings.current_provider_claude = target.current_provider_claude.clone();
+            new_settings.current_provider_codex = target.current_provider_codex.clone();
+            new_settings.current_provider_gemini = target.current_provider_gemini.clone();
+        }
+    }
+
     save_settings_file(&new_settings)?;
 
     let mut guard = settings_store().write().expect("写入设置锁失败");
@@ -238,6 +348,41 @@ pub fn get_gemini_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_override_path(p))
 }
 
+/// 读取指定环境下的 MCP 启用状态映射（env_id -> {server_id -> McpApps}）
+pub fn get_mcp_apps_for_env(env_id: &str) -> Option<HashMap<String, McpApps>> {
+    let settings = settings_store().read().ok()?;
+    settings.mcp_env_apps.get(env_id).cloned()
+}
+
+/// 设置指定环境下的 MCP 启用状态映射（空映射将移除该环境条目）
+pub fn set_mcp_apps_for_env(env_id: &str, apps: HashMap<String, McpApps>) -> Result<(), AppError> {
+    let mut settings = get_settings();
+    if apps.is_empty() {
+        settings.mcp_env_apps.remove(env_id);
+    } else {
+        settings.mcp_env_apps.insert(env_id.to_string(), apps);
+    }
+    update_settings(settings)
+}
+
+/// 从所有环境映射中移除指定服务器的状态
+pub fn remove_mcp_server_from_envs(server_id: &str) -> Result<(), AppError> {
+    let mut settings = get_settings();
+    let mut changed = false;
+
+    for env_map in settings.mcp_env_apps.values_mut() {
+        if env_map.remove(server_id).is_some() {
+            changed = true;
+        }
+    }
+
+    if changed {
+        update_settings(settings)
+    } else {
+        Ok(())
+    }
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）
@@ -264,6 +409,26 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Claude => settings.current_provider_claude = id.map(|s| s.to_string()),
         AppType::Codex => settings.current_provider_codex = id.map(|s| s.to_string()),
         AppType::Gemini => settings.current_provider_gemini = id.map(|s| s.to_string()),
+    }
+
+    if let Some(active_id) = settings.active_config_directory_set_id.clone() {
+        if let Some(active_set) = settings
+            .config_directory_sets
+            .iter_mut()
+            .find(|set| set.id == active_id)
+        {
+            match app_type {
+                AppType::Claude => {
+                    active_set.current_provider_claude = settings.current_provider_claude.clone();
+                }
+                AppType::Codex => {
+                    active_set.current_provider_codex = settings.current_provider_codex.clone();
+                }
+                AppType::Gemini => {
+                    active_set.current_provider_gemini = settings.current_provider_gemini.clone();
+                }
+            }
+        }
     }
 
     update_settings(settings)

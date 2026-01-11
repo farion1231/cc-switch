@@ -6,24 +6,31 @@ import {
   Loader2,
   Play,
   Plus,
+  RotateCcw,
   TestTube2,
   Trash2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { LaunchConfigSet } from "@/hooks/useConfigSets";
 
 interface ProviderActionsProps {
   isCurrent: boolean;
+  onSwitch: (configSetId?: string) => void | Promise<void>;
   isTesting?: boolean;
   isProxyTakeover?: boolean;
-  onSwitch: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
   onConfigureUsage: () => void;
   onDelete: () => void;
-  // 故障转移相关
+  configSets?: LaunchConfigSet[];
+  activeConfigSetId?: string;
+  isSwitching?: boolean;
+  onResetCircuitBreaker?: () => void;
+  isProxyTarget?: boolean;
+  consecutiveFailures?: number;
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
@@ -39,89 +46,98 @@ export function ProviderActions({
   onTest,
   onConfigureUsage,
   onDelete,
-  // 故障转移相关
+  configSets,
+  activeConfigSetId,
+  isSwitching = false,
+  onResetCircuitBreaker,
+  isProxyTarget,
+  consecutiveFailures = 0,
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
+  const defaultConfigSetId =
+    activeConfigSetId ?? configSets?.[0]?.id ?? undefined;
 
-  // 故障转移模式下的按钮逻辑
-  const isFailoverMode = isAutoFailoverEnabled && onToggleFailover;
-
-  // 处理主按钮点击
-  const handleMainButtonClick = () => {
-    if (isFailoverMode) {
-      // 故障转移模式：切换队列状态
-      onToggleFailover(!isInFailoverQueue);
-    } else {
-      // 普通模式：切换供应商
-      onSwitch();
-    }
+  const handleSwitch = (configSetId?: string) => {
+    const target = configSetId ?? defaultConfigSetId;
+    void onSwitch(target);
   };
 
-  // 主按钮的状态和样式
-  const getMainButtonState = () => {
-    if (isFailoverMode) {
-      // 故障转移模式
-      if (isInFailoverQueue) {
-        return {
-          disabled: false,
-          variant: "secondary" as const,
-          className:
-            "bg-blue-100 text-blue-600 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-400 dark:hover:bg-blue-900/70",
-          icon: <Check className="h-4 w-4" />,
-          text: t("failover.inQueue", { defaultValue: "已加入" }),
-        };
-      }
-      return {
-        disabled: false,
-        variant: "default" as const,
-        className:
-          "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
-        icon: <Plus className="h-4 w-4" />,
-        text: t("failover.addQueue", { defaultValue: "加入" }),
-      };
-    }
+  const renderContent = (label: "inUse" | "enable") => (
+    <>
+      {isSwitching ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : label === "inUse" ? (
+        <Check className="h-4 w-4" />
+      ) : (
+        <Play className="h-4 w-4" />
+      )}
+      {label === "inUse" ? t("provider.inUse") : t("provider.enable")}
+    </>
+  );
 
-    // 普通模式
-    if (isCurrent) {
-      return {
-        disabled: true,
-        variant: "secondary" as const,
-        className:
-          "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
-        icon: <Check className="h-4 w-4" />,
-        text: t("provider.inUse"),
-      };
-    }
-
-    return {
-      disabled: false,
-      variant: "default" as const,
-      className: isProxyTakeover
-        ? "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
-        : "",
-      icon: <Play className="h-4 w-4" />,
-      text: t("provider.enable"),
-    };
+  const handleEnableClick = () => {
+    if (isCurrent || isSwitching) return;
+    handleSwitch();
   };
 
-  const buttonState = getMainButtonState();
+  const isFailoverMode = isAutoFailoverEnabled && typeof onToggleFailover === "function";
+
+  const renderMainButton = () => {
+    if (isFailoverMode) {
+      const queuedLabel = isInFailoverQueue
+        ? t("failover.inQueue", { defaultValue: "已加入" })
+        : t("failover.addQueue", { defaultValue: "加入" });
+
+      return (
+        <Button
+          size="sm"
+          variant={isInFailoverQueue ? "secondary" : "default"}
+          disabled={isSwitching}
+          onClick={() => onToggleFailover?.(!isInFailoverQueue)}
+          className={cn(
+            "min-w-[4.5rem] px-2.5",
+            isInFailoverQueue
+              ? "bg-blue-100 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/50 dark:text-blue-400"
+              : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white",
+          )}
+        >
+          {isInFailoverQueue ? (
+            <Check className="h-4 w-4" />
+          ) : (
+            <Plus className="h-4 w-4" />
+          )}
+          {queuedLabel}
+        </Button>
+      );
+    }
+
+    return (
+      <Button
+        size="sm"
+        variant={isCurrent ? "secondary" : "default"}
+        disabled={isCurrent || isSwitching}
+        onClick={handleEnableClick}
+        className={cn(
+          "min-w-[4.5rem] px-2.5",
+          isCurrent &&
+            "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+          !isCurrent &&
+            isProxyTakeover &&
+            "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
+        )}
+      >
+        {renderContent(isCurrent ? "inUse" : "enable")}
+      </Button>
+    );
+  };
 
   return (
     <div className="flex items-center gap-1.5">
-      <Button
-        size="sm"
-        variant={buttonState.variant}
-        onClick={handleMainButtonClick}
-        disabled={buttonState.disabled}
-        className={cn("w-[4.5rem] px-2.5", buttonState.className)}
-      >
-        {buttonState.icon}
-        {buttonState.text}
-      </Button>
+      {renderMainButton()}
 
       <div className="flex items-center gap-1">
         <Button
@@ -171,6 +187,30 @@ export function ProviderActions({
           <BarChart3 className="h-4 w-4" />
         </Button>
 
+        {onResetCircuitBreaker && isProxyTarget && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onResetCircuitBreaker}
+            disabled={consecutiveFailures === 0}
+            title={
+              consecutiveFailures > 0
+                ? t("provider.resetCircuitBreaker", {
+                    defaultValue: "重置熔断器",
+                  })
+                : t("provider.noFailures", {
+                    defaultValue: "当前无失败记录",
+                  })
+            }
+            className={cn(
+              iconButtonClass,
+              consecutiveFailures > 0 &&
+                "hover:text-orange-500 dark:hover:text-orange-400",
+            )}
+          >
+            <RotateCcw className="h-4 w-4" />
+          </Button>
+        )}
         <Button
           size="icon"
           variant="ghost"

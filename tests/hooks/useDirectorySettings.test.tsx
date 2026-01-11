@@ -48,6 +48,16 @@ const createSettings = (
   enableClaudePluginIntegration: false,
   claudeConfigDir: "/claude/custom",
   codexConfigDir: "/codex/custom",
+  geminiConfigDir: "/gemini/custom",
+  configDirectorySets: [
+    {
+      id: "primary",
+      name: "默认环境",
+      claudeConfigDir: "/claude/custom",
+      codexConfigDir: "/codex/custom",
+      geminiConfigDir: "/gemini/custom",
+    },
+  ],
   language: "zh",
   ...overrides,
 });
@@ -219,5 +229,151 @@ describe("useDirectorySettings", () => {
 
     expect(result.current.resolvedDirs.claude).toBe("/server/claude");
     expect(result.current.resolvedDirs.codex).toBe("/server/codex");
+  });
+
+  it("adds a new config directory set", async () => {
+    const { result } = renderHook(() =>
+      useDirectorySettings({
+        settings: createSettings(),
+        onUpdateSettings,
+      }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      result.current.addConfigDirectorySet();
+    });
+
+    const lastCall = onUpdateSettings.mock.calls.at(-1)?.[0];
+    expect(lastCall?.configDirectorySets).toHaveLength(2);
+  });
+
+  it("updates secondary set directories via helper", async () => {
+    const { result } = renderHook(() =>
+      useDirectorySettings({
+        settings: createSettings({
+          configDirectorySets: [
+            {
+              id: "primary",
+              name: "默认环境",
+              claudeConfigDir: "/claude/custom",
+              codexConfigDir: "/codex/custom",
+              geminiConfigDir: "/gemini/custom",
+            },
+            {
+              id: "wsl",
+              name: "WSL",
+              claudeConfigDir: "/wsl/claude",
+              codexConfigDir: "/wsl/codex",
+              geminiConfigDir: "/wsl/gemini",
+            },
+          ],
+        }),
+        onUpdateSettings,
+      }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      result.current.updateConfigDirectorySetDirectory(
+        "wsl",
+        "codex",
+        "  /wsl/codex-new ",
+      );
+    });
+
+    const lastCall = onUpdateSettings.mock.calls.at(-1)?.[0];
+    expect(lastCall?.configDirectorySets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "wsl",
+          codexConfigDir: "/wsl/codex-new",
+        }),
+      ]),
+    );
+  });
+
+  it("browses directories for non-primary set", async () => {
+    selectConfigDirectoryMock.mockResolvedValue("/picked/wsl");
+    const { result } = renderHook(() =>
+      useDirectorySettings({
+        settings: createSettings({
+          configDirectorySets: [
+            {
+              id: "primary",
+              name: "默认环境",
+              claudeConfigDir: "/claude/custom",
+              codexConfigDir: "/codex/custom",
+              geminiConfigDir: "/gemini/custom",
+            },
+            {
+              id: "wsl",
+              name: "WSL",
+              claudeConfigDir: "/wsl/claude",
+              codexConfigDir: "/wsl/codex",
+              geminiConfigDir: "/wsl/gemini",
+            },
+          ],
+        }),
+        onUpdateSettings,
+      }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.browseConfigDirectorySet("wsl", "claude");
+    });
+
+    expect(selectConfigDirectoryMock).toHaveBeenCalledWith("/wsl/claude");
+    const lastCall = onUpdateSettings.mock.calls.at(-1)?.[0];
+    expect(lastCall?.configDirectorySets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "wsl",
+          claudeConfigDir: "/picked/wsl",
+        }),
+      ]),
+    );
+  });
+
+  it("resets directories on secondary set without touching primary", async () => {
+    const { result } = renderHook(() =>
+      useDirectorySettings({
+        settings: createSettings({
+          configDirectorySets: [
+            {
+              id: "primary",
+              name: "默认环境",
+              claudeConfigDir: "/claude/custom",
+              codexConfigDir: "/codex/custom",
+              geminiConfigDir: "/gemini/custom",
+            },
+            {
+              id: "wsl",
+              name: "WSL",
+              claudeConfigDir: "/wsl/claude",
+              codexConfigDir: "/wsl/codex",
+              geminiConfigDir: "/wsl/gemini",
+            },
+          ],
+        }),
+        onUpdateSettings,
+      }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.resetConfigDirectorySet("wsl", "claude");
+    });
+
+    const lastCall = onUpdateSettings.mock.calls.at(-1)?.[0];
+    expect(lastCall?.configDirectorySets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "wsl",
+          claudeConfigDir: undefined,
+        }),
+      ]),
+    );
   });
 });

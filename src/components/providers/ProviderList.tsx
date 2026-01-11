@@ -17,6 +17,7 @@ import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
+import type { LaunchConfigSet } from "@/hooks/useConfigSets";
 import { useDragSort } from "@/hooks/useDragSort";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
@@ -35,7 +36,7 @@ interface ProviderListProps {
   providers: Record<string, Provider>;
   currentProviderId: string;
   appId: AppId;
-  onSwitch: (provider: Provider) => void;
+  onSwitch: (provider: Provider, configSetId?: string) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onDuplicate: (provider: Provider) => void;
@@ -43,6 +44,9 @@ interface ProviderListProps {
   onOpenWebsite: (url: string) => void;
   onCreate?: () => void;
   isLoading?: boolean;
+  configSets?: LaunchConfigSet[];
+  activeConfigSetId?: string;
+  isSwitching?: boolean;
   isProxyRunning?: boolean; // 代理服务运行状态
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
@@ -60,8 +64,11 @@ export function ProviderList({
   onOpenWebsite,
   onCreate,
   isLoading = false,
-  isProxyRunning = false,
-  isProxyTakeover = false,
+  configSets,
+  activeConfigSetId,
+  isSwitching = false,
+  isProxyRunning = false, // 默认值为 false
+  isProxyTakeover = false, // 默认值为 false
   activeProviderId,
 }: ProviderListProps) {
   const { t } = useTranslation();
@@ -203,6 +210,9 @@ export function ProviderList({
               onDuplicate={onDuplicate}
               onConfigureUsage={onConfigureUsage}
               onOpenWebsite={onOpenWebsite}
+              configSets={configSets}
+              activeConfigSetId={activeConfigSetId}
+              isSwitching={isSwitching}
               onTest={handleTest}
               isTesting={isChecking(provider.id)}
               isProxyRunning={isProxyRunning}
@@ -305,14 +315,17 @@ interface SortableProviderCardProps {
   provider: Provider;
   isCurrent: boolean;
   appId: AppId;
-  onSwitch: (provider: Provider) => void;
+  onSwitch: (provider: Provider, configSetId?: string) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
-  onTest: (provider: Provider) => void;
-  isTesting: boolean;
+  configSets?: LaunchConfigSet[];
+  activeConfigSetId?: string;
+  isSwitching: boolean;
+  onTest?: (provider: Provider) => void;
+  isTesting?: boolean;
   isProxyRunning: boolean;
   isProxyTakeover: boolean;
   // 故障转移相关
@@ -333,6 +346,9 @@ function SortableProviderCard({
   onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
+  configSets,
+  activeConfigSetId,
+  isSwitching,
   onTest,
   isTesting,
   isProxyRunning,
@@ -363,7 +379,7 @@ function SortableProviderCard({
         provider={provider}
         isCurrent={isCurrent}
         appId={appId}
-        onSwitch={onSwitch}
+        onSwitch={(configSetId) => onSwitch(provider, configSetId)}
         onEdit={onEdit}
         onDelete={onDelete}
         onDuplicate={onDuplicate}
@@ -380,7 +396,9 @@ function SortableProviderCard({
           listeners,
           isDragging,
         }}
-        // 故障转移相关
+        configSets={configSets}
+        activeConfigSetId={activeConfigSetId}
+        isSwitching={isSwitching}
         isAutoFailoverEnabled={isAutoFailoverEnabled}
         failoverPriority={failoverPriority}
         isInFailoverQueue={isInFailoverQueue}

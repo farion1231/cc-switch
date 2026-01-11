@@ -65,11 +65,14 @@ pub async fn import_config_from_file(
 }
 
 #[tauri::command]
-pub async fn sync_current_providers_live(state: State<'_, AppState>) -> Result<Value, String> {
+pub async fn sync_current_providers_live(
+    state: State<'_, AppState>,
+    sync_mcp: Option<bool>,
+) -> Result<Value, String> {
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let app_state = AppState::new(db);
-        ProviderService::sync_current_to_live(&app_state)?;
+        ProviderService::sync_current_to_live_with_options(&app_state, sync_mcp.unwrap_or(true))?;
         Ok::<_, AppError>(json!({
             "success": true,
             "message": "Live configuration synchronized"

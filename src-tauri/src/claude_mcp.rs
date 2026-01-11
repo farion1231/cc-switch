@@ -9,60 +9,80 @@ use crate::error::AppError;
 
 /// 需要在 Windows 上用 cmd /c 包装的命令
 /// 这些命令在 Windows 上实际是 .cmd 批处理文件，需要通过 cmd /c 来执行
-#[cfg(windows)]
 const WINDOWS_WRAP_COMMANDS: &[&str] = &["npx", "npm", "yarn", "pnpm", "node", "bun", "deno"];
+
+/// 判断路径是否属于 WSL 环境
+/// WSL 路径特征：\\wsl.localhost\ 或 \\wsl$\
+fn is_wsl_path(path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+    path_str.starts_with("\\\\wsl.localhost\\") || path_str.starts_with("\\\\wsl$\\")
+}
 
 /// Windows 平台：将 `npx args...` 转换为 `cmd /c npx args...`
 /// 解决 Claude Code /doctor 报告的 "Windows requires 'cmd /c' wrapper to execute npx" 警告
-#[cfg(windows)]
-fn wrap_command_for_windows(obj: &mut Map<String, Value>) {
-    // 只处理 stdio 类型（默认或显式）
-    let server_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
-    if server_type != "stdio" {
+///
+/// # 参数
+/// * `obj` - MCP 服务器配置对象
+/// * `target_path` - 目标配置文件路径，用于判断是否在 WSL 环境中
+///
+/// # 逻辑
+/// - 仅在 Windows 平台且目标路径不在 WSL 中时包装命令
+/// - WSL 环境不需要 cmd /c 包装
+fn wrap_command_for_windows(obj: &mut Map<String, Value>, target_path: &Path) {
+    #[cfg(not(windows))]
+    {
         return;
     }
 
-    let Some(cmd) = obj.get("command").and_then(|v| v.as_str()) else {
-        return;
-    };
+    #[cfg(windows)]
+    {
+        // 如果目标路径在 WSL 中，不包装命令
+        if is_wsl_path(target_path) {
+            return;
+        }
 
-    // 已经是 cmd 的不重复包装
-    if cmd.eq_ignore_ascii_case("cmd") || cmd.eq_ignore_ascii_case("cmd.exe") {
-        return;
+        // 只处理 stdio 类型（默认或显式）
+        let server_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
+        if server_type != "stdio" {
+            return;
+        }
+
+        let Some(cmd) = obj.get("command").and_then(|v| v.as_str()) else {
+            return;
+        };
+
+        // 已经是 cmd 的不重复包装
+        if cmd.eq_ignore_ascii_case("cmd") || cmd.eq_ignore_ascii_case("cmd.exe") {
+            return;
+        }
+
+        // 提取命令名（去掉 .cmd 后缀和路径）
+        let cmd_name = Path::new(cmd)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(cmd);
+
+        let needs_wrap = WINDOWS_WRAP_COMMANDS
+            .iter()
+            .any(|&c| cmd_name.eq_ignore_ascii_case(c));
+
+        if !needs_wrap {
+            return;
+        }
+
+        // 构建新的 args: ["/c", "原命令", ...原args]
+        let original_args = obj
+            .get("args")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let mut new_args = vec![Value::String("/c".into()), Value::String(cmd.into())];
+        new_args.extend(original_args);
+
+        obj.insert("command".into(), Value::String("cmd".into()));
+        obj.insert("args".into(), Value::Array(new_args));
     }
-
-    // 提取命令名（去掉 .cmd 后缀和路径）
-    let cmd_name = Path::new(cmd)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(cmd);
-
-    let needs_wrap = WINDOWS_WRAP_COMMANDS
-        .iter()
-        .any(|&c| cmd_name.eq_ignore_ascii_case(c));
-
-    if !needs_wrap {
-        return;
-    }
-
-    // 构建新的 args: ["/c", "原命令", ...原args]
-    let original_args = obj
-        .get("args")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let mut new_args = vec![Value::String("/c".into()), Value::String(cmd.into())];
-    new_args.extend(original_args);
-
-    obj.insert("command".into(), Value::String("cmd".into()));
-    obj.insert("args".into(), Value::Array(new_args));
-}
-
-/// 非 Windows 平台无需处理
-#[cfg(not(windows))]
-fn wrap_command_for_windows(_obj: &mut Map<String, Value>) {
-    // 非 Windows 平台不做任何处理
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -398,7 +418,8 @@ pub fn set_mcp_servers_map(
         obj.remove("docs");
 
         // Windows 平台自动包装 npx/npm 等命令为 cmd /c 格式
-        wrap_command_for_windows(&mut obj);
+        // 但 WSL 环境不需要包装（通过目标路径判断）
+        wrap_command_for_windows(&mut obj, &path);
 
         out.insert(id.clone(), Value::Object(obj));
     }
@@ -427,7 +448,8 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        wrap_command_for_windows(&mut obj);
+        let path = Path::new("C:\\Users\\test\\.claude.json");
+        wrap_command_for_windows(&mut obj, path);
 
         #[cfg(windows)]
         {
@@ -451,7 +473,8 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        wrap_command_for_windows(&mut obj);
+        let path = Path::new("C:\\Users\\test\\.claude.json");
+        wrap_command_for_windows(&mut obj, path);
 
         #[cfg(windows)]
         {
@@ -467,7 +490,8 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        wrap_command_for_windows(&mut obj);
+        let path = Path::new("C:\\Users\\test\\.claude.json");
+        wrap_command_for_windows(&mut obj, path);
 
         assert_eq!(obj["command"], "cmd");
         // args 应该保持不变，不会变成 ["/c", "cmd", "/c", "npx", ...]
@@ -481,7 +505,8 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        wrap_command_for_windows(&mut obj);
+        let path = Path::new("C:\\Users\\test\\.claude.json");
+        wrap_command_for_windows(&mut obj, path);
 
         assert!(!obj.contains_key("command"));
         assert_eq!(obj["url"], "https://example.com/mcp");
@@ -494,7 +519,8 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        wrap_command_for_windows(&mut obj);
+        let path = Path::new("C:\\Users\\test\\.claude.json");
+        wrap_command_for_windows(&mut obj, path);
 
         // python 不在 WINDOWS_WRAP_COMMANDS 列表中，不应该被包装
         assert_eq!(obj["command"], "python");
@@ -505,7 +531,8 @@ mod tests {
     fn test_wrap_command_for_windows_no_args() {
         // 没有 args 的情况
         let mut obj = json!({"command": "npx"}).as_object().unwrap().clone();
-        wrap_command_for_windows(&mut obj);
+        let path = Path::new("C:\\Users\\test\\.claude.json");
+        wrap_command_for_windows(&mut obj, path);
 
         #[cfg(windows)]
         {
@@ -521,7 +548,8 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        wrap_command_for_windows(&mut obj);
+        let path = Path::new("C:\\Users\\test\\.claude.json");
+        wrap_command_for_windows(&mut obj, path);
 
         #[cfg(windows)]
         {
@@ -537,12 +565,38 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        wrap_command_for_windows(&mut obj);
+        let path = Path::new("C:\\Users\\test\\.claude.json");
+        wrap_command_for_windows(&mut obj, path);
 
         #[cfg(windows)]
         {
             assert_eq!(obj["command"], "cmd");
             assert_eq!(obj["args"], json!(["/c", "NPX", "-y", "foo"]));
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_wrap_command_for_windows_wsl_path_skipped() {
+        // WSL 路径不应该被包装
+        let mut obj = json!({"command": "npx", "args": ["-y", "@upstash/context7-mcp"]})
+            .as_object()
+            .unwrap()
+            .clone();
+        let path = Path::new("\\\\wsl.localhost\\Ubuntu-24.04\\root\\.claude.json");
+        wrap_command_for_windows(&mut obj, path);
+
+        // WSL 路径不应该被包装
+        assert_eq!(obj["command"], "npx");
+        assert_eq!(obj["args"], json!(["-y", "@upstash/context7-mcp"]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_is_wsl_path() {
+        assert!(is_wsl_path(Path::new("\\\\wsl.localhost\\Ubuntu-24.04\\root\\.claude.json")));
+        assert!(is_wsl_path(Path::new("\\\\wsl$\\Ubuntu-24.04\\root\\.claude.json")));
+        assert!(!is_wsl_path(Path::new("C:\\Users\\test\\.claude.json")));
+        assert!(!is_wsl_path(Path::new("/home/test/.claude.json")));
     }
 }

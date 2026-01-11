@@ -20,6 +20,7 @@ import { toast } from "sonner";
 
 interface UnifiedMcpPanelProps {
   onOpenChange: (open: boolean) => void;
+  activeConfigSetId?: string;
 }
 
 /**
@@ -34,7 +35,7 @@ export interface UnifiedMcpPanelHandle {
 const UnifiedMcpPanel = React.forwardRef<
   UnifiedMcpPanelHandle,
   UnifiedMcpPanelProps
->(({ onOpenChange: _onOpenChange }, ref) => {
+>(({ onOpenChange: _onOpenChange, activeConfigSetId }, ref) => {
   const { t } = useTranslation();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -46,7 +47,7 @@ const UnifiedMcpPanel = React.forwardRef<
   } | null>(null);
 
   // Queries and Mutations
-  const { data: serversMap, isLoading } = useAllMcpServers();
+  const { data: serversMap, isLoading } = useAllMcpServers(activeConfigSetId);
   const toggleAppMutation = useToggleMcpApp();
   const deleteServerMutation = useDeleteMcpServer();
   const importMutation = useImportMcpFromApps();
