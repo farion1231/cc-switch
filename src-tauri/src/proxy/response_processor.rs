@@ -372,7 +372,12 @@ async fn log_usage_internal(
         Ok(Some(p)) => {
             if let Some(meta) = p.meta {
                 if let Some(cm) = meta.cost_multiplier {
-                    Decimal::from_str(&cm).unwrap_or(Decimal::from(1))
+                    Decimal::from_str(&cm).unwrap_or_else(|e| {
+                        log::warn!(
+                            "cost_multiplier 解析失败 (provider_id={provider_id}): {cm} - {e}"
+                        );
+                        Decimal::from(1)
+                    })
                 } else {
                     Decimal::from(1)
                 }

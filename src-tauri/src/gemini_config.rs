@@ -5,15 +5,21 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+/// 获取用户主目录，带回退和日志
+fn get_home_dir() -> PathBuf {
+    dirs::home_dir().unwrap_or_else(|| {
+        log::warn!("无法获取用户主目录，回退到当前目录");
+        PathBuf::from(".")
+    })
+}
+
 /// 获取 Gemini 配置目录路径（支持设置覆盖）
 pub fn get_gemini_dir() -> PathBuf {
     if let Some(custom) = crate::settings::get_gemini_override_dir() {
         return custom;
     }
 
-    dirs::home_dir()
-        .expect("无法获取用户主目录")
-        .join(".gemini")
+    get_home_dir().join(".gemini")
 }
 
 /// 获取 Gemini .env 文件路径

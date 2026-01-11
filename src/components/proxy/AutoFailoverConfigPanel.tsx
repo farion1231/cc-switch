@@ -56,10 +56,12 @@ export function AutoFailoverConfigPanel({
 
   const handleSave = async () => {
     if (!config) return;
-    // 解析数字，空值使用默认值，0 是有效值
-    const parseNum = (val: string, defaultVal: number) => {
-      const n = parseInt(val);
-      return isNaN(n) ? defaultVal : n;
+    // 解析数字，返回 NaN 表示无效输入
+    const parseNum = (val: string) => {
+      const trimmed = val.trim();
+      // 必须是纯数字
+      if (!/^-?\d+$/.test(trimmed)) return NaN;
+      return parseInt(trimmed);
     };
 
     // 定义各字段的有效范围
@@ -70,38 +72,32 @@ export function AutoFailoverConfigPanel({
       nonStreamingTimeout: { min: 0, max: 1800 },
       circuitFailureThreshold: { min: 1, max: 20 },
       circuitSuccessThreshold: { min: 1, max: 10 },
-      circuitTimeoutSeconds: { min: 10, max: 300 },
+      circuitTimeoutSeconds: { min: 0, max: 300 },
       circuitErrorRateThreshold: { min: 0, max: 100 },
       circuitMinRequests: { min: 5, max: 100 },
     };
 
     // 解析原始值
     const raw = {
-      maxRetries: parseNum(formData.maxRetries, 3),
-      streamingFirstByteTimeout: parseNum(
-        formData.streamingFirstByteTimeout,
-        30,
-      ),
-      streamingIdleTimeout: parseNum(formData.streamingIdleTimeout, 60),
-      nonStreamingTimeout: parseNum(formData.nonStreamingTimeout, 300),
-      circuitFailureThreshold: parseNum(formData.circuitFailureThreshold, 5),
-      circuitSuccessThreshold: parseNum(formData.circuitSuccessThreshold, 2),
-      circuitTimeoutSeconds: parseNum(formData.circuitTimeoutSeconds, 60),
-      circuitErrorRateThreshold: parseNum(
-        formData.circuitErrorRateThreshold,
-        50,
-      ),
-      circuitMinRequests: parseNum(formData.circuitMinRequests, 10),
+      maxRetries: parseNum(formData.maxRetries),
+      streamingFirstByteTimeout: parseNum(formData.streamingFirstByteTimeout),
+      streamingIdleTimeout: parseNum(formData.streamingIdleTimeout),
+      nonStreamingTimeout: parseNum(formData.nonStreamingTimeout),
+      circuitFailureThreshold: parseNum(formData.circuitFailureThreshold),
+      circuitSuccessThreshold: parseNum(formData.circuitSuccessThreshold),
+      circuitTimeoutSeconds: parseNum(formData.circuitTimeoutSeconds),
+      circuitErrorRateThreshold: parseNum(formData.circuitErrorRateThreshold),
+      circuitMinRequests: parseNum(formData.circuitMinRequests),
     };
 
-    // 校验是否超出范围
+    // 校验是否超出范围（NaN 也视为无效）
     const errors: string[] = [];
     const checkRange = (
       value: number,
       range: { min: number; max: number },
       label: string,
     ) => {
-      if (value < range.min || value > range.max) {
+      if (isNaN(value) || value < range.min || value > range.max) {
         errors.push(`${label}: ${range.min}-${range.max}`);
       }
     };
@@ -424,7 +420,7 @@ export function AutoFailoverConfigPanel({
               <Input
                 id={`timeoutSeconds-${appType}`}
                 type="number"
-                min="10"
+                min="0"
                 max="300"
                 value={formData.circuitTimeoutSeconds}
                 onChange={(e) =>

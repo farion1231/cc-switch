@@ -194,14 +194,23 @@ fn resolve_override_path(raw: &str) -> PathBuf {
 }
 
 pub fn get_settings() -> AppSettings {
-    settings_store().read().expect("读取设置锁失败").clone()
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .clone()
 }
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.normalize_paths();
     save_settings_file(&new_settings)?;
 
-    let mut guard = settings_store().write().expect("写入设置锁失败");
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
     *guard = new_settings;
     Ok(())
 }
@@ -210,7 +219,10 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
 /// 用于导入配置等场景，确保内存缓存与文件同步
 pub fn reload_settings() -> Result<(), AppError> {
     let fresh_settings = AppSettings::load_from_file();
-    let mut guard = settings_store().write().expect("写入设置锁失败");
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
     *guard = fresh_settings;
     Ok(())
 }

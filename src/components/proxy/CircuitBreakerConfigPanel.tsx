@@ -41,38 +41,40 @@ export function CircuitBreakerConfigPanel() {
   }, [config]);
 
   const handleSave = async () => {
-    // 解析数字，空值使用默认值，0 是有效值
-    const parseNum = (val: string, defaultVal: number) => {
-      const n = parseInt(val);
-      return isNaN(n) ? defaultVal : n;
+    // 解析数字，返回 NaN 表示无效输入
+    const parseNum = (val: string) => {
+      const trimmed = val.trim();
+      // 必须是纯数字
+      if (!/^-?\d+$/.test(trimmed)) return NaN;
+      return parseInt(trimmed);
     };
 
     // 定义各字段的有效范围
     const ranges = {
       failureThreshold: { min: 1, max: 20 },
       successThreshold: { min: 1, max: 10 },
-      timeoutSeconds: { min: 10, max: 300 },
+      timeoutSeconds: { min: 0, max: 300 },
       errorRateThreshold: { min: 0, max: 100 },
       minRequests: { min: 5, max: 100 },
     };
 
     // 解析原始值
     const raw = {
-      failureThreshold: parseNum(formData.failureThreshold, 5),
-      successThreshold: parseNum(formData.successThreshold, 2),
-      timeoutSeconds: parseNum(formData.timeoutSeconds, 60),
-      errorRateThreshold: parseNum(formData.errorRateThreshold, 50),
-      minRequests: parseNum(formData.minRequests, 10),
+      failureThreshold: parseNum(formData.failureThreshold),
+      successThreshold: parseNum(formData.successThreshold),
+      timeoutSeconds: parseNum(formData.timeoutSeconds),
+      errorRateThreshold: parseNum(formData.errorRateThreshold),
+      minRequests: parseNum(formData.minRequests),
     };
 
-    // 校验是否超出范围
+    // 校验是否超出范围（NaN 也视为无效）
     const errors: string[] = [];
     const checkRange = (
       value: number,
       range: { min: number; max: number },
       label: string,
     ) => {
-      if (value < range.min || value > range.max) {
+      if (isNaN(value) || value < range.min || value > range.max) {
         errors.push(`${label}: ${range.min}-${range.max}`);
       }
     };
@@ -183,7 +185,7 @@ export function CircuitBreakerConfigPanel() {
           <Input
             id="timeoutSeconds"
             type="number"
-            min="10"
+            min="0"
             max="300"
             value={formData.timeoutSeconds}
             onChange={(e) =>
