@@ -183,6 +183,10 @@
         "title": "コスト計算",
         "description": "各モデルのトークン料金ルールを管理"
       },
+      "globalProxy": {
+        "title": "グローバル送信プロキシ",
+        "description": "CC Switch が外部 API にアクセスする際のプロキシを設定"
+      },
       "data": {
         "title": "データ管理",
         "description": "設定のインポート/エクスポートとバックアップ/復元"
@@ -271,7 +275,18 @@
     "restartLater": "後で再起動",
     "restartFailed": "アプリの再起動に失敗しました。手動で閉じて再度開いてください。",
     "devModeRestartHint": "開発モードでは自動再起動をサポートしていません。手動で再起動してください。",
-    "saving": "保存中..."
+    "saving": "保存中...",
+    "globalProxy": {
+      "label": "グローバルプロキシ",
+      "hint": "すべてのリクエスト（API、Skills ダウンロードなど）をプロキシ経由で送信します。空欄で直接接続。HTTP と SOCKS5 をサポート。",
+      "test": "接続テスト",
+      "scan": "ローカルプロキシをスキャン",
+      "scanFailed": "スキャンに失敗しました: {{error}}",
+      "saved": "プロキシ設定を保存しました",
+      "saveFailed": "保存に失敗しました: {{error}}",
+      "testSuccess": "接続成功！遅延 {{latency}}ms",
+      "testFailed": "接続に失敗しました: {{error}}"
+    }
   },
   "apps": {
     "claude": "Claude Code",

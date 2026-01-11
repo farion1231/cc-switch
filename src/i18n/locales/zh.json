@@ -183,6 +183,10 @@
         "title": "成本定价",
         "description": "管理各模型 Token 计费规则"
       },
+      "globalProxy": {
+        "title": "全局出站代理",
+        "description": "配置 CC Switch 访问外部 API 时使用的代理"
+      },
       "data": {
         "title": "数据管理",
         "description": "导入导出配置与备份恢复"
@@ -276,6 +280,8 @@
       "label": "全局代理",
       "hint": "代理所有请求（API、Skills 下载等）。留空表示直连。支持 HTTP 和 SOCKS5 代理。",
       "test": "测试连接",
+      "scan": "扫描本地代理",
+      "scanFailed": "扫描失败：{{error}}",
       "saved": "代理设置已保存",
       "saveFailed": "保存失败：{{error}}",
       "testSuccess": "连接成功！延迟 {{latency}}ms",

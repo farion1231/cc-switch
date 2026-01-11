@@ -20,7 +20,7 @@ static CURRENT_PROXY_URL: OnceCell<RwLock<Option<String>>> = OnceCell::new();
 ///
 /// # Arguments
 /// * `proxy_url` - 代理 URL，如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080`
-///                 传入 None 或空字符串表示直连
+///   传入 None 或空字符串表示直连
 pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let client = build_client(effective_url)?;
@@ -100,6 +100,7 @@ pub fn get_current_proxy_url() -> Option<String> {
 }
 
 /// 检查是否正在使用代理
+#[allow(dead_code)]
 pub fn is_proxy_enabled() -> bool {
     get_current_proxy_url().is_some()
 }
@@ -114,9 +115,8 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
 
     // 有代理地址则使用代理，否则直连
     if let Some(url) = proxy_url {
-        let proxy = reqwest::Proxy::all(url).map_err(|e| {
-            format!("Invalid proxy URL '{}': {}", mask_url(url), e)
-        })?;
+        let proxy = reqwest::Proxy::all(url)
+            .map_err(|e| format!("Invalid proxy URL '{}': {}", mask_url(url), e))?;
         builder = builder.proxy(proxy);
         log::debug!("[GlobalProxy] Proxy configured: {}", mask_url(url));
     } else {
@@ -126,7 +126,7 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
 
     builder
         .build()
-        .map_err(|e| format!("Failed to build HTTP client: {}", e))
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))
 }
 
 /// 隐藏 URL 中的敏感信息（用于日志）
@@ -137,7 +137,10 @@ fn mask_url(url: &str) -> String {
             "{}://{}:{}",
             parsed.scheme(),
             parsed.host_str().unwrap_or("?"),
-            parsed.port().map(|p| p.to_string()).unwrap_or_else(|| "?".to_string())
+            parsed
+                .port()
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "?".to_string())
         )
     } else {
         // URL 解析失败，返回部分内容

@@ -24,6 +24,15 @@ export interface UpstreamProxyStatus {
 }
 
 /**
+ * 检测到的代理
+ */
+export interface DetectedProxy {
+  url: string;
+  proxyType: string;
+  port: number;
+}
+
+/**
  * 获取全局代理 URL
  *
  * @returns 代理 URL，null 表示未配置（直连）
@@ -39,7 +48,12 @@ export async function getGlobalProxyUrl(): Promise<string | null> {
  *              空字符串表示清除代理（直连）
  */
 export async function setGlobalProxyUrl(url: string): Promise<void> {
-  return invoke("set_global_proxy_url", { url });
+  try {
+    return await invoke("set_global_proxy_url", { url });
+  } catch (error) {
+    // Tauri invoke 错误可能是字符串
+    throw new Error(typeof error === "string" ? error : String(error));
+  }
 }
 
 /**
@@ -59,4 +73,13 @@ export async function testProxyUrl(url: string): Promise<ProxyTestResult> {
  */
 export async function getUpstreamProxyStatus(): Promise<UpstreamProxyStatus> {
   return invoke<UpstreamProxyStatus>("get_upstream_proxy_status");
+}
+
+/**
+ * 扫描本地代理
+ *
+ * @returns 检测到的代理列表
+ */
+export async function scanLocalProxies(): Promise<DetectedProxy[]> {
+  return invoke<DetectedProxy[]>("scan_local_proxies");
 }

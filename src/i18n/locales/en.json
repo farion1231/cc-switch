@@ -183,6 +183,10 @@
         "title": "Cost Pricing",
         "description": "Manage token pricing rules for each model"
       },
+      "globalProxy": {
+        "title": "Global Outbound Proxy",
+        "description": "Configure proxy for CC Switch to access external APIs"
+      },
       "data": {
         "title": "Data Management",
         "description": "Import/export configurations and backup/restore"
@@ -276,6 +280,8 @@
       "label": "Global Proxy",
       "hint": "Proxy all requests (API, Skills download, etc.). Leave empty for direct connection. Supports HTTP and SOCKS5.",
       "test": "Test Connection",
+      "scan": "Scan Local Proxies",
+      "scanFailed": "Scan failed: {{error}}",
       "saved": "Proxy settings saved",
       "saveFailed": "Save failed: {{error}}",
       "testSuccess": "Connected! Latency {{latency}}ms",
