@@ -1820,6 +1820,79 @@
                     <textarea id="notes" rows="2" placeholder="例如: 公司专用账号"></textarea>
                 </div>
 
+                <!-- 用量查询配置 (v3.9+) -->
+                <div style="background: #f0fff4; padding: 16px; border-radius: 8px; margin: 16px 0; border: 2px solid #27ae60;">
+                    <h4 style="color: #27ae60; margin-bottom: 12px; font-size: 14px;">
+                        📊 用量查询配置（v3.9+，可选）
+                    </h4>
+                    <p style="color: #7f8c8d; font-size: 12px; margin-bottom: 12px;">
+                        配置用量查询脚本，可自动查询 API 余额
+                    </p>
+
+                    <div class="form-group">
+                        <label>启用用量查询</label>
+                        <select id="usageEnabled">
+                            <option value="">不配置</option>
+                            <option value="true">启用</option>
+                            <option value="false">禁用</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>用量查询 Base URL</label>
+                        <input type="url" id="usageBaseUrl" placeholder="https://example.com（用于用量查询的基础 URL）">
+                        <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                            用量查询接口的基础地址，必须与脚本中的请求 URL 同源
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>用量查询专用 API Key（可选）</label>
+                        <input type="text" id="usageApiKey" placeholder="留空则使用供应商的 API Key">
+                    </div>
+
+                    <div class="form-group">
+                        <label>用量查询脚本</label>
+                        <textarea id="usageScript" rows="12" style="font-family: monospace; font-size: 12px;"
+                            placeholder='({
+  request: {
+    url: "{{baseUrl}}/api/v1/user/subscription-info",
+    method: "GET",
+    headers: { "Authorization": "{{apiKey}}" }
+  },
+  extractor: function(response) {
+    const data = typeof response === "string" ? JSON.parse(response) : response;
+    return {
+      isValid: true,
+      remaining: data.balance ?? 0,
+      unit: "USD"
+    };
+  }
+})'></textarea>
+                        <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                            支持模板变量：{{baseUrl}}、{{apiKey}}、{{accessToken}}、{{userId}}
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>自动查询间隔（分钟）</label>
+                        <input type="number" id="usageAutoInterval" placeholder="30" min="0">
+                        <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                            0 表示禁用自动查询
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Access Token（可选）</label>
+                        <input type="text" id="usageAccessToken" placeholder="某些 API 需要的访问令牌">
+                    </div>
+
+                    <div class="form-group">
+                        <label>User ID（可选）</label>
+                        <input type="text" id="usageUserId" placeholder="某些 API 需要的用户 ID">
+                    </div>
+                </div>
+
                 <button class="btn" onclick="generateLink()">🚀 生成深链接</button>
 
                 <div id="result" style="display: none;">
@@ -2115,6 +2188,30 @@ requires_openai_auth = true`;
                 }
             }
 
+            // 添加用量查询参数 (v3.9+)
+            const usageEnabled = document.getElementById('usageEnabled').value;
+            const usageBaseUrl = document.getElementById('usageBaseUrl').value.trim();
+            const usageApiKey = document.getElementById('usageApiKey').value.trim();
+            const usageScript = document.getElementById('usageScript').value.trim();
+            const usageAutoInterval = document.getElementById('usageAutoInterval').value.trim();
+            const usageAccessToken = document.getElementById('usageAccessToken').value.trim();
+            const usageUserId = document.getElementById('usageUserId').value.trim();
+
+            if (usageEnabled) params.append('usageEnabled', usageEnabled);
+            if (usageBaseUrl) params.append('usageBaseUrl', usageBaseUrl);
+            if (usageApiKey) params.append('usageApiKey', usageApiKey);
+            if (usageScript) {
+                // URL-safe Base64 编码
+                const scriptB64 = utf8_to_b64(usageScript)
+                    .replace(/\+/g, '-')
+                    .replace(/\//g, '_')
+                    .replace(/=+$/, '');
+                params.append('usageScript', scriptB64);
+            }
+            if (usageAutoInterval) params.append('usageAutoInterval', usageAutoInterval);
+            if (usageAccessToken) params.append('usageAccessToken', usageAccessToken);
+            if (usageUserId) params.append('usageUserId', usageUserId);
+
             const deepLink = `ccswitch://v1/import?${params.toString()}`;
 
             // 显示结果
@@ -2349,10 +2446,93 @@ requires_openai_auth = true`;
                     }
                 }
 
+                // 用量查询配置解析 (v3.9+)
+                let usageHtml = '';
+                if (paramsObj.usageEnabled || paramsObj.usageScript || paramsObj.usageBaseUrl) {
+                    usageHtml = `
+                        <div style="background: #f0fff4; padding: 16px; border-radius: 8px; border-left: 4px solid #27ae60; margin-top: 16px;">
+                            <h4 style="margin-bottom: 12px; color: #27ae60;">📊 用量查询配置 (v3.9+)</h4>
+                            <div style="display: grid; grid-template-columns: 150px 1fr; gap: 8px; font-size: 13px;">
+                    `;
+
+                    if (paramsObj.usageEnabled) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">启用状态:</div>
+                            <div style="color: #27ae60;">${paramsObj.usageEnabled === 'true' ? '✅ 已启用' : '❌ 已禁用'}</div>
+                        `;
+                    }
+
+                    if (paramsObj.usageBaseUrl) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">Base URL:</div>
+                            <div style="color: #27ae60; word-break: break-all; font-family: monospace; font-size: 12px;">${paramsObj.usageBaseUrl}</div>
+                        `;
+                    }
+
+                    if (paramsObj.usageApiKey) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">API Key:</div>
+                            <div style="color: #27ae60; font-family: monospace; font-size: 12px;">${paramsObj.usageApiKey.substring(0, 10)}****</div>
+                        `;
+                    }
+
+                    if (paramsObj.usageAutoInterval) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">自动查询间隔:</div>
+                            <div style="color: #27ae60;">${paramsObj.usageAutoInterval} 分钟</div>
+                        `;
+                    }
+
+                    if (paramsObj.usageAccessToken) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">Access Token:</div>
+                            <div style="color: #27ae60; font-family: monospace; font-size: 12px;">${paramsObj.usageAccessToken.substring(0, 10)}****</div>
+                        `;
+                    }
+
+                    if (paramsObj.usageUserId) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">User ID:</div>
+                            <div style="color: #27ae60; font-family: monospace; font-size: 12px;">${paramsObj.usageUserId}</div>
+                        `;
+                    }
+
+                    usageHtml += '</div>';
+
+                    // 解析用量脚本
+                    if (paramsObj.usageScript) {
+                        try {
+                            // URL-safe Base64 解码
+                            let scriptB64 = paramsObj.usageScript
+                                .replace(/-/g, '+')
+                                .replace(/_/g, '/');
+                            // 补齐 padding
+                            while (scriptB64.length % 4) {
+                                scriptB64 += '=';
+                            }
+                            const scriptContent = b64_to_utf8(scriptB64);
+                            usageHtml += `
+                                <div style="margin-top: 12px;">
+                                    <div style="font-size: 12px; color: #27ae60; margin-bottom: 8px; font-weight: 600;">用量查询脚本:</div>
+                                    <pre style="margin: 0; padding: 12px; background: #fff; border-radius: 6px; font-size: 11px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; border: 1px solid #27ae60;">${scriptContent}</pre>
+                                </div>
+                            `;
+                        } catch (e) {
+                            usageHtml += `
+                                <div style="margin-top: 12px; color: #dc3545; font-size: 12px;">
+                                    ⚠️ 脚本解码失败: ${e.message}
+                                </div>
+                            `;
+                        }
+                    }
+
+                    usageHtml += '</div>';
+                }
+
                 // 显示结果
                 document.getElementById('parseBasicInfo').innerHTML = basicInfoHtml;
                 document.getElementById('parseUrlParams').innerHTML = urlParamsHtml;
-                document.getElementById('parseConfigContent').innerHTML = configHtml;
+                document.getElementById('parseConfigContent').innerHTML = configHtml + usageHtml;
                 document.getElementById('parseResult').style.display = 'block';
 
                 // 滚动到结果
