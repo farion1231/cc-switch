@@ -148,6 +148,15 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // MCP sync
     McpService::sync_all_enabled(state)?;
+
+    // Skill sync
+    for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {
+            log::warn!("同步 Skill 到 {:?} 失败: {}", app_type, e);
+            // Continue syncing other apps, don't abort
+        }
+    }
+
     Ok(())
 }
 

@@ -236,7 +236,7 @@ export function ProviderForm({
     } catch {
       // ignore
     }
-    return true;
+    return false; // OpenRouter now supports Claude Code compatible API, no need for transform
   }, [isOpenRouterProvider, settingsConfigValue]);
 
   const handleOpenRouterCompatChange = useCallback(
@@ -864,7 +864,7 @@ export function ProviderForm({
             defaultOpusModel={defaultOpusModel}
             onModelChange={handleModelChange}
             speedTestEndpoints={speedTestEndpoints}
-            showOpenRouterCompatToggle={isOpenRouterProvider}
+            showOpenRouterCompatToggle={false}
             openRouterCompatEnabled={openRouterCompatEnabled}
             onOpenRouterCompatChange={handleOpenRouterCompatChange}
           />
