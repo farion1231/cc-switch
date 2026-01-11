@@ -67,19 +67,21 @@ fn wrap_command_for_windows(_obj: &mut Map<String, Value>) {
 
 /// 检测路径是否为 WSL 网络路径（如 \\wsl$\Ubuntu\... 或 \\wsl.localhost\Ubuntu\...）
 /// WSL 环境运行的是 Linux，不需要 cmd /c 包装
+/// 注意：仅检测直接 UNC 路径，映射磁盘符（如 Z: -> \\wsl$\...）无法检测
 #[cfg(windows)]
 fn is_wsl_path(path: &Path) -> bool {
     use std::path::{Component, Prefix};
-    path.components().any(|c| match c {
-        Component::Prefix(prefix) => match prefix.kind() {
+    if let Some(Component::Prefix(prefix)) = path.components().next() {
+        match prefix.kind() {
             Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) => {
                 let s = server.to_string_lossy();
                 s.eq_ignore_ascii_case("wsl$") || s.eq_ignore_ascii_case("wsl.localhost")
             }
             _ => false,
-        },
-        _ => false,
-    })
+        }
+    } else {
+        false
+    }
 }
 
 #[cfg(not(windows))]
@@ -394,8 +396,8 @@ pub fn set_mcp_servers_map(
 
     // 构建 mcpServers 对象：移除 UI 辅助字段（enabled/source），仅保留实际 MCP 规范
     // 检测目标路径是否为 WSL，若是则跳过 cmd /c 包装
-    let skip_cmd_wrap = is_wsl_path(&path);
-    if skip_cmd_wrap {
+    let is_wsl_target = is_wsl_path(&path);
+    if is_wsl_target {
         log::info!("检测到 WSL 路径，跳过 cmd /c 包装: {}", path.display());
     }
     let mut out: Map<String, Value> = Map::new();
@@ -425,7 +427,7 @@ pub fn set_mcp_servers_map(
         obj.remove("docs");
 
         // Windows 平台自动包装 npx/npm 等命令为 cmd /c 格式（WSL 路径除外）
-        if !skip_cmd_wrap {
+        if !is_wsl_target {
             wrap_command_for_windows(&mut obj);
         }
 
