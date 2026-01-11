@@ -65,6 +65,30 @@ fn wrap_command_for_windows(_obj: &mut Map<String, Value>) {
     // 非 Windows 平台不做任何处理
 }
 
+/// 检测路径是否为 WSL 网络路径（如 \\wsl$\Ubuntu\... 或 \\wsl.localhost\Ubuntu\...）
+/// WSL 环境运行的是 Linux，不需要 cmd /c 包装
+/// 注意：仅检测直接 UNC 路径，映射磁盘符（如 Z: -> \\wsl$\...）无法检测
+#[cfg(windows)]
+fn is_wsl_path(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    if let Some(Component::Prefix(prefix)) = path.components().next() {
+        match prefix.kind() {
+            Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) => {
+                let s = server.to_string_lossy();
+                s.eq_ignore_ascii_case("wsl$") || s.eq_ignore_ascii_case("wsl.localhost")
+            }
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+#[cfg(not(windows))]
+fn is_wsl_path(_path: &Path) -> bool {
+    false
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpStatus {
@@ -371,6 +395,11 @@ pub fn set_mcp_servers_map(
     };
 
     // 构建 mcpServers 对象：移除 UI 辅助字段（enabled/source），仅保留实际 MCP 规范
+    // 检测目标路径是否为 WSL，若是则跳过 cmd /c 包装
+    let is_wsl_target = is_wsl_path(&path);
+    if is_wsl_target {
+        log::info!("检测到 WSL 路径，跳过 cmd /c 包装: {}", path.display());
+    }
     let mut out: Map<String, Value> = Map::new();
     for (id, spec) in servers.iter() {
         let mut obj = if let Some(map) = spec.as_object() {
@@ -397,8 +426,10 @@ pub fn set_mcp_servers_map(
         obj.remove("homepage");
         obj.remove("docs");
 
-        // Windows 平台自动包装 npx/npm 等命令为 cmd /c 格式
-        wrap_command_for_windows(&mut obj);
+        // Windows 平台自动包装 npx/npm 等命令为 cmd /c 格式（WSL 路径除外）
+        if !is_wsl_target {
+            wrap_command_for_windows(&mut obj);
+        }
 
         out.insert(id.clone(), Value::Object(obj));
     }
@@ -543,6 +574,70 @@ mod tests {
         {
             assert_eq!(obj["command"], "cmd");
             assert_eq!(obj["args"], json!(["/c", "NPX", "-y", "foo"]));
+        }
+    }
+
+    /// 测试 WSL 路径检测功能
+    #[test]
+    fn test_is_wsl_path_wsl_dollar() {
+        // wsl$ 格式 - 各种发行版
+        #[cfg(windows)]
+        {
+            assert!(is_wsl_path(Path::new(r"\\wsl$\Ubuntu\home\user\.claude")));
+            assert!(is_wsl_path(Path::new(r"\\wsl$\Debian\home\user\.claude")));
+            assert!(is_wsl_path(Path::new(
+                r"\\wsl$\openSUSE-Leap-15.2\home\user"
+            )));
+            assert!(is_wsl_path(Path::new(r"\\wsl$\kali-linux\home\user")));
+            assert!(is_wsl_path(Path::new(r"\\wsl$\Arch\home\user")));
+            assert!(is_wsl_path(Path::new(r"\\wsl$\Alpine\home\user")));
+            assert!(is_wsl_path(Path::new(r"\\wsl$\Fedora\home\user")));
+        }
+
+        #[cfg(not(windows))]
+        {
+            // 非 Windows 平台始终返回 false
+            assert!(!is_wsl_path(Path::new(r"\\wsl$\Ubuntu\home\user\.claude")));
+        }
+    }
+
+    #[test]
+    fn test_is_wsl_path_wsl_localhost() {
+        // wsl.localhost 格式
+        #[cfg(windows)]
+        {
+            assert!(is_wsl_path(Path::new(
+                r"\\wsl.localhost\Ubuntu\home\user\.claude"
+            )));
+            assert!(is_wsl_path(Path::new(r"\\wsl.localhost\Debian\home\user")));
+            assert!(is_wsl_path(Path::new(
+                r"\\wsl.localhost\openSUSE-Leap-15.2\home\user"
+            )));
+        }
+    }
+
+    #[test]
+    fn test_is_wsl_path_case_insensitive() {
+        // 大小写不敏感
+        #[cfg(windows)]
+        {
+            assert!(is_wsl_path(Path::new(r"\\WSL$\Ubuntu\home\user")));
+            assert!(is_wsl_path(Path::new(r"\\Wsl$\Ubuntu\home\user")));
+            assert!(is_wsl_path(Path::new(r"\\WSL.LOCALHOST\Ubuntu\home\user")));
+            assert!(is_wsl_path(Path::new(r"\\Wsl.Localhost\Ubuntu\home\user")));
+        }
+    }
+
+    #[test]
+    fn test_is_wsl_path_non_wsl() {
+        // 非 WSL 路径
+        assert!(!is_wsl_path(Path::new(r"C:\Users\user\.claude")));
+        assert!(!is_wsl_path(Path::new(r"D:\Workspace\project")));
+        #[cfg(windows)]
+        {
+            assert!(!is_wsl_path(Path::new(r"\\server\share\path")));
+            assert!(!is_wsl_path(Path::new(r"\\localhost\c$\Users")));
+            assert!(!is_wsl_path(Path::new(r"\\192.168.1.1\share")));
         }
     }
 }
