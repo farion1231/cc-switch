@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "3.9.0-3"
+version = "3.9.1"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
@@ -37,7 +37,7 @@ tauri-plugin-deep-link = "2"
 dirs = "5.0"
 toml = "0.8"
 toml_edit = "0.22"
-reqwest = { version = "0.12", features = ["rustls-tls", "json", "stream"] }
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "stream", "socks"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 futures = "0.3"
 async-stream = "0.3"
@@ -77,7 +77,8 @@ objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 codegen-units = 1
 lto = "thin"
 opt-level = "s"
-panic = "abort"
+# 使用 unwind 以便 panic hook 能捕获 backtrace（abort 会直接终止无法捕获）
+panic = "unwind"
 strip = "symbols"
 
 [dev-dependencies]

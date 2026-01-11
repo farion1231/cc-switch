@@ -53,7 +53,11 @@
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Common Config Snippet",
     "commonConfigHint": "This snippet will be merged into settings.json when 'Write Common Config' is checked",
-    "fullSettingsHint": "Full Claude Code settings.json content"
+    "fullSettingsHint": "Full Claude Code settings.json content",
+    "extractFromCurrent": "Extract from Editor",
+    "extractNoCommonConfig": "No common config available to extract from editor",
+    "extractFailed": "Extract failed: {{error}}",
+    "saveFailed": "Save failed: {{error}}"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
@@ -260,6 +264,7 @@
     "aboutHint": "View version information and update status.",
     "portableMode": "Portable mode: updates require manual download.",
     "updateAvailable": "New version available: {{version}}",
+    "updateBadge": "Update available",
     "updateFailed": "Update installation failed, attempted to open download page.",
     "checkUpdateFailed": "Failed to check for updates, please try again later.",
     "openReleaseNotesFailed": "Failed to open release notes",
@@ -331,7 +336,9 @@
       "packycode": "PackyCode is an official partner of CC Switch. Register using this link and enter \"cc-switch\" promo code during recharge to get 10% off",
       "minimax_cn": "MiniMax Coding Plan Special Offer, Starter from ¥9.9",
       "minimax_en": "MiniMax Coding Plan Black Friday, Starter is now $2/mo (80% OFF!)",
-      "dmxapi": "Claude Code exclusive model 66% OFF now!"
+      "dmxapi": "Claude Code exclusive model 66% OFF now!",
+      "cubence": "Cubence is an official partner of CC Switch. Register using this link and enter \"CCSWITCH\" promo code during recharge to get 10% off every top-up",
+      "aigocode": "AIGoCode is an official partner of CC Switch. Register using this link and get 10% bonus credit on your first top-up!"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
@@ -356,7 +363,6 @@
     "anthropicModel": "Main Model",
     "anthropicSmallFastModel": "Fast Model",
     "anthropicReasoningModel": "Reasoning Model (Thinking)",
-    "reasoningModelPlaceholder": "e.g. claude-sonnet-4-20250514",
     "openrouterCompatMode": "OpenRouter Compatibility Mode",
     "openrouterCompatModeHint": "Use OpenAI Chat Completions interface and convert to Anthropic SSE.",
     "anthropicDefaultHaikuModel": "Default Haiku Model",
@@ -407,7 +413,11 @@
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Codex Common Config Snippet",
     "commonConfigHint": "This snippet will be appended to the end of config.toml when 'Write Common Config' is checked",
-    "apiUrlLabel": "API Request URL"
+    "apiUrlLabel": "API Request URL",
+    "extractFromCurrent": "Extract from Editor",
+    "extractNoCommonConfig": "No common config available to extract from editor",
+    "extractFailed": "Extract failed: {{error}}",
+    "saveFailed": "Save failed: {{error}}"
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
@@ -417,7 +427,18 @@
     "writeCommonConfig": "Write Common Config",
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Gemini Common Config Snippet",
-    "commonConfigHint": "Common config snippet will be merged into all Gemini providers with it enabled"
+    "commonConfigHint": "This snippet writes to Gemini .env (GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY are not allowed)",
+    "extractFromCurrent": "Extract from Editor",
+    "extractNoCommonConfig": "No common config available to extract from editor",
+    "extractFailed": "Extract failed: {{error}}",
+    "saveFailed": "Save failed: {{error}}",
+    "extractedConfigInvalid": "Extracted config format is invalid",
+    "invalidJsonFormat": "Common config snippet format error (must be valid JSON)",
+    "commonConfigInvalidKeys": "Common config snippet must not include GOOGLE_GEMINI_BASE_URL or GEMINI_API_KEY (found: {{keys}})",
+    "commonConfigInvalidValues": "Common config snippet values must be strings",
+    "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
+    "configMergeFailed": "Config merge failed: {{error}}",
+    "configReplaceFailed": "Config replace failed: {{error}}"
   },
   "providerPreset": {
     "label": "Provider Preset",
@@ -578,6 +599,9 @@
   },
   "mcp": {
     "title": "MCP Management",
+    "import": "Import",
+    "importExisting": "Import Existing",
+    "addMcp": "Add MCP",
     "claudeTitle": "Claude Code MCP Management",
     "codexTitle": "Codex MCP Management",
     "geminiTitle": "Gemini MCP Management",
@@ -589,6 +613,8 @@
       "deleteConfirm": "Are you sure you want to delete server \"{{id}}\"? This action cannot be undone.",
       "noServers": "No servers yet",
       "enabledApps": "Enabled Apps",
+      "noImportFound": "No MCP servers to import found. All servers are already managed by CC Switch.",
+      "importSuccess": "Successfully imported {{count}} MCP servers",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -806,8 +832,8 @@
   },
   "skills": {
     "manage": "Skills",
-    "title": "Claude Skills Management",
-    "description": "Discover and install Claude skills from popular repositories to extend Claude Code/Codex capabilities",
+    "title": "Skills Management",
+    "description": "Discover and install skills from popular repositories to extend Claude Code/Codex/Gemini capabilities",
     "refresh": "Refresh",
     "refreshing": "Refreshing...",
     "repoManager": "Repository Management",
@@ -883,7 +909,25 @@
       "installed": "Installed",
       "uninstalled": "Not installed"
     },
-    "noResults": "No matching skills found"
+    "noResults": "No matching skills found",
+    "noInstalled": "No skills installed",
+    "noInstalledDescription": "Discover and install skills from repositories, or import existing skills",
+    "discover": "Discover Skills",
+    "import": "Import Existing",
+    "importDescription": "Select skills to import into CC Switch unified management",
+    "importSuccess": "Successfully imported {{count}} skills",
+    "importSelected": "Import Selected ({{count}})",
+    "noUnmanagedFound": "No skills to import found. All skills are already managed by CC Switch.",
+    "foundIn": "Found in",
+    "local": "Local",
+    "uninstallConfirm": "Are you sure you want to uninstall \"{{name}}\"? This will remove the skill from all apps.",
+    "uninstallInMainPanel": "Please uninstall skills from the main panel",
+    "notFound": "Skill not found",
+    "apps": {
+      "claude": "Claude",
+      "codex": "Codex",
+      "gemini": "Gemini"
+    }
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",
@@ -971,7 +1015,10 @@
     "clickToSelect": "Click to select icon"
   },
   "migration": {
-    "success": "Configuration migrated successfully"
+    "success": "Configuration migrated successfully",
+    "skillsSuccess": "Automatically imported {{count}} skill(s) into unified management",
+    "skillsFailed": "Failed to auto import skills",
+    "skillsFailedDescription": "Open the Skills page and click \"Import Existing\" to import manually (or restart and try again)."
   },
   "agents": {
     "title": "Agents"
@@ -1025,7 +1072,7 @@
         },
         "listenPort": {
           "label": "Listen Port",
-          "placeholder": "5000",
+          "placeholder": "15721",
           "description": "Port number the proxy server listens on (1024 ~ 65535)"
         },
         "maxRetries": {

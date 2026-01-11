@@ -373,6 +373,8 @@ impl McpService {
         // 调用原有的导入逻辑（从 mcp.rs）
         let count = crate::mcp::import_from_claude(&mut temp_config)?;
 
+        let mut new_count = 0;
+
         // 如果有导入的服务器，保存到数据库
         if count > 0 {
             if let Some(servers) = &temp_config.mcp.servers {
@@ -384,6 +386,8 @@ impl McpService {
                         merged.apps.claude = true;
                         merged
                     } else {
+                        // 真正的新服务器
+                        new_count += 1;
                         server.clone()
                     };
 
@@ -396,7 +400,7 @@ impl McpService {
             }
         }
 
-        Ok(count)
+        Ok(new_count)
     }
 
     /// 从 Codex 导入 MCP（v3.7.0 已更新为统一结构）
@@ -406,6 +410,8 @@ impl McpService {
 
         // 调用原有的导入逻辑（从 mcp.rs）
         let count = crate::mcp::import_from_codex(&mut temp_config)?;
+
+        let mut new_count = 0;
 
         // 如果有导入的服务器，保存到数据库
         if count > 0 {
@@ -418,6 +424,8 @@ impl McpService {
                         merged.apps.codex = true;
                         merged
                     } else {
+                        // 真正的新服务器
+                        new_count += 1;
                         server.clone()
                     };
 
@@ -430,7 +438,7 @@ impl McpService {
             }
         }
 
-        Ok(count)
+        Ok(new_count)
     }
 
     /// 从 Gemini 导入 MCP（v3.7.0 已更新为统一结构）
@@ -440,6 +448,8 @@ impl McpService {
 
         // 调用原有的导入逻辑（从 mcp.rs）
         let count = crate::mcp::import_from_gemini(&mut temp_config)?;
+
+        let mut new_count = 0;
 
         // 如果有导入的服务器，保存到数据库
         if count > 0 {
@@ -452,6 +462,8 @@ impl McpService {
                         merged.apps.gemini = true;
                         merged
                     } else {
+                        // 真正的新服务器
+                        new_count += 1;
                         server.clone()
                     };
 
@@ -464,6 +476,6 @@ impl McpService {
             }
         }
 
-        Ok(count)
+        Ok(new_count)
     }
 }

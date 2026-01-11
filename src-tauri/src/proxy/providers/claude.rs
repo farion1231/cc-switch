@@ -217,28 +217,37 @@ impl ProviderAdapter for ClaudeAdapter {
         // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
         // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
 
-        format!(
+        let base = format!(
             "{}/{}",
             base_url.trim_end_matches('/'),
             endpoint.trim_start_matches('/')
-        )
+        );
+
+        // 为 /v1/messages 端点添加 ?beta=true 参数
+        // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
+        if endpoint.contains("/v1/messages") && !endpoint.contains("?") {
+            format!("{base}?beta=true")
+        } else {
+            base
+        }
     }
 
     fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
+        // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
+        // 这里不再设置 anthropic-version，避免 header 重复
         match auth.strategy {
-            // Anthropic 官方: Authorization Bearer + x-api-key + anthropic-version
+            // Anthropic 官方: Authorization Bearer + x-api-key
             AuthStrategy::Anthropic => request
                 .header("Authorization", format!("Bearer {}", auth.api_key))
-                .header("x-api-key", &auth.api_key)
-                .header("anthropic-version", "2023-06-01"),
+                .header("x-api-key", &auth.api_key),
             // ClaudeAuth 中转服务: 仅 Bearer，无 x-api-key
-            AuthStrategy::ClaudeAuth => request
-                .header("Authorization", format!("Bearer {}", auth.api_key))
-                .header("anthropic-version", "2023-06-01"),
+            AuthStrategy::ClaudeAuth => {
+                request.header("Authorization", format!("Bearer {}", auth.api_key))
+            }
             // OpenRouter: Bearer
-            AuthStrategy::Bearer => request
-                .header("Authorization", format!("Bearer {}", auth.api_key))
-                .header("anthropic-version", "2023-06-01"),
+            AuthStrategy::Bearer => {
+                request.header("Authorization", format!("Bearer {}", auth.api_key))
+            }
             _ => request,
         }
     }
@@ -416,15 +425,33 @@ mod tests {
     #[test]
     fn test_build_url_anthropic() {
         let adapter = ClaudeAdapter::new();
+        // /v1/messages 端点会自动添加 ?beta=true 参数
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages");
-        assert_eq!(url, "https://api.anthropic.com/v1/messages");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
     }
 
     #[test]
     fn test_build_url_openrouter() {
         let adapter = ClaudeAdapter::new();
+        // /v1/messages 端点会自动添加 ?beta=true 参数
         let url = adapter.build_url("https://openrouter.ai/api", "/v1/messages");
-        assert_eq!(url, "https://openrouter.ai/api/v1/messages");
+        assert_eq!(url, "https://openrouter.ai/api/v1/messages?beta=true");
+    }
+
+    #[test]
+    fn test_build_url_no_beta_for_other_endpoints() {
+        let adapter = ClaudeAdapter::new();
+        // 非 /v1/messages 端点不添加 ?beta=true
+        let url = adapter.build_url("https://api.anthropic.com", "/v1/complete");
+        assert_eq!(url, "https://api.anthropic.com/v1/complete");
+    }
+
+    #[test]
+    fn test_build_url_preserve_existing_query() {
+        let adapter = ClaudeAdapter::new();
+        // 已有查询参数时不重复添加
+        let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages?foo=bar");
     }
 
     #[test]

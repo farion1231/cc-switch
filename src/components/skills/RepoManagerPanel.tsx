@@ -6,11 +6,11 @@ import { Label } from "@/components/ui/label";
 import { Trash2, ExternalLink, Plus } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
-import type { Skill, SkillRepo } from "@/lib/api/skills";
+import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
 
 interface RepoManagerPanelProps {
   repos: SkillRepo[];
-  skills: Skill[];
+  skills: DiscoverableSkill[];
   onAdd: (repo: SkillRepo) => Promise<void>;
   onRemove: (owner: string, name: string) => Promise<void>;
   onClose: () => void;
@@ -92,7 +92,7 @@ export function RepoManagerPanel({
       {/* 添加仓库表单 */}
       <div className="space-y-4 glass-card rounded-xl p-6">
         <h3 className="text-base font-semibold text-foreground">
-          添加技能仓库
+          {t("skills.addRepo")}
         </h3>
         <div className="space-y-4">
           <div>

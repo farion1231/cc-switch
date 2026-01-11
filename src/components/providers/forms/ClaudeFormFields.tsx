@@ -222,9 +222,7 @@ export function ClaudeFormFields({
             {/* 推理模型 */}
             <div className="space-y-2">
               <FormLabel htmlFor="reasoningModel">
-                {t("providerForm.anthropicReasoningModel", {
-                  defaultValue: "推理模型 (Thinking)",
-                })}
+                {t("providerForm.anthropicReasoningModel")}
               </FormLabel>
               <Input
                 id="reasoningModel"
@@ -233,9 +231,6 @@ export function ClaudeFormFields({
                 onChange={(e) =>
                   onModelChange("ANTHROPIC_REASONING_MODEL", e.target.value)
                 }
-                placeholder={t("providerForm.reasoningModelPlaceholder", {
-                  defaultValue: "",
-                })}
                 autoComplete="off"
               />
             </div>

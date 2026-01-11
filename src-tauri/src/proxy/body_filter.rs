@@ -68,12 +68,6 @@ pub fn filter_private_params_with_whitelist(body: Value, whitelist: &[String]) -
     filter_recursive_with_whitelist(body, &mut Vec::new(), &whitelist_set)
 }
 
-/// 递归过滤实现
-#[cfg(test)]
-fn filter_recursive(value: Value, removed_keys: &mut Vec<String>) -> Value {
-    filter_recursive_with_whitelist(value, removed_keys, &HashSet::new())
-}
-
 /// 递归过滤实现（支持白名单）
 fn filter_recursive_with_whitelist(
     value: Value,

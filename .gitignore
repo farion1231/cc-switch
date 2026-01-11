@@ -18,3 +18,8 @@ GEMINI.md
 /.vscode
 vitest-report.json
 nul
+
+# Flatpak build artifacts
+flatpak/cc-switch.deb
+flatpak-build/
+flatpak-repo/

@@ -12,10 +12,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink, Download, Trash2, Loader2 } from "lucide-react";
 import { settingsApi } from "@/lib/api";
-import type { Skill } from "@/lib/api/skills";
+import type { DiscoverableSkill } from "@/lib/api/skills";
+
+type SkillCardSkill = DiscoverableSkill & { installed: boolean };
 
 interface SkillCardProps {
-  skill: Skill;
+  skill: SkillCardSkill;
   onInstall: (directory: string) => Promise<void>;
   onUninstall: (directory: string) => Promise<void>;
 }
@@ -57,7 +59,7 @@ export function SkillCard({ skill, onInstall, onUninstall }: SkillCardProps) {
     skill.directory.trim().toLowerCase() !== skill.name.trim().toLowerCase();
 
   return (
-    <Card className="glass-card flex flex-col h-full transition-all duration-300 hover:scale-[1.01] hover:shadow-lg group relative overflow-hidden">
+    <Card className="glass-card flex flex-col h-full transition-all duration-300 hover:shadow-lg group relative overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">

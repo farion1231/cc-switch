@@ -13,6 +13,7 @@ mod gemini_config;
 mod gemini_mcp;
 mod init_status;
 mod mcp;
+mod panic_hook;
 mod prompt;
 mod prompt_files;
 mod provider;
@@ -54,6 +55,37 @@ use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 
+fn redact_url_for_log(url_str: &str) -> String {
+    match url::Url::parse(url_str) {
+        Ok(url) => {
+            let mut output = format!("{}://", url.scheme());
+            if let Some(host) = url.host_str() {
+                output.push_str(host);
+            }
+            output.push_str(url.path());
+
+            let mut keys: Vec<String> = url.query_pairs().map(|(k, _)| k.to_string()).collect();
+            keys.sort();
+            keys.dedup();
+
+            if !keys.is_empty() {
+                output.push_str("?[keys:");
+                output.push_str(&keys.join(","));
+                output.push(']');
+            }
+
+            output
+        }
+        Err(_) => {
+            let base = url_str.split('#').next().unwrap_or(url_str);
+            match base.split_once('?') {
+                Some((prefix, _)) => format!("{prefix}?[redacted]"),
+                None => base.to_string(),
+            }
+        }
+    }
+}
+
 /// 统一处理 ccswitch:// 深链接 URL
 ///
 /// - 解析 URL
@@ -69,7 +101,9 @@ fn handle_deeplink_url(
         return false;
     }
 
-    log::info!("✓ Deep link URL detected from {source}: {url_str}");
+    let redacted_url = redact_url_for_log(url_str);
+    log::info!("✓ Deep link URL detected from {source}: {redacted_url}");
+    log::debug!("Deep link URL (raw) from {source}: {url_str}");
 
     match crate::deeplink::parse_deeplink_url(url_str) {
         Ok(request) => {
@@ -150,15 +184,18 @@ fn macos_tray_icon() -> Option<Image<'static>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
+    panic_hook::setup_panic_hook();
+
     let mut builder = tauri::Builder::default();
 
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             log::info!("=== Single Instance Callback Triggered ===");
-            log::info!("Args count: {}", args.len());
+            log::debug!("Args count: {}", args.len());
             for (i, arg) in args.iter().enumerate() {
-                log::info!("  arg[{i}]: {arg}");
+                log::debug!("  arg[{i}]: {}", redact_url_for_log(arg));
             }
 
             // Check for deep link URL in args (mainly for Windows/Linux command line)
@@ -212,6 +249,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
+            // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
+            app_store::refresh_app_config_dir_override(app.handle());
+            panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
+
             // 注册 Updater 插件（桌面端）
             #[cfg(desktop)]
             {
@@ -223,17 +264,34 @@ pub fn run() {
                     log::warn!("初始化 Updater 插件失败，已跳过：{e}");
                 }
             }
-            // 初始化日志
-            if cfg!(debug_assertions) {
+            // 初始化日志（Debug 和 Release 模式都启用 Info 级别）
+            // 日志同时输出到控制台和文件（<app_config_dir>/logs/；若设置了覆盖则使用覆盖目录）
+            {
+                use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
+
+                let log_dir = panic_hook::get_log_dir();
+
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
+                        .targets([
+                            // 输出到控制台
+                            Target::new(TargetKind::Stdout),
+                            // 输出到日志文件
+                            Target::new(TargetKind::Folder {
+                                path: log_dir,
+                                file_name: Some("cc-switch".into()),
+                            }),
+                        ])
+                        .rotation_strategy(RotationStrategy::KeepAll)
+                        .max_file_size(5_000_000) // 5MB 单文件上限
+                        .timezone_strategy(TimezoneStrategy::UseLocal)
                         .build(),
                 )?;
-            }
 
-            // 预先刷新 Store 覆盖配置，确保 AppState 初始化时可读取到最新路径
-            app_store::refresh_app_config_dir_override(app.handle());
+                // 清理旧日志文件，只保留最近 2 个
+                panic_hook::cleanup_old_logs();
+            }
 
             // 初始化数据库
             let app_config_dir = crate::config::get_app_config_dir();
@@ -273,12 +331,25 @@ pub fn run() {
                 None
             };
 
-            // 现在创建数据库
-            let db = match crate::database::Database::init() {
-                Ok(db) => Arc::new(db),
-                Err(e) => {
-                    log::error!("Failed to init database: {e}");
-                    return Err(Box::new(e));
+            // 现在创建数据库（包含 Schema 迁移）
+            //
+            // 说明：从 v3.8.* 升级的用户通常会走到这里的 SQLite schema 迁移，
+            // 若迁移失败（数据库损坏/权限不足/user_version 过新等），需要给用户明确提示，
+            // 否则表现可能只是“应用打不开/闪退”。
+            let db = loop {
+                match crate::database::Database::init() {
+                    Ok(db) => break Arc::new(db),
+                    Err(e) => {
+                        log::error!("Failed to init database: {e}");
+
+                        if !show_database_init_error_dialog(app.handle(), &db_path, &e.to_string())
+                        {
+                            log::info!("用户选择退出程序");
+                            std::process::exit(1);
+                        }
+
+                        log::info!("用户选择重试初始化数据库");
+                    }
                 }
             };
 
@@ -324,6 +395,47 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to initialize default skill repos: {e}"),
             }
 
+            // 1.1. Skills 统一管理迁移：当数据库迁移到 v3 结构后，自动从各应用目录导入到 SSOT
+            // 触发条件由 schema 迁移设置 settings.skills_ssot_migration_pending = true 控制。
+            match app_state.db.get_setting("skills_ssot_migration_pending") {
+                Ok(Some(flag)) if flag == "true" || flag == "1" => {
+                    // 安全保护：如果用户已经有 v3 结构的 Skills 数据，就不要自动清空重建。
+                    let has_existing = app_state
+                        .db
+                        .get_all_installed_skills()
+                        .map(|skills| !skills.is_empty())
+                        .unwrap_or(false);
+
+                    if has_existing {
+                        log::info!(
+                            "Detected skills_ssot_migration_pending but skills table not empty; skipping auto import."
+                        );
+                        let _ = app_state
+                            .db
+                            .set_setting("skills_ssot_migration_pending", "false");
+                    } else {
+                        match crate::services::skill::migrate_skills_to_ssot(&app_state.db) {
+                            Ok(count) => {
+                                log::info!("✓ Auto imported {count} skill(s) into SSOT");
+                                if count > 0 {
+                                    crate::init_status::set_skills_migration_result(count);
+                                }
+                                let _ = app_state
+                                    .db
+                                    .set_setting("skills_ssot_migration_pending", "false");
+                            }
+                            Err(e) => {
+                                log::warn!("✗ Failed to auto import legacy skills to SSOT: {e}");
+                                crate::init_status::set_skills_migration_error(e.to_string());
+                                // 保留 pending 标志，方便下次启动重试
+                            }
+                        }
+                    }
+                }
+                Ok(_) => {} // 未开启迁移标志，静默跳过
+                Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
+            }
+
             // 2. 导入供应商配置（已有内置检查：该应用已有供应商则跳过）
             for app in [
                 crate::app_config::AppType::Claude,
@@ -336,6 +448,27 @@ pub fn run() {
                 ) {
                     Ok(true) => {
                         log::info!("✓ Imported default provider for {}", app.as_str());
+
+                        // 首次运行：自动提取通用配置片段（仅当通用配置为空时）
+                        if app_state
+                            .db
+                            .get_config_snippet(app.as_str())
+                            .ok()
+                            .flatten()
+                            .is_none()
+                        {
+                            match crate::services::provider::ProviderService::extract_common_config_snippet(&app_state, app.clone()) {
+                                Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
+                                    if let Err(e) = app_state.db.set_config_snippet(app.as_str(), Some(snippet)) {
+                                        log::warn!("✗ Failed to save common config snippet for {}: {e}", app.as_str());
+                                    } else {
+                                        log::info!("✓ Extracted common config snippet for {}", app.as_str());
+                                    }
+                                }
+                                Ok(_) => log::debug!("○ No common config to extract for {}", app.as_str()),
+                                Err(e) => log::debug!("○ Failed to extract common config for {}: {e}", app.as_str()),
+                            }
+                        }
                     }
                     Ok(false) => {} // 已有供应商，静默跳过
                     Err(e) => {
@@ -454,7 +587,7 @@ pub fn run() {
 
                     for (i, url) in urls.iter().enumerate() {
                         let url_str = url.as_str();
-                        log::info!("  URL[{i}]: {url_str}");
+                        log::debug!("  URL[{i}]: {}", redact_url_for_log(url_str));
 
                         if handle_deeplink_url(&app_handle, url_str, true, "on_open_url") {
                             break; // Process only first ccswitch:// URL
@@ -507,14 +640,8 @@ pub fn run() {
             app.manage(app_state);
 
             // 初始化 SkillService
-            match SkillService::new() {
-                Ok(skill_service) => {
-                    app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
-                }
-                Err(e) => {
-                    log::warn!("初始化 SkillService 失败: {e}");
-                }
-            }
+            let skill_service = SkillService::new();
+            app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
             // 异常退出恢复 + 代理状态自动恢复
             let app_handle = app.handle().clone();
@@ -564,12 +691,14 @@ pub fn run() {
             commands::open_external,
             commands::get_init_error,
             commands::get_migration_result,
+            commands::get_skills_migration_result,
             commands::get_app_config_path,
             commands::open_app_config_folder,
             commands::get_claude_common_config_snippet,
             commands::set_claude_common_config_snippet,
             commands::get_common_config_snippet,
             commands::set_common_config_snippet,
+            commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
@@ -601,6 +730,7 @@ pub fn run() {
             commands::upsert_mcp_server,
             commands::delete_mcp_server,
             commands::toggle_mcp_app,
+            commands::import_mcp_from_apps,
             // Prompt management
             commands::get_prompts,
             commands::upsert_prompt,
@@ -635,7 +765,15 @@ pub fn run() {
             commands::check_env_conflicts,
             commands::delete_env_vars,
             commands::restore_env_backup,
-            // Skill management
+            // Skill management (v3.10.0+ unified)
+            commands::get_installed_skills,
+            commands::install_skill_unified,
+            commands::uninstall_skill_unified,
+            commands::toggle_skill_app,
+            commands::scan_unmanaged_skills,
+            commands::import_skills_from_apps,
+            commands::discover_available_skills,
+            // Skill management (legacy API compatibility)
             commands::get_skills,
             commands::get_skills_for_app,
             commands::install_skill,
@@ -956,6 +1094,71 @@ fn show_migration_error_dialog(app: &tauri::AppHandle, error: &str) -> bool {
 
     // 使用 blocking_show 同步等待用户响应
     // OkCancelCustom: 第一个按钮（重试）返回 true，第二个按钮（退出）返回 false
+    app.dialog()
+        .message(&message)
+        .title(title)
+        .kind(MessageDialogKind::Error)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            retry_text.to_string(),
+            exit_text.to_string(),
+        ))
+        .blocking_show()
+}
+
+/// 显示数据库初始化/Schema 迁移失败对话框
+/// 返回 true 表示用户选择重试，false 表示用户选择退出
+fn show_database_init_error_dialog(
+    app: &tauri::AppHandle,
+    db_path: &std::path::Path,
+    error: &str,
+) -> bool {
+    let title = if is_chinese_locale() {
+        "数据库初始化失败"
+    } else {
+        "Database Initialization Failed"
+    };
+
+    let message = if is_chinese_locale() {
+        format!(
+            "初始化数据库或迁移数据库结构时发生错误：\n\n{error}\n\n\
+            数据库文件路径：\n{db}\n\n\
+            您的数据尚未丢失，应用不会自动删除数据库文件。\n\
+            常见原因包括：数据库版本过新、文件损坏、权限不足、磁盘空间不足等。\n\n\
+            建议：\n\
+            1) 先备份整个配置目录（包含 cc-switch.db）\n\
+            2) 如果提示“数据库版本过新”，请升级到更新版本\n\
+            3) 如果刚升级出现异常，可回退旧版本导出/备份后再升级\n\n\
+            点击「重试」重新尝试初始化\n\
+            点击「退出」关闭程序",
+            db = db_path.display()
+        )
+    } else {
+        format!(
+            "An error occurred while initializing or migrating the database:\n\n{error}\n\n\
+            Database file path:\n{db}\n\n\
+            Your data is NOT lost - the app will not delete the database automatically.\n\
+            Common causes include: newer database version, corrupted file, permission issues, or low disk space.\n\n\
+            Suggestions:\n\
+            1) Back up the entire config directory (including cc-switch.db)\n\
+            2) If you see “database version is newer”, please upgrade CC Switch\n\
+            3) If this happened right after upgrading, consider rolling back to export/backup then upgrade again\n\n\
+            Click 'Retry' to attempt initialization again\n\
+            Click 'Exit' to close the program",
+            db = db_path.display()
+        )
+    };
+
+    let retry_text = if is_chinese_locale() {
+        "重试"
+    } else {
+        "Retry"
+    };
+    let exit_text = if is_chinese_locale() {
+        "退出"
+    } else {
+        "Exit"
+    };
+
     app.dialog()
         .message(&message)
         .title(title)

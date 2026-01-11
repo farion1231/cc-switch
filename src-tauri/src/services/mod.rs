@@ -15,7 +15,8 @@ pub use mcp::McpService;
 pub use prompt::PromptService;
 pub use provider::{ProviderService, ProviderSortUpdate};
 pub use proxy::ProxyService;
-pub use skill::{Skill, SkillRepo, SkillService};
+#[allow(unused_imports)]
+pub use skill::{DiscoverableSkill, Skill, SkillRepo, SkillService};
 pub use speedtest::{EndpointLatency, SpeedtestService};
 #[allow(unused_imports)]
 pub use usage_stats::{

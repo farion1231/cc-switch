@@ -71,11 +71,21 @@ impl Database {
             PRIMARY KEY (id, app_type)
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 5. Skills 表
+        // 5. Skills 表（v3.10.0+ 统一结构）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skills (
-            directory TEXT NOT NULL, app_type TEXT NOT NULL, installed BOOLEAN NOT NULL DEFAULT 0,
-            installed_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (directory, app_type)
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            directory TEXT NOT NULL,
+            repo_owner TEXT,
+            repo_name TEXT,
+            repo_branch TEXT DEFAULT 'main',
+            readme_url TEXT,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            installed_at INTEGER NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -102,12 +112,12 @@ impl Database {
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
-            listen_port INTEGER NOT NULL DEFAULT 5000, enable_logging INTEGER NOT NULL DEFAULT 1,
+            listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
-            max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 30,
-            streaming_idle_timeout INTEGER NOT NULL DEFAULT 60, non_streaming_timeout INTEGER NOT NULL DEFAULT 300,
-            circuit_failure_threshold INTEGER NOT NULL DEFAULT 5, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
-            circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.5,
+            max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+            streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+            circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+            circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
             circuit_min_requests INTEGER NOT NULL DEFAULT 10,
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
@@ -123,7 +133,7 @@ impl Database {
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
-                VALUES ('claude', 6, 45, 90, 300, 8, 3, 90, 0.6, 15)",
+                VALUES ('claude', 6, 90, 180, 600, 8, 3, 90, 0.7, 15)",
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -132,7 +142,7 @@ impl Database {
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
-                VALUES ('codex', 3, 30, 60, 300, 5, 2, 60, 0.5, 10)",
+                VALUES ('codex', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -141,7 +151,7 @@ impl Database {
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
-                VALUES ('gemini', 5, 30, 60, 300, 5, 2, 60, 0.5, 10)",
+                VALUES ('gemini', 5, 60, 120, 600, 4, 2, 60, 0.6, 10)",
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -243,7 +253,7 @@ impl Database {
             [],
         );
         let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN listen_port INTEGER NOT NULL DEFAULT 5000",
+            "ALTER TABLE proxy_config ADD COLUMN listen_port INTEGER NOT NULL DEFAULT 15721",
             [],
         );
         let _ = conn.execute(
@@ -253,15 +263,15 @@ impl Database {
 
         // 尝试添加超时配置列到 proxy_config 表
         let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 30",
+            "ALTER TABLE proxy_config ADD COLUMN streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60",
             [],
         );
         let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN streaming_idle_timeout INTEGER NOT NULL DEFAULT 60",
+            "ALTER TABLE proxy_config ADD COLUMN streaming_idle_timeout INTEGER NOT NULL DEFAULT 120",
             [],
         );
         let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN non_streaming_timeout INTEGER NOT NULL DEFAULT 300",
+            "ALTER TABLE proxy_config ADD COLUMN non_streaming_timeout INTEGER NOT NULL DEFAULT 600",
             [],
         );
 
@@ -330,6 +340,11 @@ impl Database {
                         );
                         Self::migrate_v1_to_v2(conn)?;
                         Self::set_user_version(conn, 2)?;
+                    }
+                    2 => {
+                        log::info!("迁移数据库从 v2 到 v3（Skills 统一管理架构）");
+                        Self::migrate_v2_to_v3(conn)?;
+                        Self::set_user_version(conn, 3)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -454,7 +469,7 @@ impl Database {
                 conn,
                 "proxy_config",
                 "listen_port",
-                "INTEGER NOT NULL DEFAULT 5000",
+                "INTEGER NOT NULL DEFAULT 15721",
             )?;
             Self::add_column_if_missing(
                 conn,
@@ -467,19 +482,19 @@ impl Database {
                 conn,
                 "proxy_config",
                 "streaming_first_byte_timeout",
-                "INTEGER NOT NULL DEFAULT 30",
-            )?;
-            Self::add_column_if_missing(
-                conn,
-                "proxy_config",
-                "streaming_idle_timeout",
                 "INTEGER NOT NULL DEFAULT 60",
             )?;
             Self::add_column_if_missing(
                 conn,
                 "proxy_config",
+                "streaming_idle_timeout",
+                "INTEGER NOT NULL DEFAULT 120",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
                 "non_streaming_timeout",
-                "INTEGER NOT NULL DEFAULT 300",
+                "INTEGER NOT NULL DEFAULT 600",
             )?;
         }
 
@@ -649,12 +664,12 @@ impl Database {
         conn.execute("CREATE TABLE proxy_config_new (
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
-            listen_port INTEGER NOT NULL DEFAULT 5000, enable_logging INTEGER NOT NULL DEFAULT 1,
+            listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
-            max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 30,
-            streaming_idle_timeout INTEGER NOT NULL DEFAULT 60, non_streaming_timeout INTEGER NOT NULL DEFAULT 300,
-            circuit_failure_threshold INTEGER NOT NULL DEFAULT 5, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
-            circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.5,
+            max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+            streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+            circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+            circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
             circuit_min_requests INTEGER NOT NULL DEFAULT 10,
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", [])?;
@@ -689,6 +704,17 @@ impl Database {
 
     /// 迁移 skills 表：从单 key 主键改为 (directory, app_type) 复合主键
     fn migrate_skills_table(conn: &Connection) -> Result<(), AppError> {
+        // v3 结构（统一管理架构）已经是更高版本的 skills 表：
+        // - 主键为 id
+        // - 包含 enabled_claude / enabled_codex / enabled_gemini 等列
+        // 在这种情况下，不应再执行 v1 -> v2 的迁移逻辑，否则会因列不匹配而失败。
+        if Self::has_column(conn, "skills", "enabled_claude")?
+            || Self::has_column(conn, "skills", "id")?
+        {
+            log::info!("skills 表已经是 v3 结构，跳过 v1 -> v2 迁移");
+            return Ok(());
+        }
+
         // 检查是否已经是新表结构
         if Self::has_column(conn, "skills", "app_type")? {
             log::info!("skills 表已经包含 app_type 字段，跳过迁移");
@@ -757,6 +783,69 @@ impl Database {
             .map_err(|e| AppError::Database(format!("删除旧 skills 表失败: {e}")))?;
 
         log::info!("skills 表迁移完成，共迁移 {count} 条记录");
+        Ok(())
+    }
+
+    /// v2 -> v3 迁移：Skills 统一管理架构
+    ///
+    /// 将 skills 表从 (directory, app_type) 复合主键结构迁移到统一的 id 主键结构，
+    /// 支持三应用启用标志（enabled_claude, enabled_codex, enabled_gemini）。
+    ///
+    /// 迁移策略：
+    /// 1. 旧数据库只存储安装记录，真正的 skill 文件在文件系统
+    /// 2. 直接重建新表结构，后续由 SkillService 在首次启动时扫描文件系统重建数据
+    fn migrate_v2_to_v3(conn: &Connection) -> Result<(), AppError> {
+        // 检查是否已经是新结构（通过检查是否有 enabled_claude 列）
+        if Self::has_column(conn, "skills", "enabled_claude")? {
+            log::info!("skills 表已经是 v3 结构，跳过迁移");
+            return Ok(());
+        }
+
+        log::info!("开始迁移 skills 表到 v3 结构（统一管理架构）...");
+
+        // 1. 备份旧数据（用于日志）
+        let old_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM skills", [], |row| row.get(0))
+            .unwrap_or(0);
+        log::info!("旧 skills 表有 {old_count} 条记录");
+
+        // 标记：需要在启动后从文件系统扫描并重建 Skills 数据
+        // 说明：v3 结构将 Skills 的 SSOT 迁移到 ~/.cc-switch/skills/，
+        // 旧表只存“安装记录”，无法直接无损迁移到新结构，因此改为启动后扫描 app 目录导入。
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('skills_ssot_migration_pending', 'true')",
+            [],
+        );
+
+        // 2. 删除旧表
+        conn.execute("DROP TABLE IF EXISTS skills", [])
+            .map_err(|e| AppError::Database(format!("删除旧 skills 表失败: {e}")))?;
+
+        // 3. 创建新表
+        conn.execute(
+            "CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                directory TEXT NOT NULL,
+                repo_owner TEXT,
+                repo_name TEXT,
+                repo_branch TEXT DEFAULT 'main',
+                readme_url TEXT,
+                enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+                installed_at INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建新 skills 表失败: {e}")))?;
+
+        log::info!(
+            "skills 表已迁移到 v3 结构。\n\
+             注意：旧的安装记录已清除，首次启动时将自动扫描文件系统重建数据。"
+        );
+
         Ok(())
     }
 

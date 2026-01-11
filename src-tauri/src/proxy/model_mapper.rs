@@ -54,6 +54,7 @@ impl ModelMapping {
             || self.sonnet_model.is_some()
             || self.opus_model.is_some()
             || self.default_model.is_some()
+            || self.reasoning_model.is_some()
     }
 
     /// 根据原始模型名称获取映射后的模型
@@ -182,6 +183,27 @@ mod tests {
         }
     }
 
+    fn create_provider_with_reasoning_only() -> Provider {
+        Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_REASONING_MODEL": "reasoning-only-model"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
     #[test]
     fn test_sonnet_mapping() {
         let provider = create_provider_with_mapping();
@@ -220,6 +242,31 @@ mod tests {
         let (result, _, mapped) = apply_model_mapping(body, &provider);
         assert_eq!(result["model"], "reasoning-model");
         assert_eq!(mapped, Some("reasoning-model".to_string()));
+    }
+
+    #[test]
+    fn test_reasoning_only_mapping_in_thinking_mode() {
+        let provider = create_provider_with_reasoning_only();
+        let body = json!({
+            "model": "claude-sonnet-4-5",
+            "thinking": {"type": "enabled"}
+        });
+        let (result, _, mapped) = apply_model_mapping(body, &provider);
+        assert_eq!(result["model"], "reasoning-only-model");
+        assert_eq!(mapped, Some("reasoning-only-model".to_string()));
+    }
+
+    #[test]
+    fn test_reasoning_only_mapping_does_not_affect_non_thinking() {
+        let provider = create_provider_with_reasoning_only();
+        let body = json!({
+            "model": "claude-sonnet-4-5",
+            "thinking": {"type": "disabled"}
+        });
+        let (result, original, mapped) = apply_model_mapping(body, &provider);
+        assert_eq!(result["model"], "claude-sonnet-4-5");
+        assert_eq!(original, Some("claude-sonnet-4-5".to_string()));
+        assert!(mapped.is_none());
     }
 
     #[test]

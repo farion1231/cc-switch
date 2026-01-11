@@ -2,14 +2,14 @@
 
 # Claude Code / Codex / Gemini CLI 全方位辅助工具
 
-[![Version](https://img.shields.io/badge/version-3.8.3-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.9.1-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![Downloads](https://img.shields.io/endpoint?url=https://api.pinstudios.net/api/badges/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
 
 <a href="https://trendshift.io/repositories/15372" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15372" alt="farion1231%2Fcc-switch | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-[English](README.md) | 中文 | [日本語](README_JA.md) | [更新日志](CHANGELOG.md) | [v3.8.0 发布说明](docs/release-note-v3.8.0-zh.md)
+[English](README.md) | 中文 | [日本語](README_JA.md) | [更新日志](CHANGELOG.md) | [v3.9.0 发布说明](docs/release-note-v3.9.0-zh.md)
 
 </div>
 
@@ -24,7 +24,7 @@
 <table>
 <tr>
 <td width="180"><a href="https://www.packyapi.com/register?aff=cc-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
-<td>感谢 PackyCode 赞助了本项目！PackyCode 是一家稳定、高效的API中转服务商，提供 Claude Code、Codex、Gemini 等多种中转服务。PackyCode 为本软件的用户提供了特别优惠，使用<a href="https://www.packyapi.com/register?aff=cc-switch">此链接</a>注册并在充值时填写"cc-switch"优惠码，可以享受9折优惠。</td>
+<td>感谢 PackyCode 赞助了本项目！PackyCode 是一家稳定、高效的API中转服务商，提供 Claude Code、Codex、Gemini 等多种中转服务。PackyCode 为本软件的用户提供了特别优惠，使用<a href="https://www.packyapi.com/register?aff=cc-switch">此链接</a>注册并在充值时填写"cc-switch"优惠码，可以享受9折优惠！</td>
 </tr>
 
 <tr>
@@ -35,8 +35,13 @@
 <td width="180"><a href="https://www.dmxapi.cn/register?aff=bUHu"><img src="assets/partners/logos/dmx-zh.jpeg" alt="DMXAPI" width="150"></a></td>
 <td>感谢 DMXAPI（大模型API）赞助了本项目！ DMXAPI，一个Key用全球大模型。
 为200多家企业用户提供全球大模型API服务。· 充值即开票 ·当天开票 ·并发不限制  ·1元起充 ·  7x24 在线技术辅导，GPT/Claude/Gemini全部6.8折，国内模型5~8折，Claude Code 专属模型3.4折进行中！<a href="https://www.dmxapi.cn/register?aff=bUHu">点击这里注册</a></td>
-
 </tr>
+
+<tr>
+<td width="180"><a href="https://cubence.com/signup?code=CCSWITCH&source=ccs"><img src="assets/partners/logos/cubence.png" alt="Cubence" width="150"></a></td>
+<td>感谢 Cubence 赞助本项目！Cubence 是一家可靠高效的 API 中继服务提供商，提供对 Claude Code、Codex、Gemini 等模型的中继服务，并提供按量、包月等灵活的计费方式。Cubence 为 CC Switch 的用户提供了特别优惠：使用 <a href="https://cubence.com/signup?code=CCSWITCH&source=ccs">此链接</a> 注册，并在充值时输入 "CCSWITCH" 优惠码，每次充值均可享受九折优惠！</td>
+</tr>
+
 </table>
 
 ## 界面预览
@@ -47,7 +52,7 @@
 
 ## 功能特性
 
-### 当前版本：v3.8.3 | [完整更新日志](CHANGELOG.md)
+### 当前版本：v3.9.1 | [完整更新日志](CHANGELOG.md) | [发布说明](docs/release-note-v3.9.0-zh.md)
 
 **v3.8.0 重大更新（2025-11-28）**
 
@@ -186,7 +191,19 @@ paru -S cc-switch-bin
 
 ### Linux 用户
 
-从 [Releases](../../releases) 页面下载最新版本的 `CC-Switch-v{版本号}-Linux.deb` 包或者 `CC-Switch-v{版本号}-Linux.AppImage` 安装包。
+从 [Releases](../../releases) 页面下载最新版本的 Linux 安装包：
+
+- `CC-Switch-v{版本号}-Linux.deb`（Debian/Ubuntu）
+- `CC-Switch-v{版本号}-Linux.rpm`（Fedora/RHEL/openSUSE）
+- `CC-Switch-v{版本号}-Linux.AppImage`（通用）
+- `CC-Switch-v{版本号}-Linux.flatpak`（Flatpak）
+
+Flatpak 安装与运行：
+
+```bash
+flatpak install --user ./CC-Switch-v{版本号}-Linux.flatpak
+flatpak run com.ccswitch.desktop
+```
 
 ## 快速开始
 

@@ -52,12 +52,14 @@ interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImportSuccess?: () => void | Promise<void>;
+  defaultTab?: string;
 }
 
 export function SettingsPage({
   open,
   onOpenChange,
   onImportSuccess,
+  defaultTab = "general",
 }: SettingsDialogProps) {
   const { t } = useTranslation();
   const {
@@ -105,10 +107,10 @@ export function SettingsPage({
 
   useEffect(() => {
     if (open) {
-      setActiveTab("general");
+      setActiveTab(defaultTab);
       resetStatus();
     }
-  }, [open, resetStatus]);
+  }, [open, resetStatus, defaultTab]);
 
   useEffect(() => {
     if (requiresRestart) {
@@ -350,28 +352,6 @@ export function SettingsPage({
                     </AccordionItem>
 
                     <AccordionItem
-                      value="test"
-                      className="rounded-xl glass-card overflow-hidden"
-                    >
-                      <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
-                        <div className="flex items-center gap-3">
-                          <Activity className="h-5 w-5 text-indigo-500" />
-                          <div className="text-left">
-                            <h3 className="text-base font-semibold">
-                              {t("settings.advanced.modelTest.title")}
-                            </h3>
-                            <p className="text-sm text-muted-foreground font-normal">
-                              {t("settings.advanced.modelTest.description")}
-                            </p>
-                          </div>
-                        </div>
-                      </AccordionTrigger>
-                      <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                        <ModelTestConfigPanel />
-                      </AccordionContent>
-                    </AccordionItem>
-
-                    <AccordionItem
                       value="failover"
                       className="rounded-xl glass-card overflow-hidden"
                     >
@@ -486,6 +466,28 @@ export function SettingsPage({
                             </TabsContent>
                           </Tabs>
                         </div>
+                      </AccordionContent>
+                    </AccordionItem>
+
+                    <AccordionItem
+                      value="test"
+                      className="rounded-xl glass-card overflow-hidden"
+                    >
+                      <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <div className="flex items-center gap-3">
+                          <Activity className="h-5 w-5 text-indigo-500" />
+                          <div className="text-left">
+                            <h3 className="text-base font-semibold">
+                              {t("settings.advanced.modelTest.title")}
+                            </h3>
+                            <p className="text-sm text-muted-foreground font-normal">
+                              {t("settings.advanced.modelTest.description")}
+                            </p>
+                          </div>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                        <ModelTestConfigPanel />
                       </AccordionContent>
                     </AccordionItem>
 

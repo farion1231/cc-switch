@@ -17,6 +17,20 @@ use tokio::sync::RwLock;
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 
+/// 代理接管模式下需要从 Claude Live 配置中移除的“模型覆盖”字段。
+///
+/// 原因：接管模式切换供应商时不会写回 Live 配置，如果保留这些字段，
+/// Claude Code 会继续以旧模型名发起请求，导致新供应商不支持时失败。
+const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 6] = [
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_REASONING_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    // Legacy key (已废弃)：历史版本使用该字段区分 small/fast 模型
+    "ANTHROPIC_SMALL_FAST_MODEL",
+];
+
 #[derive(Clone)]
 pub struct ProxyService {
     db: Arc<Database>,
@@ -32,6 +46,31 @@ impl ProxyService {
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// 清理接管模式下 Claude Live 配置中的模型覆盖字段。
+    ///
+    /// 这可以避免“接管开启后切换供应商仍使用旧模型”的问题。
+    /// 注意：此方法不会修改 Token/Base URL 的接管占位符，仅移除模型字段。
+    pub fn cleanup_claude_model_overrides_in_live(&self) -> Result<(), String> {
+        let mut config = self.read_claude_live()?;
+
+        let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) else {
+            return Ok(());
+        };
+
+        let mut changed = false;
+        for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
+            if env.remove(key).is_some() {
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.write_claude_live(&config)?;
+        }
+
+        Ok(())
     }
 
     /// 设置 AppHandle（在应用初始化时调用）
@@ -402,8 +441,21 @@ impl ProxyService {
                                     }
                                     None => {
                                         // 至少写入一份可用的 Token
-                                        provider.settings_config["env"] =
-                                            json!({ token_key: token });
+                                        if provider.settings_config.is_null() {
+                                            provider.settings_config = json!({});
+                                        }
+
+                                        if let Some(root) = provider.settings_config.as_object_mut()
+                                        {
+                                            root.insert(
+                                                "env".to_string(),
+                                                json!({ token_key: token }),
+                                            );
+                                        } else {
+                                            log::warn!(
+                                                "Claude provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                            );
+                                        }
                                     }
                                 }
 
@@ -446,9 +498,20 @@ impl ProxyService {
                             {
                                 auth_obj.insert("OPENAI_API_KEY".to_string(), json!(token));
                             } else {
-                                provider.settings_config["auth"] = json!({
-                                    "OPENAI_API_KEY": token
-                                });
+                                if provider.settings_config.is_null() {
+                                    provider.settings_config = json!({});
+                                }
+
+                                if let Some(root) = provider.settings_config.as_object_mut() {
+                                    root.insert(
+                                        "auth".to_string(),
+                                        json!({ "OPENAI_API_KEY": token }),
+                                    );
+                                } else {
+                                    log::warn!(
+                                        "Codex provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                    );
+                                }
                             }
 
                             if let Err(e) = self.db.update_provider_settings_config(
@@ -487,9 +550,20 @@ impl ProxyService {
                             {
                                 env_obj.insert("GEMINI_API_KEY".to_string(), json!(token));
                             } else {
-                                provider.settings_config["env"] = json!({
-                                    "GEMINI_API_KEY": token
-                                });
+                                if provider.settings_config.is_null() {
+                                    provider.settings_config = json!({});
+                                }
+
+                                if let Some(root) = provider.settings_config.as_object_mut() {
+                                    root.insert(
+                                        "env".to_string(),
+                                        json!({ "GEMINI_API_KEY": token }),
+                                    );
+                                } else {
+                                    log::warn!(
+                                        "Gemini provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                    );
+                                }
                             }
 
                             if let Err(e) = self.db.update_provider_settings_config(
@@ -740,6 +814,10 @@ impl ProxyService {
         if let Ok(mut live_config) = self.read_claude_live() {
             if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                 env.insert("ANTHROPIC_BASE_URL".to_string(), json!(&proxy_url));
+                // 关键：接管模式下移除模型覆盖字段，避免切换供应商后仍用旧模型名发起请求
+                for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
+                    env.remove(key);
+                }
                 // 仅覆盖已存在的 Token 字段，避免新增字段导致用户困惑；
                 // 若完全没有 Token 字段，则写入 ANTHROPIC_AUTH_TOKEN 占位符用于避免客户端警告。
                 let token_keys = [
@@ -820,6 +898,10 @@ impl ProxyService {
                 let mut live_config = self.read_claude_live()?;
                 if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                     env.insert("ANTHROPIC_BASE_URL".to_string(), json!(&proxy_url));
+                    // 关键：接管模式下移除模型覆盖字段，避免切换供应商后仍用旧模型名发起请求
+                    for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
+                        env.remove(key);
+                    }
 
                     let token_keys = [
                         "ANTHROPIC_AUTH_TOKEN",
@@ -899,6 +981,10 @@ impl ProxyService {
                 if let Ok(mut live_config) = self.read_claude_live() {
                     if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                         env.insert("ANTHROPIC_BASE_URL".to_string(), json!(&proxy_url));
+                        // 关键：接管模式下移除模型覆盖字段，避免切换供应商后仍用旧模型名发起请求
+                        for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
+                            env.remove(key);
+                        }
 
                         let token_keys = [
                             "ANTHROPIC_AUTH_TOKEN",
@@ -1475,7 +1561,30 @@ impl ProxyService {
         if !path.exists() {
             return Err("Claude 配置文件不存在".to_string());
         }
-        read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))
+
+        let mut value: Value =
+            read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))?;
+
+        if value.is_null() {
+            value = json!({});
+        }
+
+        if !value.is_object() {
+            let kind = match &value {
+                Value::Null => "null",
+                Value::Bool(_) => "boolean",
+                Value::Number(_) => "number",
+                Value::String(_) => "string",
+                Value::Array(_) => "array",
+                Value::Object(_) => "object",
+            };
+            return Err(format!(
+                "Claude 配置文件格式错误：根节点必须是 JSON 对象（当前为 {kind}），路径: {}",
+                path.display()
+            ));
+        }
+
+        Ok(value)
     }
 
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {

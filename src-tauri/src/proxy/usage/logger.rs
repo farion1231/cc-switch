@@ -65,8 +65,11 @@ impl<'a> UsageLogger<'a> {
 
         let created_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or_else(|e| {
+                log::warn!("SystemTime is before UNIX_EPOCH, falling back to 0: {e}");
+                0
+            });
 
         conn.execute(
             "INSERT INTO proxy_request_logs (

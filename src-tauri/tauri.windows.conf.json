@@ -4,6 +4,7 @@
     "windows": [
       {
         "label": "main",
+        "title": "CC Switch",
         "titleBarStyle": "Visible",
         "minWidth": 900,
         "minHeight": 600

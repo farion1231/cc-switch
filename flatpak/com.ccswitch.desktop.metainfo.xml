@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.ccswitch.desktop</id>
+  <name>CC Switch</name>
+  <summary>All-in-One Assistant for Claude Code, Codex &amp; Gemini CLI</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <description>
+    <p>CC Switch is a cross-platform desktop app for managing and switching provider configurations for Claude Code, Codex, and Gemini CLI.</p>
+    <ul>
+      <li>Manage multiple provider configurations and endpoints</li>
+      <li>One-click switch and sync to client live configurations</li>
+      <li>MCP servers and Prompt/Skills management</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">com.ccswitch.desktop.desktop</launchable>
+  <provides>
+    <binary>cc-switch</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/farion1231/cc-switch</url>
+  <url type="bugtracker">https://github.com/farion1231/cc-switch/issues</url>
+</component>

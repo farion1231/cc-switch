@@ -2,7 +2,7 @@
 
 # All-in-One Assistant for Claude Code, Codex & Gemini CLI
 
-[![Version](https://img.shields.io/badge/version-3.8.3-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.9.1-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![Downloads](https://img.shields.io/endpoint?url=https://api.pinstudios.net/api/badges/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
@@ -37,6 +37,11 @@ This project is sponsored by Z.ai, supporting us with their GLM CODING PLAN.GLM 
 <td>Thanks to DMXAPI for sponsoring this project! DMXAPI provides global large model API services to 200+ enterprise users. One API key for all global models. Features include: instant invoicing, unlimited concurrency, starting from $0.15, 24/7 technical support. GPT/Claude/Gemini all at 32% off, domestic models 20-50% off, Claude Code exclusive models at 66% off! <a href="https://www.dmxapi.cn/register?aff=bUHu">Register here</a></td>
 </tr>
 
+<tr>
+<td width="180"><a href="https://cubence.com/signup?code=CCSWITCH&source=ccs"><img src="assets/partners/logos/cubence.png" alt="Cubence" width="150"></a></td>
+<td>Thanks to Cubence for sponsoring this project! Cubence is a reliable and efficient API relay service provider, offering relay services for Claude Code, Codex, Gemini, and more with flexible billing options including pay-as-you-go and monthly plans. Cubence provides special discounts for CC Switch users: register using <a href="https://cubence.com/signup?code=CCSWITCH&source=ccs">this link</a> and enter the "CCSWITCH" promo code during recharge to get 10% off every top-up!</td>
+</tr>
+
 </table>
 
 ## Screenshots
@@ -47,7 +52,7 @@ This project is sponsored by Z.ai, supporting us with their GLM CODING PLAN.GLM 
 
 ## Features
 
-### Current Version: v3.8.3 | [Full Changelog](CHANGELOG.md) | [Release Notes](docs/release-note-v3.8.0-en.md)
+### Current Version: v3.9.1 | [Full Changelog](CHANGELOG.md) | [Release Notes](docs/release-note-v3.9.0-en.md)
 
 **v3.8.0 Major Update (2025-11-28)**
 
@@ -186,7 +191,19 @@ paru -S cc-switch-bin
 
 ### Linux Users
 
-Download the latest `CC-Switch-v{version}-Linux.deb` package or `CC-Switch-v{version}-Linux.AppImage` from the [Releases](../../releases) page.
+Download the latest Linux build from the [Releases](../../releases) page:
+
+- `CC-Switch-v{version}-Linux.deb` (Debian/Ubuntu)
+- `CC-Switch-v{version}-Linux.rpm` (Fedora/RHEL/openSUSE)
+- `CC-Switch-v{version}-Linux.AppImage` (Universal)
+- `CC-Switch-v{version}-Linux.flatpak` (Flatpak)
+
+Flatpak install & run:
+
+```bash
+flatpak install --user ./CC-Switch-v{version}-Linux.flatpak
+flatpak run com.ccswitch.desktop
+```
 
 ## Quick Start
 

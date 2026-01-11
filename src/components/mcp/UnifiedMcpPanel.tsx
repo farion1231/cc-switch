@@ -3,12 +3,16 @@ import { useTranslation } from "react-i18next";
 import { Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { useAllMcpServers, useToggleMcpApp } from "@/hooks/useMcp";
+import {
+  useAllMcpServers,
+  useToggleMcpApp,
+  useDeleteMcpServer,
+  useImportMcpFromApps,
+} from "@/hooks/useMcp";
 import type { McpServer } from "@/types";
 import type { AppId } from "@/lib/api/types";
 import McpFormModal from "./McpFormModal";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { useDeleteMcpServer } from "@/hooks/useMcp";
 import { Edit3, Trash2 } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import { mcpPresets } from "@/config/mcpPresets";
@@ -25,6 +29,7 @@ interface UnifiedMcpPanelProps {
  */
 export interface UnifiedMcpPanelHandle {
   openAdd: () => void;
+  openImport: () => void;
 }
 
 const UnifiedMcpPanel = React.forwardRef<
@@ -45,6 +50,7 @@ const UnifiedMcpPanel = React.forwardRef<
   const { data: serversMap, isLoading } = useAllMcpServers(activeConfigSetId);
   const toggleAppMutation = useToggleMcpApp();
   const deleteServerMutation = useDeleteMcpServer();
+  const importMutation = useImportMcpFromApps();
 
   // Convert serversMap to array for easier rendering
   const serverEntries = useMemo((): Array<[string, McpServer]> => {
@@ -87,8 +93,28 @@ const UnifiedMcpPanel = React.forwardRef<
     setIsFormOpen(true);
   };
 
+  const handleImport = async () => {
+    try {
+      const count = await importMutation.mutateAsync();
+      if (count === 0) {
+        toast.success(t("mcp.unifiedPanel.noImportFound"), {
+          closeButton: true,
+        });
+      } else {
+        toast.success(t("mcp.unifiedPanel.importSuccess", { count }), {
+          closeButton: true,
+        });
+      }
+    } catch (error) {
+      toast.error(t("common.error"), {
+        description: String(error),
+      });
+    }
+  };
+
   React.useImperativeHandle(ref, () => ({
     openAdd: handleAdd,
+    openImport: handleImport,
   }));
 
   const handleDelete = (id: string) => {

@@ -68,7 +68,7 @@ const PromptFormModal: React.FC<PromptFormModalProps> = ({
   }, [initialData]);
 
   const handleSave = async () => {
-    if (!name.trim() || !content.trim()) {
+    if (!name.trim()) {
       return;
     }
 
@@ -147,7 +147,7 @@ const PromptFormModal: React.FC<PromptFormModalProps> = ({
           <Button
             type="button"
             onClick={handleSave}
-            disabled={!name.trim() || !content.trim() || saving}
+            disabled={!name.trim() || saving}
           >
             {saving ? t("common.saving") : t("common.save")}
           </Button>

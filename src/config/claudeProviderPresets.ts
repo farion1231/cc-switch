@@ -87,10 +87,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "glm-4.6",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.5-air",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-4.6",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-4.6",
+        ANTHROPIC_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-4.7",
       },
     },
     category: "cn_official",
@@ -107,10 +107,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "glm-4.6",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.5-air",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-4.6",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-4.6",
+        ANTHROPIC_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-4.7",
       },
     },
     category: "cn_official",
@@ -124,8 +124,7 @@ export const providerPresets: ProviderPreset[] = [
     websiteUrl: "https://bailian.console.aliyun.com",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL:
-          "https://dashscope.aliyuncs.com/api/v2/apps/claude-code-proxy",
+        ANTHROPIC_BASE_URL: "https://dashscope.aliyuncs.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "qwen3-max",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3-max",
@@ -178,10 +177,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api-inference.modelscope.cn",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "ZhipuAI/GLM-4.6",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "ZhipuAI/GLM-4.6",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "ZhipuAI/GLM-4.6",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "ZhipuAI/GLM-4.6",
+        ANTHROPIC_MODEL: "ZhipuAI/GLM-4.7",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "ZhipuAI/GLM-4.7",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "ZhipuAI/GLM-4.7",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "ZhipuAI/GLM-4.7",
       },
     },
     category: "aggregator",
@@ -243,10 +242,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
         API_TIMEOUT_MS: "3000000",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
-        ANTHROPIC_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M2",
+        ANTHROPIC_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M2.1",
       },
     },
     category: "cn_official",
@@ -269,10 +268,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
         API_TIMEOUT_MS: "3000000",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
-        ANTHROPIC_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M2",
+        ANTHROPIC_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M2.1",
       },
     },
     category: "cn_official",
@@ -372,6 +371,48 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "packycode", // 促销信息 i18n key
     icon: "packycode",
+  },
+  {
+    name: "Cubence",
+    websiteUrl: "https://cubence.com",
+    apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.cubence.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: [
+      "https://api.cubence.com",
+      "https://api-cf.cubence.com",
+      "https://api-dmit.cubence.com",
+      "https://api-bwg.cubence.com",
+    ],
+    category: "third_party",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "cubence", // 促销信息 i18n key
+    icon: "cubence",
+    iconColor: "#000000",
+  },
+  {
+    name: "AIGoCode",
+    websiteUrl: "https://aigocode.com",
+    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.aigocode.com/api",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    // 请求地址候选（用于地址管理/测速）
+    endpointCandidates: [
+      "https://api.aigocode.com",
+    ],
+    category: "third_party",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "aigocode", // 促销信息 i18n key
+    icon: "aigocode",
+    iconColor: "#5B7FFF",
   },
   {
     name: "OpenRouter",

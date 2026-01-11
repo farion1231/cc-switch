@@ -1,10 +1,4 @@
-import {
-  useState,
-  useEffect,
-  useMemo,
-  forwardRef,
-  useImperativeHandle,
-} from "react";
+import { useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,15 +14,18 @@ import { toast } from "sonner";
 import { SkillCard } from "./SkillCard";
 import { RepoManagerPanel } from "./RepoManagerPanel";
 import {
-  skillsApi,
-  type Skill,
-  type SkillRepo,
+  useDiscoverableSkills,
+  useInstalledSkills,
+  useInstallSkill,
+  useSkillRepos,
+  useAddSkillRepo,
+  useRemoveSkillRepo,
   type AppType,
-} from "@/lib/api/skills";
+} from "@/hooks/useSkills";
+import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
 import { formatSkillError } from "@/lib/errors/skillErrorParser";
 
 interface SkillsPageProps {
-  onClose?: () => void;
   initialApp?: AppType;
 }
 
@@ -37,163 +34,138 @@ export interface SkillsPageHandle {
   openRepoManager: () => void;
 }
 
+/**
+ * Skills 发现面板
+ * 用于浏览和安装来自仓库的 Skills
+ */
 export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
-  ({ onClose: _onClose, initialApp = "claude" }, ref) => {
+  ({ initialApp = "claude" }, ref) => {
     const { t } = useTranslation();
-    const [skills, setSkills] = useState<Skill[]>([]);
-    const [repos, setRepos] = useState<SkillRepo[]>([]);
-    const [loading, setLoading] = useState(true);
     const [repoManagerOpen, setRepoManagerOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [filterStatus, setFilterStatus] = useState<
       "all" | "installed" | "uninstalled"
     >("all");
-    // 使用 initialApp，不允许切换
-    const selectedApp = initialApp;
 
-    const loadSkills = async (afterLoad?: (data: Skill[]) => void) => {
-      try {
-        setLoading(true);
-        const data = await skillsApi.getAll(selectedApp);
-        setSkills(data);
-        if (afterLoad) {
-          afterLoad(data);
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
+    // currentApp 用于安装时的默认应用
+    const currentApp = initialApp;
 
-        // 传入 "skills.loadFailed" 作为标题
-        const { title, description } = formatSkillError(
-          errorMessage,
-          t,
-          "skills.loadFailed",
-        );
+    // Queries
+    const {
+      data: discoverableSkills,
+      isLoading: loadingDiscoverable,
+      isFetching: fetchingDiscoverable,
+      refetch: refetchDiscoverable,
+    } = useDiscoverableSkills();
+    const { data: installedSkills } = useInstalledSkills();
+    const { data: repos = [], refetch: refetchRepos } = useSkillRepos();
 
-        toast.error(title, {
-          description,
-          duration: 8000,
-        });
+    // Mutations
+    const installMutation = useInstallSkill();
+    const addRepoMutation = useAddSkillRepo();
+    const removeRepoMutation = useRemoveSkillRepo();
 
-        console.error("Load skills failed:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
+    // 已安装的 directory 集合
+    const installedDirs = useMemo(() => {
+      if (!installedSkills) return new Set<string>();
+      return new Set(installedSkills.map((s) => s.directory.toLowerCase()));
+    }, [installedSkills]);
 
-    const loadRepos = async () => {
-      try {
-        const data = await skillsApi.getRepos();
-        setRepos(data);
-      } catch (error) {
-        console.error("Failed to load repos:", error);
-      }
-    };
+    type DiscoverableSkillItem = DiscoverableSkill & { installed: boolean };
 
-    useEffect(() => {
-      Promise.all([loadSkills(), loadRepos()]);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    // 为发现列表补齐 installed 状态，供 SkillCard 使用
+    const skills: DiscoverableSkillItem[] = useMemo(() => {
+      if (!discoverableSkills) return [];
+      return discoverableSkills.map((d) => {
+        const installName =
+          d.directory.split("/").pop()?.toLowerCase() ||
+          d.directory.toLowerCase();
+        return {
+          ...d,
+          installed: installedDirs.has(installName),
+        };
+      });
+    }, [discoverableSkills, installedDirs]);
+
+    const loading = loadingDiscoverable || fetchingDiscoverable;
 
     useImperativeHandle(ref, () => ({
-      refresh: () => loadSkills(),
+      refresh: () => {
+        refetchDiscoverable();
+        refetchRepos();
+      },
       openRepoManager: () => setRepoManagerOpen(true),
     }));
 
     const handleInstall = async (directory: string) => {
+      // 找到对应的 DiscoverableSkill
+      const skill = discoverableSkills?.find(
+        (s) =>
+          s.directory === directory ||
+          s.directory.split("/").pop() === directory,
+      );
+      if (!skill) {
+        toast.error(t("skills.notFound"));
+        return;
+      }
+
       try {
-        await skillsApi.install(directory, selectedApp);
-        toast.success(t("skills.installSuccess", { name: directory }), {
+        await installMutation.mutateAsync({
+          skill,
+          currentApp,
+        });
+        toast.success(t("skills.installSuccess", { name: skill.name }), {
           closeButton: true,
         });
-        await loadSkills();
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
-
-        // 使用错误解析器格式化错误，传入 "skills.installFailed"
         const { title, description } = formatSkillError(
           errorMessage,
           t,
           "skills.installFailed",
         );
-
-        toast.error(title, {
-          description,
-          duration: 10000, // 延长显示时间让用户看清
-        });
-
-        console.error("Install skill failed:", {
-          directory,
-          error,
-          message: errorMessage,
-        });
-      }
-    };
-
-    const handleUninstall = async (directory: string) => {
-      try {
-        await skillsApi.uninstall(directory, selectedApp);
-        toast.success(t("skills.uninstallSuccess", { name: directory }), {
-          closeButton: true,
-        });
-        await loadSkills();
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-
-        // 使用错误解析器格式化错误，传入 "skills.uninstallFailed"
-        const { title, description } = formatSkillError(
-          errorMessage,
-          t,
-          "skills.uninstallFailed",
-        );
-
         toast.error(title, {
           description,
           duration: 10000,
         });
+        console.error("Install skill failed:", error);
+      }
+    };
 
-        console.error("Uninstall skill failed:", {
-          directory,
-          error,
-          message: errorMessage,
+    const handleUninstall = async (_directory: string) => {
+      // 在发现面板中，不支持卸载，需要在主面板中操作
+      toast.info(t("skills.uninstallInMainPanel"));
+    };
+
+    const handleAddRepo = async (repo: SkillRepo) => {
+      try {
+        await addRepoMutation.mutateAsync(repo);
+        toast.success(
+          t("skills.repo.addSuccess", {
+            owner: repo.owner,
+            name: repo.name,
+          }),
+          { closeButton: true },
+        );
+      } catch (error) {
+        toast.error(t("common.error"), {
+          description: String(error),
         });
       }
     };
 
-    const handleAddRepo = async (repo: SkillRepo) => {
-      await skillsApi.addRepo(repo);
-
-      let repoSkillCount = 0;
-      await Promise.all([
-        loadRepos(),
-        loadSkills((data) => {
-          repoSkillCount = data.filter(
-            (skill) =>
-              skill.repoOwner === repo.owner &&
-              skill.repoName === repo.name &&
-              (skill.repoBranch || "main") === (repo.branch || "main"),
-          ).length;
-        }),
-      ]);
-
-      toast.success(
-        t("skills.repo.addSuccess", {
-          owner: repo.owner,
-          name: repo.name,
-          count: repoSkillCount,
-        }),
-        { closeButton: true },
-      );
-    };
-
     const handleRemoveRepo = async (owner: string, name: string) => {
-      await skillsApi.removeRepo(owner, name);
-      toast.success(t("skills.repo.removeSuccess", { owner, name }), {
-        closeButton: true,
-      });
-      await Promise.all([loadRepos(), loadSkills()]);
+      try {
+        await removeRepoMutation.mutateAsync({ owner, name });
+        toast.success(t("skills.repo.removeSuccess", { owner, name }), {
+          closeButton: true,
+        });
+      } catch (error) {
+        toast.error(t("common.error"), {
+          description: String(error),
+        });
+      }
     };
 
     // 过滤技能列表

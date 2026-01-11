@@ -17,6 +17,8 @@ import {
   ChevronDown,
   Loader2,
   Check,
+  Search,
+  Download,
 } from "lucide-react";
 import type { Provider } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -37,6 +39,7 @@ import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
+import { isWindows, isLinux } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
@@ -50,6 +53,7 @@ import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
 import { SkillsPage } from "@/components/skills/SkillsPage";
+import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
@@ -68,11 +72,13 @@ type View =
   | "settings"
   | "prompts"
   | "skills"
+  | "skillsDiscovery"
   | "mcp"
   | "agents"
   | "universal";
 
-const DRAG_BAR_HEIGHT = 28; // px
+// macOS Overlay mode needs space for traffic light buttons, Windows/Linux use native titlebar
+const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
 const CONTENT_TOP_OFFSET = DRAG_BAR_HEIGHT + HEADER_HEIGHT;
 
@@ -82,9 +88,12 @@ function App() {
 
   const [activeApp, setActiveApp] = useState<AppId>("claude");
   const [currentView, setCurrentView] = useState<View>("providers");
+  const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
 
-  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [editingProviderId, setEditingProviderId] = useState<string | null>(
+    null,
+  );
   const [usageProviderId, setUsageProviderId] = useState<string | null>(null);
   const [editingProviderSnapshot, setEditingProviderSnapshot] =
     useState<Provider | null>(null);
@@ -107,6 +116,7 @@ function App() {
   const promptPanelRef = useRef<any>(null);
   const mcpPanelRef = useRef<any>(null);
   const skillsPageRef = useRef<any>(null);
+  const unifiedSkillsPanelRef = useRef<any>(null);
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
@@ -263,6 +273,35 @@ function App() {
     checkMigration();
   }, [t]);
 
+  // 应用启动时检查是否刚完成了 Skills 自动导入（统一管理 SSOT）
+  useEffect(() => {
+    const checkSkillsMigration = async () => {
+      try {
+        const result = await invoke<{ count: number; error?: string } | null>(
+          "get_skills_migration_result",
+        );
+        if (result?.error) {
+          toast.error(t("migration.skillsFailed"), {
+            description: t("migration.skillsFailedDescription"),
+            closeButton: true,
+          });
+          console.error("[App] Skills SSOT migration failed:", result.error);
+          return;
+        }
+        if (result && result.count > 0) {
+          toast.success(t("migration.skillsSuccess", { count: result.count }), {
+            closeButton: true,
+          });
+          await queryClient.invalidateQueries({ queryKey: ["skills"] });
+        }
+      } catch (error) {
+        console.error("[App] Failed to check skills migration result:", error);
+      }
+    };
+
+    checkSkillsMigration();
+  }, [t, queryClient]);
+
   // 切换应用时检测当前应用的环境变量冲突
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
@@ -326,7 +365,8 @@ function App() {
   const handleSwitchProvider = useCallback(
     async (provider: Provider, targetSetId?: string) => {
       const fallbackSetId =
-        activeConfigSetId ?? (configSets.length > 0 ? configSets[0].id : undefined);
+        activeConfigSetId ??
+        (configSets.length > 0 ? configSets[0].id : undefined);
       const desiredSetId = targetSetId ?? fallbackSetId;
 
       if (desiredSetId && desiredSetId !== activeConfigSetId) {
@@ -340,12 +380,7 @@ function App() {
 
       await switchProvider(provider);
     },
-    [
-      activateEnvironment,
-      activeConfigSetId,
-      configSets,
-      switchProvider,
-    ],
+    [activateEnvironment, activeConfigSetId, configSets, switchProvider],
   );
 
   useEffect(() => {
@@ -542,6 +577,7 @@ function App() {
               open={true}
               onOpenChange={() => setCurrentView("providers")}
               onImportSuccess={handleImportSuccess}
+              defaultTab={settingsDefaultTab}
             />
           );
         case "prompts":
@@ -555,12 +591,13 @@ function App() {
           );
         case "skills":
           return (
-            <SkillsPage
-              ref={skillsPageRef}
-              onClose={() => setCurrentView("providers")}
-              initialApp={activeApp}
+            <UnifiedSkillsPanel
+              ref={unifiedSkillsPanelRef}
+              onOpenDiscovery={() => setCurrentView("skillsDiscovery")}
             />
           );
+        case "skillsDiscovery":
+          return <SkillsPage ref={skillsPageRef} initialApp={activeApp} />;
         case "mcp":
           return (
             <UnifiedMcpPanel
@@ -700,7 +737,13 @@ function App() {
                 <Button
                   variant="outline"
                   size="icon"
-                  onClick={() => setCurrentView("providers")}
+                  onClick={() =>
+                    setCurrentView(
+                      currentView === "skillsDiscovery"
+                        ? "skills"
+                        : "providers",
+                    )
+                  }
                   className="mr-2 rounded-lg"
                 >
                   <ArrowLeft className="w-4 h-4" />
@@ -710,6 +753,7 @@ function App() {
                   {currentView === "prompts" &&
                     t("prompts.title", { appName: t(`apps.${activeApp}`) })}
                   {currentView === "skills" && t("skills.title")}
+                  {currentView === "skillsDiscovery" && t("skills.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
                   {currentView === "agents" && t("agents.title")}
                   {currentView === "universal" &&
@@ -737,14 +781,22 @@ function App() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => setCurrentView("settings")}
+                    onClick={() => {
+                      setSettingsDefaultTab("general");
+                      setCurrentView("settings");
+                    }}
                     title={t("common.settings")}
                     className="hover:bg-black/5 dark:hover:bg-white/5"
                   >
                     <Settings className="w-4 h-4" />
                   </Button>
                 </div>
-                <UpdateBadge onClick={() => setCurrentView("settings")} />
+                <UpdateBadge
+                  onClick={() => {
+                    setSettingsDefaultTab("about");
+                    setCurrentView("settings");
+                  }}
+                />
               </>
             )}
           </div>
@@ -755,15 +807,60 @@ function App() {
           >
             {currentView === "prompts" && (
               <Button
-                size="icon"
+                variant="ghost"
+                size="sm"
                 onClick={() => promptPanelRef.current?.openAdd()}
-                className={`ml-auto ${addActionButtonClass}`}
-                title={t("prompts.add")}
+                className="hover:bg-black/5 dark:hover:bg-white/5"
               >
-                <Plus className="w-5 h-5" />
+                <Plus className="w-4 h-4 mr-2" />
+                {t("prompts.add")}
               </Button>
             )}
+            {currentView === "mcp" && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => mcpPanelRef.current?.openImport()}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  {t("mcp.importExisting")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => mcpPanelRef.current?.openAdd()}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  {t("mcp.addMcp")}
+                </Button>
+              </>
+            )}
             {currentView === "skills" && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => unifiedSkillsPanelRef.current?.openImport()}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  {t("skills.import")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCurrentView("skillsDiscovery")}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Search className="w-4 h-4 mr-2" />
+                  {t("skills.discover")}
+                </Button>
+              </>
+            )}
+            {currentView === "skillsDiscovery" && (
               <>
                 <Button
                   variant="ghost"

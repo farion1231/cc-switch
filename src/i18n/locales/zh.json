@@ -53,7 +53,11 @@
     "editCommonConfig": "编辑通用配置",
     "editCommonConfigTitle": "编辑通用配置片段",
     "commonConfigHint": "该片段会在勾选\"写入通用配置\"时合并到 settings.json 中",
-    "fullSettingsHint": "完整的 Claude Code settings.json 配置内容"
+    "fullSettingsHint": "完整的 Claude Code settings.json 配置内容",
+    "extractFromCurrent": "从编辑内容提取",
+    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
+    "extractFailed": "提取失败: {{error}}",
+    "saveFailed": "保存失败: {{error}}"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
@@ -260,6 +264,7 @@
     "aboutHint": "查看版本信息与更新状态。",
     "portableMode": "当前为便携版，更新需手动下载。",
     "updateAvailable": "检测到新版本：{{version}}",
+    "updateBadge": "有更新可用",
     "updateFailed": "更新安装失败，已尝试打开下载页面。",
     "checkUpdateFailed": "检查更新失败，请稍后重试。",
     "openReleaseNotesFailed": "打开更新日志失败",
@@ -331,7 +336,9 @@
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
       "minimax_cn": "MiniMax Coding Plan 特惠，Starter 套餐 9.9 元起",
       "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 套餐现仅 $2/月（2折优惠！）",
-      "dmxapi": "Claude Code 专属模型 3.4 折优惠进行中！"
+      "dmxapi": "Claude Code 专属模型 3.4 折优惠进行中！",
+      "cubence": "Cubence 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"CCSWITCH\" 优惠码，每次充值均可享受9折优惠",
+      "aigocode": "AIGoCode 是 CC Switch 的官方合作伙伴，使用此链接注册首次充值时可以获得10%额度奖励！"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -356,7 +363,6 @@
     "anthropicModel": "主模型",
     "anthropicSmallFastModel": "快速模型",
     "anthropicReasoningModel": "推理模型 (Thinking)",
-    "reasoningModelPlaceholder": "如 claude-sonnet-4-20250514",
     "openrouterCompatMode": "OpenRouter 兼容模式",
     "openrouterCompatModeHint": "使用 OpenAI Chat Completions 接口并转换为 Anthropic SSE。",
     "anthropicDefaultHaikuModel": "Haiku 默认模型",
@@ -407,7 +413,11 @@
     "editCommonConfig": "编辑通用配置",
     "editCommonConfigTitle": "编辑 Codex 通用配置片段",
     "commonConfigHint": "该片段会在勾选'写入通用配置'时追加到 config.toml 末尾",
-    "apiUrlLabel": "API 请求地址"
+    "apiUrlLabel": "API 请求地址",
+    "extractFromCurrent": "从编辑内容提取",
+    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
+    "extractFailed": "提取失败: {{error}}",
+    "saveFailed": "保存失败: {{error}}"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
@@ -417,7 +427,18 @@
     "writeCommonConfig": "写入通用配置",
     "editCommonConfig": "编辑通用配置",
     "editCommonConfigTitle": "编辑 Gemini 通用配置片段",
-    "commonConfigHint": "通用配置片段将合并到所有启用它的 Gemini 供应商配置中"
+    "commonConfigHint": "该片段会写入 Gemini 的 .env（不允许包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
+    "extractFromCurrent": "从编辑内容提取",
+    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
+    "extractFailed": "提取失败: {{error}}",
+    "saveFailed": "保存失败: {{error}}",
+    "extractedConfigInvalid": "提取的配置格式错误",
+    "invalidJsonFormat": "通用配置片段格式错误（必须是有效的 JSON）",
+    "commonConfigInvalidKeys": "通用配置片段不能包含 GOOGLE_GEMINI_BASE_URL 或 GEMINI_API_KEY（发现：{{keys}}）",
+    "commonConfigInvalidValues": "通用配置片段的值必须是字符串",
+    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
+    "configMergeFailed": "配置合并失败: {{error}}",
+    "configReplaceFailed": "配置替换失败: {{error}}"
   },
   "providerPreset": {
     "label": "预设供应商",
@@ -578,6 +599,9 @@
   },
   "mcp": {
     "title": "MCP 管理",
+    "import": "导入",
+    "importExisting": "导入已有",
+    "addMcp": "添加MCP",
     "claudeTitle": "Claude Code MCP 管理",
     "codexTitle": "Codex MCP 管理",
     "geminiTitle": "Gemini MCP 管理",
@@ -589,6 +613,8 @@
       "deleteConfirm": "确定要删除服务器 \"{{id}}\" 吗？此操作无法撤销。",
       "noServers": "暂无服务器",
       "enabledApps": "启用的应用",
+      "noImportFound": "未发现需要导入的 MCP 服务器。所有服务器已在 CC Switch 统一管理中。",
+      "importSuccess": "成功导入 {{count}} 个 MCP 服务器",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -806,8 +832,8 @@
   },
   "skills": {
     "manage": "Skills",
-    "title": "Claude Skills 管理",
-    "description": "从流行的仓库发现并安装 Claude 技能，扩展 Claude Code/Codex 的能力",
+    "title": "Skills 管理",
+    "description": "从流行的仓库发现并安装技能，扩展 Claude Code/Codex/Gemini 的能力",
     "refresh": "刷新",
     "refreshing": "刷新中...",
     "repoManager": "仓库管理",
@@ -883,7 +909,25 @@
       "installed": "已安装",
       "uninstalled": "未安装"
     },
-    "noResults": "未找到匹配的技能"
+    "noResults": "未找到匹配的技能",
+    "noInstalled": "暂无已安装的技能",
+    "noInstalledDescription": "从仓库发现并安装技能，或导入已有的技能",
+    "discover": "发现技能",
+    "import": "导入已有",
+    "importDescription": "选择要导入到 CC Switch 统一管理的技能",
+    "importSuccess": "成功导入 {{count}} 个技能",
+    "importSelected": "导入已选 ({{count}})",
+    "noUnmanagedFound": "未发现需要导入的技能。所有技能已在 CC Switch 统一管理中。",
+    "foundIn": "发现于",
+    "local": "本地",
+    "uninstallConfirm": "确定要卸载技能 \"{{name}}\" 吗？这将从所有应用中移除该技能。",
+    "uninstallInMainPanel": "请在主面板中卸载技能",
+    "notFound": "未找到技能",
+    "apps": {
+      "claude": "Claude",
+      "codex": "Codex",
+      "gemini": "Gemini"
+    }
   },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",
@@ -971,7 +1015,10 @@
     "clickToSelect": "点击选择图标"
   },
   "migration": {
-    "success": "配置迁移成功"
+    "success": "配置迁移成功",
+    "skillsSuccess": "已自动导入 {{count}} 个技能到统一管理",
+    "skillsFailed": "自动导入技能失败",
+    "skillsFailedDescription": "请打开 Skills 页面点击“导入已有”手动导入（或重启后再试）。"
   },
   "agents": {
     "title": "智能体"
@@ -1025,7 +1072,7 @@
         },
         "listenPort": {
           "label": "监听端口",
-          "placeholder": "5000",
+          "placeholder": "15721",
           "description": "代理服务器监听的端口号（1024 ~ 65535）"
         },
         "maxRetries": {

@@ -53,7 +53,11 @@
     "editCommonConfig": "共通設定を編集",
     "editCommonConfigTitle": "共通設定スニペットを編集",
     "commonConfigHint": "「共通設定を書き込む」がオンのとき settings.json にマージされます",
-    "fullSettingsHint": "Claude Code の settings.json 全文"
+    "fullSettingsHint": "Claude Code の settings.json 全文",
+    "extractFromCurrent": "編集内容から抽出",
+    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
+    "extractFailed": "抽出に失敗しました: {{error}}",
+    "saveFailed": "保存に失敗しました: {{error}}"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",
@@ -260,6 +264,7 @@
     "aboutHint": "バージョン情報と更新状況を表示します。",
     "portableMode": "ポータブルモード: 更新は手動ダウンロードが必要です。",
     "updateAvailable": "新しいバージョンがあります: {{version}}",
+    "updateBadge": "更新あり",
     "updateFailed": "更新のインストールに失敗しました。ダウンロードページを開こうとしました。",
     "checkUpdateFailed": "更新の確認に失敗しました。時間をおいて再試行してください。",
     "openReleaseNotesFailed": "リリースノートの表示に失敗しました",
@@ -331,7 +336,9 @@
       "packycode": "PackyCode は CC Switch の公式パートナーです。登録後チャージ時に \"cc-switch\" を入力すると 10% オフ",
       "minimax_cn": "MiniMax Coding Plan 特別価格、Starter ¥9.9 から",
       "minimax_en": "MiniMax Coding Plan Black Friday、Starter が月額 $2（80% OFF）",
-      "dmxapi": "Claude Code 専用モデル 66% OFF 実施中！"
+      "dmxapi": "Claude Code 専用モデル 66% OFF 実施中！",
+      "cubence": "Cubence は CC Switch の公式パートナーです。登録後チャージ時に \"CCSWITCH\" を入力すると、毎回 10% オフ",
+      "aigocode": "AIGoCode は CC Switch の公式パートナーです。このリンクから登録すると、初回チャージ時に 10% のボーナスクレジットがもらえます！"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
@@ -356,7 +363,6 @@
     "anthropicModel": "メインモデル",
     "anthropicSmallFastModel": "高速モデル",
     "anthropicReasoningModel": "推論モデル（Thinking）",
-    "reasoningModelPlaceholder": "例: claude-sonnet-4-20250514",
     "openrouterCompatMode": "OpenRouter 互換モード",
     "openrouterCompatModeHint": "OpenAI Chat Completions インターフェースを使用し、Anthropic SSE に変換します。",
     "anthropicDefaultHaikuModel": "既定 Haiku モデル",
@@ -407,7 +413,11 @@
     "editCommonConfig": "共通設定を編集",
     "editCommonConfigTitle": "Codex 共通設定スニペットを編集",
     "commonConfigHint": "「共通設定を書き込む」がオンの場合、config.toml の末尾に追記されます",
-    "apiUrlLabel": "API リクエスト URL"
+    "apiUrlLabel": "API リクエスト URL",
+    "extractFromCurrent": "編集内容から抽出",
+    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
+    "extractFailed": "抽出に失敗しました: {{error}}",
+    "saveFailed": "保存に失敗しました: {{error}}"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
@@ -417,7 +427,18 @@
     "writeCommonConfig": "共通設定を書き込む",
     "editCommonConfig": "共通設定を編集",
     "editCommonConfigTitle": "Gemini 共通設定スニペットを編集",
-    "commonConfigHint": "共通設定スニペットは、この機能をオンにしたすべての Gemini プロバイダーへマージされます"
+    "commonConfigHint": "このスニペットは Gemini の .env に書き込みます（GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY は使用できません）",
+    "extractFromCurrent": "編集内容から抽出",
+    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
+    "extractFailed": "抽出に失敗しました: {{error}}",
+    "saveFailed": "保存に失敗しました: {{error}}",
+    "extractedConfigInvalid": "抽出した設定のフォーマットが不正です",
+    "invalidJsonFormat": "共通設定スニペットの形式が不正です（有効な JSON でなければなりません）",
+    "commonConfigInvalidKeys": "共通設定スニペットに GOOGLE_GEMINI_BASE_URL または GEMINI_API_KEY を含めることはできません（検出: {{keys}}）",
+    "commonConfigInvalidValues": "共通設定スニペットの値は文字列である必要があります",
+    "noCommonConfigToApply": "共通設定スニペットが空、または適用できる項目がありません",
+    "configMergeFailed": "設定のマージに失敗しました: {{error}}",
+    "configReplaceFailed": "設定の置換に失敗しました: {{error}}"
   },
   "providerPreset": {
     "label": "プロバイダータイプ",
@@ -578,6 +599,9 @@
   },
   "mcp": {
     "title": "MCP 管理",
+    "import": "インポート",
+    "importExisting": "既存をインポート",
+    "addMcp": "MCPを追加",
     "claudeTitle": "Claude Code MCP 管理",
     "codexTitle": "Codex MCP 管理",
     "geminiTitle": "Gemini MCP 管理",
@@ -589,6 +613,8 @@
       "deleteConfirm": "サーバー「{{id}}」を削除しますか？この操作は元に戻せません。",
       "noServers": "まだサーバーがありません",
       "enabledApps": "有効なアプリ",
+      "noImportFound": "インポートする MCP サーバーが見つかりませんでした。すべてのサーバーは CC Switch で管理されています。",
+      "importSuccess": "{{count}} 個の MCP サーバーをインポートしました",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -806,8 +832,8 @@
   },
   "skills": {
     "manage": "Skills",
-    "title": "Claude スキル管理",
-    "description": "人気リポジトリから Claude Skills を探してインストールし、Claude Code/Codex を拡張",
+    "title": "Skills 管理",
+    "description": "人気リポジトリからスキルを探してインストールし、Claude Code/Codex/Gemini を拡張",
     "refresh": "更新",
     "refreshing": "更新中...",
     "repoManager": "リポジトリ管理",
@@ -883,7 +909,25 @@
       "installed": "インストール済み",
       "uninstalled": "未インストール"
     },
-    "noResults": "一致するスキルが見つかりませんでした"
+    "noResults": "一致するスキルが見つかりませんでした",
+    "noInstalled": "インストールされたスキルがありません",
+    "noInstalledDescription": "リポジトリからスキルを発見してインストールするか、既存のスキルをインポートしてください",
+    "discover": "スキルを発見",
+    "import": "既存をインポート",
+    "importDescription": "CC Switch 統合管理にインポートするスキルを選択してください",
+    "importSuccess": "{{count}} 件のスキルをインポートしました",
+    "importSelected": "選択をインポート ({{count}})",
+    "noUnmanagedFound": "インポートするスキルが見つかりませんでした。すべてのスキルは CC Switch で管理されています。",
+    "foundIn": "発見場所",
+    "local": "ローカル",
+    "uninstallConfirm": "「{{name}}」をアンインストールしますか？すべてのアプリからこのスキルが削除されます。",
+    "uninstallInMainPanel": "メインパネルからスキルをアンインストールしてください",
+    "notFound": "スキルが見つかりません",
+    "apps": {
+      "claude": "Claude",
+      "codex": "Codex",
+      "gemini": "Gemini"
+    }
   },
   "deeplink": {
     "confirmImport": "プロバイダーのインポートを確認",
@@ -971,7 +1015,10 @@
     "clickToSelect": "クリックでアイコンを選択"
   },
   "migration": {
-    "success": "設定の移行が完了しました"
+    "success": "設定の移行が完了しました",
+    "skillsSuccess": "スキルを {{count}} 件、自動的に統合管理へインポートしました",
+    "skillsFailed": "スキルの自動インポートに失敗しました",
+    "skillsFailedDescription": "Skills 画面で「既存をインポート」をクリックして手動でインポートしてください（または再起動して再試行）。"
   },
   "agents": {
     "title": "エージェント"
@@ -1025,7 +1072,7 @@
         },
         "listenPort": {
           "label": "リッスンポート",
-          "placeholder": "5000",
+          "placeholder": "15721",
           "description": "プロキシサーバーがリッスンするポート番号（1024 ~ 65535）"
         },
         "maxRetries": {
