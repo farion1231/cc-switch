@@ -62,7 +62,8 @@ impl ClaudeAdapter {
                 let normalized = value.trim().to_lowercase();
                 normalized == "true" || normalized == "1"
             }
-            _ => true,
+            // OpenRouter now supports Claude Code compatible API, default to passthrough
+            _ => false,
         }
     }
 
@@ -465,12 +466,22 @@ mod tests {
         }));
         assert!(!adapter.needs_transform(&anthropic_provider));
 
+        // OpenRouter provider without explicit setting now defaults to passthrough (no transform)
         let openrouter_provider = create_provider(json!({
             "env": {
                 "ANTHROPIC_BASE_URL": "https://openrouter.ai/api"
             }
         }));
-        assert!(adapter.needs_transform(&openrouter_provider));
+        assert!(!adapter.needs_transform(&openrouter_provider));
+
+        // OpenRouter provider with explicit compat mode enabled should transform
+        let openrouter_enabled = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api"
+            },
+            "openrouter_compat_mode": true
+        }));
+        assert!(adapter.needs_transform(&openrouter_enabled));
 
         let openrouter_disabled = create_provider(json!({
             "env": {

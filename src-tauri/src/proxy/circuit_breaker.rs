@@ -2,6 +2,7 @@
 //!
 //! 实现熔断器模式，用于防止向不健康的供应商发送请求
 
+use super::log_codes::cb as log_cb;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -126,7 +127,10 @@ impl CircuitBreaker {
                 if let Some(opened_at) = *self.last_opened_at.read().await {
                     if opened_at.elapsed().as_secs() >= config.timeout_seconds {
                         drop(config); // 释放读锁再转换状态
-                        log::info!("[CB-001] 熔断器 Open → HalfOpen (超时恢复)");
+                        log::info!(
+                            "[{}] 熔断器 Open → HalfOpen (超时恢复)",
+                            log_cb::OPEN_TO_HALF_OPEN
+                        );
                         self.transition_to_half_open().await;
                         return true;
                     }
@@ -151,7 +155,10 @@ impl CircuitBreaker {
                 if let Some(opened_at) = *self.last_opened_at.read().await {
                     if opened_at.elapsed().as_secs() >= config.timeout_seconds {
                         drop(config); // 释放读锁再转换状态
-                        log::info!("熔断器 Open → HalfOpen (超时恢复)");
+                        log::info!(
+                            "[{}] 熔断器 Open → HalfOpen (超时恢复)",
+                            log_cb::OPEN_TO_HALF_OPEN
+                        );
                         self.transition_to_half_open().await;
 
                         // 转换后按当前状态决定是否需要获取 HalfOpen 探测名额
@@ -197,7 +204,10 @@ impl CircuitBreaker {
 
             if successes >= config.success_threshold {
                 drop(config); // 释放读锁再转换状态
-                log::info!("[CB-002] 熔断器 HalfOpen → Closed (恢复正常)");
+                log::info!(
+                    "[{}] 熔断器 HalfOpen → Closed (恢复正常)",
+                    log_cb::HALF_OPEN_TO_CLOSED
+                );
                 self.transition_to_closed().await;
             }
         }
@@ -224,14 +234,20 @@ impl CircuitBreaker {
         match state {
             CircuitState::HalfOpen => {
                 // HalfOpen 状态下失败，立即转为 Open
-                log::warn!("[CB-003] 熔断器 HalfOpen 探测失败 → Open");
+                log::warn!(
+                    "[{}] 熔断器 HalfOpen 探测失败 → Open",
+                    log_cb::HALF_OPEN_PROBE_FAILED
+                );
                 drop(config);
                 self.transition_to_open().await;
             }
             CircuitState::Closed => {
                 // 检查连续失败次数
                 if failures >= config.failure_threshold {
-                    log::warn!("[CB-004] 熔断器触发: 连续失败 {failures} 次 → Open");
+                    log::warn!(
+                        "[{}] 熔断器触发: 连续失败 {failures} 次 → Open",
+                        log_cb::TRIGGERED_FAILURES
+                    );
                     drop(config); // 释放读锁再转换状态
                     self.transition_to_open().await;
                 } else {
@@ -244,7 +260,8 @@ impl CircuitBreaker {
 
                         if error_rate >= config.error_rate_threshold {
                             log::warn!(
-                                "[CB-005] 熔断器触发: 错误率 {:.1}% → Open",
+                                "[{}] 熔断器触发: 错误率 {:.1}% → Open",
+                                log_cb::TRIGGERED_ERROR_RATE,
                                 error_rate * 100.0
                             );
                             drop(config); // 释放读锁再转换状态
@@ -278,7 +295,7 @@ impl CircuitBreaker {
     /// 重置熔断器（手动恢复）
     #[allow(dead_code)]
     pub async fn reset(&self) {
-        log::info!("[CB-006] 熔断器手动重置 → Closed");
+        log::info!("[{}] 熔断器手动重置 → Closed", log_cb::MANUAL_RESET);
         self.transition_to_closed().await;
     }
 

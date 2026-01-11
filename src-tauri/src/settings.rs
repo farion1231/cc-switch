@@ -92,12 +92,9 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    fn settings_path() -> PathBuf {
+    fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
-        dirs::home_dir()
-            .expect("无法获取用户主目录")
-            .join(".cc-switch")
-            .join("settings.json")
+        dirs::home_dir().map(|h| h.join(".cc-switch").join("settings.json"))
     }
 
     fn normalize_paths(&mut self) {
@@ -131,7 +128,9 @@ impl AppSettings {
     }
 
     fn load_from_file() -> Self {
-        let path = Self::settings_path();
+        let Some(path) = Self::settings_path() else {
+            return Self::default();
+        };
         if let Ok(content) = fs::read_to_string(&path) {
             match serde_json::from_str::<AppSettings>(&content) {
                 Ok(mut settings) => {
@@ -156,7 +155,9 @@ impl AppSettings {
 fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     let mut normalized = settings.clone();
     normalized.normalize_paths();
-    let path = AppSettings::settings_path();
+    let Some(path) = AppSettings::settings_path() else {
+        return Err(AppError::Config("无法获取用户主目录".to_string()));
+    };
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -193,14 +194,23 @@ fn resolve_override_path(raw: &str) -> PathBuf {
 }
 
 pub fn get_settings() -> AppSettings {
-    settings_store().read().expect("读取设置锁失败").clone()
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .clone()
 }
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.normalize_paths();
     save_settings_file(&new_settings)?;
 
-    let mut guard = settings_store().write().expect("写入设置锁失败");
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
     *guard = new_settings;
     Ok(())
 }
@@ -209,7 +219,10 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
 /// 用于导入配置等场景，确保内存缓存与文件同步
 pub fn reload_settings() -> Result<(), AppError> {
     let fresh_settings = AppSettings::load_from_file();
-    let mut guard = settings_store().write().expect("写入设置锁失败");
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
     *guard = fresh_settings;
     Ok(())
 }

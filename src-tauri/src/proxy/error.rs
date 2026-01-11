@@ -17,6 +17,12 @@ pub enum ProxyError {
     #[error("地址绑定失败: {0}")]
     BindFailed(String),
 
+    #[error("停止超时")]
+    StopTimeout,
+
+    #[error("停止失败: {0}")]
+    StopFailed(String),
+
     #[error("请求转发失败: {0}")]
     ForwardFailed(String),
 
@@ -111,6 +117,12 @@ impl IntoResponse for ProxyError {
                     ProxyError::AlreadyRunning => (StatusCode::CONFLICT, self.to_string()),
                     ProxyError::NotRunning => (StatusCode::SERVICE_UNAVAILABLE, self.to_string()),
                     ProxyError::BindFailed(_) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+                    }
+                    ProxyError::StopTimeout => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+                    }
+                    ProxyError::StopFailed(_) => {
                         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
                     }
                     ProxyError::ForwardFailed(_) => (StatusCode::BAD_GATEWAY, self.to_string()),

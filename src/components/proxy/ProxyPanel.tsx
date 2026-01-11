@@ -102,14 +102,57 @@ export function ProxyPanel() {
 
   const handleSaveBasicConfig = async () => {
     if (!globalConfig) return;
-    const port = parseInt(listenPort);
-    const validPort = isNaN(port) || port < 1024 || port > 65535 ? 15721 : port;
+
+    // 校验地址格式（简单的 IP 地址或 localhost 校验）
+    const addressTrimmed = listenAddress.trim();
+    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    // 规范化 localhost 为 127.0.0.1
+    const normalizedAddress =
+      addressTrimmed === "localhost" ? "127.0.0.1" : addressTrimmed;
+    const isValidAddress =
+      normalizedAddress === "0.0.0.0" ||
+      (ipv4Regex.test(normalizedAddress) &&
+        normalizedAddress.split(".").every((n) => {
+          const num = parseInt(n);
+          return num >= 0 && num <= 255;
+        }));
+    if (!isValidAddress) {
+      toast.error(
+        t("proxy.settings.invalidAddress", {
+          defaultValue:
+            "地址无效，请输入有效的 IP 地址（如 127.0.0.1）或 localhost",
+        }),
+      );
+      return;
+    }
+
+    // 严格校验端口：必须是纯数字
+    const portTrimmed = listenPort.trim();
+    if (!/^\d+$/.test(portTrimmed)) {
+      toast.error(
+        t("proxy.settings.invalidPort", {
+          defaultValue: "端口无效，请输入 1024-65535 之间的数字",
+        }),
+      );
+      return;
+    }
+    const port = parseInt(portTrimmed);
+    if (isNaN(port) || port < 1024 || port > 65535) {
+      toast.error(
+        t("proxy.settings.invalidPort", {
+          defaultValue: "端口无效，请输入 1024-65535 之间的数字",
+        }),
+      );
+      return;
+    }
     try {
       await updateGlobalConfig.mutateAsync({
         ...globalConfig,
-        listenAddress,
-        listenPort: validPort,
+        listenAddress: normalizedAddress,
+        listenPort: port,
       });
+      // 同步更新本地状态为规范化后的值
+      setListenAddress(normalizedAddress);
       toast.success(
         t("proxy.settings.configSaved", { defaultValue: "代理配置已保存" }),
         { closeButton: true },
@@ -135,6 +178,13 @@ export function ProxyPanel() {
     }
   };
 
+  // 格式化地址用于 URL（IPv6 需要方括号）
+  const formatAddressForUrl = (address: string, port: number): string => {
+    const isIPv6 = address.includes(":");
+    const host = isIPv6 ? `[${address}]` : address;
+    return `http://${host}:${port}`;
+  };
+
   return (
     <>
       <section className="space-y-6">
@@ -149,14 +199,14 @@ export function ProxyPanel() {
                 </p>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <code className="flex-1 text-sm bg-background px-3 py-2 rounded border border-border/60">
-                    http://{status.address}:{status.port}
+                    {formatAddressForUrl(status.address, status.port)}
                   </code>
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => {
                       navigator.clipboard.writeText(
-                        `http://${status.address}:${status.port}`,
+                        formatAddressForUrl(status.address, status.port),
                       );
                       toast.success(
                         t("proxy.panel.addressCopied", {
