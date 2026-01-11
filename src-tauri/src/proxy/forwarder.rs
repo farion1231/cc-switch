@@ -8,6 +8,7 @@ use super::{
     failover_switch::FailoverSwitchManager,
     provider_router::ProviderRouter,
     providers::{get_adapter, ProviderAdapter},
+    thinking_rectifier::{detect_rectifier_trigger, rectify_anthropic_request},
     types::ProxyStatus,
     ProxyError,
 };
@@ -168,7 +169,7 @@ impl RequestForwarder {
         &self,
         app_type: &AppType,
         endpoint: &str,
-        body: Value,
+        mut body: Value,
         headers: axum::http::HeaderMap,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
@@ -281,6 +282,97 @@ impl RequestForwarder {
                     });
                 }
                 Err(e) => {
+                    // 检测是否需要触发整流器（仅 Claude 供应商）
+                    let is_claude_provider = adapter.name() == "Claude";
+
+                    if is_claude_provider {
+                        let error_message = extract_error_message(&e);
+                        if let Some(trigger) = detect_rectifier_trigger(error_message.as_deref()) {
+                            let rectified = rectify_anthropic_request(&mut body);
+
+                            if rectified.applied {
+                                log::info!(
+                                    "[{}] [RECT-001] 整流器触发: {:?}, 移除 {} thinking blocks, {} redacted_thinking blocks, {} signature fields",
+                                    app_type_str,
+                                    trigger,
+                                    rectified.removed_thinking_blocks,
+                                    rectified.removed_redacted_thinking_blocks,
+                                    rectified.removed_signature_fields
+                                );
+
+                                // 使用同一供应商重试（不计入熔断器）
+                                match self
+                                    .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                                    .await
+                                {
+                                    Ok(response) => {
+                                        log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
+                                        // 记录成功
+                                        let _ = self
+                                            .router
+                                            .record_result(
+                                                &provider.id,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                                true,
+                                                None,
+                                            )
+                                            .await;
+
+                                        // 更新当前应用类型使用的 provider
+                                        {
+                                            let mut current_providers =
+                                                self.current_providers.write().await;
+                                            current_providers.insert(
+                                                app_type_str.to_string(),
+                                                (provider.id.clone(), provider.name.clone()),
+                                            );
+                                        }
+
+                                        // 更新成功统计
+                                        {
+                                            let mut status = self.status.write().await;
+                                            status.success_requests += 1;
+                                            status.last_error = None;
+                                            if status.total_requests > 0 {
+                                                status.success_rate = (status.success_requests
+                                                    as f32
+                                                    / status.total_requests as f32)
+                                                    * 100.0;
+                                            }
+                                        }
+
+                                        return Ok(ForwardResult {
+                                            response,
+                                            provider: provider.clone(),
+                                        });
+                                    }
+                                    Err(retry_err) => {
+                                        // 整流重试仍失败：标记为不可重试的客户端错误
+                                        log::warn!(
+                                            "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
+                                        );
+                                        {
+                                            let mut status = self.status.write().await;
+                                            status.failed_requests += 1;
+                                            status.last_error = Some(retry_err.to_string());
+                                            if status.total_requests > 0 {
+                                                status.success_rate = (status.success_requests
+                                                    as f32
+                                                    / status.total_requests as f32)
+                                                    * 100.0;
+                                            }
+                                        }
+                                        return Err(ForwardError {
+                                            error: retry_err,
+                                            provider: Some(provider.clone()),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // 失败：记录失败并更新熔断器
                     let _ = self
                         .router
@@ -539,5 +631,13 @@ impl RequestForwarder {
             // 其他错误（数据库/内部错误等）：不是换供应商能解决的问题
             _ => ErrorCategory::NonRetryable,
         }
+    }
+}
+
+/// 从 ProxyError 中提取错误消息
+fn extract_error_message(error: &ProxyError) -> Option<String> {
+    match error {
+        ProxyError::UpstreamError { body, .. } => body.clone(),
+        _ => Some(error.to_string()),
     }
 }
