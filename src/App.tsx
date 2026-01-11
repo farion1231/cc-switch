@@ -990,6 +990,7 @@ function App() {
 
       {effectiveUsageProvider && (
         <UsageScriptModal
+          key={effectiveUsageProvider.id}
           provider={effectiveUsageProvider}
           appId={activeApp}
           isOpen={isUsageModalOpen}
