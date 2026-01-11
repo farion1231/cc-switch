@@ -156,11 +156,8 @@ impl Default for SkillService {
 impl SkillService {
     pub fn new() -> Self {
         Self {
-            http_client: Client::builder()
-                .user_agent("cc-switch")
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("Failed to create HTTP client"),
+            // 使用全局 HTTP 客户端（已包含代理配置）
+            http_client: crate::proxy::http_client::get(),
         }
     }
 

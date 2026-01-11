@@ -34,6 +34,7 @@ import { WindowSettings } from "@/components/settings/WindowSettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { AboutSection } from "@/components/settings/AboutSection";
+import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ProxyPanel } from "@/components/proxy";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
 import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
@@ -238,6 +239,7 @@ export function SettingsPage({
                     settings={settings}
                     onChange={handleAutoSave}
                   />
+                  <GlobalProxySettings />
                 </motion.div>
               ) : null}
             </TabsContent>

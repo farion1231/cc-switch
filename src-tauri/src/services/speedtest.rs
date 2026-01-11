@@ -1,7 +1,7 @@
 use futures::future::join_all;
 use reqwest::{Client, Url};
 use serde::Serialize;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::error::AppError;
 
@@ -112,19 +112,11 @@ impl SpeedtestService {
         Ok(results.into_iter().flatten().collect::<Vec<_>>())
     }
 
-    fn build_client(timeout_secs: u64) -> Result<Client, AppError> {
-        Client::builder()
-            .timeout(Duration::from_secs(timeout_secs))
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .user_agent("cc-switch-speedtest/1.0")
-            .build()
-            .map_err(|e| {
-                AppError::localized(
-                    "speedtest.client_create_failed",
-                    format!("创建 HTTP 客户端失败: {e}"),
-                    format!("Failed to create HTTP client: {e}"),
-                )
-            })
+    fn build_client(_timeout_secs: u64) -> Result<Client, AppError> {
+        // 使用全局 HTTP 客户端（已包含代理配置）
+        // 注意：speedtest 使用全局客户端的代理配置，如果需要单独的超时设置
+        // 可以考虑在请求级别设置超时
+        Ok(crate::proxy::http_client::get())
     }
 
     fn sanitize_timeout(timeout_secs: Option<u64>) -> u64 {

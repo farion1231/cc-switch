@@ -643,6 +643,19 @@ pub fn run() {
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
+            // 初始化全局出站代理 HTTP 客户端
+            {
+                let proxy_url = app
+                    .state::<AppState>()
+                    .db
+                    .get_global_proxy_url()
+                    .ok()
+                    .flatten();
+                if let Err(e) = crate::proxy::http_client::init(proxy_url.as_deref()) {
+                    log::error!("[GlobalProxy] Failed to initialize: {e}");
+                }
+            }
+
             // 异常退出恢复 + 代理状态自动恢复
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -838,6 +851,11 @@ pub fn run() {
             commands::upsert_universal_provider,
             commands::delete_universal_provider,
             commands::sync_universal_provider,
+            // Global upstream proxy
+            commands::get_global_proxy_url,
+            commands::set_global_proxy_url,
+            commands::test_proxy_url,
+            commands::get_upstream_proxy_status,
         ]);
 
     let app = builder

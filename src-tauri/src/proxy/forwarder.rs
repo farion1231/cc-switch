@@ -15,7 +15,6 @@ use crate::{app_config::AppType, provider::Provider};
 use reqwest::{Client, Response};
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
 
 /// Headers 黑名单 - 不透传到上游的 Headers
@@ -99,7 +98,7 @@ impl RequestForwarder {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<ProviderRouter>,
-        non_streaming_timeout: u64,
+        _non_streaming_timeout: u64,
         status: Arc<RwLock<ProxyStatus>>,
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
         failover_manager: Arc<FailoverSwitchManager>,
@@ -108,45 +107,13 @@ impl RequestForwarder {
         _streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
     ) -> Self {
-        // 全局超时设置为 1800 秒（30 分钟），确保业务层超时配置能正常工作
-        // 参考 Claude Code Hub 的 undici 全局超时设计
-        const GLOBAL_TIMEOUT_SECS: u64 = 1800;
-
-        let timeout_secs = if non_streaming_timeout > 0 {
-            non_streaming_timeout
-        } else {
-            GLOBAL_TIMEOUT_SECS
-        };
-
-        // 注意：这里不能用 expect/unwrap。
-        // release 配置为 panic=abort，一旦 build 失败会导致整个应用闪退。
-        // 常见原因：用户环境变量里存在不合法/不支持的代理（HTTP(S)_PROXY/ALL_PROXY 等）。
-        let (client, client_init_error) = match Client::builder()
-            .timeout(Duration::from_secs(timeout_secs))
-            .build()
-        {
-            Ok(client) => (Some(client), None),
-            Err(e) => {
-                // 降级：忽略系统/环境代理，避免因代理配置问题导致整个应用崩溃
-                match Client::builder()
-                    .timeout(Duration::from_secs(timeout_secs))
-                    .no_proxy()
-                    .build()
-                {
-                    Ok(client) => (Some(client), Some(e.to_string())),
-                    Err(fallback_err) => (
-                        None,
-                        Some(format!(
-                            "Failed to create HTTP client: {e}; no_proxy fallback failed: {fallback_err}"
-                        )),
-                    ),
-                }
-            }
-        };
+        // 使用全局 HTTP 客户端（已包含代理配置）
+        // 如果全局客户端未初始化，会自动创建默认客户端
+        let client = super::http_client::get();
 
         Self {
-            client,
-            client_init_error,
+            client: Some(client),
+            client_init_error: None,
             router,
             status,
             current_providers,

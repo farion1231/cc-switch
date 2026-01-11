@@ -271,7 +271,16 @@
     "restartLater": "Restart Later",
     "restartFailed": "Application restart failed, please manually close and reopen.",
     "devModeRestartHint": "Dev Mode: Automatic restart not supported, please manually restart the application.",
-    "saving": "Saving..."
+    "saving": "Saving...",
+    "globalProxy": {
+      "label": "Global Proxy",
+      "hint": "Proxy all requests (API, Skills download, etc.). Leave empty for direct connection. Supports HTTP and SOCKS5.",
+      "test": "Test Connection",
+      "saved": "Proxy settings saved",
+      "saveFailed": "Save failed: {{error}}",
+      "testSuccess": "Connected! Latency {{latency}}ms",
+      "testFailed": "Connection failed: {{error}}"
+    }
   },
   "apps": {
     "claude": "Claude Code",

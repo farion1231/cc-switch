@@ -7,7 +7,7 @@ use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::app_config::AppType;
 use crate::error::AppError;
@@ -136,11 +136,8 @@ impl StreamCheckService {
             .extract_auth(provider)
             .ok_or_else(|| AppError::Message("未找到 API Key".to_string()))?;
 
-        let client = Client::builder()
-            .timeout(Duration::from_secs(config.timeout_secs))
-            .user_agent("cc-switch/1.0")
-            .build()
-            .map_err(|e| AppError::Message(format!("创建客户端失败: {e}")))?;
+        // 使用全局 HTTP 客户端（已包含代理配置）
+        let client = crate::proxy::http_client::get();
 
         let model_to_test = Self::resolve_test_model(app_type, provider, config);
 

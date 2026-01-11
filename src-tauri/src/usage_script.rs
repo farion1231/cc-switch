@@ -1,8 +1,6 @@
-use reqwest::Client;
 use rquickjs::{Context, Function, Runtime};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::time::Duration;
 use url::{Host, Url};
 
 use crate::error::AppError;
@@ -214,19 +212,9 @@ struct RequestConfig {
 }
 
 /// 发送 HTTP 请求
-async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
-    // 约束超时范围，防止异常配置导致长时间阻塞
-    let timeout = timeout_secs.clamp(2, 30);
-    let client = Client::builder()
-        .timeout(Duration::from_secs(timeout))
-        .build()
-        .map_err(|e| {
-            AppError::localized(
-                "usage_script.client_create_failed",
-                format!("创建客户端失败: {e}"),
-                format!("Failed to create client: {e}"),
-            )
-        })?;
+async fn send_http_request(config: &RequestConfig, _timeout_secs: u64) -> Result<String, AppError> {
+    // 使用全局 HTTP 客户端（已包含代理配置）
+    let client = crate::proxy::http_client::get();
 
     // 严格校验 HTTP 方法，非法值不回退为 GET
     let method: reqwest::Method = config.method.parse().map_err(|_| {
