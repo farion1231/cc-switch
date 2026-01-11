@@ -33,12 +33,12 @@ pub fn import_provider_from_deeplink(
     }
 
     // Step 1: Merge config file if provided (v3.8+)
-    let merged_request = parse_and_merge_config(&request)?;
+    let mut merged_request = parse_and_merge_config(&request)?;
 
     // Extract required fields (now as Option)
     let app_str = merged_request
         .app
-        .as_ref()
+        .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' field for provider".to_string()))?;
 
     let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
@@ -63,9 +63,18 @@ pub fn import_provider_from_deeplink(
         .filter(|e| !e.is_empty())
         .collect();
 
-    let _endpoint = all_endpoints
+    let primary_endpoint = all_endpoints
         .first()
         .ok_or_else(|| AppError::InvalidInput("Endpoint cannot be empty".to_string()))?;
+
+    // Auto-infer homepage from endpoint if not provided
+    if merged_request
+        .homepage
+        .as_ref()
+        .is_none_or(|s| s.is_empty())
+    {
+        merged_request.homepage = infer_homepage_from_endpoint(primary_endpoint);
+    }
 
     let homepage = merged_request.homepage.as_ref().ok_or_else(|| {
         AppError::InvalidInput("Homepage is required (either in URL or config file)".to_string())
@@ -79,11 +88,11 @@ pub fn import_provider_from_deeplink(
 
     let name = merged_request
         .name
-        .as_ref()
+        .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'name' field for provider".to_string()))?;
 
     // Parse app type
-    let app_type = AppType::from_str(app_str)
+    let app_type = AppType::from_str(&app_str)
         .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
 
     // Build provider configuration based on app type

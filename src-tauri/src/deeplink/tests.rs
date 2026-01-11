@@ -445,3 +445,16 @@ fn test_parse_endpoints_with_spaces_trimmed() {
     // Validation should pass (spaces are trimmed during validation)
     assert!(request.endpoint.is_some());
 }
+
+#[test]
+fn test_infer_homepage_from_endpoint_without_homepage() {
+    // Test that homepage is auto-inferred from endpoint when not provided
+    assert_eq!(
+        infer_homepage_from_endpoint("https://api.cubence.com/v1"),
+        Some("https://cubence.com".to_string())
+    );
+    assert_eq!(
+        infer_homepage_from_endpoint("https://cubence.com"),
+        Some("https://cubence.com".to_string())
+    );
+}
