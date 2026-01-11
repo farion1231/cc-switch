@@ -395,6 +395,9 @@ pub fn set_mcp_servers_map(
     // 构建 mcpServers 对象：移除 UI 辅助字段（enabled/source），仅保留实际 MCP 规范
     // 检测目标路径是否为 WSL，若是则跳过 cmd /c 包装
     let skip_cmd_wrap = is_wsl_path(&path);
+    if skip_cmd_wrap {
+        log::info!("检测到 WSL 路径，跳过 cmd /c 包装: {}", path.display());
+    }
     let mut out: Map<String, Value> = Map::new();
     for (id, spec) in servers.iter() {
         let mut obj = if let Some(map) = spec.as_object() {
