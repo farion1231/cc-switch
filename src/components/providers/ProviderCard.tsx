@@ -14,9 +14,8 @@ import UsageFooter from "@/components/UsageFooter";
 import type { LaunchConfigSet } from "@/hooks/useConfigSets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
-import { useProviderHealth, useResetCircuitBreaker } from "@/lib/query/failover";
+import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
-import { toast } from "sonner";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -114,7 +113,6 @@ export function ProviderCard({
 
   // 获取供应商健康状态
   const { data: health } = useProviderHealth(provider.id, appId);
-  const resetCircuitBreaker = useResetCircuitBreaker();
 
   const fallbackUrlText = t("provider.notConfigured", {
     defaultValue: "未配置接口地址",
@@ -168,27 +166,6 @@ export function ProviderCard({
       return;
     }
     onOpenWebsite(displayUrl);
-  };
-
-  const handleResetCircuitBreaker = async () => {
-    try {
-      await resetCircuitBreaker.mutateAsync({
-        providerId: provider.id,
-        appType: appId,
-      });
-      toast.success(
-        t("provider.circuitBreakerReset", {
-          defaultValue: "熔断器已重置",
-        }),
-        { closeButton: true },
-      );
-    } catch (error) {
-      toast.error(
-        t("provider.circuitBreakerResetFailed", {
-          defaultValue: "重置失败",
-        }) + `: ${String(error)}`,
-      );
-    }
   };
 
   // 判断是否是"当前使用中"的供应商
@@ -372,12 +349,6 @@ export function ProviderCard({
               configSets={configSets}
               activeConfigSetId={activeConfigSetId}
               isSwitching={isSwitching}
-              onResetCircuitBreaker={
-                isProxyRunning && provider.isProxyTarget
-                  ? handleResetCircuitBreaker
-                  : undefined
-              }
-              isProxyTarget={provider.isProxyTarget}
               consecutiveFailures={health?.consecutive_failures ?? 0}
               // 故障转移相关
               isAutoFailoverEnabled={isAutoFailoverEnabled}
