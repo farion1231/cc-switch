@@ -51,15 +51,21 @@ pub fn import_provider_from_deeplink(
         ));
     }
 
-    let endpoint = merged_request.endpoint.as_ref().ok_or_else(|| {
+    // Get endpoint: supports comma-separated multiple URLs (first is primary)
+    let endpoint_str = merged_request.endpoint.as_ref().ok_or_else(|| {
         AppError::InvalidInput("Endpoint is required (either in URL or config file)".to_string())
     })?;
 
-    if endpoint.is_empty() {
-        return Err(AppError::InvalidInput(
-            "Endpoint cannot be empty".to_string(),
-        ));
-    }
+    // Parse endpoints: split by comma, first is primary
+    let all_endpoints: Vec<String> = endpoint_str
+        .split(',')
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty())
+        .collect();
+
+    let _endpoint = all_endpoints
+        .first()
+        .ok_or_else(|| AppError::InvalidInput("Endpoint cannot be empty".to_string()))?;
 
     let homepage = merged_request.homepage.as_ref().ok_or_else(|| {
         AppError::InvalidInput("Homepage is required (either in URL or config file)".to_string())
@@ -96,6 +102,21 @@ pub fn import_provider_from_deeplink(
 
     // Use ProviderService to add the provider
     ProviderService::add(state, app_type.clone(), provider)?;
+
+    // Add extra endpoints as custom endpoints (skip first one as it's the primary)
+    for ep in all_endpoints.iter().skip(1) {
+        let normalized = ep.trim().trim_end_matches('/').to_string();
+        if !normalized.is_empty() {
+            if let Err(e) = ProviderService::add_custom_endpoint(
+                state,
+                app_type.clone(),
+                &provider_id,
+                normalized.clone(),
+            ) {
+                log::warn!("Failed to add custom endpoint '{normalized}': {e}");
+            }
+        }
+    }
 
     // If enabled=true, set as current provider
     if merged_request.enabled.unwrap_or(false) {
@@ -136,6 +157,16 @@ pub(crate) fn build_provider_from_request(
     };
 
     Ok(provider)
+}
+
+/// Get primary endpoint from request (first one if comma-separated)
+fn get_primary_endpoint(request: &DeepLinkImportRequest) -> String {
+    request
+        .endpoint
+        .as_ref()
+        .and_then(|ep| ep.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Build provider meta with usage script configuration
@@ -198,7 +229,7 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     );
     env.insert(
         "ANTHROPIC_BASE_URL".to_string(),
-        json!(request.endpoint.clone().unwrap_or_default()),
+        json!(get_primary_endpoint(request)),
     );
 
     // Add default model if provided
@@ -271,11 +302,8 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
         .unwrap_or("gpt-5-codex")
         .to_string();
 
-    // Endpoint: normalize trailing slashes
-    let endpoint = request
-        .endpoint
-        .as_deref()
-        .unwrap_or("")
+    // Endpoint: normalize trailing slashes (use primary endpoint only)
+    let endpoint = get_primary_endpoint(request)
         .trim()
         .trim_end_matches('/')
         .to_string();
@@ -309,7 +337,7 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     env.insert("GEMINI_API_KEY".to_string(), json!(request.api_key));
     env.insert(
         "GOOGLE_GEMINI_BASE_URL".to_string(),
-        json!(request.endpoint),
+        json!(get_primary_endpoint(request)),
     );
 
     // Add model if provided
