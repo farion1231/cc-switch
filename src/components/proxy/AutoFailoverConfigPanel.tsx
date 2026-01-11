@@ -61,24 +61,121 @@ export function AutoFailoverConfigPanel({
       const n = parseInt(val);
       return isNaN(n) ? defaultVal : n;
     };
+
+    // 定义各字段的有效范围
+    const ranges = {
+      maxRetries: { min: 0, max: 10 },
+      streamingFirstByteTimeout: { min: 0, max: 180 },
+      streamingIdleTimeout: { min: 0, max: 600 },
+      nonStreamingTimeout: { min: 0, max: 1800 },
+      circuitFailureThreshold: { min: 1, max: 20 },
+      circuitSuccessThreshold: { min: 1, max: 10 },
+      circuitTimeoutSeconds: { min: 10, max: 300 },
+      circuitErrorRateThreshold: { min: 0, max: 100 },
+      circuitMinRequests: { min: 5, max: 100 },
+    };
+
+    // 解析原始值
+    const raw = {
+      maxRetries: parseNum(formData.maxRetries, 3),
+      streamingFirstByteTimeout: parseNum(
+        formData.streamingFirstByteTimeout,
+        30,
+      ),
+      streamingIdleTimeout: parseNum(formData.streamingIdleTimeout, 60),
+      nonStreamingTimeout: parseNum(formData.nonStreamingTimeout, 300),
+      circuitFailureThreshold: parseNum(formData.circuitFailureThreshold, 5),
+      circuitSuccessThreshold: parseNum(formData.circuitSuccessThreshold, 2),
+      circuitTimeoutSeconds: parseNum(formData.circuitTimeoutSeconds, 60),
+      circuitErrorRateThreshold: parseNum(
+        formData.circuitErrorRateThreshold,
+        50,
+      ),
+      circuitMinRequests: parseNum(formData.circuitMinRequests, 10),
+    };
+
+    // 校验是否超出范围
+    const errors: string[] = [];
+    const checkRange = (
+      value: number,
+      range: { min: number; max: number },
+      label: string,
+    ) => {
+      if (value < range.min || value > range.max) {
+        errors.push(`${label}: ${range.min}-${range.max}`);
+      }
+    };
+
+    checkRange(
+      raw.maxRetries,
+      ranges.maxRetries,
+      t("proxy.autoFailover.maxRetries", "最大重试次数"),
+    );
+    checkRange(
+      raw.streamingFirstByteTimeout,
+      ranges.streamingFirstByteTimeout,
+      t("proxy.autoFailover.streamingFirstByte", "流式首字节超时"),
+    );
+    checkRange(
+      raw.streamingIdleTimeout,
+      ranges.streamingIdleTimeout,
+      t("proxy.autoFailover.streamingIdle", "流式静默超时"),
+    );
+    checkRange(
+      raw.nonStreamingTimeout,
+      ranges.nonStreamingTimeout,
+      t("proxy.autoFailover.nonStreaming", "非流式超时"),
+    );
+    checkRange(
+      raw.circuitFailureThreshold,
+      ranges.circuitFailureThreshold,
+      t("proxy.autoFailover.failureThreshold", "失败阈值"),
+    );
+    checkRange(
+      raw.circuitSuccessThreshold,
+      ranges.circuitSuccessThreshold,
+      t("proxy.autoFailover.successThreshold", "恢复成功阈值"),
+    );
+    checkRange(
+      raw.circuitTimeoutSeconds,
+      ranges.circuitTimeoutSeconds,
+      t("proxy.autoFailover.timeout", "恢复等待时间"),
+    );
+    checkRange(
+      raw.circuitErrorRateThreshold,
+      ranges.circuitErrorRateThreshold,
+      t("proxy.autoFailover.errorRate", "错误率阈值"),
+    );
+    checkRange(
+      raw.circuitMinRequests,
+      ranges.circuitMinRequests,
+      t("proxy.autoFailover.minRequests", "最小请求数"),
+    );
+
+    if (errors.length > 0) {
+      toast.error(
+        t("proxy.autoFailover.validationFailed", {
+          fields: errors.join("; "),
+          defaultValue: `以下字段超出有效范围: ${errors.join("; ")}`,
+        }),
+      );
+      return;
+    }
+
     try {
       await updateConfig.mutateAsync({
         appType,
         enabled: config.enabled,
         autoFailoverEnabled: formData.autoFailoverEnabled,
-        maxRetries: parseNum(formData.maxRetries, 3),
-        streamingFirstByteTimeout: parseNum(
-          formData.streamingFirstByteTimeout,
-          30,
-        ),
-        streamingIdleTimeout: parseNum(formData.streamingIdleTimeout, 60),
-        nonStreamingTimeout: parseNum(formData.nonStreamingTimeout, 300),
-        circuitFailureThreshold: parseNum(formData.circuitFailureThreshold, 5),
-        circuitSuccessThreshold: parseNum(formData.circuitSuccessThreshold, 2),
-        circuitTimeoutSeconds: parseNum(formData.circuitTimeoutSeconds, 60),
-        circuitErrorRateThreshold:
-          parseNum(formData.circuitErrorRateThreshold, 50) / 100,
-        circuitMinRequests: parseNum(formData.circuitMinRequests, 10),
+        maxRetries: raw.maxRetries,
+        streamingFirstByteTimeout: raw.streamingFirstByteTimeout,
+        streamingIdleTimeout: raw.streamingIdleTimeout,
+        nonStreamingTimeout: raw.nonStreamingTimeout,
+        circuitFailureThreshold: raw.circuitFailureThreshold,
+        circuitSuccessThreshold: raw.circuitSuccessThreshold,
+        circuitTimeoutSeconds: raw.circuitTimeoutSeconds,
+        circuitErrorRateThreshold: raw.circuitErrorRateThreshold / 100,
+        circuitMinRequests: raw.circuitMinRequests,
       });
       toast.success(
         t("proxy.autoFailover.configSaved", "自动故障转移配置已保存"),

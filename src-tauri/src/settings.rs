@@ -92,12 +92,9 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    fn settings_path() -> PathBuf {
+    fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
-        dirs::home_dir()
-            .expect("无法获取用户主目录")
-            .join(".cc-switch")
-            .join("settings.json")
+        dirs::home_dir().map(|h| h.join(".cc-switch").join("settings.json"))
     }
 
     fn normalize_paths(&mut self) {
@@ -131,7 +128,9 @@ impl AppSettings {
     }
 
     fn load_from_file() -> Self {
-        let path = Self::settings_path();
+        let Some(path) = Self::settings_path() else {
+            return Self::default();
+        };
         if let Ok(content) = fs::read_to_string(&path) {
             match serde_json::from_str::<AppSettings>(&content) {
                 Ok(mut settings) => {
@@ -156,7 +155,9 @@ impl AppSettings {
 fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     let mut normalized = settings.clone();
     normalized.normalize_paths();
-    let path = AppSettings::settings_path();
+    let Some(path) = AppSettings::settings_path() else {
+        return Err(AppError::Config("无法获取用户主目录".to_string()));
+    };
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;

@@ -102,13 +102,42 @@ export function ProxyPanel() {
 
   const handleSaveBasicConfig = async () => {
     if (!globalConfig) return;
+
+    // 校验地址格式（简单的 IP 地址或 localhost 校验）
+    const addressTrimmed = listenAddress.trim();
+    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    const isValidAddress =
+      addressTrimmed === "localhost" ||
+      addressTrimmed === "0.0.0.0" ||
+      (ipv4Regex.test(addressTrimmed) &&
+        addressTrimmed.split(".").every((n) => {
+          const num = parseInt(n);
+          return num >= 0 && num <= 255;
+        }));
+    if (!isValidAddress) {
+      toast.error(
+        t("proxy.settings.invalidAddress", {
+          defaultValue:
+            "地址无效，请输入有效的 IP 地址（如 127.0.0.1）或 localhost",
+        }),
+      );
+      return;
+    }
+
     const port = parseInt(listenPort);
-    const validPort = isNaN(port) || port < 1024 || port > 65535 ? 15721 : port;
+    if (isNaN(port) || port < 1024 || port > 65535) {
+      toast.error(
+        t("proxy.settings.invalidPort", {
+          defaultValue: "端口无效，请输入 1024-65535 之间的数字",
+        }),
+      );
+      return;
+    }
     try {
       await updateGlobalConfig.mutateAsync({
         ...globalConfig,
-        listenAddress,
-        listenPort: validPort,
+        listenAddress: addressTrimmed,
+        listenPort: port,
       });
       toast.success(
         t("proxy.settings.configSaved", { defaultValue: "代理配置已保存" }),

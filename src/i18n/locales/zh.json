@@ -1107,7 +1107,12 @@
       "toast": {
         "saved": "代理配置已保存",
         "saveFailed": "保存失败: {{error}}"
-      }
+      },
+      "invalidPort": "端口无效，请输入 1024-65535 之间的数字",
+      "invalidAddress": "地址无效，请输入有效的 IP 地址（如 127.0.0.1）或 localhost",
+      "configSaved": "代理配置已保存",
+      "configSaveFailed": "保存配置失败",
+      "restartRequired": "修改地址或端口后需要重启代理服务才能生效"
     },
     "switchFailed": "切换失败: {{error}}",
     "failover": {
@@ -1134,6 +1139,7 @@
       "info": "当故障转移队列中配置了多个供应商时，系统会在请求失败时按优先级顺序依次尝试。当某个供应商连续失败达到阈值时，熔断器会打开并在一段时间内跳过该供应商。",
       "configSaved": "自动故障转移配置已保存",
       "configSaveFailed": "保存失败",
+      "validationFailed": "以下字段超出有效范围: {{fields}}",
       "retrySettings": "重试与超时设置",
       "failureThreshold": "失败阈值",
       "failureThresholdHint": "连续失败多少次后打开熔断器（建议: 3-10）",
@@ -1184,6 +1190,16 @@
     "streamingFirstByte": "流式首字节超时",
     "streamingIdle": "流式静默超时",
     "nonStreaming": "非流式超时"
+  },
+  "circuitBreaker": {
+    "failureThreshold": "失败阈值",
+    "successThreshold": "成功阈值",
+    "timeoutSeconds": "超时时间",
+    "errorRateThreshold": "错误率阈值",
+    "minRequests": "最小请求数",
+    "validationFailed": "以下字段超出有效范围: {{fields}}",
+    "configSaved": "熔断器配置已保存",
+    "saveFailed": "保存失败"
   },
   "universalProvider": {
     "title": "统一供应商",

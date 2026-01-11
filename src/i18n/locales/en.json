@@ -1107,7 +1107,12 @@
       "toast": {
         "saved": "Proxy configuration saved",
         "saveFailed": "Save failed: {{error}}"
-      }
+      },
+      "invalidPort": "Invalid port, please enter a number between 1024-65535",
+      "invalidAddress": "Invalid address, please enter a valid IP address (e.g. 127.0.0.1) or localhost",
+      "configSaved": "Proxy configuration saved",
+      "configSaveFailed": "Failed to save configuration",
+      "restartRequired": "Restart proxy service for address or port changes to take effect"
     },
     "switchFailed": "Switch failed: {{error}}",
     "failover": {
@@ -1134,6 +1139,7 @@
       "info": "When the failover queue has multiple providers, the system will try them in priority order when requests fail. When a provider reaches the consecutive failure threshold, the circuit breaker will open and skip it temporarily.",
       "configSaved": "Auto failover config saved",
       "configSaveFailed": "Failed to save",
+      "validationFailed": "The following fields are out of valid range: {{fields}}",
       "retrySettings": "Retry & Timeout Settings",
       "failureThreshold": "Failure Threshold",
       "failureThresholdHint": "Open circuit breaker after this many consecutive failures (recommended: 3-10)",
@@ -1184,6 +1190,16 @@
     "streamingFirstByte": "Streaming First Byte Timeout",
     "streamingIdle": "Streaming Idle Timeout",
     "nonStreaming": "Non-Streaming Timeout"
+  },
+  "circuitBreaker": {
+    "failureThreshold": "Failure Threshold",
+    "successThreshold": "Success Threshold",
+    "timeoutSeconds": "Timeout (seconds)",
+    "errorRateThreshold": "Error Rate Threshold",
+    "minRequests": "Min Requests",
+    "validationFailed": "The following fields are out of valid range: {{fields}}",
+    "configSaved": "Circuit breaker config saved",
+    "saveFailed": "Failed to save"
   },
   "universalProvider": {
     "title": "Universal Provider",

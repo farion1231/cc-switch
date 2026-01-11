@@ -7,12 +7,14 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 
 /**
  * 熔断器配置面板
  * 允许用户调整熔断器参数
  */
 export function CircuitBreakerConfigPanel() {
+  const { t } = useTranslation();
   const { data: config, isLoading } = useCircuitBreakerConfig();
   const updateConfig = useUpdateCircuitBreakerConfig();
 
@@ -44,18 +46,88 @@ export function CircuitBreakerConfigPanel() {
       const n = parseInt(val);
       return isNaN(n) ? defaultVal : n;
     };
+
+    // 定义各字段的有效范围
+    const ranges = {
+      failureThreshold: { min: 1, max: 20 },
+      successThreshold: { min: 1, max: 10 },
+      timeoutSeconds: { min: 10, max: 300 },
+      errorRateThreshold: { min: 0, max: 100 },
+      minRequests: { min: 5, max: 100 },
+    };
+
+    // 解析原始值
+    const raw = {
+      failureThreshold: parseNum(formData.failureThreshold, 5),
+      successThreshold: parseNum(formData.successThreshold, 2),
+      timeoutSeconds: parseNum(formData.timeoutSeconds, 60),
+      errorRateThreshold: parseNum(formData.errorRateThreshold, 50),
+      minRequests: parseNum(formData.minRequests, 10),
+    };
+
+    // 校验是否超出范围
+    const errors: string[] = [];
+    const checkRange = (
+      value: number,
+      range: { min: number; max: number },
+      label: string,
+    ) => {
+      if (value < range.min || value > range.max) {
+        errors.push(`${label}: ${range.min}-${range.max}`);
+      }
+    };
+
+    checkRange(
+      raw.failureThreshold,
+      ranges.failureThreshold,
+      t("circuitBreaker.failureThreshold", "失败阈值"),
+    );
+    checkRange(
+      raw.successThreshold,
+      ranges.successThreshold,
+      t("circuitBreaker.successThreshold", "成功阈值"),
+    );
+    checkRange(
+      raw.timeoutSeconds,
+      ranges.timeoutSeconds,
+      t("circuitBreaker.timeoutSeconds", "超时时间"),
+    );
+    checkRange(
+      raw.errorRateThreshold,
+      ranges.errorRateThreshold,
+      t("circuitBreaker.errorRateThreshold", "错误率阈值"),
+    );
+    checkRange(
+      raw.minRequests,
+      ranges.minRequests,
+      t("circuitBreaker.minRequests", "最小请求数"),
+    );
+
+    if (errors.length > 0) {
+      toast.error(
+        t("circuitBreaker.validationFailed", {
+          fields: errors.join("; "),
+          defaultValue: `以下字段超出有效范围: ${errors.join("; ")}`,
+        }),
+      );
+      return;
+    }
+
     try {
-      const parsed = {
-        failureThreshold: parseNum(formData.failureThreshold, 5),
-        successThreshold: parseNum(formData.successThreshold, 2),
-        timeoutSeconds: parseNum(formData.timeoutSeconds, 60),
-        errorRateThreshold: parseNum(formData.errorRateThreshold, 50) / 100,
-        minRequests: parseNum(formData.minRequests, 10),
-      };
-      await updateConfig.mutateAsync(parsed);
-      toast.success("熔断器配置已保存", { closeButton: true });
+      await updateConfig.mutateAsync({
+        failureThreshold: raw.failureThreshold,
+        successThreshold: raw.successThreshold,
+        timeoutSeconds: raw.timeoutSeconds,
+        errorRateThreshold: raw.errorRateThreshold / 100,
+        minRequests: raw.minRequests,
+      });
+      toast.success(t("circuitBreaker.configSaved", "熔断器配置已保存"), {
+        closeButton: true,
+      });
     } catch (error) {
-      toast.error("保存失败: " + String(error));
+      toast.error(
+        t("circuitBreaker.saveFailed", "保存失败") + ": " + String(error),
+      );
     }
   };
 

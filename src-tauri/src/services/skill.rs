@@ -160,7 +160,7 @@ impl SkillService {
                 .user_agent("cc-switch")
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
-                .expect("Failed to create HTTP client"),
+                .unwrap_or_else(|_| Client::new()),
         }
     }
 
