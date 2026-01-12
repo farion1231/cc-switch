@@ -70,8 +70,8 @@ impl Database {
 
     /// 获取全局出站代理 URL
     ///
-    /// 返回 None 表示未配置代理（直连）
-    /// 返回 Some("") 或 Some(url) 需要调用方判断是否为空
+    /// 返回 None 表示未配置或已清除代理（直连）
+    /// 返回 Some(url) 表示已配置代理
     pub fn get_global_proxy_url(&self) -> Result<Option<String>, AppError> {
         self.get_setting(Self::GLOBAL_PROXY_URL_KEY)
     }

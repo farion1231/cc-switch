@@ -380,7 +380,14 @@ impl RequestForwarder {
 
         // 每次请求时获取最新的全局 HTTP 客户端（支持热更新代理配置）
         let client = super::http_client::get();
-        let mut request = client.post(&url).timeout(self.non_streaming_timeout);
+        let mut request = client.post(&url);
+
+        // 只有当 timeout > 0 时才设置请求超时
+        // Duration::ZERO 在 reqwest 中表示"立刻超时"而不是"禁用超时"
+        // 故障转移关闭时会传入 0，此时应该使用 client 的默认超时（600秒）
+        if !self.non_streaming_timeout.is_zero() {
+            request = request.timeout(self.non_streaming_timeout);
+        }
 
         // 过滤黑名单 Headers，保护隐私并避免冲突
         for (key, value) in headers {

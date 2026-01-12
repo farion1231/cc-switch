@@ -20,6 +20,9 @@ pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<
 ///
 /// - 传入非空字符串：启用代理
 /// - 传入空字符串：清除代理（直连）
+///
+/// 执行顺序：先验证 → 写 DB → 再应用
+/// 这样确保 DB 写失败时不会出现运行态与持久化不一致的问题
 #[tauri::command]
 pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> Result<(), String> {
     let url_opt = if url.trim().is_empty() {
@@ -28,17 +31,20 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
         Some(url.as_str())
     };
 
-    // 1. 先验证并构建新的 HTTP 客户端（如果失败则不落库）
-    http_client::update_proxy(url_opt)?;
+    // 1. 先验证代理配置是否有效（不应用）
+    http_client::validate_proxy(url_opt)?;
 
-    // 2. 验证成功后再保存到数据库
+    // 2. 验证成功后保存到数据库
     state
         .db
         .set_global_proxy_url(url_opt)
         .map_err(|e| e.to_string())?;
 
+    // 3. DB 写入成功后再应用到运行态
+    http_client::apply_proxy(url_opt)?;
+
     log::info!(
-        "[GlobalProxy] Configuration updated: {}",
+        "[GlobalProxy] [GP-009] Configuration updated: {}",
         url_opt
             .map(http_client::mask_url)
             .unwrap_or_else(|| "direct connection".to_string())
@@ -62,6 +68,7 @@ pub struct ProxyTestResult {
 /// 测试代理连接
 ///
 /// 通过指定的代理 URL 发送测试请求，返回连接结果和延迟。
+/// 使用多个测试目标，任一成功即认为代理可用。
 #[tauri::command]
 pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
     if url.trim().is_empty() {
@@ -80,40 +87,58 @@ pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
         .build()
         .map_err(|e| format!("Failed to build client: {e}"))?;
 
-    // 测试连接到 api.anthropic.com
-    // 使用 HEAD 请求，即使返回 401 也说明网络通了
-    let test_url = "https://api.anthropic.com";
+    // 使用多个测试目标，提高兼容性
+    // 优先使用 httpbin（专门用于 HTTP 测试），回退到其他公共端点
+    let test_urls = [
+        "https://httpbin.org/get",
+        "https://www.google.com",
+        "https://api.anthropic.com",
+    ];
 
-    match client.head(test_url).send().await {
-        Ok(resp) => {
-            let latency = start.elapsed().as_millis() as u64;
-            log::debug!(
-                "[GlobalProxy] Test successful: {} -> {} ({}ms)",
-                http_client::mask_url(&url),
-                resp.status(),
-                latency
-            );
-            Ok(ProxyTestResult {
-                success: true,
-                latency_ms: latency,
-                error: None,
-            })
-        }
-        Err(e) => {
-            let latency = start.elapsed().as_millis() as u64;
-            log::debug!(
-                "[GlobalProxy] Test failed: {} -> {} ({}ms)",
-                http_client::mask_url(&url),
-                e,
-                latency
-            );
-            Ok(ProxyTestResult {
-                success: false,
-                latency_ms: latency,
-                error: Some(e.to_string()),
-            })
+    let mut last_error = None;
+
+    for test_url in test_urls {
+        match client.head(test_url).send().await {
+            Ok(resp) => {
+                let latency = start.elapsed().as_millis() as u64;
+                log::debug!(
+                    "[GlobalProxy] Test successful: {} -> {} via {} ({}ms)",
+                    http_client::mask_url(&url),
+                    test_url,
+                    resp.status(),
+                    latency
+                );
+                return Ok(ProxyTestResult {
+                    success: true,
+                    latency_ms: latency,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                log::debug!("[GlobalProxy] Test to {test_url} failed: {e}");
+                last_error = Some(e);
+            }
         }
     }
+
+    // 所有测试目标都失败
+    let latency = start.elapsed().as_millis() as u64;
+    let error_msg = last_error
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "All test targets failed".to_string());
+
+    log::debug!(
+        "[GlobalProxy] Test failed: {} -> {} ({}ms)",
+        http_client::mask_url(&url),
+        error_msg,
+        latency
+    );
+
+    Ok(ProxyTestResult {
+        success: false,
+        latency_ms: latency,
+        error: Some(error_msg),
+    })
 }
 
 /// 获取当前出站代理状态
@@ -151,34 +176,56 @@ pub struct DetectedProxy {
 }
 
 /// 常见代理端口配置
-const PROXY_PORTS: &[(u16, &str)] = &[
-    (7890, "http"),    // Clash
-    (7891, "socks5"),  // Clash SOCKS
-    (1080, "socks5"),  // 通用 SOCKS5
-    (8080, "http"),    // 通用 HTTP
-    (8888, "http"),    // Charles/Fiddler
-    (3128, "http"),    // Squid
-    (10808, "socks5"), // V2Ray
-    (10809, "http"),   // V2Ray HTTP
+/// 格式：(端口, 主要类型, 是否同时支持 http 和 socks5)
+/// 对于 mixed 端口，会同时返回两种协议供用户选择
+const PROXY_PORTS: &[(u16, &str, bool)] = &[
+    (7890, "http", true),     // Clash (mixed mode)
+    (7891, "socks5", false),  // Clash SOCKS only
+    (1080, "socks5", false),  // 通用 SOCKS5
+    (8080, "http", false),    // 通用 HTTP
+    (8888, "http", false),    // Charles/Fiddler
+    (3128, "http", false),    // Squid
+    (10808, "socks5", false), // V2Ray SOCKS
+    (10809, "http", false),   // V2Ray HTTP
 ];
 
 /// 扫描本地代理
 ///
 /// 检测常见端口是否有代理服务在运行。
+/// 使用异步任务避免阻塞 UI 线程。
 #[tauri::command]
-pub fn scan_local_proxies() -> Vec<DetectedProxy> {
-    let mut found = Vec::new();
+pub async fn scan_local_proxies() -> Vec<DetectedProxy> {
+    // 使用 spawn_blocking 避免阻塞主线程
+    tokio::task::spawn_blocking(|| {
+        let mut found = Vec::new();
 
-    for &(port, proxy_type) in PROXY_PORTS {
-        let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
-        if TcpStream::connect_timeout(&addr.into(), Duration::from_millis(100)).is_ok() {
-            found.push(DetectedProxy {
-                url: format!("{proxy_type}://127.0.0.1:{port}"),
-                proxy_type: proxy_type.to_string(),
-                port,
-            });
+        for &(port, primary_type, is_mixed) in PROXY_PORTS {
+            let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
+            if TcpStream::connect_timeout(&addr.into(), Duration::from_millis(100)).is_ok() {
+                // 添加主要类型
+                found.push(DetectedProxy {
+                    url: format!("{primary_type}://127.0.0.1:{port}"),
+                    proxy_type: primary_type.to_string(),
+                    port,
+                });
+                // 对于 mixed 端口，同时添加另一种协议
+                if is_mixed {
+                    let alt_type = if primary_type == "http" {
+                        "socks5"
+                    } else {
+                        "http"
+                    };
+                    found.push(DetectedProxy {
+                        url: format!("{alt_type}://127.0.0.1:{port}"),
+                        proxy_type: alt_type.to_string(),
+                        port,
+                    });
+                }
+            }
         }
-    }
 
-    found
+        found
+    })
+    .await
+    .unwrap_or_default()
 }

@@ -25,7 +25,19 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let client = build_client(effective_url)?;
 
-    let _ = GLOBAL_CLIENT.set(RwLock::new(client));
+    // 尝试初始化全局客户端，如果已存在则记录警告并使用 apply_proxy 更新
+    if GLOBAL_CLIENT.set(RwLock::new(client.clone())).is_err() {
+        log::warn!(
+            "[GlobalProxy] [GP-003] Already initialized, updating instead: {}",
+            effective_url
+                .map(mask_url)
+                .unwrap_or_else(|| "direct connection".to_string())
+        );
+        // 已初始化，改用 apply_proxy 更新
+        return apply_proxy(proxy_url);
+    }
+
+    // 初始化代理 URL 记录
     let _ = CURRENT_PROXY_URL.set(RwLock::new(effective_url.map(|s| s.to_string())));
 
     log::info!(
@@ -38,21 +50,41 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// 更新代理配置（热更新）
+/// 验证代理配置（不应用）
 ///
-/// 可在运行时调用以更改代理设置，无需重启应用。
+/// 只验证代理 URL 是否有效，不实际更新全局客户端。
+/// 用于在持久化之前验证配置的有效性。
 ///
 /// # Arguments
-/// * `proxy_url` - 新的代理 URL，None 或空字符串表示直连
-pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
+/// * `proxy_url` - 代理 URL，None 或空字符串表示直连
+///
+/// # Returns
+/// 验证成功返回 Ok(())，失败返回错误信息
+pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
+    let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
+    // 只调用 build_client 来验证，但不应用
+    build_client(effective_url)?;
+    Ok(())
+}
+
+/// 应用代理配置（假设已验证）
+///
+/// 直接应用代理配置到全局客户端，不做额外验证。
+/// 应在 validate_proxy 成功后调用。
+///
+/// # Arguments
+/// * `proxy_url` - 代理 URL，None 或空字符串表示直连
+pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let new_client = build_client(effective_url)?;
 
     // 更新客户端
     if let Some(lock) = GLOBAL_CLIENT.get() {
-        if let Ok(mut client) = lock.write() {
-            *client = new_client;
-        }
+        let mut client = lock.write().map_err(|e| {
+            log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
+            "Failed to update proxy: lock poisoned".to_string()
+        })?;
+        *client = new_client;
     } else {
         // 如果还没初始化，则初始化
         return init(proxy_url);
@@ -60,9 +92,55 @@ pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 
     // 更新代理 URL 记录
     if let Some(lock) = CURRENT_PROXY_URL.get() {
-        if let Ok(mut url) = lock.write() {
-            *url = effective_url.map(|s| s.to_string());
-        }
+        let mut url = lock.write().map_err(|e| {
+            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
+            "Failed to update proxy URL record: lock poisoned".to_string()
+        })?;
+        *url = effective_url.map(|s| s.to_string());
+    }
+
+    log::info!(
+        "[GlobalProxy] Applied: {}",
+        effective_url
+            .map(mask_url)
+            .unwrap_or_else(|| "direct connection".to_string())
+    );
+
+    Ok(())
+}
+
+/// 更新代理配置（热更新）
+///
+/// 可在运行时调用以更改代理设置，无需重启应用。
+/// 注意：此函数同时验证和应用，如果需要先验证后持久化再应用，
+/// 请使用 validate_proxy + apply_proxy 组合。
+///
+/// # Arguments
+/// * `proxy_url` - 新的代理 URL，None 或空字符串表示直连
+#[allow(dead_code)]
+pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
+    let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
+    let new_client = build_client(effective_url)?;
+
+    // 更新客户端
+    if let Some(lock) = GLOBAL_CLIENT.get() {
+        let mut client = lock.write().map_err(|e| {
+            log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
+            "Failed to update proxy: lock poisoned".to_string()
+        })?;
+        *client = new_client;
+    } else {
+        // 如果还没初始化，则初始化
+        return init(proxy_url);
+    }
+
+    // 更新代理 URL 记录
+    if let Some(lock) = CURRENT_PROXY_URL.get() {
+        let mut url = lock.write().map_err(|e| {
+            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
+            "Failed to update proxy URL record: lock poisoned".to_string()
+        })?;
+        *url = effective_url.map(|s| s.to_string());
     }
 
     log::info!(
@@ -84,10 +162,14 @@ pub fn get() -> Client {
         .and_then(|lock| lock.read().ok())
         .map(|c| c.clone())
         .unwrap_or_else(|| {
-            // 如果还没初始化，创建一个默认客户端
-            log::warn!("[GlobalProxy] Client not initialized, using default");
+            // 如果还没初始化，创建一个默认客户端（配置与 build_client 一致）
+            log::warn!("[GlobalProxy] [GP-004] Client not initialized, using fallback");
             Client::builder()
-                .timeout(Duration::from_secs(30))
+                .timeout(Duration::from_secs(600))
+                .connect_timeout(Duration::from_secs(30))
+                .pool_max_idle_per_host(10)
+                .tcp_keepalive(Duration::from_secs(60))
+                .no_proxy()
                 .build()
                 .unwrap_or_default()
         })
@@ -149,16 +231,12 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
 /// 隐藏 URL 中的敏感信息（用于日志）
 pub fn mask_url(url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(url) {
-        // 隐藏用户名和密码
-        format!(
-            "{}://{}:{}",
-            parsed.scheme(),
-            parsed.host_str().unwrap_or("?"),
-            parsed
-                .port()
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "?".to_string())
-        )
+        // 隐藏用户名和密码，保留 scheme、host 和端口
+        let host = parsed.host_str().unwrap_or("?");
+        match parsed.port() {
+            Some(port) => format!("{}://{}:{}", parsed.scheme(), host, port),
+            None => format!("{}://{}", parsed.scheme(), host),
+        }
     } else {
         // URL 解析失败，返回部分内容
         if url.len() > 20 {
@@ -183,6 +261,15 @@ mod tests {
         assert_eq!(
             mask_url("socks5://admin:secret@proxy.example.com:1080"),
             "socks5://proxy.example.com:1080"
+        );
+        // 无端口的 URL 不应显示 ":?"
+        assert_eq!(
+            mask_url("http://proxy.example.com"),
+            "http://proxy.example.com"
+        );
+        assert_eq!(
+            mask_url("https://user:pass@proxy.example.com"),
+            "https://proxy.example.com"
         );
     }
 

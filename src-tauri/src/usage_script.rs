@@ -215,7 +215,8 @@ struct RequestConfig {
 async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
-    let request_timeout = std::time::Duration::from_secs(timeout_secs);
+    // 约束超时范围，防止异常配置导致长时间阻塞（最小 2 秒，最大 30 秒）
+    let request_timeout = std::time::Duration::from_secs(timeout_secs.clamp(2, 30));
 
     // 严格校验 HTTP 方法，非法值不回退为 GET
     let method: reqwest::Method = config.method.parse().map_err(|_| {
