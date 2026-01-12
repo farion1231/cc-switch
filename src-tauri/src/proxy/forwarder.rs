@@ -334,6 +334,26 @@ impl RequestForwarder {
                                             let mut status = self.status.write().await;
                                             status.success_requests += 1;
                                             status.last_error = None;
+                                            let should_switch = self
+                                                .current_provider_id_at_start
+                                                .as_str()
+                                                != provider.id.as_str();
+                                            if should_switch {
+                                                status.failover_count += 1;
+
+                                                // 异步触发供应商切换，更新 UI/托盘
+                                                let fm = self.failover_manager.clone();
+                                                let ah = self.app_handle.clone();
+                                                let pid = provider.id.clone();
+                                                let pname = provider.name.clone();
+                                                let at = app_type_str.to_string();
+
+                                                tokio::spawn(async move {
+                                                    let _ =
+                                                        fm.try_switch(ah.as_ref(), &at, &pid, &pname)
+                                                            .await;
+                                                });
+                                            }
                                             if status.total_requests > 0 {
                                                 status.success_rate = (status.success_requests
                                                     as f32
@@ -348,25 +368,68 @@ impl RequestForwarder {
                                         });
                                     }
                                     Err(retry_err) => {
-                                        // 整流重试仍失败：标记为不可重试的客户端错误
+                                        // 整流重试仍失败：走正常错误分类逻辑
                                         log::warn!(
                                             "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
                                         );
-                                        {
-                                            let mut status = self.status.write().await;
-                                            status.failed_requests += 1;
-                                            status.last_error = Some(retry_err.to_string());
-                                            if status.total_requests > 0 {
-                                                status.success_rate = (status.success_requests
-                                                    as f32
-                                                    / status.total_requests as f32)
-                                                    * 100.0;
+
+                                        // 记录失败并更新熔断器
+                                        let _ = self
+                                            .router
+                                            .record_result(
+                                                &provider.id,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                                false,
+                                                Some(retry_err.to_string()),
+                                            )
+                                            .await;
+
+                                        // 分类错误，决定是否继续 failover
+                                        let category = self.categorize_proxy_error(&retry_err);
+                                        match category {
+                                            ErrorCategory::Retryable => {
+                                                // 可重试：继续尝试下一个供应商
+                                                {
+                                                    let mut status = self.status.write().await;
+                                                    status.last_error = Some(format!(
+                                                        "Provider {} 整流重试失败: {}",
+                                                        provider.name, retry_err
+                                                    ));
+                                                }
+                                                log::warn!(
+                                                    "[{}] [RECT-004] Provider {} 整流重试失败，切换下一个 ({}/{})",
+                                                    app_type_str,
+                                                    provider.name,
+                                                    attempted_providers,
+                                                    providers.len()
+                                                );
+                                                last_error = Some(retry_err);
+                                                last_provider = Some(provider.clone());
+                                                // 继续尝试下一个供应商
+                                                continue;
+                                            }
+                                            ErrorCategory::NonRetryable
+                                            | ErrorCategory::ClientAbort => {
+                                                // 不可重试：直接返回错误
+                                                {
+                                                    let mut status = self.status.write().await;
+                                                    status.failed_requests += 1;
+                                                    status.last_error =
+                                                        Some(retry_err.to_string());
+                                                    if status.total_requests > 0 {
+                                                        status.success_rate =
+                                                            (status.success_requests as f32
+                                                                / status.total_requests as f32)
+                                                                * 100.0;
+                                                    }
+                                                }
+                                                return Err(ForwardError {
+                                                    error: retry_err,
+                                                    provider: Some(provider.clone()),
+                                                });
                                             }
                                         }
-                                        return Err(ForwardError {
-                                            error: retry_err,
-                                            provider: Some(provider.clone()),
-                                        });
                                     }
                                 }
                             }
