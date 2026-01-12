@@ -241,6 +241,16 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_invalid_signature_nested_json() {
+        // 测试嵌套 JSON 格式的错误消息（第三方渠道常见格式）
+        let nested_error = r#"{"error":{"message":"{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"***.content.0: Invalid `signature` in `thinking` block\"},\"request_id\":\"req_xxx\"}"}}"#;
+        assert!(should_rectify_thinking_signature(
+            Some(nested_error),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
     fn test_detect_thinking_expected() {
         assert!(should_rectify_thinking_signature(
             Some("messages.69.content.0.type: Expected `thinking` or `redacted_thinking`, but found `tool_use`."),
