@@ -404,3 +404,57 @@ fn test_parse_skill_deeplink() {
     assert_eq!(request.directory.unwrap(), "skills");
     assert_eq!(request.branch.unwrap(), "dev");
 }
+
+// =============================================================================
+// Multiple Endpoints Tests
+// =============================================================================
+
+#[test]
+fn test_parse_multiple_endpoints_comma_separated() {
+    let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi1.example.com,https%3A%2F%2Fapi2.example.com,https%3A%2F%2Fapi3.example.com&apiKey=sk-test";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert!(request.endpoint.is_some());
+    let endpoint = request.endpoint.unwrap();
+    // Should contain all endpoints comma-separated
+    assert!(endpoint.contains("https://api1.example.com"));
+    assert!(endpoint.contains("https://api2.example.com"));
+    assert!(endpoint.contains("https://api3.example.com"));
+}
+
+#[test]
+fn test_parse_single_endpoint_backward_compatible() {
+    // Old format with single endpoint should still work
+    let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(
+        request.endpoint,
+        Some("https://api.example.com".to_string())
+    );
+}
+
+#[test]
+fn test_parse_endpoints_with_spaces_trimmed() {
+    let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi1.example.com%20,%20https%3A%2F%2Fapi2.example.com&apiKey=sk-test";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    // Validation should pass (spaces are trimmed during validation)
+    assert!(request.endpoint.is_some());
+}
+
+#[test]
+fn test_infer_homepage_from_endpoint_without_homepage() {
+    // Test that homepage is auto-inferred from endpoint when not provided
+    assert_eq!(
+        infer_homepage_from_endpoint("https://api.cubence.com/v1"),
+        Some("https://cubence.com".to_string())
+    );
+    assert_eq!(
+        infer_homepage_from_endpoint("https://cubence.com"),
+        Some("https://cubence.com".to_string())
+    );
+}

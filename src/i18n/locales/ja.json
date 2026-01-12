@@ -958,6 +958,7 @@
     "configDetails": "設定の詳細",
     "configUrl": "設定ファイル URL",
     "configMergeError": "設定ファイルのマージに失敗しました",
+    "primaryEndpoint": "メイン",
     "mcp": {
       "title": "MCP サーバーを一括インポート",
       "targetApps": "ターゲットアプリ",

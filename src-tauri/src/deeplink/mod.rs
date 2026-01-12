@@ -55,7 +55,7 @@ pub struct DeepLinkImportRequest {
     /// Provider homepage URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub homepage: Option<String>,
-    /// API endpoint/base URL
+    /// API endpoint/base URL (supports comma-separated multiple URLs)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
     /// API key
