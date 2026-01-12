@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -149,12 +149,30 @@ export function ProviderCard({
   // 多套餐默认展开
   const [isExpanded, setIsExpanded] = useState(false);
 
+  // 操作按钮容器 ref，用于动态计算宽度
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const [actionsWidth, setActionsWidth] = useState(0);
+
   // 当检测到多套餐时自动展开
   useEffect(() => {
     if (hasMultiplePlans) {
       setIsExpanded(true);
     }
   }, [hasMultiplePlans]);
+
+  // 动态获取操作按钮宽度
+  useEffect(() => {
+    if (actionsRef.current) {
+      const updateWidth = () => {
+        const width = actionsRef.current?.offsetWidth || 0;
+        setActionsWidth(width);
+      };
+      updateWidth();
+      // 监听窗口大小变化
+      window.addEventListener("resize", updateWidth);
+      return () => window.removeEventListener("resize", updateWidth);
+    }
+  }, [onTest, onOpenTerminal]); // 按钮数量可能变化时重新计算
 
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
@@ -281,10 +299,13 @@ export function ProviderCard({
           </div>
         </div>
 
-        <div className="relative flex items-center ml-auto min-w-0">
+        <div
+          className="relative flex items-center ml-auto min-w-0 gap-3"
+          style={{ "--actions-width": `${actionsWidth || 320}px` } as React.CSSProperties}
+        >
           {/* 用量信息区域 - hover 时向左移动，为操作按钮腾出空间 */}
-          <div className="ml-auto transition-transform duration-200 group-hover:-translate-x-[14.5rem] group-focus-within:-translate-x-[14.5rem] sm:group-hover:-translate-x-[16rem] sm:group-focus-within:-translate-x-[16rem]">
-            <div className="flex items-center gap-1">
+          <div className="ml-auto">
+            <div className="flex items-center gap-1 transition-transform duration-200 group-hover:-translate-x-[var(--actions-width)] group-focus-within:-translate-x-[var(--actions-width)]">
               {/* 多套餐时显示套餐数量，单套餐时显示详细信息 */}
               {hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
@@ -329,8 +350,11 @@ export function ProviderCard({
             </div>
           </div>
 
-          {/* 操作按钮区域 - 绝对定位在右侧，hover 时滑入 */}
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0">
+          {/* 操作按钮区域 - 绝对定位在右侧，hover 时滑入，与用量信息保持间距 */}
+          <div
+            ref={actionsRef}
+            className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pl-3 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0"
+          >
             <ProviderActions
               isCurrent={isCurrent}
               isTesting={isTesting}
