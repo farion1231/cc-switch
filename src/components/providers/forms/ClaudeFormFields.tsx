@@ -36,6 +36,8 @@ interface ClaudeFormFieldsProps {
   isEndpointModalOpen: boolean;
   onEndpointModalToggle: (open: boolean) => void;
   onCustomEndpointsChange?: (endpoints: string[]) => void;
+  autoSelect: boolean;
+  onAutoSelectChange: (checked: boolean) => void;
 
   // Model Selector
   shouldShowModelSelector: boolean;
@@ -83,6 +85,8 @@ export function ClaudeFormFields({
   isEndpointModalOpen,
   onEndpointModalToggle,
   onCustomEndpointsChange,
+  autoSelect,
+  onAutoSelectChange,
   shouldShowModelSelector,
   claudeModel,
   reasoningModel,
@@ -170,6 +174,8 @@ export function ClaudeFormFields({
           initialEndpoints={speedTestEndpoints}
           visible={isEndpointModalOpen}
           onClose={() => onEndpointModalToggle(false)}
+          autoSelect={autoSelect}
+          onAutoSelectChange={onAutoSelectChange}
           onCustomEndpointsChange={onCustomEndpointsChange}
         />
       )}
