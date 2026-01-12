@@ -205,6 +205,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
     let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
 
     // Build UsageScript - use provider's API key and endpoint as defaults
+    // Note: use primary endpoint only (first one if comma-separated)
     let usage_script = UsageScript {
         enabled,
         language: "javascript".to_string(),
@@ -214,10 +215,14 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
             .usage_api_key
             .clone()
             .or_else(|| request.api_key.clone()),
-        base_url: request
-            .usage_base_url
-            .clone()
-            .or_else(|| request.endpoint.clone()),
+        base_url: request.usage_base_url.clone().or_else(|| {
+            let primary = get_primary_endpoint(request);
+            if primary.is_empty() {
+                None
+            } else {
+                Some(primary)
+            }
+        }),
         access_token: request.usage_access_token.clone(),
         user_id: request.usage_user_id.clone(),
         auto_query_interval: request.usage_auto_interval,

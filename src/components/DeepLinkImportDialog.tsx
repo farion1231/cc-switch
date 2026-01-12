@@ -405,7 +405,7 @@ export function DeepLinkImportDialog() {
                           {ep.trim()}
                           {idx === 0 && request.endpoint?.includes(",") && (
                             <span className="text-xs text-muted-foreground ml-2">
-                              (主)
+                              ({t("deeplink.primaryEndpoint")})
                             </span>
                           )}
                         </div>

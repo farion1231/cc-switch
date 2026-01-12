@@ -958,6 +958,7 @@
     "configDetails": "配置详情",
     "configUrl": "配置文件 URL",
     "configMergeError": "合并配置文件失败",
+    "primaryEndpoint": "主",
     "mcp": {
       "title": "批量导入 MCP Servers",
       "targetApps": "目标应用",
