@@ -147,6 +147,9 @@ pub struct ProviderMeta {
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,
+    /// 请求地址管理：测速后自动选择最佳端点
+    #[serde(rename = "endpointAutoSelect", skip_serializing_if = "Option::is_none")]
+    pub endpoint_auto_select: Option<bool>,
     /// 合作伙伴标记（前端使用 isPartner，保持字段名一致）
     #[serde(rename = "isPartner", skip_serializing_if = "Option::is_none")]
     pub is_partner: Option<bool>,

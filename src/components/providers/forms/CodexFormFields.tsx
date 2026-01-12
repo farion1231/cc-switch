@@ -25,6 +25,8 @@ interface CodexFormFieldsProps {
   isEndpointModalOpen: boolean;
   onEndpointModalToggle: (open: boolean) => void;
   onCustomEndpointsChange?: (endpoints: string[]) => void;
+  autoSelect: boolean;
+  onAutoSelectChange: (checked: boolean) => void;
 
   // Model Name
   shouldShowModelField?: boolean;
@@ -50,6 +52,8 @@ export function CodexFormFields({
   isEndpointModalOpen,
   onEndpointModalToggle,
   onCustomEndpointsChange,
+  autoSelect,
+  onAutoSelectChange,
   shouldShowModelField = true,
   modelName = "",
   onModelNameChange,
@@ -130,6 +134,8 @@ export function CodexFormFields({
           initialEndpoints={speedTestEndpoints}
           visible={isEndpointModalOpen}
           onClose={() => onEndpointModalToggle(false)}
+          autoSelect={autoSelect}
+          onAutoSelectChange={onAutoSelectChange}
           onCustomEndpointsChange={onCustomEndpointsChange}
         />
       )}

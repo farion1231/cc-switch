@@ -30,6 +30,8 @@ interface EndpointSpeedTestProps {
   initialEndpoints: EndpointCandidate[];
   visible?: boolean;
   onClose: () => void;
+  autoSelect: boolean;
+  onAutoSelectChange: (checked: boolean) => void;
   // 新建模式：当自定义端点列表变化时回传（仅包含 isCustom 的条目）
   // 编辑模式：不使用此回调，端点直接保存到后端
   onCustomEndpointsChange?: (urls: string[]) => void;
@@ -85,6 +87,8 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
   initialEndpoints,
   visible = true,
   onClose,
+  autoSelect,
+  onAutoSelectChange,
   onCustomEndpointsChange,
 }) => {
   const { t } = useTranslation();
@@ -93,7 +97,6 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
   );
   const [customUrl, setCustomUrl] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
-  const [autoSelect, setAutoSelect] = useState(true);
   const [isTesting, setIsTesting] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -488,7 +491,9 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
               <input
                 type="checkbox"
                 checked={autoSelect}
-                onChange={(event) => setAutoSelect(event.target.checked)}
+                onChange={(event) => {
+                  onAutoSelectChange(event.target.checked);
+                }}
                 className="h-3.5 w-3.5 rounded border-border-default bg-background text-primary focus:ring-2 focus:ring-primary/20"
               />
               {t("endpointTest.autoSelect")}
