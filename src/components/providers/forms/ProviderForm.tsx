@@ -124,6 +124,9 @@ export function ProviderForm({
       return [];
     },
   );
+  const [endpointAutoSelect, setEndpointAutoSelect] = useState<boolean>(
+    () => initialData?.meta?.endpointAutoSelect ?? true,
+  );
 
   // 使用 category hook
   const { category } = useProviderCategory({
@@ -141,6 +144,7 @@ export function ProviderForm({
     if (!initialData) {
       setDraftCustomEndpoints([]);
     }
+    setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
   }, [appId, initialData]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -647,6 +651,13 @@ export function ProviderForm({
       }
     }
 
+    const baseMeta: ProviderMeta | undefined =
+      payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+    payload.meta = {
+      ...(baseMeta ?? {}),
+      endpointAutoSelect,
+    };
+
     onSubmit(payload);
   };
 
@@ -856,6 +867,8 @@ export function ProviderForm({
             onCustomEndpointsChange={
               isEditMode ? undefined : setDraftCustomEndpoints
             }
+            autoSelect={endpointAutoSelect}
+            onAutoSelectChange={setEndpointAutoSelect}
             shouldShowModelSelector={category !== "official"}
             claudeModel={claudeModel}
             reasoningModel={reasoningModel}
@@ -889,6 +902,8 @@ export function ProviderForm({
             onCustomEndpointsChange={
               isEditMode ? undefined : setDraftCustomEndpoints
             }
+            autoSelect={endpointAutoSelect}
+            onAutoSelectChange={setEndpointAutoSelect}
             shouldShowModelField={category !== "official"}
             modelName={codexModelName}
             onModelNameChange={handleCodexModelNameChange}
@@ -917,6 +932,8 @@ export function ProviderForm({
             isEndpointModalOpen={isEndpointModalOpen}
             onEndpointModalToggle={setIsEndpointModalOpen}
             onCustomEndpointsChange={setDraftCustomEndpoints}
+            autoSelect={endpointAutoSelect}
+            onAutoSelectChange={setEndpointAutoSelect}
             shouldShowModelField={true}
             model={geminiModel}
             onModelChange={handleGeminiModelChange}

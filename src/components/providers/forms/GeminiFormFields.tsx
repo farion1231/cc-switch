@@ -29,6 +29,8 @@ interface GeminiFormFieldsProps {
   isEndpointModalOpen: boolean;
   onEndpointModalToggle: (open: boolean) => void;
   onCustomEndpointsChange: (endpoints: string[]) => void;
+  autoSelect: boolean;
+  onAutoSelectChange: (checked: boolean) => void;
 
   // Model
   shouldShowModelField: boolean;
@@ -55,6 +57,8 @@ export function GeminiFormFields({
   isEndpointModalOpen,
   onEndpointModalToggle,
   onCustomEndpointsChange,
+  autoSelect,
+  onAutoSelectChange,
   shouldShowModelField,
   model,
   onModelChange,
@@ -142,6 +146,8 @@ export function GeminiFormFields({
           initialEndpoints={speedTestEndpoints}
           visible={isEndpointModalOpen}
           onClose={() => onEndpointModalToggle(false)}
+          autoSelect={autoSelect}
+          onAutoSelectChange={onAutoSelectChange}
           onCustomEndpointsChange={onCustomEndpointsChange}
         />
       )}
