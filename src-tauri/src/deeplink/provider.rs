@@ -33,12 +33,12 @@ pub fn import_provider_from_deeplink(
     }
 
     // Step 1: Merge config file if provided (v3.8+)
-    let merged_request = parse_and_merge_config(&request)?;
+    let mut merged_request = parse_and_merge_config(&request)?;
 
     // Extract required fields (now as Option)
     let app_str = merged_request
         .app
-        .as_ref()
+        .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' field for provider".to_string()))?;
 
     let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
@@ -51,14 +51,29 @@ pub fn import_provider_from_deeplink(
         ));
     }
 
-    let endpoint = merged_request.endpoint.as_ref().ok_or_else(|| {
+    // Get endpoint: supports comma-separated multiple URLs (first is primary)
+    let endpoint_str = merged_request.endpoint.as_ref().ok_or_else(|| {
         AppError::InvalidInput("Endpoint is required (either in URL or config file)".to_string())
     })?;
 
-    if endpoint.is_empty() {
-        return Err(AppError::InvalidInput(
-            "Endpoint cannot be empty".to_string(),
-        ));
+    // Parse endpoints: split by comma, first is primary
+    let all_endpoints: Vec<String> = endpoint_str
+        .split(',')
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty())
+        .collect();
+
+    let primary_endpoint = all_endpoints
+        .first()
+        .ok_or_else(|| AppError::InvalidInput("Endpoint cannot be empty".to_string()))?;
+
+    // Auto-infer homepage from endpoint if not provided
+    if merged_request
+        .homepage
+        .as_ref()
+        .is_none_or(|s| s.is_empty())
+    {
+        merged_request.homepage = infer_homepage_from_endpoint(primary_endpoint);
     }
 
     let homepage = merged_request.homepage.as_ref().ok_or_else(|| {
@@ -73,11 +88,11 @@ pub fn import_provider_from_deeplink(
 
     let name = merged_request
         .name
-        .as_ref()
+        .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'name' field for provider".to_string()))?;
 
     // Parse app type
-    let app_type = AppType::from_str(app_str)
+    let app_type = AppType::from_str(&app_str)
         .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
 
     // Build provider configuration based on app type
@@ -96,6 +111,21 @@ pub fn import_provider_from_deeplink(
 
     // Use ProviderService to add the provider
     ProviderService::add(state, app_type.clone(), provider)?;
+
+    // Add extra endpoints as custom endpoints (skip first one as it's the primary)
+    for ep in all_endpoints.iter().skip(1) {
+        let normalized = ep.trim().trim_end_matches('/').to_string();
+        if !normalized.is_empty() {
+            if let Err(e) = ProviderService::add_custom_endpoint(
+                state,
+                app_type.clone(),
+                &provider_id,
+                normalized.clone(),
+            ) {
+                log::warn!("Failed to add custom endpoint '{normalized}': {e}");
+            }
+        }
+    }
 
     // If enabled=true, set as current provider
     if merged_request.enabled.unwrap_or(false) {
@@ -138,6 +168,16 @@ pub(crate) fn build_provider_from_request(
     Ok(provider)
 }
 
+/// Get primary endpoint from request (first one if comma-separated)
+fn get_primary_endpoint(request: &DeepLinkImportRequest) -> String {
+    request
+        .endpoint
+        .as_ref()
+        .and_then(|ep| ep.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
 /// Build provider meta with usage script configuration
 fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<ProviderMeta>, AppError> {
     // Check if any usage script fields are provided
@@ -165,6 +205,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
     let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
 
     // Build UsageScript - use provider's API key and endpoint as defaults
+    // Note: use primary endpoint only (first one if comma-separated)
     let usage_script = UsageScript {
         enabled,
         language: "javascript".to_string(),
@@ -174,10 +215,14 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
             .usage_api_key
             .clone()
             .or_else(|| request.api_key.clone()),
-        base_url: request
-            .usage_base_url
-            .clone()
-            .or_else(|| request.endpoint.clone()),
+        base_url: request.usage_base_url.clone().or_else(|| {
+            let primary = get_primary_endpoint(request);
+            if primary.is_empty() {
+                None
+            } else {
+                Some(primary)
+            }
+        }),
         access_token: request.usage_access_token.clone(),
         user_id: request.usage_user_id.clone(),
         auto_query_interval: request.usage_auto_interval,
@@ -198,7 +243,7 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     );
     env.insert(
         "ANTHROPIC_BASE_URL".to_string(),
-        json!(request.endpoint.clone().unwrap_or_default()),
+        json!(get_primary_endpoint(request)),
     );
 
     // Add default model if provided
@@ -271,11 +316,8 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
         .unwrap_or("gpt-5-codex")
         .to_string();
 
-    // Endpoint: normalize trailing slashes
-    let endpoint = request
-        .endpoint
-        .as_deref()
-        .unwrap_or("")
+    // Endpoint: normalize trailing slashes (use primary endpoint only)
+    let endpoint = get_primary_endpoint(request)
         .trim()
         .trim_end_matches('/')
         .to_string();
@@ -309,7 +351,7 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     env.insert("GEMINI_API_KEY".to_string(), json!(request.api_key));
     env.insert(
         "GOOGLE_GEMINI_BASE_URL".to_string(),
-        json!(request.endpoint),
+        json!(get_primary_endpoint(request)),
     );
 
     // Add model if provided

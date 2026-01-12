@@ -92,6 +92,8 @@ export interface ProviderMeta {
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 用量查询脚本配置
   usage_script?: UsageScript;
+  // 请求地址管理：测速后自动选择最佳端点
+  endpointAutoSelect?: boolean;
   // 是否为官方合作伙伴
   isPartner?: boolean;
   // 合作伙伴促销 key（用于后端识别 PackyCode 等）
