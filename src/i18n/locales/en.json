@@ -278,9 +278,12 @@
     "saving": "Saving...",
     "globalProxy": {
       "label": "Global Proxy",
-      "hint": "Proxy all requests (API, Skills download, etc.). Leave empty for direct connection. Supports HTTP and SOCKS5.",
+      "hint": "Proxy all requests (API, Skills download, etc.). Leave empty for direct connection.",
+      "username": "Username (optional)",
+      "password": "Password (optional)",
       "test": "Test Connection",
       "scan": "Scan Local Proxies",
+      "clear": "Clear",
       "scanFailed": "Scan failed: {{error}}",
       "saved": "Proxy settings saved",
       "saveFailed": "Save failed: {{error}}",

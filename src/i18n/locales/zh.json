@@ -278,9 +278,12 @@
     "saving": "正在保存...",
     "globalProxy": {
       "label": "全局代理",
-      "hint": "代理所有请求（API、Skills 下载等）。留空表示直连。支持 HTTP 和 SOCKS5 代理。",
+      "hint": "代理所有请求（API、Skills 下载等）。留空表示直连。",
+      "username": "用户名（可选）",
+      "password": "密码（可选）",
       "test": "测试连接",
       "scan": "扫描本地代理",
+      "clear": "清除",
       "scanFailed": "扫描失败：{{error}}",
       "saved": "代理设置已保存",
       "saveFailed": "保存失败：{{error}}",
