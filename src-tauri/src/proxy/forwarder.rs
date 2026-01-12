@@ -12,7 +12,7 @@ use super::{
     ProxyError,
 };
 use crate::{app_config::AppType, provider::Provider};
-use reqwest::{Client, Response};
+use reqwest::Response;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -80,8 +80,6 @@ pub struct ForwardError {
 }
 
 pub struct RequestForwarder {
-    client: Option<Client>,
-    client_init_error: Option<String>,
     /// 共享的 ProviderRouter（持有熔断器状态）
     router: Arc<ProviderRouter>,
     status: Arc<RwLock<ProxyStatus>>,
@@ -92,13 +90,15 @@ pub struct RequestForwarder {
     app_handle: Option<tauri::AppHandle>,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
+    /// 非流式请求超时（秒）
+    non_streaming_timeout: std::time::Duration,
 }
 
 impl RequestForwarder {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<ProviderRouter>,
-        _non_streaming_timeout: u64,
+        non_streaming_timeout: u64,
         status: Arc<RwLock<ProxyStatus>>,
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
         failover_manager: Arc<FailoverSwitchManager>,
@@ -107,19 +107,14 @@ impl RequestForwarder {
         _streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
     ) -> Self {
-        // 使用全局 HTTP 客户端（已包含代理配置）
-        // 如果全局客户端未初始化，会自动创建默认客户端
-        let client = super::http_client::get();
-
         Self {
-            client: Some(client),
-            client_init_error: None,
             router,
             status,
             current_providers,
             failover_manager,
             app_handle,
             current_provider_id_at_start,
+            non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
         }
     }
 
@@ -383,15 +378,9 @@ impl RequestForwarder {
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
 
-        // 构建请求
-        let client = self.client.as_ref().ok_or_else(|| {
-            ProxyError::ForwardFailed(
-                self.client_init_error
-                    .clone()
-                    .unwrap_or_else(|| "HTTP client is not initialized".to_string()),
-            )
-        })?;
-        let mut request = client.post(&url);
+        // 每次请求时获取最新的全局 HTTP 客户端（支持热更新代理配置）
+        let client = super::http_client::get();
+        let mut request = client.post(&url).timeout(self.non_streaming_timeout);
 
         // 过滤黑名单 Headers，保护隐私并避免冲突
         for (key, value) in headers {

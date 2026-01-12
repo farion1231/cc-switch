@@ -30,7 +30,9 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
 
     log::info!(
         "[GlobalProxy] Initialized: {}",
-        effective_url.unwrap_or("direct connection")
+        effective_url
+            .map(mask_url)
+            .unwrap_or_else(|| "direct connection".to_string())
     );
 
     Ok(())
@@ -65,7 +67,9 @@ pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 
     log::info!(
         "[GlobalProxy] Updated: {}",
-        effective_url.unwrap_or("direct connection")
+        effective_url
+            .map(mask_url)
+            .unwrap_or_else(|| "direct connection".to_string())
     );
 
     Ok(())
@@ -115,6 +119,19 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
 
     // 有代理地址则使用代理，否则直连
     if let Some(url) = proxy_url {
+        // 先验证 URL 格式和 scheme
+        let parsed = url::Url::parse(url)
+            .map_err(|e| format!("Invalid proxy URL '{}': {}", mask_url(url), e))?;
+
+        let scheme = parsed.scheme();
+        if !["http", "https", "socks5", "socks5h"].contains(&scheme) {
+            return Err(format!(
+                "Invalid proxy scheme '{}' in URL '{}'. Supported: http, https, socks5, socks5h",
+                scheme,
+                mask_url(url)
+            ));
+        }
+
         let proxy = reqwest::Proxy::all(url)
             .map_err(|e| format!("Invalid proxy URL '{}': {}", mask_url(url), e))?;
         builder = builder.proxy(proxy);
@@ -130,7 +147,7 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
 }
 
 /// 隐藏 URL 中的敏感信息（用于日志）
-fn mask_url(url: &str) -> String {
+pub fn mask_url(url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(url) {
         // 隐藏用户名和密码
         format!(
@@ -189,7 +206,9 @@ mod tests {
 
     #[test]
     fn test_build_client_invalid_url() {
-        let result = build_client(Some("not-a-valid-url"));
-        assert!(result.is_err());
+        // reqwest::Proxy::all 对某些无效 URL 不会立即报错
+        // 使用明确无效的 scheme 来触发错误
+        let result = build_client(Some("invalid-scheme://127.0.0.1:7890"));
+        assert!(result.is_err(), "Should reject invalid proxy scheme");
     }
 }

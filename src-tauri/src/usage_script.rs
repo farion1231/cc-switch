@@ -212,9 +212,10 @@ struct RequestConfig {
 }
 
 /// 发送 HTTP 请求
-async fn send_http_request(config: &RequestConfig, _timeout_secs: u64) -> Result<String, AppError> {
+async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
+    let request_timeout = std::time::Duration::from_secs(timeout_secs);
 
     // 严格校验 HTTP 方法，非法值不回退为 GET
     let method: reqwest::Method = config.method.parse().map_err(|_| {
@@ -225,7 +226,9 @@ async fn send_http_request(config: &RequestConfig, _timeout_secs: u64) -> Result
         )
     })?;
 
-    let mut req = client.request(method.clone(), &config.url);
+    let mut req = client
+        .request(method.clone(), &config.url)
+        .timeout(request_timeout);
 
     // 添加请求头
     for (k, v) in &config.headers {

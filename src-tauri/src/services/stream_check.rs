@@ -138,18 +138,34 @@ impl StreamCheckService {
 
         // 使用全局 HTTP 客户端（已包含代理配置）
         let client = crate::proxy::http_client::get();
+        let request_timeout = std::time::Duration::from_secs(config.timeout_secs);
 
         let model_to_test = Self::resolve_test_model(app_type, provider, config);
 
         let result = match app_type {
             AppType::Claude => {
-                Self::check_claude_stream(&client, &base_url, &auth, &model_to_test).await
+                Self::check_claude_stream(
+                    &client,
+                    &base_url,
+                    &auth,
+                    &model_to_test,
+                    request_timeout,
+                )
+                .await
             }
             AppType::Codex => {
-                Self::check_codex_stream(&client, &base_url, &auth, &model_to_test).await
+                Self::check_codex_stream(&client, &base_url, &auth, &model_to_test, request_timeout)
+                    .await
             }
             AppType::Gemini => {
-                Self::check_gemini_stream(&client, &base_url, &auth, &model_to_test).await
+                Self::check_gemini_stream(
+                    &client,
+                    &base_url,
+                    &auth,
+                    &model_to_test,
+                    request_timeout,
+                )
+                .await
             }
         };
 
@@ -190,6 +206,7 @@ impl StreamCheckService {
         base_url: &str,
         auth: &AuthInfo,
         model: &str,
+        timeout: std::time::Duration,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
         let url = if base.ends_with("/v1") {
@@ -210,6 +227,7 @@ impl StreamCheckService {
             .header("x-api-key", &auth.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
+            .timeout(timeout)
             .json(&body)
             .send()
             .await
@@ -240,6 +258,7 @@ impl StreamCheckService {
         base_url: &str,
         auth: &AuthInfo,
         model: &str,
+        timeout: std::time::Duration,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
         let url = if base.ends_with("/v1") {
@@ -272,6 +291,7 @@ impl StreamCheckService {
             .post(&url)
             .header("Authorization", format!("Bearer {}", auth.api_key))
             .header("Content-Type", "application/json")
+            .timeout(timeout)
             .json(&body)
             .send()
             .await
@@ -301,6 +321,7 @@ impl StreamCheckService {
         base_url: &str,
         auth: &AuthInfo,
         model: &str,
+        timeout: std::time::Duration,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
         let url = format!("{base}/v1/chat/completions");
@@ -317,6 +338,7 @@ impl StreamCheckService {
             .post(&url)
             .header("Authorization", format!("Bearer {}", auth.api_key))
             .header("Content-Type", "application/json")
+            .timeout(timeout)
             .json(&body)
             .send()
             .await

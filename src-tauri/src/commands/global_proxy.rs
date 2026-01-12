@@ -28,18 +28,20 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
         Some(url.as_str())
     };
 
-    // 1. 保存到数据库
+    // 1. 先验证并构建新的 HTTP 客户端（如果失败则不落库）
+    http_client::update_proxy(url_opt)?;
+
+    // 2. 验证成功后再保存到数据库
     state
         .db
         .set_global_proxy_url(url_opt)
         .map_err(|e| e.to_string())?;
 
-    // 2. 热更新全局 HTTP 客户端
-    http_client::update_proxy(url_opt)?;
-
     log::info!(
         "[GlobalProxy] Configuration updated: {}",
-        url_opt.unwrap_or("direct connection")
+        url_opt
+            .map(http_client::mask_url)
+            .unwrap_or_else(|| "direct connection".to_string())
     );
 
     Ok(())
@@ -87,7 +89,7 @@ pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
             let latency = start.elapsed().as_millis() as u64;
             log::debug!(
                 "[GlobalProxy] Test successful: {} -> {} ({}ms)",
-                url,
+                http_client::mask_url(&url),
                 resp.status(),
                 latency
             );
@@ -99,7 +101,12 @@ pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
         }
         Err(e) => {
             let latency = start.elapsed().as_millis() as u64;
-            log::debug!("[GlobalProxy] Test failed: {url} -> {e} ({latency}ms)");
+            log::debug!(
+                "[GlobalProxy] Test failed: {} -> {} ({}ms)",
+                http_client::mask_url(&url),
+                e,
+                latency
+            );
             Ok(ProxyTestResult {
                 success: false,
                 latency_ms: latency,
