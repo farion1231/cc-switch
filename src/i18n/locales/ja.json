@@ -186,6 +186,16 @@
       "data": {
         "title": "データ管理",
         "description": "設定のインポート/エクスポートとバックアップ/復元"
+      },
+      "rectifier": {
+        "title": "整流器",
+        "description": "API リクエストの互換性問題を自動修正",
+        "enabled": "整流器を有効化",
+        "enabledDescription": "マスタースイッチ、オフにするとすべての整流機能が無効になります",
+        "requestGroup": "リクエスト整流",
+        "responseGroup": "レスポンス整流",
+        "thinkingSignature": "Thinking 署名整流",
+        "thinkingSignatureDescription": "Claude API の thinking 署名検証エラーを自動修正"
       }
     },
     "language": "言語",

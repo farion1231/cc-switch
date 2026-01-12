@@ -186,6 +186,16 @@
       "data": {
         "title": "Data Management",
         "description": "Import/export configurations and backup/restore"
+      },
+      "rectifier": {
+        "title": "Rectifier",
+        "description": "Automatically fix API request compatibility issues",
+        "enabled": "Enable Rectifier",
+        "enabledDescription": "Master switch, all rectification features will be disabled when turned off",
+        "requestGroup": "Request Rectification",
+        "responseGroup": "Response Rectification",
+        "thinkingSignature": "Thinking Signature Rectification",
+        "thinkingSignatureDescription": "Automatically fix Claude API errors caused by thinking signature validation failures"
       }
     },
     "language": "Language",
