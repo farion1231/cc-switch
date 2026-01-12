@@ -13,7 +13,15 @@ use std::time::{Duration, Instant};
 /// 返回当前配置的代理 URL，null 表示直连。
 #[tauri::command]
 pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
-    state.db.get_global_proxy_url().map_err(|e| e.to_string())
+    let result = state.db.get_global_proxy_url().map_err(|e| e.to_string())?;
+    log::debug!(
+        "[GlobalProxy] [GP-010] Read from database: {}",
+        result
+            .as_ref()
+            .map(|u| http_client::mask_url(u))
+            .unwrap_or_else(|| "None".to_string())
+    );
+    Ok(result)
 }
 
 /// 设置全局代理 URL
@@ -25,6 +33,14 @@ pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<
 /// 这样确保 DB 写失败时不会出现运行态与持久化不一致的问题
 #[tauri::command]
 pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> Result<(), String> {
+    // 调试：显示接收到的 URL 信息（不包含敏感内容）
+    let has_auth = url.contains('@') && (url.starts_with("http://") || url.starts_with("socks"));
+    log::debug!(
+        "[GlobalProxy] [GP-011] Received URL: length={}, has_auth={}",
+        url.len(),
+        has_auth
+    );
+
     let url_opt = if url.trim().is_empty() {
         None
     } else {

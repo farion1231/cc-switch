@@ -49,18 +49,20 @@ function mergeAuth(
 
   try {
     const parsed = new URL(baseUrl);
-    parsed.username = encodeURIComponent(username.trim());
+    // URL 对象的 username/password setter 会自动进行 percent-encoding
+    // 不要使用 encodeURIComponent，否则会导致双重编码
+    parsed.username = username.trim();
     if (password) {
-      parsed.password = encodeURIComponent(password);
+      parsed.password = password;
     }
     return parsed.toString();
   } catch {
-    // URL 解析失败，尝试手动插入
+    // URL 解析失败，尝试手动插入（此时需要手动编码）
     const match = baseUrl.match(/^(\w+:\/\/)(.+)$/);
     if (match) {
       const auth = password
-        ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@`
-        : `${encodeURIComponent(username)}@`;
+        ? `${encodeURIComponent(username.trim())}:${encodeURIComponent(password)}@`
+        : `${encodeURIComponent(username.trim())}@`;
       return `${match[1]}${auth}${match[2]}`;
     }
     return baseUrl;
