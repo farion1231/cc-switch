@@ -1192,7 +1192,8 @@
     "checkParams": "Check Parameters",
     "timeout": "Timeout (seconds)",
     "maxRetries": "Max Retries",
-    "degradedThreshold": "Degraded Threshold (ms)"
+    "degradedThreshold": "Degraded Threshold (ms)",
+    "testPrompt": "Test Prompt"
   },
   "proxyConfig": {
     "proxyEnabled": "Proxy Enabled",

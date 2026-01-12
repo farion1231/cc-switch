@@ -1192,7 +1192,8 @@
     "checkParams": "检查参数",
     "timeout": "超时时间（秒）",
     "maxRetries": "最大重试次数",
-    "degradedThreshold": "降级阈值（毫秒）"
+    "degradedThreshold": "降级阈值（毫秒）",
+    "testPrompt": "检查提示词"
   },
   "proxyConfig": {
     "proxyEnabled": "代理总开关",

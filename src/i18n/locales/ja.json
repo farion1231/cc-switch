@@ -1186,7 +1186,8 @@
     "checkParams": "チェックパラメーター",
     "timeout": "タイムアウト（秒）",
     "maxRetries": "最大リトライ回数",
-    "degradedThreshold": "劣化しきい値（ミリ秒）"
+    "degradedThreshold": "劣化しきい値（ミリ秒）",
+    "testPrompt": "テストプロンプト"
   },
   "proxyConfig": {
     "proxyEnabled": "プロキシ有効",
