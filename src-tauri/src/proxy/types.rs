@@ -191,3 +191,23 @@ pub struct AppProxyConfig {
     /// 计算错误率的最小请求数
     pub circuit_min_requests: u32,
 }
+
+/// 整流器配置
+///
+/// 存储在 settings 表中
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RectifierConfig {
+    /// 总开关：是否启用整流器
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 请求整流：启用 thinking 签名整流器
+    ///
+    /// 处理错误：Invalid 'signature' in 'thinking' block
+    #[serde(default = "default_true")]
+    pub request_thinking_signature: bool,
+}
+
+fn default_true() -> bool {
+    true
+}

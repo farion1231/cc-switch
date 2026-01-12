@@ -3,20 +3,8 @@
 //! 用于自动修复 Anthropic API 中因签名校验失败导致的请求错误。
 //! 当上游 API 返回签名相关错误时，系统会自动移除有问题的签名字段并重试请求。
 
-use regex::Regex;
+use super::types::RectifierConfig;
 use serde_json::Value;
-use std::sync::LazyLock;
-
-/// 整流器触发类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RectifierTrigger {
-    /// thinking block 中的签名无效
-    InvalidSignatureInThinkingBlock,
-    /// assistant 消息必须以 thinking block 开头
-    AssistantMessageMustStartWithThinking,
-    /// 非法请求
-    InvalidRequest,
-}
 
 /// 整流结果
 #[derive(Debug, Clone, Default)]
@@ -31,45 +19,55 @@ pub struct RectifyResult {
     pub removed_signature_fields: usize,
 }
 
-// 正则表达式（延迟初始化）
-static THINKING_EXPECTED_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)expected\s*`?thinking`?\s*or\s*`?redacted_thinking`?.*found\s*`?tool_use`?")
-        .unwrap()
-});
-
-static INVALID_REQUEST_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)非法请求|illegal request|invalid request").unwrap());
-
-/// 检测是否需要触发整流器
+/// 检测是否需要触发 thinking 签名整流器
 ///
-/// 注意：不依赖错误规则开关，仅做字符串/正则判断
-pub fn detect_rectifier_trigger(error_message: Option<&str>) -> Option<RectifierTrigger> {
-    let msg = error_message?;
+/// 返回 `true` 表示需要触发整流器，`false` 表示不需要。
+/// 会检查配置开关。
+pub fn should_rectify_thinking_signature(
+    error_message: Option<&str>,
+    config: &RectifierConfig,
+) -> bool {
+    // 检查总开关
+    if !config.enabled {
+        return false;
+    }
+    // 检查子开关
+    if !config.request_thinking_signature {
+        return false;
+    }
+
+    // 检测错误类型
+    let Some(msg) = error_message else {
+        return false;
+    };
     let lower = msg.to_lowercase();
 
-    // 场景1: thinking 启用但 assistant 消息未以 thinking 开头
-    if lower.contains("must start with a thinking block") {
-        return Some(RectifierTrigger::AssistantMessageMustStartWithThinking);
-    }
-    if THINKING_EXPECTED_RE.is_match(msg) {
-        return Some(RectifierTrigger::AssistantMessageMustStartWithThinking);
-    }
-
-    // 场景2: thinking block 中的签名无效
+    // 场景1: thinking block 中的签名无效
+    // 错误示例: "Invalid 'signature' in 'thinking' block"
     if lower.contains("invalid")
         && lower.contains("signature")
         && lower.contains("thinking")
         && lower.contains("block")
     {
-        return Some(RectifierTrigger::InvalidSignatureInThinkingBlock);
+        return true;
     }
 
-    // 场景3: 非法请求
-    if INVALID_REQUEST_RE.is_match(msg) {
-        return Some(RectifierTrigger::InvalidRequest);
+    // 场景2: assistant 消息必须以 thinking block 开头
+    // 错误示例: "must start with a thinking block"
+    if lower.contains("must start with a thinking block") {
+        return true;
     }
 
-    None
+    // 场景3: expected thinking or redacted_thinking, found tool_use
+    // 错误示例: "Expected `thinking` or `redacted_thinking`, but found `tool_use`"
+    if lower.contains("expected")
+        && (lower.contains("thinking") || lower.contains("redacted_thinking"))
+        && lower.contains("found")
+    {
+        return true;
+    }
+
+    false
 }
 
 /// 对 Anthropic 请求体做最小侵入整流
@@ -203,77 +201,90 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // ==================== detect_rectifier_trigger 测试 ====================
+    fn enabled_config() -> RectifierConfig {
+        RectifierConfig {
+            enabled: true,
+            request_thinking_signature: true,
+        }
+    }
+
+    fn disabled_config() -> RectifierConfig {
+        RectifierConfig {
+            enabled: true,
+            request_thinking_signature: false,
+        }
+    }
+
+    fn master_disabled_config() -> RectifierConfig {
+        RectifierConfig {
+            enabled: false,
+            request_thinking_signature: true,
+        }
+    }
+
+    // ==================== should_rectify_thinking_signature 测试 ====================
 
     #[test]
     fn test_detect_invalid_signature() {
-        let trigger = detect_rectifier_trigger(Some(
-            "messages.1.content.0: Invalid `signature` in `thinking` block",
+        assert!(should_rectify_thinking_signature(
+            Some("messages.1.content.0: Invalid `signature` in `thinking` block"),
+            &enabled_config()
         ));
-        assert_eq!(
-            trigger,
-            Some(RectifierTrigger::InvalidSignatureInThinkingBlock)
-        );
     }
 
     #[test]
     fn test_detect_invalid_signature_no_backticks() {
-        let trigger = detect_rectifier_trigger(Some(
-            "Messages.1.Content.0: invalid signature in thinking block",
+        assert!(should_rectify_thinking_signature(
+            Some("Messages.1.Content.0: invalid signature in thinking block"),
+            &enabled_config()
         ));
-        assert_eq!(
-            trigger,
-            Some(RectifierTrigger::InvalidSignatureInThinkingBlock)
-        );
     }
 
     #[test]
     fn test_detect_thinking_expected() {
-        let trigger = detect_rectifier_trigger(Some(
-            "messages.69.content.0.type: Expected `thinking` or `redacted_thinking`, but found `tool_use`.",
+        assert!(should_rectify_thinking_signature(
+            Some("messages.69.content.0.type: Expected `thinking` or `redacted_thinking`, but found `tool_use`."),
+            &enabled_config()
         ));
-        assert_eq!(
-            trigger,
-            Some(RectifierTrigger::AssistantMessageMustStartWithThinking)
-        );
     }
 
     #[test]
     fn test_detect_must_start_with_thinking() {
-        let trigger = detect_rectifier_trigger(Some(
-            "a final `assistant` message must start with a thinking block",
+        assert!(should_rectify_thinking_signature(
+            Some("a final `assistant` message must start with a thinking block"),
+            &enabled_config()
         ));
-        assert_eq!(
-            trigger,
-            Some(RectifierTrigger::AssistantMessageMustStartWithThinking)
-        );
-    }
-
-    #[test]
-    fn test_detect_invalid_request_chinese() {
-        assert_eq!(
-            detect_rectifier_trigger(Some("非法请求")),
-            Some(RectifierTrigger::InvalidRequest)
-        );
-    }
-
-    #[test]
-    fn test_detect_invalid_request_english() {
-        assert_eq!(
-            detect_rectifier_trigger(Some("illegal request format")),
-            Some(RectifierTrigger::InvalidRequest)
-        );
-        assert_eq!(
-            detect_rectifier_trigger(Some("invalid request: malformed JSON")),
-            Some(RectifierTrigger::InvalidRequest)
-        );
     }
 
     #[test]
     fn test_no_trigger_for_unrelated_error() {
-        assert_eq!(detect_rectifier_trigger(Some("Request timeout")), None);
-        assert_eq!(detect_rectifier_trigger(Some("Connection refused")), None);
-        assert_eq!(detect_rectifier_trigger(None), None);
+        assert!(!should_rectify_thinking_signature(
+            Some("Request timeout"),
+            &enabled_config()
+        ));
+        assert!(!should_rectify_thinking_signature(
+            Some("Connection refused"),
+            &enabled_config()
+        ));
+        assert!(!should_rectify_thinking_signature(None, &enabled_config()));
+    }
+
+    #[test]
+    fn test_disabled_config() {
+        // 即使错误匹配，配置关闭时也不触发
+        assert!(!should_rectify_thinking_signature(
+            Some("Invalid `signature` in `thinking` block"),
+            &disabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_master_disabled() {
+        // 总开关关闭时，即使子开关开启也不触发
+        assert!(!should_rectify_thinking_signature(
+            Some("Invalid `signature` in `thinking` block"),
+            &master_disabled_config()
+        ));
     }
 
     // ==================== rectify_anthropic_request 测试 ====================
