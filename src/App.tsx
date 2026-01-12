@@ -382,6 +382,26 @@ function App() {
     await addProvider(duplicatedProvider);
   };
 
+  // 打开提供商终端
+  const handleOpenTerminal = async (provider: Provider) => {
+    try {
+      await providersApi.openTerminal(provider.id, activeApp);
+      toast.success(
+        t("provider.terminalOpened", {
+          defaultValue: "终端已打开",
+        }),
+      );
+    } catch (error) {
+      console.error("[App] Failed to open terminal", error);
+      const errorMessage = extractErrorMessage(error);
+      toast.error(
+        t("provider.terminalOpenFailed", {
+          defaultValue: "打开终端失败",
+        }) + (errorMessage ? `: ${errorMessage}` : ""),
+      );
+    }
+  };
+
   // 导入配置成功后刷新
   const handleImportSuccess = async () => {
     try {
@@ -482,6 +502,7 @@ function App() {
                       onDuplicate={handleDuplicateProvider}
                       onConfigureUsage={setUsageProvider}
                       onOpenWebsite={handleOpenWebsite}
+                      onOpenTerminal={activeApp === "claude" ? handleOpenTerminal : undefined}
                       onCreate={() => setIsAddOpen(true)}
                     />
                   </motion.div>

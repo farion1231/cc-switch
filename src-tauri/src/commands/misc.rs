@@ -1,9 +1,13 @@
 #![allow(non_snake_case)]
 
+use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
+use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::str::FromStr;
 use tauri::AppHandle;
+use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
 #[cfg(target_os = "windows")]
@@ -299,4 +303,286 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     }
 
     (None, Some("未安装或无法执行".to_string()))
+}
+
+/// 打开指定提供商的终端
+///
+/// 根据提供商配置的环境变量启动一个带有该提供商特定设置的终端
+/// 无需检查是否为当前激活的提供商，任何提供商都可以打开终端
+#[allow(non_snake_case)]
+#[tauri::command]
+pub async fn open_provider_terminal(
+    state: State<'_, crate::store::AppState>,
+    app: String,
+    #[allow(non_snake_case)] providerId: String,
+) -> Result<bool, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+
+    // 获取提供商配置
+    let providers = ProviderService::list(state.inner(), app_type.clone())
+        .map_err(|e| format!("获取提供商列表失败: {e}"))?;
+
+    let provider = providers
+        .get(&providerId)
+        .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
+
+    // 从提供商配置中提取环境变量
+    let config = &provider.settings_config;
+    let env_vars = extract_env_vars_from_config(config, &app_type);
+
+    // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
+    launch_terminal_with_env(env_vars, &providerId).map_err(|e| format!("启动终端失败: {e}"))?;
+
+    Ok(true)
+}
+
+/// 从提供商配置中提取环境变量
+fn extract_env_vars_from_config(
+    config: &serde_json::Value,
+    app_type: &AppType,
+) -> Vec<(String, String)> {
+    let mut env_vars = Vec::new();
+
+    let Some(obj) = config.as_object() else {
+        return env_vars;
+    };
+
+    // 处理 env 字段（Claude/Gemini 通用）
+    if let Some(env) = obj.get("env").and_then(|v| v.as_object()) {
+        for (key, value) in env {
+            if let Some(str_val) = value.as_str() {
+                env_vars.push((key.clone(), str_val.to_string()));
+            }
+        }
+
+        // 处理 base_url: 根据应用类型添加对应的环境变量
+        let base_url_key = match app_type {
+            AppType::Claude => Some("ANTHROPIC_BASE_URL"),
+            AppType::Gemini => Some("GOOGLE_GEMINI_BASE_URL"),
+            _ => None,
+        };
+
+        if let Some(key) = base_url_key {
+            if let Some(url_str) = env.get(key).and_then(|v| v.as_str()) {
+                env_vars.push((key.to_string(), url_str.to_string()));
+            }
+        }
+    }
+
+    // Codex 使用 auth 字段转换为 OPENAI_API_KEY
+    if *app_type == AppType::Codex {
+        if let Some(auth) = obj.get("auth").and_then(|v| v.as_str()) {
+            env_vars.push(("OPENAI_API_KEY".to_string(), auth.to_string()));
+        }
+    }
+
+    // Gemini 使用 api_key 字段转换为 GEMINI_API_KEY
+    if *app_type == AppType::Gemini {
+        if let Some(api_key) = obj.get("api_key").and_then(|v| v.as_str()) {
+            env_vars.push(("GEMINI_API_KEY".to_string(), api_key.to_string()));
+        }
+    }
+
+    env_vars
+}
+
+/// 创建临时配置文件并启动 claude 终端
+/// 使用 --settings 参数传入提供商特定的 API 配置
+fn launch_terminal_with_env(
+    env_vars: Vec<(String, String)>,
+    provider_id: &str,
+) -> Result<(), String> {
+    let temp_dir = std::env::temp_dir();
+    let config_file = temp_dir.join(format!(
+        "claude_{}_{}.json",
+        provider_id,
+        std::process::id()
+    ));
+
+    // 创建并写入配置文件
+    write_claude_config(&config_file, &env_vars)?;
+
+    // 转义配置文件路径用于 shell
+    let config_path_escaped = escape_shell_path(&config_file);
+
+    #[cfg(target_os = "macos")]
+    {
+        launch_macos_terminal(&config_file, &config_path_escaped)?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        launch_linux_terminal(&config_file, &config_path_escaped)?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        launch_windows_terminal(&temp_dir, &config_file)?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    Err("不支持的操作系统".to_string())
+}
+
+/// 写入 claude 配置文件
+fn write_claude_config(
+    config_file: &std::path::Path,
+    env_vars: &[(String, String)],
+) -> Result<(), String> {
+    let mut config_obj = serde_json::Map::new();
+    let mut env_obj = serde_json::Map::new();
+
+    for (key, value) in env_vars {
+        env_obj.insert(key.clone(), serde_json::Value::String(value.clone()));
+    }
+
+    config_obj.insert("env".to_string(), serde_json::Value::Object(env_obj));
+
+    let config_json =
+        serde_json::to_string_pretty(&config_obj).map_err(|e| format!("序列化配置失败: {e}"))?;
+
+    std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
+}
+
+/// 转义 shell 路径
+fn escape_shell_path(path: &std::path::Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace(' ', "\\ ")
+}
+
+/// 生成 bash 包装脚本，用于清理临时文件
+fn generate_wrapper_script(config_path: &str, escaped_path: &str) -> String {
+    format!(
+        "bash -c 'trap \"rm -f \\\"{}\\\"\" EXIT; echo \"Using provider-specific claude config:\"; echo \"{}\"; claude --settings \"{}\"; exec bash --norc --noprofile'",
+        config_path, escaped_path, escaped_path
+    )
+}
+
+/// macOS: 使用 Terminal.app 启动
+#[cfg(target_os = "macos")]
+fn launch_macos_terminal(
+    config_file: &std::path::Path,
+    config_path_escaped: &str,
+) -> Result<(), String> {
+    use std::process::Command;
+
+    let config_path_for_script = config_file.to_string_lossy().replace('\"', "\\\"");
+
+    let shell_script = generate_wrapper_script(&config_path_for_script, config_path_escaped);
+
+    let script = format!(
+        r#"tell application "Terminal"
+                activate
+                do script "{}"
+            end tell"#,
+        shell_script.replace('\"', "\\\"")
+    );
+
+    Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .spawn()
+        .map_err(|e| format!("启动 macOS 终端失败: {e}"))?;
+
+    Ok(())
+}
+
+/// Linux: 尝试使用常见终端启动
+#[cfg(target_os = "linux")]
+fn launch_linux_terminal(
+    config_file: &std::path::Path,
+    config_path_escaped: &str,
+) -> Result<(), String> {
+    use std::process::Command;
+
+    let terminals = [
+        "gnome-terminal",
+        "konsole",
+        "xfce4-terminal",
+        "mate-terminal",
+        "lxterminal",
+        "alacritty",
+        "kitty",
+    ];
+
+    let config_path_for_bash = config_file.to_string_lossy();
+    let shell_cmd = generate_wrapper_script(&config_path_for_bash, config_path_escaped);
+
+    let mut last_error = String::from("未找到可用的终端");
+
+    for terminal in terminals {
+        // 检查终端是否存在
+        if std::path::Path::new(&format!("/usr/bin/{}", terminal)).exists()
+            || std::path::Path::new(&format!("/bin/{}", terminal)).exists()
+        {
+            let result = match terminal {
+                "gnome-terminal" | "mate-terminal" => Command::new(terminal)
+                    .arg("--")
+                    .arg("bash")
+                    .arg("-c")
+                    .arg(&shell_cmd)
+                    .spawn(),
+                _ => Command::new(terminal)
+                    .arg("-e")
+                    .arg("bash")
+                    .arg("-c")
+                    .arg(&shell_cmd)
+                    .spawn(),
+            };
+
+            match result {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    last_error = format!("启动 {} 失败: {}", terminal, e);
+                }
+            }
+        }
+    }
+
+    // 清理配置文件
+    let _ = std::fs::remove_file(config_file);
+    Err(last_error)
+}
+
+/// Windows: 创建临时批处理文件启动
+#[cfg(target_os = "windows")]
+fn launch_windows_terminal(
+    temp_dir: &std::path::Path,
+    config_file: &std::path::Path,
+) -> Result<(), String> {
+    use std::process::Command;
+
+    let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
+    let config_path_for_batch = config_file.to_string_lossy().replace('&', "^&");
+
+    let content = format!(
+        "@echo off
+echo Using provider-specific claude config:
+echo {}
+claude --settings \"{}\"
+del \"{}\" >nul 2>&1
+del \"%~f0\" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo Press any key to close...
+    pause >nul
+)",
+        config_path_for_batch, config_path_for_batch, config_path_for_batch
+    );
+
+    std::fs::write(&bat_file, content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+
+    Command::new("cmd")
+        .args(["/C", "start", "cmd", "/C", &bat_file.to_string_lossy()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("启动 Windows 终端失败: {e}"))?;
+
+    Ok(())
 }
