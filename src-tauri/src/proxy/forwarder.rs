@@ -267,6 +267,14 @@ impl RequestForwarder {
                             // 已经重试过：直接返回错误（不可重试客户端错误）
                             if rectifier_retried {
                                 log::warn!("[{app_type_str}] [RECT-005] 整流器已触发过，不再重试");
+                                // 释放 HalfOpen permit（不记录熔断器，这是客户端兼容性问题）
+                                self.router
+                                    .release_permit_neutral(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
                                 let mut status = self.status.write().await;
                                 status.failed_requests += 1;
                                 status.last_error = Some(e.to_string());
@@ -289,6 +297,14 @@ impl RequestForwarder {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-006] 整流器触发但无可整流内容，不做无意义重试"
                                 );
+                                // 释放 HalfOpen permit（不记录熔断器，这是客户端兼容性问题）
+                                self.router
+                                    .release_permit_neutral(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
                                 let mut status = self.status.write().await;
                                 status.failed_requests += 1;
                                 status.last_error = Some(e.to_string());
@@ -380,11 +396,43 @@ impl RequestForwarder {
                                     });
                                 }
                                 Err(retry_err) => {
-                                    // 整流重试仍失败：直接返回错误（不可重试客户端错误）
-                                    // 不记录熔断器、不继续 failover
+                                    // 整流重试仍失败：区分错误类型决定是否记录熔断器
                                     log::warn!(
                                         "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
                                     );
+
+                                    // 区分错误类型：Provider 问题记录失败，客户端问题仅释放 permit
+                                    let is_provider_error = match &retry_err {
+                                        ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => {
+                                            true
+                                        }
+                                        ProxyError::UpstreamError { status, .. } => *status >= 500,
+                                        _ => false,
+                                    };
+
+                                    if is_provider_error {
+                                        // Provider 问题：记录失败到熔断器
+                                        let _ = self
+                                            .router
+                                            .record_result(
+                                                &provider.id,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                                false,
+                                                Some(retry_err.to_string()),
+                                            )
+                                            .await;
+                                    } else {
+                                        // 客户端问题：仅释放 permit，不记录熔断器
+                                        self.router
+                                            .release_permit_neutral(
+                                                &provider.id,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                            )
+                                            .await;
+                                    }
+
                                     let mut status = self.status.write().await;
                                     status.failed_requests += 1;
                                     status.last_error = Some(retry_err.to_string());
