@@ -301,7 +301,11 @@ export function ProviderCard({
 
         <div
           className="relative flex items-center ml-auto min-w-0 gap-3"
-          style={{ "--actions-width": `${actionsWidth || 320}px` } as React.CSSProperties}
+          style={
+            {
+              "--actions-width": `${actionsWidth || 320}px`,
+            } as React.CSSProperties
+          }
         >
           {/* 用量信息区域 - hover 时向左移动，为操作按钮腾出空间 */}
           <div className="ml-auto">
