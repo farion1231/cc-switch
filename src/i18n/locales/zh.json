@@ -183,6 +183,10 @@
         "title": "成本定价",
         "description": "管理各模型 Token 计费规则"
       },
+      "globalProxy": {
+        "title": "全局出站代理",
+        "description": "配置 CC Switch 访问外部 API 时使用的代理"
+      },
       "data": {
         "title": "数据管理",
         "description": "导入导出配置与备份恢复"
@@ -281,7 +285,21 @@
     "restartLater": "稍后重启",
     "restartFailed": "应用重启失败，请手动关闭后重新打开。",
     "devModeRestartHint": "开发模式下不支持自动重启，请手动重新启动应用。",
-    "saving": "正在保存..."
+    "saving": "正在保存...",
+    "globalProxy": {
+      "label": "全局代理",
+      "hint": "代理所有请求（API、Skills 下载等）。留空表示直连。",
+      "username": "用户名（可选）",
+      "password": "密码（可选）",
+      "test": "测试连接",
+      "scan": "扫描本地代理",
+      "clear": "清除",
+      "scanFailed": "扫描失败：{{error}}",
+      "saved": "代理设置已保存",
+      "saveFailed": "保存失败：{{error}}",
+      "testSuccess": "连接成功！延迟 {{latency}}ms",
+      "testFailed": "连接失败：{{error}}"
+    }
   },
   "apps": {
     "claude": "Claude Code",

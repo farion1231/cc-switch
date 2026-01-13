@@ -183,6 +183,10 @@
         "title": "Cost Pricing",
         "description": "Manage token pricing rules for each model"
       },
+      "globalProxy": {
+        "title": "Global Outbound Proxy",
+        "description": "Configure proxy for CC Switch to access external APIs"
+      },
       "data": {
         "title": "Data Management",
         "description": "Import/export configurations and backup/restore"
@@ -281,7 +285,21 @@
     "restartLater": "Restart Later",
     "restartFailed": "Application restart failed, please manually close and reopen.",
     "devModeRestartHint": "Dev Mode: Automatic restart not supported, please manually restart the application.",
-    "saving": "Saving..."
+    "saving": "Saving...",
+    "globalProxy": {
+      "label": "Global Proxy",
+      "hint": "Proxy all requests (API, Skills download, etc.). Leave empty for direct connection.",
+      "username": "Username (optional)",
+      "password": "Password (optional)",
+      "test": "Test Connection",
+      "scan": "Scan Local Proxies",
+      "clear": "Clear",
+      "scanFailed": "Scan failed: {{error}}",
+      "saved": "Proxy settings saved",
+      "saveFailed": "Save failed: {{error}}",
+      "testSuccess": "Connected! Latency {{latency}}ms",
+      "testFailed": "Connection failed: {{error}}"
+    }
   },
   "apps": {
     "claude": "Claude Code",

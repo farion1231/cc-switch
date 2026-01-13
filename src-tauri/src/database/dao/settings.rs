@@ -63,6 +63,41 @@ impl Database {
         }
     }
 
+    // --- 全局出站代理 ---
+
+    /// 全局代理 URL 的存储键名
+    const GLOBAL_PROXY_URL_KEY: &'static str = "global_proxy_url";
+
+    /// 获取全局出站代理 URL
+    ///
+    /// 返回 None 表示未配置或已清除代理（直连）
+    /// 返回 Some(url) 表示已配置代理
+    pub fn get_global_proxy_url(&self) -> Result<Option<String>, AppError> {
+        self.get_setting(Self::GLOBAL_PROXY_URL_KEY)
+    }
+
+    /// 设置全局出站代理 URL
+    ///
+    /// - 传入非空字符串：启用代理
+    /// - 传入空字符串或 None：清除代理设置（直连）
+    pub fn set_global_proxy_url(&self, url: Option<&str>) -> Result<(), AppError> {
+        match url {
+            Some(u) if !u.trim().is_empty() => {
+                self.set_setting(Self::GLOBAL_PROXY_URL_KEY, u.trim())
+            }
+            _ => {
+                // 清除代理设置
+                let conn = lock_conn!(self.conn);
+                conn.execute(
+                    "DELETE FROM settings WHERE key = ?1",
+                    params![Self::GLOBAL_PROXY_URL_KEY],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+                Ok(())
+            }
+        }
+    }
+
     // --- 代理接管状态管理（已废弃，使用 proxy_config.enabled 替代）---
 
     /// 获取指定应用的代理接管状态

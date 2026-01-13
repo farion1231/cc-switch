@@ -7,7 +7,6 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -143,9 +142,7 @@ pub struct SkillMetadata {
 
 // ========== SkillService ==========
 
-pub struct SkillService {
-    http_client: Client,
-}
+pub struct SkillService;
 
 impl Default for SkillService {
     fn default() -> Self {
@@ -155,13 +152,7 @@ impl Default for SkillService {
 
 impl SkillService {
     pub fn new() -> Self {
-        Self {
-            http_client: Client::builder()
-                .user_agent("cc-switch")
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .unwrap_or_else(|_| Client::new()),
-        }
+        Self
     }
 
     // ========== 路径管理 ==========
@@ -863,7 +854,8 @@ impl SkillService {
 
     /// 下载并解压 ZIP
     async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
-        let response = self.http_client.get(url).send().await?;
+        let client = crate::proxy::http_client::get();
+        let response = client.get(url).send().await?;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(

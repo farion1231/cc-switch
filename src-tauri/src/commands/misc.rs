@@ -91,11 +91,8 @@ pub async fn get_tool_versions() -> Result<Vec<ToolVersion>, String> {
     let tools = vec!["claude", "codex", "gemini"];
     let mut results = Vec::new();
 
-    // 用于获取远程版本的 client
-    let client = reqwest::Client::builder()
-        .user_agent("cc-switch/1.0")
-        .build()
-        .map_err(|e| e.to_string())?;
+    // 使用全局 HTTP 客户端（已包含代理配置）
+    let client = crate::proxy::http_client::get();
 
     for tool in tools {
         // 1. 获取本地版本 - 先尝试直接执行，失败则扫描常见路径

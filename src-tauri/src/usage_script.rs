@@ -1,8 +1,6 @@
-use reqwest::Client;
 use rquickjs::{Context, Function, Runtime};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::time::Duration;
 use url::{Host, Url};
 
 use crate::error::AppError;
@@ -215,18 +213,10 @@ struct RequestConfig {
 
 /// 发送 HTTP 请求
 async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
-    // 约束超时范围，防止异常配置导致长时间阻塞
-    let timeout = timeout_secs.clamp(2, 30);
-    let client = Client::builder()
-        .timeout(Duration::from_secs(timeout))
-        .build()
-        .map_err(|e| {
-            AppError::localized(
-                "usage_script.client_create_failed",
-                format!("创建客户端失败: {e}"),
-                format!("Failed to create client: {e}"),
-            )
-        })?;
+    // 使用全局 HTTP 客户端（已包含代理配置）
+    let client = crate::proxy::http_client::get();
+    // 约束超时范围，防止异常配置导致长时间阻塞（最小 2 秒，最大 30 秒）
+    let request_timeout = std::time::Duration::from_secs(timeout_secs.clamp(2, 30));
 
     // 严格校验 HTTP 方法，非法值不回退为 GET
     let method: reqwest::Method = config.method.parse().map_err(|_| {
@@ -237,7 +227,9 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
         )
     })?;
 
-    let mut req = client.request(method.clone(), &config.url);
+    let mut req = client
+        .request(method.clone(), &config.url)
+        .timeout(request_timeout);
 
     // 添加请求头
     for (k, v) in &config.headers {

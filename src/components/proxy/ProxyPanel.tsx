@@ -106,13 +106,11 @@ export function ProxyPanel() {
     // 校验地址格式（简单的 IP 地址或 localhost 校验）
     const addressTrimmed = listenAddress.trim();
     const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
-    // 规范化 localhost 为 127.0.0.1
-    const normalizedAddress =
-      addressTrimmed === "localhost" ? "127.0.0.1" : addressTrimmed;
     const isValidAddress =
-      normalizedAddress === "0.0.0.0" ||
-      (ipv4Regex.test(normalizedAddress) &&
-        normalizedAddress.split(".").every((n) => {
+      addressTrimmed === "localhost" ||
+      addressTrimmed === "0.0.0.0" ||
+      (ipv4Regex.test(addressTrimmed) &&
+        addressTrimmed.split(".").every((n) => {
           const num = parseInt(n);
           return num >= 0 && num <= 255;
         }));
@@ -148,11 +146,9 @@ export function ProxyPanel() {
     try {
       await updateGlobalConfig.mutateAsync({
         ...globalConfig,
-        listenAddress: normalizedAddress,
+        listenAddress: addressTrimmed,
         listenPort: port,
       });
-      // 同步更新本地状态为规范化后的值
-      setListenAddress(normalizedAddress);
       toast.success(
         t("proxy.settings.configSaved", { defaultValue: "代理配置已保存" }),
         { closeButton: true },
