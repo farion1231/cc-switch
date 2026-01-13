@@ -101,6 +101,17 @@ impl Default for AppSettings {
 impl AppSettings {
     fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
+        #[cfg(windows)]
+        if let Ok(home) = std::env::var("HOME") {
+            let trimmed = home.trim();
+            if !trimmed.is_empty() {
+                return Some(
+                    PathBuf::from(trimmed)
+                        .join(".cc-switch")
+                        .join("settings.json"),
+                );
+            }
+        }
         dirs::home_dir().map(|h| h.join(".cc-switch").join("settings.json"))
     }
 

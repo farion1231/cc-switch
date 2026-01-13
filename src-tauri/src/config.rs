@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -7,6 +8,13 @@ use crate::error::AppError;
 
 /// 获取用户主目录，带回退和日志
 fn get_home_dir() -> PathBuf {
+    #[cfg(windows)]
+    if let Ok(home) = env::var("HOME") {
+        let trimmed = home.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
     dirs::home_dir().unwrap_or_else(|| {
         log::warn!("无法获取用户主目录，回退到当前目录");
         PathBuf::from(".")
@@ -71,10 +79,7 @@ pub fn get_app_config_dir() -> PathBuf {
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
         return custom;
     }
-
-    dirs::home_dir()
-        .expect("无法获取用户主目录")
-        .join(".cc-switch")
+    get_home_dir().join(".cc-switch")
 }
 
 /// 获取应用配置文件路径

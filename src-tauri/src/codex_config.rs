@@ -11,6 +11,13 @@ use std::path::Path;
 
 /// 获取用户主目录，带回退和日志
 fn get_home_dir() -> PathBuf {
+    #[cfg(windows)]
+    if let Ok(home) = std::env::var("HOME") {
+        let trimmed = home.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
     dirs::home_dir().unwrap_or_else(|| {
         log::warn!("无法获取用户主目录，回退到当前目录");
         PathBuf::from(".")
