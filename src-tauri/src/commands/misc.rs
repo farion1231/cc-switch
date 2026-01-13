@@ -190,7 +190,7 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
             if out.status.success() {
                 let raw = if stdout.is_empty() { &stderr } else { &stdout };
                 if raw.is_empty() {
-                    (None, Some("未安装或无法执行".to_string()))
+                    (None, Some("not installed or not executable".to_string()))
                 } else {
                     (Some(extract_version(raw)), None)
                 }
@@ -199,7 +199,7 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
                 (
                     None,
                     Some(if err.is_empty() {
-                        "未安装或无法执行".to_string()
+                        "not installed or not executable".to_string()
                     } else {
                         err
                     }),
@@ -245,6 +245,7 @@ fn try_get_version_wsl(tool: &str, distro: &str) -> (Option<String>, Option<Stri
             "-lc",
             &format!("{tool} --version"),
         ])
+        .creation_flags(CREATE_NO_WINDOW)
         .output();
 
     match output {
@@ -386,7 +387,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         }
     }
 
-    (None, Some("未安装或无法执行".to_string()))
+    (None, Some("not installed or not executable".to_string()))
 }
 
 fn wsl_distro_for_tool(tool: &str) -> Option<String> {
