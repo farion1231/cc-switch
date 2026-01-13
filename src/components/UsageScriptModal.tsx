@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Play, Wand2, Eye, EyeOff, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData } from "@/types";
 import { usageApi, type AppId } from "@/lib/api";
 import JsonEditor from "./JsonEditor";
@@ -109,6 +110,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   onSave,
 }) => {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   // 生成带国际化的预设模板
   const PRESET_TEMPLATES = generatePresetTemplates(t);
@@ -155,14 +157,19 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const providerCredentials = getProviderCredentials();
 
   const [script, setScript] = useState<UsageScript>(() => {
-    return (
-      provider.meta?.usage_script || {
-        enabled: false,
-        language: "javascript",
-        code: PRESET_TEMPLATES[TEMPLATE_KEYS.GENERAL],
-        timeout: 10,
-      }
-    );
+    const savedScript = provider.meta?.usage_script;
+    const defaultScript = {
+      enabled: false,
+      language: "javascript" as const,
+      code: PRESET_TEMPLATES[TEMPLATE_KEYS.GENERAL],
+      timeout: 10,
+    };
+
+    if (!savedScript) {
+      return defaultScript;
+    }
+
+    return savedScript;
   });
 
   const [testing, setTesting] = useState(false);
@@ -281,6 +288,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           duration: 3000,
           closeButton: true,
         });
+
+        // 🔧 测试成功后，更新主界面列表的用量查询缓存
+        queryClient.setQueryData(
+          ["usage", provider.id, appId],
+          result,
+        );
       } else {
         toast.error(
           `${t("usageScript.testFailed")}: ${result.error || t("endpointTest.noResult")}`,
@@ -330,10 +343,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     const preset = PRESET_TEMPLATES[presetName];
     if (preset) {
       if (presetName === TEMPLATE_KEYS.CUSTOM) {
+        // 🔧 自定义模式：用户应该在脚本中直接写完整 URL 和凭证，而不是依赖变量替换
+        // 这样可以避免同源检查导致的问题
+        // 如果用户想使用变量，需要手动在配置中设置 baseUrl/apiKey
         setScript({
           ...script,
           code: preset,
-          // 自定义模式不使用这些字段，清除以使用 provider 的值
+          // 清除凭证，用户可选择手动输入或保持空
           apiKey: undefined,
           baseUrl: undefined,
           accessToken: undefined,
@@ -720,11 +736,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   type="number"
                   min={0}
                   max={1440}
-                  value={script.autoIntervalMinutes ?? 0}
+                  value={script.autoQueryInterval ?? script.autoIntervalMinutes ?? 0}
                   onChange={(e) =>
                     setScript({
                       ...script,
-                      autoIntervalMinutes: validateAndClampInterval(
+                      autoQueryInterval: validateAndClampInterval(
                         e.target.value,
                       ),
                     })
@@ -732,7 +748,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   onBlur={(e) =>
                     setScript({
                       ...script,
-                      autoIntervalMinutes: validateAndClampInterval(
+                      autoQueryInterval: validateAndClampInterval(
                         e.target.value,
                       ),
                     })

@@ -512,8 +512,8 @@ fn validate_request_url(request_url: &str, base_url: &str, is_custom_template: b
     }
 
     // 如果提供了 base_url（非空），则进行同源检查
-    // 自定义模板模式下，用户可能不提供 base_url，直接在脚本中写完整 URL
-    if !base_url.is_empty() {
+    // 🔧 自定义模板模式下，用户可以自由访问任意 HTTPS 域名，跳过同源检查
+    if !base_url.is_empty() && !is_custom_template {
         // 解析 base URL
         let parsed_base = Url::parse(base_url).map_err(|e| {
             AppError::localized(
