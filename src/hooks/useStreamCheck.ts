@@ -6,10 +6,12 @@ import {
   type StreamCheckResult,
 } from "@/lib/api/model-test";
 import type { AppId } from "@/lib/api";
+import { useResetCircuitBreaker } from "@/lib/query/failover";
 
 export function useStreamCheck(appId: AppId) {
   const { t } = useTranslation();
   const [checkingIds, setCheckingIds] = useState<Set<string>>(new Set());
+  const resetCircuitBreaker = useResetCircuitBreaker();
 
   const checkProvider = useCallback(
     async (
@@ -30,6 +32,9 @@ export function useStreamCheck(appId: AppId) {
             }),
             { closeButton: true },
           );
+
+          // 测试通过后重置熔断器状态
+          resetCircuitBreaker.mutate({ providerId, appType: appId });
         } else if (result.status === "degraded") {
           toast.warning(
             t("streamCheck.degraded", {
@@ -38,6 +43,9 @@ export function useStreamCheck(appId: AppId) {
               defaultValue: `${providerName} 响应较慢 (${result.responseTimeMs}ms)`,
             }),
           );
+
+          // 降级状态也重置熔断器，因为至少能通信
+          resetCircuitBreaker.mutate({ providerId, appType: appId });
         } else {
           toast.error(
             t("streamCheck.failed", {
@@ -66,7 +74,7 @@ export function useStreamCheck(appId: AppId) {
         });
       }
     },
-    [appId, t],
+    [appId, t, resetCircuitBreaker],
   );
 
   const isChecking = useCallback(

@@ -20,6 +20,7 @@ import {
   geminiProviderPresets,
   type GeminiProviderPreset,
 } from "@/config/geminiProviderPresets";
+import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import { applyTemplateValues } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
@@ -72,6 +73,8 @@ interface ProviderFormProps {
   submitLabel: string;
   onSubmit: (values: ProviderFormValues) => void;
   onCancel: () => void;
+  onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
+  onManageUniversalProviders?: () => void;
   initialData?: {
     name?: string;
     websiteUrl?: string;
@@ -91,6 +94,8 @@ export function ProviderForm({
   submitLabel,
   onSubmit,
   onCancel,
+  onUniversalPresetSelect,
+  onManageUniversalProviders,
   initialData,
   showButtons = true,
 }: ProviderFormProps) {
@@ -119,6 +124,9 @@ export function ProviderForm({
       return [];
     },
   );
+  const [endpointAutoSelect, setEndpointAutoSelect] = useState<boolean>(
+    () => initialData?.meta?.endpointAutoSelect ?? true,
+  );
 
   // 使用 category hook
   const { category } = useProviderCategory({
@@ -136,6 +144,7 @@ export function ProviderForm({
     if (!initialData) {
       setDraftCustomEndpoints([]);
     }
+    setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
   }, [appId, initialData]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -162,6 +171,8 @@ export function ProviderForm({
     mode: "onSubmit",
   });
 
+  const settingsConfigValue = form.watch("settingsConfig");
+
   // 使用 API Key hook
   const {
     apiKey,
@@ -187,9 +198,10 @@ export function ProviderForm({
     },
   });
 
-  // 使用 Model hook（新：主模型 + Haiku/Sonnet/Opus 默认模型）
+  // 使用 Model hook（新：主模型 + 推理模型 + Haiku/Sonnet/Opus 默认模型）
   const {
     claudeModel,
+    reasoningModel,
     defaultHaikuModel,
     defaultSonnetModel,
     defaultOpusModel,
@@ -198,6 +210,53 @@ export function ProviderForm({
     settingsConfig: form.watch("settingsConfig"),
     onConfigChange: (config) => form.setValue("settingsConfig", config),
   });
+
+  const isOpenRouterProvider = useMemo(() => {
+    if (appId !== "claude") return false;
+    const normalized = baseUrl.trim().toLowerCase();
+    if (normalized.includes("openrouter.ai")) {
+      return true;
+    }
+    try {
+      const config = JSON.parse(settingsConfigValue || "{}");
+      const envUrl = config?.env?.ANTHROPIC_BASE_URL;
+      return typeof envUrl === "string" && envUrl.includes("openrouter.ai");
+    } catch {
+      return false;
+    }
+  }, [appId, baseUrl, settingsConfigValue]);
+
+  const openRouterCompatEnabled = useMemo(() => {
+    if (!isOpenRouterProvider) return false;
+    try {
+      const config = JSON.parse(settingsConfigValue || "{}");
+      const raw = config?.openrouter_compat_mode;
+      if (typeof raw === "boolean") return raw;
+      if (typeof raw === "number") return raw !== 0;
+      if (typeof raw === "string") {
+        const normalized = raw.trim().toLowerCase();
+        return normalized === "true" || normalized === "1";
+      }
+    } catch {
+      // ignore
+    }
+    return false; // OpenRouter now supports Claude Code compatible API, no need for transform
+  }, [isOpenRouterProvider, settingsConfigValue]);
+
+  const handleOpenRouterCompatChange = useCallback(
+    (enabled: boolean) => {
+      try {
+        const currentConfig = JSON.parse(
+          form.getValues("settingsConfig") || "{}",
+        );
+        currentConfig.openrouter_compat_mode = enabled;
+        form.setValue("settingsConfig", JSON.stringify(currentConfig, null, 2));
+      } catch {
+        // ignore
+      }
+    },
+    [form],
+  );
 
   // 使用 Codex 配置 hook (仅 Codex 模式)
   const {
@@ -297,10 +356,13 @@ export function ProviderForm({
     commonConfigError,
     handleCommonConfigToggle,
     handleCommonConfigSnippetChange,
+    isExtracting: isClaudeExtracting,
+    handleExtract: handleClaudeExtract,
   } = useCommonConfigSnippet({
     settingsConfig: form.watch("settingsConfig"),
     onConfigChange: (config) => form.setValue("settingsConfig", config),
     initialData: appId === "claude" ? initialData : undefined,
+    selectedPresetId: selectedPresetId ?? undefined,
   });
 
   // 使用 Codex 通用配置片段 hook (仅 Codex 模式)
@@ -310,10 +372,13 @@ export function ProviderForm({
     commonConfigError: codexCommonConfigError,
     handleCommonConfigToggle: handleCodexCommonConfigToggle,
     handleCommonConfigSnippetChange: handleCodexCommonConfigSnippetChange,
+    isExtracting: isCodexExtracting,
+    handleExtract: handleCodexExtract,
   } = useCodexCommonConfig({
     codexConfig,
     onConfigChange: handleCodexConfigChange,
     initialData: appId === "codex" ? initialData : undefined,
+    selectedPresetId: selectedPresetId ?? undefined,
   });
 
   // 使用 Gemini 配置 hook (仅 Gemini 模式)
@@ -332,6 +397,7 @@ export function ProviderForm({
     handleGeminiConfigChange,
     resetGeminiConfig,
     envStringToObj,
+    envObjToString,
   } = useGeminiConfigState({
     initialData: appId === "gemini" ? initialData : undefined,
   });
@@ -392,10 +458,15 @@ export function ProviderForm({
     commonConfigError: geminiCommonConfigError,
     handleCommonConfigToggle: handleGeminiCommonConfigToggle,
     handleCommonConfigSnippetChange: handleGeminiCommonConfigSnippetChange,
+    isExtracting: isGeminiExtracting,
+    handleExtract: handleGeminiExtract,
   } = useGeminiCommonConfig({
-    configValue: geminiConfig,
-    onConfigChange: handleGeminiConfigChange,
+    envValue: geminiEnv,
+    onEnvChange: handleGeminiEnvChange,
+    envStringToObj,
+    envObjToString,
     initialData: appId === "gemini" ? initialData : undefined,
+    selectedPresetId: selectedPresetId ?? undefined,
   });
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
@@ -580,6 +651,13 @@ export function ProviderForm({
       }
     }
 
+    const baseMeta: ProviderMeta | undefined =
+      payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+    payload.meta = {
+      ...(baseMeta ?? {}),
+      endpointAutoSelect,
+    };
+
     onSubmit(payload);
   };
 
@@ -753,6 +831,8 @@ export function ProviderForm({
             categoryKeys={categoryKeys}
             presetCategoryLabels={presetCategoryLabels}
             onPresetChange={handlePresetChange}
+            onUniversalPresetSelect={onUniversalPresetSelect}
+            onManageUniversalProviders={onManageUniversalProviders}
             category={category}
           />
         )}
@@ -787,13 +867,19 @@ export function ProviderForm({
             onCustomEndpointsChange={
               isEditMode ? undefined : setDraftCustomEndpoints
             }
+            autoSelect={endpointAutoSelect}
+            onAutoSelectChange={setEndpointAutoSelect}
             shouldShowModelSelector={category !== "official"}
             claudeModel={claudeModel}
+            reasoningModel={reasoningModel}
             defaultHaikuModel={defaultHaikuModel}
             defaultSonnetModel={defaultSonnetModel}
             defaultOpusModel={defaultOpusModel}
             onModelChange={handleModelChange}
             speedTestEndpoints={speedTestEndpoints}
+            showOpenRouterCompatToggle={false}
+            openRouterCompatEnabled={openRouterCompatEnabled}
+            onOpenRouterCompatChange={handleOpenRouterCompatChange}
           />
         )}
 
@@ -816,6 +902,8 @@ export function ProviderForm({
             onCustomEndpointsChange={
               isEditMode ? undefined : setDraftCustomEndpoints
             }
+            autoSelect={endpointAutoSelect}
+            onAutoSelectChange={setEndpointAutoSelect}
             shouldShowModelField={category !== "official"}
             modelName={codexModelName}
             onModelNameChange={handleCodexModelNameChange}
@@ -844,6 +932,8 @@ export function ProviderForm({
             isEndpointModalOpen={isEndpointModalOpen}
             onEndpointModalToggle={setIsEndpointModalOpen}
             onCustomEndpointsChange={setDraftCustomEndpoints}
+            autoSelect={endpointAutoSelect}
+            onAutoSelectChange={setEndpointAutoSelect}
             shouldShowModelField={true}
             model={geminiModel}
             onModelChange={handleGeminiModelChange}
@@ -866,6 +956,8 @@ export function ProviderForm({
               commonConfigError={codexCommonConfigError}
               authError={codexAuthError}
               configError={codexConfigError}
+              onExtract={handleCodexExtract}
+              isExtracting={isCodexExtracting}
             />
             {/* 配置验证错误显示 */}
             <FormField
@@ -894,6 +986,8 @@ export function ProviderForm({
               commonConfigError={geminiCommonConfigError}
               envError={envError}
               configError={geminiConfigError}
+              onExtract={handleGeminiExtract}
+              isExtracting={isGeminiExtracting}
             />
             {/* 配置验证错误显示 */}
             <FormField
@@ -919,6 +1013,8 @@ export function ProviderForm({
               onEditClick={() => setIsCommonConfigModalOpen(true)}
               isModalOpen={isCommonConfigModalOpen}
               onModalClose={() => setIsCommonConfigModalOpen(false)}
+              onExtract={handleClaudeExtract}
+              isExtracting={isClaudeExtracting}
             />
             {/* 配置验证错误显示 */}
             <FormField

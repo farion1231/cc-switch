@@ -15,6 +15,8 @@ interface GeminiConfigEditorProps {
   commonConfigError: string;
   envError: string;
   configError: string;
+  onExtract?: () => void;
+  isExtracting?: boolean;
 }
 
 const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
@@ -30,6 +32,8 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
   commonConfigError,
   envError,
   configError,
+  onExtract,
+  isExtracting,
 }) => {
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
@@ -48,16 +52,16 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
         onChange={onEnvChange}
         onBlur={onEnvBlur}
         error={envError}
+        useCommonConfig={useCommonConfig}
+        onCommonConfigToggle={onCommonConfigToggle}
+        onEditCommonConfig={() => setIsCommonConfigModalOpen(true)}
+        commonConfigError={commonConfigError}
       />
 
       {/* Config JSON Section */}
       <GeminiConfigSection
         value={configValue}
         onChange={onConfigChange}
-        useCommonConfig={useCommonConfig}
-        onCommonConfigToggle={onCommonConfigToggle}
-        onEditCommonConfig={() => setIsCommonConfigModalOpen(true)}
-        commonConfigError={commonConfigError}
         configError={configError}
       />
 
@@ -68,6 +72,8 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
         value={commonConfigSnippet}
         onChange={onCommonConfigSnippetChange}
         error={commonConfigError}
+        onExtract={onExtract}
+        isExtracting={isExtracting}
       />
     </div>
   );

@@ -7,42 +7,141 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 
 /**
  * 熔断器配置面板
  * 允许用户调整熔断器参数
  */
 export function CircuitBreakerConfigPanel() {
+  const { t } = useTranslation();
   const { data: config, isLoading } = useCircuitBreakerConfig();
   const updateConfig = useUpdateCircuitBreakerConfig();
 
+  // 使用字符串状态以支持完全清空输入框
   const [formData, setFormData] = useState({
-    failureThreshold: 5,
-    successThreshold: 2,
-    timeoutSeconds: 60,
-    errorRateThreshold: 0.5,
-    minRequests: 10,
+    failureThreshold: "5",
+    successThreshold: "2",
+    timeoutSeconds: "60",
+    errorRateThreshold: "50", // 存储百分比值
+    minRequests: "10",
   });
 
   // 当配置加载完成时更新表单数据
   useEffect(() => {
     if (config) {
-      setFormData(config);
+      setFormData({
+        failureThreshold: String(config.failureThreshold),
+        successThreshold: String(config.successThreshold),
+        timeoutSeconds: String(config.timeoutSeconds),
+        errorRateThreshold: String(Math.round(config.errorRateThreshold * 100)),
+        minRequests: String(config.minRequests),
+      });
     }
   }, [config]);
 
   const handleSave = async () => {
+    // 解析数字，返回 NaN 表示无效输入
+    const parseNum = (val: string) => {
+      const trimmed = val.trim();
+      // 必须是纯数字
+      if (!/^-?\d+$/.test(trimmed)) return NaN;
+      return parseInt(trimmed);
+    };
+
+    // 定义各字段的有效范围
+    const ranges = {
+      failureThreshold: { min: 1, max: 20 },
+      successThreshold: { min: 1, max: 10 },
+      timeoutSeconds: { min: 0, max: 300 },
+      errorRateThreshold: { min: 0, max: 100 },
+      minRequests: { min: 5, max: 100 },
+    };
+
+    // 解析原始值
+    const raw = {
+      failureThreshold: parseNum(formData.failureThreshold),
+      successThreshold: parseNum(formData.successThreshold),
+      timeoutSeconds: parseNum(formData.timeoutSeconds),
+      errorRateThreshold: parseNum(formData.errorRateThreshold),
+      minRequests: parseNum(formData.minRequests),
+    };
+
+    // 校验是否超出范围（NaN 也视为无效）
+    const errors: string[] = [];
+    const checkRange = (
+      value: number,
+      range: { min: number; max: number },
+      label: string,
+    ) => {
+      if (isNaN(value) || value < range.min || value > range.max) {
+        errors.push(`${label}: ${range.min}-${range.max}`);
+      }
+    };
+
+    checkRange(
+      raw.failureThreshold,
+      ranges.failureThreshold,
+      t("circuitBreaker.failureThreshold", "失败阈值"),
+    );
+    checkRange(
+      raw.successThreshold,
+      ranges.successThreshold,
+      t("circuitBreaker.successThreshold", "成功阈值"),
+    );
+    checkRange(
+      raw.timeoutSeconds,
+      ranges.timeoutSeconds,
+      t("circuitBreaker.timeoutSeconds", "超时时间"),
+    );
+    checkRange(
+      raw.errorRateThreshold,
+      ranges.errorRateThreshold,
+      t("circuitBreaker.errorRateThreshold", "错误率阈值"),
+    );
+    checkRange(
+      raw.minRequests,
+      ranges.minRequests,
+      t("circuitBreaker.minRequests", "最小请求数"),
+    );
+
+    if (errors.length > 0) {
+      toast.error(
+        t("circuitBreaker.validationFailed", {
+          fields: errors.join("; "),
+          defaultValue: `以下字段超出有效范围: ${errors.join("; ")}`,
+        }),
+      );
+      return;
+    }
+
     try {
-      await updateConfig.mutateAsync(formData);
-      toast.success("熔断器配置已保存", { closeButton: true });
+      await updateConfig.mutateAsync({
+        failureThreshold: raw.failureThreshold,
+        successThreshold: raw.successThreshold,
+        timeoutSeconds: raw.timeoutSeconds,
+        errorRateThreshold: raw.errorRateThreshold / 100,
+        minRequests: raw.minRequests,
+      });
+      toast.success(t("circuitBreaker.configSaved", "熔断器配置已保存"), {
+        closeButton: true,
+      });
     } catch (error) {
-      toast.error("保存失败: " + String(error));
+      toast.error(
+        t("circuitBreaker.saveFailed", "保存失败") + ": " + String(error),
+      );
     }
   };
 
   const handleReset = () => {
     if (config) {
-      setFormData(config);
+      setFormData({
+        failureThreshold: String(config.failureThreshold),
+        successThreshold: String(config.successThreshold),
+        timeoutSeconds: String(config.timeoutSeconds),
+        errorRateThreshold: String(Math.round(config.errorRateThreshold * 100)),
+        minRequests: String(config.minRequests),
+      });
     }
   };
 
@@ -72,10 +171,7 @@ export function CircuitBreakerConfigPanel() {
             max="20"
             value={formData.failureThreshold}
             onChange={(e) =>
-              setFormData({
-                ...formData,
-                failureThreshold: parseInt(e.target.value) || 5,
-              })
+              setFormData({ ...formData, failureThreshold: e.target.value })
             }
           />
           <p className="text-xs text-muted-foreground">
@@ -89,14 +185,11 @@ export function CircuitBreakerConfigPanel() {
           <Input
             id="timeoutSeconds"
             type="number"
-            min="10"
+            min="0"
             max="300"
             value={formData.timeoutSeconds}
             onChange={(e) =>
-              setFormData({
-                ...formData,
-                timeoutSeconds: parseInt(e.target.value) || 60,
-              })
+              setFormData({ ...formData, timeoutSeconds: e.target.value })
             }
           />
           <p className="text-xs text-muted-foreground">
@@ -114,10 +207,7 @@ export function CircuitBreakerConfigPanel() {
             max="10"
             value={formData.successThreshold}
             onChange={(e) =>
-              setFormData({
-                ...formData,
-                successThreshold: parseInt(e.target.value) || 2,
-              })
+              setFormData({ ...formData, successThreshold: e.target.value })
             }
           />
           <p className="text-xs text-muted-foreground">
@@ -134,12 +224,9 @@ export function CircuitBreakerConfigPanel() {
             min="0"
             max="100"
             step="5"
-            value={Math.round(formData.errorRateThreshold * 100)}
+            value={formData.errorRateThreshold}
             onChange={(e) =>
-              setFormData({
-                ...formData,
-                errorRateThreshold: (parseInt(e.target.value) || 50) / 100,
-              })
+              setFormData({ ...formData, errorRateThreshold: e.target.value })
             }
           />
           <p className="text-xs text-muted-foreground">
@@ -157,10 +244,7 @@ export function CircuitBreakerConfigPanel() {
             max="100"
             value={formData.minRequests}
             onChange={(e) =>
-              setFormData({
-                ...formData,
-                minRequests: parseInt(e.target.value) || 10,
-              })
+              setFormData({ ...formData, minRequests: e.target.value })
             }
           />
           <p className="text-xs text-muted-foreground">

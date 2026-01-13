@@ -150,7 +150,7 @@ describe("SettingsPage integration", () => {
       expect(screen.getByText("language:zh")).toBeInTheDocument(),
     );
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("配置文件目录"));
+    fireEvent.click(screen.getByText("settings.advanced.configDir.title"));
     const appInput = await screen.findByPlaceholderText(
       "settings.browsePlaceholderApp",
     );
@@ -166,7 +166,7 @@ describe("SettingsPage integration", () => {
     );
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("数据管理"));
+    fireEvent.click(screen.getByText("settings.advanced.data.title"));
     fireEvent.click(screen.getByText("settings.selectConfigFile"));
     await waitFor(() =>
       expect(screen.getByTestId("selected-file").textContent).toContain(
@@ -190,7 +190,7 @@ describe("SettingsPage integration", () => {
     );
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("配置文件目录"));
+    fireEvent.click(screen.getByText("settings.advanced.configDir.title"));
     const appInput = await screen.findByPlaceholderText(
       "settings.browsePlaceholderApp",
     );
@@ -217,7 +217,7 @@ describe("SettingsPage integration", () => {
     );
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("配置文件目录"));
+    fireEvent.click(screen.getByText("settings.advanced.configDir.title"));
 
     const browseButtons = screen.getAllByTitle("settings.browseDirectory");
     const resetButtons = screen.getAllByTitle("settings.resetDefault");
@@ -257,7 +257,7 @@ describe("SettingsPage integration", () => {
       expect(screen.getByText("language:zh")).toBeInTheDocument(),
     );
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("数据管理"));
+    fireEvent.click(screen.getByText("settings.advanced.data.title"));
 
     server.use(
       http.post("http://tauri.local/save_file_dialog", () =>

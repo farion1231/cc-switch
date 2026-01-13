@@ -5,7 +5,7 @@
 //! ## 认证模式
 //! - **Claude**: Anthropic 官方 API (x-api-key + anthropic-version)
 //! - **ClaudeAuth**: 中转服务 (仅 Bearer 认证，无 x-api-key)
-//! - **OpenRouter**: 需要 Anthropic ↔ OpenAI 格式转换
+//! - **OpenRouter**: 已支持 Claude Code 兼容接口，默认透传（保留旧转换逻辑备用）
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
@@ -28,10 +28,8 @@ impl ClaudeAdapter {
     /// - Claude: 默认 Anthropic 官方
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
         // 检测 OpenRouter
-        if let Ok(base_url) = self.extract_base_url(provider) {
-            if base_url.contains("openrouter.ai") {
-                return ProviderType::OpenRouter;
-            }
+        if self.is_openrouter(provider) {
+            return ProviderType::OpenRouter;
         }
 
         // 检测 ClaudeAuth (仅 Bearer 认证)
@@ -48,6 +46,25 @@ impl ClaudeAdapter {
             return base_url.contains("openrouter.ai");
         }
         false
+    }
+
+    /// 检测 OpenRouter 是否启用兼容模式
+    fn is_openrouter_compat_enabled(&self, provider: &Provider) -> bool {
+        if !self.is_openrouter(provider) {
+            return false;
+        }
+
+        let raw = provider.settings_config.get("openrouter_compat_mode");
+        match raw {
+            Some(serde_json::Value::Bool(enabled)) => *enabled,
+            Some(serde_json::Value::Number(num)) => num.as_i64().unwrap_or(0) != 0,
+            Some(serde_json::Value::String(value)) => {
+                let normalized = value.trim().to_lowercase();
+                normalized == "true" || normalized == "1"
+            }
+            // OpenRouter now supports Claude Code compatible API, default to passthrough
+            _ => false,
+        }
     }
 
     /// 检测是否为仅 Bearer 认证模式
@@ -85,6 +102,14 @@ impl ClaudeAdapter {
                 .filter(|s| !s.is_empty())
             {
                 log::debug!("[Claude] 使用 ANTHROPIC_AUTH_TOKEN");
+                return Some(key.to_string());
+            }
+            if let Some(key) = env
+                .get("ANTHROPIC_API_KEY")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                log::debug!("[Claude] 使用 ANTHROPIC_API_KEY");
                 return Some(key.to_string());
             }
             // OpenRouter key
@@ -186,26 +211,36 @@ impl ProviderAdapter for ClaudeAdapter {
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
-        // OpenRouter 使用 /v1/chat/completions
-        if base_url.contains("openrouter.ai") {
-            return format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
-        }
+        // NOTE:
+        // 过去 OpenRouter 只有 OpenAI Chat Completions 兼容接口，需要把 Claude 的 `/v1/messages`
+        // 映射到 `/v1/chat/completions`，并做 Anthropic ↔ OpenAI 的格式转换。
+        //
+        // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
+        // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
 
-        // Anthropic 直连
-        format!(
+        let base = format!(
             "{}/{}",
             base_url.trim_end_matches('/'),
             endpoint.trim_start_matches('/')
-        )
+        );
+
+        // 为 /v1/messages 端点添加 ?beta=true 参数
+        // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
+        if endpoint.contains("/v1/messages") && !endpoint.contains("?") {
+            format!("{base}?beta=true")
+        } else {
+            base
+        }
     }
 
     fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
+        // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
+        // 这里不再设置 anthropic-version，避免 header 重复
         match auth.strategy {
-            // Anthropic 官方: Authorization Bearer + x-api-key + anthropic-version
+            // Anthropic 官方: Authorization Bearer + x-api-key
             AuthStrategy::Anthropic => request
                 .header("Authorization", format!("Bearer {}", auth.api_key))
-                .header("x-api-key", &auth.api_key)
-                .header("anthropic-version", "2023-06-01"),
+                .header("x-api-key", &auth.api_key),
             // ClaudeAuth 中转服务: 仅 Bearer，无 x-api-key
             AuthStrategy::ClaudeAuth => {
                 request.header("Authorization", format!("Bearer {}", auth.api_key))
@@ -218,8 +253,13 @@ impl ProviderAdapter for ClaudeAdapter {
         }
     }
 
-    fn needs_transform(&self, provider: &Provider) -> bool {
-        self.is_openrouter(provider)
+    fn needs_transform(&self, _provider: &Provider) -> bool {
+        // NOTE:
+        // OpenRouter 已推出 Claude Code 兼容接口（可直接处理 `/v1/messages`），默认不再启用
+        // Anthropic ↔ OpenAI 的格式转换。
+        //
+        // 如果未来需要回退到旧的 OpenAI Chat Completions 方案，可恢复下面这行：
+        self.is_openrouter_compat_enabled(_provider)
     }
 
     fn transform_request(
@@ -253,6 +293,7 @@ mod tests {
             meta: None,
             icon: None,
             icon_color: None,
+            in_failover_queue: false,
         }
     }
 
@@ -276,6 +317,21 @@ mod tests {
             "env": {
                 "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
                 "ANTHROPIC_AUTH_TOKEN": "sk-ant-test-key"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-ant-test-key");
+        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+    }
+
+    #[test]
+    fn test_extract_auth_anthropic_api_key() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_API_KEY": "sk-ant-test-key"
             }
         }));
 
@@ -370,15 +426,33 @@ mod tests {
     #[test]
     fn test_build_url_anthropic() {
         let adapter = ClaudeAdapter::new();
+        // /v1/messages 端点会自动添加 ?beta=true 参数
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages");
-        assert_eq!(url, "https://api.anthropic.com/v1/messages");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
     }
 
     #[test]
     fn test_build_url_openrouter() {
         let adapter = ClaudeAdapter::new();
+        // /v1/messages 端点会自动添加 ?beta=true 参数
         let url = adapter.build_url("https://openrouter.ai/api", "/v1/messages");
-        assert_eq!(url, "https://openrouter.ai/api/v1/chat/completions");
+        assert_eq!(url, "https://openrouter.ai/api/v1/messages?beta=true");
+    }
+
+    #[test]
+    fn test_build_url_no_beta_for_other_endpoints() {
+        let adapter = ClaudeAdapter::new();
+        // 非 /v1/messages 端点不添加 ?beta=true
+        let url = adapter.build_url("https://api.anthropic.com", "/v1/complete");
+        assert_eq!(url, "https://api.anthropic.com/v1/complete");
+    }
+
+    #[test]
+    fn test_build_url_preserve_existing_query() {
+        let adapter = ClaudeAdapter::new();
+        // 已有查询参数时不重复添加
+        let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages?foo=bar");
     }
 
     #[test]
@@ -392,11 +466,29 @@ mod tests {
         }));
         assert!(!adapter.needs_transform(&anthropic_provider));
 
+        // OpenRouter provider without explicit setting now defaults to passthrough (no transform)
         let openrouter_provider = create_provider(json!({
             "env": {
                 "ANTHROPIC_BASE_URL": "https://openrouter.ai/api"
             }
         }));
-        assert!(adapter.needs_transform(&openrouter_provider));
+        assert!(!adapter.needs_transform(&openrouter_provider));
+
+        // OpenRouter provider with explicit compat mode enabled should transform
+        let openrouter_enabled = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api"
+            },
+            "openrouter_compat_mode": true
+        }));
+        assert!(adapter.needs_transform(&openrouter_enabled));
+
+        let openrouter_disabled = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api"
+            },
+            "openrouter_compat_mode": false
+        }));
+        assert!(!adapter.needs_transform(&openrouter_disabled));
     }
 }

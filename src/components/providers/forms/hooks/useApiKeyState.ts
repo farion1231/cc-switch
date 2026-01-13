@@ -43,11 +43,7 @@ export function useApiKeyState({
       return;
     }
 
-    // 仅当配置确实包含 API Key 字段时才同步（避免无意清空用户正在输入的 key）
-    if (!hasApiKeyField(initialConfig, appType)) {
-      return;
-    }
-
+    // 从配置中提取 API Key（如果不存在则返回空字符串）
     const extracted = getApiKeyFromConfig(initialConfig, appType);
     if (extracted !== apiKey) {
       setApiKey(extracted);

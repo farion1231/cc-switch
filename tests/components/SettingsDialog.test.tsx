@@ -305,7 +305,7 @@ describe("SettingsPage Component", () => {
     });
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("数据管理"));
+    fireEvent.click(screen.getByText("settings.advanced.data.title"));
 
     // 有文件时，点击导入按钮执行 importConfig
     fireEvent.click(
@@ -319,7 +319,7 @@ describe("SettingsPage Component", () => {
     expect(importExportMock.exportConfig).toHaveBeenCalled();
 
     // 清除选择按钮
-    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    fireEvent.click(screen.getByRole("button", { name: "common.clear" }));
     expect(importExportMock.clearSelection).toHaveBeenCalled();
   });
 
@@ -412,7 +412,7 @@ describe("SettingsPage Component", () => {
     render(<SettingsPage open={true} onOpenChange={vi.fn()} />);
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("配置文件目录"));
+    fireEvent.click(screen.getByText("settings.advanced.configDir.title"));
 
     fireEvent.click(screen.getByText("browse-directory"));
     expect(settingsMock.browseDirectory).toHaveBeenCalledWith("claude");

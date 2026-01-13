@@ -23,7 +23,11 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
     useProxyStatus();
 
   const handleToggle = async (checked: boolean) => {
-    await setTakeoverForApp({ appType: activeApp, enabled: checked });
+    try {
+      await setTakeoverForApp({ appType: activeApp, enabled: checked });
+    } catch (error) {
+      console.error("[ProxyToggle] Toggle takeover failed:", error);
+    }
   };
 
   const takeoverEnabled = takeoverStatus?.[activeApp] || false;
@@ -49,43 +53,39 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
 
   return (
     <div
-      className={cn(
-        "flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all cursor-default",
-        takeoverEnabled
-          ? "bg-emerald-500/10 border border-emerald-500/30"
-          : "bg-muted/50 hover:bg-muted",
-        className,
-      )}
+      className={cn("p-1 rounded-xl transition-all", className)}
       title={tooltipText}
     >
-      {isPending ? (
-        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-      ) : (
-        <Radio
+      <div className="flex items-center gap-2 px-2 h-8 rounded-md cursor-default">
+        {isPending ? (
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        ) : (
+          <Radio
+            className={cn(
+              "h-4 w-4 transition-colors",
+              takeoverEnabled
+                ? "text-emerald-500 animate-pulse"
+                : "text-muted-foreground",
+            )}
+          />
+        )}
+        <span
           className={cn(
-            "h-4 w-4 transition-colors",
+            "text-sm font-medium transition-colors select-none",
             takeoverEnabled
-              ? "text-emerald-500 animate-pulse"
+              ? "text-emerald-600 dark:text-emerald-400"
               : "text-muted-foreground",
           )}
+        >
+          Proxy
+        </span>
+        <Switch
+          checked={takeoverEnabled}
+          onCheckedChange={handleToggle}
+          disabled={isPending}
+          className="ml-1"
         />
-      )}
-      <span
-        className={cn(
-          "text-sm font-medium transition-colors select-none",
-          takeoverEnabled
-            ? "text-emerald-600 dark:text-emerald-400"
-            : "text-muted-foreground",
-        )}
-      >
-        Proxy
-      </span>
-      <Switch
-        checked={takeoverEnabled}
-        onCheckedChange={handleToggle}
-        disabled={isPending}
-        className="ml-1"
-      />
+      </div>
     </div>
   );
 }

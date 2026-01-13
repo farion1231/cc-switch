@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import { ProviderHealthStatus } from "@/types/proxy";
+import { useTranslation } from "react-i18next";
 
 interface ProviderHealthBadgeProps {
   consecutiveFailures: number;
@@ -14,11 +15,14 @@ export function ProviderHealthBadge({
   consecutiveFailures,
   className,
 }: ProviderHealthBadgeProps) {
+  const { t } = useTranslation();
+
   // 根据失败次数计算状态
   const getStatus = () => {
     if (consecutiveFailures === 0) {
       return {
-        label: "正常",
+        labelKey: "health.operational",
+        labelFallback: "正常",
         status: ProviderHealthStatus.Healthy,
         color: "bg-green-500",
         // 使用更深/柔和的背景色，去除可能的白色内容感
@@ -27,7 +31,8 @@ export function ProviderHealthBadge({
       };
     } else if (consecutiveFailures < 5) {
       return {
-        label: "降级",
+        labelKey: "health.degraded",
+        labelFallback: "降级",
         status: ProviderHealthStatus.Degraded,
         color: "bg-yellow-500",
         bgColor: "bg-yellow-500/10",
@@ -35,7 +40,8 @@ export function ProviderHealthBadge({
       };
     } else {
       return {
-        label: "熔断",
+        labelKey: "health.circuitOpen",
+        labelFallback: "熔断",
         status: ProviderHealthStatus.Failed,
         color: "bg-red-500",
         bgColor: "bg-red-500/10",
@@ -45,6 +51,9 @@ export function ProviderHealthBadge({
   };
 
   const statusConfig = getStatus();
+  const label = t(statusConfig.labelKey, {
+    defaultValue: statusConfig.labelFallback,
+  });
 
   return (
     <div
@@ -54,10 +63,13 @@ export function ProviderHealthBadge({
         statusConfig.textColor,
         className,
       )}
-      title={`连续失败 ${consecutiveFailures} 次`}
+      title={t("health.consecutiveFailures", {
+        count: consecutiveFailures,
+        defaultValue: `连续失败 ${consecutiveFailures} 次`,
+      })}
     >
       <div className={cn("w-2 h-2 rounded-full", statusConfig.color)} />
-      <span>{statusConfig.label}</span>
+      <span>{label}</span>
     </div>
   );
 }

@@ -87,7 +87,7 @@ pub trait ProviderAdapter: Send + Sync {
     /// 是否需要格式转换
     ///
     /// 默认返回 `false`（透传模式）。
-    /// 仅当供应商需要格式转换时（如 Claude + OpenRouter）才返回 `true`。
+    /// 仅当供应商需要格式转换时（如 Claude + OpenRouter 旧 OpenAI 兼容接口）才返回 `true`。
     ///
     /// # Arguments
     /// * `provider` - Provider 配置

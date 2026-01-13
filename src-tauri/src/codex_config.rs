@@ -9,13 +9,21 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
+/// 获取用户主目录，带回退和日志
+fn get_home_dir() -> PathBuf {
+    dirs::home_dir().unwrap_or_else(|| {
+        log::warn!("无法获取用户主目录，回退到当前目录");
+        PathBuf::from(".")
+    })
+}
+
 /// 获取 Codex 配置目录路径
 pub fn get_codex_config_dir() -> PathBuf {
     if let Some(custom) = crate::settings::get_codex_override_dir() {
         return custom;
     }
 
-    dirs::home_dir().expect("无法获取用户主目录").join(".codex")
+    get_home_dir().join(".codex")
 }
 
 /// 获取 Codex auth.json 路径

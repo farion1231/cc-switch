@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Save, Loader2 } from "lucide-react";
@@ -17,13 +18,15 @@ export function ModelTestConfigPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [config, setConfig] = useState<StreamCheckConfig>({
-    timeoutSecs: 45,
-    maxRetries: 2,
-    degradedThresholdMs: 6000,
+  // 使用字符串状态以支持完全清空数字输入框
+  const [config, setConfig] = useState({
+    timeoutSecs: "45",
+    maxRetries: "2",
+    degradedThresholdMs: "6000",
     claudeModel: "claude-haiku-4-5-20251001",
     codexModel: "gpt-5.1-codex@low",
     geminiModel: "gemini-3-pro-preview",
+    testPrompt: "Who are you?",
   });
 
   useEffect(() => {
@@ -35,7 +38,15 @@ export function ModelTestConfigPanel() {
       setIsLoading(true);
       setError(null);
       const data = await getStreamCheckConfig();
-      setConfig(data);
+      setConfig({
+        timeoutSecs: String(data.timeoutSecs),
+        maxRetries: String(data.maxRetries),
+        degradedThresholdMs: String(data.degradedThresholdMs),
+        claudeModel: data.claudeModel,
+        codexModel: data.codexModel,
+        geminiModel: data.geminiModel,
+        testPrompt: data.testPrompt || "Who are you?",
+      });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -44,16 +55,28 @@ export function ModelTestConfigPanel() {
   }
 
   async function handleSave() {
+    // 解析数字，空值使用默认值，0 是有效值
+    const parseNum = (val: string, defaultVal: number) => {
+      const n = parseInt(val);
+      return isNaN(n) ? defaultVal : n;
+    };
     try {
       setIsSaving(true);
-      await saveStreamCheckConfig(config);
-      toast.success(t("streamCheck.configSaved", "健康检查配置已保存"), {
+      const parsed: StreamCheckConfig = {
+        timeoutSecs: parseNum(config.timeoutSecs, 45),
+        maxRetries: parseNum(config.maxRetries, 2),
+        degradedThresholdMs: parseNum(config.degradedThresholdMs, 6000),
+        claudeModel: config.claudeModel,
+        codexModel: config.codexModel,
+        geminiModel: config.geminiModel,
+        testPrompt: config.testPrompt || "Who are you?",
+      };
+      await saveStreamCheckConfig(parsed);
+      toast.success(t("streamCheck.configSaved"), {
         closeButton: true,
       });
     } catch (e) {
-      toast.error(
-        t("streamCheck.configSaveFailed", "保存失败") + ": " + String(e),
-      );
+      toast.error(t("streamCheck.configSaveFailed") + ": " + String(e));
     } finally {
       setIsSaving(false);
     }
@@ -78,13 +101,11 @@ export function ModelTestConfigPanel() {
       {/* 测试模型配置 */}
       <div className="space-y-4">
         <h4 className="text-sm font-medium text-muted-foreground">
-          {t("streamCheck.testModels", "测试模型")}
+          {t("streamCheck.testModels")}
         </h4>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
-            <Label htmlFor="claudeModel">
-              {t("streamCheck.claudeModel", "Claude 模型")}
-            </Label>
+            <Label htmlFor="claudeModel">{t("streamCheck.claudeModel")}</Label>
             <Input
               id="claudeModel"
               value={config.claudeModel}
@@ -96,9 +117,7 @@ export function ModelTestConfigPanel() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="codexModel">
-              {t("streamCheck.codexModel", "Codex 模型")}
-            </Label>
+            <Label htmlFor="codexModel">{t("streamCheck.codexModel")}</Label>
             <Input
               id="codexModel"
               value={config.codexModel}
@@ -110,9 +129,7 @@ export function ModelTestConfigPanel() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="geminiModel">
-              {t("streamCheck.geminiModel", "Gemini 模型")}
-            </Label>
+            <Label htmlFor="geminiModel">{t("streamCheck.geminiModel")}</Label>
             <Input
               id="geminiModel"
               value={config.geminiModel}
@@ -128,13 +145,11 @@ export function ModelTestConfigPanel() {
       {/* 检查参数配置 */}
       <div className="space-y-4">
         <h4 className="text-sm font-medium text-muted-foreground">
-          {t("streamCheck.checkParams", "检查参数")}
+          {t("streamCheck.checkParams")}
         </h4>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
-            <Label htmlFor="timeoutSecs">
-              {t("streamCheck.timeout", "超时时间（秒）")}
-            </Label>
+            <Label htmlFor="timeoutSecs">{t("streamCheck.timeout")}</Label>
             <Input
               id="timeoutSecs"
               type="number"
@@ -142,18 +157,13 @@ export function ModelTestConfigPanel() {
               max={120}
               value={config.timeoutSecs}
               onChange={(e) =>
-                setConfig({
-                  ...config,
-                  timeoutSecs: parseInt(e.target.value) || 45,
-                })
+                setConfig({ ...config, timeoutSecs: e.target.value })
               }
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="maxRetries">
-              {t("streamCheck.maxRetries", "最大重试次数")}
-            </Label>
+            <Label htmlFor="maxRetries">{t("streamCheck.maxRetries")}</Label>
             <Input
               id="maxRetries"
               type="number"
@@ -161,17 +171,14 @@ export function ModelTestConfigPanel() {
               max={5}
               value={config.maxRetries}
               onChange={(e) =>
-                setConfig({
-                  ...config,
-                  maxRetries: parseInt(e.target.value) || 2,
-                })
+                setConfig({ ...config, maxRetries: e.target.value })
               }
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="degradedThresholdMs">
-              {t("streamCheck.degradedThreshold", "降级阈值（毫秒）")}
+              {t("streamCheck.degradedThreshold")}
             </Label>
             <Input
               id="degradedThresholdMs"
@@ -181,13 +188,25 @@ export function ModelTestConfigPanel() {
               step={1000}
               value={config.degradedThresholdMs}
               onChange={(e) =>
-                setConfig({
-                  ...config,
-                  degradedThresholdMs: parseInt(e.target.value) || 6000,
-                })
+                setConfig({ ...config, degradedThresholdMs: e.target.value })
               }
             />
           </div>
+        </div>
+
+        {/* 检查提示词配置 */}
+        <div className="space-y-2">
+          <Label htmlFor="testPrompt">{t("streamCheck.testPrompt")}</Label>
+          <Textarea
+            id="testPrompt"
+            value={config.testPrompt}
+            onChange={(e) =>
+              setConfig({ ...config, testPrompt: e.target.value })
+            }
+            placeholder="Who are you?"
+            rows={2}
+            className="min-h-[60px]"
+          />
         </div>
       </div>
 
@@ -196,12 +215,12 @@ export function ModelTestConfigPanel() {
           {isSaving ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              {t("common.saving", "保存中...")}
+              {t("common.saving")}
             </>
           ) : (
             <>
               <Save className="mr-2 h-4 w-4" />
-              {t("common.save", "保存")}
+              {t("common.save")}
             </>
           )}
         </Button>

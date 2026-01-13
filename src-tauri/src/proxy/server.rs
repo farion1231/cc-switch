@@ -3,8 +3,8 @@
 //! 基于Axum的HTTP服务器，处理代理请求
 
 use super::{
-    failover_switch::FailoverSwitchManager, handlers, provider_router::ProviderRouter, types::*,
-    ProxyError,
+    failover_switch::FailoverSwitchManager, handlers, log_codes::srv as log_srv,
+    provider_router::ProviderRouter, types::*, ProxyError,
 };
 use crate::database::Database;
 use axum::{
@@ -95,7 +95,7 @@ impl ProxyServer {
             .await
             .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
 
-        log::info!("代理服务器启动于 {addr}");
+        log::info!("[{}] 代理服务器启动于 {addr}", log_srv::STARTED);
 
         // 保存关闭句柄
         *self.shutdown_tx.write().await = Some(shutdown_tx);
@@ -146,13 +146,25 @@ impl ProxyServer {
         // 2. 等待服务器任务结束（带 5 秒超时保护）
         if let Some(handle) = self.server_handle.write().await.take() {
             match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
-                Ok(Ok(())) => log::info!("代理服务器已完全停止"),
-                Ok(Err(e)) => log::warn!("代理服务器任务异常终止: {e}"),
-                Err(_) => log::warn!("代理服务器停止超时（5秒），强制继续"),
+                Ok(Ok(())) => {
+                    log::info!("[{}] 代理服务器已完全停止", log_srv::STOPPED);
+                    Ok(())
+                }
+                Ok(Err(e)) => {
+                    log::warn!("[{}] 代理服务器任务异常终止: {e}", log_srv::TASK_ERROR);
+                    Err(ProxyError::StopFailed(e.to_string()))
+                }
+                Err(_) => {
+                    log::warn!(
+                        "[{}] 代理服务器停止超时（5秒），强制继续",
+                        log_srv::STOP_TIMEOUT
+                    );
+                    Err(ProxyError::StopTimeout)
+                }
             }
+        } else {
+            Ok(())
         }
-
-        Ok(())
     }
 
     pub async fn get_status(&self) -> ProxyStatus {

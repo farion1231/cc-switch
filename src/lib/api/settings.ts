@@ -69,6 +69,14 @@ export const settingsApi = {
     return await invoke("apply_claude_plugin_config", { official });
   },
 
+  async applyClaudeOnboardingSkip(): Promise<boolean> {
+    return await invoke("apply_claude_onboarding_skip");
+  },
+
+  async clearClaudeOnboardingSkip(): Promise<boolean> {
+    return await invoke("clear_claude_onboarding_skip");
+  },
+
   async saveFileDialog(defaultName: string): Promise<string | null> {
     return await invoke("save_file_dialog", { defaultName });
   },
@@ -126,4 +134,17 @@ export const settingsApi = {
   > {
     return await invoke("get_tool_versions");
   },
+
+  async getRectifierConfig(): Promise<RectifierConfig> {
+    return await invoke("get_rectifier_config");
+  },
+
+  async setRectifierConfig(config: RectifierConfig): Promise<boolean> {
+    return await invoke("set_rectifier_config", { config });
+  },
 };
+
+export interface RectifierConfig {
+  enabled: boolean;
+  requestThinkingSignature: boolean;
+}

@@ -1,11 +1,14 @@
 export interface ProxyConfig {
-  enabled: boolean;
   listen_address: string;
   listen_port: number;
   max_retries: number;
   request_timeout: number;
   enable_logging: boolean;
   live_takeover_active?: boolean;
+  // 超时配置
+  streaming_first_byte_timeout: number;
+  streaming_idle_timeout: number;
+  non_streaming_timeout: number;
 }
 
 export interface ProxyStatus {
@@ -104,7 +107,29 @@ export interface ProxyUsageRecord {
 export interface FailoverQueueItem {
   providerId: string;
   providerName: string;
-  queueOrder: number;
+  sortIndex?: number;
+}
+
+// 全局代理配置（统一字段，三行镜像）
+export interface GlobalProxyConfig {
+  proxyEnabled: boolean;
+  listenAddress: string;
+  listenPort: number;
+  enableLogging: boolean;
+}
+
+// 应用级代理配置（每个 app 独立）
+export interface AppProxyConfig {
+  appType: string;
   enabled: boolean;
-  createdAt: number;
+  autoFailoverEnabled: boolean;
+  maxRetries: number;
+  streamingFirstByteTimeout: number;
+  streamingIdleTimeout: number;
+  nonStreamingTimeout: number;
+  circuitFailureThreshold: number;
+  circuitSuccessThreshold: number;
+  circuitTimeoutSeconds: number;
+  circuitErrorRateThreshold: number;
+  circuitMinRequests: number;
 }

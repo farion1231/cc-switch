@@ -5,6 +5,177 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+---
+
+## [3.9.1] - 2026-01-09
+
+### Bug Fix Release
+
+This release focuses on stability improvements and crash prevention.
+
+### Added
+
+- **Crash Logging** - Panic hook captures crash info to `~/.cc-switch/crash.log` with full stack traces (#562)
+- **Release Logging** - Enable logging for release builds with automatic rotation (keeps 2 most recent files)
+- **AIGoCode Icon** - Added colored icon for AIGoCode provider preset
+
+### Fixed
+
+- **Proxy Panic Prevention** - Graceful degradation when HTTP client initialization fails due to invalid proxy settings; falls back to no_proxy mode (#560)
+- **UTF-8 Safety** - Fix potential panic when masking API keys or truncating logs containing multi-byte characters (Chinese, emoji, etc.) (#560)
+- **Default Proxy Port** - Change default port from 5000 to 15721 to avoid conflict with macOS AirPlay Receiver (#560)
+- **Windows Title** - Display "CC Switch" instead of default "Tauri app" in window title
+- **Windows/Linux Spacing** - Remove extra 28px blank space below native titlebar introduced in v3.9.0
+- **Flatpak Tray Icon** - Bundle libayatana-appindicator for tray icon support on Flatpak (#556)
+- **Provider Preset** - Correct casing from "AiGoCode" to "AIGoCode" to match official branding
+
+---
+
+## [3.9.0] - 2026-01-07
+
+### Stable Release
+
+This stable release includes all changes from `3.9.0-1`, `3.9.0-2`, and `3.9.0-3`.
+
+### Added
+
+- **Local API Proxy** - High-performance local HTTP proxy for Claude Code, Codex, and Gemini CLI (Axum-based)
+- **Per-App Takeover** - Independently route each app through the proxy with automatic live-config backup/redirect
+- **Auto Failover** - Circuit breaker + smart failover with independent queues and health tracking per app
+- **Universal Provider** - Shared provider configurations that can sync to Claude/Codex/Gemini (ideal for API gateways like NewAPI)
+- **Provider Search Filter** - Quick filter to find providers by name (#435)
+- **Keyboard Shortcut** - Open settings with Command+comma / Ctrl+comma (#436)
+- **Deeplink Usage Config** - Import usage query config via deeplink (#400)
+- **Provider Icon Colors** - Customize provider icon colors (#385)
+- **Skills Multi-App Support** - Skills now support both Claude Code and Codex (#365)
+- **Closable Toasts** - Close button for switch toast and all success toasts (#350)
+- **Skip First-Run Confirmation** - Option to skip Claude Code first-run confirmation dialog
+- **MCP Import** - Import MCP servers from installed apps
+- **Common Config Snippet Extraction** - Extract reusable common config snippets from the current provider or editor content (Claude/Codex/Gemini)
+- **Usage Enhancements** - Model extraction, request logging improvements, cache hit/creation metrics, and auto-refresh (#455, #508)
+- **Error Request Logging** - Detailed logging for proxy requests (#401)
+- **Linux Packaging** - Added RPM and Flatpak packaging targets
+- **Provider Presets & Icons** - Added/updated partner presets and icons (e.g., MiMo, DMXAPI, Cubence)
+
+### Changed
+
+- **Usage Terminology** - Rename "Cache Read/Write" to "Cache Hit/Creation" across all languages (#508)
+- **Model Pricing Data** - Refresh built-in model pricing table (Claude full version IDs, GPT-5 series, Gemini ID formats, and Chinese models) (#508)
+- **Proxy Header Forwarding** - Switch to a blacklist approach and improve header passthrough compatibility (#508)
+- **Failover Behavior** - Bypass timeout/retry configs when failover is disabled; update default failover timeout and circuit breaker values (#508, #521)
+- **Provider Presets** - Update default model versions and change the default Qwen base URL (#517)
+- **Skills Management** - Unify Skills management architecture with SSOT + React Query; improve caching for discoverable skills
+- **Settings UX** - Reorder items in the Advanced tab for better discoverability
+- **Proxy Active Theme** - Apply emerald theme when proxy takeover is active
+
+### Fixed
+
+- **Security** - Security fixes for JavaScript executor and usage script (#151)
+- **Usage Timezone & Parsing** - Fix datetime picker timezone handling; improve token parsing/billing for Gemini and Codex formats (#508)
+- **Windows Compatibility** - Improve MCP export and version check behavior to avoid terminal popups
+- **Windows Startup** - Use system titlebar to prevent black screen on startup
+- **WebView Compatibility** - Add fallback for crypto.randomUUID() on older WebViews
+- **macOS Autostart** - Use `.app` bundle path to prevent terminal window popups
+- **Database** - Add missing schema migrations; show an error dialog on initialization failure with a retry option
+- **Import/Export** - Restrict SQL import to CC Switch exported backups only; refresh providers immediately after import
+- **Prompts** - Allow saving prompts with empty content
+- **MCP Sync** - Skip sync when the target CLI app is not installed
+- **Common Config (Codex)** - Preserve MCP server `base_url` during extraction and remove provider-specific `model_providers` blocks
+- **Proxy** - Improve takeover detection and stability; clean up model override env vars when switching providers in takeover mode (#508)
+- **Skills** - Skip hidden directories during discovery; fix wrong skill repo branch
+- **Settings Navigation** - Navigate to About tab when clicking update badge
+- **UI** - Fix dialogs not opening on first click and improve window dragging area in `FullScreenPanel`
+
+---
+
+## [3.9.0-3] - 2025-12-29
+
+### Beta Release
+
+Third beta release with important bug fixes for Windows compatibility, UI improvements, and new features.
+
+### Added
+
+- **Universal Provider** - Support for universal provider configurations (#348)
+- **Provider Search Filter** - Quick filter to find providers by name (#435)
+- **Keyboard Shortcut** - Open settings with Command+comma / Ctrl+comma (#436)
+- **Xiaomi MiMo Icon** - Added MiMo icon and Claude provider configuration (#470)
+- **Usage Model Extraction** - Extract model info from usage statistics (#455)
+- **Skip First-Run Confirmation** - Option to skip Claude Code first-run confirmation dialog
+- **Exit Animations** - Added exit animation to FullScreenPanel dialogs
+- **Fade Transitions** - Smooth fade transitions for app/view/panel switching
+
+### Fixed
+
+#### Windows
+- Wrap npx/npm commands with `cmd /c` for MCP export
+- Prevent terminal windows from appearing during version check
+
+#### macOS
+- Use .app bundle path for autostart to prevent terminal window popup
+
+#### UI
+- Resolve Dialog/Modal not opening on first click (#492)
+- Improve dark mode text contrast for form labels
+- Reduce header spacing and fix layout shift on view switch
+- Prevent header layout shift when switching views
+
+#### Database & Schema
+- Add missing base columns migration for proxy_config
+- Add backward compatibility check for proxy_config seed insert
+
+#### Other
+- Use local timezone and robust DST handling in usage stats (#500)
+- Remove deprecated `sync_enabled_to_codex` call
+- Gracefully handle invalid Codex config.toml during MCP sync
+- Add missing translations for reasoning model and OpenRouter compat mode
+
+### Improved
+
+- **macOS Tray** - Use macOS tray template icon
+- **Header Alignment** - Remove macOS titlebar tint, align custom header
+- **Shadow Removal** - Cleaner UI by removing shadow styles
+- **Code Inspector** - Added code-inspector-plugin for development
+- **i18n** - Complete internationalization for usage panel and settings
+- **Sponsor Logos** - Made sponsor logos clickable
+
+### Stats
+
+- 35 commits since v3.9.0-2
+- 5 files changed in test/lint fixes
+
+---
+
+## [3.9.0-2] - 2025-12-20
+
+### Beta Release
+
+Second beta release focusing on proxy stability, import safety, and provider preset polish.
+
+### Added
+
+- **DMXAPI Partner** - Added DMXAPI as an official partner provider preset
+- **Provider Icons** - Added provider icons for OpenRouter, LongCat, ModelScope, and AiHubMix
+
+### Changed
+
+- **Proxy (OpenRouter)** - Switched OpenRouter to passthrough mode for native Claude API
+
+### Fixed
+
+- **Import/Export** - Restrict SQL import to CC Switch exported backups only; refresh providers immediately after import
+- **Proxy** - Respect existing Claude token when syncing; add fallback recovery for orphaned takeover state; remove global auto-start flag
+- **Windows** - Add minimum window size to Windows platform config
+- **UI** - Improve About section UI (#419) and unify header toolbar styling
+
+### Stats
+
+- 13 commits since v3.9.0-1
+
+---
+
 ## [3.9.0-1] - 2025-12-18
 
 ### Beta Release
@@ -497,8 +668,8 @@ v3.7.0 represents a major evolution from "Provider Switcher" to **"All-in-One AI
 
 ### ⚠ Breaking Changes
 
-- Tauri 命令仅接受参数 `app`（取值：`claude`/`codex`）；移除对 `app_type`/`appType` 的兼容。
-- 前端类型命名统一为 `AppId`（移除 `AppType` 导出），变量命名统一为 `appId`。
+- Tauri commands only accept the `app` parameter (`claude`/`codex`); removed `app_type`/`appType` compatibility.
+- Frontend types are standardized to `AppId` (removed `AppType` export); variable naming is standardized to `appId`.
 
 ### ✨ New Features
 
@@ -741,40 +912,3 @@ For users upgrading from v2.x (Electron version):
 - Basic provider management
 - Claude Code integration
 - Configuration file handling
-
-## [Unreleased]
-
-### ⚠️ Breaking Changes
-
-- **Runtime auto-migration from v1 to v2 config format has been removed**
-  - `MultiAppConfig::load()` no longer automatically migrates v1 configs
-  - When a v1 config is detected, the app now returns a clear error with migration instructions
-  - **Migration path**: Install v3.2.x to perform one-time auto-migration, OR manually edit `~/.cc-switch/config.json` to v2 format
-  - **Rationale**: Separates concerns (load() should be read-only), fail-fast principle, simplifies maintenance
-  - Related: `app_config.rs` (v1 detection improved with structural analysis), `app_config_load.rs` (comprehensive test coverage added)
-
-- **Legacy v1 copy file migration logic has been removed**
-  - Removed entire `migration.rs` module (435 lines) that handled one-time migration from v3.1.0 to v3.2.0
-  - No longer scans/merges legacy copy files (`settings-*.json`, `auth-*.json`, `config-*.toml`)
-  - No longer archives copy files or performs automatic deduplication
-  - **Migration path**: Users upgrading from v3.1.0 must first upgrade to v3.2.x to automatically migrate their configurations
-  - **Benefits**: Improved startup performance (no file scanning), reduced code complexity, cleaner codebase
-
-- **Tauri commands now only accept `app` parameter**
-  - Removed legacy `app_type`/`appType` compatibility paths
-  - Explicit error with available values when unknown `app` is provided
-
-### 🔧 Improvements
-
-- Unified `AppType` parsing: centralized to `FromStr` implementation, command layer no longer implements separate `parse_app()`, reducing code duplication and drift
-- Localized and user-friendly error messages: returns bilingual (Chinese/English) hints for unsupported `app` values with a list of available options
-- Simplified startup logic: Only ensures config structure exists, no migration overhead
-
-### 🧪 Tests
-
-- Added unit tests covering `AppType::from_str`: case sensitivity, whitespace trimming, unknown value error messages
-- Added comprehensive config loading tests:
-  - `load_v1_config_returns_error_and_does_not_write`
-  - `load_v1_with_extra_version_still_treated_as_v1`
-  - `load_invalid_json_returns_parse_error_and_does_not_write`
-  - `load_valid_v2_config_succeeds`

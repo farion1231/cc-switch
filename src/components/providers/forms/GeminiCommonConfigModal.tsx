@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Save } from "lucide-react";
+import { Save, Download, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Button } from "@/components/ui/button";
@@ -11,15 +11,17 @@ interface GeminiCommonConfigModalProps {
   value: string;
   onChange: (value: string) => void;
   error?: string;
+  onExtract?: () => void;
+  isExtracting?: boolean;
 }
 
 /**
  * GeminiCommonConfigModal - Common Gemini configuration editor modal
- * Allows editing of common JSON configuration shared across Gemini providers
+ * Allows editing of common env snippet shared across Gemini providers
  */
 export const GeminiCommonConfigModal: React.FC<
   GeminiCommonConfigModalProps
-> = ({ isOpen, onClose, value, onChange, error }) => {
+> = ({ isOpen, onClose, value, onChange, error, onExtract, isExtracting }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
 
@@ -47,6 +49,24 @@ export const GeminiCommonConfigModal: React.FC<
       onClose={onClose}
       footer={
         <>
+          {onExtract && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onExtract}
+              disabled={isExtracting}
+              className="gap-2"
+            >
+              {isExtracting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              {t("geminiConfig.extractFromCurrent", {
+                defaultValue: "从编辑内容提取",
+              })}
+            </Button>
+          )}
           <Button type="button" variant="outline" onClick={onClose}>
             {t("common.cancel")}
           </Button>
@@ -61,7 +81,7 @@ export const GeminiCommonConfigModal: React.FC<
         <p className="text-sm text-muted-foreground">
           {t("geminiConfig.commonConfigHint", {
             defaultValue:
-              "通用配置片段将合并到所有启用它的 Gemini 供应商配置中",
+              "该片段会写入 Gemini 的 .env（不允许包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
           })}
         </p>
 
@@ -69,9 +89,7 @@ export const GeminiCommonConfigModal: React.FC<
           value={value}
           onChange={onChange}
           placeholder={`{
-  "timeout": 30000,
-  "maxRetries": 3,
-  "customField": "value"
+  "GEMINI_MODEL": "gemini-3-pro-preview"
 }`}
           darkMode={isDarkMode}
           rows={16}

@@ -50,7 +50,9 @@ export function useProxyStatus() {
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
     },
     onError: (error: Error) => {
-      const detail = extractErrorMessage(error) || "未知错误";
+      const detail =
+        extractErrorMessage(error) ||
+        t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.server.startFailed", {
           defaultValue: `启动代理服务失败: ${detail}`,
@@ -71,11 +73,16 @@ export function useProxyStatus() {
       );
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
       queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] });
-      // 清除所有供应商健康状态缓存（后端已清空数据库记录）
-      queryClient.invalidateQueries({ queryKey: ["providerHealth"] });
+      // 彻底删除所有供应商健康状态缓存（后端已清空数据库记录）
+      queryClient.removeQueries({ queryKey: ["providerHealth"] });
+      // 彻底删除所有熔断器统计缓存（代理停止后熔断器状态已重置）
+      queryClient.removeQueries({ queryKey: ["circuitBreakerStats"] });
+      // 注意：故障转移队列和开关状态会保留，不需要刷新
     },
     onError: (error: Error) => {
-      const detail = extractErrorMessage(error) || "未知错误";
+      const detail =
+        extractErrorMessage(error) ||
+        t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.stopWithRestoreFailed", {
           defaultValue: `停止失败: ${detail}`,
@@ -111,7 +118,9 @@ export function useProxyStatus() {
       queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] });
     },
     onError: (error: Error) => {
-      const detail = extractErrorMessage(error) || "未知错误";
+      const detail =
+        extractErrorMessage(error) ||
+        t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.takeover.failed", {
           defaultValue: `操作失败: ${detail}`,
@@ -133,8 +142,15 @@ export function useProxyStatus() {
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
     },
     onError: (error: Error) => {
-      const detail = extractErrorMessage(error) || "未知错误";
-      toast.error(`切换失败: ${detail}`);
+      const detail =
+        extractErrorMessage(error) ||
+        t("common.unknown", { defaultValue: "未知错误" });
+      toast.error(
+        t("proxy.switchFailed", {
+          error: detail,
+          defaultValue: `切换失败: ${detail}`,
+        }),
+      );
     },
   });
 

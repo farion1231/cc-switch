@@ -25,6 +25,8 @@ interface CodexFormFieldsProps {
   isEndpointModalOpen: boolean;
   onEndpointModalToggle: (open: boolean) => void;
   onCustomEndpointsChange?: (endpoints: string[]) => void;
+  autoSelect: boolean;
+  onAutoSelectChange: (checked: boolean) => void;
 
   // Model Name
   shouldShowModelField?: boolean;
@@ -50,6 +52,8 @@ export function CodexFormFields({
   isEndpointModalOpen,
   onEndpointModalToggle,
   onCustomEndpointsChange,
+  autoSelect,
+  onAutoSelectChange,
   shouldShowModelField = true,
   modelName = "",
   onModelNameChange,
@@ -98,7 +102,7 @@ export function CodexFormFields({
         <div className="space-y-2">
           <label
             htmlFor="codexModelName"
-            className="block text-sm font-medium text-gray-900 dark:text-gray-100"
+            className="block text-sm font-medium text-foreground"
           >
             {t("codexConfig.modelName", { defaultValue: "模型名称" })}
           </label>
@@ -110,9 +114,9 @@ export function CodexFormFields({
             placeholder={t("codexConfig.modelNamePlaceholder", {
               defaultValue: "例如: gpt-5-codex",
             })}
-            className="w-full px-3 py-2 border border-border-default dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 transition-colors"
+            className="w-full px-3 py-2 border border-border-default bg-background text-foreground rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 transition-colors"
           />
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-muted-foreground">
             {t("codexConfig.modelNameHint", {
               defaultValue: "指定使用的模型，将自动更新到 config.toml 中",
             })}
@@ -130,6 +134,8 @@ export function CodexFormFields({
           initialEndpoints={speedTestEndpoints}
           visible={isEndpointModalOpen}
           onClose={() => onEndpointModalToggle(false)}
+          autoSelect={autoSelect}
+          onAutoSelectChange={onAutoSelectChange}
           onCustomEndpointsChange={onCustomEndpointsChange}
         />
       )}

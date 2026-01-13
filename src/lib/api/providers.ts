@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Provider } from "@/types";
+import type {
+  Provider,
+  UniversalProvider,
+  UniversalProvidersMap,
+} from "@/types";
 import type { AppId } from "./types";
 
 export interface ProviderSortUpdate {
@@ -60,5 +64,55 @@ export const providersApi = {
       const payload = event.payload as ProviderSwitchEvent;
       handler(payload);
     });
+  },
+
+  /**
+   * 打开指定提供商的终端
+   * 任何提供商都可以打开终端，不受是否为当前激活提供商的限制
+   * 终端会使用该提供商特定的 API 配置，不影响全局设置
+   */
+  async openTerminal(providerId: string, appId: AppId): Promise<boolean> {
+    return await invoke("open_provider_terminal", { providerId, app: appId });
+  },
+};
+
+// ============================================================================
+// 统一供应商（Universal Provider）API
+// ============================================================================
+
+export const universalProvidersApi = {
+  /**
+   * 获取所有统一供应商
+   */
+  async getAll(): Promise<UniversalProvidersMap> {
+    return await invoke("get_universal_providers");
+  },
+
+  /**
+   * 获取单个统一供应商
+   */
+  async get(id: string): Promise<UniversalProvider | null> {
+    return await invoke("get_universal_provider", { id });
+  },
+
+  /**
+   * 添加或更新统一供应商
+   */
+  async upsert(provider: UniversalProvider): Promise<boolean> {
+    return await invoke("upsert_universal_provider", { provider });
+  },
+
+  /**
+   * 删除统一供应商
+   */
+  async delete(id: string): Promise<boolean> {
+    return await invoke("delete_universal_provider", { id });
+  },
+
+  /**
+   * 手动同步统一供应商到各应用
+   */
+  async sync(id: string): Promise<boolean> {
+    return await invoke("sync_universal_provider", { id });
   },
 };

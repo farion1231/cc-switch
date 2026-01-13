@@ -239,7 +239,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {/* Hint */}
           <div className="rounded-lg border border-border-default bg-gray-100/50 dark:bg-gray-800/50 p-3">
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+            <p className="text-sm text-muted-foreground">
               {t("mcp.wizard.hint")}
             </p>
           </div>
@@ -248,7 +248,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
           <div className="space-y-4 min-h-[400px]">
             {/* Type */}
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-900 dark:text-gray-100">
+              <label className="mb-2 block text-sm font-medium text-foreground">
                 {t("mcp.wizard.type")} <span className="text-red-500">*</span>
               </label>
               <div className="flex gap-4">
@@ -262,7 +262,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     }
                     className="w-4 h-4 accent-blue-500"
                   />
-                  <span className="text-sm text-gray-900 dark:text-gray-100">
+                  <span className="text-sm text-foreground">
                     {t("mcp.wizard.typeStdio")}
                   </span>
                 </label>
@@ -276,7 +276,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     }
                     className="w-4 h-4 accent-blue-500"
                   />
-                  <span className="text-sm text-gray-900 dark:text-gray-100">
+                  <span className="text-sm text-foreground">
                     {t("mcp.wizard.typeHttp")}
                   </span>
                 </label>
@@ -290,7 +290,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     }
                     className="w-4 h-4 accent-blue-500"
                   />
-                  <span className="text-sm text-gray-900 dark:text-gray-100">
+                  <span className="text-sm text-foreground">
                     {t("mcp.wizard.typeSse")}
                   </span>
                 </label>
@@ -299,7 +299,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
 
             {/* Title */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-900 dark:text-gray-100">
+              <label className="mb-1 block text-sm font-medium text-foreground">
                 {t("mcp.form.title")} <span className="text-red-500">*</span>
               </label>
               <Input
@@ -317,7 +317,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
               <>
                 {/* Command */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-900 dark:text-gray-100">
+                  <label className="mb-1 block text-sm font-medium text-foreground">
                     {t("mcp.wizard.command")}{" "}
                     <span className="text-red-500">*</span>
                   </label>
@@ -333,7 +333,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
 
                 {/* Args */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-900 dark:text-gray-100">
+                  <label className="mb-1 block text-sm font-medium text-foreground">
                     {t("mcp.wizard.args")}
                   </label>
                   <textarea
@@ -341,13 +341,13 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     onChange={(e) => setWizardArgs(e.target.value)}
                     placeholder={t("mcp.wizard.argsPlaceholder")}
                     rows={3}
-                    className="w-full rounded-md border border-border-default bg-white dark:bg-gray-800 px-3 py-2 text-sm font-mono text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-y"
+                    className="w-full rounded-md border border-border-default bg-background px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-y"
                   />
                 </div>
 
                 {/* Env */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-900 dark:text-gray-100">
+                  <label className="mb-1 block text-sm font-medium text-foreground">
                     {t("mcp.wizard.env")}
                   </label>
                   <textarea
@@ -355,7 +355,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     onChange={(e) => setWizardEnv(e.target.value)}
                     placeholder={t("mcp.wizard.envPlaceholder")}
                     rows={3}
-                    className="w-full rounded-md border border-border-default bg-white dark:bg-gray-800 px-3 py-2 text-sm font-mono text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-y"
+                    className="w-full rounded-md border border-border-default bg-background px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-y"
                   />
                 </div>
               </>
@@ -366,7 +366,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
               <>
                 {/* URL */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-900 dark:text-gray-100">
+                  <label className="mb-1 block text-sm font-medium text-foreground">
                     {t("mcp.wizard.url")}{" "}
                     <span className="text-red-500">*</span>
                   </label>
@@ -382,7 +382,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
 
                 {/* Headers */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-900 dark:text-gray-100">
+                  <label className="mb-1 block text-sm font-medium text-foreground">
                     {t("mcp.wizard.headers")}
                   </label>
                   <textarea
@@ -390,7 +390,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     onChange={(e) => setWizardHeaders(e.target.value)}
                     placeholder={t("mcp.wizard.headersPlaceholder")}
                     rows={3}
-                    className="w-full rounded-md border border-border-default bg-white dark:bg-gray-800 px-3 py-2 text-sm font-mono text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-y"
+                    className="w-full rounded-md border border-border-default bg-background px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-y"
                   />
                 </div>
               </>
@@ -404,7 +404,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
             wizardUrl ||
             wizardHeaders) && (
             <div className="space-y-2 border-t border-border-default pt-4">
-              <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
+              <h3 className="text-sm font-medium text-foreground">
                 {t("mcp.wizard.preview")}
               </h3>
               <pre className="overflow-x-auto rounded-lg bg-gray-100 dark:bg-gray-800 p-3 text-xs font-mono text-gray-700 dark:text-gray-300">

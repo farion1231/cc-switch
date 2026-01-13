@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -12,6 +12,7 @@ import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
+import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 
@@ -32,10 +33,17 @@ interface ProviderCardProps {
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
+  onOpenTerminal?: (provider: Provider) => void;
   isTesting?: boolean;
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
   dragHandleProps?: DragHandleProps;
+  // 故障转移相关
+  isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
+  failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
+  isInFailoverQueue?: boolean; // 是否在故障转移队列中
+  onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
+  activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -84,10 +92,17 @@ export function ProviderCard({
   onOpenWebsite,
   onDuplicate,
   onTest,
+  onOpenTerminal,
   isTesting,
   isProxyRunning,
   isProxyTakeover = false,
   dragHandleProps,
+  // 故障转移相关
+  isAutoFailoverEnabled = false,
+  failoverPriority,
+  isInFailoverQueue = false,
+  onToggleFailover,
+  activeProviderId,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -134,12 +149,30 @@ export function ProviderCard({
   // 多套餐默认展开
   const [isExpanded, setIsExpanded] = useState(false);
 
+  // 操作按钮容器 ref，用于动态计算宽度
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const [actionsWidth, setActionsWidth] = useState(0);
+
   // 当检测到多套餐时自动展开
   useEffect(() => {
     if (hasMultiplePlans) {
       setIsExpanded(true);
     }
   }, [hasMultiplePlans]);
+
+  // 动态获取操作按钮宽度
+  useEffect(() => {
+    if (actionsRef.current) {
+      const updateWidth = () => {
+        const width = actionsRef.current?.offsetWidth || 0;
+        setActionsWidth(width);
+      };
+      updateWidth();
+      // 监听窗口大小变化
+      window.addEventListener("resize", updateWidth);
+      return () => window.removeEventListener("resize", updateWidth);
+    }
+  }, [onTest, onOpenTerminal]); // 按钮数量可能变化时重新计算
 
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
@@ -148,21 +181,32 @@ export function ProviderCard({
     onOpenWebsite(displayUrl);
   };
 
+  // 判断是否是"当前使用中"的供应商
+  // - 故障转移模式：代理实际使用的供应商（activeProviderId）
+  // - 代理接管模式（非故障转移）：isCurrent
+  // - 普通模式：isCurrent
+  const isActiveProvider = isAutoFailoverEnabled
+    ? activeProviderId === provider.id
+    : isCurrent;
+
+  // 判断是否使用绿色（代理接管模式）还是蓝色（普通模式）
+  const shouldUseGreen = isProxyTakeover && isActiveProvider;
+  const shouldUseBlue = !isProxyTakeover && isActiveProvider;
+
   return (
     <div
       className={cn(
         "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
         "bg-card text-card-foreground group",
-        // 代理接管模式下 hover 使用绿色边框，否则使用蓝色
-        isProxyTakeover
+        // hover 时的边框效果
+        isAutoFailoverEnabled || isProxyTakeover
           ? "hover:border-emerald-500/50"
           : "hover:border-border-active",
-        // 代理接管模式下当前供应商使用绿色边框
-        isProxyTakeover && isCurrent
-          ? "border-emerald-500/60 shadow-sm shadow-emerald-500/10"
-          : isCurrent
-            ? "border-primary/50 shadow-sm"
-            : "hover:shadow-sm",
+        // 当前激活的供应商边框样式
+        shouldUseGreen &&
+          "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
+        shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
+        !isActiveProvider && "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
@@ -170,11 +214,11 @@ export function ProviderCard({
       <div
         className={cn(
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
-          // 代理接管模式下使用绿色渐变，否则使用蓝色主色调
-          isProxyTakeover && isCurrent
-            ? "from-emerald-500/10"
-            : "from-primary/10",
-          isCurrent ? "opacity-100" : "opacity-0",
+          // 代理接管模式使用绿色渐变，普通模式使用蓝色渐变
+          shouldUseGreen && "from-emerald-500/10",
+          shouldUseBlue && "from-blue-500/10",
+          !isActiveProvider && "from-primary/10",
+          isActiveProvider ? "opacity-100" : "opacity-0",
         )}
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -209,12 +253,19 @@ export function ProviderCard({
                 {provider.name}
               </h3>
 
-              {/* 健康状态徽章和优先级 */}
-              {isProxyRunning && health && (
+              {/* 健康状态徽章 */}
+              {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
                   consecutiveFailures={health.consecutive_failures}
                 />
               )}
+
+              {/* 故障转移优先级徽章 */}
+              {isAutoFailoverEnabled &&
+                isInFailoverQueue &&
+                failoverPriority && (
+                  <FailoverPriorityBadge priority={failoverPriority} />
+                )}
 
               {provider.category === "third_party" &&
                 provider.meta?.isPartner && (
@@ -248,10 +299,17 @@ export function ProviderCard({
           </div>
         </div>
 
-        <div className="relative flex items-center ml-auto min-w-0">
+        <div
+          className="relative flex items-center ml-auto min-w-0 gap-3"
+          style={
+            {
+              "--actions-width": `${actionsWidth || 320}px`,
+            } as React.CSSProperties
+          }
+        >
           {/* 用量信息区域 - hover 时向左移动，为操作按钮腾出空间 */}
-          <div className="ml-auto transition-transform duration-200 group-hover:-translate-x-[14.5rem] group-focus-within:-translate-x-[14.5rem] sm:group-hover:-translate-x-[16rem] sm:group-focus-within:-translate-x-[16rem]">
-            <div className="flex items-center gap-1">
+          <div className="ml-auto">
+            <div className="flex items-center gap-1 transition-transform duration-200 group-hover:-translate-x-[var(--actions-width)] group-focus-within:-translate-x-[var(--actions-width)]">
               {/* 多套餐时显示套餐数量，单套餐时显示详细信息 */}
               {hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
@@ -296,8 +354,11 @@ export function ProviderCard({
             </div>
           </div>
 
-          {/* 操作按钮区域 - 绝对定位在右侧，hover 时滑入 */}
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0">
+          {/* 操作按钮区域 - 绝对定位在右侧，hover 时滑入，与用量信息保持间距 */}
+          <div
+            ref={actionsRef}
+            className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pl-3 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0"
+          >
             <ProviderActions
               isCurrent={isCurrent}
               isTesting={isTesting}
@@ -308,6 +369,13 @@ export function ProviderCard({
               onTest={onTest ? () => onTest(provider) : undefined}
               onConfigureUsage={() => onConfigureUsage(provider)}
               onDelete={() => onDelete(provider)}
+              onOpenTerminal={
+                onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+              }
+              // 故障转移相关
+              isAutoFailoverEnabled={isAutoFailoverEnabled}
+              isInFailoverQueue={isInFailoverQueue}
+              onToggleFailover={onToggleFailover}
             />
           </div>
         </div>

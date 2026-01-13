@@ -7,6 +7,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::app_config::AppType;
 use crate::codex_config;
 use crate::config::{self, get_claude_settings_path, ConfigStatus};
+use crate::settings;
 
 /// 获取 Claude Code 配置状态
 #[tauri::command]
@@ -15,6 +16,18 @@ pub async fn get_claude_config_status() -> Result<ConfigStatus, String> {
 }
 
 use std::str::FromStr;
+
+fn invalid_json_format_error(error: serde_json::Error) -> String {
+    let lang = settings::get_settings()
+        .language
+        .unwrap_or_else(|| "zh".to_string());
+
+    match lang.as_str() {
+        "en" => format!("Invalid JSON format: {error}"),
+        "ja" => format!("JSON形式が無効です: {error}"),
+        _ => format!("无效的 JSON 格式: {error}"),
+    }
+}
 
 #[tauri::command]
 pub async fn get_config_status(app: String) -> Result<ConfigStatus, String> {
@@ -155,8 +168,7 @@ pub async fn set_claude_common_config_snippet(
 ) -> Result<(), String> {
     // 验证是否为有效的 JSON（如果不为空）
     if !snippet.trim().is_empty() {
-        serde_json::from_str::<serde_json::Value>(&snippet)
-            .map_err(|e| format!("无效的 JSON 格式: {e}"))?;
+        serde_json::from_str::<serde_json::Value>(&snippet).map_err(invalid_json_format_error)?;
     }
 
     let value = if snippet.trim().is_empty() {
@@ -197,7 +209,7 @@ pub async fn set_common_config_snippet(
             "claude" | "gemini" => {
                 // 验证 JSON 格式
                 serde_json::from_str::<serde_json::Value>(&snippet)
-                    .map_err(|e| format!("无效的 JSON 格式: {e}"))?;
+                    .map_err(invalid_json_format_error)?;
             }
             "codex" => {
                 // TOML 格式暂不验证（或可使用 toml crate）
@@ -218,4 +230,32 @@ pub async fn set_common_config_snippet(
         .set_config_snippet(&app_type, value)
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 提取通用配置片段
+///
+/// 优先从 `settingsConfig`（编辑器当前内容）提取；若未提供，则从当前激活供应商提取。
+///
+/// 提取时会自动排除差异化字段（API Key、模型配置、端点等），返回可复用的通用配置片段。
+#[tauri::command]
+pub async fn extract_common_config_snippet(
+    appType: String,
+    settingsConfig: Option<String>,
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<String, String> {
+    let app = AppType::from_str(&appType).map_err(|e| e.to_string())?;
+
+    if let Some(settings_config) = settingsConfig.filter(|s| !s.trim().is_empty()) {
+        let settings: serde_json::Value =
+            serde_json::from_str(&settings_config).map_err(invalid_json_format_error)?;
+
+        return crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
+            app,
+            &settings,
+        )
+        .map_err(|e| e.to_string());
+    }
+
+    crate::services::provider::ProviderService::extract_common_config_snippet(&state, app)
+        .map_err(|e| e.to_string())
 }

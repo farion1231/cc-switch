@@ -12,13 +12,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Trash2, ExternalLink, Plus } from "lucide-react";
 import { settingsApi } from "@/lib/api";
-import type { Skill, SkillRepo } from "@/lib/api/skills";
+import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
 
 interface RepoManagerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   repos: SkillRepo[];
-  skills: Skill[];
+  skills: DiscoverableSkill[];
   onAdd: (repo: SkillRepo) => Promise<void>;
   onRemove: (owner: string, name: string) => Promise<void>;
 }

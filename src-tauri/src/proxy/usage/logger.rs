@@ -65,8 +65,11 @@ impl<'a> UsageLogger<'a> {
 
         let created_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or_else(|e| {
+                log::warn!("SystemTime is before UNIX_EPOCH, falling back to 0: {e}");
+                0
+            });
 
         conn.execute(
             "INSERT INTO proxy_request_logs (
@@ -211,7 +214,7 @@ impl<'a> UsageLogger<'a> {
         let pricing = self.get_model_pricing(&model)?;
 
         if pricing.is_none() {
-            log::warn!("模型 {model} 的定价信息未找到，成本将记录为 0");
+            log::warn!("[USG-002] 模型定价未找到，成本将记录为 0");
         }
 
         let cost = CostCalculator::try_calculate(&usage, pricing.as_ref(), cost_multiplier);

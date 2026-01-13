@@ -8,6 +8,7 @@ use crate::database::Database;
 use crate::provider::Provider;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::types::*;
+use crate::services::provider::write_live_snapshot;
 use serde_json::{json, Value};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -15,6 +16,20 @@ use tokio::sync::RwLock;
 
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+/// 代理接管模式下需要从 Claude Live 配置中移除的“模型覆盖”字段。
+///
+/// 原因：接管模式切换供应商时不会写回 Live 配置，如果保留这些字段，
+/// Claude Code 会继续以旧模型名发起请求，导致新供应商不支持时失败。
+const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 6] = [
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_REASONING_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    // Legacy key (已废弃)：历史版本使用该字段区分 small/fast 模型
+    "ANTHROPIC_SMALL_FAST_MODEL",
+];
 
 #[derive(Clone)]
 pub struct ProxyService {
@@ -33,6 +48,31 @@ impl ProxyService {
         }
     }
 
+    /// 清理接管模式下 Claude Live 配置中的模型覆盖字段。
+    ///
+    /// 这可以避免“接管开启后切换供应商仍使用旧模型”的问题。
+    /// 注意：此方法不会修改 Token/Base URL 的接管占位符，仅移除模型字段。
+    pub fn cleanup_claude_model_overrides_in_live(&self) -> Result<(), String> {
+        let mut config = self.read_claude_live()?;
+
+        let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) else {
+            return Ok(());
+        };
+
+        let mut changed = false;
+        for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
+            if env.remove(key).is_some() {
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.write_claude_live(&config)?;
+        }
+
+        Ok(())
+    }
+
     /// 设置 AppHandle（在应用初始化时调用）
     pub fn set_app_handle(&self, handle: tauri::AppHandle) {
         futures::executor::block_on(async {
@@ -41,31 +81,31 @@ impl ProxyService {
     }
 
     /// 启动代理服务器
-    ///
-    /// - `persist_enabled = true`：将 `proxy_config.enabled` 持久化为启用（用于“总开关”）
-    /// - `persist_enabled = false`：仅在当前进程启动代理服务（用于“按 App 接管”自动启动）
-    pub async fn start(&self, persist_enabled: bool) -> Result<ProxyServerInfo, String> {
-        // 1. 获取配置
-        let mut config = self
+    pub async fn start(&self) -> Result<ProxyServerInfo, String> {
+        // 1. 启动时自动设置 proxy_enabled = true
+        let mut global_config = self
+            .db
+            .get_global_proxy_config()
+            .await
+            .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
+
+        if !global_config.proxy_enabled {
+            global_config.proxy_enabled = true;
+            self.db
+                .update_global_proxy_config(global_config.clone())
+                .await
+                .map_err(|e| format!("更新代理总开关失败: {e}"))?;
+        }
+
+        // 2. 获取配置
+        let config = self
             .db
             .get_proxy_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
-        // 2. 仅在需要时持久化 enabled（避免“按 App 接管”自动启动时误打开总开关）
-        if persist_enabled {
-            config.enabled = true;
-        }
-
         // 3. 若已在运行：确保持久化状态（如需要）并返回当前信息
         if let Some(server) = self.server.read().await.as_ref() {
-            if persist_enabled {
-                self.db
-                    .update_proxy_config(config)
-                    .await
-                    .map_err(|e| format!("保存代理配置失败: {e}"))?;
-            }
-
             let status = server.get_status().await;
             return Ok(ProxyServerInfo {
                 address: status.address,
@@ -85,14 +125,6 @@ impl ProxyService {
 
         // 5. 保存服务器实例
         *self.server.write().await = Some(server);
-
-        // 6. 持久化 enabled 状态（仅总开关）
-        if persist_enabled {
-            self.db
-                .update_proxy_config(config)
-                .await
-                .map_err(|e| format!("保存代理配置失败: {e}"))?;
-        }
 
         log::info!("代理服务器已启动: {}:{}", info.address, info.port);
         Ok(info)
@@ -138,7 +170,7 @@ impl ProxyService {
         }
 
         // 5. 启动代理服务器
-        match self.start(true).await {
+        match self.start().await {
             Ok(info) => Ok(info),
             Err(e) => {
                 // 启动失败，恢复原始配置
@@ -159,55 +191,71 @@ impl ProxyService {
 
     /// 获取各应用的接管状态（是否改写该应用的 Live 配置指向本地代理）
     pub async fn get_takeover_status(&self) -> Result<ProxyTakeoverStatus, String> {
-        let claude = self
+        // 从 proxy_config.enabled 读取（优先），兼容旧的 live_backup 备份检测
+        let claude_enabled = self
             .db
-            .get_live_backup("claude")
+            .get_proxy_config_for_app("claude")
             .await
-            .map_err(|e| format!("获取 Claude 接管状态失败: {e}"))?
-            .is_some();
-        let codex = self
+            .map(|c| c.enabled)
+            .unwrap_or(false);
+        let codex_enabled = self
             .db
-            .get_live_backup("codex")
+            .get_proxy_config_for_app("codex")
             .await
-            .map_err(|e| format!("获取 Codex 接管状态失败: {e}"))?
-            .is_some();
-        let gemini = self
+            .map(|c| c.enabled)
+            .unwrap_or(false);
+        let gemini_enabled = self
             .db
-            .get_live_backup("gemini")
+            .get_proxy_config_for_app("gemini")
             .await
-            .map_err(|e| format!("获取 Gemini 接管状态失败: {e}"))?
-            .is_some();
+            .map(|c| c.enabled)
+            .unwrap_or(false);
 
         Ok(ProxyTakeoverStatus {
-            claude,
-            codex,
-            gemini,
+            claude: claude_enabled,
+            codex: codex_enabled,
+            gemini: gemini_enabled,
         })
     }
 
     /// 为指定应用开启/关闭 Live 接管
     ///
-    /// - 开启：自动启动代理服务（不影响总开关持久化），仅接管当前 app 的 Live 配置
-    /// - 关闭：仅恢复当前 app 的 Live 配置；若总开关未开启且无其它接管，则自动停止代理服务
+    /// - 开启：自动启动代理服务，仅接管当前 app 的 Live 配置
+    /// - 关闭：仅恢复当前 app 的 Live 配置；若无其它接管，则自动停止代理服务
     pub async fn set_takeover_for_app(&self, app_type: &str, enabled: bool) -> Result<(), String> {
         let app = AppType::from_str(app_type).map_err(|e| format!("无效的应用类型: {e}"))?;
         let app_type_str = app.as_str();
 
         if enabled {
-            // 1) 代理服务未运行则自动启动（不持久化总开关）
+            // 1) 代理服务未运行则自动启动
             if !self.is_running().await {
-                self.start(false).await?;
+                self.start().await?;
             }
 
-            // 2) 已接管则直接返回（幂等）
-            if self
+            // 2) 已接管则直接返回（幂等）；但如果缺少备份或占位符残留，需要重建接管
+            let current_config = self
                 .db
-                .get_live_backup(app_type_str)
+                .get_proxy_config_for_app(app_type_str)
                 .await
-                .map_err(|e| format!("检查 {app_type_str} Live 备份失败: {e}"))?
-                .is_some()
-            {
-                return Ok(());
+                .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
+
+            if current_config.enabled {
+                let has_backup = match self.db.get_live_backup(app_type_str).await {
+                    Ok(v) => v.is_some(),
+                    Err(e) => {
+                        log::warn!("读取 {app_type_str} 备份失败（将继续重建接管）: {e}");
+                        false
+                    }
+                };
+                let live_taken_over = self.detect_takeover_in_live_config_for_app(&app);
+
+                if has_backup || live_taken_over {
+                    return Ok(());
+                }
+
+                log::warn!(
+                    "{app_type_str} 标记为已接管，但缺少备份或占位符，正在重新接管并补齐备份"
+                );
             }
 
             // 3) 备份 Live 配置（严格：目标 app 不存在则报错）
@@ -222,25 +270,46 @@ impl ProxyService {
             // 5) 写入接管配置（仅当前 app）
             if let Err(e) = self.takeover_live_config_strict(&app).await {
                 log::error!("{app_type_str} 接管 Live 配置失败，尝试恢复: {e}");
-                let _ = self.restore_live_config_for_app(&app).await;
-                let _ = self.db.delete_live_backup(app_type_str).await;
+                match self.restore_live_config_for_app(&app).await {
+                    Ok(()) => {
+                        // 恢复成功才清理备份，避免失败场景下丢失唯一可回滚来源
+                        let _ = self.db.delete_live_backup(app_type_str).await;
+                    }
+                    Err(restore_err) => {
+                        log::error!(
+                            "{app_type_str} 恢复 Live 配置失败，将保留备份以便下次启动恢复: {restore_err}"
+                        );
+                    }
+                }
                 return Err(e);
             }
 
-            // 6) 兼容旧逻辑：写入 any-of 标志（失败不影响功能）
+            // 6) 设置 proxy_config.enabled = true
+            let mut updated_config = self
+                .db
+                .get_proxy_config_for_app(app_type_str)
+                .await
+                .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
+            updated_config.enabled = true;
+            self.db
+                .update_proxy_config_for_app(updated_config)
+                .await
+                .map_err(|e| format!("设置 {app_type_str} enabled 状态失败: {e}"))?;
+
+            // 7) 兼容旧逻辑：写入 any-of 标志（失败不影响功能）
             let _ = self.db.set_live_takeover_active(true).await;
             return Ok(());
         }
 
-        // 关闭接管：无备份则视为未接管（幂等）
-        let has_backup = self
+        // 关闭接管：检查 enabled 状态
+        let current_config = self
             .db
-            .get_live_backup(app_type_str)
+            .get_proxy_config_for_app(app_type_str)
             .await
-            .map_err(|e| format!("检查 {app_type_str} Live 备份失败: {e}"))?
-            .is_some();
-        if !has_backup {
-            return Ok(());
+            .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
+
+        if !current_config.enabled {
+            return Ok(()); // 未接管，幂等返回
         }
 
         // 1) 恢复 Live 配置
@@ -252,22 +321,36 @@ impl ProxyService {
             .await
             .map_err(|e| format!("删除 {app_type_str} Live 备份失败: {e}"))?;
 
-        // 3) 若无其它接管，更新旧标志，并在总开关未开启时停止代理服务
-        let has_any_backup = self
+        // 3) 设置 proxy_config.enabled = false
+        let mut updated_config = self
             .db
-            .has_any_live_backup()
+            .get_proxy_config_for_app(app_type_str)
             .await
-            .map_err(|e| format!("检查 Live 备份失败: {e}"))?;
-        if !has_any_backup {
+            .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
+        updated_config.enabled = false;
+        self.db
+            .update_proxy_config_for_app(updated_config)
+            .await
+            .map_err(|e| format!("清除 {app_type_str} enabled 状态失败: {e}"))?;
+
+        // 4) 清除该应用的健康状态（关闭代理时重置队列状态）
+        self.db
+            .clear_provider_health_for_app(app_type_str)
+            .await
+            .map_err(|e| format!("清除 {app_type_str} 健康状态失败: {e}"))?;
+
+        // 5) 若无其它接管，更新旧标志，并停止代理服务
+        // 检查是否还有其它 app 的 enabled = true
+        let any_enabled = self
+            .db
+            .is_live_takeover_active()
+            .await
+            .map_err(|e| format!("检查接管状态失败: {e}"))?;
+
+        if !any_enabled {
             let _ = self.db.set_live_takeover_active(false).await;
 
-            let master_enabled = self
-                .db
-                .get_proxy_config()
-                .await
-                .map_err(|e| format!("获取代理配置失败: {e}"))?
-                .enabled;
-            if !master_enabled && self.is_running().await {
+            if self.is_running().await {
                 // 此时没有任何 app 处于接管状态，停止服务即可
                 let _ = self.stop().await;
             }
@@ -331,33 +414,47 @@ impl ProxyService {
 
                                 match env_obj {
                                     Some(obj) => {
-                                        obj.insert(token_key.to_string(), json!(token));
-                                        // ANTHROPIC_AUTH_TOKEN 与 ANTHROPIC_API_KEY 视为同义字段，保持一致
                                         if token_key == "ANTHROPIC_AUTH_TOKEN"
                                             || token_key == "ANTHROPIC_API_KEY"
                                         {
-                                            obj.insert(
-                                                "ANTHROPIC_AUTH_TOKEN".to_string(),
-                                                json!(token),
-                                            );
-                                            obj.insert(
-                                                "ANTHROPIC_API_KEY".to_string(),
-                                                json!(token),
-                                            );
+                                            let mut updated = false;
+                                            if obj.contains_key("ANTHROPIC_AUTH_TOKEN") {
+                                                obj.insert(
+                                                    "ANTHROPIC_AUTH_TOKEN".to_string(),
+                                                    json!(token),
+                                                );
+                                                updated = true;
+                                            }
+                                            if obj.contains_key("ANTHROPIC_API_KEY") {
+                                                obj.insert(
+                                                    "ANTHROPIC_API_KEY".to_string(),
+                                                    json!(token),
+                                                );
+                                                updated = true;
+                                            }
+                                            if !updated {
+                                                obj.insert(token_key.to_string(), json!(token));
+                                            }
+                                        } else {
+                                            obj.insert(token_key.to_string(), json!(token));
                                         }
                                     }
                                     None => {
                                         // 至少写入一份可用的 Token
-                                        provider.settings_config["env"] = json!({
-                                            token_key: token
-                                        });
-                                        if token_key == "ANTHROPIC_AUTH_TOKEN"
-                                            || token_key == "ANTHROPIC_API_KEY"
+                                        if provider.settings_config.is_null() {
+                                            provider.settings_config = json!({});
+                                        }
+
+                                        if let Some(root) = provider.settings_config.as_object_mut()
                                         {
-                                            provider.settings_config["env"]
-                                                ["ANTHROPIC_AUTH_TOKEN"] = json!(token);
-                                            provider.settings_config["env"]["ANTHROPIC_API_KEY"] =
-                                                json!(token);
+                                            root.insert(
+                                                "env".to_string(),
+                                                json!({ token_key: token }),
+                                            );
+                                        } else {
+                                            log::warn!(
+                                                "Claude provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                            );
                                         }
                                     }
                                 }
@@ -401,9 +498,20 @@ impl ProxyService {
                             {
                                 auth_obj.insert("OPENAI_API_KEY".to_string(), json!(token));
                             } else {
-                                provider.settings_config["auth"] = json!({
-                                    "OPENAI_API_KEY": token
-                                });
+                                if provider.settings_config.is_null() {
+                                    provider.settings_config = json!({});
+                                }
+
+                                if let Some(root) = provider.settings_config.as_object_mut() {
+                                    root.insert(
+                                        "auth".to_string(),
+                                        json!({ "OPENAI_API_KEY": token }),
+                                    );
+                                } else {
+                                    log::warn!(
+                                        "Codex provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                    );
+                                }
                             }
 
                             if let Err(e) = self.db.update_provider_settings_config(
@@ -442,9 +550,20 @@ impl ProxyService {
                             {
                                 env_obj.insert("GEMINI_API_KEY".to_string(), json!(token));
                             } else {
-                                provider.settings_config["env"] = json!({
-                                    "GEMINI_API_KEY": token
-                                });
+                                if provider.settings_config.is_null() {
+                                    provider.settings_config = json!({});
+                                }
+
+                                if let Some(root) = provider.settings_config.as_object_mut() {
+                                    root.insert(
+                                        "env".to_string(),
+                                        json!({ "GEMINI_API_KEY": token }),
+                                    );
+                                } else {
+                                    log::warn!(
+                                        "Gemini provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                    );
+                                }
                             }
 
                             if let Err(e) = self.db.update_provider_settings_config(
@@ -495,10 +614,18 @@ impl ProxyService {
                 .await
                 .map_err(|e| format!("停止代理服务器失败: {e}"))?;
 
-            // 将 enabled 设为 false，避免下次启动时自动开启
-            if let Ok(mut config) = self.db.get_proxy_config().await {
-                config.enabled = false;
-                let _ = self.db.update_proxy_config(config).await;
+            // 停止时设置 proxy_enabled = false
+            let mut global_config = self
+                .db
+                .get_global_proxy_config()
+                .await
+                .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
+
+            if global_config.proxy_enabled {
+                global_config.proxy_enabled = false;
+                if let Err(e) = self.db.update_global_proxy_config(global_config).await {
+                    log::warn!("更新代理总开关失败: {e}");
+                }
             }
 
             log::info!("代理服务器已停止");
@@ -508,44 +635,85 @@ impl ProxyService {
         }
     }
 
-    /// 停止代理服务器（恢复 Live 配置）
+    /// 停止代理服务器（恢复 Live 配置，用户手动关闭时使用）
+    ///
+    /// 会清除 settings 表中的代理状态，下次启动不会自动恢复。
     pub async fn stop_with_restore(&self) -> Result<(), String> {
         // 1. 停止代理服务器（即使未运行也继续执行恢复逻辑）
         if let Err(e) = self.stop().await {
             log::warn!("停止代理服务器失败（将继续恢复 Live 配置）: {e}");
-
-            // stop() 只有在 server 实例存在时才会把 enabled 设为 false；
-            // 这里兜底确保“总开关关闭”能落盘关闭状态。
-            if let Ok(mut config) = self.db.get_proxy_config().await {
-                if config.enabled {
-                    config.enabled = false;
-                    let _ = self.db.update_proxy_config(config).await;
-                }
-            }
         }
 
         // 2. 恢复原始 Live 配置
         self.restore_live_configs().await?;
 
-        // 3. 清除接管状态
+        // 3. 清除 proxy_config 表中的接管状态（兼容旧版）
         self.db
             .set_live_takeover_active(false)
             .await
             .map_err(|e| format!("清除接管状态失败: {e}"))?;
 
-        // 4. 删除备份
+        // 4. 清除所有应用的 enabled 状态（用户手动关闭，不需要下次自动恢复）
+        for app_type in ["claude", "codex", "gemini"] {
+            if let Ok(mut config) = self.db.get_proxy_config_for_app(app_type).await {
+                if config.enabled {
+                    config.enabled = false;
+                    if let Err(e) = self.db.update_proxy_config_for_app(config).await {
+                        log::warn!("清除 {app_type} enabled 状态失败: {e}");
+                    }
+                }
+            }
+        }
+
+        // 5. 删除备份
         self.db
             .delete_all_live_backups()
             .await
             .map_err(|e| format!("删除备份失败: {e}"))?;
 
-        // 5. 重置健康状态（让健康徽章恢复为正常）
+        // 6. 重置健康状态（让健康徽章恢复为正常）
         self.db
             .clear_all_provider_health()
             .await
             .map_err(|e| format!("重置健康状态失败: {e}"))?;
 
+        // 注意：不清除故障转移队列和开关状态，保留供下次开启代理时使用
         log::info!("代理已停止，Live 配置已恢复");
+        Ok(())
+    }
+
+    /// 停止代理服务器（恢复 Live 配置，但保留 settings 表中的代理状态）
+    ///
+    /// 用于程序正常退出时，保留代理状态以便下次启动时自动恢复
+    pub async fn stop_with_restore_keep_state(&self) -> Result<(), String> {
+        // 1. 停止代理服务器（即使未运行也继续执行恢复逻辑）
+        if let Err(e) = self.stop().await {
+            log::warn!("停止代理服务器失败（将继续恢复 Live 配置）: {e}");
+        }
+
+        // 2. 恢复原始 Live 配置
+        self.restore_live_configs().await?;
+
+        // 3. 更新 proxy_config 表中的 live_takeover_active 标志（兼容旧版）
+        //    注意：保留 proxy_config.enabled 状态，下次启动时自动恢复
+        if let Ok(mut config) = self.db.get_proxy_config().await {
+            config.live_takeover_active = false;
+            let _ = self.db.update_proxy_config(config).await;
+        }
+
+        // 4. 删除备份（Live 配置已恢复，备份不再需要）
+        self.db
+            .delete_all_live_backups()
+            .await
+            .map_err(|e| format!("删除备份失败: {e}"))?;
+
+        // 5. 重置健康状态
+        self.db
+            .clear_all_provider_health()
+            .await
+            .map_err(|e| format!("重置健康状态失败: {e}"))?;
+
+        log::info!("代理已停止，Live 配置已恢复（保留代理状态，下次启动将自动恢复）");
         Ok(())
     }
 
@@ -646,6 +814,10 @@ impl ProxyService {
         if let Ok(mut live_config) = self.read_claude_live() {
             if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                 env.insert("ANTHROPIC_BASE_URL".to_string(), json!(&proxy_url));
+                // 关键：接管模式下移除模型覆盖字段，避免切换供应商后仍用旧模型名发起请求
+                for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
+                    env.remove(key);
+                }
                 // 仅覆盖已存在的 Token 字段，避免新增字段导致用户困惑；
                 // 若完全没有 Token 字段，则写入 ANTHROPIC_AUTH_TOKEN 占位符用于避免客户端警告。
                 let token_keys = [
@@ -726,6 +898,10 @@ impl ProxyService {
                 let mut live_config = self.read_claude_live()?;
                 if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                     env.insert("ANTHROPIC_BASE_URL".to_string(), json!(&proxy_url));
+                    // 关键：接管模式下移除模型覆盖字段，避免切换供应商后仍用旧模型名发起请求
+                    for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
+                        env.remove(key);
+                    }
 
                     let token_keys = [
                         "ANTHROPIC_AUTH_TOKEN",
@@ -805,6 +981,10 @@ impl ProxyService {
                 if let Ok(mut live_config) = self.read_claude_live() {
                     if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                         env.insert("ANTHROPIC_BASE_URL".to_string(), json!(&proxy_url));
+                        // 关键：接管模式下移除模型覆盖字段，避免切换供应商后仍用旧模型名发起请求
+                        for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
+                            env.remove(key);
+                        }
 
                         let token_keys = [
                             "ANTHROPIC_AUTH_TOKEN",
@@ -909,44 +1089,282 @@ impl ProxyService {
 
     /// 恢复原始 Live 配置
     async fn restore_live_configs(&self) -> Result<(), String> {
-        // Claude
-        if let Ok(Some(backup)) = self.db.get_live_backup("claude").await {
-            let config: Value = serde_json::from_str(&backup.original_config)
-                .map_err(|e| format!("解析 Claude 备份失败: {e}"))?;
-            self.write_claude_live(&config)?;
-            log::info!("Claude Live 配置已恢复");
+        let mut errors = Vec::new();
+
+        for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+            if let Err(e) = self
+                .restore_live_config_for_app_with_fallback(&app_type)
+                .await
+            {
+                errors.push(e);
+            }
         }
 
-        // Codex
-        if let Ok(Some(backup)) = self.db.get_live_backup("codex").await {
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("；"))
+        }
+    }
+
+    async fn restore_live_config_for_app_with_fallback(
+        &self,
+        app_type: &AppType,
+    ) -> Result<(), String> {
+        let app_type_str = app_type.as_str();
+
+        // 1) 优先从 Live 备份恢复（这是“原始 Live”的唯一可靠来源）
+        let backup = self
+            .db
+            .get_live_backup(app_type_str)
+            .await
+            .map_err(|e| format!("获取 {app_type_str} Live 备份失败: {e}"))?;
+        if let Some(backup) = backup {
             let config: Value = serde_json::from_str(&backup.original_config)
-                .map_err(|e| format!("解析 Codex 备份失败: {e}"))?;
-            self.write_codex_live(&config)?;
-            log::info!("Codex Live 配置已恢复");
+                .map_err(|e| format!("解析 {app_type_str} 备份失败: {e}"))?;
+            self.write_live_config_for_app(app_type, &config)?;
+            log::info!("{app_type_str} Live 配置已从备份恢复");
+            return Ok(());
         }
 
-        // Gemini
-        if let Ok(Some(backup)) = self.db.get_live_backup("gemini").await {
-            let config: Value = serde_json::from_str(&backup.original_config)
-                .map_err(|e| format!("解析 Gemini 备份失败: {e}"))?;
-            self.write_gemini_live(&config)?;
-            log::info!("Gemini Live 配置已恢复");
+        // 2) 兜底：备份缺失，但 Live 仍包含接管占位符（异常退出/历史 bug 场景）
+        if !self.detect_takeover_in_live_config_for_app(app_type) {
+            return Ok(());
         }
 
+        // 2.1) 优先从 SSOT（当前供应商）重建 Live（比“清理字段”更可用）
+        match self.restore_live_from_ssot_for_app(app_type) {
+            Ok(true) => {
+                log::info!("{app_type_str} Live 配置已从 SSOT 恢复（无备份兜底）");
+                return Ok(());
+            }
+            Ok(false) => {
+                log::warn!(
+                    "{app_type_str} Live 备份缺失，且无法从 SSOT 恢复，将尝试清理接管占位符"
+                );
+            }
+            Err(e) => {
+                log::error!(
+                    "{app_type_str} Live 备份缺失，SSOT 恢复失败，将尝试清理接管占位符: {e}"
+                );
+            }
+        }
+
+        // 2.2) 最后兜底：尽力清理占位符与本地代理地址，避免长期卡在代理占位符状态
+        self.cleanup_takeover_placeholders_in_live_for_app(app_type)?;
+        log::info!("{app_type_str} Live 接管占位符已清理（无备份兜底）");
+        Ok(())
+    }
+
+    fn write_live_config_for_app(&self, app_type: &AppType, config: &Value) -> Result<(), String> {
+        match app_type {
+            AppType::Claude => self.write_claude_live(config),
+            AppType::Codex => self.write_codex_live(config),
+            AppType::Gemini => self.write_gemini_live(config),
+        }
+    }
+
+    pub fn detect_takeover_in_live_config_for_app(&self, app_type: &AppType) -> bool {
+        match app_type {
+            AppType::Claude => match self.read_claude_live() {
+                Ok(config) => Self::is_claude_live_taken_over(&config),
+                Err(_) => false,
+            },
+            AppType::Codex => match self.read_codex_live() {
+                Ok(config) => Self::is_codex_live_taken_over(&config),
+                Err(_) => false,
+            },
+            AppType::Gemini => match self.read_gemini_live() {
+                Ok(config) => Self::is_gemini_live_taken_over(&config),
+                Err(_) => false,
+            },
+        }
+    }
+
+    /// 当 Live 备份缺失时，尝试用 SSOT（当前供应商）写回 Live，以解除占位符接管。
+    ///
+    /// 返回值：
+    /// - Ok(true)：已成功写回
+    /// - Ok(false)：缺少当前供应商/供应商不存在，无法写回
+    fn restore_live_from_ssot_for_app(&self, app_type: &AppType) -> Result<bool, String> {
+        let current_id = crate::settings::get_effective_current_provider(&self.db, app_type)
+            .map_err(|e| format!("获取 {app_type:?} 当前供应商失败: {e}"))?;
+
+        let Some(current_id) = current_id else {
+            return Ok(false);
+        };
+
+        let providers = self
+            .db
+            .get_all_providers(app_type.as_str())
+            .map_err(|e| format!("读取 {app_type:?} 供应商列表失败: {e}"))?;
+
+        let Some(provider) = providers.get(&current_id) else {
+            return Ok(false);
+        };
+
+        write_live_snapshot(app_type, provider)
+            .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
+
+        Ok(true)
+    }
+
+    fn cleanup_takeover_placeholders_in_live_for_app(
+        &self,
+        app_type: &AppType,
+    ) -> Result<(), String> {
+        match app_type {
+            AppType::Claude => self.cleanup_claude_takeover_placeholders_in_live(),
+            AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
+            AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
+        }
+    }
+
+    fn is_local_proxy_url(url: &str) -> bool {
+        let url = url.trim();
+        if !url.starts_with("http://") {
+            return false;
+        }
+        let rest = &url["http://".len()..];
+        rest.starts_with("127.0.0.1")
+            || rest.starts_with("localhost")
+            || rest.starts_with("0.0.0.0")
+            || rest.starts_with("[::1]")
+            || rest.starts_with("[::]")
+            || rest.starts_with("::1")
+            || rest.starts_with("::")
+    }
+
+    fn cleanup_claude_takeover_placeholders_in_live(&self) -> Result<(), String> {
+        let mut config = self.read_claude_live()?;
+
+        let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) else {
+            return Ok(());
+        };
+
+        for key in [
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OPENAI_API_KEY",
+        ] {
+            if env.get(key).and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+                env.remove(key);
+            }
+        }
+
+        if env
+            .get("ANTHROPIC_BASE_URL")
+            .and_then(|v| v.as_str())
+            .map(Self::is_local_proxy_url)
+            .unwrap_or(false)
+        {
+            env.remove("ANTHROPIC_BASE_URL");
+        }
+
+        self.write_claude_live(&config)?;
+        Ok(())
+    }
+
+    fn cleanup_codex_takeover_placeholders_in_live(&self) -> Result<(), String> {
+        let mut config = self.read_codex_live()?;
+
+        if let Some(auth) = config.get_mut("auth").and_then(|v| v.as_object_mut()) {
+            if auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
+            {
+                auth.remove("OPENAI_API_KEY");
+            }
+        }
+
+        if let Some(cfg_str) = config.get("config").and_then(|v| v.as_str()) {
+            let updated = Self::remove_local_toml_base_url(cfg_str);
+            config["config"] = json!(updated);
+        }
+
+        self.write_codex_live(&config)?;
+        Ok(())
+    }
+
+    fn remove_local_toml_base_url(toml_str: &str) -> String {
+        use toml_edit::DocumentMut;
+
+        let mut doc = match toml_str.parse::<DocumentMut>() {
+            Ok(doc) => doc,
+            Err(_) => return toml_str.to_string(),
+        };
+
+        let model_provider = doc
+            .get("model_provider")
+            .and_then(|item| item.as_str())
+            .map(str::to_string);
+
+        if let Some(provider_key) = model_provider {
+            if let Some(model_providers) = doc
+                .get_mut("model_providers")
+                .and_then(|v| v.as_table_mut())
+            {
+                if let Some(provider_table) = model_providers
+                    .get_mut(provider_key.as_str())
+                    .and_then(|v| v.as_table_mut())
+                {
+                    let should_remove = provider_table
+                        .get("base_url")
+                        .and_then(|item| item.as_str())
+                        .map(Self::is_local_proxy_url)
+                        .unwrap_or(false);
+                    if should_remove {
+                        provider_table.remove("base_url");
+                    }
+                }
+            }
+        }
+
+        // 兜底：清理顶层 base_url（仅当它看起来像本地代理地址）
+        let should_remove_root = doc
+            .get("base_url")
+            .and_then(|item| item.as_str())
+            .map(Self::is_local_proxy_url)
+            .unwrap_or(false);
+        if should_remove_root {
+            doc.as_table_mut().remove("base_url");
+        }
+
+        doc.to_string()
+    }
+
+    fn cleanup_gemini_takeover_placeholders_in_live(&self) -> Result<(), String> {
+        let mut config = self.read_gemini_live()?;
+
+        let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) else {
+            return Ok(());
+        };
+
+        if env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+            env.remove("GEMINI_API_KEY");
+        }
+
+        if env
+            .get("GOOGLE_GEMINI_BASE_URL")
+            .and_then(|v| v.as_str())
+            .map(Self::is_local_proxy_url)
+            .unwrap_or(false)
+        {
+            env.remove("GOOGLE_GEMINI_BASE_URL");
+        }
+
+        self.write_gemini_live(&config)?;
         Ok(())
     }
 
     /// 检查是否处于 Live 接管模式
     pub async fn is_takeover_active(&self) -> Result<bool, String> {
-        self.db
-            .is_live_takeover_active()
-            .await
-            .map_err(|e| format!("检查接管状态失败: {e}"))
+        let status = self.get_takeover_status().await?;
+        Ok(status.claude || status.codex || status.gemini)
     }
 
     /// 从异常退出中恢复（启动时调用）
     ///
-    /// 检测到 live_takeover_active=true 但代理未运行时调用此方法。
+    /// 检测到 Live 备份残留时调用此方法。
     /// 会恢复 Live 配置、清除接管标志、删除备份。
     pub async fn recover_from_crash(&self) -> Result<(), String> {
         // 1. 恢复 Live 配置
@@ -970,7 +1388,7 @@ impl ProxyService {
 
     /// 检测 Live 配置是否处于“被接管”的残留状态
     ///
-    /// 用于兜底处理：当数据库标志未写入成功（或旧版本遗留）但 Live 文件已经写成代理占位符时，
+    /// 用于兜底处理：当数据库备份缺失但 Live 文件已经写成代理占位符时，
     /// 启动流程可以据此触发恢复逻辑。
     pub fn detect_takeover_in_live_configs(&self) -> bool {
         if let Ok(config) = self.read_claude_live() {
@@ -1143,7 +1561,30 @@ impl ProxyService {
         if !path.exists() {
             return Err("Claude 配置文件不存在".to_string());
         }
-        read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))
+
+        let mut value: Value =
+            read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))?;
+
+        if value.is_null() {
+            value = json!({});
+        }
+
+        if !value.is_object() {
+            let kind = match &value {
+                Value::Null => "null",
+                Value::Bool(_) => "boolean",
+                Value::Number(_) => "number",
+                Value::String(_) => "string",
+                Value::Array(_) => "array",
+                Value::Object(_) => "object",
+            };
+            return Err(format!(
+                "Claude 配置文件格式错误：根节点必须是 JSON 对象（当前为 {kind}），路径: {}",
+                path.display()
+            ));
+        }
+
+        Ok(value)
     }
 
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {
@@ -1255,9 +1696,8 @@ impl ProxyService {
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
-        // 保存到数据库（保持 enabled 和 live_takeover_active 状态不变）
+        // 保存到数据库（保持 live_takeover_active 状态不变）
         let mut new_config = config.clone();
-        new_config.enabled = previous.enabled;
         new_config.live_takeover_active = previous.live_takeover_active;
 
         self.db
@@ -1370,6 +1810,47 @@ impl ProxyService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+    use std::env;
+    use tempfile::TempDir;
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let original_home = env::var("HOME").ok();
+            let original_userprofile = env::var("USERPROFILE").ok();
+
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+
+            match &self.original_userprofile {
+                Some(value) => env::set_var("USERPROFILE", value),
+                None => env::remove_var("USERPROFILE"),
+            }
+        }
+    }
 
     #[test]
     fn update_toml_base_url_updates_active_model_provider_base_url() {
@@ -1431,5 +1912,117 @@ model = "gpt-5.1-codex"
             .expect("base_url should exist");
 
         assert_eq!(base_url, new_url);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sync_claude_token_does_not_add_anthropic_api_key() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                    "ANTHROPIC_AUTH_TOKEN": "stale"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+
+        let live_config = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "fresh"
+            }
+        });
+
+        service
+            .sync_live_config_to_provider(&AppType::Claude, &live_config)
+            .await
+            .expect("sync");
+
+        let updated = db
+            .get_provider_by_id("p1", "claude")
+            .expect("get provider")
+            .expect("provider exists");
+        let env = updated
+            .settings_config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .expect("env object");
+
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(|v| v.as_str()),
+            Some("fresh")
+        );
+        assert!(
+            !env.contains_key("ANTHROPIC_API_KEY"),
+            "should not add ANTHROPIC_API_KEY when absent"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sync_claude_token_respects_existing_api_key_field() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                    "ANTHROPIC_API_KEY": "stale"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+
+        let live_config = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "fresh"
+            }
+        });
+
+        service
+            .sync_live_config_to_provider(&AppType::Claude, &live_config)
+            .await
+            .expect("sync");
+
+        let updated = db
+            .get_provider_by_id("p1", "claude")
+            .expect("get provider")
+            .expect("provider exists");
+        let env = updated
+            .settings_config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .expect("env object");
+
+        assert_eq!(
+            env.get("ANTHROPIC_API_KEY").and_then(|v| v.as_str()),
+            Some("fresh")
+        );
+        assert!(
+            !env.contains_key("ANTHROPIC_AUTH_TOKEN"),
+            "should not add ANTHROPIC_AUTH_TOKEN when absent"
+        );
     }
 }

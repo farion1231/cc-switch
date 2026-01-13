@@ -3,12 +3,16 @@ import { useTranslation } from "react-i18next";
 import { Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { useAllMcpServers, useToggleMcpApp } from "@/hooks/useMcp";
+import {
+  useAllMcpServers,
+  useToggleMcpApp,
+  useDeleteMcpServer,
+  useImportMcpFromApps,
+} from "@/hooks/useMcp";
 import type { McpServer } from "@/types";
 import type { AppId } from "@/lib/api/types";
 import McpFormModal from "./McpFormModal";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { useDeleteMcpServer } from "@/hooks/useMcp";
 import { Edit3, Trash2 } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import { mcpPresets } from "@/config/mcpPresets";
@@ -24,6 +28,7 @@ interface UnifiedMcpPanelProps {
  */
 export interface UnifiedMcpPanelHandle {
   openAdd: () => void;
+  openImport: () => void;
 }
 
 const UnifiedMcpPanel = React.forwardRef<
@@ -44,6 +49,7 @@ const UnifiedMcpPanel = React.forwardRef<
   const { data: serversMap, isLoading } = useAllMcpServers();
   const toggleAppMutation = useToggleMcpApp();
   const deleteServerMutation = useDeleteMcpServer();
+  const importMutation = useImportMcpFromApps();
 
   // Convert serversMap to array for easier rendering
   const serverEntries = useMemo((): Array<[string, McpServer]> => {
@@ -86,8 +92,28 @@ const UnifiedMcpPanel = React.forwardRef<
     setIsFormOpen(true);
   };
 
+  const handleImport = async () => {
+    try {
+      const count = await importMutation.mutateAsync();
+      if (count === 0) {
+        toast.success(t("mcp.unifiedPanel.noImportFound"), {
+          closeButton: true,
+        });
+      } else {
+        toast.success(t("mcp.unifiedPanel.importSuccess", { count }), {
+          closeButton: true,
+        });
+      }
+    } catch (error) {
+      toast.error(t("common.error"), {
+        description: String(error),
+      });
+    }
+  };
+
   React.useImperativeHandle(ref, () => ({
     openAdd: handleAdd,
+    openImport: handleImport,
   }));
 
   const handleDelete = (id: string) => {
@@ -129,18 +155,18 @@ const UnifiedMcpPanel = React.forwardRef<
       {/* Content - Scrollable */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
-          <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+          <div className="text-center py-12 text-muted-foreground">
             {t("mcp.loading")}
           </div>
         ) : serverEntries.length === 0 ? (
           <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center">
-              <Server size={24} className="text-gray-400 dark:text-gray-500" />
+            <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+              <Server size={24} className="text-muted-foreground" />
             </div>
-            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+            <h3 className="text-lg font-medium text-foreground mb-2">
               {t("mcp.unifiedPanel.noServers")}
             </h3>
-            <p className="text-gray-500 dark:text-gray-400 text-sm">
+            <p className="text-muted-foreground text-sm">
               {t("mcp.emptyDescription")}
             </p>
           </div>
@@ -237,9 +263,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
       {/* 左侧：服务器信息 */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          <h3 className="font-medium text-gray-900 dark:text-gray-100">
-            {name}
-          </h3>
+          <h3 className="font-medium text-foreground">{name}</h3>
           {docsUrl && (
             <Button
               type="button"
@@ -253,12 +277,12 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
           )}
         </div>
         {description && (
-          <p className="text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
+          <p className="text-sm text-muted-foreground line-clamp-2">
             {description}
           </p>
         )}
         {!description && tags && tags.length > 0 && (
-          <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
+          <p className="text-xs text-muted-foreground/70 truncate">
             {tags.join(", ")}
           </p>
         )}
@@ -269,7 +293,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
         <div className="flex items-center justify-between gap-3">
           <label
             htmlFor={`${id}-claude`}
-            className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer"
+            className="text-sm text-foreground/80 cursor-pointer"
           >
             {t("mcp.unifiedPanel.apps.claude")}
           </label>
@@ -285,7 +309,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
         <div className="flex items-center justify-between gap-3">
           <label
             htmlFor={`${id}-codex`}
-            className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer"
+            className="text-sm text-foreground/80 cursor-pointer"
           >
             {t("mcp.unifiedPanel.apps.codex")}
           </label>
@@ -301,7 +325,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
         <div className="flex items-center justify-between gap-3">
           <label
             htmlFor={`${id}-gemini`}
-            className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer"
+            className="text-sm text-foreground/80 cursor-pointer"
           >
             {t("mcp.unifiedPanel.apps.gemini")}
           </label>

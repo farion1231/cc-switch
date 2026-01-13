@@ -41,7 +41,7 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
     >
       <Download className="w-3 h-3 text-blue-500 dark:text-blue-400" />
       <span className="text-gray-700 dark:text-gray-300 font-medium">
-        v{updateInfo.availableVersion}
+        {t("settings.updateBadge")}
       </span>
       <button
         onClick={(e) => {
@@ -56,7 +56,7 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
         "
         aria-label={t("common.close")}
       >
-        <X className="w-3 h-3 text-gray-400 dark:text-gray-500" />
+        <X className="w-3 h-3 text-muted-foreground" />
       </button>
     </div>
   );

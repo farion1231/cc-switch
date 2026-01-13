@@ -19,9 +19,10 @@ pub fn get_usage_summary(
 #[tauri::command]
 pub fn get_usage_trends(
     state: State<'_, AppState>,
-    days: u32,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
 ) -> Result<Vec<DailyStats>, AppError> {
-    state.db.get_daily_trends(days)
+    state.db.get_daily_trends(start_date, end_date)
 }
 
 /// 获取 Provider 统计

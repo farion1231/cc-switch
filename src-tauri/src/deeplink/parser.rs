@@ -101,9 +101,13 @@ fn parse_provider_deeplink(
             validate_url(hp, "homepage")?;
         }
     }
+    // Validate each endpoint (supports comma-separated multiple URLs)
     if let Some(ref ep) = endpoint {
-        if !ep.is_empty() {
-            validate_url(ep, "endpoint")?;
+        for (i, url) in ep.split(',').enumerate() {
+            let trimmed = url.trim();
+            if !trimmed.is_empty() {
+                validate_url(trimmed, &format!("endpoint[{i}]"))?;
+            }
         }
     }
 

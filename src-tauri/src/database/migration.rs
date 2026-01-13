@@ -192,13 +192,16 @@ impl Database {
         tx: &rusqlite::Transaction<'_>,
         config: &MultiAppConfig,
     ) -> Result<(), AppError> {
-        for (key, state) in &config.skills.skills {
-            tx.execute(
-                "INSERT OR REPLACE INTO skills (key, installed, installed_at) VALUES (?1, ?2, ?3)",
-                params![key, state.installed, state.installed_at.timestamp()],
-            )
-            .map_err(|e| AppError::Database(format!("Migrate skill failed: {e}")))?;
-        }
+        // v3.10.0+：Skills 的 SSOT 已迁移到文件系统（~/.cc-switch/skills/）+ 数据库统一结构。
+        //
+        // 旧版 config.json 里的 `skills.skills` 仅记录“安装状态”，但不包含完整元数据，
+        // 且无法保证 SSOT 目录中一定存在对应的 skill 文件。
+        //
+        // 因此这里不再直接把旧的安装状态写入新 skills 表，避免产生“数据库显示已安装但文件缺失”的不一致。
+        // 迁移后可通过：
+        // - 前端「导入已有」(扫描各应用的 skills 目录并复制到 SSOT)
+        // - 或后续启动时的自动扫描逻辑
+        // 来重建已安装技能记录。
 
         for repo in &config.skills.repos {
             tx.execute(

@@ -75,6 +75,11 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
           queryKey: ["providers", appId],
         });
 
+        // 刷新故障转移队列（因为队列顺序依赖 sort_index）
+        await queryClient.invalidateQueries({
+          queryKey: ["failoverQueue", appId],
+        });
+
         // 更新托盘菜单以反映新的排序（失败不影响主操作）
         try {
           await providersApi.updateTrayMenu();

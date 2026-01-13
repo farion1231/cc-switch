@@ -8,7 +8,7 @@ interface PromptToggleProps {
 
 /**
  * Toggle 开关组件（提示词专用）
- * 启用时为蓝色，禁用时为灰色
+ * 启用时为绿色，禁用时为灰色
  */
 const PromptToggle: React.FC<PromptToggleProps> = ({
   enabled,
@@ -23,8 +23,8 @@ const PromptToggle: React.FC<PromptToggleProps> = ({
       disabled={disabled}
       onClick={() => onChange(!enabled)}
       className={`
-        relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/20
-        ${enabled ? "bg-blue-500 dark:bg-blue-600" : "bg-gray-300 dark:bg-gray-600"}
+        relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500/20
+        ${enabled ? "bg-emerald-500 dark:bg-emerald-600" : "bg-gray-300 dark:bg-gray-600"}
         ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
       `}
     >

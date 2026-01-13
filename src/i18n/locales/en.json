@@ -17,6 +17,7 @@
     "about": "About",
     "version": "Version",
     "loading": "Loading...",
+    "notInstalled": "Not installed",
     "success": "Success",
     "error": "Error",
     "unknown": "Unknown",
@@ -28,7 +29,14 @@
     "formatError": "Format failed: {{error}}",
     "copy": "Copy",
     "view": "View",
-    "back": "Back"
+    "back": "Back",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing...",
+    "all": "All",
+    "search": "Search",
+    "reset": "Reset",
+    "actions": "Actions",
+    "deleting": "Deleting..."
   },
   "apiKeyInput": {
     "placeholder": "Enter API Key",
@@ -45,7 +53,11 @@
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Common Config Snippet",
     "commonConfigHint": "This snippet will be merged into settings.json when 'Write Common Config' is checked",
-    "fullSettingsHint": "Full Claude Code settings.json content"
+    "fullSettingsHint": "Full Claude Code settings.json content",
+    "extractFromCurrent": "Extract from Editor",
+    "extractNoCommonConfig": "No common config available to extract from editor",
+    "extractFailed": "Extract failed: {{error}}",
+    "saveFailed": "Save failed: {{error}}"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
@@ -58,6 +70,8 @@
     "exitEditMode": "Exit Edit Mode"
   },
   "provider": {
+    "tabProvider": "Provider",
+    "tabUniversal": "Universal",
     "noProviders": "No providers added yet",
     "noProvidersDescription": "Click the \"Add Provider\" button in the top right to configure your first API provider",
     "currentlyUsing": "Currently Using",
@@ -79,6 +93,12 @@
     "removeFromClaudePlugin": "Remove from Claude plugin",
     "dragToReorder": "Drag to reorder",
     "dragHandle": "Drag to reorder",
+    "searchPlaceholder": "Search name, notes, or URL...",
+    "searchAriaLabel": "Search providers",
+    "searchScopeHint": "Matches provider name, notes, and URL.",
+    "searchCloseHint": "Press Esc to close",
+    "searchCloseAriaLabel": "Close provider search",
+    "noSearchResults": "No providers match your search.",
     "duplicate": "Duplicate",
     "sortUpdateFailed": "Failed to update sort order",
     "configureUsage": "Configure usage query",
@@ -122,6 +142,8 @@
     "appliedToClaudePlugin": "Applied to Claude plugin",
     "removedFromClaudePlugin": "Removed from Claude plugin",
     "syncClaudePluginFailed": "Sync Claude plugin failed",
+    "skipClaudeOnboardingFailed": "Failed to skip Claude Code first-run confirmation",
+    "clearClaudeOnboardingSkipFailed": "Failed to restore Claude Code first-run confirmation",
     "updateSuccess": "Provider updated successfully",
     "updateFailed": "Failed to update provider: {{error}}",
     "deleteSuccess": "Provider deleted",
@@ -138,6 +160,48 @@
     "general": "General",
     "tabGeneral": "General",
     "tabAdvanced": "Advanced",
+    "advanced": {
+      "configDir": {
+        "title": "Configuration Directory",
+        "description": "Manage storage paths for Claude, Codex and Gemini configurations"
+      },
+      "proxy": {
+        "title": "Local Proxy",
+        "description": "Control proxy service toggle, view status and port info",
+        "running": "Running",
+        "stopped": "Stopped"
+      },
+      "modelTest": {
+        "title": "Model Test Config",
+        "description": "Configure default models and prompts for model testing"
+      },
+      "failover": {
+        "title": "Auto Failover",
+        "description": "Configure failover queue and circuit breaker strategy"
+      },
+      "pricing": {
+        "title": "Cost Pricing",
+        "description": "Manage token pricing rules for each model"
+      },
+      "globalProxy": {
+        "title": "Global Outbound Proxy",
+        "description": "Configure proxy for CC Switch to access external APIs"
+      },
+      "data": {
+        "title": "Data Management",
+        "description": "Import/export configurations and backup/restore"
+      },
+      "rectifier": {
+        "title": "Rectifier",
+        "description": "Automatically fix API request compatibility issues",
+        "enabled": "Enable Rectifier",
+        "enabledDescription": "Master switch, all rectification features will be disabled when turned off",
+        "requestGroup": "Request Rectification",
+        "responseGroup": "Response Rectification",
+        "thinkingSignature": "Thinking Signature Rectification",
+        "thinkingSignatureDescription": "Automatically fix Claude API errors caused by thinking signature validation failures"
+      }
+    },
     "language": "Language",
     "languageHint": "Preview interface language immediately after switching, takes effect permanently after saving.",
     "theme": "Theme",
@@ -146,7 +210,7 @@
     "themeDark": "Dark",
     "themeSystem": "System",
     "importExport": "SQL Import/Export",
-    "importExportHint": "Import or export database SQL backups for migration or restore.",
+    "importExportHint": "Import or export database SQL backups for migration or restore (import supports only backups exported by CC Switch).",
     "exportConfig": "Export SQL Backup",
     "selectConfigFile": "Select SQL File",
     "noFileSelected": "No configuration file selected.",
@@ -162,7 +226,7 @@
     "selectFileFailed": "Please choose a valid SQL backup file",
     "configCorrupted": "SQL file may be corrupted or invalid",
     "backupId": "Backup ID",
-    "autoReload": "Data will refresh automatically in 2 seconds...",
+    "autoReload": "Data refreshed",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
@@ -175,6 +239,8 @@
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
     "enableClaudePluginIntegration": "Apply to Claude Code extension",
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
+    "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
+    "skipClaudeOnboardingDescription": "When enabled, Claude Code will skip the first-run confirmation",
     "configDirectoryOverride": "Configuration Directory Override (Advanced)",
     "configDirectoryDescription": "When using Claude Code or Codex in environments like WSL, you can manually specify the configuration directory to the one in WSL to keep provider data consistent with the main environment.",
     "appConfigDir": "CC Switch Configuration Directory",
@@ -199,12 +265,18 @@
     "aboutHint": "View version information and update status.",
     "portableMode": "Portable mode: updates require manual download.",
     "updateAvailable": "New version available: {{version}}",
+    "updateBadge": "Update available",
     "updateFailed": "Update installation failed, attempted to open download page.",
     "checkUpdateFailed": "Failed to check for updates, please try again later.",
     "openReleaseNotesFailed": "Failed to open release notes",
     "releaseNotes": "Release Notes",
     "viewReleaseNotes": "View release notes for this version",
     "viewCurrentReleaseNotes": "View current version release notes",
+    "oneClickInstall": "One-click Install",
+    "oneClickInstallHint": "Install Claude Code / Codex / Gemini CLI",
+    "localEnvCheck": "Local environment check",
+    "installCommandsCopied": "Install commands copied",
+    "installCommandsCopyFailed": "Copy failed, please copy manually.",
     "importFailedError": "Import config failed: {{message}}",
     "exportFailedError": "Export config failed:",
     "restartRequired": "Restart Required",
@@ -213,7 +285,21 @@
     "restartLater": "Restart Later",
     "restartFailed": "Application restart failed, please manually close and reopen.",
     "devModeRestartHint": "Dev Mode: Automatic restart not supported, please manually restart the application.",
-    "saving": "Saving..."
+    "saving": "Saving...",
+    "globalProxy": {
+      "label": "Global Proxy",
+      "hint": "Proxy all requests (API, Skills download, etc.). Leave empty for direct connection.",
+      "username": "Username (optional)",
+      "password": "Password (optional)",
+      "test": "Test Connection",
+      "scan": "Scan Local Proxies",
+      "clear": "Clear",
+      "scanFailed": "Scan failed: {{error}}",
+      "saved": "Proxy settings saved",
+      "saveFailed": "Save failed: {{error}}",
+      "testSuccess": "Connected! Latency {{latency}}ms",
+      "testFailed": "Connection failed: {{error}}"
+    }
   },
   "apps": {
     "claude": "Claude Code",
@@ -264,7 +350,10 @@
       "zhipu": "Zhipu GLM is an official partner of CC Switch. Use this link to top up and get a 10% discount",
       "packycode": "PackyCode is an official partner of CC Switch. Register using this link and enter \"cc-switch\" promo code during recharge to get 10% off",
       "minimax_cn": "MiniMax Coding Plan Special Offer, Starter from ¥9.9",
-      "minimax_en": "MiniMax Coding Plan Black Friday, Starter is now $2/mo (80% OFF!)"
+      "minimax_en": "MiniMax Coding Plan Black Friday, Starter is now $2/mo (80% OFF!)",
+      "dmxapi": "Claude Code exclusive model 66% OFF now!",
+      "cubence": "Cubence is an official partner of CC Switch. Register using this link and enter \"CCSWITCH\" promo code during recharge to get 10% off every top-up",
+      "aigocode": "AIGoCode is an official partner of CC Switch. Register using this link and get 10% bonus credit on your first top-up!"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
@@ -288,6 +377,9 @@
     "visitWebsite": "Visit {{url}}",
     "anthropicModel": "Main Model",
     "anthropicSmallFastModel": "Fast Model",
+    "anthropicReasoningModel": "Reasoning Model (Thinking)",
+    "openrouterCompatMode": "OpenRouter Compatibility Mode",
+    "openrouterCompatModeHint": "Use OpenAI Chat Completions interface and convert to Anthropic SSE.",
     "anthropicDefaultHaikuModel": "Default Haiku Model",
     "anthropicDefaultSonnetModel": "Default Sonnet Model",
     "anthropicDefaultOpusModel": "Default Opus Model",
@@ -336,7 +428,11 @@
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Codex Common Config Snippet",
     "commonConfigHint": "This snippet will be appended to the end of config.toml when 'Write Common Config' is checked",
-    "apiUrlLabel": "API Request URL"
+    "apiUrlLabel": "API Request URL",
+    "extractFromCurrent": "Extract from Editor",
+    "extractNoCommonConfig": "No common config available to extract from editor",
+    "extractFailed": "Extract failed: {{error}}",
+    "saveFailed": "Save failed: {{error}}"
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
@@ -346,7 +442,18 @@
     "writeCommonConfig": "Write Common Config",
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Gemini Common Config Snippet",
-    "commonConfigHint": "Common config snippet will be merged into all Gemini providers with it enabled"
+    "commonConfigHint": "This snippet writes to Gemini .env (GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY are not allowed)",
+    "extractFromCurrent": "Extract from Editor",
+    "extractNoCommonConfig": "No common config available to extract from editor",
+    "extractFailed": "Extract failed: {{error}}",
+    "saveFailed": "Save failed: {{error}}",
+    "extractedConfigInvalid": "Extracted config format is invalid",
+    "invalidJsonFormat": "Common config snippet format error (must be valid JSON)",
+    "commonConfigInvalidKeys": "Common config snippet must not include GOOGLE_GEMINI_BASE_URL or GEMINI_API_KEY (found: {{keys}})",
+    "commonConfigInvalidValues": "Common config snippet values must be strings",
+    "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
+    "configMergeFailed": "Config merge failed: {{error}}",
+    "configReplaceFailed": "Config replace failed: {{error}}"
   },
   "providerPreset": {
     "label": "Provider Preset",
@@ -355,6 +462,50 @@
     "hint": "You can continue to adjust the fields below after selecting a preset."
   },
   "usage": {
+    "title": "Usage Statistics",
+    "subtitle": "View AI model usage and cost statistics",
+    "today": "24 Hours",
+    "last7days": "7 Days",
+    "last30days": "30 Days",
+    "totalRequests": "Total Requests",
+    "totalCost": "Total Cost",
+    "cost": "Cost",
+    "perMillion": "(per million)",
+    "trends": "Usage Trends",
+    "rangeToday": "Last 24 hours (hourly)",
+    "rangeLast7Days": "Last 7 days",
+    "rangeLast30Days": "Last 30 days",
+    "totalTokens": "Total Tokens",
+    "cacheTokens": "Cache Tokens",
+    "requestLogs": "Request Logs",
+    "providerStats": "Provider Stats",
+    "modelStats": "Model Stats",
+    "time": "Time",
+    "provider": "Provider",
+    "billingModel": "Billing Model",
+    "inputTokens": "Input",
+    "outputTokens": "Output",
+    "cacheReadTokens": "Cache Hit",
+    "cacheCreationTokens": "Cache Creation",
+    "timingInfo": "Duration/TTFT",
+    "status": "Status",
+    "noData": "No data",
+    "unknownProvider": "Unknown Provider",
+    "stream": "Stream",
+    "nonStream": "Non-stream",
+    "totalRecords": "{{total}} records total",
+    "modelPricing": "Model Pricing",
+    "loadPricingError": "Failed to load pricing data",
+    "modelPricingDesc": "Configure token costs for each model",
+    "noPricingData": "No pricing data. Click \"Add\" to add model pricing configuration.",
+    "model": "Model",
+    "displayName": "Display Name",
+    "inputCost": "Input Cost",
+    "outputCost": "Output Cost",
+    "cacheReadCost": "Cache Hit",
+    "cacheWriteCost": "Cache Creation",
+    "deleteConfirmTitle": "Confirm Delete",
+    "deleteConfirmDesc": "Are you sure you want to delete this model pricing? This action cannot be undone.",
     "queryFailed": "Query failed",
     "refreshUsage": "Refresh usage",
     "planUsage": "Plan usage",
@@ -368,7 +519,19 @@
     "daysAgo": "{{count}} day ago",
     "multiplePlans": "{{count}} plans",
     "expand": "Expand",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "modelIdPlaceholder": "e.g., claude-3-5-sonnet-20241022",
+    "displayNamePlaceholder": "e.g., Claude 3.5 Sonnet",
+    "appType": "App Type",
+    "allApps": "All Apps",
+    "statusCode": "Status Code",
+    "searchProviderPlaceholder": "Search provider...",
+    "searchModelPlaceholder": "Search model...",
+    "timeRange": "Time Range",
+    "input": "Input",
+    "output": "Output",
+    "cacheWrite": "Creation",
+    "cacheRead": "Hit"
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -438,7 +601,9 @@
     "tip3": "• Entire config must be wrapped in () to form object literal expression"
   },
   "errors": {
-    "usage_query_failed": "Usage query failed"
+    "usage_query_failed": "Usage query failed",
+    "configLoadFailedTitle": "Configuration Load Failed",
+    "configLoadFailedMessage": "Unable to read configuration file:\n{{path}}\n\nError details:\n{{detail}}\n\nPlease check if the JSON is valid, or restore from a backup file (e.g., config.json.bak) in the same directory.\n\nThe app will exit so you can fix this."
   },
   "presetSelector": {
     "title": "Select Configuration Type",
@@ -449,6 +614,9 @@
   },
   "mcp": {
     "title": "MCP Management",
+    "import": "Import",
+    "importExisting": "Import Existing",
+    "addMcp": "Add MCP",
     "claudeTitle": "Claude Code MCP Management",
     "codexTitle": "Codex MCP Management",
     "geminiTitle": "Gemini MCP Management",
@@ -460,6 +628,8 @@
       "deleteConfirm": "Are you sure you want to delete server \"{{id}}\"? This action cannot be undone.",
       "noServers": "No servers yet",
       "enabledApps": "Enabled Apps",
+      "noImportFound": "No MCP servers to import found. All servers are already managed by CC Switch.",
+      "importSuccess": "Successfully imported {{count}} MCP servers",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -677,8 +847,8 @@
   },
   "skills": {
     "manage": "Skills",
-    "title": "Claude Skills Management",
-    "description": "Discover and install Claude skills from popular repositories to extend Claude Code/Codex capabilities",
+    "title": "Skills Management",
+    "description": "Discover and install skills from popular repositories to extend Claude Code/Codex/Gemini capabilities",
     "refresh": "Refresh",
     "refreshing": "Refreshing...",
     "repoManager": "Repository Management",
@@ -754,7 +924,25 @@
       "installed": "Installed",
       "uninstalled": "Not installed"
     },
-    "noResults": "No matching skills found"
+    "noResults": "No matching skills found",
+    "noInstalled": "No skills installed",
+    "noInstalledDescription": "Discover and install skills from repositories, or import existing skills",
+    "discover": "Discover Skills",
+    "import": "Import Existing",
+    "importDescription": "Select skills to import into CC Switch unified management",
+    "importSuccess": "Successfully imported {{count}} skills",
+    "importSelected": "Import Selected ({{count}})",
+    "noUnmanagedFound": "No skills to import found. All skills are already managed by CC Switch.",
+    "foundIn": "Found in",
+    "local": "Local",
+    "uninstallConfirm": "Are you sure you want to uninstall \"{{name}}\"? This will remove the skill from all apps.",
+    "uninstallInMainPanel": "Please uninstall skills from the main panel",
+    "notFound": "Skill not found",
+    "apps": {
+      "claude": "Claude",
+      "codex": "Codex",
+      "gemini": "Gemini"
+    }
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",
@@ -798,6 +986,7 @@
     "configDetails": "Config Details",
     "configUrl": "Config File URL",
     "configMergeError": "Failed to merge configuration file",
+    "primaryEndpoint": "Primary",
     "mcp": {
       "title": "Batch Import MCP Servers",
       "targetApps": "Target Apps",
@@ -837,13 +1026,25 @@
     "label": "Icon",
     "colorLabel": "Icon Color",
     "selectIcon": "Select Icon",
-    "preview": "Preview"
+    "preview": "Preview",
+    "clickToChange": "Click to change icon",
+    "clickToSelect": "Click to select icon"
   },
   "migration": {
-    "success": "Configuration migrated successfully"
+    "success": "Configuration migrated successfully",
+    "skillsSuccess": "Automatically imported {{count}} skill(s) into unified management",
+    "skillsFailed": "Failed to auto import skills",
+    "skillsFailedDescription": "Open the Skills page and click \"Import Existing\" to import manually (or restart and try again)."
   },
   "agents": {
     "title": "Agents"
+  },
+  "health": {
+    "operational": "Operational",
+    "degraded": "Degraded",
+    "failed": "Failed",
+    "circuitOpen": "Circuit Open",
+    "consecutiveFailures": "{{count}} consecutive failures"
   },
   "templates": {
     "title": "Template Market",
@@ -929,6 +1130,106 @@
     }
   },
   "proxy": {
+    "panel": {
+      "serviceAddress": "Service Address",
+      "addressCopied": "Address copied",
+      "currentProvider": "Current Provider:",
+      "waitingFirstRequest": "Current Provider: Waiting for first request...",
+      "stoppedTitle": "Proxy Service Stopped",
+      "stoppedDescription": "Use the toggle in the top right to start the service",
+      "openSettings": "Configure Proxy Service",
+      "stats": {
+        "activeConnections": "Active Connections",
+        "totalRequests": "Total Requests",
+        "successRate": "Success Rate",
+        "uptime": "Uptime"
+      }
+    },
+    "settings": {
+      "title": "Proxy Service Settings",
+      "description": "Configure local proxy server listening address, port and runtime parameters. Changes take effect immediately after saving.",
+      "alert": {
+        "autoApply": "Changes will be automatically synced to the running proxy service without manual restart."
+      },
+      "basic": {
+        "title": "Basic Settings",
+        "description": "Configure proxy service listening address and port."
+      },
+      "advanced": {
+        "title": "Advanced Parameters",
+        "description": "Control request stability and logging."
+      },
+      "timeout": {
+        "title": "Timeout Settings",
+        "description": "Configure timeout for streaming and non-streaming requests."
+      },
+      "fields": {
+        "listenAddress": {
+          "label": "Listen Address",
+          "placeholder": "127.0.0.1",
+          "description": "IP address the proxy server listens on (recommended: 127.0.0.1)"
+        },
+        "listenPort": {
+          "label": "Listen Port",
+          "placeholder": "15721",
+          "description": "Port number the proxy server listens on (1024 ~ 65535)"
+        },
+        "maxRetries": {
+          "label": "Max Retries",
+          "placeholder": "3",
+          "description": "Number of retries on request failure (0 ~ 10)"
+        },
+        "requestTimeout": {
+          "label": "Request Timeout (sec)",
+          "placeholder": "0 (unlimited) or 300",
+          "description": "Maximum wait time for a single request (0 = unlimited, or 10 ~ 600 seconds)"
+        },
+        "enableLogging": {
+          "label": "Enable Logging",
+          "description": "Log all proxy requests for troubleshooting"
+        },
+        "streamingFirstByteTimeout": {
+          "label": "Streaming First Byte Timeout (sec)",
+          "description": "Maximum time to wait for the first data chunk"
+        },
+        "streamingIdleTimeout": {
+          "label": "Streaming Idle Timeout (sec)",
+          "description": "Maximum interval between data chunks"
+        },
+        "nonStreamingTimeout": {
+          "label": "Non-Streaming Timeout (sec)",
+          "description": "Total timeout for non-streaming requests"
+        }
+      },
+      "validation": {
+        "addressInvalid": "Please enter a valid IP address",
+        "portMin": "Port must be greater than 1024",
+        "portMax": "Port must be less than 65535",
+        "retryMin": "Retry count cannot be negative",
+        "retryMax": "Retry count cannot exceed 10",
+        "timeoutNonNegative": "Timeout cannot be negative",
+        "timeoutMax": "Timeout cannot exceed 600 seconds",
+        "timeoutRange": "Please enter 0 or a value between 10-600",
+        "streamingTimeoutMin": "Timeout must be at least 5 seconds",
+        "streamingTimeoutMax": "Timeout cannot exceed 300 seconds"
+      },
+      "actions": {
+        "save": "Save Configuration"
+      },
+      "toast": {
+        "saved": "Proxy configuration saved",
+        "saveFailed": "Save failed: {{error}}"
+      },
+      "invalidPort": "Invalid port, please enter a number between 1024-65535",
+      "invalidAddress": "Invalid address, please enter a valid IP address (e.g. 127.0.0.1) or localhost",
+      "configSaved": "Proxy configuration saved",
+      "configSaveFailed": "Failed to save configuration",
+      "restartRequired": "Restart proxy service for address or port changes to take effect"
+    },
+    "switchFailed": "Switch failed: {{error}}",
+    "failover": {
+      "proxyRequired": "Proxy service must be started to configure failover"
+    },
     "failoverQueue": {
       "title": "Failover Queue",
       "description": "Manage failover order for each app's providers",
@@ -950,12 +1251,13 @@
       "info": "When the failover queue has multiple providers, the system will try them in priority order when requests fail. When a provider reaches the consecutive failure threshold, the circuit breaker will open and skip it temporarily.",
       "configSaved": "Auto failover config saved",
       "configSaveFailed": "Failed to save",
+      "validationFailed": "The following fields are out of valid range: {{fields}}",
       "retrySettings": "Retry & Timeout Settings",
       "failureThreshold": "Failure Threshold",
       "failureThresholdHint": "Open circuit breaker after this many consecutive failures (recommended: 3-10)",
       "timeout": "Recovery Wait Time (seconds)",
       "timeoutHint": "Wait this long before trying to recover after circuit opens (recommended: 30-120)",
-      "circuitBreakerSettings": "Circuit Breaker Advanced Settings",
+      "circuitBreakerSettings": "Circuit Breaker Settings",
       "successThreshold": "Recovery Success Threshold",
       "successThresholdHint": "Close circuit breaker after this many successes in half-open state",
       "errorRate": "Error Rate Threshold (%)",
@@ -972,5 +1274,88 @@
       "errorRateLabel": "Error Rate Threshold",
       "errorRateExplain": "Open circuit breaker when error rate exceeds this value, even if failure threshold not reached"
     }
+  },
+  "streamCheck": {
+    "configSaved": "Health check config saved",
+    "configSaveFailed": "Save failed",
+    "testModels": "Test Models",
+    "claudeModel": "Claude Model",
+    "codexModel": "Codex Model",
+    "geminiModel": "Gemini Model",
+    "checkParams": "Check Parameters",
+    "timeout": "Timeout (seconds)",
+    "maxRetries": "Max Retries",
+    "degradedThreshold": "Degraded Threshold (ms)",
+    "testPrompt": "Test Prompt"
+  },
+  "proxyConfig": {
+    "proxyEnabled": "Proxy Enabled",
+    "appTakeover": "Proxy Enabled",
+    "perAppConfig": "Per-App Config",
+    "circuitBreaker": "Circuit Breaker",
+    "circuitBreakerSettings": "Circuit Breaker Settings",
+    "failureThreshold": "Failure Threshold",
+    "successThreshold": "Success Threshold",
+    "recoveryTimeout": "Recovery Timeout",
+    "errorRateThreshold": "Error Rate Threshold",
+    "minRequests": "Min Requests",
+    "timeoutConfig": "Timeout Config",
+    "streamingFirstByte": "Streaming First Byte Timeout",
+    "streamingIdle": "Streaming Idle Timeout",
+    "nonStreaming": "Non-Streaming Timeout"
+  },
+  "circuitBreaker": {
+    "failureThreshold": "Failure Threshold",
+    "successThreshold": "Success Threshold",
+    "timeoutSeconds": "Timeout (seconds)",
+    "errorRateThreshold": "Error Rate Threshold",
+    "minRequests": "Min Requests",
+    "validationFailed": "The following fields are out of valid range: {{fields}}",
+    "configSaved": "Circuit breaker config saved",
+    "saveFailed": "Failed to save"
+  },
+  "universalProvider": {
+    "title": "Universal Provider",
+    "description": "Universal providers manage Claude, Codex, and Gemini configurations simultaneously. Changes are automatically synced to all enabled apps.",
+    "add": "Add Universal Provider",
+    "edit": "Edit Universal Provider",
+    "empty": "No universal providers yet",
+    "emptyHint": "Click the \"Add Universal Provider\" button below to create one",
+    "selectPreset": "Select Preset Type",
+    "name": "Name",
+    "namePlaceholder": "e.g., My NewAPI",
+    "baseUrl": "API URL",
+    "apiKey": "API Key",
+    "websiteUrl": "Website URL",
+    "websiteUrlPlaceholder": "https://example.com (optional, displayed in the list)",
+    "notes": "Notes",
+    "notesPlaceholder": "Optional: Add notes",
+    "enabledApps": "Enabled Apps",
+    "modelConfig": "Model Configuration",
+    "model": "Model",
+    "sync": "Sync to Apps",
+    "synced": "Synced to all apps",
+    "syncError": "Sync failed",
+    "noAppsEnabled": "No apps enabled",
+    "added": "Universal provider added",
+    "addedAndSynced": "Universal provider added and synced",
+    "updated": "Universal provider updated",
+    "deleted": "Universal provider deleted",
+    "addSuccess": "Universal provider added successfully",
+    "addFailed": "Failed to add universal provider",
+    "manage": "Manage",
+    "loadError": "Failed to load universal providers",
+    "saveError": "Failed to save universal provider",
+    "deleteError": "Failed to delete universal provider",
+    "deleteConfirmTitle": "Delete Universal Provider",
+    "deleteConfirmDescription": "Are you sure you want to delete \"{{name}}\"? This will also delete its generated provider configurations in each app.",
+    "syncConfirmTitle": "Sync Universal Provider",
+    "syncConfirmDescription": "Syncing \"{{name}}\" will overwrite the associated provider configurations in Claude, Codex, and Gemini. Do you want to continue?",
+    "syncConfirm": "Sync",
+    "saveAndSync": "Save & Sync",
+    "savedAndSynced": "Saved and synced to all apps",
+    "saveAndSyncError": "Failed to save and sync",
+    "configJsonPreview": "Config JSON Preview",
+    "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)"
   }
 }

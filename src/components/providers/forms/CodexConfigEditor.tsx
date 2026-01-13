@@ -26,6 +26,10 @@ interface CodexConfigEditorProps {
   authError: string;
 
   configError: string; // config.toml 错误提示
+
+  onExtract?: () => void;
+
+  isExtracting?: boolean;
 }
 
 const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
@@ -41,6 +45,8 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
   commonConfigError,
   authError,
   configError,
+  onExtract,
+  isExtracting,
 }) => {
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
@@ -79,6 +85,8 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
         value={commonConfigSnippet}
         onChange={onCommonConfigSnippetChange}
         error={commonConfigError}
+        onExtract={onExtract}
+        isExtracting={isExtracting}
       />
     </div>
   );

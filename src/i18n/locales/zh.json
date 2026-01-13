@@ -17,6 +17,7 @@
     "about": "关于",
     "version": "版本",
     "loading": "加载中...",
+    "notInstalled": "未安装",
     "success": "成功",
     "error": "错误",
     "unknown": "未知",
@@ -28,7 +29,14 @@
     "formatError": "格式化失败：{{error}}",
     "copy": "复制",
     "view": "查看",
-    "back": "返回"
+    "back": "返回",
+    "refresh": "刷新",
+    "refreshing": "刷新中...",
+    "all": "全部",
+    "search": "查询",
+    "reset": "重置",
+    "actions": "操作",
+    "deleting": "删除中..."
   },
   "apiKeyInput": {
     "placeholder": "请输入API Key",
@@ -45,7 +53,11 @@
     "editCommonConfig": "编辑通用配置",
     "editCommonConfigTitle": "编辑通用配置片段",
     "commonConfigHint": "该片段会在勾选\"写入通用配置\"时合并到 settings.json 中",
-    "fullSettingsHint": "完整的 Claude Code settings.json 配置内容"
+    "fullSettingsHint": "完整的 Claude Code settings.json 配置内容",
+    "extractFromCurrent": "从编辑内容提取",
+    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
+    "extractFailed": "提取失败: {{error}}",
+    "saveFailed": "保存失败: {{error}}"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
@@ -58,6 +70,8 @@
     "exitEditMode": "退出编辑模式"
   },
   "provider": {
+    "tabProvider": "供应商",
+    "tabUniversal": "统一供应商",
     "noProviders": "还没有添加任何供应商",
     "noProvidersDescription": "点击右上角的\"添加供应商\"按钮开始配置您的第一个API供应商",
     "currentlyUsing": "当前使用",
@@ -79,6 +93,12 @@
     "removeFromClaudePlugin": "从 Claude 插件移除",
     "dragToReorder": "拖拽以重新排序",
     "dragHandle": "拖拽排序",
+    "searchPlaceholder": "按名称/备注/网址搜索供应商...",
+    "searchAriaLabel": "搜索供应商",
+    "searchScopeHint": "根据名称、备注和官网链接匹配结果。",
+    "searchCloseHint": "按 Esc 关闭",
+    "searchCloseAriaLabel": "关闭供应商搜索",
+    "noSearchResults": "没有符合搜索条件的供应商。",
     "duplicate": "复制",
     "sortUpdateFailed": "排序更新失败",
     "configureUsage": "配置用量查询",
@@ -122,6 +142,8 @@
     "appliedToClaudePlugin": "已应用到 Claude 插件",
     "removedFromClaudePlugin": "已从 Claude 插件移除",
     "syncClaudePluginFailed": "同步 Claude 插件失败",
+    "skipClaudeOnboardingFailed": "跳过 Claude Code 初次安装确认失败",
+    "clearClaudeOnboardingSkipFailed": "恢复 Claude Code 初次安装确认失败",
     "updateSuccess": "供应商更新成功",
     "updateFailed": "更新供应商失败：{{error}}",
     "deleteSuccess": "供应商已删除",
@@ -138,6 +160,48 @@
     "general": "通用",
     "tabGeneral": "通用",
     "tabAdvanced": "高级",
+    "advanced": {
+      "configDir": {
+        "title": "配置文件目录",
+        "description": "管理 Claude、Codex 和 Gemini 的配置存储路径"
+      },
+      "proxy": {
+        "title": "本地代理",
+        "description": "控制代理服务开关、查看状态与端口信息",
+        "running": "运行中",
+        "stopped": "已停止"
+      },
+      "modelTest": {
+        "title": "模型测试配置",
+        "description": "配置模型测试使用的默认模型和提示词"
+      },
+      "failover": {
+        "title": "自动故障转移",
+        "description": "配置故障转移队列和熔断策略"
+      },
+      "pricing": {
+        "title": "成本定价",
+        "description": "管理各模型 Token 计费规则"
+      },
+      "globalProxy": {
+        "title": "全局出站代理",
+        "description": "配置 CC Switch 访问外部 API 时使用的代理"
+      },
+      "data": {
+        "title": "数据管理",
+        "description": "导入导出配置与备份恢复"
+      },
+      "rectifier": {
+        "title": "整流器",
+        "description": "自动修复 API 请求中的兼容性问题",
+        "enabled": "启用整流器",
+        "enabledDescription": "总开关，关闭后所有整流功能将被禁用",
+        "requestGroup": "请求整流",
+        "responseGroup": "响应整流",
+        "thinkingSignature": "Thinking 签名整流",
+        "thinkingSignatureDescription": "自动修复 Claude API 中因 thinking 签名校验失败导致的请求错误"
+      }
+    },
     "language": "界面语言",
     "languageHint": "切换后立即预览界面语言，保存后永久生效。",
     "theme": "外观主题",
@@ -146,7 +210,7 @@
     "themeDark": "深色",
     "themeSystem": "跟随系统",
     "importExport": "SQL 导入导出",
-    "importExportHint": "导入/导出数据库 SQL 备份，便于备份或迁移。",
+    "importExportHint": "导入/导出数据库 SQL 备份（仅支持导入由 CC Switch 导出的备份），便于备份或迁移。",
     "exportConfig": "导出 SQL 备份",
     "selectConfigFile": "选择 SQL 文件",
     "noFileSelected": "尚未选择配置文件。",
@@ -162,7 +226,7 @@
     "selectFileFailed": "请选择有效的 SQL 备份文件",
     "configCorrupted": "SQL 文件可能已损坏或格式不正确",
     "backupId": "备份ID",
-    "autoReload": "数据将在2秒后自动刷新...",
+    "autoReload": "数据已刷新",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
@@ -175,6 +239,8 @@
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
     "enableClaudePluginIntegration": "应用到 Claude Code 插件",
     "enableClaudePluginIntegrationDescription": "开启后 Vscode Claude Code 插件的供应商将随本软件切换",
+    "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
+    "skipClaudeOnboardingDescription": "开启后跳过 Claude Code 初次安装确认",
     "configDirectoryOverride": "配置目录覆盖（高级）",
     "configDirectoryDescription": "在 WSL 等环境使用 Claude Code 或 Codex 的时候，可手动指定为 WSL 里的配置目录，供应商数据与主环境保持一致。",
     "appConfigDir": "CC Switch 配置目录",
@@ -199,12 +265,18 @@
     "aboutHint": "查看版本信息与更新状态。",
     "portableMode": "当前为便携版，更新需手动下载。",
     "updateAvailable": "检测到新版本：{{version}}",
+    "updateBadge": "有更新可用",
     "updateFailed": "更新安装失败，已尝试打开下载页面。",
     "checkUpdateFailed": "检查更新失败，请稍后重试。",
     "openReleaseNotesFailed": "打开更新日志失败",
     "releaseNotes": "更新日志",
     "viewReleaseNotes": "查看该版本更新日志",
     "viewCurrentReleaseNotes": "查看当前版本更新日志",
+    "oneClickInstall": "一键安装",
+    "oneClickInstallHint": "安装 Claude Code / Codex / Gemini CLI",
+    "localEnvCheck": "本地环境检查",
+    "installCommandsCopied": "安装命令已复制",
+    "installCommandsCopyFailed": "复制失败，请手动复制。",
     "importFailedError": "导入配置失败：{{message}}",
     "exportFailedError": "导出配置失败:",
     "restartRequired": "需要重启应用",
@@ -213,7 +285,21 @@
     "restartLater": "稍后重启",
     "restartFailed": "应用重启失败，请手动关闭后重新打开。",
     "devModeRestartHint": "开发模式下不支持自动重启，请手动重新启动应用。",
-    "saving": "正在保存..."
+    "saving": "正在保存...",
+    "globalProxy": {
+      "label": "全局代理",
+      "hint": "代理所有请求（API、Skills 下载等）。留空表示直连。",
+      "username": "用户名（可选）",
+      "password": "密码（可选）",
+      "test": "测试连接",
+      "scan": "扫描本地代理",
+      "clear": "清除",
+      "scanFailed": "扫描失败：{{error}}",
+      "saved": "代理设置已保存",
+      "saveFailed": "保存失败：{{error}}",
+      "testSuccess": "连接成功！延迟 {{latency}}ms",
+      "testFailed": "连接失败：{{error}}"
+    }
   },
   "apps": {
     "claude": "Claude Code",
@@ -264,7 +350,10 @@
       "zhipu": "智谱 GLM 是 CC Switch 的官方合作伙伴，使用此链接充值可以获得9折优惠",
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
       "minimax_cn": "MiniMax Coding Plan 特惠，Starter 套餐 9.9 元起",
-      "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 套餐现仅 $2/月（2折优惠！）"
+      "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 套餐现仅 $2/月（2折优惠！）",
+      "dmxapi": "Claude Code 专属模型 3.4 折优惠进行中！",
+      "cubence": "Cubence 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"CCSWITCH\" 优惠码，每次充值均可享受9折优惠",
+      "aigocode": "AIGoCode 是 CC Switch 的官方合作伙伴，使用此链接注册首次充值时可以获得10%额度奖励！"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -288,6 +377,9 @@
     "visitWebsite": "访问 {{url}}",
     "anthropicModel": "主模型",
     "anthropicSmallFastModel": "快速模型",
+    "anthropicReasoningModel": "推理模型 (Thinking)",
+    "openrouterCompatMode": "OpenRouter 兼容模式",
+    "openrouterCompatModeHint": "使用 OpenAI Chat Completions 接口并转换为 Anthropic SSE。",
     "anthropicDefaultHaikuModel": "Haiku 默认模型",
     "anthropicDefaultSonnetModel": "Sonnet 默认模型",
     "anthropicDefaultOpusModel": "Opus 默认模型",
@@ -336,7 +428,11 @@
     "editCommonConfig": "编辑通用配置",
     "editCommonConfigTitle": "编辑 Codex 通用配置片段",
     "commonConfigHint": "该片段会在勾选'写入通用配置'时追加到 config.toml 末尾",
-    "apiUrlLabel": "API 请求地址"
+    "apiUrlLabel": "API 请求地址",
+    "extractFromCurrent": "从编辑内容提取",
+    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
+    "extractFailed": "提取失败: {{error}}",
+    "saveFailed": "保存失败: {{error}}"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
@@ -346,7 +442,18 @@
     "writeCommonConfig": "写入通用配置",
     "editCommonConfig": "编辑通用配置",
     "editCommonConfigTitle": "编辑 Gemini 通用配置片段",
-    "commonConfigHint": "通用配置片段将合并到所有启用它的 Gemini 供应商配置中"
+    "commonConfigHint": "该片段会写入 Gemini 的 .env（不允许包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
+    "extractFromCurrent": "从编辑内容提取",
+    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
+    "extractFailed": "提取失败: {{error}}",
+    "saveFailed": "保存失败: {{error}}",
+    "extractedConfigInvalid": "提取的配置格式错误",
+    "invalidJsonFormat": "通用配置片段格式错误（必须是有效的 JSON）",
+    "commonConfigInvalidKeys": "通用配置片段不能包含 GOOGLE_GEMINI_BASE_URL 或 GEMINI_API_KEY（发现：{{keys}}）",
+    "commonConfigInvalidValues": "通用配置片段的值必须是字符串",
+    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
+    "configMergeFailed": "配置合并失败: {{error}}",
+    "configReplaceFailed": "配置替换失败: {{error}}"
   },
   "providerPreset": {
     "label": "预设供应商",
@@ -355,6 +462,50 @@
     "hint": "选择预设后可继续调整下方字段。"
   },
   "usage": {
+    "title": "使用统计",
+    "subtitle": "查看 AI 模型的使用情况和成本统计",
+    "today": "24小时",
+    "last7days": "7天",
+    "last30days": "30天",
+    "totalRequests": "总请求数",
+    "totalCost": "总成本",
+    "cost": "成本",
+    "perMillion": "(每百万)",
+    "trends": "使用趋势",
+    "rangeToday": "过去 24 小时 (按小时)",
+    "rangeLast7Days": "过去 7 天",
+    "rangeLast30Days": "过去 30 天",
+    "totalTokens": "总 Token 数",
+    "cacheTokens": "缓存 Token",
+    "requestLogs": "请求日志",
+    "providerStats": "Provider 统计",
+    "modelStats": "模型统计",
+    "time": "时间",
+    "provider": "供应商",
+    "billingModel": "计费模型",
+    "inputTokens": "输入",
+    "outputTokens": "输出",
+    "cacheReadTokens": "缓存命中",
+    "cacheCreationTokens": "缓存创建",
+    "timingInfo": "用时/首字",
+    "status": "状态",
+    "noData": "暂无数据",
+    "unknownProvider": "未知供应商",
+    "stream": "流",
+    "nonStream": "非流",
+    "totalRecords": "共 {{total}} 条记录",
+    "modelPricing": "模型定价",
+    "loadPricingError": "加载定价数据失败",
+    "modelPricingDesc": "配置各模型的 Token 成本",
+    "noPricingData": "暂无定价数据。点击\"新增\"添加模型定价配置。",
+    "model": "模型",
+    "displayName": "显示名称",
+    "inputCost": "输入成本",
+    "outputCost": "输出成本",
+    "cacheReadCost": "缓存命中",
+    "cacheWriteCost": "缓存创建",
+    "deleteConfirmTitle": "确认删除",
+    "deleteConfirmDesc": "确定要删除此模型定价配置吗？此操作无法撤销。",
     "queryFailed": "查询失败",
     "refreshUsage": "刷新用量",
     "planUsage": "套餐用量",
@@ -368,7 +519,19 @@
     "daysAgo": "{{count}} 天前",
     "multiplePlans": "{{count}} 个套餐",
     "expand": "展开",
-    "collapse": "收起"
+    "collapse": "收起",
+    "modelIdPlaceholder": "例如: claude-3-5-sonnet-20241022",
+    "displayNamePlaceholder": "例如: Claude 3.5 Sonnet",
+    "appType": "应用类型",
+    "allApps": "全部应用",
+    "statusCode": "状态码",
+    "searchProviderPlaceholder": "搜索供应商...",
+    "searchModelPlaceholder": "搜索模型...",
+    "timeRange": "时间范围",
+    "input": "Input",
+    "output": "Output",
+    "cacheWrite": "创建",
+    "cacheRead": "命中"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -438,7 +601,9 @@
     "tip3": "• 整个配置必须用 () 包裹，形成对象字面量表达式"
   },
   "errors": {
-    "usage_query_failed": "用量查询失败"
+    "usage_query_failed": "用量查询失败",
+    "configLoadFailedTitle": "配置加载失败",
+    "configLoadFailedMessage": "无法读取配置文件：\n{{path}}\n\n错误详情：\n{{detail}}\n\n请手动检查 JSON 是否有效，或从同目录的备份文件（如 config.json.bak）恢复。\n\n应用将退出以便您进行修复。"
   },
   "presetSelector": {
     "title": "选择配置类型",
@@ -449,6 +614,9 @@
   },
   "mcp": {
     "title": "MCP 管理",
+    "import": "导入",
+    "importExisting": "导入已有",
+    "addMcp": "添加MCP",
     "claudeTitle": "Claude Code MCP 管理",
     "codexTitle": "Codex MCP 管理",
     "geminiTitle": "Gemini MCP 管理",
@@ -460,6 +628,8 @@
       "deleteConfirm": "确定要删除服务器 \"{{id}}\" 吗？此操作无法撤销。",
       "noServers": "暂无服务器",
       "enabledApps": "启用的应用",
+      "noImportFound": "未发现需要导入的 MCP 服务器。所有服务器已在 CC Switch 统一管理中。",
+      "importSuccess": "成功导入 {{count}} 个 MCP 服务器",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -677,8 +847,8 @@
   },
   "skills": {
     "manage": "Skills",
-    "title": "Claude Skills 管理",
-    "description": "从流行的仓库发现并安装 Claude 技能，扩展 Claude Code/Codex 的能力",
+    "title": "Skills 管理",
+    "description": "从流行的仓库发现并安装技能，扩展 Claude Code/Codex/Gemini 的能力",
     "refresh": "刷新",
     "refreshing": "刷新中...",
     "repoManager": "仓库管理",
@@ -754,7 +924,25 @@
       "installed": "已安装",
       "uninstalled": "未安装"
     },
-    "noResults": "未找到匹配的技能"
+    "noResults": "未找到匹配的技能",
+    "noInstalled": "暂无已安装的技能",
+    "noInstalledDescription": "从仓库发现并安装技能，或导入已有的技能",
+    "discover": "发现技能",
+    "import": "导入已有",
+    "importDescription": "选择要导入到 CC Switch 统一管理的技能",
+    "importSuccess": "成功导入 {{count}} 个技能",
+    "importSelected": "导入已选 ({{count}})",
+    "noUnmanagedFound": "未发现需要导入的技能。所有技能已在 CC Switch 统一管理中。",
+    "foundIn": "发现于",
+    "local": "本地",
+    "uninstallConfirm": "确定要卸载技能 \"{{name}}\" 吗？这将从所有应用中移除该技能。",
+    "uninstallInMainPanel": "请在主面板中卸载技能",
+    "notFound": "未找到技能",
+    "apps": {
+      "claude": "Claude",
+      "codex": "Codex",
+      "gemini": "Gemini"
+    }
   },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",
@@ -798,6 +986,7 @@
     "configDetails": "配置详情",
     "configUrl": "配置文件 URL",
     "configMergeError": "合并配置文件失败",
+    "primaryEndpoint": "主",
     "mcp": {
       "title": "批量导入 MCP Servers",
       "targetApps": "目标应用",
@@ -837,13 +1026,25 @@
     "label": "图标",
     "colorLabel": "图标颜色",
     "selectIcon": "选择图标",
-    "preview": "预览"
+    "preview": "预览",
+    "clickToChange": "点击更换图标",
+    "clickToSelect": "点击选择图标"
   },
   "migration": {
-    "success": "配置迁移成功"
+    "success": "配置迁移成功",
+    "skillsSuccess": "已自动导入 {{count}} 个技能到统一管理",
+    "skillsFailed": "自动导入技能失败",
+    "skillsFailedDescription": "请打开 Skills 页面点击“导入已有”手动导入（或重启后再试）。"
   },
   "agents": {
     "title": "智能体"
+  },
+  "health": {
+    "operational": "正常",
+    "degraded": "降级",
+    "failed": "失败",
+    "circuitOpen": "熔断",
+    "consecutiveFailures": "连续失败 {{count}} 次"
   },
   "templates": {
     "title": "模板市场",
@@ -929,6 +1130,106 @@
     }
   },
   "proxy": {
+    "panel": {
+      "serviceAddress": "服务地址",
+      "addressCopied": "地址已复制",
+      "currentProvider": "当前 Provider：",
+      "waitingFirstRequest": "当前 Provider：等待首次请求…",
+      "stoppedTitle": "代理服务已停止",
+      "stoppedDescription": "使用右上角开关即可启动服务",
+      "openSettings": "配置代理服务",
+      "stats": {
+        "activeConnections": "活跃连接",
+        "totalRequests": "总请求数",
+        "successRate": "成功率",
+        "uptime": "运行时间"
+      }
+    },
+    "settings": {
+      "title": "代理服务设置",
+      "description": "配置本地代理服务器的监听地址、端口和运行参数，保存后立即生效。",
+      "alert": {
+        "autoApply": "保存后将自动同步到正在运行的代理服务，无需手动重启。"
+      },
+      "basic": {
+        "title": "基础设置",
+        "description": "配置代理服务监听的地址与端口。"
+      },
+      "advanced": {
+        "title": "高级参数",
+        "description": "控制请求的稳定性和日志记录。"
+      },
+      "timeout": {
+        "title": "超时设置",
+        "description": "配置流式和非流式请求的超时时间。"
+      },
+      "fields": {
+        "listenAddress": {
+          "label": "监听地址",
+          "placeholder": "127.0.0.1",
+          "description": "代理服务器监听的 IP 地址（推荐 127.0.0.1）"
+        },
+        "listenPort": {
+          "label": "监听端口",
+          "placeholder": "15721",
+          "description": "代理服务器监听的端口号（1024 ~ 65535）"
+        },
+        "maxRetries": {
+          "label": "最大重试次数",
+          "placeholder": "3",
+          "description": "请求失败时的重试次数（0 ~ 10）"
+        },
+        "requestTimeout": {
+          "label": "请求超时（秒）",
+          "placeholder": "0（不限）或 300",
+          "description": "单个请求的最大等待时间（0 表示不限制，或设置 10 ~ 600 秒）"
+        },
+        "enableLogging": {
+          "label": "启用日志记录",
+          "description": "记录所有代理请求，便于排查问题"
+        },
+        "streamingFirstByteTimeout": {
+          "label": "流式首字超时（秒）",
+          "description": "等待首个数据块的最大时间"
+        },
+        "streamingIdleTimeout": {
+          "label": "流式静默超时（秒）",
+          "description": "数据块之间的最大间隔"
+        },
+        "nonStreamingTimeout": {
+          "label": "非流式超时（秒）",
+          "description": "非流式请求的总超时时间"
+        }
+      },
+      "validation": {
+        "addressInvalid": "请输入有效的IP地址",
+        "portMin": "端口必须大于1024",
+        "portMax": "端口必须小于65535",
+        "retryMin": "重试次数不能为负",
+        "retryMax": "重试次数不能超过10",
+        "timeoutNonNegative": "超时时间不能为负数",
+        "timeoutMax": "超时时间最多600秒",
+        "timeoutRange": "请输入 0 或 10-600 之间的数值",
+        "streamingTimeoutMin": "超时时间至少5秒",
+        "streamingTimeoutMax": "超时时间最多300秒"
+      },
+      "actions": {
+        "save": "保存配置"
+      },
+      "toast": {
+        "saved": "代理配置已保存",
+        "saveFailed": "保存失败: {{error}}"
+      },
+      "invalidPort": "端口无效，请输入 1024-65535 之间的数字",
+      "invalidAddress": "地址无效，请输入有效的 IP 地址（如 127.0.0.1）或 localhost",
+      "configSaved": "代理配置已保存",
+      "configSaveFailed": "保存配置失败",
+      "restartRequired": "修改地址或端口后需要重启代理服务才能生效"
+    },
+    "switchFailed": "切换失败: {{error}}",
+    "failover": {
+      "proxyRequired": "需要先启动代理服务才能配置故障转移"
+    },
     "failoverQueue": {
       "title": "故障转移队列",
       "description": "管理各应用的供应商故障转移顺序",
@@ -950,12 +1251,13 @@
       "info": "当故障转移队列中配置了多个供应商时，系统会在请求失败时按优先级顺序依次尝试。当某个供应商连续失败达到阈值时，熔断器会打开并在一段时间内跳过该供应商。",
       "configSaved": "自动故障转移配置已保存",
       "configSaveFailed": "保存失败",
+      "validationFailed": "以下字段超出有效范围: {{fields}}",
       "retrySettings": "重试与超时设置",
       "failureThreshold": "失败阈值",
       "failureThresholdHint": "连续失败多少次后打开熔断器（建议: 3-10）",
       "timeout": "恢复等待时间（秒）",
       "timeoutHint": "熔断器打开后，等待多久后尝试恢复（建议: 30-120）",
-      "circuitBreakerSettings": "熔断器高级设置",
+      "circuitBreakerSettings": "熔断器设置",
       "successThreshold": "恢复成功阈值",
       "successThresholdHint": "半开状态下成功多少次后关闭熔断器",
       "errorRate": "错误率阈值 (%)",
@@ -972,5 +1274,88 @@
       "errorRateLabel": "错误率阈值",
       "errorRateExplain": "错误率超过此值时，即使未达到失败阈值也会打开熔断器"
     }
+  },
+  "streamCheck": {
+    "configSaved": "健康检查配置已保存",
+    "configSaveFailed": "保存失败",
+    "testModels": "测试模型",
+    "claudeModel": "Claude 模型",
+    "codexModel": "Codex 模型",
+    "geminiModel": "Gemini 模型",
+    "checkParams": "检查参数",
+    "timeout": "超时时间（秒）",
+    "maxRetries": "最大重试次数",
+    "degradedThreshold": "降级阈值（毫秒）",
+    "testPrompt": "检查提示词"
+  },
+  "proxyConfig": {
+    "proxyEnabled": "代理总开关",
+    "appTakeover": "代理启用",
+    "perAppConfig": "应用配置",
+    "circuitBreaker": "熔断器配置",
+    "circuitBreakerSettings": "熔断器设置",
+    "failureThreshold": "失败阈值",
+    "successThreshold": "恢复阈值",
+    "recoveryTimeout": "恢复等待时间",
+    "errorRateThreshold": "错误率阈值",
+    "minRequests": "最小请求数",
+    "timeoutConfig": "超时配置",
+    "streamingFirstByte": "流式首字节超时",
+    "streamingIdle": "流式静默超时",
+    "nonStreaming": "非流式超时"
+  },
+  "circuitBreaker": {
+    "failureThreshold": "失败阈值",
+    "successThreshold": "成功阈值",
+    "timeoutSeconds": "超时时间",
+    "errorRateThreshold": "错误率阈值",
+    "minRequests": "最小请求数",
+    "validationFailed": "以下字段超出有效范围: {{fields}}",
+    "configSaved": "熔断器配置已保存",
+    "saveFailed": "保存失败"
+  },
+  "universalProvider": {
+    "title": "统一供应商",
+    "description": "统一供应商可以同时管理 Claude、Codex 和 Gemini 的配置。修改后会自动同步到所有启用的应用。",
+    "add": "添加统一供应商",
+    "edit": "编辑统一供应商",
+    "empty": "还没有统一供应商",
+    "emptyHint": "点击下方「添加统一供应商」按钮创建一个",
+    "selectPreset": "选择预设类型",
+    "name": "名称",
+    "namePlaceholder": "例如：我的 NewAPI",
+    "baseUrl": "API 地址",
+    "apiKey": "API Key",
+    "websiteUrl": "官网地址",
+    "websiteUrlPlaceholder": "https://example.com（可选，用于在列表中显示）",
+    "notes": "备注",
+    "notesPlaceholder": "可选：添加备注信息",
+    "enabledApps": "启用的应用",
+    "modelConfig": "模型配置",
+    "model": "模型",
+    "sync": "同步到应用",
+    "synced": "已同步到所有应用",
+    "syncError": "同步失败",
+    "noAppsEnabled": "未启用任何应用",
+    "added": "统一供应商已添加",
+    "addedAndSynced": "统一供应商已添加并同步",
+    "updated": "统一供应商已更新",
+    "deleted": "统一供应商已删除",
+    "addSuccess": "统一供应商添加成功",
+    "addFailed": "统一供应商添加失败",
+    "manage": "管理",
+    "loadError": "加载统一供应商失败",
+    "saveError": "保存统一供应商失败",
+    "deleteError": "删除统一供应商失败",
+    "deleteConfirmTitle": "删除统一供应商",
+    "deleteConfirmDescription": "确定要删除 \"{{name}}\" 吗？这将同时删除它在各应用中生成的供应商配置。",
+    "syncConfirmTitle": "同步统一供应商",
+    "syncConfirmDescription": "同步 \"{{name}}\" 将会覆盖 Claude、Codex 和 Gemini 中关联的供应商配置。确定要继续吗？",
+    "syncConfirm": "同步",
+    "saveAndSync": "保存并同步",
+    "savedAndSynced": "已保存并同步到所有应用",
+    "saveAndSyncError": "保存并同步失败",
+    "configJsonPreview": "配置 JSON 预览",
+    "configJsonPreviewHint": "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）"
   }
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Save } from "lucide-react";
+import { Save, Download, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,8 @@ interface CodexCommonConfigModalProps {
   value: string;
   onChange: (value: string) => void;
   error?: string;
+  onExtract?: () => void;
+  isExtracting?: boolean;
 }
 
 /**
@@ -23,6 +25,8 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
   value,
   onChange,
   error,
+  onExtract,
+  isExtracting,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -49,6 +53,24 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
       onClose={onClose}
       footer={
         <>
+          {onExtract && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onExtract}
+              disabled={isExtracting}
+              className="gap-2"
+            >
+              {isExtracting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              {t("codexConfig.extractFromCurrent", {
+                defaultValue: "从编辑内容提取",
+              })}
+            </Button>
+          )}
           <Button type="button" variant="outline" onClick={onClose}>
             {t("common.cancel")}
           </Button>

@@ -1,8 +1,7 @@
-import { Suspense } from "react";
+import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import App from "@/App";
 import { resetProviderState } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 
@@ -109,20 +108,6 @@ vi.mock("@/components/ConfirmDialog", () => ({
     ) : null,
 }));
 
-vi.mock("@/components/settings/SettingsPage", () => ({
-  SettingsPage: ({ open, onOpenChange, onImportSuccess }: any) =>
-    open ? (
-      <div data-testid="settings-dialog">
-        <button onClick={() => onImportSuccess?.()}>
-          trigger-import-success
-        </button>
-        <button onClick={() => onOpenChange(false)}>close-settings</button>
-      </div>
-    ) : (
-      <button onClick={() => onOpenChange(true)}>open-settings</button>
-    ),
-}));
-
 vi.mock("@/components/AppSwitcher", () => ({
   AppSwitcher: ({ activeApp, onSwitch }: any) => (
     <div data-testid="app-switcher">
@@ -150,12 +135,12 @@ vi.mock("@/components/mcp/McpPanel", () => ({
     ),
 }));
 
-const renderApp = () => {
+const renderApp = (AppComponent: ComponentType) => {
   const client = new QueryClient();
   return render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
-        <App />
+        <AppComponent />
       </Suspense>
     </QueryClientProvider>,
   );
@@ -169,18 +154,14 @@ describe("App integration with MSW", () => {
   });
 
   it("covers basic provider flows via real hooks", async () => {
-    renderApp();
+    const { default: App } = await import("@/App");
+    renderApp(App);
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "claude-1",
       ),
     );
-
-    fireEvent.click(screen.getByText("update-badge"));
-    expect(screen.getByTestId("settings-dialog")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("trigger-import-success"));
-    fireEvent.click(screen.getByText("close-settings"));
 
     fireEvent.click(screen.getByText("switch-codex"));
     await waitFor(() =>

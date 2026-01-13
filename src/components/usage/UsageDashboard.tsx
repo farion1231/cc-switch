@@ -25,10 +25,8 @@ export function UsageDashboard() {
     >
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="text-2xl font-bold">{t("usage.title", "使用统计")}</h2>
-          <p className="text-sm text-muted-foreground">
-            {t("usage.subtitle", "查看 AI 模型的使用情况和成本统计")}
-          </p>
+          <h2 className="text-2xl font-bold">{t("usage.title")}</h2>
+          <p className="text-sm text-muted-foreground">{t("usage.subtitle")}</p>
         </div>
 
         <Tabs
@@ -41,19 +39,19 @@ export function UsageDashboard() {
               value="1d"
               className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
             >
-              {t("usage.today", "24小时")}
+              {t("usage.today")}
             </TabsTrigger>
             <TabsTrigger
               value="7d"
               className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
             >
-              {t("usage.last7days", "7天")}
+              {t("usage.last7days")}
             </TabsTrigger>
             <TabsTrigger
               value="30d"
               className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
             >
-              {t("usage.last30days", "30天")}
+              {t("usage.last30days")}
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -69,15 +67,15 @@ export function UsageDashboard() {
             <TabsList className="bg-muted/50">
               <TabsTrigger value="logs" className="gap-2">
                 <ListFilter className="h-4 w-4" />
-                {t("usage.requestLogs", "请求日志")}
+                {t("usage.requestLogs")}
               </TabsTrigger>
               <TabsTrigger value="providers" className="gap-2">
                 <Activity className="h-4 w-4" />
-                {t("usage.providerStats", "Provider 统计")}
+                {t("usage.providerStats")}
               </TabsTrigger>
               <TabsTrigger value="models" className="gap-2">
                 <BarChart3 className="h-4 w-4" />
-                {t("usage.modelStats", "模型统计")}
+                {t("usage.modelStats")}
               </TabsTrigger>
             </TabsList>
           </div>

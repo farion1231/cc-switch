@@ -17,11 +17,23 @@ pub enum ProxyError {
     #[error("地址绑定失败: {0}")]
     BindFailed(String),
 
+    #[error("停止超时")]
+    StopTimeout,
+
+    #[error("停止失败: {0}")]
+    StopFailed(String),
+
     #[error("请求转发失败: {0}")]
     ForwardFailed(String),
 
     #[error("无可用的Provider")]
     NoAvailableProvider,
+
+    #[error("所有供应商已熔断，无可用渠道")]
+    AllProvidersCircuitOpen,
+
+    #[error("未配置供应商")]
+    NoProvidersConfigured,
 
     #[allow(dead_code)]
     #[error("Provider不健康: {0}")]
@@ -107,8 +119,20 @@ impl IntoResponse for ProxyError {
                     ProxyError::BindFailed(_) => {
                         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
                     }
+                    ProxyError::StopTimeout => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+                    }
+                    ProxyError::StopFailed(_) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+                    }
                     ProxyError::ForwardFailed(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
                     ProxyError::NoAvailableProvider => {
+                        (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
+                    }
+                    ProxyError::AllProvidersCircuitOpen => {
+                        (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
+                    }
+                    ProxyError::NoProvidersConfigured => {
                         (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
                     }
                     ProxyError::ProviderUnhealthy(_) => {

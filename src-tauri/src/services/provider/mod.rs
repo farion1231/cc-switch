@@ -71,6 +71,47 @@ mod tests {
         assert_eq!(api_key, "token");
         assert_eq!(base_url, "https://claude.example");
     }
+
+    #[test]
+    fn extract_codex_common_config_preserves_mcp_servers_base_url() {
+        let config_toml = r#"model_provider = "azure"
+model = "gpt-4"
+disable_response_storage = true
+
+[model_providers.azure]
+name = "Azure OpenAI"
+base_url = "https://azure.example/v1"
+wire_api = "responses"
+
+[mcp_servers.my_server]
+base_url = "http://localhost:8080"
+"#;
+
+        let settings = json!({ "config": config_toml });
+        let extracted = ProviderService::extract_codex_common_config(&settings)
+            .expect("extract_codex_common_config should succeed");
+
+        assert!(
+            !extracted
+                .lines()
+                .any(|line| line.trim_start().starts_with("model_provider")),
+            "should remove top-level model_provider"
+        );
+        assert!(
+            !extracted
+                .lines()
+                .any(|line| line.trim_start().starts_with("model =")),
+            "should remove top-level model"
+        );
+        assert!(
+            !extracted.contains("[model_providers"),
+            "should remove entire model_providers table"
+        );
+        assert!(
+            extracted.contains("http://localhost:8080"),
+            "should keep mcp_servers.* base_url"
+        );
+    }
 }
 
 impl ProviderService {
@@ -217,9 +258,12 @@ impl ProviderService {
                 .flatten()
                 .is_some();
         let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
+        let live_taken_over = state
+            .proxy_service
+            .detect_takeover_in_live_config_for_app(&app_type);
 
         // Hot-switch only when BOTH: this app is taken over AND proxy server is actually running
-        let should_hot_switch = is_app_taken_over && is_proxy_running;
+        let should_hot_switch = (is_app_taken_over || live_taken_over) && is_proxy_running;
 
         if should_hot_switch {
             // Proxy takeover mode: hot-switch only, don't write Live config
@@ -247,6 +291,14 @@ impl ProviderService {
                     .update_live_backup_from_provider(app_type.as_str(), provider),
             )
             .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+
+            // 关键修复：接管模式下切换供应商不会写回 Live 配置，
+            // 需要主动清理 Claude Live 中的“模型覆盖”字段，避免仍以旧模型名发起请求。
+            if matches!(app_type, AppType::Claude) {
+                if let Err(e) = state.proxy_service.cleanup_claude_model_overrides_in_live() {
+                    log::warn!("清理 Claude Live 模型字段失败（不影响切换结果）: {e}");
+                }
+            }
 
             // Note: No Live config write, no MCP sync
             // The proxy server will route requests to the new provider via is_current
@@ -303,6 +355,174 @@ impl ProviderService {
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)
+    }
+
+    /// Extract common config snippet from current provider
+    ///
+    /// Extracts the current provider's configuration and removes provider-specific fields
+    /// (API keys, model settings, endpoints) to create a reusable common config snippet.
+    pub fn extract_common_config_snippet(
+        state: &AppState,
+        app_type: AppType,
+    ) -> Result<String, AppError> {
+        // Get current provider
+        let current_id = Self::current(state, app_type.clone())?;
+        if current_id.is_empty() {
+            return Err(AppError::Message("No current provider".to_string()));
+        }
+
+        let providers = state.db.get_all_providers(app_type.as_str())?;
+        let provider = providers
+            .get(&current_id)
+            .ok_or_else(|| AppError::Message(format!("Provider {current_id} not found")))?;
+
+        match app_type {
+            AppType::Claude => Self::extract_claude_common_config(&provider.settings_config),
+            AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
+            AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
+        }
+    }
+
+    /// Extract common config snippet from a config value (e.g. editor content).
+    pub fn extract_common_config_snippet_from_settings(
+        app_type: AppType,
+        settings_config: &Value,
+    ) -> Result<String, AppError> {
+        match app_type {
+            AppType::Claude => Self::extract_claude_common_config(settings_config),
+            AppType::Codex => Self::extract_codex_common_config(settings_config),
+            AppType::Gemini => Self::extract_gemini_common_config(settings_config),
+        }
+    }
+
+    /// Extract common config for Claude (JSON format)
+    fn extract_claude_common_config(settings: &Value) -> Result<String, AppError> {
+        let mut config = settings.clone();
+
+        // Fields to exclude from common config
+        const ENV_EXCLUDES: &[&str] = &[
+            // Auth
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            // Models (5 fields)
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_REASONING_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            // Endpoint
+            "ANTHROPIC_BASE_URL",
+        ];
+
+        const TOP_LEVEL_EXCLUDES: &[&str] = &[
+            "apiBaseUrl",
+            // Legacy model fields
+            "primaryModel",
+            "smallFastModel",
+        ];
+
+        // Remove env fields
+        if let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) {
+            for key in ENV_EXCLUDES {
+                env.remove(*key);
+            }
+            // If env is empty after removal, remove the env object itself
+            if env.is_empty() {
+                config.as_object_mut().map(|obj| obj.remove("env"));
+            }
+        }
+
+        // Remove top-level fields
+        if let Some(obj) = config.as_object_mut() {
+            for key in TOP_LEVEL_EXCLUDES {
+                obj.remove(*key);
+            }
+        }
+
+        // Check if result is empty
+        if config.as_object().is_none_or(|obj| obj.is_empty()) {
+            return Ok("{}".to_string());
+        }
+
+        serde_json::to_string_pretty(&config)
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+    }
+
+    /// Extract common config for Codex (TOML format)
+    fn extract_codex_common_config(settings: &Value) -> Result<String, AppError> {
+        // Codex config is stored as { "auth": {...}, "config": "toml string" }
+        let config_toml = settings
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if config_toml.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut doc = config_toml
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| AppError::Message(format!("TOML parse error: {e}")))?;
+
+        // Remove provider-specific fields.
+        let root = doc.as_table_mut();
+        root.remove("model");
+        root.remove("model_provider");
+        // Legacy/alt formats might use a top-level base_url.
+        root.remove("base_url");
+
+        // Remove entire model_providers table (provider-specific configuration)
+        root.remove("model_providers");
+
+        // Clean up multiple empty lines (keep at most one blank line).
+        let mut cleaned = String::new();
+        let mut blank_run = 0usize;
+        for line in doc.to_string().lines() {
+            if line.trim().is_empty() {
+                blank_run += 1;
+                if blank_run <= 1 {
+                    cleaned.push('\n');
+                }
+                continue;
+            }
+            blank_run = 0;
+            cleaned.push_str(line);
+            cleaned.push('\n');
+        }
+
+        Ok(cleaned.trim().to_string())
+    }
+
+    /// Extract common config for Gemini (JSON format)
+    ///
+    /// Extracts `.env` values while excluding provider-specific credentials:
+    /// - GOOGLE_GEMINI_BASE_URL
+    /// - GEMINI_API_KEY
+    fn extract_gemini_common_config(settings: &Value) -> Result<String, AppError> {
+        let env = settings.get("env").and_then(|v| v.as_object());
+
+        let mut snippet = serde_json::Map::new();
+        if let Some(env) = env {
+            for (key, value) in env {
+                if key == "GOOGLE_GEMINI_BASE_URL" || key == "GEMINI_API_KEY" {
+                    continue;
+                }
+                let Value::String(v) = value else {
+                    continue;
+                };
+                let trimmed = v.trim();
+                if !trimmed.is_empty() {
+                    snippet.insert(key.to_string(), Value::String(trimmed.to_string()));
+                }
+            }
+        }
+
+        if snippet.is_empty() {
+            return Ok("{}".to_string());
+        }
+
+        serde_json::to_string_pretty(&Value::Object(snippet))
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
     }
 
     /// Import default configuration from live files (re-export)
@@ -689,4 +909,141 @@ pub struct ProviderSortUpdate {
     pub id: String,
     #[serde(rename = "sortIndex")]
     pub sort_index: usize,
+}
+
+// ============================================================================
+// 统一供应商（Universal Provider）服务方法
+// ============================================================================
+
+use crate::provider::UniversalProvider;
+use std::collections::HashMap;
+
+impl ProviderService {
+    /// 获取所有统一供应商
+    pub fn list_universal(
+        state: &AppState,
+    ) -> Result<HashMap<String, UniversalProvider>, AppError> {
+        state.db.get_all_universal_providers()
+    }
+
+    /// 获取单个统一供应商
+    pub fn get_universal(
+        state: &AppState,
+        id: &str,
+    ) -> Result<Option<UniversalProvider>, AppError> {
+        state.db.get_universal_provider(id)
+    }
+
+    /// 添加或更新统一供应商（不自动同步，需手动调用 sync_universal_to_apps）
+    pub fn upsert_universal(
+        state: &AppState,
+        provider: UniversalProvider,
+    ) -> Result<bool, AppError> {
+        // 保存统一供应商
+        state.db.save_universal_provider(&provider)?;
+
+        Ok(true)
+    }
+
+    /// 删除统一供应商
+    pub fn delete_universal(state: &AppState, id: &str) -> Result<bool, AppError> {
+        // 获取统一供应商（用于删除生成的子供应商）
+        let provider = state.db.get_universal_provider(id)?;
+
+        // 删除统一供应商
+        state.db.delete_universal_provider(id)?;
+
+        // 删除生成的子供应商
+        if let Some(p) = provider {
+            if p.apps.claude {
+                let claude_id = format!("universal-claude-{id}");
+                let _ = state.db.delete_provider("claude", &claude_id);
+            }
+            if p.apps.codex {
+                let codex_id = format!("universal-codex-{id}");
+                let _ = state.db.delete_provider("codex", &codex_id);
+            }
+            if p.apps.gemini {
+                let gemini_id = format!("universal-gemini-{id}");
+                let _ = state.db.delete_provider("gemini", &gemini_id);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// 同步统一供应商到各应用
+    pub fn sync_universal_to_apps(state: &AppState, id: &str) -> Result<bool, AppError> {
+        let provider = state
+            .db
+            .get_universal_provider(id)?
+            .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?;
+
+        // 同步到 Claude
+        if let Some(mut claude_provider) = provider.to_claude_provider() {
+            // 合并已有配置
+            if let Some(existing) = state.db.get_provider_by_id(&claude_provider.id, "claude")? {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &claude_provider.settings_config);
+                claude_provider.settings_config = merged;
+            }
+            state.db.save_provider("claude", &claude_provider)?;
+        } else {
+            // 如果禁用了 Claude，删除对应的子供应商
+            let claude_id = format!("universal-claude-{id}");
+            let _ = state.db.delete_provider("claude", &claude_id);
+        }
+
+        // 同步到 Codex
+        if let Some(mut codex_provider) = provider.to_codex_provider() {
+            // 合并已有配置
+            if let Some(existing) = state.db.get_provider_by_id(&codex_provider.id, "codex")? {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &codex_provider.settings_config);
+                codex_provider.settings_config = merged;
+            }
+            state.db.save_provider("codex", &codex_provider)?;
+        } else {
+            let codex_id = format!("universal-codex-{id}");
+            let _ = state.db.delete_provider("codex", &codex_id);
+        }
+
+        // 同步到 Gemini
+        if let Some(mut gemini_provider) = provider.to_gemini_provider() {
+            // 合并已有配置
+            if let Some(existing) = state.db.get_provider_by_id(&gemini_provider.id, "gemini")? {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &gemini_provider.settings_config);
+                gemini_provider.settings_config = merged;
+            }
+            state.db.save_provider("gemini", &gemini_provider)?;
+        } else {
+            let gemini_id = format!("universal-gemini-{id}");
+            let _ = state.db.delete_provider("gemini", &gemini_id);
+        }
+
+        Ok(true)
+    }
+
+    /// 递归合并 JSON：base 为底，patch 覆盖同名字段
+    fn merge_json(base: &mut serde_json::Value, patch: &serde_json::Value) {
+        use serde_json::Value;
+
+        match (base, patch) {
+            (Value::Object(base_map), Value::Object(patch_map)) => {
+                for (k, v_patch) in patch_map {
+                    match base_map.get_mut(k) {
+                        Some(v_base) => Self::merge_json(v_base, v_patch),
+                        None => {
+                            base_map.insert(k.clone(), v_patch.clone());
+                        }
+                    }
+                }
+            }
+            // 其它类型：直接覆盖
+            (base_val, patch_val) => {
+                *base_val = patch_val.clone();
+            }
+        }
+    }
 }

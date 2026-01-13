@@ -48,17 +48,21 @@ pub enum ProviderType {
     Gemini,
     /// Google Gemini CLI (OAuth Bearer)
     GeminiCli,
-    /// OpenRouter (需要 Anthropic ↔ OpenAI 格式转换)
+    /// OpenRouter（已支持 Claude Code 兼容接口，默认透传；保留旧转换逻辑备用）
     OpenRouter,
 }
 
 impl ProviderType {
     /// 是否需要格式转换
     ///
-    /// OpenRouter 需要将 Anthropic 格式转换为 OpenAI 格式
+    /// 过去 OpenRouter 需要将 Anthropic 格式转换为 OpenAI 格式；
+    /// 现在默认关闭转换（因为 OpenRouter 已支持 Claude Code 兼容接口）。
     #[allow(dead_code)]
     pub fn needs_transform(&self) -> bool {
-        matches!(self, ProviderType::OpenRouter)
+        match self {
+            ProviderType::OpenRouter => false,
+            _ => false,
+        }
     }
 
     /// 获取默认端点
@@ -205,6 +209,7 @@ mod tests {
             meta: None,
             icon: None,
             icon_color: None,
+            in_failover_queue: false,
         }
     }
 
@@ -215,7 +220,7 @@ mod tests {
         assert!(!ProviderType::Codex.needs_transform());
         assert!(!ProviderType::Gemini.needs_transform());
         assert!(!ProviderType::GeminiCli.needs_transform());
-        assert!(ProviderType::OpenRouter.needs_transform());
+        assert!(!ProviderType::OpenRouter.needs_transform());
     }
 
     #[test]

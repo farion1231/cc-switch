@@ -359,9 +359,14 @@ pub fn sync_single_server_to_codex(
     let mut doc = if config_path.exists() {
         let content =
             std::fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?;
-        content
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| AppError::McpValidation(format!("解析 Codex config.toml 失败: {e}")))?
+        // 尝试解析现有配置，如果失败则创建新文档（容错处理）
+        match content.parse::<toml_edit::DocumentMut>() {
+            Ok(doc) => doc,
+            Err(e) => {
+                log::warn!("解析 Codex config.toml 失败: {e}，将创建新配置");
+                toml_edit::DocumentMut::new()
+            }
+        }
     } else {
         toml_edit::DocumentMut::new()
     };
@@ -409,9 +414,14 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
     let content =
         std::fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?;
 
-    let mut doc = content
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| AppError::McpValidation(format!("解析 Codex config.toml 失败: {e}")))?;
+    // 尝试解析现有配置，如果失败则直接返回（无法删除不存在的内容）
+    let mut doc = match content.parse::<toml_edit::DocumentMut>() {
+        Ok(doc) => doc,
+        Err(e) => {
+            log::warn!("解析 Codex config.toml 失败: {e}，跳过删除操作");
+            return Ok(());
+        }
+    };
 
     // 从正确的位置删除：[mcp_servers]
     if let Some(mcp_servers) = doc.get_mut("mcp_servers").and_then(|s| s.as_table_mut()) {

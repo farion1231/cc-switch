@@ -52,9 +52,7 @@ pub async fn stream_check_all_providers(
         }
         if let Ok(queue) = state.db.get_failover_queue(app_type.as_str()) {
             for item in queue {
-                if item.enabled {
-                    ids.insert(item.provider_id);
-                }
+                ids.insert(item.provider_id);
             }
         }
         Some(ids)

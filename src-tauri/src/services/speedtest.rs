@@ -1,7 +1,7 @@
 use futures::future::join_all;
 use reqwest::{Client, Url};
 use serde::Serialize;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::error::AppError;
 
@@ -65,17 +65,21 @@ impl SpeedtestService {
         }
 
         let timeout = Self::sanitize_timeout(timeout_secs);
-        let client = Self::build_client(timeout)?;
+        let (client, request_timeout) = Self::build_client(timeout)?;
 
         let tasks = valid_targets.into_iter().map(|(idx, trimmed, parsed_url)| {
             let client = client.clone();
             async move {
                 // 先进行一次热身请求，忽略结果，仅用于复用连接/绕过首包惩罚。
-                let _ = client.get(parsed_url.clone()).send().await;
+                let _ = client
+                    .get(parsed_url.clone())
+                    .timeout(request_timeout)
+                    .send()
+                    .await;
 
                 // 第二次请求开始计时，并将其作为结果返回。
                 let start = Instant::now();
-                let latency = match client.get(parsed_url).send().await {
+                let latency = match client.get(parsed_url).timeout(request_timeout).send().await {
                     Ok(resp) => EndpointLatency {
                         url: trimmed,
                         latency: Some(start.elapsed().as_millis()),
@@ -112,19 +116,11 @@ impl SpeedtestService {
         Ok(results.into_iter().flatten().collect::<Vec<_>>())
     }
 
-    fn build_client(timeout_secs: u64) -> Result<Client, AppError> {
-        Client::builder()
-            .timeout(Duration::from_secs(timeout_secs))
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .user_agent("cc-switch-speedtest/1.0")
-            .build()
-            .map_err(|e| {
-                AppError::localized(
-                    "speedtest.client_create_failed",
-                    format!("创建 HTTP 客户端失败: {e}"),
-                    format!("Failed to create HTTP client: {e}"),
-                )
-            })
+    fn build_client(timeout_secs: u64) -> Result<(Client, std::time::Duration), AppError> {
+        // 使用全局 HTTP 客户端（已包含代理配置）
+        // 返回 timeout Duration 供请求级别使用
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+        Ok((crate::proxy::http_client::get(), timeout))
     }
 
     fn sanitize_timeout(timeout_secs: Option<u64>) -> u64 {

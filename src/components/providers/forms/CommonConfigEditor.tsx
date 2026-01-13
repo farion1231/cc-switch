@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Save } from "lucide-react";
+import { Save, Download, Loader2 } from "lucide-react";
 import JsonEditor from "@/components/JsonEditor";
 
 interface CommonConfigEditorProps {
@@ -17,6 +17,8 @@ interface CommonConfigEditorProps {
   onEditClick: () => void;
   isModalOpen: boolean;
   onModalClose: () => void;
+  onExtract?: () => void;
+  isExtracting?: boolean;
 }
 
 export function CommonConfigEditor({
@@ -30,6 +32,8 @@ export function CommonConfigEditor({
   onEditClick,
   isModalOpen,
   onModalClose,
+  onExtract,
+  isExtracting,
 }: CommonConfigEditorProps) {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -111,6 +115,24 @@ export function CommonConfigEditor({
         onClose={onModalClose}
         footer={
           <>
+            {onExtract && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onExtract}
+                disabled={isExtracting}
+                className="gap-2"
+              >
+                {isExtracting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4" />
+                )}
+                {t("claudeConfig.extractFromCurrent", {
+                  defaultValue: "从编辑内容提取",
+                })}
+              </Button>
+            )}
             <Button type="button" variant="outline" onClick={onModalClose}>
               {t("common.cancel")}
             </Button>

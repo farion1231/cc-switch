@@ -2,37 +2,14 @@
  * 故障转移队列管理组件
  *
  * 允许用户管理代理模式下的故障转移队列，支持：
- * - 拖拽排序
  * - 添加/移除供应商
- * - 启用/禁用队列项
+ * - 队列顺序基于首页供应商列表的 sort_index
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter } from "@dnd-kit/core";
-import {
-  SortableContext,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import {
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { toast } from "sonner";
-import {
-  GripVertical,
-  Plus,
-  Trash2,
-  Loader2,
-  Info,
-  AlertTriangle,
-} from "lucide-react";
+import { Plus, Trash2, Loader2, Info, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -51,8 +28,8 @@ import {
   useAvailableProvidersForFailover,
   useAddToFailoverQueue,
   useRemoveFromFailoverQueue,
-  useReorderFailoverQueue,
-  useSetFailoverItemEnabled,
+  useAutoFailoverEnabled,
+  useSetAutoFailoverEnabled,
 } from "@/lib/query/failover";
 
 interface FailoverQueueManagerProps {
@@ -67,6 +44,10 @@ export function FailoverQueueManager({
   const { t } = useTranslation();
   const [selectedProviderId, setSelectedProviderId] = useState<string>("");
 
+  // 故障转移开关状态（每个应用独立）
+  const { data: isFailoverEnabled = false } = useAutoFailoverEnabled(appType);
+  const setFailoverEnabled = useSetAutoFailoverEnabled();
+
   // 查询数据
   const {
     data: queue,
@@ -79,59 +60,11 @@ export function FailoverQueueManager({
   // Mutations
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
-  const reorderQueue = useReorderFailoverQueue();
-  const setItemEnabled = useSetFailoverItemEnabled();
 
-  // 拖拽配置
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  );
-
-  // 排序后的队列
-  const sortedQueue = useMemo(() => {
-    if (!queue) return [];
-    return [...queue].sort((a, b) => a.queueOrder - b.queueOrder);
-  }, [queue]);
-
-  // 处理拖拽结束
-  const handleDragEnd = useCallback(
-    async (event: DragEndEvent) => {
-      const { active, over } = event;
-      if (!over || active.id === over.id || !sortedQueue) return;
-
-      const oldIndex = sortedQueue.findIndex(
-        (item) => item.providerId === active.id,
-      );
-      const newIndex = sortedQueue.findIndex(
-        (item) => item.providerId === over.id,
-      );
-
-      if (oldIndex === -1 || newIndex === -1) return;
-
-      const reordered = arrayMove(sortedQueue, oldIndex, newIndex);
-      const providerIds = reordered.map((item) => item.providerId);
-
-      try {
-        await reorderQueue.mutateAsync({ appType, providerIds });
-        toast.success(
-          t("proxy.failoverQueue.reorderSuccess", "队列顺序已更新"),
-          { closeButton: true },
-        );
-      } catch (error) {
-        toast.error(
-          t("proxy.failoverQueue.reorderFailed", "更新顺序失败") +
-            ": " +
-            String(error),
-        );
-      }
-    },
-    [sortedQueue, appType, reorderQueue, t],
-  );
+  // 切换故障转移开关
+  const handleToggleFailover = (enabled: boolean) => {
+    setFailoverEnabled.mutate({ appType, enabled });
+  };
 
   // 添加供应商到队列
   const handleAddProvider = async () => {
@@ -171,19 +104,6 @@ export function FailoverQueueManager({
     }
   };
 
-  // 切换启用状态
-  const handleToggleEnabled = async (providerId: string, enabled: boolean) => {
-    try {
-      await setItemEnabled.mutateAsync({ appType, providerId, enabled });
-    } catch (error) {
-      toast.error(
-        t("proxy.failoverQueue.toggleFailed", "状态更新失败") +
-          ": " +
-          String(error),
-      );
-    }
-  };
-
   if (isQueueLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -203,13 +123,41 @@ export function FailoverQueueManager({
 
   return (
     <div className="space-y-4">
+      {/* 自动故障转移开关 */}
+      <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50 border border-border/50">
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">
+              {t("proxy.failover.autoSwitch", {
+                defaultValue: "自动故障转移",
+              })}
+            </span>
+            {isFailoverEnabled && (
+              <span className="px-2 py-0.5 text-xs rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                {t("common.enabled", { defaultValue: "已开启" })}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t("proxy.failover.autoSwitchDescription", {
+              defaultValue: "开启后，请求失败时自动切换到队列中的下一个供应商",
+            })}
+          </p>
+        </div>
+        <Switch
+          checked={isFailoverEnabled}
+          onCheckedChange={handleToggleFailover}
+          disabled={disabled || setFailoverEnabled.isPending}
+        />
+      </div>
+
       {/* 说明信息 */}
       <Alert className="border-blue-500/40 bg-blue-500/10">
         <Info className="h-4 w-4" />
         <AlertDescription className="text-sm">
           {t(
             "proxy.failoverQueue.info",
-            "当前激活的供应商始终优先。当请求失败时，系统会按队列顺序依次尝试其他供应商。",
+            "队列顺序与首页供应商列表顺序一致。当请求失败时，系统会按顺序依次尝试队列中的供应商。",
           )}
         </AlertDescription>
       </Alert>
@@ -260,7 +208,7 @@ export function FailoverQueueManager({
       </div>
 
       {/* 队列列表 */}
-      {sortedQueue.length === 0 ? (
+      {!queue || queue.length === 0 ? (
         <div className="rounded-lg border border-dashed border-muted-foreground/40 p-8 text-center">
           <p className="text-sm text-muted-foreground">
             {t(
@@ -270,39 +218,26 @@ export function FailoverQueueManager({
           </p>
         </div>
       ) : (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
-        >
-          <SortableContext
-            items={sortedQueue.map((item) => item.providerId)}
-            strategy={verticalListSortingStrategy}
-          >
-            <div className="space-y-2">
-              {sortedQueue.map((item, index) => (
-                <SortableQueueItem
-                  key={item.providerId}
-                  item={item}
-                  index={index}
-                  disabled={disabled}
-                  onToggleEnabled={handleToggleEnabled}
-                  onRemove={handleRemoveProvider}
-                  isRemoving={removeFromQueue.isPending}
-                  isToggling={setItemEnabled.isPending}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
+        <div className="space-y-2">
+          {queue.map((item, index) => (
+            <QueueItem
+              key={item.providerId}
+              item={item}
+              index={index}
+              disabled={disabled}
+              onRemove={handleRemoveProvider}
+              isRemoving={removeFromQueue.isPending}
+            />
+          ))}
+        </div>
       )}
 
       {/* 队列说明 */}
-      {sortedQueue.length > 0 && (
+      {queue && queue.length > 0 && (
         <p className="text-xs text-muted-foreground">
           {t(
-            "proxy.failoverQueue.dragHint",
-            "拖拽供应商可调整故障转移顺序，序号越小优先级越高。",
+            "proxy.failoverQueue.orderHint",
+            "队列顺序与首页供应商列表顺序一致，可在首页拖拽调整顺序。",
           )}
         </p>
       )}
@@ -310,65 +245,29 @@ export function FailoverQueueManager({
   );
 }
 
-interface SortableQueueItemProps {
+interface QueueItemProps {
   item: FailoverQueueItem;
   index: number;
   disabled: boolean;
-  onToggleEnabled: (providerId: string, enabled: boolean) => void;
   onRemove: (providerId: string) => void;
   isRemoving: boolean;
-  isToggling: boolean;
 }
 
-function SortableQueueItem({
+function QueueItem({
   item,
   index,
   disabled,
-  onToggleEnabled,
   onRemove,
   isRemoving,
-  isToggling,
-}: SortableQueueItemProps) {
+}: QueueItemProps) {
   const { t } = useTranslation();
-  const {
-    setNodeRef,
-    attributes,
-    listeners,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: item.providerId, disabled });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
 
   return (
     <div
-      ref={setNodeRef}
-      style={style}
       className={cn(
         "flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors",
-        isDragging && "opacity-50 shadow-lg",
-        !item.enabled && "opacity-60",
       )}
     >
-      {/* 拖拽手柄 */}
-      <button
-        type="button"
-        className={cn(
-          "cursor-grab touch-none text-muted-foreground hover:text-foreground",
-          disabled && "cursor-not-allowed opacity-50",
-        )}
-        {...attributes}
-        {...listeners}
-        disabled={disabled}
-        aria-label={t("provider.dragHandle", "拖拽排序")}
-      >
-        <GripVertical className="h-5 w-5" />
-      </button>
-
       {/* 序号 */}
       <div className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium">
         {index + 1}
@@ -376,23 +275,10 @@ function SortableQueueItem({
 
       {/* 供应商名称 */}
       <div className="flex-1 min-w-0">
-        <span
-          className={cn(
-            "text-sm font-medium truncate block",
-            !item.enabled && "text-muted-foreground line-through",
-          )}
-        >
+        <span className="text-sm font-medium truncate block">
           {item.providerName}
         </span>
       </div>
-
-      {/* 启用开关 */}
-      <Switch
-        checked={item.enabled}
-        onCheckedChange={(checked) => onToggleEnabled(item.providerId, checked)}
-        disabled={disabled || isToggling}
-        aria-label={t("proxy.failoverQueue.toggleEnabled", "启用/禁用")}
-      />
 
       {/* 删除按钮 */}
       <Button

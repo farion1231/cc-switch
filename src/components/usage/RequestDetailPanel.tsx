@@ -16,8 +16,14 @@ export function RequestDetailPanel({
   requestId,
   onClose,
 }: RequestDetailPanelProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { data: request, isLoading } = useRequestDetail(requestId);
+  const dateLocale =
+    i18n.language === "zh"
+      ? "zh-CN"
+      : i18n.language === "ja"
+        ? "ja-JP"
+        : "en-US";
 
   if (isLoading) {
     return (
@@ -69,7 +75,9 @@ export function RequestDetailPanel({
                   {t("usage.time", "时间")}
                 </dt>
                 <dd>
-                  {new Date(request.createdAt * 1000).toLocaleString("zh-CN")}
+                  {new Date(request.createdAt * 1000).toLocaleString(
+                    dateLocale,
+                  )}
                 </dd>
               </div>
               <div>

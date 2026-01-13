@@ -7,6 +7,10 @@ interface GeminiEnvSectionProps {
   onChange: (value: string) => void;
   onBlur?: () => void;
   error?: string;
+  useCommonConfig: boolean;
+  onCommonConfigToggle: (checked: boolean) => void;
+  onEditCommonConfig: () => void;
+  commonConfigError?: string;
 }
 
 /**
@@ -17,6 +21,10 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
   onChange,
   onBlur,
   error,
+  useCommonConfig,
+  onCommonConfigToggle,
+  onEditCommonConfig,
+  commonConfigError,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -45,93 +53,15 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
 
   return (
     <div className="space-y-2">
-      <label
-        htmlFor="geminiEnv"
-        className="block text-sm font-medium text-gray-900 dark:text-gray-100"
-      >
-        {t("geminiConfig.envFile", { defaultValue: "环境变量 (.env)" })}
-      </label>
-
-      <JsonEditor
-        value={value}
-        onChange={handleChange}
-        placeholder={`GOOGLE_GEMINI_BASE_URL=https://your-api-endpoint.com/
-GEMINI_API_KEY=sk-your-api-key-here
-GEMINI_MODEL=gemini-3-pro-preview`}
-        darkMode={isDarkMode}
-        rows={6}
-        showValidation={false}
-        language="javascript"
-      />
-
-      {error && (
-        <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
-      )}
-
-      {!error && (
-        <p className="text-xs text-gray-500 dark:text-gray-400">
-          {t("geminiConfig.envFileHint", {
-            defaultValue: "使用 .env 格式配置 Gemini 环境变量",
-          })}
-        </p>
-      )}
-    </div>
-  );
-};
-
-interface GeminiConfigSectionProps {
-  value: string;
-  onChange: (value: string) => void;
-  useCommonConfig: boolean;
-  onCommonConfigToggle: (checked: boolean) => void;
-  onEditCommonConfig: () => void;
-  commonConfigError?: string;
-  configError?: string;
-}
-
-/**
- * GeminiConfigSection - Config JSON editor section with common config support
- */
-export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
-  value,
-  onChange,
-  useCommonConfig,
-  onCommonConfigToggle,
-  onEditCommonConfig,
-  commonConfigError,
-  configError,
-}) => {
-  const { t } = useTranslation();
-  const [isDarkMode, setIsDarkMode] = useState(false);
-
-  useEffect(() => {
-    setIsDarkMode(document.documentElement.classList.contains("dark"));
-
-    const observer = new MutationObserver(() => {
-      setIsDarkMode(document.documentElement.classList.contains("dark"));
-    });
-
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <div className="space-y-2">
       <div className="flex items-center justify-between">
         <label
-          htmlFor="geminiConfig"
-          className="block text-sm font-medium text-gray-900 dark:text-gray-100"
+          htmlFor="geminiEnv"
+          className="block text-sm font-medium text-foreground"
         >
-          {t("geminiConfig.configJson", {
-            defaultValue: "配置文件 (config.json)",
-          })}
+          {t("geminiConfig.envFile", { defaultValue: "环境变量 (.env)" })}
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
           <input
             type="checkbox"
             checked={useCommonConfig}
@@ -164,6 +94,76 @@ export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
 
       <JsonEditor
         value={value}
+        onChange={handleChange}
+        placeholder={`GOOGLE_GEMINI_BASE_URL=https://your-api-endpoint.com/
+GEMINI_API_KEY=sk-your-api-key-here
+GEMINI_MODEL=gemini-3-pro-preview`}
+        darkMode={isDarkMode}
+        rows={6}
+        showValidation={false}
+        language="javascript"
+      />
+
+      {error && (
+        <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
+      )}
+
+      {!error && (
+        <p className="text-xs text-muted-foreground">
+          {t("geminiConfig.envFileHint", {
+            defaultValue: "使用 .env 格式配置 Gemini 环境变量",
+          })}
+        </p>
+      )}
+    </div>
+  );
+};
+
+interface GeminiConfigSectionProps {
+  value: string;
+  onChange: (value: string) => void;
+  configError?: string;
+}
+
+/**
+ * GeminiConfigSection - Config JSON editor section with common config support
+ */
+export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
+  value,
+  onChange,
+  configError,
+}) => {
+  const { t } = useTranslation();
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  useEffect(() => {
+    setIsDarkMode(document.documentElement.classList.contains("dark"));
+
+    const observer = new MutationObserver(() => {
+      setIsDarkMode(document.documentElement.classList.contains("dark"));
+    });
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div className="space-y-2">
+      <label
+        htmlFor="geminiConfig"
+        className="block text-sm font-medium text-foreground"
+      >
+        {t("geminiConfig.configJson", {
+          defaultValue: "配置文件 (config.json)",
+        })}
+      </label>
+
+      <JsonEditor
+        value={value}
         onChange={onChange}
         placeholder={`{
   "timeout": 30000,
@@ -180,7 +180,7 @@ export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
       )}
 
       {!configError && (
-        <p className="text-xs text-gray-500 dark:text-gray-400">
+        <p className="text-xs text-muted-foreground">
           {t("geminiConfig.configJsonHint", {
             defaultValue: "使用 JSON 格式配置 Gemini 扩展参数（可选）",
           })}
