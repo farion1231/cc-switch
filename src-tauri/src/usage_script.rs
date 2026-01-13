@@ -15,13 +15,21 @@ pub async fn execute_usage_script(
     timeout_secs: u64,
     access_token: Option<&str>,
     user_id: Option<&str>,
+    template_type: Option<&str>,
 ) -> Result<Value, AppError> {
+    // 检测是否为自定义模板模式
+    // 优先使用前端传递的 template_type
+    let is_custom_template = template_type.map(|t| t == "custom").unwrap_or(false);
+
     // 1. 替换模板变量，避免泄露敏感信息
     let script_with_vars =
         build_script_with_vars(script_code, api_key, base_url, access_token, user_id);
 
-    // 2. 验证 base_url 的安全性
-    validate_base_url(base_url)?;
+    // 2. 验证 base_url 的安全性（仅当提供了 base_url 时）
+    // 自定义模板模式下，用户可能不使用模板变量，而是直接在脚本中写完整 URL
+    if !base_url.is_empty() {
+        validate_base_url(base_url)?;
+    }
 
     // 3. 在独立作用域中提取 request 配置（确保 Runtime/Context 在 await 前释放）
     let request_config = {
@@ -99,7 +107,8 @@ pub async fn execute_usage_script(
     })?;
 
     // 5. 验证请求 URL 是否安全（防止 SSRF）
-    validate_request_url(&request.url, base_url)?;
+    // 如果提供了 base_url，则验证同源；否则只做基本安全检查
+    validate_request_url(&request.url, base_url, is_custom_template)?;
 
     // 6. 发送 HTTP 请求
     let response_data = send_http_request(&request, timeout_secs).await?;
@@ -480,7 +489,7 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
 }
 
 /// 验证请求 URL 是否安全（防止 SSRF）
-fn validate_request_url(request_url: &str, base_url: &str) -> Result<(), AppError> {
+fn validate_request_url(request_url: &str, base_url: &str, is_custom_template: bool) -> Result<(), AppError> {
     // 解析请求 URL
     let parsed_request = Url::parse(request_url).map_err(|e| {
         AppError::localized(
@@ -490,19 +499,11 @@ fn validate_request_url(request_url: &str, base_url: &str) -> Result<(), AppErro
         )
     })?;
 
-    // 解析 base URL
-    let parsed_base = Url::parse(base_url).map_err(|e| {
-        AppError::localized(
-            "usage_script.base_url_invalid",
-            format!("无效的 base_url: {e}"),
-            format!("Invalid base_url: {e}"),
-        )
-    })?;
-
     let is_request_loopback = is_loopback_host(&parsed_request);
 
     // 必须使用 HTTPS（允许 localhost 用于开发）
-    if parsed_request.scheme() != "https" && !is_request_loopback {
+    // 自定义模板模式下，允许用户自行决定是否使用 HTTP（用户需自行承担安全风险）
+    if !is_custom_template && parsed_request.scheme() != "https" && !is_request_loopback {
         return Err(AppError::localized(
             "usage_script.request_https_required",
             "请求 URL 必须使用 HTTPS 协议（localhost 除外）",
@@ -510,60 +511,85 @@ fn validate_request_url(request_url: &str, base_url: &str) -> Result<(), AppErro
         ));
     }
 
-    // 核心安全检查：必须与 base_url 同源（相同域名和端口）
-    if parsed_request.host_str() != parsed_base.host_str() {
-        return Err(AppError::localized(
-            "usage_script.request_host_mismatch",
-            format!(
-                "请求域名 {} 与 base_url 域名 {} 不匹配（必须是同源请求）",
-                parsed_request.host_str().unwrap_or("unknown"),
-                parsed_base.host_str().unwrap_or("unknown")
-            ),
-            format!(
-                "Request host {} must match base_url host {} (same-origin required)",
-                parsed_request.host_str().unwrap_or("unknown"),
-                parsed_base.host_str().unwrap_or("unknown")
-            ),
-        ));
-    }
+    // 如果提供了 base_url（非空），则进行同源检查
+    // 自定义模板模式下，用户可能不提供 base_url，直接在脚本中写完整 URL
+    if !base_url.is_empty() {
+        // 解析 base URL
+        let parsed_base = Url::parse(base_url).map_err(|e| {
+            AppError::localized(
+                "usage_script.base_url_invalid",
+                format!("无效的 base_url: {e}"),
+                format!("Invalid base_url: {e}"),
+            )
+        })?;
 
-    // 检查端口是否匹配（考虑默认端口）
-    // 使用 port_or_known_default() 会自动处理默认端口（http->80, https->443）
-    match (
-        parsed_request.port_or_known_default(),
-        parsed_base.port_or_known_default(),
-    ) {
-        (Some(request_port), Some(base_port)) if request_port == base_port => {
-            // 端口匹配，继续执行
-        }
-        (Some(request_port), Some(base_port)) => {
+        // 核心安全检查：必须与 base_url 同源（相同域名和端口）
+        if parsed_request.host_str() != parsed_base.host_str() {
             return Err(AppError::localized(
-                "usage_script.request_port_mismatch",
-                format!("请求端口 {request_port} 必须与 base_url 端口 {base_port} 匹配"),
-                format!("Request port {request_port} must match base_url port {base_port}"),
+                "usage_script.request_host_mismatch",
+                format!(
+                    "请求域名 {} 与 base_url 域名 {} 不匹配（必须是同源请求）",
+                    parsed_request.host_str().unwrap_or("unknown"),
+                    parsed_base.host_str().unwrap_or("unknown")
+                ),
+                format!(
+                    "Request host {} must match base_url host {} (same-origin required)",
+                    parsed_request.host_str().unwrap_or("unknown"),
+                    parsed_base.host_str().unwrap_or("unknown")
+                ),
             ));
         }
-        _ => {
-            // 理论上不会发生，因为 port_or_known_default() 应该总是返回 Some
-            return Err(AppError::localized(
-                "usage_script.request_port_unknown",
-                "无法确定端口号",
-                "Unable to determine port number",
-            ));
+
+        // 检查端口是否匹配（考虑默认端口）
+        // 使用 port_or_known_default() 会自动处理默认端口（http->80, https->443）
+        match (
+            parsed_request.port_or_known_default(),
+            parsed_base.port_or_known_default(),
+        ) {
+            (Some(request_port), Some(base_port)) if request_port == base_port => {
+                // 端口匹配，继续执行
+            }
+            (Some(request_port), Some(base_port)) => {
+                return Err(AppError::localized(
+                    "usage_script.request_port_mismatch",
+                    format!("请求端口 {request_port} 必须与 base_url 端口 {base_port} 匹配"),
+                    format!("Request port {request_port} must match base_url port {base_port}"),
+                ));
+            }
+            _ => {
+                // 理论上不会发生，因为 port_or_known_default() 应该总是返回 Some
+                return Err(AppError::localized(
+                    "usage_script.request_port_unknown",
+                    "无法确定端口号",
+                    "Unable to determine port number",
+                ));
+            }
         }
-    }
 
-    // 禁止私有 IP 地址访问（除非 base_url 本身就是私有地址，用于开发环境）
-    if let Some(host) = parsed_request.host_str() {
-        let base_host = parsed_base.host_str().unwrap_or("");
+        // 禁止私有 IP 地址访问（除非 base_url 本身就是私有地址，用于开发环境）
+        if let Some(host) = parsed_request.host_str() {
+            let base_host = parsed_base.host_str().unwrap_or("");
 
-        // 如果 base_url 不是私有地址，则禁止访问私有IP
-        if !is_private_ip(base_host) && is_private_ip(host) {
-            return Err(AppError::localized(
-                "usage_script.private_ip_blocked",
-                "禁止访问私有 IP 地址",
-                "Access to private IP addresses is blocked",
-            ));
+            // 如果 base_url 不是私有地址，则禁止访问私有IP
+            if !is_private_ip(base_host) && is_private_ip(host) {
+                return Err(AppError::localized(
+                    "usage_script.private_ip_blocked",
+                    "禁止访问私有 IP 地址",
+                    "Access to private IP addresses is blocked",
+                ));
+            }
+        }
+    } else {
+        // 自定义模板模式：没有 base_url，需要额外的安全检查
+        // 禁止访问私有 IP 地址（SSRF 防护）
+        if let Some(host) = parsed_request.host_str() {
+            if is_private_ip(host) && !is_request_loopback {
+                return Err(AppError::localized(
+                    "usage_script.private_ip_blocked",
+                    "禁止访问私有 IP 地址（localhost 除外）",
+                    "Access to private IP addresses is blocked (localhost allowed)",
+                ));
+            }
         }
     }
 
@@ -851,7 +877,7 @@ mod tests {
         ];
 
         for (base_url, request_url, should_match) in test_cases {
-            let result = validate_request_url(request_url, base_url);
+            let result = validate_request_url(request_url, base_url, false);
 
             if should_match {
                 assert!(

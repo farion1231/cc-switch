@@ -556,6 +556,7 @@
     "testFailed": "Test failed",
     "formatSuccess": "Format successful",
     "formatFailed": "Format failed",
+    "supportedVariables": "Supported Variables",
     "variablesHint": "Supported variables: {{apiKey}}, {{baseUrl}} | extractor function receives API response JSON object",
     "scriptConfig": "Request configuration",
     "extractorCode": "Extractor code",

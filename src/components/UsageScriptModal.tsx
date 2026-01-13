@@ -113,6 +113,47 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   // 生成带国际化的预设模板
   const PRESET_TEMPLATES = generatePresetTemplates(t);
 
+  // 从 provider 的 settingsConfig 中提取 API Key 和 Base URL
+  const getProviderCredentials = (): {
+    apiKey: string | undefined;
+    baseUrl: string | undefined;
+  } => {
+    try {
+      const config = provider.settingsConfig;
+      if (!config) return { apiKey: undefined, baseUrl: undefined };
+
+      // 处理不同应用的配置格式
+      if (appId === "claude") {
+        // Claude: { env: { ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL } }
+        const env = (config as any).env || {};
+        return {
+          apiKey: env.ANTHROPIC_AUTH_TOKEN,
+          baseUrl: env.ANTHROPIC_BASE_URL,
+        };
+      } else if (appId === "codex") {
+        // Codex: { auth: { api_key }, config: { base_url } }
+        const auth = (config as any).auth || {};
+        const configObj = (config as any).config || {};
+        return {
+          apiKey: auth.api_key,
+          baseUrl: configObj.base_url,
+        };
+      } else if (appId === "gemini") {
+        // Gemini: { GOOGLE_GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL }
+        return {
+          apiKey: (config as any).GOOGLE_GEMINI_API_KEY,
+          baseUrl: (config as any).GOOGLE_GEMINI_BASE_URL,
+        };
+      }
+      return { apiKey: undefined, baseUrl: undefined };
+    } catch (error) {
+      console.error("Failed to extract provider credentials:", error);
+      return { apiKey: undefined, baseUrl: undefined };
+    }
+  };
+
+  const providerCredentials = getProviderCredentials();
+
   const [script, setScript] = useState<UsageScript>(() => {
     return (
       provider.meta?.usage_script || {
@@ -176,6 +217,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(
     () => {
       const existingScript = provider.meta?.usage_script;
+      // 优先使用保存的 templateType
+      if (existingScript?.templateType) {
+        return existingScript.templateType;
+      }
+      // 向后兼容：根据字段推断模板类型
       // 检测 NEW_API 模板（有 accessToken 或 userId）
       if (existingScript?.accessToken || existingScript?.userId) {
         return TEMPLATE_KEYS.NEW_API;
@@ -201,7 +247,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       toast.error(t("usageScript.mustHaveReturn"), { duration: 5000 });
       return;
     }
-    onSave(script);
+    // 保存时记录当前选择的模板类型
+    const scriptWithTemplate = {
+      ...script,
+      templateType: selectedTemplate as "custom" | "general" | "newapi" | undefined,
+    };
+    onSave(scriptWithTemplate);
     onClose();
   };
 
@@ -217,6 +268,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         script.baseUrl,
         script.accessToken,
         script.userId,
+        selectedTemplate as "custom" | "general" | "newapi" | undefined,
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
@@ -281,6 +333,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         setScript({
           ...script,
           code: preset,
+          // 自定义模式不使用这些字段，清除以使用 provider 的值
           apiKey: undefined,
           baseUrl: undefined,
           accessToken: undefined,
@@ -400,6 +453,72 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 );
               })}
             </div>
+
+            {/* 自定义模式：变量提示和具体值 */}
+            {selectedTemplate === TEMPLATE_KEYS.CUSTOM && (
+              <div className="space-y-2 border-t border-white/10 pt-3">
+                <h4 className="text-sm font-medium text-foreground">
+                  {t("usageScript.supportedVariables")}
+                </h4>
+                <div className="space-y-1 text-xs">
+                  {/* baseUrl */}
+                  <div className="flex items-center gap-2 py-1">
+                    <code className="text-emerald-500 dark:text-emerald-400 font-mono shrink-0">
+                      {"{{baseUrl}}"}
+                    </code>
+                    <span className="text-muted-foreground/50">=</span>
+                    {providerCredentials.baseUrl ? (
+                      <code className="text-foreground/70 break-all font-mono">
+                        {providerCredentials.baseUrl}
+                      </code>
+                    ) : (
+                      <span className="text-muted-foreground/50 italic">
+                        {t("common.notSet") || "未设置"}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* apiKey */}
+                  <div className="flex items-center gap-2 py-1">
+                    <code className="text-emerald-500 dark:text-emerald-400 font-mono shrink-0">
+                      {"{{apiKey}}"}
+                    </code>
+                    <span className="text-muted-foreground/50">=</span>
+                    {providerCredentials.apiKey ? (
+                      <>
+                        {showApiKey ? (
+                          <code className="text-foreground/70 break-all font-mono">
+                            {providerCredentials.apiKey}
+                          </code>
+                        ) : (
+                          <code className="text-foreground/70 font-mono">••••••••</code>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                          className="text-muted-foreground hover:text-foreground transition-colors ml-1"
+                          aria-label={
+                            showApiKey
+                              ? t("apiKeyInput.hide")
+                              : t("apiKeyInput.show")
+                          }
+                        >
+                          {showApiKey ? (
+                            <EyeOff size={12} />
+                          ) : (
+                            <Eye size={12} />
+                          )}
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground/50 italic">
+                        {t("common.notSet") || "未设置"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* 凭证配置 */}
             {shouldShowCredentialsConfig && (

@@ -556,6 +556,7 @@
     "testFailed": "测试失败",
     "formatSuccess": "格式化成功",
     "formatFailed": "格式化失败",
+    "supportedVariables": "支持的变量",
     "variablesHint": "支持变量: {{apiKey}}, {{baseUrl}} | extractor 函数接收 API 响应的 JSON 对象",
     "scriptConfig": "请求配置",
     "extractorCode": "提取器代码",

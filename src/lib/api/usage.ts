@@ -28,6 +28,7 @@ export const usageApi = {
     baseUrl?: string,
     accessToken?: string,
     userId?: string,
+    templateType?: "custom" | "general" | "newapi",
   ): Promise<UsageResult> => {
     return invoke("testUsageScript", {
       providerId,
@@ -38,6 +39,7 @@ export const usageApi = {
       baseUrl,
       accessToken,
       userId,
+      templateType,
     });
   },
 

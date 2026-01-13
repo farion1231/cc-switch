@@ -556,6 +556,7 @@
     "testFailed": "テストに失敗しました",
     "formatSuccess": "整形に成功しました",
     "formatFailed": "整形に失敗しました",
+    "supportedVariables": "使用可能な変数",
     "variablesHint": "使用可能な変数: {{apiKey}}, {{baseUrl}} | extractor 関数には API 応答の JSON オブジェクトが渡されます",
     "scriptConfig": "リクエスト設定",
     "extractorCode": "抽出コード",

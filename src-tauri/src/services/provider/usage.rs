@@ -17,6 +17,7 @@ pub(crate) async fn execute_and_format_usage_result(
     timeout: u64,
     access_token: Option<&str>,
     user_id: Option<&str>,
+    template_type: Option<&str>,
 ) -> Result<UsageResult, AppError> {
     match usage_script::execute_usage_script(
         script_code,
@@ -25,6 +26,7 @@ pub(crate) async fn execute_and_format_usage_result(
         timeout,
         access_token,
         user_id,
+        template_type,
     )
     .await
     {
@@ -113,7 +115,7 @@ pub async fn query_usage(
     app_type: AppType,
     provider_id: &str,
 ) -> Result<UsageResult, AppError> {
-    let (script_code, timeout, api_key, base_url, access_token, user_id) = {
+    let (script_code, timeout, api_key, base_url, access_token, user_id, template_type) = {
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let provider = providers.get(provider_id).ok_or_else(|| {
             AppError::localized(
@@ -164,6 +166,7 @@ pub async fn query_usage(
             base_url,
             usage_script.access_token.clone(),
             usage_script.user_id.clone(),
+            usage_script.template_type.clone(),
         )
     };
 
@@ -174,6 +177,7 @@ pub async fn query_usage(
         timeout,
         access_token.as_deref(),
         user_id.as_deref(),
+        template_type.as_deref(),
     )
     .await
 }
@@ -190,6 +194,7 @@ pub async fn test_usage_script(
     base_url: Option<&str>,
     access_token: Option<&str>,
     user_id: Option<&str>,
+    template_type: Option<&str>,
 ) -> Result<UsageResult, AppError> {
     // Use provided credential parameters directly for testing
     execute_and_format_usage_result(
@@ -199,6 +204,7 @@ pub async fn test_usage_script(
         timeout,
         access_token,
         user_id,
+        template_type,
     )
     .await
 }

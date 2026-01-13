@@ -225,6 +225,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         }),
         access_token: request.usage_access_token.clone(),
         user_id: request.usage_user_id.clone(),
+        template_type: None, // Deeplink providers don't specify template type (will use backward compatibility logic)
         auto_query_interval: request.usage_auto_interval,
     };
 
