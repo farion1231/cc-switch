@@ -67,6 +67,12 @@ pub fn should_rectify_thinking_signature(
         return true;
     }
 
+    // 场景4: signature 字段必需但缺失
+    // 错误示例: "signature: Field required"
+    if lower.contains("signature") && lower.contains("field required") {
+        return true;
+    }
+
     false
 }
 
@@ -277,6 +283,21 @@ mod tests {
             &enabled_config()
         ));
         assert!(!should_rectify_thinking_signature(None, &enabled_config()));
+    }
+
+    #[test]
+    fn test_detect_signature_field_required() {
+        // 场景4: signature 字段缺失
+        assert!(should_rectify_thinking_signature(
+            Some("***.***.***.***.***.signature: Field required"),
+            &enabled_config()
+        ));
+        // 嵌套 JSON 格式
+        let nested_error = r#"{"error":{"type":"<nil>","message":"{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"***.***.***.***.***.signature: Field required\"},\"request_id\":\"req_xxx\"}"}}"#;
+        assert!(should_rectify_thinking_signature(
+            Some(nested_error),
+            &enabled_config()
+        ));
     }
 
     #[test]
