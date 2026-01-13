@@ -216,6 +216,32 @@ flatpak run com.ccswitch.desktop
 3. **反映**: ターミナルや Claude Code / Codex / Gemini クライアントを再起動して適用
 4. **公式設定に戻す**: 「Official Login」プリセット（Claude/Codex）または「Google Official」プリセット（Gemini）を選び、対応クライアントを再起動してログイン/OAuth を実行
 
+### CLI モード
+
+GUI を起動せずにターミナルから直接プロバイダを切り替え：
+
+```bash
+# インタラクティブモード - メニュー形式
+cc-switch cmd
+
+# 全ツールの現在のプロバイダ状態を表示
+cc-switch cmd status
+
+# 特定ツールの全プロバイダを一覧表示
+cc-switch cmd list claude
+cc-switch cmd list codex
+cc-switch cmd list gemini
+
+# プロバイダを直接切り替え（非インタラクティブ）
+cc-switch cmd switch claude "OpenRouter"
+cc-switch cmd switch codex "Azure OpenAI"
+```
+
+**ユースケース**：
+- ターミナルワークフローでの素早いプロバイダ切り替え
+- スクリプトや自動化
+- SSH/ヘッドレス環境
+
 ### MCP 管理
 
 - **入口**: 右上の「MCP」ボタンをクリック

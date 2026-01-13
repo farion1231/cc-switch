@@ -216,6 +216,32 @@ flatpak run com.ccswitch.desktop
 3. **Takes Effect**: Restart your terminal or Claude Code / Codex / Gemini clients to apply changes
 4. **Back to Official**: Select the "Official Login" preset (Claude/Codex) or "Google Official" preset (Gemini), restart the corresponding client, then follow its login/OAuth flow
 
+### CLI Mode
+
+Switch providers directly from the terminal without launching the GUI:
+
+```bash
+# Interactive mode - menu-driven interface
+cc-switch cmd
+
+# Show current provider status for all tools
+cc-switch cmd status
+
+# List all providers for a specific tool
+cc-switch cmd list claude
+cc-switch cmd list codex
+cc-switch cmd list gemini
+
+# Switch provider directly (non-interactive)
+cc-switch cmd switch claude "OpenRouter"
+cc-switch cmd switch codex "Azure OpenAI"
+```
+
+**Use Cases**:
+- Quick provider switching in terminal workflows
+- Scripting and automation
+- SSH/headless environments
+
 ### MCP Management
 
 - **Location**: Click "MCP" button in top-right corner
