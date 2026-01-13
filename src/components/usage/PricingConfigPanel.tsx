@@ -202,6 +202,7 @@ export function PricingConfigPanel() {
 
       {editingModel && (
         <PricingEditModal
+          open={!!editingModel}
           model={editingModel}
           isNew={isAddingNew}
           onClose={() => {

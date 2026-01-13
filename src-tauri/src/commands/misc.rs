@@ -5,6 +5,7 @@ use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::path::Path;
 use std::str::FromStr;
 use tauri::AppHandle;
 use tauri::State;
@@ -96,7 +97,9 @@ pub async fn get_tool_versions() -> Result<Vec<ToolVersion>, String> {
 
     for tool in tools {
         // 1. 获取本地版本 - 先尝试直接执行，失败则扫描常见路径
-        let (local_version, local_error) = {
+        let (local_version, local_error) = if let Some(distro) = wsl_distro_for_tool(tool) {
+            try_get_version_wsl(tool, &distro)
+        } else {
             // 先尝试直接执行
             let direct_result = try_get_version(tool);
 
@@ -184,7 +187,7 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
             if out.status.success() {
                 let raw = if stdout.is_empty() { &stderr } else { &stdout };
                 if raw.is_empty() {
-                    (None, Some("未安装或无法执行".to_string()))
+                    (None, Some("not installed or not executable".to_string()))
                 } else {
                     (Some(extract_version(raw)), None)
                 }
@@ -193,7 +196,7 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
                 (
                     None,
                     Some(if err.is_empty() {
-                        "未安装或无法执行".to_string()
+                        "not installed or not executable".to_string()
                     } else {
                         err
                     }),
@@ -202,6 +205,88 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
         }
         Err(e) => (None, Some(e.to_string())),
     }
+}
+
+/// 校验 WSL 发行版名称是否合法
+/// WSL 发行版名称只允许字母、数字、连字符和下划线
+#[cfg(target_os = "windows")]
+fn is_valid_wsl_distro_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+#[cfg(target_os = "windows")]
+fn try_get_version_wsl(tool: &str, distro: &str) -> (Option<String>, Option<String>) {
+    use std::process::Command;
+
+    // 防御性断言：tool 只能是预定义的值
+    debug_assert!(
+        ["claude", "codex", "gemini"].contains(&tool),
+        "unexpected tool name: {tool}"
+    );
+
+    // 校验 distro 名称，防止命令注入
+    if !is_valid_wsl_distro_name(distro) {
+        return (None, Some(format!("[WSL:{distro}] invalid distro name")));
+    }
+
+    let output = Command::new("wsl.exe")
+        .args([
+            "-d",
+            distro,
+            "--",
+            "sh",
+            "-lc",
+            &format!("{tool} --version"),
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    match output {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            if out.status.success() {
+                let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                if raw.is_empty() {
+                    (
+                        None,
+                        Some(format!("[WSL:{distro}] not installed or not executable")),
+                    )
+                } else {
+                    (Some(extract_version(raw)), None)
+                }
+            } else {
+                let err = if stderr.is_empty() { stdout } else { stderr };
+                (
+                    None,
+                    Some(format!(
+                        "[WSL:{distro}] {}",
+                        if err.is_empty() {
+                            "not installed or not executable".to_string()
+                        } else {
+                            err
+                        }
+                    )),
+                )
+            }
+        }
+        Err(e) => (None, Some(format!("[WSL:{distro}] exec failed: {e}"))),
+    }
+}
+
+/// 非 Windows 平台的 WSL 版本检测存根
+/// 注意：此函数实际上不会被调用，因为 `wsl_distro_from_path` 在非 Windows 平台总是返回 None。
+/// 保留此函数是为了保持 API 一致性，防止未来重构时遗漏。
+#[cfg(not(target_os = "windows"))]
+fn try_get_version_wsl(_tool: &str, _distro: &str) -> (Option<String>, Option<String>) {
+    (
+        None,
+        Some("WSL check not supported on this platform".to_string()),
+    )
 }
 
 /// 扫描常见路径查找 CLI
@@ -299,7 +384,49 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         }
     }
 
-    (None, Some("未安装或无法执行".to_string()))
+    (None, Some("not installed or not executable".to_string()))
+}
+
+fn wsl_distro_for_tool(tool: &str) -> Option<String> {
+    let override_dir = match tool {
+        "claude" => crate::settings::get_claude_override_dir(),
+        "codex" => crate::settings::get_codex_override_dir(),
+        "gemini" => crate::settings::get_gemini_override_dir(),
+        _ => None,
+    }?;
+
+    wsl_distro_from_path(&override_dir)
+}
+
+/// 从 UNC 路径中提取 WSL 发行版名称
+/// 支持 `\\wsl$\Ubuntu\...` 和 `\\wsl.localhost\Ubuntu\...` 两种格式
+#[cfg(target_os = "windows")]
+fn wsl_distro_from_path(path: &Path) -> Option<String> {
+    use std::path::{Component, Prefix};
+    let Some(Component::Prefix(prefix)) = path.components().next() else {
+        return None;
+    };
+    match prefix.kind() {
+        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+            let server_name = server.to_string_lossy();
+            if server_name.eq_ignore_ascii_case("wsl$")
+                || server_name.eq_ignore_ascii_case("wsl.localhost")
+            {
+                let distro = share.to_string_lossy().to_string();
+                if !distro.is_empty() {
+                    return Some(distro);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// 非 Windows 平台不支持 WSL 路径解析
+#[cfg(not(target_os = "windows"))]
+fn wsl_distro_from_path(_path: &Path) -> Option<String> {
+    None
 }
 
 /// 打开指定提供商的终端

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Save, Loader2 } from "lucide-react";
@@ -25,6 +26,7 @@ export function ModelTestConfigPanel() {
     claudeModel: "claude-haiku-4-5-20251001",
     codexModel: "gpt-5.1-codex@low",
     geminiModel: "gemini-3-pro-preview",
+    testPrompt: "Who are you?",
   });
 
   useEffect(() => {
@@ -43,6 +45,7 @@ export function ModelTestConfigPanel() {
         claudeModel: data.claudeModel,
         codexModel: data.codexModel,
         geminiModel: data.geminiModel,
+        testPrompt: data.testPrompt || "Who are you?",
       });
     } catch (e) {
       setError(String(e));
@@ -66,6 +69,7 @@ export function ModelTestConfigPanel() {
         claudeModel: config.claudeModel,
         codexModel: config.codexModel,
         geminiModel: config.geminiModel,
+        testPrompt: config.testPrompt || "Who are you?",
       };
       await saveStreamCheckConfig(parsed);
       toast.success(t("streamCheck.configSaved"), {
@@ -188,6 +192,21 @@ export function ModelTestConfigPanel() {
               }
             />
           </div>
+        </div>
+
+        {/* 检查提示词配置 */}
+        <div className="space-y-2">
+          <Label htmlFor="testPrompt">{t("streamCheck.testPrompt")}</Label>
+          <Textarea
+            id="testPrompt"
+            value={config.testPrompt}
+            onChange={(e) =>
+              setConfig({ ...config, testPrompt: e.target.value })
+            }
+            placeholder="Who are you?"
+            rows={2}
+            className="min-h-[60px]"
+          />
         </div>
       </div>
 
