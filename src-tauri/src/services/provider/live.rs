@@ -11,6 +11,7 @@ use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::services::codex_env;
 use crate::services::mcp::McpService;
 use crate::store::AppState;
 
@@ -112,9 +113,14 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             })?;
 
             let auth_path = get_codex_auth_path();
+            let prev_auth: Option<Value> = std::fs::read_to_string(&auth_path)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok());
             write_json_file(&auth_path, auth)?;
             let config_path = get_codex_config_path();
+            let prev_config = std::fs::read_to_string(&config_path).ok();
             std::fs::write(&config_path, config_str).map_err(|e| AppError::io(&config_path, e))?;
+            codex_env::sync_codex_shell_env(provider, prev_auth, prev_config)?;
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
