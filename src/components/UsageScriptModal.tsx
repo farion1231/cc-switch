@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData } from "@/types";
 import { usageApi, type AppId } from "@/lib/api";
+import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
 import * as parserBabel from "prettier/parser-babel";
@@ -126,25 +127,26 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
       // 处理不同应用的配置格式
       if (appId === "claude") {
-        // Claude: { env: { ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL } }
+        // Claude: { env: { ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL } }
         const env = (config as any).env || {};
         return {
-          apiKey: env.ANTHROPIC_AUTH_TOKEN,
+          apiKey: env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY,
           baseUrl: env.ANTHROPIC_BASE_URL,
         };
       } else if (appId === "codex") {
-        // Codex: { auth: { api_key }, config: { base_url } }
+        // Codex: { auth: { OPENAI_API_KEY }, config: TOML string with base_url }
         const auth = (config as any).auth || {};
-        const configObj = (config as any).config || {};
+        const configToml = (config as any).config || "";
         return {
-          apiKey: auth.api_key,
-          baseUrl: configObj.base_url,
+          apiKey: auth.OPENAI_API_KEY,
+          baseUrl: extractCodexBaseUrl(configToml),
         };
       } else if (appId === "gemini") {
-        // Gemini: { GOOGLE_GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL }
+        // Gemini: { env: { GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL } }
+        const env = (config as any).env || {};
         return {
-          apiKey: (config as any).GOOGLE_GEMINI_API_KEY,
-          baseUrl: (config as any).GOOGLE_GEMINI_BASE_URL,
+          apiKey: env.GEMINI_API_KEY,
+          baseUrl: env.GOOGLE_GEMINI_BASE_URL,
         };
       }
       return { apiKey: undefined, baseUrl: undefined };
