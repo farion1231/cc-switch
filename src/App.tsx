@@ -672,8 +672,8 @@ function App() {
                 </h1>
               </div>
             ) : (
-              <>
-                <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
+                <div className="relative inline-flex items-center">
                   <a
                     href="https://github.com/farion1231/cc-switch"
                     target="_blank"
@@ -687,26 +687,27 @@ function App() {
                   >
                     CC Switch
                   </a>
-                  <Button
-                    variant="ghost"
-                    size="icon"
+                  <UpdateBadge
                     onClick={() => {
-                      setSettingsDefaultTab("general");
+                      setSettingsDefaultTab("about");
                       setCurrentView("settings");
                     }}
-                    title={t("common.settings")}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <Settings className="w-4 h-4" />
-                  </Button>
+                    className="absolute -top-4 -right-4"
+                  />
                 </div>
-                <UpdateBadge
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={() => {
-                    setSettingsDefaultTab("about");
+                    setSettingsDefaultTab("general");
                     setCurrentView("settings");
                   }}
-                />
-              </>
+                  title={t("common.settings")}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Settings className="w-4 h-4" />
+                </Button>
+              </div>
             )}
           </div>
 
