@@ -216,6 +216,32 @@ flatpak run com.ccswitch.desktop
 3. **生效方式**：重启终端或 Claude Code / Codex / Gemini 客户端以应用更改
 4. **恢复官方登录**：选择"官方登录"预设（Claude/Codex）或"Google 官方"预设（Gemini），重启对应客户端后按照其登录/OAuth 流程操作
 
+### 命令行模式
+
+无需启动 GUI，直接在终端中切换供应商：
+
+```bash
+# 交互模式 - 菜单驱动界面
+cc-switch cmd
+
+# 显示所有工具的当前供应商状态
+cc-switch cmd status
+
+# 列出指定工具的所有供应商
+cc-switch cmd list claude
+cc-switch cmd list codex
+cc-switch cmd list gemini
+
+# 直接切换供应商（非交互式）
+cc-switch cmd switch claude "OpenRouter"
+cc-switch cmd switch codex "Azure OpenAI"
+```
+
+**使用场景**：
+- 终端工作流中快速切换供应商
+- 脚本和自动化
+- SSH/无头环境
+
 ### MCP 管理
 
 - **位置**：点击右上角"MCP"按钮
