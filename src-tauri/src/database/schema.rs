@@ -430,6 +430,12 @@ impl Database {
                         Self::migrate_v2_to_v3(conn)?;
                         Self::set_user_version(conn, 3)?;
                     }
+                    // v3 -> v4: Claude Code Templates 市场功能（暂未启用）
+                    // 3 => {
+                    //     log::info!("迁移数据库从 v3 到 v4（Claude Code Templates 市场功能）");
+                    //     Self::migrate_v3_to_v4(conn)?;
+                    //     Self::set_user_version(conn, 4)?;
+                    // }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -870,8 +876,9 @@ impl Database {
         Ok(())
     }
 
-    /// v2 -> v3 迁移：添加 Claude Code Templates 功能相关表
-    fn migrate_v2_to_v3(conn: &Connection) -> Result<(), AppError> {
+    /// v3 -> v4 迁移：添加 Claude Code Templates 功能相关表
+    #[allow(dead_code)]
+    fn migrate_v3_to_v4(conn: &Connection) -> Result<(), AppError> {
         // 1. template_repos 表 - 存储模板仓库信息
         conn.execute(
             "CREATE TABLE IF NOT EXISTS template_repos (

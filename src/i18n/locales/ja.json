@@ -1121,7 +1121,6 @@
       "partialFail": "{{count}} 個のコンポーネントのインストールに失敗しました",
       "installFailed": "バンドルのインストールに失敗しました"
     }
-
   },
   "health": {
     "operational": "正常",
