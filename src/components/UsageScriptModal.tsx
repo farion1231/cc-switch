@@ -259,7 +259,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     // 保存时记录当前选择的模板类型
     const scriptWithTemplate = {
       ...script,
-      templateType: selectedTemplate as "custom" | "general" | "newapi" | undefined,
+      templateType: selectedTemplate as
+        | "custom"
+        | "general"
+        | "newapi"
+        | undefined,
     };
     onSave(scriptWithTemplate);
     onClose();
@@ -292,10 +296,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         });
 
         // 🔧 测试成功后，更新主界面列表的用量查询缓存
-        queryClient.setQueryData(
-          ["usage", provider.id, appId],
-          result,
-        );
+        queryClient.setQueryData(["usage", provider.id, appId], result);
       } else {
         toast.error(
           `${t("usageScript.testFailed")}: ${result.error || t("endpointTest.noResult")}`,
@@ -509,7 +510,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                             {providerCredentials.apiKey}
                           </code>
                         ) : (
-                          <code className="text-foreground/70 font-mono">••••••••</code>
+                          <code className="text-foreground/70 font-mono">
+                            ••••••••
+                          </code>
                         )}
                         <button
                           type="button"
@@ -738,7 +741,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   type="number"
                   min={0}
                   max={1440}
-                  value={script.autoQueryInterval ?? script.autoIntervalMinutes ?? 0}
+                  value={
+                    script.autoQueryInterval ?? script.autoIntervalMinutes ?? 0
+                  }
                   onChange={(e) =>
                     setScript({
                       ...script,

@@ -502,7 +502,9 @@ function App() {
                       onDuplicate={handleDuplicateProvider}
                       onConfigureUsage={setUsageProvider}
                       onOpenWebsite={handleOpenWebsite}
-                      onOpenTerminal={activeApp === "claude" ? handleOpenTerminal : undefined}
+                      onOpenTerminal={
+                        activeApp === "claude" ? handleOpenTerminal : undefined
+                      }
                       onCreate={() => setIsAddOpen(true)}
                     />
                   </motion.div>

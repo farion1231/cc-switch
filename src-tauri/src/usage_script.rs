@@ -489,7 +489,11 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
 }
 
 /// 验证请求 URL 是否安全（防止 SSRF）
-fn validate_request_url(request_url: &str, base_url: &str, is_custom_template: bool) -> Result<(), AppError> {
+fn validate_request_url(
+    request_url: &str,
+    base_url: &str,
+    is_custom_template: bool,
+) -> Result<(), AppError> {
     // 解析请求 URL
     let parsed_request = Url::parse(request_url).map_err(|e| {
         AppError::localized(
