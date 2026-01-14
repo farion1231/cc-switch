@@ -190,6 +190,16 @@
       "data": {
         "title": "Data Management",
         "description": "Import/export configurations and backup/restore"
+      },
+      "rectifier": {
+        "title": "Rectifier",
+        "description": "Automatically fix API request compatibility issues",
+        "enabled": "Enable Rectifier",
+        "enabledDescription": "Master switch, all rectification features will be disabled when turned off",
+        "requestGroup": "Request Rectification",
+        "responseGroup": "Response Rectification",
+        "thinkingSignature": "Thinking Signature Rectification",
+        "thinkingSignatureDescription": "Automatically fix Claude API errors caused by thinking signature validation failures"
       }
     },
     "language": "Language",
@@ -574,6 +584,7 @@
     "testFailed": "Test failed",
     "formatSuccess": "Format successful",
     "formatFailed": "Format failed",
+    "supportedVariables": "Supported Variables",
     "variablesHint": "Supported variables: {{apiKey}}, {{baseUrl}} | extractor function receives API response JSON object",
     "scriptConfig": "Request configuration",
     "extractorCode": "Extractor code",

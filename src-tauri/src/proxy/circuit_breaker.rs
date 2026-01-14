@@ -319,7 +319,11 @@ impl CircuitBreaker {
         }
     }
 
-    fn release_half_open_permit(&self) {
+    /// 仅释放 HalfOpen permit，不影响健康统计
+    ///
+    /// 用于整流器等场景：请求结果不应计入 Provider 健康度，
+    /// 但仍需释放占用的探测名额，避免 HalfOpen 状态卡死
+    pub fn release_half_open_permit(&self) {
         let mut current = self.half_open_requests.load(Ordering::SeqCst);
         loop {
             if current == 0 {

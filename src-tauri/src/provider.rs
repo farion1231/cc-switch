@@ -98,6 +98,10 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "userId")]
     pub user_id: Option<String>,
+    /// 模板类型（用于后端判断验证规则）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "templateType")]
+    pub template_type: Option<String>,
     /// 自动查询间隔（单位：分钟，0 表示禁用自动查询）
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "autoQueryInterval")]

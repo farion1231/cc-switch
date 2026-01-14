@@ -190,6 +190,16 @@
       "data": {
         "title": "数据管理",
         "description": "导入导出配置与备份恢复"
+      },
+      "rectifier": {
+        "title": "整流器",
+        "description": "自动修复 API 请求中的兼容性问题",
+        "enabled": "启用整流器",
+        "enabledDescription": "总开关，关闭后所有整流功能将被禁用",
+        "requestGroup": "请求整流",
+        "responseGroup": "响应整流",
+        "thinkingSignature": "Thinking 签名整流",
+        "thinkingSignatureDescription": "自动修复 Claude API 中因 thinking 签名校验失败导致的请求错误"
       }
     },
     "language": "界面语言",
@@ -574,6 +584,7 @@
     "testFailed": "测试失败",
     "formatSuccess": "格式化成功",
     "formatFailed": "格式化失败",
+    "supportedVariables": "支持的变量",
     "variablesHint": "支持变量: {{apiKey}}, {{baseUrl}} | extractor 函数接收 API 响应的 JSON 对象",
     "scriptConfig": "请求配置",
     "extractorCode": "提取器代码",

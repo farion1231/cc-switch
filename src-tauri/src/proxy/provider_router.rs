@@ -151,6 +151,24 @@ impl ProviderRouter {
         self.reset_circuit_breaker(&circuit_key).await;
     }
 
+    /// 仅释放 HalfOpen permit，不影响健康统计（neutral 接口）
+    ///
+    /// 用于整流器等场景：请求结果不应计入 Provider 健康度，
+    /// 但仍需释放占用的探测名额，避免 HalfOpen 状态卡死
+    pub async fn release_permit_neutral(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        used_half_open_permit: bool,
+    ) {
+        if !used_half_open_permit {
+            return;
+        }
+        let circuit_key = format!("{app_type}:{provider_id}");
+        let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+        breaker.release_half_open_permit();
+    }
+
     /// 更新所有熔断器的配置（热更新）
     pub async fn update_all_configs(&self, config: CircuitBreakerConfig) {
         let breakers = self.circuit_breakers.read().await;
@@ -324,5 +342,56 @@ mod tests {
         assert_eq!(providers.len(), 2);
 
         assert!(router.allow_provider_request("b", "claude").await.allowed);
+    }
+
+    #[tokio::test]
+    async fn test_release_permit_neutral_frees_half_open_slot() {
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 配置熔断器：1 次失败即熔断，0 秒超时立即进入 HalfOpen
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 0,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.add_to_failover_queue("claude", "a").unwrap();
+
+        // 启用自动故障转移
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 触发熔断：1 次失败
+        router
+            .record_result("a", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        // 第一次请求：获取 HalfOpen 探测名额
+        let first = router.allow_provider_request("a", "claude").await;
+        assert!(first.allowed);
+        assert!(first.used_half_open_permit);
+
+        // 第二次请求应被拒绝（名额已被占用）
+        let second = router.allow_provider_request("a", "claude").await;
+        assert!(!second.allowed);
+
+        // 使用 release_permit_neutral 释放名额（不影响健康统计）
+        router
+            .release_permit_neutral("a", "claude", first.used_half_open_permit)
+            .await;
+
+        // 第三次请求应被允许（名额已释放）
+        let third = router.allow_provider_request("a", "claude").await;
+        assert!(third.allowed);
+        assert!(third.used_half_open_permit);
     }
 }

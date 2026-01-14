@@ -532,7 +532,7 @@ fn launch_terminal_with_env(
     #[cfg(target_os = "macos")]
     {
         launch_macos_terminal(&config_file, &config_path_escaped)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -583,8 +583,7 @@ fn escape_shell_path(path: &std::path::Path) -> String {
 /// 生成 bash 包装脚本，用于清理临时文件
 fn generate_wrapper_script(config_path: &str, escaped_path: &str) -> String {
     format!(
-        "bash -c 'trap \"rm -f \\\"{}\\\"\" EXIT; echo \"Using provider-specific claude config:\"; echo \"{}\"; claude --settings \"{}\"; exec bash --norc --noprofile'",
-        config_path, escaped_path, escaped_path
+        "bash -c 'trap \"rm -f \\\"{config_path}\\\"\" EXIT; echo \"Using provider-specific claude config:\"; echo \"{escaped_path}\"; claude --settings \"{escaped_path}\"; exec bash --norc --noprofile'"
     )
 }
 

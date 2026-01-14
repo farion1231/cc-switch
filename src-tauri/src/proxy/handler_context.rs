@@ -5,7 +5,10 @@
 use crate::app_config::AppType;
 use crate::provider::Provider;
 use crate::proxy::{
-    extract_session_id, forwarder::RequestForwarder, server::ProxyState, types::AppProxyConfig,
+    extract_session_id,
+    forwarder::RequestForwarder,
+    server::ProxyState,
+    types::{AppProxyConfig, RectifierConfig},
     ProxyError,
 };
 use axum::http::HeaderMap;
@@ -54,6 +57,8 @@ pub struct RequestContext {
     pub app_type: AppType,
     /// Session ID（从客户端请求提取或新生成）
     pub session_id: String,
+    /// 整流器配置
+    pub rectifier_config: RectifierConfig,
 }
 
 impl RequestContext {
@@ -85,6 +90,9 @@ impl RequestContext {
             .get_proxy_config_for_app(app_type_str)
             .await
             .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+
+        // 从数据库读取整流器配置
+        let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
 
         let current_provider_id =
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
@@ -147,6 +155,7 @@ impl RequestContext {
             app_type_str,
             app_type,
             session_id,
+            rectifier_config,
         })
     }
 
@@ -206,6 +215,7 @@ impl RequestContext {
             self.current_provider_id.clone(),
             first_byte_timeout,
             idle_timeout,
+            self.rectifier_config.clone(),
         )
     }
 

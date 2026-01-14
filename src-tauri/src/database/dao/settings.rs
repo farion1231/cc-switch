@@ -163,4 +163,27 @@ impl Database {
         log::info!("已清除所有代理接管状态");
         Ok(())
     }
+
+    // --- 整流器配置 ---
+
+    /// 获取整流器配置
+    ///
+    /// 返回整流器配置，如果不存在则返回默认值（全部启用）
+    pub fn get_rectifier_config(&self) -> Result<crate::proxy::types::RectifierConfig, AppError> {
+        match self.get_setting("rectifier_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析整流器配置失败: {e}"))),
+            None => Ok(crate::proxy::types::RectifierConfig::default()),
+        }
+    }
+
+    /// 更新整流器配置
+    pub fn set_rectifier_config(
+        &self,
+        config: &crate::proxy::types::RectifierConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化整流器配置失败: {e}")))?;
+        self.set_setting("rectifier_config", &json)
+    }
 }

@@ -735,6 +735,8 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::get_rectifier_config,
+            commands::set_rectifier_config,
             commands::restart_app,
             commands::check_for_updates,
             commands::is_portable_mode,

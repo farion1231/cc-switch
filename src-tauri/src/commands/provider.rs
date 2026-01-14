@@ -133,6 +133,7 @@ pub async fn testUsageScript(
     #[allow(non_snake_case)] baseUrl: Option<String>,
     #[allow(non_snake_case)] accessToken: Option<String>,
     #[allow(non_snake_case)] userId: Option<String>,
+    #[allow(non_snake_case)] templateType: Option<String>,
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::test_usage_script(
@@ -145,6 +146,7 @@ pub async fn testUsageScript(
         baseUrl.as_deref(),
         accessToken.as_deref(),
         userId.as_deref(),
+        templateType.as_deref(),
     )
     .await
     .map_err(|e| e.to_string())
