@@ -9,7 +9,6 @@ import {
   Terminal,
   CheckCircle2,
   AlertCircle,
-  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
@@ -20,6 +19,7 @@ import { useUpdate } from "@/contexts/UpdateContext";
 import { relaunchApp } from "@/lib/updater";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
+import appIcon from "@/assets/icons/app-icon.png";
 
 interface AboutSectionProps {
   isPortable: boolean;
@@ -204,7 +204,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-primary" />
+              <img src={appIcon} alt="CC Switch" className="h-5 w-5" />
               <h4 className="text-lg font-semibold text-foreground">
                 CC Switch
               </h4>
