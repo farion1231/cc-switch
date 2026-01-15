@@ -1088,6 +1088,20 @@
     "circuitOpen": "熔断",
     "consecutiveFailures": "连续失败 {{count}} 次"
   },
+  "failover": {
+    "enabled": "{{app}} 故障转移已启用",
+    "disabled": "{{app}} 故障转移已关闭",
+    "toggleFailed": "操作失败: {{detail}}",
+    "inQueue": "已加入",
+    "addQueue": "加入",
+    "priority": {
+      "tooltip": "故障转移优先级 {{priority}}"
+    },
+    "tooltip": {
+      "enabled": "{{app}} 故障转移已启用\n自动切换到下一个可用供应商",
+      "disabled": "启用 {{app}} 故障转移\n当当前供应商失败时自动切换"
+    }
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "服务地址",

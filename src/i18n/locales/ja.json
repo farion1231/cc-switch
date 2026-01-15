@@ -1088,6 +1088,20 @@
     "circuitOpen": "サーキットオープン",
     "consecutiveFailures": "{{count}} 回連続失敗"
   },
+  "failover": {
+    "enabled": "{{app}} フェイルオーバーが有効になりました",
+    "disabled": "{{app}} フェイルオーバーが無効になりました",
+    "toggleFailed": "操作に失敗しました: {{detail}}",
+    "inQueue": "キュー内",
+    "addQueue": "追加",
+    "priority": {
+      "tooltip": "フェイルオーバー優先度 {{priority}}"
+    },
+    "tooltip": {
+      "enabled": "{{app}} フェイルオーバーが有効\n次の利用可能なプロバイダーに自動切り替え",
+      "disabled": "{{app}} フェイルオーバーを有効にする\n現在のプロバイダーが失敗した場合に自動切り替え"
+    }
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "サービスアドレス",

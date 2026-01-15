@@ -15,6 +15,7 @@ pub struct TrayTexts {
     pub show_main: &'static str,
     pub no_provider_hint: &'static str,
     pub quit: &'static str,
+    pub auto_label: &'static str,
 }
 
 impl TrayTexts {
@@ -24,17 +25,20 @@ impl TrayTexts {
                 show_main: "Open main window",
                 no_provider_hint: "  (No providers yet, please add them from the main window)",
                 quit: "Quit",
+                auto_label: "Auto (Failover)",
             },
             "ja" => Self {
                 show_main: "メインウィンドウを開く",
                 no_provider_hint:
                     "  (プロバイダーがまだありません。メイン画面から追加してください)",
                 quit: "終了",
+                auto_label: "自動 (フェイルオーバー)",
             },
             _ => Self {
                 show_main: "打开主界面",
                 no_provider_hint: "  (无供应商，请在主界面添加)",
                 quit: "退出",
+                auto_label: "自动 (故障转移)",
             },
         }
     }
@@ -49,6 +53,9 @@ pub struct TrayAppSection {
     pub header_label: &'static str,
     pub log_name: &'static str,
 }
+
+/// Auto 菜单项后缀
+pub const AUTO_SUFFIX: &str = "auto";
 
 pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
     TrayAppSection {
@@ -84,6 +91,7 @@ fn append_provider_section<'a>(
     manager: Option<&crate::provider::ProviderManager>,
     section: &TrayAppSection,
     tray_texts: &TrayTexts,
+    app_state: &AppState,
 ) -> Result<MenuBuilder<'a, tauri::Wry, tauri::AppHandle<tauri::Wry>>, AppError> {
     let Some(manager) = manager else {
         return Ok(menu_builder);
@@ -111,6 +119,23 @@ fn append_provider_section<'a>(
         return Ok(menu_builder.item(&empty_hint));
     }
 
+    // 获取 proxy 状态，决定 Auto 是否选中
+    let (proxy_enabled, auto_failover) =
+        app_state.db.get_proxy_flags_sync(section.app_type.as_str());
+    let auto_mode = proxy_enabled && auto_failover;
+
+    // 添加 Auto 菜单项（始终显示在供应商列表前）
+    let auto_item = CheckMenuItem::with_id(
+        app,
+        format!("{}{}", section.prefix, AUTO_SUFFIX),
+        tray_texts.auto_label,
+        true,
+        auto_mode,
+        None::<&str>,
+    )
+    .map_err(|e| AppError::Message(format!("创建{}Auto菜单项失败: {e}", section.log_name)))?;
+    menu_builder = menu_builder.item(&auto_item);
+
     let mut sorted_providers: Vec<_> = manager.providers.iter().collect();
     sorted_providers.sort_by(|(_, a), (_, b)| {
         match (a.sort_index, b.sort_index) {
@@ -131,7 +156,8 @@ fn append_provider_section<'a>(
     });
 
     for (id, provider) in sorted_providers {
-        let is_current = manager.current == *id;
+        // Auto 模式下所有供应商都不选中
+        let is_current = !auto_mode && manager.current == *id;
         let item = CheckMenuItem::with_id(
             app,
             format!("{}{}", section.prefix, id),
@@ -150,13 +176,27 @@ fn append_provider_section<'a>(
 /// 处理供应商托盘事件
 pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool {
     for section in TRAY_SECTIONS.iter() {
-        if let Some(provider_id) = event_id.strip_prefix(section.prefix) {
-            log::info!("切换到{}供应商: {provider_id}", section.log_name);
+        if let Some(suffix) = event_id.strip_prefix(section.prefix) {
+            // 处理 Auto 点击
+            if suffix == AUTO_SUFFIX {
+                log::info!("切换到{} Auto模式", section.log_name);
+                let app_handle = app.clone();
+                let app_type = section.app_type.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(e) = handle_auto_click(&app_handle, &app_type) {
+                        log::error!("切换{}Auto模式失败: {e}", section.log_name);
+                    }
+                });
+                return true;
+            }
+
+            // 处理供应商点击
+            log::info!("切换到{}供应商: {suffix}", section.log_name);
             let app_handle = app.clone();
-            let provider_id = provider_id.to_string();
+            let provider_id = suffix.to_string();
             let app_type = section.app_type.clone();
             tauri::async_runtime::spawn_blocking(move || {
-                if let Err(e) = switch_provider_internal(&app_handle, app_type, provider_id) {
+                if let Err(e) = handle_provider_click(&app_handle, &app_type, &provider_id) {
                     log::error!("切换{}供应商失败: {e}", section.log_name);
                 }
             });
@@ -164,6 +204,80 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
         }
     }
     false
+}
+
+/// 处理 Auto 点击：启用 proxy 和 auto_failover
+fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), AppError> {
+    if let Some(app_state) = app.try_state::<AppState>() {
+        let app_type_str = app_type.as_str();
+
+        // 启用 proxy 和 auto_failover
+        app_state
+            .db
+            .set_proxy_flags_sync(app_type_str, true, true)?;
+
+        // 更新托盘菜单
+        if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
+            if let Some(tray) = app.tray_by_id("main") {
+                let _ = tray.set_menu(Some(new_menu));
+            }
+        }
+
+        // 发射事件到前端
+        let event_data = serde_json::json!({
+            "appType": app_type_str,
+            "proxyEnabled": true,
+            "autoFailoverEnabled": true
+        });
+        if let Err(e) = app.emit("proxy-flags-changed", event_data) {
+            log::error!("发射 proxy-flags-changed 事件失败: {e}");
+        }
+    }
+    Ok(())
+}
+
+/// 处理供应商点击：关闭 auto_failover + 切换供应商
+fn handle_provider_click(
+    app: &tauri::AppHandle,
+    app_type: &AppType,
+    provider_id: &str,
+) -> Result<(), AppError> {
+    if let Some(app_state) = app.try_state::<AppState>() {
+        let app_type_str = app_type.as_str();
+
+        // 获取当前 proxy 状态，保持 enabled 不变，只关闭 auto_failover
+        let (proxy_enabled, _) = app_state.db.get_proxy_flags_sync(app_type_str);
+        app_state
+            .db
+            .set_proxy_flags_sync(app_type_str, proxy_enabled, false)?;
+
+        // 切换供应商
+        crate::commands::switch_provider(
+            app_state.clone(),
+            app_type_str.to_string(),
+            provider_id.to_string(),
+        )
+        .map_err(AppError::Message)?;
+
+        // 更新托盘菜单
+        if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
+            if let Some(tray) = app.tray_by_id("main") {
+                let _ = tray.set_menu(Some(new_menu));
+            }
+        }
+
+        // 发射事件到前端
+        let event_data = serde_json::json!({
+            "appType": app_type_str,
+            "proxyEnabled": proxy_enabled,
+            "autoFailoverEnabled": false,
+            "providerId": provider_id
+        });
+        if let Err(e) = app.emit("proxy-flags-changed", event_data) {
+            log::error!("发射 proxy-flags-changed 事件失败: {e}");
+        }
+    }
+    Ok(())
 }
 
 /// 创建动态托盘菜单
@@ -197,8 +311,14 @@ pub fn create_tray_menu(
             current: current_id,
         };
 
-        menu_builder =
-            append_provider_section(app, menu_builder, Some(&manager), section, &tray_texts)?;
+        menu_builder = append_provider_section(
+            app,
+            menu_builder,
+            Some(&manager),
+            section,
+            &tray_texts,
+            app_state,
+        )?;
     }
 
     // 分隔符和退出菜单
@@ -262,39 +382,4 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             log::warn!("未处理的菜单事件: {event_id}");
         }
     }
-}
-
-/// 内部切换供应商函数
-pub fn switch_provider_internal(
-    app: &tauri::AppHandle,
-    app_type: AppType,
-    provider_id: String,
-) -> Result<(), AppError> {
-    if let Some(app_state) = app.try_state::<AppState>() {
-        // 在使用前先保存需要的值
-        let app_type_str = app_type.as_str().to_string();
-        let provider_id_clone = provider_id.clone();
-
-        crate::commands::switch_provider(app_state.clone(), app_type_str.clone(), provider_id)
-            .map_err(AppError::Message)?;
-
-        // 切换成功后重新创建托盘菜单
-        if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
-            if let Some(tray) = app.tray_by_id("main") {
-                if let Err(e) = tray.set_menu(Some(new_menu)) {
-                    log::error!("更新托盘菜单失败: {e}");
-                }
-            }
-        }
-
-        // 发射事件到前端，通知供应商已切换
-        let event_data = serde_json::json!({
-            "appType": app_type_str,
-            "providerId": provider_id_clone
-        });
-        if let Err(e) = app.emit("provider-switched", event_data) {
-            log::error!("发射供应商切换事件失败: {e}");
-        }
-    }
-    Ok(())
 }

@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Search,
   Download,
+  BarChart2,
 } from "lucide-react";
 import type { Provider } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -41,6 +42,7 @@ import { SettingsPage } from "@/components/settings/SettingsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { ProxyToggle } from "@/components/proxy/ProxyToggle";
+import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
@@ -707,6 +709,22 @@ function App() {
                 >
                   <Settings className="w-4 h-4" />
                 </Button>
+                {isCurrentAppTakeoverActive && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      setSettingsDefaultTab("usage");
+                      setCurrentView("settings");
+                    }}
+                    title={t("settings.usage.title", {
+                      defaultValue: "使用统计",
+                    })}
+                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                  >
+                    <BarChart2 className="w-4 h-4" />
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -795,7 +813,19 @@ function App() {
             {currentView === "providers" && (
               <>
                 {activeApp !== "opencode" && (
-                  <ProxyToggle activeApp={activeApp} />
+                  <>
+                    <ProxyToggle activeApp={activeApp} />
+                    <div
+                      className={cn(
+                        "transition-all duration-300 ease-in-out overflow-hidden",
+                        isCurrentAppTakeoverActive
+                          ? "opacity-100 max-w-[100px] scale-100"
+                          : "opacity-0 max-w-0 scale-75 pointer-events-none",
+                      )}
+                    >
+                      <FailoverToggle activeApp={activeApp} />
+                    </div>
+                  </>
                 )}
 
                 <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />

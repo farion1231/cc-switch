@@ -1088,6 +1088,20 @@
     "circuitOpen": "Circuit Open",
     "consecutiveFailures": "{{count}} consecutive failures"
   },
+  "failover": {
+    "enabled": "{{app}} failover enabled",
+    "disabled": "{{app}} failover disabled",
+    "toggleFailed": "Operation failed: {{detail}}",
+    "inQueue": "In queue",
+    "addQueue": "Add",
+    "priority": {
+      "tooltip": "Failover priority {{priority}}"
+    },
+    "tooltip": {
+      "enabled": "{{app}} failover enabled\nAutomatically switch to next available provider",
+      "disabled": "Enable {{app}} failover\nAutomatically switch when current provider fails"
+    }
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "Service Address",
