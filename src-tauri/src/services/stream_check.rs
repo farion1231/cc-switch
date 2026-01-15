@@ -78,15 +78,19 @@ pub struct StreamCheckService;
 
 impl StreamCheckService {
     /// 执行流式健康检查（带重试）
+    ///
+    /// 如果 Provider 配置了单独的测试配置（meta.testConfig），则使用该配置覆盖全局配置
     pub async fn check_with_retry(
         app_type: &AppType,
         provider: &Provider,
         config: &StreamCheckConfig,
     ) -> Result<StreamCheckResult, AppError> {
+        // 合并供应商单独配置和全局配置
+        let effective_config = Self::merge_provider_config(provider, config);
         let mut last_result = None;
 
-        for attempt in 0..=config.max_retries {
-            let result = Self::check_once(app_type, provider, config).await;
+        for attempt in 0..=effective_config.max_retries {
+            let result = Self::check_once(app_type, provider, &effective_config).await;
 
             match &result {
                 Ok(r) if r.success => {
@@ -97,7 +101,7 @@ impl StreamCheckService {
                 }
                 Ok(r) => {
                     // 失败但非异常，判断是否重试
-                    if Self::should_retry(&r.message) && attempt < config.max_retries {
+                    if Self::should_retry(&r.message) && attempt < effective_config.max_retries {
                         last_result = Some(r.clone());
                         continue;
                     }
@@ -107,7 +111,8 @@ impl StreamCheckService {
                     });
                 }
                 Err(e) => {
-                    if Self::should_retry(&e.to_string()) && attempt < config.max_retries {
+                    if Self::should_retry(&e.to_string()) && attempt < effective_config.max_retries
+                    {
                         continue;
                     }
                     return Err(AppError::Message(e.to_string()));
@@ -123,8 +128,49 @@ impl StreamCheckService {
             http_status: None,
             model_used: String::new(),
             tested_at: chrono::Utc::now().timestamp(),
-            retry_count: config.max_retries,
+            retry_count: effective_config.max_retries,
         }))
+    }
+
+    /// 合并供应商单独配置和全局配置
+    ///
+    /// 如果供应商配置了 meta.testConfig 且 enabled 为 true，则使用供应商配置覆盖全局配置
+    fn merge_provider_config(
+        provider: &Provider,
+        global_config: &StreamCheckConfig,
+    ) -> StreamCheckConfig {
+        let test_config = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.test_config.as_ref())
+            .filter(|tc| tc.enabled);
+
+        match test_config {
+            Some(tc) => StreamCheckConfig {
+                timeout_secs: tc.timeout_secs.unwrap_or(global_config.timeout_secs),
+                max_retries: tc.max_retries.unwrap_or(global_config.max_retries),
+                degraded_threshold_ms: tc
+                    .degraded_threshold_ms
+                    .unwrap_or(global_config.degraded_threshold_ms),
+                claude_model: tc
+                    .test_model
+                    .clone()
+                    .unwrap_or_else(|| global_config.claude_model.clone()),
+                codex_model: tc
+                    .test_model
+                    .clone()
+                    .unwrap_or_else(|| global_config.codex_model.clone()),
+                gemini_model: tc
+                    .test_model
+                    .clone()
+                    .unwrap_or_else(|| global_config.gemini_model.clone()),
+                test_prompt: tc
+                    .test_prompt
+                    .clone()
+                    .unwrap_or_else(|| global_config.test_prompt.clone()),
+            },
+            None => global_config.clone(),
+        }
     }
 
     /// 单次流式检查
