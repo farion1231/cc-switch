@@ -16,13 +16,13 @@ pub struct ProxyConfig {
     /// 是否正在接管 Live 配置
     #[serde(default)]
     pub live_takeover_active: bool,
-    /// 流式首字超时（秒）- 等待首个数据块的最大时间
+    /// 流式首字超时（秒）- 等待首个数据块的最大时间，范围 1-120 秒，默认 60 秒
     #[serde(default = "default_streaming_first_byte_timeout")]
     pub streaming_first_byte_timeout: u64,
-    /// 流式静默超时（秒）- 两个数据块之间的最大间隔
+    /// 流式静默超时（秒）- 两个数据块之间的最大间隔，范围 60-600 秒，填 0 禁用（防止中途卡住）
     #[serde(default = "default_streaming_idle_timeout")]
     pub streaming_idle_timeout: u64,
-    /// 非流式总超时（秒）- 非流式请求的总超时时间
+    /// 非流式总超时（秒）- 非流式请求的总超时时间，范围 60-1200 秒，默认 600 秒（10 分钟）
     #[serde(default = "default_non_streaming_timeout")]
     pub non_streaming_timeout: u64,
 }

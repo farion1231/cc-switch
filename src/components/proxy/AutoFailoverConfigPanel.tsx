@@ -25,9 +25,9 @@ export function AutoFailoverConfigPanel({
   const [formData, setFormData] = useState({
     autoFailoverEnabled: false,
     maxRetries: "3",
-    streamingFirstByteTimeout: "30",
-    streamingIdleTimeout: "60",
-    nonStreamingTimeout: "300",
+    streamingFirstByteTimeout: "60",
+    streamingIdleTimeout: "120",
+    nonStreamingTimeout: "600",
     circuitFailureThreshold: "5",
     circuitSuccessThreshold: "2",
     circuitTimeoutSeconds: "60",
@@ -67,9 +67,9 @@ export function AutoFailoverConfigPanel({
     // 定义各字段的有效范围
     const ranges = {
       maxRetries: { min: 0, max: 10 },
-      streamingFirstByteTimeout: { min: 0, max: 180 },
+      streamingFirstByteTimeout: { min: 1, max: 120 },
       streamingIdleTimeout: { min: 0, max: 600 },
-      nonStreamingTimeout: { min: 0, max: 1800 },
+      nonStreamingTimeout: { min: 60, max: 1200 },
       circuitFailureThreshold: { min: 1, max: 20 },
       circuitSuccessThreshold: { min: 1, max: 10 },
       circuitTimeoutSeconds: { min: 0, max: 300 },
@@ -307,8 +307,8 @@ export function AutoFailoverConfigPanel({
               <Input
                 id={`streamingFirstByte-${appType}`}
                 type="number"
-                min="0"
-                max="180"
+                min="1"
+                max="120"
                 value={formData.streamingFirstByteTimeout}
                 onChange={(e) =>
                   setFormData({
@@ -321,7 +321,7 @@ export function AutoFailoverConfigPanel({
               <p className="text-xs text-muted-foreground">
                 {t(
                   "proxy.autoFailover.streamingFirstByteHint",
-                  "等待首个数据块的最大时间",
+                  "等待首个数据块的最大时间，范围 1-120 秒，默认 60 秒",
                 )}
               </p>
             </div>
@@ -347,7 +347,7 @@ export function AutoFailoverConfigPanel({
               <p className="text-xs text-muted-foreground">
                 {t(
                   "proxy.autoFailover.streamingIdleHint",
-                  "数据块之间的最大间隔",
+                  "数据块之间的最大间隔，范围 60-600 秒，填 0 禁用（防止中途卡住）",
                 )}
               </p>
             </div>
@@ -359,8 +359,8 @@ export function AutoFailoverConfigPanel({
               <Input
                 id={`nonStreaming-${appType}`}
                 type="number"
-                min="0"
-                max="1800"
+                min="60"
+                max="1200"
                 value={formData.nonStreamingTimeout}
                 onChange={(e) =>
                   setFormData({
@@ -373,7 +373,7 @@ export function AutoFailoverConfigPanel({
               <p className="text-xs text-muted-foreground">
                 {t(
                   "proxy.autoFailover.nonStreamingHint",
-                  "非流式请求的总超时时间",
+                  "非流式请求的总超时时间，范围 60-1200 秒，默认 600 秒（10 分钟）",
                 )}
               </p>
             </div>
