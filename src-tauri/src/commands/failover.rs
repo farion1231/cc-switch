@@ -75,6 +75,7 @@ pub async fn get_auto_failover_enabled(
 /// 注意：关闭故障转移时不会清除队列，队列内容会保留供下次开启时使用
 #[tauri::command]
 pub async fn set_auto_failover_enabled(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     app_type: String,
     enabled: bool,
@@ -98,5 +99,14 @@ pub async fn set_auto_failover_enabled(
         .db
         .update_proxy_config_for_app(config)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // 刷新托盘菜单，确保状态同步
+    if let Ok(new_menu) = crate::tray::create_tray_menu(&app, &state) {
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_menu(Some(new_menu));
+        }
+    }
+
+    Ok(())
 }

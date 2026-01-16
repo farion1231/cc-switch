@@ -104,7 +104,6 @@ pub fn create_anthropic_sse_stream(
                                 }
 
                                 if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(data) {
-                                    // 仅在 DEBUG 级别简短记录 SSE 事件
                                     log::debug!("[Claude/OpenRouter] <<< SSE chunk received");
 
                                     if message_id.is_none() {

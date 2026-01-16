@@ -87,6 +87,38 @@ export interface UsageResult {
   error?: string;
 }
 
+// 供应商单独的模型测试配置
+export interface ProviderTestConfig {
+  // 是否启用单独配置（false 时使用全局配置）
+  enabled: boolean;
+  // 测试用的模型名称（覆盖全局配置）
+  testModel?: string;
+  // 超时时间（秒）
+  timeoutSecs?: number;
+  // 测试提示词
+  testPrompt?: string;
+  // 降级阈值（毫秒）
+  degradedThresholdMs?: number;
+  // 最大重试次数
+  maxRetries?: number;
+}
+
+// 供应商单独的代理配置
+export interface ProviderProxyConfig {
+  // 是否启用单独配置（false 时使用全局/系统代理）
+  enabled: boolean;
+  // 代理类型：http, https, socks5
+  proxyType?: "http" | "https" | "socks5";
+  // 代理主机
+  proxyHost?: string;
+  // 代理端口
+  proxyPort?: number;
+  // 代理用户名（可选）
+  proxyUsername?: string;
+  // 代理密码（可选）
+  proxyPassword?: string;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -99,6 +131,10 @@ export interface ProviderMeta {
   isPartner?: boolean;
   // 合作伙伴促销 key（用于后端识别 PackyCode 等）
   partnerPromotionKey?: string;
+  // 供应商单独的模型测试配置
+  testConfig?: ProviderTestConfig;
+  // 供应商单独的代理配置
+  proxyConfig?: ProviderProxyConfig;
 }
 
 // 应用设置类型（用于设置对话框与 Tauri API）

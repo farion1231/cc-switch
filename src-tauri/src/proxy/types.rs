@@ -16,13 +16,13 @@ pub struct ProxyConfig {
     /// 是否正在接管 Live 配置
     #[serde(default)]
     pub live_takeover_active: bool,
-    /// 流式首字超时（秒）- 等待首个数据块的最大时间
+    /// 流式首字超时（秒）- 等待首个数据块的最大时间，范围 1-120 秒，默认 60 秒
     #[serde(default = "default_streaming_first_byte_timeout")]
     pub streaming_first_byte_timeout: u64,
-    /// 流式静默超时（秒）- 两个数据块之间的最大间隔
+    /// 流式静默超时（秒）- 两个数据块之间的最大间隔，范围 60-600 秒，填 0 禁用（防止中途卡住）
     #[serde(default = "default_streaming_idle_timeout")]
     pub streaming_idle_timeout: u64,
-    /// 非流式总超时（秒）- 非流式请求的总超时时间
+    /// 非流式总超时（秒）- 非流式请求的总超时时间，范围 60-1200 秒，默认 600 秒（10 分钟）
     #[serde(default = "default_non_streaming_timeout")]
     pub non_streaming_timeout: u64,
 }
@@ -221,6 +221,50 @@ fn default_true() -> bool {
     true
 }
 
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+/// 日志配置
+///
+/// 存储在 settings 表的 log_config 字段中（JSON 格式）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogConfig {
+    /// 总开关：是否启用日志
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 日志级别: error, warn, info, debug, trace
+    #[serde(default = "default_log_level")]
+    pub level: String,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            level: "info".to_string(),
+        }
+    }
+}
+
+impl LogConfig {
+    /// 将配置转换为 log::LevelFilter
+    pub fn to_level_filter(&self) -> log::LevelFilter {
+        if !self.enabled {
+            return log::LevelFilter::Off;
+        }
+        match self.level.to_lowercase().as_str() {
+            "error" => log::LevelFilter::Error,
+            "warn" => log::LevelFilter::Warn,
+            "info" => log::LevelFilter::Info,
+            "debug" => log::LevelFilter::Debug,
+            "trace" => log::LevelFilter::Trace,
+            _ => log::LevelFilter::Info,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,5 +297,61 @@ mod tests {
         let config: RectifierConfig = serde_json::from_str(json).unwrap();
         assert!(!config.enabled);
         assert!(!config.request_thinking_signature);
+    }
+
+    #[test]
+    fn test_log_config_default() {
+        let config = LogConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.level, "info");
+    }
+
+    #[test]
+    fn test_log_config_serde_default() {
+        let json = "{}";
+        let config: LogConfig = serde_json::from_str(json).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.level, "info");
+    }
+
+    #[test]
+    fn test_log_config_to_level_filter() {
+        let mut config = LogConfig::default();
+
+        config.level = "error".to_string();
+        assert_eq!(config.to_level_filter(), log::LevelFilter::Error);
+
+        config.level = "warn".to_string();
+        assert_eq!(config.to_level_filter(), log::LevelFilter::Warn);
+
+        config.level = "info".to_string();
+        assert_eq!(config.to_level_filter(), log::LevelFilter::Info);
+
+        config.level = "debug".to_string();
+        assert_eq!(config.to_level_filter(), log::LevelFilter::Debug);
+
+        config.level = "trace".to_string();
+        assert_eq!(config.to_level_filter(), log::LevelFilter::Trace);
+
+        // 无效级别回退到 info
+        config.level = "invalid".to_string();
+        assert_eq!(config.to_level_filter(), log::LevelFilter::Info);
+
+        // 禁用时返回 Off
+        config.enabled = false;
+        config.level = "debug".to_string();
+        assert_eq!(config.to_level_filter(), log::LevelFilter::Off);
+    }
+
+    #[test]
+    fn test_log_config_serde_roundtrip() {
+        let config = LogConfig {
+            enabled: true,
+            level: "debug".to_string(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: LogConfig = serde_json::from_str(&json).unwrap();
+        assert!(parsed.enabled);
+        assert_eq!(parsed.level, "debug");
     }
 }

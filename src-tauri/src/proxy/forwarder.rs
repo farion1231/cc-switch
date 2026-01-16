@@ -585,8 +585,9 @@ impl RequestForwarder {
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
 
-        // 每次请求时获取最新的全局 HTTP 客户端（支持热更新代理配置）
-        let client = super::http_client::get();
+        // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
+        let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
+        let client = super::http_client::get_for_provider(proxy_config);
         let mut request = client.post(&url);
 
         // 只有当 timeout > 0 时才设置请求超时

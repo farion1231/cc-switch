@@ -1,5 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { failoverApi } from "@/lib/api/failover";
+import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
+import { extractErrorMessage } from "@/utils/errorUtils";
 
 // ========== 熔断器 Hooks ==========
 
@@ -197,6 +200,7 @@ export function useAutoFailoverEnabled(appType: string) {
  */
 export function useSetAutoFailoverEnabled() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: ({ appType, enabled }: { appType: string; enabled: boolean }) =>
@@ -217,14 +221,45 @@ export function useSetAutoFailoverEnabled() {
       return { previousValue, appType };
     },
 
+    onSuccess: (_data, variables) => {
+      const appLabel =
+        variables.appType === "claude"
+          ? "Claude"
+          : variables.appType === "codex"
+            ? "Codex"
+            : "Gemini";
+
+      toast.success(
+        variables.enabled
+          ? t("failover.enabled", {
+              app: appLabel,
+              defaultValue: `${appLabel} 故障转移已启用`,
+            })
+          : t("failover.disabled", {
+              app: appLabel,
+              defaultValue: `${appLabel} 故障转移已关闭`,
+            }),
+        { closeButton: true },
+      );
+    },
+
     // 错误时回滚
-    onError: (_error, _variables, context) => {
+    onError: (error: Error, _variables, context) => {
       if (context?.previousValue !== undefined) {
         queryClient.setQueryData(
           ["autoFailoverEnabled", context.appType],
           context.previousValue,
         );
       }
+
+      const detail =
+        extractErrorMessage(error) ||
+        t("common.unknown", { defaultValue: "未知错误" });
+      toast.error(
+        t("failover.toggleFailed", {
+          defaultValue: `操作失败: ${detail}`,
+        }),
+      );
     },
 
     // 无论成功失败，都重新获取

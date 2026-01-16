@@ -7,7 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { AppId } from "@/lib/api";
-import type { ProviderCategory, ProviderMeta } from "@/types";
+import type {
+  ProviderCategory,
+  ProviderMeta,
+  ProviderTestConfig,
+  ProviderProxyConfig,
+} from "@/types";
 import {
   providerPresets,
   type ProviderPreset,
@@ -32,6 +37,7 @@ import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
+import { ProviderAdvancedConfig } from "./ProviderAdvancedConfig";
 import {
   useProviderCategory,
   useApiKeyState,
@@ -128,6 +134,14 @@ export function ProviderForm({
     () => initialData?.meta?.endpointAutoSelect ?? true,
   );
 
+  // 高级配置：模型测试和代理配置
+  const [testConfig, setTestConfig] = useState<ProviderTestConfig>(
+    () => initialData?.meta?.testConfig ?? { enabled: false },
+  );
+  const [proxyConfig, setProxyConfig] = useState<ProviderProxyConfig>(
+    () => initialData?.meta?.proxyConfig ?? { enabled: false },
+  );
+
   // 使用 category hook
   const { category } = useProviderCategory({
     appId,
@@ -145,6 +159,8 @@ export function ProviderForm({
       setDraftCustomEndpoints([]);
     }
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
+    setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
+    setProxyConfig(initialData?.meta?.proxyConfig ?? { enabled: false });
   }, [appId, initialData]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -656,6 +672,9 @@ export function ProviderForm({
     payload.meta = {
       ...(baseMeta ?? {}),
       endpointAutoSelect,
+      // 添加高级配置
+      testConfig: testConfig.enabled ? testConfig : undefined,
+      proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
     };
 
     onSubmit(payload);
@@ -1028,6 +1047,14 @@ export function ProviderForm({
             />
           </>
         )}
+
+        {/* 高级配置：模型测试和代理配置 */}
+        <ProviderAdvancedConfig
+          testConfig={testConfig}
+          proxyConfig={proxyConfig}
+          onTestConfigChange={setTestConfig}
+          onProxyConfigChange={setProxyConfig}
+        />
 
         {showButtons && (
           <div className="flex justify-end gap-2">

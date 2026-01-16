@@ -12,6 +12,7 @@ use super::{
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
+use reqwest::header::HeaderMap;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use std::{
@@ -47,6 +48,12 @@ pub async fn handle_streaming(
     parser_config: &UsageParserConfig,
 ) -> Response {
     let status = response.status();
+    log::debug!(
+        "[{}] 已接收上游流式响应: status={}, headers={}",
+        ctx.tag,
+        status.as_u16(),
+        format_headers(response.headers())
+    );
     let mut builder = axum::response::Response::builder().status(status);
 
     // 复制响应头
@@ -94,6 +101,19 @@ pub async fn handle_non_streaming(
         log::error!("[{}] 读取响应失败: {e}", ctx.tag);
         ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
     })?;
+    log::debug!(
+        "[{}] 已接收上游响应体: status={}, bytes={}, headers={}",
+        ctx.tag,
+        status.as_u16(),
+        body_bytes.len(),
+        format_headers(&response_headers)
+    );
+
+    log::debug!(
+        "[{}] 上游响应体内容: {}",
+        ctx.tag,
+        String::from_utf8_lossy(&body_bytes)
+    );
 
     // 解析并记录使用量
     if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
@@ -470,6 +490,12 @@ pub fn create_logged_passthrough_stream(
 
             match chunk_result {
                 Some(Ok(bytes)) => {
+                    if is_first_chunk {
+                        log::debug!(
+                            "[{tag}] 已接收上游流式首包: bytes={}",
+                            bytes.len()
+                        );
+                    }
                     is_first_chunk = false;
                     let text = String::from_utf8_lossy(&bytes);
                     buffer.push_str(&text);
@@ -488,13 +514,9 @@ pub fn create_logged_passthrough_stream(
                                             if let Some(c) = &collector {
                                                 c.push(json_value.clone()).await;
                                             }
-                                            log::debug!(
-                                                "[{}] <<< SSE 事件: {}",
-                                                tag,
-                                                data.chars().take(100).collect::<String>()
-                                            );
+                                            log::debug!("[{tag}] <<< SSE 事件: {data}");
                                         } else {
-                                            log::debug!("[{tag}] <<< SSE 数据: {}", data.chars().take(100).collect::<String>());
+                                            log::debug!("[{tag}] <<< SSE 数据: {data}");
                                         }
                                     } else {
                                         log::debug!("[{tag}] <<< SSE: [DONE]");
@@ -522,4 +544,15 @@ pub fn create_logged_passthrough_stream(
             c.finish().await;
         }
     }
+}
+
+fn format_headers(headers: &HeaderMap) -> String {
+    headers
+        .iter()
+        .map(|(key, value)| {
+            let value_str = value.to_str().unwrap_or("<non-utf8>");
+            format!("{key}={value_str}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }

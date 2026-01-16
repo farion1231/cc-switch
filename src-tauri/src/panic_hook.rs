@@ -12,9 +12,6 @@ use std::sync::OnceLock;
 /// 应用版本号（从 Cargo.toml 读取）
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// 日志文件保留数量
-const LOG_FILES_TO_KEEP: usize = 2;
-
 static APP_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn init_app_config_dir(dir: PathBuf) {
@@ -44,48 +41,6 @@ fn get_crash_log_path() -> PathBuf {
 /// 获取日志目录路径
 pub fn get_log_dir() -> PathBuf {
     get_app_config_dir().join("logs")
-}
-
-/// 清理旧日志文件，只保留最近 N 个
-///
-/// 在应用启动时调用，确保日志文件不会无限增长。
-pub fn cleanup_old_logs() {
-    let log_dir = get_log_dir();
-
-    if !log_dir.exists() {
-        return;
-    }
-
-    // 读取目录中的所有 .log 文件
-    let mut log_files: Vec<_> = match std::fs::read_dir(&log_dir) {
-        Ok(entries) => entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().map(|ext| ext == "log").unwrap_or(false))
-            .collect(),
-        Err(_) => return,
-    };
-
-    // 如果文件数量不超过保留数量，无需清理
-    if log_files.len() <= LOG_FILES_TO_KEEP {
-        return;
-    }
-
-    // 按修改时间排序（最新的在前）
-    log_files.sort_by(|a, b| {
-        let time_a = a.metadata().and_then(|m| m.modified()).ok();
-        let time_b = b.metadata().and_then(|m| m.modified()).ok();
-        time_b.cmp(&time_a) // 降序
-    });
-
-    // 删除多余的旧文件
-    for old_file in log_files.into_iter().skip(LOG_FILES_TO_KEEP) {
-        if let Err(e) = std::fs::remove_file(&old_file) {
-            log::warn!("清理旧日志文件失败 {}: {e}", old_file.display());
-        } else {
-            log::info!("已清理旧日志文件: {}", old_file.display());
-        }
-    }
 }
 
 /// 安全获取环境信息（不会 panic）
