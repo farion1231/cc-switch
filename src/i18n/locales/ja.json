@@ -208,6 +208,29 @@
         "responseGroup": "レスポンス整流",
         "thinkingSignature": "Thinking 署名整流",
         "thinkingSignatureDescription": "Claude API の thinking 署名検証エラーを自動修正"
+      },
+      "logConfig": {
+        "title": "ログ管理",
+        "description": "ログ出力レベルを制御",
+        "enabled": "ログを有効化",
+        "enabledDescription": "マスタースイッチ、オフにするとすべてのログが無効になります",
+        "level": "ログレベル",
+        "levelDescription": "出力する最小ログレベルを設定",
+        "levels": {
+          "error": "エラー",
+          "warn": "警告",
+          "info": "情報",
+          "debug": "デバッグ",
+          "trace": "トレース"
+        },
+        "levelHint": "ログレベルの説明：",
+        "levelDesc": {
+          "error": "重大なエラーのみ",
+          "warn": "エラー + 警告",
+          "info": "一般的な操作情報（デフォルト）",
+          "debug": "SSE ストリームとリクエスト/レスポンスを含む詳細情報",
+          "trace": "すべてのログ、最も詳細"
+        }
       }
     },
     "language": "言語",

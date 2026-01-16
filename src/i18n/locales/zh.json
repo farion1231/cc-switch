@@ -208,6 +208,29 @@
         "responseGroup": "响应整流",
         "thinkingSignature": "Thinking 签名整流",
         "thinkingSignatureDescription": "自动修复 Claude API 中因 thinking 签名校验失败导致的请求错误"
+      },
+      "logConfig": {
+        "title": "日志管理",
+        "description": "控制日志输出级别",
+        "enabled": "启用日志",
+        "enabledDescription": "总开关，关闭后所有日志将被禁用",
+        "level": "日志级别",
+        "levelDescription": "设置输出的最低日志级别",
+        "levels": {
+          "error": "错误",
+          "warn": "警告",
+          "info": "信息",
+          "debug": "调试",
+          "trace": "跟踪"
+        },
+        "levelHint": "日志级别说明：",
+        "levelDesc": {
+          "error": "仅严重错误",
+          "warn": "错误 + 警告信息",
+          "info": "一般操作信息（默认）",
+          "debug": "详细信息，包含 SSE 流和请求/响应详情",
+          "trace": "全部日志，最详细"
+        }
       }
     },
     "language": "界面语言",

@@ -208,6 +208,29 @@
         "responseGroup": "Response Rectification",
         "thinkingSignature": "Thinking Signature Rectification",
         "thinkingSignatureDescription": "Automatically fix Claude API errors caused by thinking signature validation failures"
+      },
+      "logConfig": {
+        "title": "Log Management",
+        "description": "Control log output level",
+        "enabled": "Enable Logging",
+        "enabledDescription": "Master switch, all logging will be disabled when turned off",
+        "level": "Log Level",
+        "levelDescription": "Set the minimum log level to output",
+        "levels": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        },
+        "levelHint": "Log level descriptions:",
+        "levelDesc": {
+          "error": "Critical errors only",
+          "warn": "Errors + warnings",
+          "info": "General operation info (default)",
+          "debug": "Detailed info including SSE stream and request/response",
+          "trace": "All logs, most verbose"
+        }
       }
     },
     "language": "Language",
