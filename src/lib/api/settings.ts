@@ -142,9 +142,22 @@ export const settingsApi = {
   async setRectifierConfig(config: RectifierConfig): Promise<boolean> {
     return await invoke("set_rectifier_config", { config });
   },
+
+  async getLogConfig(): Promise<LogConfig> {
+    return await invoke("get_log_config");
+  },
+
+  async setLogConfig(config: LogConfig): Promise<boolean> {
+    return await invoke("set_log_config", { config });
+  },
 };
 
 export interface RectifierConfig {
   enabled: boolean;
   requestThinkingSignature: boolean;
+}
+
+export interface LogConfig {
+  enabled: boolean;
+  level: "error" | "warn" | "info" | "debug" | "trace";
 }
