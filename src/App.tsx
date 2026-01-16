@@ -635,7 +635,7 @@ function App() {
         }
       >
         <div
-          className="flex h-full items-center justify-between gap-2 px-6"
+          className="mx-auto flex h-full max-w-[56rem] items-center justify-between gap-2 px-4"
           data-tauri-drag-region
           style={{ WebkitAppRegion: "drag" } as any}
         >
@@ -730,7 +730,7 @@ function App() {
           </div>
 
           <div
-            className="flex items-center gap-2 h-[32px]"
+            className="flex items-center gap-1.5 h-[32px]"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
             {currentView === "prompts" && (
