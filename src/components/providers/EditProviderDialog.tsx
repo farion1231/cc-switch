@@ -129,8 +129,8 @@ export function EditProviderDialog({
     };
   }, [
     provider?.id, // 只依赖 ID，provider 对象更新不会触发重新计算
+    provider?.meta, // 需要依赖 meta 以便正确初始化 testConfig 和 proxyConfig
     initialSettingsConfig,
-    // 注意：不依赖 provider 的其他字段，防止表单重置
   ]);
 
   const handleSubmit = useCallback(

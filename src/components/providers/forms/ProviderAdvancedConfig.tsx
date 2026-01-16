@@ -81,26 +81,47 @@ export function ProviderAdvancedConfig({
   );
   const [showPassword, setShowPassword] = useState(false);
 
-  // 代理 URL 输入状态
+  // 代理 URL 输入状态（仅在初始化时从 proxyConfig 构建）
   const [proxyUrl, setProxyUrl] = useState(() => buildProxyUrl(proxyConfig));
 
-  // 同步外部 proxyConfig 变化到内部状态
+  // 标记是否为用户主动输入（用于区分外部更新和用户输入）
+  const [isUserTyping, setIsUserTyping] = useState(false);
+
+  // 同步外部 testConfig.enabled 变化到展开状态
   useEffect(() => {
-    const newUrl = buildProxyUrl(proxyConfig);
-    if (newUrl !== proxyUrl) {
-      setProxyUrl(newUrl);
+    setIsTestConfigOpen(testConfig.enabled);
+  }, [testConfig.enabled]);
+
+  // 同步外部 proxyConfig.enabled 变化到展开状态
+  useEffect(() => {
+    setIsProxyConfigOpen(proxyConfig.enabled);
+  }, [proxyConfig.enabled]);
+
+  // 仅在外部 proxyConfig 变化且非用户输入时同步（如：重置表单、加载数据）
+  useEffect(() => {
+    if (!isUserTyping) {
+      const newUrl = buildProxyUrl(proxyConfig);
+      if (newUrl !== proxyUrl) {
+        setProxyUrl(newUrl);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proxyConfig.proxyType, proxyConfig.proxyHost, proxyConfig.proxyPort]);
 
-  // 处理代理 URL 变化
+  // 处理代理 URL 变化（用户输入时不触发 URL 重建）
   const handleProxyUrlChange = (value: string) => {
+    setIsUserTyping(true);
     setProxyUrl(value);
     const parsed = parseProxyUrl(value);
     onProxyConfigChange({
       ...proxyConfig,
       ...parsed,
     });
+  };
+
+  // 输入框失焦时结束用户输入状态
+  const handleProxyUrlBlur = () => {
+    setIsUserTyping(false);
   };
 
   // 清除代理配置
@@ -361,6 +382,7 @@ export function ProviderAdvancedConfig({
                 placeholder="http://127.0.0.1:7890 / socks5://127.0.0.1:1080"
                 value={proxyUrl}
                 onChange={(e) => handleProxyUrlChange(e.target.value)}
+                onBlur={handleProxyUrlBlur}
                 className="font-mono text-sm flex-1"
                 disabled={!proxyConfig.enabled}
               />
