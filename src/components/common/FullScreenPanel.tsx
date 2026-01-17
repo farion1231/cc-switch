@@ -38,14 +38,30 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   }, [isOpen]);
 
   // ESC 键关闭面板
+  const onCloseRef = React.useRef(onClose);
+  
+  React.useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   React.useEffect(() => {
     if (!isOpen) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // 如果焦点在输入框、文本域或可编辑元素上，不拦截 ESC
+        const target = event.target as HTMLElement;
+        const isInput = target.tagName === "INPUT" || 
+                       target.tagName === "TEXTAREA" || 
+                       target.isContentEditable;
+        
+        if (isInput) {
+          return; // 让输入框自己处理 ESC（比如清空、失焦等）
+        }
+
         event.preventDefault();
         event.stopPropagation(); // 阻止事件冒泡，避免与 App.tsx 的监听器冲突
-        onClose();
+        onCloseRef.current();
       }
     };
 
@@ -54,7 +70,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   return createPortal(
     <AnimatePresence>
