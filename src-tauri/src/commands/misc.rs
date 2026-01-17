@@ -322,6 +322,19 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         search_paths.push(std::path::PathBuf::from("C:\\Program Files\\nodejs"));
     }
 
+    // 添加 fnm 路径支持
+    let fnm_base = home.join(".local/state/fnm_multishells");
+    if fnm_base.exists() {
+        if let Ok(entries) = std::fs::read_dir(&fnm_base) {
+            for entry in entries.flatten() {
+                let bin_path = entry.path().join("bin");
+                if bin_path.exists() {
+                    search_paths.push(bin_path);
+                }
+            }
+        }
+    }
+
     // 扫描 nvm 目录下的所有 node 版本
     let nvm_base = home.join(".nvm/versions/node");
     if nvm_base.exists() {
