@@ -286,6 +286,10 @@
     "restartFailed": "アプリの再起動に失敗しました。手動で閉じて再度開いてください。",
     "devModeRestartHint": "開発モードでは自動再起動をサポートしていません。手動で再起動してください。",
     "saving": "保存中...",
+    "enableConfigDirOverrides": "設定ディレクトリ上書きを有効化",
+    "enableConfigDirOverridesDescription": "有効にすると下の上書きディレクトリ（例: WSL）に書き込みます。無効にすると既定ディレクトリを使い、上書きパスは保持します。",
+    "syncProviderSwitchToBothConfigDirs": "両方のディレクトリへ同期",
+    "syncProviderSwitchToBothConfigDirsDescription": "有効にするとプロバイダー切替時に既定ディレクトリと上書きディレクトリ（Windows + WSL）を同時に更新します。",
     "globalProxy": {
       "label": "グローバルプロキシ",
       "hint": "すべてのリクエスト（API、Skills ダウンロードなど）をプロキシ経由で送信します。空欄で直接接続。",

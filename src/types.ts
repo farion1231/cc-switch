@@ -120,6 +120,8 @@ export interface Settings {
 
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
+  enableConfigDirOverrides?: boolean;
+  syncProviderSwitchToBothConfigDirs?: boolean;
   claudeConfigDir?: string;
   // 覆盖 Codex 配置目录（可选）
   codexConfigDir?: string;

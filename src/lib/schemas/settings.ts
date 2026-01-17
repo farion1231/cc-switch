@@ -17,6 +17,8 @@ export const settingsSchema = z.object({
   language: z.enum(["en", "zh", "ja"]).optional(),
 
   // 设备级目录覆盖
+  enableConfigDirOverrides: z.boolean().optional(),
+  syncProviderSwitchToBothConfigDirs: z.boolean().optional(),
   claudeConfigDir: directorySchema.nullable().optional(),
   codexConfigDir: directorySchema.nullable().optional(),
   geminiConfigDir: directorySchema.nullable().optional(),

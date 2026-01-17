@@ -24,9 +24,9 @@ pub use live::{import_default_config, read_live_settings, sync_current_to_live};
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::write_live_snapshot;
+pub(crate) use live::write_gemini_live;
 
-// Internal re-exports
-use live::write_gemini_live;
+// Internal imports
 use usage::validate_usage_script;
 
 /// Provider business logic service

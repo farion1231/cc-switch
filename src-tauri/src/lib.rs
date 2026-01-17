@@ -13,6 +13,7 @@ mod gemini_config;
 mod gemini_mcp;
 mod init_status;
 mod mcp;
+mod paths;
 mod panic_hook;
 mod prompt;
 mod prompt_files;
@@ -46,6 +47,11 @@ pub use services::{
 };
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
+
+pub fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
+    crate::services::provider::write_gemini_live(provider)
+}
+
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 

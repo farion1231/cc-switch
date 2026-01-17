@@ -3,10 +3,13 @@ use crate::error::AppError;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// 获取用户主目录，带回退和日志
 fn get_home_dir() -> PathBuf {
+    if let Some(home) = crate::paths::home_dir() {
+        return home;
+    }
     dirs::home_dir().unwrap_or_else(|| {
         log::warn!("无法获取用户主目录，回退到当前目录");
         PathBuf::from(".")
@@ -163,7 +166,13 @@ pub fn read_gemini_env() -> Result<HashMap<String, String>, AppError> {
 /// 写入 Gemini .env 文件（原子操作）
 pub fn write_gemini_env_atomic(map: &HashMap<String, String>) -> Result<(), AppError> {
     let path = get_gemini_env_path();
+    write_gemini_env_atomic_at_path(&path, map)
+}
 
+pub(crate) fn write_gemini_env_atomic_at_path(
+    path: &Path,
+    map: &HashMap<String, String>,
+) -> Result<(), AppError> {
     // 确保目录存在
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -181,17 +190,17 @@ pub fn write_gemini_env_atomic(map: &HashMap<String, String>) -> Result<(), AppE
     }
 
     let content = serialize_env_file(map);
-    write_text_file(&path, &content)?;
+    write_text_file(path, &content)?;
 
     // 设置文件权限为 600（仅所有者可读写）
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&path)
-            .map_err(|e| AppError::io(&path, e))?
+        let mut perms = fs::metadata(path)
+            .map_err(|e| AppError::io(path, e))?
             .permissions();
         perms.set_mode(0o600);
-        fs::set_permissions(&path, perms).map_err(|e| AppError::io(&path, e))?;
+        fs::set_permissions(path, perms).map_err(|e| AppError::io(path, e))?;
     }
 
     Ok(())
@@ -301,7 +310,13 @@ pub fn get_gemini_settings_path() -> PathBuf {
 /// - `selected_type`: 要设置的 selectedType 值（如 "gemini-api-key" 或 "oauth-personal"）
 fn update_selected_type(selected_type: &str) -> Result<(), AppError> {
     let settings_path = get_gemini_settings_path();
+    update_selected_type_at_path(&settings_path, selected_type)
+}
 
+pub(crate) fn update_selected_type_at_path(
+    settings_path: &Path,
+    selected_type: &str,
+) -> Result<(), AppError> {
     // 确保目录存在
     if let Some(parent) = settings_path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -310,7 +325,7 @@ fn update_selected_type(selected_type: &str) -> Result<(), AppError> {
     // 读取现有的 settings.json（如果存在）
     let mut settings_content = if settings_path.exists() {
         let content =
-            fs::read_to_string(&settings_path).map_err(|e| AppError::io(&settings_path, e))?;
+            fs::read_to_string(settings_path).map_err(|e| AppError::io(settings_path, e))?;
         serde_json::from_str::<Value>(&content).unwrap_or_else(|_| serde_json::json!({}))
     } else {
         serde_json::json!({})
@@ -337,7 +352,7 @@ fn update_selected_type(selected_type: &str) -> Result<(), AppError> {
     }
 
     // 写入文件
-    crate::config::write_json_file(&settings_path, &settings_content)?;
+    crate::config::write_json_file(settings_path, &settings_content)?;
 
     Ok(())
 }
