@@ -291,20 +291,30 @@ function App() {
     checkEnvOnSwitch();
   }, [activeApp]);
 
+  // 全局键盘快捷键
   useEffect(() => {
-    const handleGlobalShortcut = (event: KeyboardEvent) => {
-      if (event.key !== "," || !(event.metaKey || event.ctrlKey)) {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Cmd/Ctrl + , 打开设置
+      if (event.key === "," && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        setCurrentView("settings");
         return;
       }
-      event.preventDefault();
-      setCurrentView("settings");
+
+      // ESC 键返回
+      if (event.key === "Escape" && currentView !== "providers") {
+        event.preventDefault();
+        setCurrentView(
+          currentView === "skillsDiscovery" ? "skills" : "providers"
+        );
+      }
     };
 
-    window.addEventListener("keydown", handleGlobalShortcut);
+    window.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.removeEventListener("keydown", handleGlobalShortcut);
+      window.removeEventListener("keydown", handleKeyDown);
     };
-  }, []);
+  }, [currentView]);
 
   // 打开网站链接
   const handleOpenWebsite = async (url: string) => {
