@@ -181,7 +181,7 @@ Download `CC-Switch-v{version}-macOS.zip` from the [Releases](../../releases) pa
 
 > **Note**: Since the author doesn't have an Apple Developer account, you may see an "unidentified developer" warning on first launch. Please close it first, then go to "System Settings" → "Privacy & Security" → click "Open Anyway", and you'll be able to open it normally afterwards.
 
-### ArchLinux 用户
+### Arch Linux Users
 
 **Install via paru (Recommended)**
 
