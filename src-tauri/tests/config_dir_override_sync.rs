@@ -10,6 +10,63 @@ mod support;
 use support::{ensure_test_home, reset_test_fs, test_mutex};
 
 #[test]
+fn override_toggle_preserves_configured_paths_and_switches_effective_dir() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home().to_path_buf();
+
+    let override_codex_dir = home.join("wsl").join(".codex");
+    let override_codex_dir_str = override_codex_dir.to_string_lossy().to_string();
+
+    let default_auth_path = home.join(".codex").join("auth.json");
+    let override_auth_path = override_codex_dir.join("auth.json");
+
+    let mut settings = AppSettings::default();
+    settings.codex_config_dir = Some(override_codex_dir_str.clone());
+    settings.enable_config_dir_overrides = false;
+    settings.sync_provider_switch_to_both_config_dirs = false;
+    update_settings(settings).expect("update settings");
+
+    // Effective dir should switch back to default when overrides are disabled.
+    assert_eq!(
+        cc_switch_lib::get_codex_auth_path(),
+        default_auth_path,
+        "override disabled should make default codex dir effective"
+    );
+
+    // Persisted settings.json should also retain the configured override.
+    let settings_path = home.join(".cc-switch").join("settings.json");
+    let on_disk: serde_json::Value = read_json_file(&settings_path).expect("read settings.json");
+    assert_eq!(
+        on_disk
+            .get("codexConfigDir")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+        override_codex_dir_str,
+        "settings.json should retain codexConfigDir"
+    );
+    assert_eq!(
+        on_disk
+            .get("enableConfigDirOverrides")
+            .and_then(|v| v.as_bool()),
+        Some(false),
+        "settings.json should reflect overrides disabled"
+    );
+
+    // Re-enable overrides: effective dir should switch back to override without re-entering the path.
+    let mut settings = AppSettings::default();
+    settings.codex_config_dir = Some(override_codex_dir_str);
+    settings.enable_config_dir_overrides = true;
+    settings.sync_provider_switch_to_both_config_dirs = false;
+    update_settings(settings).expect("re-enable overrides");
+    assert_eq!(
+        cc_switch_lib::get_codex_auth_path(),
+        override_auth_path,
+        "override enabled should restore override codex dir effective"
+    );
+}
+
+#[test]
 fn write_codex_live_respects_override_toggle_and_can_sync_both_dirs() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
