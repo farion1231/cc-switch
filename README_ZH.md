@@ -221,8 +221,9 @@ flatpak run com.ccswitch.desktop
 无需启动 GUI，直接在终端中切换供应商：
 
 ```bash
-# 交互模式 - 菜单驱动界面
+# 交互模式（TUI）
 cc-switch cmd
+# 提示：在 TUI 内按 '?' 查看快捷键，按 '/' 搜索，按 'q' 退出
 
 # 显示所有工具的当前供应商状态
 cc-switch cmd status
@@ -232,10 +233,25 @@ cc-switch cmd list claude
 cc-switch cmd list codex
 cc-switch cmd list gemini
 
+# 列出供应商并显示 ID（同名时用于区分）
+cc-switch cmd list claude --ids
+
 # 直接切换供应商（非交互式）
 cc-switch cmd switch claude "OpenRouter"
 cc-switch cmd switch codex "Azure OpenAI"
+cc-switch cmd switch claude <provider-id>
+
+# 供应商 CRUD
+cc-switch cmd add claude
+cc-switch cmd add claude --json provider.json
+cc-switch cmd show claude "My Provider"
+cc-switch cmd show claude <provider-id>
+cc-switch cmd edit claude "My Provider"
+cc-switch cmd delete claude "My Provider"
+cc-switch cmd delete claude "My Provider" --force
 ```
+
+更多 TUI 快捷键与 ASCII 截图见 `docs/tui.md`。
 
 **使用场景**：
 - 终端工作流中快速切换供应商

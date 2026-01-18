@@ -221,8 +221,9 @@ flatpak run com.ccswitch.desktop
 Switch providers directly from the terminal without launching the GUI:
 
 ```bash
-# Interactive mode - menu-driven interface
+# Interactive mode (TUI)
 cc-switch cmd
+# Tip: press '?' for shortcuts, '/' to search, 'q' to quit
 
 # Show current provider status for all tools
 cc-switch cmd status
@@ -232,10 +233,25 @@ cc-switch cmd list claude
 cc-switch cmd list codex
 cc-switch cmd list gemini
 
+# List providers with IDs (useful when duplicate names exist)
+cc-switch cmd list claude --ids
+
 # Switch provider directly (non-interactive)
 cc-switch cmd switch claude "OpenRouter"
 cc-switch cmd switch codex "Azure OpenAI"
+cc-switch cmd switch claude <provider-id>
+
+# Provider CRUD
+cc-switch cmd add claude
+cc-switch cmd add claude --json provider.json
+cc-switch cmd show claude "My Provider"
+cc-switch cmd show claude <provider-id>
+cc-switch cmd edit claude "My Provider"
+cc-switch cmd delete claude "My Provider"
+cc-switch cmd delete claude "My Provider" --force
 ```
+
+See `docs/tui.md` for keybindings and an ASCII screenshot.
 
 **Use Cases**:
 - Quick provider switching in terminal workflows

@@ -5,7 +5,8 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use super::args::{parse_tool_name, CmdAction};
-use super::interactive;
+use super::crud;
+use super::tui;
 use crate::app_config::AppType;
 use crate::database::Database;
 use crate::services::ProviderService;
@@ -31,8 +32,8 @@ pub fn run_cli(action: Option<CmdAction>) -> ExitCode {
 
     match action {
         None => {
-            // Interactive mode
-            match interactive::run_interactive(&app_state, &term) {
+            // Interactive mode (TUI by default)
+            match tui::run_tui(&app_state) {
                 Ok(_) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("{} {e}", style("✗").red());
@@ -41,10 +42,22 @@ pub fn run_cli(action: Option<CmdAction>) -> ExitCode {
             }
         }
         Some(CmdAction::Status) => cmd_status(&app_state, &term),
-        Some(CmdAction::List { tool }) => cmd_list(&app_state, &term, &tool),
+        Some(CmdAction::List { tool, ids }) => cmd_list(&app_state, &term, &tool, ids),
         Some(CmdAction::Switch { tool, provider }) => {
             cmd_switch(&app_state, &term, &tool, &provider)
         }
+        Some(CmdAction::Add { tool, json }) => cmd_add(&app_state, &term, &tool, json.as_deref()),
+        Some(CmdAction::Edit { tool, provider }) => cmd_edit(&app_state, &term, &tool, &provider),
+        Some(CmdAction::Delete {
+            tool,
+            provider,
+            force,
+        }) => cmd_delete(&app_state, &term, &tool, &provider, force),
+        Some(CmdAction::Show {
+            tool,
+            provider,
+            json,
+        }) => cmd_show(&app_state, &term, &tool, &provider, json),
         Some(CmdAction::Help) => cmd_help(&term),
     }
 }
@@ -86,7 +99,7 @@ fn cmd_status(state: &AppState, term: &Term) -> ExitCode {
 }
 
 /// List all providers for a specific tool
-fn cmd_list(state: &AppState, term: &Term, tool: &str) -> ExitCode {
+fn cmd_list(state: &AppState, term: &Term, tool: &str, show_ids: bool) -> ExitCode {
     let app_type = match parse_tool_name(tool) {
         Some(t) => t,
         None => {
@@ -147,7 +160,11 @@ fn cmd_list(state: &AppState, term: &Term, tool: &str) -> ExitCode {
             String::new()
         };
 
-        let _ = term.write_line(&format!("  {marker} {name}{active_label}"));
+        if show_ids {
+            let _ = term.write_line(&format!("  {marker} {name} (id: {id}){active_label}"));
+        } else {
+            let _ = term.write_line(&format!("  {marker} {name}{active_label}"));
+        }
     }
 
     let _ = term.write_line("");
@@ -176,44 +193,55 @@ fn cmd_switch(state: &AppState, term: &Term, tool: &str, provider_name: &str) ->
         }
     };
 
-    // Find provider by name (case-insensitive partial match)
-    let matching: Vec<_> = providers
-        .iter()
-        .filter(|(_, p)| p.name.to_lowercase().contains(&provider_name.to_lowercase()))
-        .collect();
+    // Prefer switching by provider ID when an exact ID is provided.
+    let (provider_id, provider) = if let Some(provider) = providers.get(provider_name) {
+        (provider_name, provider)
+    } else {
+        // Find provider by name (case-insensitive partial match)
+        let query = provider_name.to_ascii_lowercase();
+        let matching: Vec<_> = providers
+            .iter()
+            .filter(|(_, p)| p.name.to_ascii_lowercase().contains(&query))
+            .collect();
 
-    let (provider_id, provider) = match matching.len() {
-        0 => {
-            eprintln!(
-                "{} Provider '{}' not found for {}.",
-                style("✗").red(),
-                provider_name,
-                app_type.as_str()
-            );
-            eprintln!("\nAvailable providers:");
-            for (_, p) in providers.iter() {
-                eprintln!("  • {}", p.name);
-            }
-            return ExitCode::from(1);
-        }
-        1 => matching[0],
-        _ => {
-            // Check for exact match first
-            if let Some(exact) = matching
-                .iter()
-                .find(|(_, p)| p.name.to_lowercase() == provider_name.to_lowercase())
-            {
-                *exact
-            } else {
+        match matching.len() {
+            0 => {
                 eprintln!(
-                    "{} Multiple providers match '{}'. Please be more specific:",
+                    "{} Provider '{}' not found for {}.",
                     style("✗").red(),
-                    provider_name
+                    provider_name,
+                    app_type.as_str()
                 );
-                for (_, p) in matching {
-                    eprintln!("  • {}", p.name);
+                if !providers.is_empty() {
+                    eprintln!("\nAvailable providers (use ID to disambiguate):");
+                    for (id, p) in providers.iter() {
+                        eprintln!("  • {} (id: {id})", p.name);
+                    }
                 }
                 return ExitCode::from(1);
+            }
+            1 => (matching[0].0.as_str(), matching[0].1),
+            _ => {
+                // If there is exactly one exact match, use it; otherwise require ID.
+                let exact: Vec<_> = matching
+                    .iter()
+                    .filter(|(_, p)| p.name.eq_ignore_ascii_case(provider_name))
+                    .collect();
+
+                if exact.len() == 1 {
+                    (exact[0].0.as_str(), exact[0].1)
+                } else {
+                    eprintln!(
+                        "{} Multiple providers match '{}'. Please use a provider ID.",
+                        style("✗").red(),
+                        provider_name
+                    );
+                    eprintln!("Tip: run `cc-switch cmd list {tool} --ids` to see IDs.\n");
+                    for (id, p) in matching {
+                        eprintln!("  • {} (id: {id})", p.name);
+                    }
+                    return ExitCode::from(1);
+                }
             }
         }
     };
@@ -237,6 +265,106 @@ fn cmd_switch(state: &AppState, term: &Term, tool: &str, provider_name: &str) ->
     }
 }
 
+fn cmd_add(state: &AppState, term: &Term, tool: &str, json_path: Option<&str>) -> ExitCode {
+    let app_type = match parse_tool_name(tool) {
+        Some(t) => t,
+        None => {
+            eprintln!(
+                "{} Invalid tool name: '{}'. Valid options: claude, codex, gemini",
+                style("✗").red(),
+                tool
+            );
+            return ExitCode::from(1);
+        }
+    };
+
+    match crud::add_provider(state, term, app_type, json_path) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{} {e}", style("✗").red());
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cmd_edit(state: &AppState, term: &Term, tool: &str, provider_name: &str) -> ExitCode {
+    let app_type = match parse_tool_name(tool) {
+        Some(t) => t,
+        None => {
+            eprintln!(
+                "{} Invalid tool name: '{}'. Valid options: claude, codex, gemini",
+                style("✗").red(),
+                tool
+            );
+            return ExitCode::from(1);
+        }
+    };
+
+    match crud::edit_provider(state, term, app_type, provider_name) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{} {e}", style("✗").red());
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cmd_delete(
+    state: &AppState,
+    term: &Term,
+    tool: &str,
+    provider_name: &str,
+    force: bool,
+) -> ExitCode {
+    let app_type = match parse_tool_name(tool) {
+        Some(t) => t,
+        None => {
+            eprintln!(
+                "{} Invalid tool name: '{}'. Valid options: claude, codex, gemini",
+                style("✗").red(),
+                tool
+            );
+            return ExitCode::from(1);
+        }
+    };
+
+    match crud::delete_provider(state, term, app_type, provider_name, force) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{} {e}", style("✗").red());
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cmd_show(
+    state: &AppState,
+    term: &Term,
+    tool: &str,
+    provider_name: &str,
+    as_json: bool,
+) -> ExitCode {
+    let app_type = match parse_tool_name(tool) {
+        Some(t) => t,
+        None => {
+            eprintln!(
+                "{} Invalid tool name: '{}'. Valid options: claude, codex, gemini",
+                style("✗").red(),
+                tool
+            );
+            return ExitCode::from(1);
+        }
+    };
+
+    match crud::show_provider(state, term, app_type, provider_name, as_json) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{} {e}", style("✗").red());
+            ExitCode::from(1)
+        }
+    }
+}
+
 /// Display detailed help with examples
 fn cmd_help(term: &Term) -> ExitCode {
     let _ = term.write_line(&format!(
@@ -251,9 +379,11 @@ fn cmd_help(term: &Term) -> ExitCode {
 
     let _ = term.write_line(&format!("{}", style("COMMANDS:").bold().underlined()));
     let _ = term.write_line(&format!(
-        "    {}        Enter interactive mode (default)",
+        "    {}        Launch TUI (interactive mode, default)",
         style("(none)").dim()
     ));
+    let _ =
+        term.write_line("                        Tip: press '?' inside the TUI to view shortcuts");
     let _ = term.write_line(&format!(
         "    {}        Show current active provider for all tools",
         style("status").green()
@@ -261,15 +391,41 @@ fn cmd_help(term: &Term) -> ExitCode {
     let _ = term.write_line(&format!(
         "    {} {}   List all providers for a tool",
         style("list").green(),
-        style("<tool>").yellow()
+        style("<tool> [--ids]").yellow()
     ));
     let _ = term.write_line(&format!(
         "    {} {} {}",
         style("switch").green(),
         style("<tool>").yellow(),
-        style("<provider>").yellow()
+        style("<provider|id>").yellow()
     ));
     let _ = term.write_line("                        Switch to a specific provider");
+    let _ = term.write_line(&format!(
+        "    {} {}   Add a new provider (interactive)",
+        style("add").green(),
+        style("<tool>").yellow()
+    ));
+    let _ = term.write_line(&format!(
+        "    {} {} {}",
+        style("edit").green(),
+        style("<tool>").yellow(),
+        style("<provider|id>").yellow()
+    ));
+    let _ = term.write_line("                        Edit an existing provider");
+    let _ = term.write_line(&format!(
+        "    {} {} {}",
+        style("delete").green(),
+        style("<tool>").yellow(),
+        style("<provider|id>").yellow()
+    ));
+    let _ = term.write_line("                        Delete a provider");
+    let _ = term.write_line(&format!(
+        "    {} {} {}",
+        style("show").green(),
+        style("<tool>").yellow(),
+        style("<provider|id>").yellow()
+    ));
+    let _ = term.write_line("                        Show provider details");
     let _ = term.write_line(&format!(
         "    {}          Show this help message",
         style("help").green()
@@ -281,10 +437,7 @@ fn cmd_help(term: &Term) -> ExitCode {
     let _ = term.write_line("");
 
     let _ = term.write_line(&format!("{}", style("EXAMPLES:").bold().underlined()));
-    let _ = term.write_line(&format!(
-        "    {}",
-        style("# Enter interactive mode").dim()
-    ));
+    let _ = term.write_line(&format!("    {}", style("# Enter interactive mode").dim()));
     let _ = term.write_line("    cc-switch cmd");
     let _ = term.write_line("");
     let _ = term.write_line(&format!(
@@ -293,17 +446,97 @@ fn cmd_help(term: &Term) -> ExitCode {
     ));
     let _ = term.write_line("    cc-switch cmd status");
     let _ = term.write_line("");
-    let _ = term.write_line(&format!(
-        "    {}",
-        style("# List Claude providers").dim()
-    ));
+    let _ = term.write_line(&format!("    {}", style("# List Claude providers").dim()));
     let _ = term.write_line("    cc-switch cmd list claude");
     let _ = term.write_line("");
     let _ = term.write_line(&format!(
         "    {}",
-        style("# Switch Claude provider").dim()
+        style("# List providers with IDs (for duplicates)").dim()
     ));
+    let _ = term.write_line("    cc-switch cmd list claude --ids");
+    let _ = term.write_line("");
+    let _ = term.write_line(&format!("    {}", style("# Switch Claude provider").dim()));
     let _ = term.write_line("    cc-switch cmd switch claude \"My Provider\"");
+    let _ = term.write_line("");
+    let _ = term.write_line(&format!("    {}", style("# Switch provider by ID").dim()));
+    let _ = term.write_line("    cc-switch cmd switch claude <provider-id>");
+    let _ = term.write_line("");
+    let _ = term.write_line(&format!(
+        "    {}",
+        style("# Add a provider (interactive)").dim()
+    ));
+    let _ = term.write_line("    cc-switch cmd add claude");
+    let _ = term.write_line("");
+    let _ = term.write_line(&format!("    {}", style("# Show provider details").dim()));
+    let _ = term.write_line("    cc-switch cmd show claude \"My Provider\"");
+    let _ = term.write_line("");
+
+    let _ = term.write_line(&format!(
+        "{}",
+        style("JSON IMPORT FORMAT:").bold().underlined()
+    ));
+    let _ = term.write_line(&format!("    {}", style("# Import from file").dim()));
+    let _ = term.write_line("    cc-switch cmd add claude --json provider.json");
+    let _ = term.write_line(&format!("    {}", style("# Import from stdin").dim()));
+    let _ = term.write_line("    cat provider.json | cc-switch cmd add claude --json -");
+    let _ = term.write_line("");
+    let _ = term.write_line(&format!("    {}", style("# Claude example:").dim()));
+    let _ = term.write_line("    {");
+    let _ = term.write_line("      \"name\": \"My Claude Provider\",");
+    let _ = term.write_line("      \"settingsConfig\": {");
+    let _ = term.write_line("        \"env\": {");
+    let _ = term.write_line("          \"ANTHROPIC_AUTH_TOKEN\": \"sk-ant-...\",");
+    let _ = term.write_line("          \"ANTHROPIC_BASE_URL\": \"https://api.anthropic.com\"");
+    let _ = term.write_line("        }");
+    let _ = term.write_line("      }");
+    let _ = term.write_line("    }");
+    let _ = term.write_line("");
+    let _ = term.write_line(&format!(
+        "    {}",
+        style("# Codex simple example (auto-converts to TOML):").dim()
+    ));
+    let _ = term.write_line("    {");
+    let _ = term.write_line("      \"name\": \"My Codex Provider\",");
+    let _ = term.write_line("      \"settingsConfig\": {");
+    let _ = term.write_line("        \"auth\": { \"OPENAI_API_KEY\": \"sk-...\" },");
+    let _ = term.write_line("        \"model\": \"gpt-4\",");
+    let _ = term.write_line("        \"baseUrl\": \"https://api.openai.com/v1\"");
+    let _ = term.write_line("      }");
+    let _ = term.write_line("    }");
+    let _ = term.write_line("");
+    let _ = term.write_line(&format!(
+        "    {}",
+        style("# Codex full example (config as JSON object, auto-converts to TOML):").dim()
+    ));
+    let _ = term.write_line("    {");
+    let _ = term.write_line("      \"name\": \"My Codex Provider\",");
+    let _ = term.write_line("      \"settingsConfig\": {");
+    let _ = term.write_line("        \"auth\": { \"OPENAI_API_KEY\": \"sk-...\" },");
+    let _ = term.write_line("        \"config\": {");
+    let _ = term.write_line("          \"model\": \"gpt-5.2\",");
+    let _ = term.write_line("          \"model_provider\": \"custom\",");
+    let _ = term.write_line("          \"model_providers\": {");
+    let _ = term.write_line(
+        "            \"custom\": { \"base_url\": \"https://...\", \"wire_api\": \"responses\" }",
+    );
+    let _ = term.write_line("          },");
+    let _ = term.write_line("          \"mcp_servers\": { ... }");
+    let _ = term.write_line("        }");
+    let _ = term.write_line("      }");
+    let _ = term.write_line("    }");
+    let _ = term.write_line("");
+    let _ = term.write_line(&format!("    {}", style("# Gemini example:").dim()));
+    let _ = term.write_line("    {");
+    let _ = term.write_line("      \"name\": \"My Gemini Provider\",");
+    let _ = term.write_line("      \"settingsConfig\": {");
+    let _ = term.write_line("        \"env\": {");
+    let _ = term.write_line("          \"GEMINI_API_KEY\": \"...\",");
+    let _ = term.write_line(
+        "          \"GOOGLE_GEMINI_BASE_URL\": \"https://generativelanguage.googleapis.com\"",
+    );
+    let _ = term.write_line("        }");
+    let _ = term.write_line("      }");
+    let _ = term.write_line("    }");
     let _ = term.write_line("");
 
     ExitCode::SUCCESS

@@ -11,10 +11,7 @@ use crate::store::AppState;
 ///
 /// Presents a menu-driven interface for selecting tools and switching providers.
 pub fn run_interactive(state: &AppState, term: &Term) -> Result<(), String> {
-    let _ = term.write_line(&format!(
-        "\n{}",
-        style("CC-Switch CLI Mode").bold().cyan()
-    ));
+    let _ = term.write_line(&format!("\n{}", style("CC-Switch CLI Mode").bold().cyan()));
     let _ = term.write_line(&format!(
         "{}\n",
         style("Use arrow keys to navigate, Enter to select, Esc to quit").dim()

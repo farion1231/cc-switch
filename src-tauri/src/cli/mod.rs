@@ -4,7 +4,9 @@
 
 mod args;
 mod commands;
+mod crud;
 mod interactive;
+mod tui;
 
-pub use args::{Cli, CliCommand};
+pub use args::{Cli, CliCommand, CmdAction};
 pub use commands::run_cli;

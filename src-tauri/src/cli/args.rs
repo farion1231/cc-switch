@@ -30,6 +30,9 @@ pub enum CmdAction {
     List {
         /// Tool type: claude, codex, or gemini
         tool: String,
+        /// Show provider IDs (useful when duplicate names exist)
+        #[arg(long)]
+        ids: bool,
     },
 
     /// Switch provider for a specific tool (non-interactive)
@@ -38,6 +41,45 @@ pub enum CmdAction {
         tool: String,
         /// Provider name to switch to
         provider: String,
+    },
+
+    /// Add a new provider (interactive by default)
+    Add {
+        /// Tool type: claude, codex, or gemini
+        tool: String,
+        /// Import provider settings from a JSON file ("-" for stdin)
+        #[arg(long)]
+        json: Option<String>,
+    },
+
+    /// Edit an existing provider (interactive)
+    Edit {
+        /// Tool type: claude, codex, or gemini
+        tool: String,
+        /// Provider name to edit
+        provider: String,
+    },
+
+    /// Delete a provider
+    Delete {
+        /// Tool type: claude, codex, or gemini
+        tool: String,
+        /// Provider name to delete
+        provider: String,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Show provider details
+    Show {
+        /// Tool type: claude, codex, or gemini
+        tool: String,
+        /// Provider name to show
+        provider: String,
+        /// Output as JSON (redacts sensitive values)
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show detailed help with examples
