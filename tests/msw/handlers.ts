@@ -105,6 +105,9 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/open_external`, () => success(true)),
 
+  // Env var manager APIs
+  http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
+
   // MCP APIs
   http.post(`${TAURI_ENDPOINT}/get_mcp_config`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);

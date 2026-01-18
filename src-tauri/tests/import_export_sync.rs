@@ -1,6 +1,5 @@
 use serde_json::json;
 use std::fs;
-use std::path::PathBuf;
 
 use cc_switch_lib::{
     get_claude_settings_path, read_json_file, AppError, AppType, ConfigService, MultiAppConfig,
@@ -965,12 +964,15 @@ fn export_sql_writes_to_target_path() {
 fn export_sql_returns_error_for_invalid_path() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
-    let _home = ensure_test_home();
+    let home = ensure_test_home();
 
     let state = create_test_state().expect("create test state");
 
-    // Try to export to an invalid path (parent directory doesn't exist)
-    let invalid_path = PathBuf::from("/nonexistent/directory/export.sql");
+    // Try to export to an invalid path (parent is a file, not a directory).
+    // This is stable across platforms, unlike hard-coded absolute paths.
+    let not_a_dir = home.join("not-a-dir");
+    fs::write(&not_a_dir, "not a dir").expect("seed parent path as file");
+    let invalid_path = not_a_dir.join("export.sql");
     let err = state
         .db
         .export_sql(&invalid_path)
@@ -986,8 +988,10 @@ fn export_sql_returns_error_for_invalid_path() {
         }
         AppError::Io { path, .. } => {
             assert!(
-                path.starts_with("/nonexistent"),
-                "expected error for /nonexistent path, got: {path:?}"
+                path.ends_with("not-a-dir")
+                    || path.ends_with("not-a-dir\\export.sql")
+                    || path.ends_with("not-a-dir/export.sql"),
+                "expected error for invalid path, got: {path:?}"
             );
         }
         other => panic!("expected IoContext or Io error, got {other:?}"),

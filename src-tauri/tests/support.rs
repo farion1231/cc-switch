@@ -9,7 +9,12 @@ use cc_switch_lib::{
 pub fn ensure_test_home() -> &'static Path {
     static HOME: OnceLock<PathBuf> = OnceLock::new();
     HOME.get_or_init(|| {
-        let base = std::env::temp_dir().join("cc-switch-test-home");
+        // Each integration test binary runs in its own process. If they all share the same HOME
+        // directory, parallel `cargo test` runs can fight over files/locks on Windows and cause
+        // intermittent failures (e.g. os error 5/32). Use a per-process HOME to keep tests
+        // isolated while still being deterministic.
+        let root = std::env::temp_dir().join("cc-switch-test-home");
+        let base = root.join(std::process::id().to_string());
         if base.exists() {
             let _ = std::fs::remove_dir_all(&base);
         }
