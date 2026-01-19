@@ -450,6 +450,22 @@
     "testFailed": "测速失败: {{error}}",
     "status": "状态码：{{code}}"
   },
+  "providerAdvanced": {
+    "testConfig": "模型测试配置",
+    "useCustomConfig": "使用单独配置",
+    "testConfigDesc": "为此供应商配置单独的模型测试参数，不启用时使用全局配置。",
+    "testModel": "测试模型",
+    "testModelPlaceholder": "留空使用全局配置",
+    "timeoutSecs": "超时时间（秒）",
+    "testPrompt": "测试提示词",
+    "degradedThreshold": "降级阈值（毫秒）",
+    "maxRetries": "最大重试次数",
+    "proxyConfig": "代理配置",
+    "useCustomProxy": "使用单独代理",
+    "proxyConfigDesc": "为此供应商配置单独的网络代理，不启用时使用系统代理或全局设置。",
+    "proxyUsername": "用户名（可选）",
+    "proxyPassword": "密码（可选）"
+  },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",

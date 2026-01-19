@@ -450,6 +450,22 @@
     "testFailed": "速度テストに失敗しました: {{error}}",
     "status": "ステータス: {{code}}"
   },
+  "providerAdvanced": {
+    "testConfig": "モデルテスト設定",
+    "useCustomConfig": "個別設定を使用",
+    "testConfigDesc": "このプロバイダーに個別のモデルテストパラメータを設定します。無効の場合はグローバル設定を使用します。",
+    "testModel": "テストモデル",
+    "testModelPlaceholder": "空白の場合はグローバル設定を使用",
+    "timeoutSecs": "タイムアウト（秒）",
+    "testPrompt": "テストプロンプト",
+    "degradedThreshold": "低下閾値（ミリ秒）",
+    "maxRetries": "最大リトライ回数",
+    "proxyConfig": "プロキシ設定",
+    "useCustomProxy": "個別プロキシを使用",
+    "proxyConfigDesc": "このプロバイダーに個別のネットワークプロキシを設定します。無効の場合はシステムプロキシまたはグローバル設定を使用します。",
+    "proxyUsername": "ユーザー名（任意）",
+    "proxyPassword": "パスワード（任意）"
+  },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",

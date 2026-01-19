@@ -257,6 +257,7 @@ export function useSetAutoFailoverEnabled() {
         t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("failover.toggleFailed", {
+          detail,
           defaultValue: `操作失败: ${detail}`,
         }),
       );

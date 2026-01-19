@@ -96,9 +96,7 @@ pub fn convert_to_opencode_format(spec: &Value) -> Result<Value, AppError> {
             result.insert("enabled".into(), json!(true));
         }
         _ => {
-            return Err(AppError::McpValidation(format!(
-                "Unknown MCP type: {typ}"
-            )));
+            return Err(AppError::McpValidation(format!("Unknown MCP type: {typ}")));
         }
     }
 

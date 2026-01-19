@@ -500,9 +500,7 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
 
     // Check if OpenCode config directory exists
     if !opencode_config::get_opencode_dir().exists() {
-        log::debug!(
-            "OpenCode config directory doesn't exist, skipping removal of '{provider_id}'"
-        );
+        log::debug!("OpenCode config directory doesn't exist, skipping removal of '{provider_id}'");
         return Ok(());
     }
 

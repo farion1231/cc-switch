@@ -450,6 +450,22 @@
     "testFailed": "Speed test failed: {{error}}",
     "status": "Status: {{code}}"
   },
+  "providerAdvanced": {
+    "testConfig": "Model Test Config",
+    "useCustomConfig": "Use separate config",
+    "testConfigDesc": "Configure separate model testing parameters for this provider. Uses global settings when disabled.",
+    "testModel": "Test Model",
+    "testModelPlaceholder": "Leave empty to use global config",
+    "timeoutSecs": "Timeout (seconds)",
+    "testPrompt": "Test Prompt",
+    "degradedThreshold": "Degraded Threshold (ms)",
+    "maxRetries": "Max Retries",
+    "proxyConfig": "Proxy Config",
+    "useCustomProxy": "Use separate proxy",
+    "proxyConfigDesc": "Configure separate network proxy for this provider. Uses system proxy or global settings when disabled.",
+    "proxyUsername": "Username (optional)",
+    "proxyPassword": "Password (optional)"
+  },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
