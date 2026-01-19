@@ -28,6 +28,7 @@ const HEADER_BLACKLIST: &[&str] = &[
     // 认证类（会被覆盖）
     "authorization",
     "x-api-key",
+    "x-goog-api-key",
     // 连接类（由 HTTP 客户端管理）
     "host",
     "content-length",
