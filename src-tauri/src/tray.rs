@@ -211,26 +211,50 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
     if let Some(app_state) = app.try_state::<AppState>() {
         let app_type_str = app_type.as_str();
 
-        // 启用 proxy 和 auto_failover
+        // 真正启用 failover：启动代理服务 + 执行接管 + 开启 auto_failover
+        let proxy_service = &app_state.proxy_service;
+
+        // 1) 确保代理服务运行（会自动设置 proxy_enabled = true）
+        let is_running = futures::executor::block_on(proxy_service.is_running());
+        if !is_running {
+            log::info!("[Tray] Auto 模式：启动代理服务");
+            if let Err(e) = futures::executor::block_on(proxy_service.start()) {
+                log::error!("[Tray] 启动代理服务失败: {e}");
+                return Err(AppError::Message(format!("启动代理服务失败: {e}")));
+            }
+        }
+
+        // 2) 执行 Live 配置接管（确保该 app 被代理接管）
+        log::info!("[Tray] Auto 模式：对 {} 执行接管", app_type_str);
+        if let Err(e) = futures::executor::block_on(proxy_service.set_takeover_for_app(app_type_str, true)) {
+            log::error!("[Tray] 执行接管失败: {e}");
+            return Err(AppError::Message(format!("执行接管失败: {e}")));
+        }
+
+        // 3) 设置 auto_failover_enabled = true
         app_state
             .db
             .set_proxy_flags_sync(app_type_str, true, true)?;
 
-        // 更新托盘菜单
+        // 4) 更新托盘菜单
         if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
             if let Some(tray) = app.tray_by_id("main") {
                 let _ = tray.set_menu(Some(new_menu));
             }
         }
 
-        // 发射事件到前端
+        // 5) 发射事件到前端
         let event_data = serde_json::json!({
             "appType": app_type_str,
             "proxyEnabled": true,
             "autoFailoverEnabled": true
         });
-        if let Err(e) = app.emit("proxy-flags-changed", event_data) {
+        if let Err(e) = app.emit("proxy-flags-changed", event_data.clone()) {
             log::error!("发射 proxy-flags-changed 事件失败: {e}");
+        }
+        // 发射 provider-switched 事件（保持向后兼容，Auto 切换也算一种切换）
+        if let Err(e) = app.emit("provider-switched", event_data) {
+            log::error!("发射 provider-switched 事件失败: {e}");
         }
     }
     Ok(())
@@ -273,8 +297,12 @@ fn handle_provider_click(
             "autoFailoverEnabled": false,
             "providerId": provider_id
         });
-        if let Err(e) = app.emit("proxy-flags-changed", event_data) {
+        if let Err(e) = app.emit("proxy-flags-changed", event_data.clone()) {
             log::error!("发射 proxy-flags-changed 事件失败: {e}");
+        }
+        // 发射 provider-switched 事件（保持向后兼容）
+        if let Err(e) = app.emit("provider-switched", event_data) {
+            log::error!("发射 provider-switched 事件失败: {e}");
         }
     }
     Ok(())
