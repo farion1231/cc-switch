@@ -501,17 +501,13 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
     // Check if OpenCode config directory exists
     if !opencode_config::get_opencode_dir().exists() {
         log::debug!(
-            "OpenCode config directory doesn't exist, skipping removal of '{}'",
-            provider_id
+            "OpenCode config directory doesn't exist, skipping removal of '{provider_id}'"
         );
         return Ok(());
     }
 
     opencode_config::remove_provider(provider_id)?;
-    log::info!(
-        "OpenCode provider '{}' removed from live config",
-        provider_id
-    );
+    log::info!("OpenCode provider '{provider_id}' removed from live config");
 
     Ok(())
 }
@@ -535,10 +531,7 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     for (id, config) in providers {
         // Skip if already exists in database
         if existing.contains_key(&id) {
-            log::debug!(
-                "OpenCode provider '{}' already exists in database, skipping",
-                id
-            );
+            log::debug!("OpenCode provider '{id}' already exists in database, skipping");
             continue;
         }
 
@@ -546,7 +539,7 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         let settings_config = match serde_json::to_value(&config) {
             Ok(v) => v,
             Err(e) => {
-                log::warn!("Failed to serialize OpenCode provider '{}': {}", id, e);
+                log::warn!("Failed to serialize OpenCode provider '{id}': {e}");
                 continue;
             }
         };
@@ -561,12 +554,12 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
 
         // Save to database
         if let Err(e) = state.db.save_provider("opencode", &provider) {
-            log::warn!("Failed to import OpenCode provider '{}': {}", id, e);
+            log::warn!("Failed to import OpenCode provider '{id}': {e}");
             continue;
         }
 
         imported += 1;
-        log::info!("Imported OpenCode provider '{}' from live config", id);
+        log::info!("Imported OpenCode provider '{id}' from live config");
     }
 
     Ok(imported)

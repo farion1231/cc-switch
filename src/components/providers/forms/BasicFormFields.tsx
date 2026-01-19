@@ -29,7 +29,10 @@ interface BasicFormFieldsProps {
   beforeNameSlot?: ReactNode;
 }
 
-export function BasicFormFields({ form, beforeNameSlot }: BasicFormFieldsProps) {
+export function BasicFormFields({
+  form,
+  beforeNameSlot,
+}: BasicFormFieldsProps) {
   const { t } = useTranslation();
   const [iconDialogOpen, setIconDialogOpen] = useState(false);
 

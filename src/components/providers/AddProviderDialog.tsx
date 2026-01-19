@@ -24,7 +24,9 @@ interface AddProviderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   appId: AppId;
-  onSubmit: (provider: Omit<Provider, "id"> & { providerKey?: string }) => Promise<void> | void;
+  onSubmit: (
+    provider: Omit<Provider, "id"> & { providerKey?: string },
+  ) => Promise<void> | void;
 }
 
 export function AddProviderDialog({
@@ -186,7 +188,9 @@ export function AddProviderDialog({
           }
         } else if (appId === "opencode") {
           // OpenCode uses options.baseURL
-          const options = parsedConfig.options as Record<string, any> | undefined;
+          const options = parsedConfig.options as
+            | Record<string, any>
+            | undefined;
           if (options?.baseURL) {
             addUrl(options.baseURL);
           }

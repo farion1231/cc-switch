@@ -355,7 +355,10 @@ function App() {
   };
 
   // Generate a unique provider key for OpenCode duplication
-  const generateUniqueOpencodeKey = (originalKey: string, existingKeys: string[]): string => {
+  const generateUniqueOpencodeKey = (
+    originalKey: string,
+    existingKeys: string[],
+  ): string => {
     const baseKey = `${originalKey}-copy`;
 
     if (!existingKeys.includes(baseKey)) {
@@ -376,7 +379,9 @@ function App() {
     const newSortIndex =
       provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
 
-    const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & { providerKey?: string } = {
+    const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & {
+      providerKey?: string;
+    } = {
       name: `${provider.name} copy`,
       settingsConfig: JSON.parse(JSON.stringify(provider.settingsConfig)), // 深拷贝
       websiteUrl: provider.websiteUrl,
@@ -392,7 +397,10 @@ function App() {
     // OpenCode: generate unique provider key (used as ID)
     if (activeApp === "opencode") {
       const existingKeys = Object.keys(providers);
-      duplicatedProvider.providerKey = generateUniqueOpencodeKey(provider.id, existingKeys);
+      duplicatedProvider.providerKey = generateUniqueOpencodeKey(
+        provider.id,
+        existingKeys,
+      );
     }
 
     // 2️⃣ 如果原供应商有 sortIndex，需要将后续所有供应商的 sortIndex +1
@@ -501,7 +509,12 @@ function App() {
             />
           );
         case "skillsDiscovery":
-          return <SkillsPage ref={skillsPageRef} initialApp={activeApp === "opencode" ? "claude" : activeApp} />;
+          return (
+            <SkillsPage
+              ref={skillsPageRef}
+              initialApp={activeApp === "opencode" ? "claude" : activeApp}
+            />
+          );
         case "mcp":
           return (
             <UnifiedMcpPanel

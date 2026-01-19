@@ -103,7 +103,7 @@ pub fn write_opencode_config(config: &Value) -> Result<(), AppError> {
     // 复用统一的原子写入逻辑（兼容 Windows 上目标文件已存在的情况）
     write_json_file(&path, config)?;
 
-    log::debug!("OpenCode config written to {:?}", path);
+    log::debug!("OpenCode config written to {path:?}");
     Ok(())
 }
 
@@ -165,7 +165,7 @@ pub fn get_typed_providers() -> Result<IndexMap<String, OpenCodeProviderConfig>,
                 result.insert(id, config);
             }
             Err(e) => {
-                log::warn!("Failed to parse provider '{}': {}", id, e);
+                log::warn!("Failed to parse provider '{id}': {e}");
                 // Skip invalid providers but continue
             }
         }
@@ -219,4 +219,3 @@ pub fn remove_mcp_server(id: &str) -> Result<(), AppError> {
 
     write_opencode_config(&config)
 }
-

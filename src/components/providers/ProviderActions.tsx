@@ -64,7 +64,8 @@ export function ProviderActions({
   const isOpenCodeMode = appId === "opencode";
 
   // 故障转移模式下的按钮逻辑（OpenCode 不支持故障转移）
-  const isFailoverMode = !isOpenCodeMode && isAutoFailoverEnabled && onToggleFailover;
+  const isFailoverMode =
+    !isOpenCodeMode && isAutoFailoverEnabled && onToggleFailover;
 
   // 处理主按钮点击
   const handleMainButtonClick = () => {

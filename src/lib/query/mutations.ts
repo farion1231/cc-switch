@@ -12,7 +12,7 @@ export const useAddProviderMutation = (appId: AppId) => {
 
   return useMutation({
     mutationFn: async (
-      providerInput: Omit<Provider, "id"> & { providerKey?: string }
+      providerInput: Omit<Provider, "id"> & { providerKey?: string },
     ) => {
       let id: string;
 

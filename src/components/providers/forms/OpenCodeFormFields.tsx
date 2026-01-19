@@ -265,7 +265,7 @@ export function OpenCodeFormFields({
   const handleModelOptionKeyChange = (
     modelKey: string,
     oldKey: string,
-    newKey: string
+    newKey: string,
   ) => {
     if (!newKey.trim() || oldKey === newKey) return;
     const model = models[modelKey];
@@ -283,7 +283,7 @@ export function OpenCodeFormFields({
   const handleModelOptionValueChange = (
     modelKey: string,
     optionKey: string,
-    value: string
+    value: string,
   ) => {
     const model = models[modelKey];
     let parsedValue: unknown;
@@ -443,7 +443,9 @@ export function OpenCodeFormFields({
                 />
                 <Input
                   value={value}
-                  onChange={(e) => handleExtraOptionValueChange(key, e.target.value)}
+                  onChange={(e) =>
+                    handleExtraOptionValueChange(key, e.target.value)
+                  }
                   placeholder={t("opencode.extraOptionValuePlaceholder", {
                     defaultValue: "600000",
                   })}
@@ -521,7 +523,7 @@ export function OpenCodeFormFields({
                     <ChevronRight
                       className={cn(
                         "h-4 w-4 transition-transform",
-                        expandedModels.has(key) && "rotate-90"
+                        expandedModels.has(key) && "rotate-90",
                       )}
                     />
                   </Button>
@@ -575,17 +577,24 @@ export function OpenCodeFormFields({
                       <>
                         {Object.entries(model.options || {}).map(
                           ([optKey, optValue]) => (
-                            <div key={optKey} className="flex items-center gap-2">
+                            <div
+                              key={optKey}
+                              className="flex items-center gap-2"
+                            >
                               <ModelOptionKeyInput
                                 optionKey={optKey}
                                 onChange={(newKey) =>
-                                  handleModelOptionKeyChange(key, optKey, newKey)
+                                  handleModelOptionKeyChange(
+                                    key,
+                                    optKey,
+                                    newKey,
+                                  )
                                 }
                                 placeholder={t(
                                   "opencode.modelOptionKeyPlaceholder",
                                   {
                                     defaultValue: "provider",
-                                  }
+                                  },
                                 )}
                               />
                               <Input
@@ -598,14 +607,14 @@ export function OpenCodeFormFields({
                                   handleModelOptionValueChange(
                                     key,
                                     optKey,
-                                    e.target.value
+                                    e.target.value,
                                   )
                                 }
                                 placeholder={t(
                                   "opencode.modelOptionValuePlaceholder",
                                   {
                                     defaultValue: '{"order": ["baseten"]}',
-                                  }
+                                  },
                                 )}
                                 className="flex-1"
                               />
@@ -621,7 +630,7 @@ export function OpenCodeFormFields({
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
-                          )
+                          ),
                         )}
                         <div className="flex items-center justify-end">
                           <Button

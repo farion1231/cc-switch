@@ -97,8 +97,7 @@ pub fn convert_to_opencode_format(spec: &Value) -> Result<Value, AppError> {
         }
         _ => {
             return Err(AppError::McpValidation(format!(
-                "Unknown MCP type: {}",
-                typ
+                "Unknown MCP type: {typ}"
             )));
         }
     }
@@ -171,8 +170,7 @@ pub fn convert_from_opencode_format(spec: &Value) -> Result<Value, AppError> {
         }
         _ => {
             return Err(AppError::McpValidation(format!(
-                "Unknown OpenCode MCP type: {}",
-                typ
+                "Unknown OpenCode MCP type: {typ}"
             )));
         }
     }
@@ -230,16 +228,16 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
         let unified_spec = match convert_from_opencode_format(&spec) {
             Ok(s) => s,
             Err(e) => {
-                log::warn!("Skip invalid OpenCode MCP server '{}': {}", id, e);
-                errors.push(format!("{}: {}", id, e));
+                log::warn!("Skip invalid OpenCode MCP server '{id}': {e}");
+                errors.push(format!("{id}: {e}"));
                 continue;
             }
         };
 
         // Validate the converted spec
         if let Err(e) = validate_server_spec(&unified_spec) {
-            log::warn!("Skip invalid MCP server '{}' after conversion: {}", id, e);
-            errors.push(format!("{}: {}", id, e));
+            log::warn!("Skip invalid MCP server '{id}' after conversion: {e}");
+            errors.push(format!("{id}: {e}"));
             continue;
         }
 
@@ -248,7 +246,7 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
             if !existing.apps.opencode {
                 existing.apps.opencode = true;
                 changed += 1;
-                log::info!("MCP server '{}' enabled for OpenCode", id);
+                log::info!("MCP server '{id}' enabled for OpenCode");
             }
         } else {
             // New server: default to only OpenCode enabled
@@ -271,7 +269,7 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                 },
             );
             changed += 1;
-            log::info!("Imported new MCP server '{}' from OpenCode", id);
+            log::info!("Imported new MCP server '{id}' from OpenCode");
         }
     }
 
