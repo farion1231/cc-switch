@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { isWindows, isLinux } from "@/lib/platform";
+import { isTextEditableTarget } from "@/utils/domUtils";
 
 interface FullScreenPanelProps {
   isOpen: boolean;
@@ -39,7 +40,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
 
   // ESC 键关闭面板
   const onCloseRef = React.useRef(onClose);
-  
+
   React.useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
@@ -49,26 +50,24 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        // 如果焦点在输入框、文本域或可编辑元素上，不拦截 ESC
-        const target = event.target as HTMLElement;
-        const isInput = target.tagName === "INPUT" || 
-                       target.tagName === "TEXTAREA" || 
-                       target.isContentEditable;
-        
-        if (isInput) {
+        // 子组件（例如 Radix 的 Select/Dialog/Dropdown）如果已经消费了 ESC，就不要再关闭整个面板
+        if (event.defaultPrevented) {
+          return;
+        }
+
+        if (isTextEditableTarget(event.target)) {
           return; // 让输入框自己处理 ESC（比如清空、失焦等）
         }
 
-        event.preventDefault();
-        event.stopPropagation(); // 阻止事件冒泡，避免与 App.tsx 的监听器冲突
+        event.stopPropagation(); // 阻止事件继续冒泡到 window，避免触发 App.tsx 的全局监听
         onCloseRef.current();
       }
     };
 
-    // 使用 capture 阶段捕获，优先级高于 App.tsx 的监听
-    document.addEventListener("keydown", handleKeyDown, true);
+    // 使用冒泡阶段监听，让子组件（如 Radix UI）优先处理 ESC
+    window.addEventListener("keydown", handleKeyDown, false);
     return () => {
-      document.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("keydown", handleKeyDown, false);
     };
   }, [isOpen]);
 

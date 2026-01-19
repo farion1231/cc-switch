@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 interface UseModelStateProps {
   settingsConfig: string;
@@ -19,12 +19,27 @@ export function useModelState({
   const [defaultSonnetModel, setDefaultSonnetModel] = useState("");
   const [defaultOpusModel, setDefaultOpusModel] = useState("");
 
+  const isUserEditingRef = useRef(false);
+  const lastConfigRef = useRef(settingsConfig);
+
   // 初始化读取：读新键；若缺失，按兼容优先级回退
   // Haiku: DEFAULT_HAIKU || SMALL_FAST || MODEL
   // Sonnet: DEFAULT_SONNET || MODEL || SMALL_FAST
   // Opus: DEFAULT_OPUS || MODEL || SMALL_FAST
   // 仅在 settingsConfig 变化时同步一次（表单加载/切换预设时）
   useEffect(() => {
+    if (lastConfigRef.current === settingsConfig) {
+      return;
+    }
+    
+    if (isUserEditingRef.current) {
+      isUserEditingRef.current = false;
+      lastConfigRef.current = settingsConfig;
+      return;
+    }
+    
+    lastConfigRef.current = settingsConfig;
+    
     try {
       const cfg = settingsConfig ? JSON.parse(settingsConfig) : {};
       const env = cfg?.env || {};
@@ -71,6 +86,8 @@ export function useModelState({
         | "ANTHROPIC_DEFAULT_OPUS_MODEL",
       value: string,
     ) => {
+      isUserEditingRef.current = true;
+
       if (field === "ANTHROPIC_MODEL") setClaudeModel(value);
       if (field === "ANTHROPIC_REASONING_MODEL") setReasoningModel(value);
       if (field === "ANTHROPIC_DEFAULT_HAIKU_MODEL")

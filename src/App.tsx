@@ -30,6 +30,7 @@ import { useProviderActions } from "@/hooks/useProviderActions";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { isTextEditableTarget } from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
 import { isWindows, isLinux } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
@@ -292,6 +293,12 @@ function App() {
   }, [activeApp]);
 
   // 全局键盘快捷键
+  const currentViewRef = useRef(currentView);
+
+  useEffect(() => {
+    currentViewRef.current = currentView;
+  }, [currentView]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Cmd/Ctrl + , 打开设置
@@ -302,19 +309,25 @@ function App() {
       }
 
       // ESC 键返回
-      if (event.key === "Escape" && currentView !== "providers") {
-        event.preventDefault();
-        setCurrentView(
-          currentView === "skillsDiscovery" ? "skills" : "providers"
-        );
-      }
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+
+      // 如果有模态框打开（通过 overflow hidden 判断），则不处理全局 ESC，交给模态框处理
+      if (document.body.style.overflow === "hidden") return;
+
+      const view = currentViewRef.current;
+      if (view === "providers") return;
+
+      if (isTextEditableTarget(event.target)) return;
+
+      event.preventDefault();
+      setCurrentView(view === "skillsDiscovery" ? "skills" : "providers");
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [currentView]);
+  }, []);
 
   // 打开网站链接
   const handleOpenWebsite = async (url: string) => {
