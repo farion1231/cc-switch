@@ -10,6 +10,7 @@ import {
   ArrowLeft,
   // Bot, // TODO: Agents 功能开发中，暂时不需要
   Book,
+  BarChart3,
   Wrench,
   Server,
   RefreshCw,
@@ -49,6 +50,7 @@ import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
+import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { Button } from "@/components/ui/button";
 
 type View =
@@ -59,6 +61,7 @@ type View =
   | "skillsDiscovery"
   | "mcp"
   | "agents"
+  | "usage"
   | "universal";
 
 // macOS Overlay mode needs space for traffic light buttons, Windows/Linux use native titlebar
@@ -472,6 +475,14 @@ function App() {
               <UniversalProviderPanel />
             </div>
           );
+        case "usage":
+          return (
+            <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
+              <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1 pt-4">
+                <UsageDashboard />
+              </div>
+            </div>
+          );
         default:
           return (
             <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
@@ -612,6 +623,7 @@ function App() {
                   {currentView === "skillsDiscovery" && t("skills.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
                   {currentView === "agents" && t("agents.title")}
+                  {currentView === "usage" && t("usage.title")}
                   {currentView === "universal" &&
                     t("universalProvider.title", {
                       defaultValue: "统一供应商",
@@ -745,6 +757,15 @@ function App() {
                 <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
 
                 <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCurrentView("usage")}
+                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                    title={t("usage.title")}
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
