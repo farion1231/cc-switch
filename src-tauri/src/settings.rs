@@ -41,6 +41,12 @@ pub struct AppSettings {
     pub language: Option<String>,
 
     // ===== 设备级目录覆盖 =====
+    /// 是否启用 Claude/Codex/Gemini/OpenCode 配置目录覆盖（适用于 WSL 等场景）
+    #[serde(default = "default_true")]
+    pub enable_config_dir_overrides: bool,
+    /// 切换供应商时，是否同步写入默认目录与覆盖目录（用于同时切换 Windows/WSL 配置）
+    #[serde(default)]
+    pub sync_provider_switch_to_both_config_dirs: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,6 +92,8 @@ impl Default for AppSettings {
             skip_claude_onboarding: true,
             launch_on_startup: false,
             language: None,
+            enable_config_dir_overrides: true,
+            sync_provider_switch_to_both_config_dirs: false,
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
@@ -101,7 +109,7 @@ impl Default for AppSettings {
 impl AppSettings {
     fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
-        dirs::home_dir().map(|h| h.join(".cc-switch").join("settings.json"))
+        crate::paths::home_dir().map(|h| h.join(".cc-switch").join("settings.json"))
     }
 
     fn normalize_paths(&mut self) {
@@ -191,15 +199,15 @@ fn settings_store() -> &'static RwLock<AppSettings> {
 
 fn resolve_override_path(raw: &str) -> PathBuf {
     if raw == "~" {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::paths::home_dir() {
             return home;
         }
     } else if let Some(stripped) = raw.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::paths::home_dir() {
             return home.join(stripped);
         }
     } else if let Some(stripped) = raw.strip_prefix("~\\") {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::paths::home_dir() {
             return home.join(stripped);
         }
     }
@@ -242,6 +250,13 @@ pub fn reload_settings() -> Result<(), AppError> {
 }
 
 pub fn get_claude_override_dir() -> Option<PathBuf> {
+    if !config_dir_overrides_enabled() {
+        return None;
+    }
+    get_claude_override_dir_configured()
+}
+
+pub fn get_claude_override_dir_configured() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
         .claude_config_dir
@@ -250,6 +265,13 @@ pub fn get_claude_override_dir() -> Option<PathBuf> {
 }
 
 pub fn get_codex_override_dir() -> Option<PathBuf> {
+    if !config_dir_overrides_enabled() {
+        return None;
+    }
+    get_codex_override_dir_configured()
+}
+
+pub fn get_codex_override_dir_configured() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
         .codex_config_dir
@@ -258,6 +280,13 @@ pub fn get_codex_override_dir() -> Option<PathBuf> {
 }
 
 pub fn get_gemini_override_dir() -> Option<PathBuf> {
+    if !config_dir_overrides_enabled() {
+        return None;
+    }
+    get_gemini_override_dir_configured()
+}
+
+pub fn get_gemini_override_dir_configured() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
         .gemini_config_dir
@@ -266,11 +295,32 @@ pub fn get_gemini_override_dir() -> Option<PathBuf> {
 }
 
 pub fn get_opencode_override_dir() -> Option<PathBuf> {
+    if !config_dir_overrides_enabled() {
+        return None;
+    }
+    get_opencode_override_dir_configured()
+}
+
+pub fn get_opencode_override_dir_configured() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
         .opencode_config_dir
         .as_ref()
         .map(|p| resolve_override_path(p))
+}
+
+pub fn config_dir_overrides_enabled() -> bool {
+    settings_store()
+        .read()
+        .map(|s| s.enable_config_dir_overrides)
+        .unwrap_or(true)
+}
+
+pub fn sync_provider_switch_to_both_config_dirs_enabled() -> bool {
+    settings_store()
+        .read()
+        .map(|s| s.sync_provider_switch_to_both_config_dirs)
+        .unwrap_or(false)
 }
 
 // ===== 当前供应商管理函数 =====
@@ -339,4 +389,110 @@ pub fn get_effective_current_provider(
 
     // Fallback 到数据库的 is_current
     db.get_current_provider(app_type.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, OnceLock};
+
+    fn test_mutex() -> &'static Mutex<()> {
+        static MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+        MUTEX.get_or_init(|| Mutex::new(()))
+    }
+
+    fn ensure_test_home() -> PathBuf {
+        let pid = std::process::id();
+        let base = std::env::temp_dir().join(format!("cc-switch-settings-test-home-{pid}"));
+        if base.exists() {
+            let _ = std::fs::remove_dir_all(&base);
+        }
+        std::fs::create_dir_all(&base).expect("create test home");
+        std::env::set_var("HOME", &base);
+        #[cfg(windows)]
+        std::env::set_var("USERPROFILE", &base);
+        base
+    }
+
+    fn reset_test_fs(home: &Path) {
+        for sub in [".claude", ".codex", ".cc-switch", ".gemini", "wsl"] {
+            let path = home.join(sub);
+            if path.exists() {
+                let _ = std::fs::remove_dir_all(&path);
+            }
+        }
+        let claude_json = home.join(".claude.json");
+        if claude_json.exists() {
+            let _ = std::fs::remove_file(&claude_json);
+        }
+
+        let _ = update_settings(AppSettings::default());
+    }
+
+    #[test]
+    #[serial]
+    fn override_toggle_preserves_configured_paths_and_switches_effective_dir() {
+        let _guard = test_mutex().lock().expect("acquire test mutex");
+
+        let home = ensure_test_home();
+        reset_test_fs(&home);
+
+        let override_codex_dir = home.join("wsl").join(".codex");
+        let override_codex_dir_str = override_codex_dir.to_string_lossy().to_string();
+
+        let default_dir = home.join(".codex");
+
+        let mut settings = AppSettings::default();
+        settings.codex_config_dir = Some(override_codex_dir_str.clone());
+        settings.enable_config_dir_overrides = false;
+        settings.sync_provider_switch_to_both_config_dirs = false;
+        update_settings(settings).expect("update settings");
+
+        assert_eq!(
+            get_codex_override_dir(),
+            None,
+            "override disabled should make override dir non-effective"
+        );
+        assert_eq!(
+            get_codex_override_dir_configured(),
+            Some(override_codex_dir.clone()),
+            "override dir should remain configured even when disabled"
+        );
+
+        assert_eq!(
+            crate::codex_config::get_codex_auth_path(),
+            default_dir.join("auth.json"),
+            "override disabled should make default codex dir effective"
+        );
+
+        let settings_path = home.join(".cc-switch").join("settings.json");
+        let on_disk: serde_json::Value =
+            crate::config::read_json_file(&settings_path).expect("read settings.json");
+        assert_eq!(
+            on_disk.get("codexConfigDir").and_then(|v| v.as_str()),
+            Some(override_codex_dir_str.as_str()),
+            "settings.json should retain codexConfigDir"
+        );
+        assert_eq!(
+            on_disk
+                .get("enableConfigDirOverrides")
+                .and_then(|v| v.as_bool()),
+            Some(false),
+            "settings.json should reflect overrides disabled"
+        );
+
+        let mut settings = AppSettings::default();
+        settings.codex_config_dir = Some(override_codex_dir_str);
+        settings.enable_config_dir_overrides = true;
+        settings.sync_provider_switch_to_both_config_dirs = false;
+        update_settings(settings).expect("re-enable overrides");
+
+        assert_eq!(
+            get_codex_override_dir(),
+            Some(override_codex_dir),
+            "override enabled should make override dir effective"
+        );
+    }
 }

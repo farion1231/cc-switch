@@ -9,7 +9,8 @@ use cc_switch_lib::{
 pub fn ensure_test_home() -> &'static Path {
     static HOME: OnceLock<PathBuf> = OnceLock::new();
     HOME.get_or_init(|| {
-        let base = std::env::temp_dir().join("cc-switch-test-home");
+        let pid = std::process::id();
+        let base = std::env::temp_dir().join(format!("cc-switch-test-home-{pid}"));
         if base.exists() {
             let _ = std::fs::remove_dir_all(&base);
         }

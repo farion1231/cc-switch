@@ -1,8 +1,9 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
-    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
+    get_claude_settings_path, read_json_file, update_settings, write_codex_live_atomic, AppError,
+    AppSettings, AppType, McpApps, McpServer, MultiAppConfig, Provider, ProviderMeta,
+    ProviderService,
 };
 
 #[path = "support.rs"]
@@ -323,6 +324,101 @@ fn switch_google_official_gemini_sets_oauth_security() {
             .and_then(|v| v.as_str()),
         Some("oauth-personal"),
         "Gemini settings json should reflect oauth-personal for Google Official"
+    );
+}
+
+#[test]
+fn gemini_secondary_sync_does_not_write_settings_if_env_write_fails() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home().to_path_buf();
+
+    let override_dir = home.join("wsl").join(".gemini");
+    if override_dir.exists() {
+        std::fs::remove_dir_all(&override_dir).expect("clean override gemini dir");
+    }
+    std::fs::create_dir_all(&override_dir).expect("create override gemini dir");
+
+    // Force the secondary .env write to fail by creating a directory at the .env file path.
+    std::fs::create_dir_all(override_dir.join(".env")).expect("create conflicting .env directory");
+
+    let mut settings = AppSettings::default();
+    settings.gemini_config_dir = Some(override_dir.to_string_lossy().to_string());
+    settings.enable_config_dir_overrides = false;
+    settings.sync_provider_switch_to_both_config_dirs = true;
+    update_settings(settings).expect("update settings");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Gemini)
+            .expect("gemini manager");
+        manager.current = "old-gemini".to_string();
+        manager.providers.insert(
+            "old-gemini".to_string(),
+            Provider::with_id(
+                "old-gemini".to_string(),
+                "Old Gemini".to_string(),
+                json!({
+                    "env": {
+                        "GEMINI_API_KEY": "old-key"
+                    }
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "new-gemini".to_string(),
+            Provider::with_id(
+                "new-gemini".to_string(),
+                "New Gemini".to_string(),
+                json!({
+                    "env": {
+                        "GEMINI_API_KEY": "fresh-key",
+                        "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com"
+                    }
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Gemini, "new-gemini")
+        .expect("switching to Gemini provider should succeed");
+
+    // Primary writes should still succeed.
+    let primary_env = home.join(".gemini").join(".env");
+    assert!(primary_env.exists(), "primary .env should exist at {}", primary_env.display());
+    let env_content = std::fs::read_to_string(&primary_env).expect("read primary .env");
+    assert!(
+        env_content.contains("GEMINI_API_KEY=fresh-key"),
+        "primary .env should contain updated api key"
+    );
+
+    let primary_settings = home.join(".gemini").join("settings.json");
+    assert!(
+        primary_settings.exists(),
+        "primary settings.json should exist at {}",
+        primary_settings.display()
+    );
+    let raw =
+        std::fs::read_to_string(&primary_settings).expect("read primary gemini settings.json");
+    let value: serde_json::Value =
+        serde_json::from_str(&raw).expect("parse primary gemini settings.json");
+    assert_eq!(
+        value
+            .pointer("/security/auth/selectedType")
+            .and_then(|v| v.as_str()),
+        Some("gemini-api-key"),
+        "primary gemini settings should record gemini-api-key"
+    );
+
+    // Secondary writes should not proceed after the .env write fails.
+    assert!(
+        !override_dir.join("settings.json").exists(),
+        "secondary settings.json should not be written when secondary .env write fails"
     );
 }
 

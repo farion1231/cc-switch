@@ -84,8 +84,12 @@ export function useSettingsForm(): UseSettingsFormResult {
       enableClaudePluginIntegration:
         data.enableClaudePluginIntegration ?? false,
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? true,
+      enableConfigDirOverrides: data.enableConfigDirOverrides ?? true,
+      syncProviderSwitchToBothConfigDirs:
+        data.syncProviderSwitchToBothConfigDirs ?? false,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
+      geminiConfigDir: sanitizeDir(data.geminiConfigDir),
       language: normalizedLanguage,
     };
 
@@ -104,6 +108,8 @@ export function useSettingsForm(): UseSettingsFormResult {
             minimizeToTrayOnClose: true,
             enableClaudePluginIntegration: false,
             skipClaudeOnboarding: true,
+            enableConfigDirOverrides: true,
+            syncProviderSwitchToBothConfigDirs: false,
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -139,8 +145,12 @@ export function useSettingsForm(): UseSettingsFormResult {
         enableClaudePluginIntegration:
           serverData.enableClaudePluginIntegration ?? false,
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? true,
+        enableConfigDirOverrides: serverData.enableConfigDirOverrides ?? true,
+        syncProviderSwitchToBothConfigDirs:
+          serverData.syncProviderSwitchToBothConfigDirs ?? false,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
+        geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),
         language: normalizedLanguage,
       };
 

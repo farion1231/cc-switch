@@ -2,7 +2,8 @@ use serde_json::json;
 
 use cc_switch_lib::{
     get_codex_auth_path, get_codex_config_path, read_json_file, switch_provider_test_hook,
-    write_codex_live_atomic, AppError, AppType, McpApps, McpServer, MultiAppConfig, Provider,
+    update_settings, write_codex_live_atomic, AppError, AppSettings, AppType, McpApps, McpServer,
+    MultiAppConfig, Provider,
 };
 
 #[path = "support.rs"]
@@ -14,7 +15,19 @@ use support::{create_test_state_with_config, ensure_test_home, reset_test_fs, te
 fn switch_provider_updates_codex_live_and_state() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
-    let _home = ensure_test_home();
+    let home = ensure_test_home().to_path_buf();
+
+    let override_dir = home.join("wsl").join(".codex");
+    if override_dir.exists() {
+        std::fs::remove_dir_all(&override_dir).expect("clean override codex dir");
+    }
+    std::fs::create_dir_all(&override_dir).expect("create override codex dir");
+
+    let mut settings = AppSettings::default();
+    settings.codex_config_dir = Some(override_dir.to_string_lossy().to_string());
+    settings.enable_config_dir_overrides = false;
+    settings.sync_provider_switch_to_both_config_dirs = true;
+    update_settings(settings).expect("update settings");
 
     let legacy_auth = json!({"OPENAI_API_KEY": "legacy-key"});
     let legacy_config = r#"[mcp_servers.legacy]
@@ -103,6 +116,23 @@ command = "say"
     assert!(
         config_text.contains("mcp_servers.echo-server"),
         "config.toml should contain synced MCP servers"
+    );
+
+    let override_auth_value: serde_json::Value =
+        read_json_file(&override_dir.join("auth.json")).expect("read override auth.json");
+    assert_eq!(
+        override_auth_value
+            .get("OPENAI_API_KEY")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+        "fresh-key",
+        "override auth.json should reflect new provider when sync is enabled"
+    );
+    let override_config_text =
+        std::fs::read_to_string(override_dir.join("config.toml")).expect("read override config");
+    assert!(
+        override_config_text.contains("mcp_servers.latest"),
+        "override config should contain provider config when sync is enabled"
     );
 
     let current_id = app_state

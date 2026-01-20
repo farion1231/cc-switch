@@ -14,6 +14,7 @@ mod gemini_mcp;
 mod init_status;
 mod mcp;
 mod opencode_config;
+mod paths;
 mod panic_hook;
 mod prompt;
 mod prompt_files;

@@ -11,10 +11,82 @@ use std::path::Path;
 
 /// 获取用户主目录，带回退和日志
 fn get_home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| {
+    crate::paths::home_dir().unwrap_or_else(|| {
         log::warn!("无法获取用户主目录，回退到当前目录");
         PathBuf::from(".")
     })
+}
+
+fn get_default_codex_config_dir() -> PathBuf {
+    get_home_dir().join(".codex")
+}
+
+fn sync_codex_live_to_secondary_dir(primary_dir: &PathBuf, auth: &Value, cfg_text: &str) {
+    if !crate::settings::sync_provider_switch_to_both_config_dirs_enabled() {
+        return;
+    }
+
+    let Some(override_dir) = crate::settings::get_codex_override_dir_configured() else {
+        return;
+    };
+
+    let default_dir = get_default_codex_config_dir();
+    let secondary_dir = if primary_dir == &override_dir {
+        default_dir
+    } else {
+        override_dir
+    };
+
+    if secondary_dir == *primary_dir {
+        return;
+    }
+
+    let secondary_auth_path = secondary_dir.join("auth.json");
+    let secondary_config_path = secondary_dir.join("config.toml");
+
+    if let Some(parent) = secondary_auth_path.parent() {
+        if let Err(err) = std::fs::create_dir_all(parent) {
+            log::warn!(
+                "Failed to create secondary Codex config dir {}: {err}",
+                parent.display()
+            );
+            return;
+        }
+    }
+
+    let secondary_old_auth = if secondary_auth_path.exists() {
+        match fs::read(&secondary_auth_path) {
+            Ok(bytes) => Some(bytes),
+            Err(err) => {
+                log::warn!(
+                    "Failed to read secondary Codex auth.json for rollback ({}): {err}",
+                    secondary_auth_path.display()
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Err(err) = write_json_file(&secondary_auth_path, auth) {
+        log::warn!(
+            "Failed to sync Codex auth.json to secondary dir {}: {err}",
+            secondary_dir.display()
+        );
+    } else if let Err(err) = write_text_file(&secondary_config_path, cfg_text) {
+        // Rollback auth.json to keep the pair consistent.
+        if let Some(bytes) = secondary_old_auth {
+            let _ = atomic_write(&secondary_auth_path, &bytes);
+        } else {
+            let _ = delete_file(&secondary_auth_path);
+        }
+
+        log::warn!(
+            "Failed to sync Codex config.toml to secondary dir {}: {err}",
+            secondary_dir.display()
+        );
+    }
 }
 
 /// 获取 Codex 配置目录路径
@@ -23,7 +95,7 @@ pub fn get_codex_config_dir() -> PathBuf {
         return custom;
     }
 
-    get_home_dir().join(".codex")
+    get_default_codex_config_dir()
 }
 
 /// 获取 Codex auth.json 路径
@@ -71,8 +143,9 @@ pub fn write_codex_live_atomic(
     auth: &Value,
     config_text_opt: Option<&str>,
 ) -> Result<(), AppError> {
-    let auth_path = get_codex_auth_path();
-    let config_path = get_codex_config_path();
+    let primary_dir = get_codex_config_dir();
+    let auth_path = primary_dir.join("auth.json");
+    let config_path = primary_dir.join("config.toml");
 
     if let Some(parent) = auth_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -112,6 +185,8 @@ pub fn write_codex_live_atomic(
         }
         return Err(e);
     }
+
+    sync_codex_live_to_secondary_dir(&primary_dir, auth, &cfg_text);
 
     Ok(())
 }

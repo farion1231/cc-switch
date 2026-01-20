@@ -3,11 +3,11 @@ use crate::error::AppError;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// 获取用户主目录，带回退和日志
 fn get_home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| {
+    crate::paths::home_dir().unwrap_or_else(|| {
         log::warn!("无法获取用户主目录，回退到当前目录");
         PathBuf::from(".")
     })
@@ -197,6 +197,41 @@ pub fn write_gemini_env_atomic(map: &HashMap<String, String>) -> Result<(), AppE
     Ok(())
 }
 
+/// 写入 Gemini .env 文件到指定路径（原子操作）
+pub fn write_gemini_env_atomic_at_path(path: &Path, map: &HashMap<String, String>) -> Result<(), AppError> {
+    // 确保目录存在
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+
+        // 设置目录权限为 700（仅所有者可读写执行）
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(parent)
+                .map_err(|e| AppError::io(parent, e))?
+                .permissions();
+            perms.set_mode(0o700);
+            fs::set_permissions(parent, perms).map_err(|e| AppError::io(parent, e))?;
+        }
+    }
+
+    let content = serialize_env_file(map);
+    write_text_file(path, &content)?;
+
+    // 设置文件权限为 600（仅所有者可读写）
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(path)
+            .map_err(|e| AppError::io(path, e))?
+            .permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(path, perms).map_err(|e| AppError::io(path, e))?;
+    }
+
+    Ok(())
+}
+
 /// 从 .env 格式转换为 Provider.settings_config (JSON Value)
 pub fn env_to_json(env_map: &HashMap<String, String>) -> Value {
     let mut json_map = serde_json::Map::new();
@@ -300,7 +335,11 @@ pub fn get_gemini_settings_path() -> PathBuf {
 /// # 参数
 /// - `selected_type`: 要设置的 selectedType 值（如 "gemini-api-key" 或 "oauth-personal"）
 fn update_selected_type(selected_type: &str) -> Result<(), AppError> {
-    let settings_path = get_gemini_settings_path();
+    update_selected_type_at_path(&get_gemini_settings_path(), selected_type)
+}
+
+/// 更新指定 settings.json 中的 security.auth.selectedType 字段
+pub fn update_selected_type_at_path(settings_path: &Path, selected_type: &str) -> Result<(), AppError> {
 
     // 确保目录存在
     if let Some(parent) = settings_path.parent() {
