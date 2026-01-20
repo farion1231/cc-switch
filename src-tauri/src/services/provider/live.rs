@@ -163,6 +163,7 @@ fn maybe_sync_gemini_live_to_secondary_dir(
             "Failed to sync Gemini .env to secondary dir {}: {err}",
             secondary_dir.display()
         );
+        return;
     }
 
     let secondary_settings_path = secondary_dir.join("settings.json");
@@ -187,6 +188,7 @@ fn maybe_sync_gemini_live_to_secondary_dir(
                     "Failed to sync Gemini settings.json to secondary dir {}: {err}",
                     secondary_dir.display()
                 );
+                return;
             }
         }
     }
