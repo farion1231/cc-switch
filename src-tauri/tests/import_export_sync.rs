@@ -973,6 +973,7 @@ fn export_sql_returns_error_for_invalid_path() {
     // Try to export to an invalid path: the "parent directory" exists but is a file.
     // This is deterministic across platforms.
     let not_a_dir = home.join("not-a-dir");
+    let not_a_dir_display = not_a_dir.display().to_string();
     fs::write(&not_a_dir, "not a dir").expect("seed parent path as a file");
     let invalid_path = not_a_dir.join("export.sql");
     let err = state
@@ -990,7 +991,7 @@ fn export_sql_returns_error_for_invalid_path() {
         }
         AppError::Io { path, .. } => {
             assert!(
-                path == not_a_dir,
+                path == not_a_dir_display,
                 "expected error for parent path that is a file, got: {path:?}"
             );
         }
