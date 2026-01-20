@@ -19,6 +19,10 @@ pub fn get_claude_config_dir() -> PathBuf {
         return custom;
     }
 
+    get_default_claude_config_dir()
+}
+
+pub(crate) fn get_default_claude_config_dir() -> PathBuf {
     get_home_dir().join(".claude")
 }
 

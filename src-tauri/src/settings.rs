@@ -250,14 +250,10 @@ pub fn reload_settings() -> Result<(), AppError> {
 }
 
 pub fn get_claude_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    if !settings.enable_config_dir_overrides {
+    if !config_dir_overrides_enabled() {
         return None;
     }
-    settings
-        .claude_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
+    get_claude_override_dir_configured()
 }
 
 pub fn get_claude_override_dir_configured() -> Option<PathBuf> {
@@ -269,14 +265,10 @@ pub fn get_claude_override_dir_configured() -> Option<PathBuf> {
 }
 
 pub fn get_codex_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    if !settings.enable_config_dir_overrides {
+    if !config_dir_overrides_enabled() {
         return None;
     }
-    settings
-        .codex_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
+    get_codex_override_dir_configured()
 }
 
 pub fn get_codex_override_dir_configured() -> Option<PathBuf> {
@@ -288,14 +280,10 @@ pub fn get_codex_override_dir_configured() -> Option<PathBuf> {
 }
 
 pub fn get_gemini_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    if !settings.enable_config_dir_overrides {
+    if !config_dir_overrides_enabled() {
         return None;
     }
-    settings
-        .gemini_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
+    get_gemini_override_dir_configured()
 }
 
 pub fn get_gemini_override_dir_configured() -> Option<PathBuf> {
@@ -307,14 +295,10 @@ pub fn get_gemini_override_dir_configured() -> Option<PathBuf> {
 }
 
 pub fn get_opencode_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    if !settings.enable_config_dir_overrides {
+    if !config_dir_overrides_enabled() {
         return None;
     }
-    settings
-        .opencode_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
+    get_opencode_override_dir_configured()
 }
 
 pub fn get_opencode_override_dir_configured() -> Option<PathBuf> {
