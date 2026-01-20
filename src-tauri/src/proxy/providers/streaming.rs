@@ -115,16 +115,22 @@ pub fn create_anthropic_sse_stream(
 
                                     if let Some(choice) = chunk.choices.first() {
                                         if !has_sent_message_start {
+                                            // 构建完整的 message_start 事件，与原生 Anthropic 格式一致
                                             let event = json!({
                                                 "type": "message_start",
                                                 "message": {
                                                     "id": message_id.clone().unwrap_or_default(),
                                                     "type": "message",
                                                     "role": "assistant",
+                                                    "content": [],
                                                     "model": current_model.clone().unwrap_or_default(),
+                                                    "stop_reason": null,
+                                                    "stop_sequence": null,
                                                     "usage": {
-                                                        "input_tokens": 0,
-                                                        "output_tokens": 0
+                                                        "input_tokens": chunk.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(1),
+                                                        "output_tokens": 0,
+                                                        "cache_creation_input_tokens": 0,
+                                                        "cache_read_input_tokens": 0
                                                     }
                                                 }
                                             });
@@ -272,18 +278,17 @@ pub fn create_anthropic_sse_stream(
                                             }
 
                                             let stop_reason = map_stop_reason(Some(finish_reason));
-                                            // 构建 usage 信息，包含 input_tokens 和 output_tokens
-                                            let usage_json = chunk.usage.as_ref().map(|u| json!({
-                                                "input_tokens": u.prompt_tokens,
-                                                "output_tokens": u.completion_tokens
-                                            }));
+                                            // 构建 usage 信息，Anthropic 格式只需要 output_tokens
+                                            let output_tokens = chunk.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0);
                                             let event = json!({
                                                 "type": "message_delta",
                                                 "delta": {
                                                     "stop_reason": stop_reason,
                                                     "stop_sequence": null
                                                 },
-                                                "usage": usage_json
+                                                "usage": {
+                                                    "output_tokens": output_tokens
+                                                }
                                             });
                                             let sse_data = format!("event: message_delta\ndata: {}\n\n",
                                                 serde_json::to_string(&event).unwrap_or_default());

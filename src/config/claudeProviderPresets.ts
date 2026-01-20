@@ -431,6 +431,20 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#6566F1",
   },
   {
+    name: "ChatCompletions",
+    websiteUrl: "",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+      chat_completions_mode: true,
+    },
+    category: "third_party",
+    icon: "openai",
+    iconColor: "#10A37F",
+  },
+  {
     name: "Xiaomi MiMo",
     websiteUrl: "https://platform.xiaomimimo.com",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",

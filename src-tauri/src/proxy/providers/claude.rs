@@ -23,10 +23,16 @@ impl ClaudeAdapter {
     /// 获取供应商类型
     ///
     /// 根据 base_url 和 auth_mode 检测具体的供应商类型：
+    /// - ChatCompletions: chat_completions_mode 为 true（优先级最高）
     /// - OpenRouter: base_url 包含 openrouter.ai
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
+        // 检测 ChatCompletions 模式（优先级最高）
+        if self.is_chat_completions_mode(provider) {
+            return ProviderType::ChatCompletions;
+        }
+
         // 检测 OpenRouter
         if self.is_openrouter(provider) {
             return ProviderType::OpenRouter;
@@ -46,6 +52,20 @@ impl ClaudeAdapter {
             return base_url.contains("openrouter.ai");
         }
         false
+    }
+
+    /// 检测是否启用 ChatCompletions 兼容模式
+    fn is_chat_completions_mode(&self, provider: &Provider) -> bool {
+        let raw = provider.settings_config.get("chat_completions_mode");
+        match raw {
+            Some(serde_json::Value::Bool(enabled)) => *enabled,
+            Some(serde_json::Value::Number(num)) => num.as_i64().unwrap_or(0) != 0,
+            Some(serde_json::Value::String(value)) => {
+                let normalized = value.trim().to_lowercase();
+                normalized == "true" || normalized == "1"
+            }
+            _ => false,
+        }
     }
 
     /// 检测 OpenRouter 是否启用兼容模式
@@ -253,13 +273,9 @@ impl ProviderAdapter for ClaudeAdapter {
         }
     }
 
-    fn needs_transform(&self, _provider: &Provider) -> bool {
-        // NOTE:
-        // OpenRouter 已推出 Claude Code 兼容接口（可直接处理 `/v1/messages`），默认不再启用
-        // Anthropic ↔ OpenAI 的格式转换。
-        //
-        // 如果未来需要回退到旧的 OpenAI Chat Completions 方案，可恢复下面这行：
-        self.is_openrouter_compat_enabled(_provider)
+    fn needs_transform(&self, provider: &Provider) -> bool {
+        // ChatCompletions 模式或 OpenRouter 兼容模式都需要转换
+        self.is_chat_completions_mode(provider) || self.is_openrouter_compat_enabled(provider)
     }
 
     fn transform_request(

@@ -50,6 +50,8 @@ pub enum ProviderType {
     GeminiCli,
     /// OpenRouter（已支持 Claude Code 兼容接口，默认透传；保留旧转换逻辑备用）
     OpenRouter,
+    /// ChatCompletions 兼容模式（Anthropic ↔ OpenAI 格式转换，不限制上游地址）
+    ChatCompletions,
 }
 
 impl ProviderType {
@@ -75,6 +77,7 @@ impl ProviderType {
                 "https://generativelanguage.googleapis.com"
             }
             ProviderType::OpenRouter => "https://openrouter.ai/api",
+            ProviderType::ChatCompletions => "https://api.openai.com",
         }
     }
 
@@ -148,6 +151,7 @@ impl ProviderType {
             ProviderType::Gemini => "gemini",
             ProviderType::GeminiCli => "gemini_cli",
             ProviderType::OpenRouter => "openrouter",
+            ProviderType::ChatCompletions => "chat_completions",
         }
     }
 }
@@ -169,6 +173,9 @@ impl std::str::FromStr for ProviderType {
             "gemini" => Ok(ProviderType::Gemini),
             "gemini_cli" | "gemini-cli" => Ok(ProviderType::GeminiCli),
             "openrouter" => Ok(ProviderType::OpenRouter),
+            "chat_completions" | "chat-completions" | "chatcompletions" => {
+                Ok(ProviderType::ChatCompletions)
+            }
             _ => Err(format!("Invalid provider type: {s}")),
         }
     }
@@ -191,9 +198,10 @@ pub fn get_adapter(app_type: &AppType) -> Box<dyn ProviderAdapter> {
 #[allow(dead_code)]
 pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn ProviderAdapter> {
     match provider_type {
-        ProviderType::Claude | ProviderType::ClaudeAuth | ProviderType::OpenRouter => {
-            Box::new(ClaudeAdapter::new())
-        }
+        ProviderType::Claude
+        | ProviderType::ClaudeAuth
+        | ProviderType::OpenRouter
+        | ProviderType::ChatCompletions => Box::new(ClaudeAdapter::new()),
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
     }

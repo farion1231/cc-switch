@@ -561,12 +561,19 @@ impl RequestForwarder {
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
 
-        let effective_endpoint =
-            if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
+        // 确定有效端点：
+        // - 如果需要转换且是 Claude 的 /v1/messages 端点，改写为 /v1/chat/completions
+        // - 但如果 base_url 已包含 chat/completions，则不再自动添加
+        let effective_endpoint = if needs_transform && adapter.name() == "Claude" {
+            let base_has_chat_completions = base_url.contains("chat/completions");
+            if endpoint == "/v1/messages" && !base_has_chat_completions {
                 "/v1/chat/completions"
             } else {
                 endpoint
-            };
+            }
+        } else {
+            endpoint
+        };
 
         // 使用适配器构建 URL
         let url = adapter.build_url(&base_url, effective_endpoint);
