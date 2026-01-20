@@ -539,18 +539,15 @@ fn launch_terminal_with_env(
     // 创建并写入配置文件
     write_claude_config(&config_file, &env_vars)?;
 
-    // 转义配置文件路径用于 shell
-    let config_path_escaped = escape_shell_path(&config_file);
-
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file, &config_path_escaped)?;
+        launch_macos_terminal(&config_file)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file, &config_path_escaped)?;
+        launch_linux_terminal(&config_file)?;
         Ok(())
     }
 
@@ -584,104 +581,132 @@ fn write_claude_config(
     std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
-/// 转义 shell 路径
-fn escape_shell_path(path: &std::path::Path) -> String {
-    path.to_string_lossy()
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('$', "\\$")
-        .replace(' ', "\\ ")
-}
-
-/// 生成 bash 包装脚本，用于清理临时文件
-fn generate_wrapper_script(config_path: &str, escaped_path: &str) -> String {
-    format!(
-        "bash -c 'trap \"rm -f \\\"{config_path}\\\"\" EXIT; echo \"Using provider-specific claude config:\"; echo \"{escaped_path}\"; claude --settings \"{escaped_path}\"; exec bash --norc --noprofile'"
-    )
-}
-
 /// macOS: 使用 Terminal.app 启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(
-    config_file: &std::path::Path,
-    config_path_escaped: &str,
-) -> Result<(), String> {
+fn launch_macos_terminal(config_file: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
-    let config_path_for_script = config_file.to_string_lossy().replace('\"', "\\\"");
+    let temp_dir = std::env::temp_dir();
+    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
 
-    let shell_script = generate_wrapper_script(&config_path_for_script, config_path_escaped);
+    let config_path = config_file.to_string_lossy();
 
-    let script = format!(
-        r#"tell application "Terminal"
-                activate
-                do script "{}"
-            end tell"#,
-        shell_script.replace('\"', "\\\"")
+    // Write the shell script to a temp file (no escaping needed!)
+    let script_content = format!(
+        r#"#!/bin/bash
+trap 'rm -f "{config_path}" "{script_file}"' EXIT
+echo "Using provider-specific claude config:"
+echo "{config_path}"
+claude --settings "{config_path}"
+exec bash --norc --noprofile
+"#,
+        config_path = config_path,
+        script_file = script_file.display()
     );
 
-    Command::new("osascript")
+    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
+
+    // Make script executable
+    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+
+    // Simple AppleScript - just execute the script file
+    let applescript = format!(
+        r#"tell application "Terminal"
+    activate
+    do script "bash '{}'"
+end tell"#,
+        script_file.display()
+    );
+
+    let output = Command::new("osascript")
         .arg("-e")
-        .arg(&script)
-        .spawn()
-        .map_err(|e| format!("启动 macOS 终端失败: {e}"))?;
+        .arg(&applescript)
+        .output()
+        .map_err(|e| format!("执行 osascript 失败: {e}"))?;
+
+    if !output.status.success() {
+        // Clean up on failure
+        let _ = std::fs::remove_file(&script_file);
+        let _ = std::fs::remove_file(config_file);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "AppleScript 执行失败 (exit code: {:?}): {}",
+            output.status.code(),
+            stderr
+        ));
+    }
 
     Ok(())
 }
 
 /// Linux: 尝试使用常见终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(
-    config_file: &std::path::Path,
-    config_path_escaped: &str,
-) -> Result<(), String> {
+fn launch_linux_terminal(config_file: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
     let terminals = [
-        "gnome-terminal",
-        "konsole",
-        "xfce4-terminal",
-        "mate-terminal",
-        "lxterminal",
-        "alacritty",
-        "kitty",
+        ("gnome-terminal", vec!["--"]),
+        ("konsole", vec!["-e"]),
+        ("xfce4-terminal", vec!["-e"]),
+        ("mate-terminal", vec!["--"]),
+        ("lxterminal", vec!["-e"]),
+        ("alacritty", vec!["-e"]),
+        ("kitty", vec!["-e"]),
     ];
 
-    let config_path_for_bash = config_file.to_string_lossy();
-    let shell_cmd = generate_wrapper_script(&config_path_for_bash, config_path_escaped);
+    // Create temp script file (same approach as macOS)
+    let temp_dir = std::env::temp_dir();
+    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
+    let config_path = config_file.to_string_lossy();
+
+    let script_content = format!(
+        r#"#!/bin/bash
+trap 'rm -f "{config_path}" "{script_file}"' EXIT
+echo "Using provider-specific claude config:"
+echo "{config_path}"
+claude --settings "{config_path}"
+exec bash --norc --noprofile
+"#,
+        config_path = config_path,
+        script_file = script_file.display()
+    );
+
+    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
+
+    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
     let mut last_error = String::from("未找到可用的终端");
 
-    for terminal in terminals {
-        // 检查终端是否存在
+    for (terminal, args) in terminals {
+        // Check if terminal exists
         if std::path::Path::new(&format!("/usr/bin/{}", terminal)).exists()
             || std::path::Path::new(&format!("/bin/{}", terminal)).exists()
         {
-            let result = match terminal {
-                "gnome-terminal" | "mate-terminal" => Command::new(terminal)
-                    .arg("--")
-                    .arg("bash")
-                    .arg("-c")
-                    .arg(&shell_cmd)
-                    .spawn(),
-                _ => Command::new(terminal)
-                    .arg("-e")
-                    .arg("bash")
-                    .arg("-c")
-                    .arg(&shell_cmd)
-                    .spawn(),
-            };
+            let result = Command::new(terminal)
+                .args(&args)
+                .arg("bash")
+                .arg(script_file.to_string_lossy().as_ref())
+                .output();
 
             match result {
-                Ok(_) => return Ok(()),
+                Ok(output) if output.status.success() => return Ok(()),
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    last_error = format!("启动 {} 失败: {}", terminal, stderr);
+                }
                 Err(e) => {
-                    last_error = format!("启动 {} 失败: {}", terminal, e);
+                    last_error = format!("执行 {} 失败: {}", terminal, e);
                 }
             }
         }
     }
 
-    // 清理配置文件
+    // Clean up on failure
+    let _ = std::fs::remove_file(&script_file);
     let _ = std::fs::remove_file(config_file);
     Err(last_error)
 }
@@ -714,11 +739,24 @@ if errorlevel 1 (
 
     std::fs::write(&bat_file, content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
-    Command::new("cmd")
+    // Use output() to capture errors from the start command
+    let output = Command::new("cmd")
         .args(["/C", "start", "cmd", "/C", &bat_file.to_string_lossy()])
         .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|e| format!("启动 Windows 终端失败: {e}"))?;
+        .output()
+        .map_err(|e| format!("执行 cmd 失败: {e}"))?;
+
+    if !output.status.success() {
+        // Clean up on failure
+        let _ = std::fs::remove_file(&bat_file);
+        let _ = std::fs::remove_file(config_file);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "启动 Windows 终端失败 (exit code: {:?}): {}",
+            output.status.code(),
+            stderr
+        ));
+    }
 
     Ok(())
 }

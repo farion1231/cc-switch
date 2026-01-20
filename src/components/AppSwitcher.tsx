@@ -6,11 +6,17 @@ interface AppSwitcherProps {
   activeApp: AppId;
   onSwitch: (app: AppId) => void;
   visibleApps?: VisibleApps;
+  compact?: boolean;
 }
 
 const ALL_APPS: AppId[] = ["claude", "codex", "gemini", "opencode"];
 
-export function AppSwitcher({ activeApp, onSwitch, visibleApps }: AppSwitcherProps) {
+export function AppSwitcher({
+  activeApp,
+  onSwitch,
+  visibleApps,
+  compact,
+}: AppSwitcherProps) {
   const handleSwitch = (app: AppId) => {
     if (app === activeApp) return;
     onSwitch(app);
@@ -52,13 +58,8 @@ export function AppSwitcher({ activeApp, onSwitch, visibleApps }: AppSwitcherPro
             icon={appIconName[app]}
             name={appDisplayName[app]}
             size={iconSize}
-            className={
-              activeApp === app
-                ? "text-foreground"
-                : "text-muted-foreground group-hover:text-foreground transition-colors"
-            }
           />
-          <span>{appDisplayName[app]}</span>
+          {!compact && <span>{appDisplayName[app]}</span>}
         </button>
       ))}
     </div>

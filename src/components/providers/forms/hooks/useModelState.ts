@@ -31,15 +31,15 @@ export function useModelState({
     if (lastConfigRef.current === settingsConfig) {
       return;
     }
-    
+
     if (isUserEditingRef.current) {
       isUserEditingRef.current = false;
       lastConfigRef.current = settingsConfig;
       return;
     }
-    
+
     lastConfigRef.current = settingsConfig;
-    
+
     try {
       const cfg = settingsConfig ? JSON.parse(settingsConfig) : {};
       const env = cfg?.env || {};

@@ -1,5 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { ReactElement } from "react";
 import type { Provider } from "@/types";
 import { ProviderList } from "@/components/providers/ProviderList";
 
@@ -108,6 +110,16 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
   };
 }
 
+function renderWithQueryClient(ui: ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  );
+}
+
 beforeEach(() => {
   useDragSortMock.mockReset();
   useSortableMock.mockReset();
@@ -131,7 +143,7 @@ beforeEach(() => {
 
 describe("ProviderList Component", () => {
   it("should render skeleton placeholders when loading", () => {
-    const { container } = render(
+    const { container } = renderWithQueryClient(
       <ProviderList
         providers={{}}
         currentProviderId=""
@@ -159,7 +171,7 @@ describe("ProviderList Component", () => {
       handleDragEnd: vi.fn(),
     });
 
-    render(
+    renderWithQueryClient(
       <ProviderList
         providers={{}}
         currentProviderId=""
@@ -198,7 +210,7 @@ describe("ProviderList Component", () => {
       handleDragEnd: vi.fn(),
     });
 
-    render(
+    renderWithQueryClient(
       <ProviderList
         providers={{ a: providerA, b: providerB }}
         currentProviderId="b"
@@ -262,7 +274,7 @@ describe("ProviderList Component", () => {
       handleDragEnd: vi.fn(),
     });
 
-    render(
+    renderWithQueryClient(
       <ProviderList
         providers={{ alpha: providerAlpha, beta: providerBeta }}
         currentProviderId=""

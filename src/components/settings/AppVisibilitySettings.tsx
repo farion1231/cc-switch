@@ -22,7 +22,10 @@ const APP_CONFIG: Array<{
   { id: "opencode", icon: "opencode", nameKey: "apps.opencode" },
 ];
 
-export function AppVisibilitySettings({ settings, onChange }: AppVisibilitySettingsProps) {
+export function AppVisibilitySettings({
+  settings,
+  onChange,
+}: AppVisibilitySettingsProps) {
   const { t } = useTranslation();
 
   const visibleApps: VisibleApps = settings.visibleApps ?? {
@@ -51,7 +54,9 @@ export function AppVisibilitySettings({ settings, onChange }: AppVisibilitySetti
   return (
     <section className="space-y-2">
       <header className="space-y-1">
-        <h3 className="text-sm font-medium">{t("settings.appVisibility.title")}</h3>
+        <h3 className="text-sm font-medium">
+          {t("settings.appVisibility.title")}
+        </h3>
         <p className="text-xs text-muted-foreground">
           {t("settings.appVisibility.description")}
         </p>

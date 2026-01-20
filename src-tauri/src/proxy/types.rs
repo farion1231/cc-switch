@@ -316,30 +316,48 @@ mod tests {
 
     #[test]
     fn test_log_config_to_level_filter() {
-        let mut config = LogConfig::default();
-
-        config.level = "error".to_string();
+        let config = LogConfig {
+            level: "error".to_string(),
+            ..Default::default()
+        };
         assert_eq!(config.to_level_filter(), log::LevelFilter::Error);
 
-        config.level = "warn".to_string();
+        let config = LogConfig {
+            level: "warn".to_string(),
+            ..Default::default()
+        };
         assert_eq!(config.to_level_filter(), log::LevelFilter::Warn);
 
-        config.level = "info".to_string();
+        let config = LogConfig {
+            level: "info".to_string(),
+            ..Default::default()
+        };
         assert_eq!(config.to_level_filter(), log::LevelFilter::Info);
 
-        config.level = "debug".to_string();
+        let config = LogConfig {
+            level: "debug".to_string(),
+            ..Default::default()
+        };
         assert_eq!(config.to_level_filter(), log::LevelFilter::Debug);
 
-        config.level = "trace".to_string();
+        let config = LogConfig {
+            level: "trace".to_string(),
+            ..Default::default()
+        };
         assert_eq!(config.to_level_filter(), log::LevelFilter::Trace);
 
         // 无效级别回退到 info
-        config.level = "invalid".to_string();
+        let config = LogConfig {
+            level: "invalid".to_string(),
+            ..Default::default()
+        };
         assert_eq!(config.to_level_filter(), log::LevelFilter::Info);
 
         // 禁用时返回 Off
-        config.enabled = false;
-        config.level = "debug".to_string();
+        let config = LogConfig {
+            enabled: false,
+            level: "debug".to_string(),
+        };
         assert_eq!(config.to_level_filter(), log::LevelFilter::Off);
     }
 
