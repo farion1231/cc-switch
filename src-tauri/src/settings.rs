@@ -410,6 +410,7 @@ pub fn get_effective_current_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::path::{Path, PathBuf};
     use std::sync::{Mutex, OnceLock};
 
@@ -447,6 +448,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn override_toggle_preserves_configured_paths_and_switches_effective_dir() {
         let _guard = test_mutex().lock().expect("acquire test mutex");
 
