@@ -272,6 +272,14 @@
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "skipClaudeOnboardingDescription": "When enabled, Claude Code will skip the first-run confirmation",
+    "appVisibility": {
+      "title": "Homepage Display",
+      "description": "Choose which apps to show on the homepage",
+      "claudeDesc": "Anthropic Claude Code CLI",
+      "codexDesc": "OpenAI Codex CLI",
+      "geminiDesc": "Google Gemini CLI",
+      "opencodeDesc": "OpenCode CLI"
+    },
     "configDirectoryOverride": "Configuration Directory Override (Advanced)",
     "configDirectoryDescription": "When using Claude Code or Codex in environments like WSL, you can manually specify the configuration directory to the one in WSL to keep provider data consistent with the main environment.",
     "appConfigDir": "CC Switch Configuration Directory",
@@ -333,7 +341,7 @@
     }
   },
   "apps": {
-    "claude": "Claude Code",
+    "claude": "Claude",
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode"

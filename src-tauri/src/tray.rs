@@ -318,6 +318,9 @@ pub fn create_tray_menu(
     let app_settings = crate::settings::get_settings();
     let tray_texts = TrayTexts::from_language(app_settings.language.as_deref().unwrap_or("zh"));
 
+    // Get visible apps setting, default to all visible
+    let visible_apps = app_settings.visible_apps.unwrap_or_default();
+
     let mut menu_builder = MenuBuilder::new(app);
 
     // 顶部：打开主界面
@@ -327,7 +330,13 @@ pub fn create_tray_menu(
     menu_builder = menu_builder.item(&show_main_item).separator();
 
     // 直接添加所有供应商到主菜单（扁平化结构，更简单可靠）
+    // Only add visible app sections
     for section in TRAY_SECTIONS.iter() {
+        // Skip hidden apps
+        if !visible_apps.is_visible(&section.app_type) {
+            continue;
+        }
+
         let app_type_str = section.app_type.as_str();
         let providers = app_state.db.get_all_providers(app_type_str)?;
 

@@ -128,6 +128,7 @@ export function EditProviderDialog({
       iconColor: provider.iconColor,
     };
   }, [
+    open, // 修复：编辑保存后再次打开显示旧数据，依赖 open 确保每次打开时重新读取最新 provider 数据
     provider?.id, // 只依赖 ID，provider 对象更新不会触发重新计算
     provider?.meta, // 需要依赖 meta 以便正确初始化 testConfig 和 proxyConfig
     initialSettingsConfig,

@@ -34,6 +34,7 @@ import { settingsApi } from "@/lib/api";
 import { LanguageSettings } from "@/components/settings/LanguageSettings";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
 import { WindowSettings } from "@/components/settings/WindowSettings";
+import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { AboutSection } from "@/components/settings/AboutSection";
@@ -240,6 +241,10 @@ export function SettingsPage({
                     onChange={(lang) => handleAutoSave({ language: lang })}
                   />
                   <ThemeSettings />
+                  <AppVisibilitySettings
+                    settings={settings}
+                    onChange={handleAutoSave}
+                  />
                   <WindowSettings
                     settings={settings}
                     onChange={handleAutoSave}

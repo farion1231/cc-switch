@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { isWindows, isLinux } from "@/lib/platform";
+import { isTextEditableTarget } from "@/utils/domUtils";
 
 interface FullScreenPanelProps {
   isOpen: boolean;
@@ -34,6 +35,39 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
     }
     return () => {
       document.body.style.overflow = "";
+    };
+  }, [isOpen]);
+
+  // ESC 键关闭面板
+  const onCloseRef = React.useRef(onClose);
+
+  React.useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        // 子组件（例如 Radix 的 Select/Dialog/Dropdown）如果已经消费了 ESC，就不要再关闭整个面板
+        if (event.defaultPrevented) {
+          return;
+        }
+
+        if (isTextEditableTarget(event.target)) {
+          return; // 让输入框自己处理 ESC（比如清空、失焦等）
+        }
+
+        event.stopPropagation(); // 阻止事件继续冒泡到 window，避免触发 App.tsx 的全局监听
+        onCloseRef.current();
+      }
+    };
+
+    // 使用冒泡阶段监听，让子组件（如 Radix UI）优先处理 ESC
+    window.addEventListener("keydown", handleKeyDown, false);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, false);
     };
   }, [isOpen]);
 

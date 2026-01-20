@@ -17,9 +17,9 @@ import {
   Download,
   BarChart2,
 } from "lucide-react";
-import type { Provider } from "@/types";
+import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
-import { useProvidersQuery } from "@/lib/query";
+import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
   settingsApi,
@@ -31,6 +31,7 @@ import { useProviderActions } from "@/hooks/useProviderActions";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { isTextEditableTarget } from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
 import { isWindows, isLinux } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
@@ -76,6 +77,31 @@ function App() {
   const [currentView, setCurrentView] = useState<View>("providers");
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+
+  // Get settings for visibleApps
+  const { data: settingsData } = useSettingsQuery();
+  const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
+    claude: true,
+    codex: true,
+    gemini: true,
+    opencode: true,
+  };
+
+  // Get first visible app for fallback
+  const getFirstVisibleApp = (): AppId => {
+    if (visibleApps.claude) return "claude";
+    if (visibleApps.codex) return "codex";
+    if (visibleApps.gemini) return "gemini";
+    if (visibleApps.opencode) return "opencode";
+    return "claude"; // fallback
+  };
+
+  // If current active app is hidden, switch to first visible app
+  useEffect(() => {
+    if (!visibleApps[activeApp]) {
+      setActiveApp(getFirstVisibleApp());
+    }
+  }, [visibleApps, activeApp]);
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
@@ -293,18 +319,40 @@ function App() {
     checkEnvOnSwitch();
   }, [activeApp]);
 
+  // 全局键盘快捷键
+  const currentViewRef = useRef(currentView);
+
   useEffect(() => {
-    const handleGlobalShortcut = (event: KeyboardEvent) => {
-      if (event.key !== "," || !(event.metaKey || event.ctrlKey)) {
+    currentViewRef.current = currentView;
+  }, [currentView]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Cmd/Ctrl + , 打开设置
+      if (event.key === "," && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        setCurrentView("settings");
         return;
       }
+
+      // ESC 键返回
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+
+      // 如果有模态框打开（通过 overflow hidden 判断），则不处理全局 ESC，交给模态框处理
+      if (document.body.style.overflow === "hidden") return;
+
+      const view = currentViewRef.current;
+      if (view === "providers") return;
+
+      if (isTextEditableTarget(event.target)) return;
+
       event.preventDefault();
-      setCurrentView("settings");
+      setCurrentView(view === "skillsDiscovery" ? "skills" : "providers");
     };
 
-    window.addEventListener("keydown", handleGlobalShortcut);
+    window.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.removeEventListener("keydown", handleGlobalShortcut);
+      window.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
 
@@ -841,7 +889,7 @@ function App() {
                   </>
                 )}
 
-                <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
+                <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} visibleApps={visibleApps} />
 
                 <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
                   <Button
