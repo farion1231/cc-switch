@@ -436,6 +436,8 @@ impl StreamCheckService {
     }
 
     /// Gemini 流式检查
+    ///
+    /// 使用 Gemini 原生 API 格式 (streamGenerateContent)
     async fn check_gemini_stream(
         client: &Client,
         base_url: &str,
@@ -445,20 +447,28 @@ impl StreamCheckService {
         timeout: std::time::Duration,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
-        let url = format!("{base}/v1/chat/completions");
+        // Gemini 原生 API: /v1beta/models/{model}:streamGenerateContent?alt=sse
+        // 智能处理 /v1beta 路径：如果 base_url 不包含版本路径，则添加 /v1beta
+        // alt=sse 参数使 API 返回 SSE 格式（text/event-stream）而非 JSON 数组
+        let url = if base.contains("/v1beta") || base.contains("/v1/") {
+            format!("{base}/models/{model}:streamGenerateContent?alt=sse")
+        } else {
+            format!("{base}/v1beta/models/{model}:streamGenerateContent?alt=sse")
+        };
 
+        // Gemini 原生请求体格式
         let body = json!({
-            "model": model,
-            "messages": [{ "role": "user", "content": test_prompt }],
-            "max_tokens": 1,
-            "temperature": 0,
-            "stream": true
+            "contents": [{
+                "role": "user",
+                "parts": [{ "text": test_prompt }]
+            }]
         });
 
         let response = client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", auth.api_key))
+            .header("x-goog-api-key", &auth.api_key)
             .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream")
             .timeout(timeout)
             .json(&body)
             .send()
