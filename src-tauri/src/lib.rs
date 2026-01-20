@@ -277,9 +277,14 @@ pub fn run() {
                     eprintln!("创建日志目录失败: {e}");
                 }
 
+                // 启动时删除旧日志文件，实现单文件覆盖效果
+                let log_file_path = log_dir.join("cc-switch.log");
+                let _ = std::fs::remove_file(&log_file_path);
+
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info) // 初始化为 Info，后续从数据库加载配置
+                        // 初始化为 Trace，允许后续通过 log::set_max_level() 动态调整级别
+                        .level(log::LevelFilter::Trace)
                         .targets([
                             Target::new(TargetKind::Stdout),
                             Target::new(TargetKind::Folder {
@@ -287,7 +292,10 @@ pub fn run() {
                                 file_name: Some("cc-switch".into()),
                             }),
                         ])
-                        .rotation_strategy(RotationStrategy::KeepAll) // 追加模式，不清空日志
+                        // 单文件模式：启动时删除旧文件，达到大小时轮转并保留 1 个
+                        .rotation_strategy(RotationStrategy::KeepSome(1))
+                        // 单文件大小限制 1GB
+                        .max_file_size(1024 * 1024 * 1024)
                         .timezone_strategy(TimezoneStrategy::UseLocal)
                         .build(),
                 )?;
