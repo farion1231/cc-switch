@@ -292,8 +292,10 @@ pub fn run() {
                                 file_name: Some("cc-switch".into()),
                             }),
                         ])
-                        // 单文件模式：启动时删除旧文件，达到大小时轮转并保留 1 个
-                        .rotation_strategy(RotationStrategy::KeepSome(1))
+                        // 单文件模式：启动时删除旧文件，达到大小时轮转
+                        // 注意：KeepSome(n) 内部会做 n-2 运算，n=1 会导致 usize 下溢
+                        // KeepSome(2) 是最小安全值，表示不保留轮转文件
+                        .rotation_strategy(RotationStrategy::KeepSome(2))
                         // 单文件大小限制 1GB
                         .max_file_size(1024 * 1024 * 1024)
                         .timezone_strategy(TimezoneStrategy::UseLocal)
