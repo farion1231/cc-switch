@@ -283,6 +283,22 @@ export function SettingsPage({
                           onAppConfigChange={updateAppConfigDir}
                           onBrowseAppConfig={browseAppConfigDir}
                           onResetAppConfig={resetAppConfigDir}
+                          enableConfigDirOverrides={
+                            settings.enableConfigDirOverrides ?? true
+                          }
+                          syncProviderSwitchToBothConfigDirs={
+                            settings.syncProviderSwitchToBothConfigDirs ?? false
+                          }
+                          onEnableConfigDirOverridesChange={(enabled) =>
+                            updateSettings({
+                              enableConfigDirOverrides: enabled,
+                            })
+                          }
+                          onSyncProviderSwitchToBothConfigDirsChange={(enabled) =>
+                            updateSettings({
+                              syncProviderSwitchToBothConfigDirs: enabled,
+                            })
+                          }
                           claudeDir={settings.claudeConfigDir}
                           codexDir={settings.codexConfigDir}
                           geminiDir={settings.geminiConfigDir}

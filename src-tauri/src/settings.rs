@@ -41,6 +41,12 @@ pub struct AppSettings {
     pub language: Option<String>,
 
     // ===== 设备级目录覆盖 =====
+    /// 是否启用 Claude/Codex/Gemini/OpenCode 配置目录覆盖（适用于 WSL 等场景）
+    #[serde(default = "default_true")]
+    pub enable_config_dir_overrides: bool,
+    /// 切换供应商时，是否同步写入默认目录与覆盖目录（用于同时切换 Windows/WSL 配置）
+    #[serde(default)]
+    pub sync_provider_switch_to_both_config_dirs: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,6 +92,8 @@ impl Default for AppSettings {
             skip_claude_onboarding: true,
             launch_on_startup: false,
             language: None,
+            enable_config_dir_overrides: true,
+            sync_provider_switch_to_both_config_dirs: false,
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
@@ -101,7 +109,7 @@ impl Default for AppSettings {
 impl AppSettings {
     fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
-        dirs::home_dir().map(|h| h.join(".cc-switch").join("settings.json"))
+        crate::paths::home_dir().map(|h| h.join(".cc-switch").join("settings.json"))
     }
 
     fn normalize_paths(&mut self) {
@@ -191,15 +199,15 @@ fn settings_store() -> &'static RwLock<AppSettings> {
 
 fn resolve_override_path(raw: &str) -> PathBuf {
     if raw == "~" {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::paths::home_dir() {
             return home;
         }
     } else if let Some(stripped) = raw.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::paths::home_dir() {
             return home.join(stripped);
         }
     } else if let Some(stripped) = raw.strip_prefix("~\\") {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::paths::home_dir() {
             return home.join(stripped);
         }
     }
@@ -243,6 +251,17 @@ pub fn reload_settings() -> Result<(), AppError> {
 
 pub fn get_claude_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
+    if !settings.enable_config_dir_overrides {
+        return None;
+    }
+    settings
+        .claude_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn get_claude_override_dir_configured() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
     settings
         .claude_config_dir
         .as_ref()
@@ -250,6 +269,17 @@ pub fn get_claude_override_dir() -> Option<PathBuf> {
 }
 
 pub fn get_codex_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    if !settings.enable_config_dir_overrides {
+        return None;
+    }
+    settings
+        .codex_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn get_codex_override_dir_configured() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
         .codex_config_dir
@@ -259,6 +289,17 @@ pub fn get_codex_override_dir() -> Option<PathBuf> {
 
 pub fn get_gemini_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
+    if !settings.enable_config_dir_overrides {
+        return None;
+    }
+    settings
+        .gemini_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn get_gemini_override_dir_configured() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
     settings
         .gemini_config_dir
         .as_ref()
@@ -267,10 +308,35 @@ pub fn get_gemini_override_dir() -> Option<PathBuf> {
 
 pub fn get_opencode_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
+    if !settings.enable_config_dir_overrides {
+        return None;
+    }
     settings
         .opencode_config_dir
         .as_ref()
         .map(|p| resolve_override_path(p))
+}
+
+pub fn get_opencode_override_dir_configured() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .opencode_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn config_dir_overrides_enabled() -> bool {
+    settings_store()
+        .read()
+        .map(|s| s.enable_config_dir_overrides)
+        .unwrap_or(true)
+}
+
+pub fn sync_provider_switch_to_both_config_dirs_enabled() -> bool {
+    settings_store()
+        .read()
+        .map(|s| s.sync_provider_switch_to_both_config_dirs)
+        .unwrap_or(false)
 }
 
 // ===== 当前供应商管理函数 =====

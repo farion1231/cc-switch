@@ -98,6 +98,39 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Claude => {
             let path = get_claude_settings_path();
             write_json_file(&path, &provider.settings_config)?;
+
+            // Optional: also write to the "other" config directory (default <-> override).
+            if crate::settings::sync_provider_switch_to_both_config_dirs_enabled() {
+                if let Some(override_dir) = crate::settings::get_claude_override_dir_configured() {
+                    let primary_dir = crate::config::get_claude_config_dir();
+                    let default_dir = crate::paths::home_dir_or_current().join(".claude");
+                    let secondary_dir = if primary_dir == override_dir {
+                        default_dir
+                    } else {
+                        override_dir
+                    };
+
+                    if secondary_dir != primary_dir {
+                        let secondary_settings = secondary_dir.join("settings.json");
+                        let secondary_legacy = secondary_dir.join("claude.json");
+                        let secondary_path = if secondary_settings.exists() {
+                            secondary_settings
+                        } else if secondary_legacy.exists() {
+                            secondary_legacy
+                        } else {
+                            secondary_settings
+                        };
+
+                        if let Err(err) = write_json_file(&secondary_path, &provider.settings_config)
+                        {
+                            log::warn!(
+                                "Failed to sync Claude live config to secondary dir {}: {err}",
+                                secondary_dir.display()
+                            );
+                        }
+                    }
+                }
+            }
         }
         AppType::Codex => {
             let obj = provider
@@ -111,10 +144,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 AppError::Config("Codex 供应商配置缺少 'config' 字段或不是字符串".to_string())
             })?;
 
-            let auth_path = get_codex_auth_path();
-            write_json_file(&auth_path, auth)?;
-            let config_path = get_codex_config_path();
-            std::fs::write(&config_path, config_str).map_err(|e| AppError::io(&config_path, e))?;
+            crate::codex_config::write_codex_live_atomic(auth, Some(config_str))?;
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
@@ -407,8 +437,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 /// Write Gemini live configuration with authentication handling
 pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
     use crate::gemini_config::{
-        get_gemini_settings_path, json_to_env, validate_gemini_settings_strict,
-        write_gemini_env_atomic,
+        get_gemini_dir, get_gemini_settings_path, json_to_env, update_selected_type_at_path,
+        validate_gemini_settings_strict, write_gemini_env_atomic, write_gemini_env_atomic_at_path,
     };
 
     // One-time auth type detection to avoid repeated detection
@@ -485,6 +515,67 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
         GeminiAuthType::GoogleOfficial => ensure_google_oauth_security_flag(provider)?,
         GeminiAuthType::Packycode | GeminiAuthType::Generic => {
             crate::gemini_config::write_packycode_settings()?;
+        }
+    }
+
+    if crate::settings::sync_provider_switch_to_both_config_dirs_enabled() {
+        if let Some(override_dir) = crate::settings::get_gemini_override_dir_configured() {
+            let primary_dir = get_gemini_dir();
+            let default_dir = crate::paths::home_dir_or_current().join(".gemini");
+            let secondary_dir = if primary_dir == override_dir {
+                default_dir
+            } else {
+                override_dir
+            };
+
+            if secondary_dir != primary_dir {
+                let secondary_env_path = secondary_dir.join(".env");
+                if let Err(err) = write_gemini_env_atomic_at_path(&secondary_env_path, &env_map) {
+                    log::warn!(
+                        "Failed to sync Gemini .env to secondary dir {}: {err}",
+                        secondary_dir.display()
+                    );
+                }
+
+                let secondary_settings_path = secondary_dir.join("settings.json");
+                if let Some(config_value) = provider.settings_config.get("config") {
+                    if config_value.is_object() {
+                        let mut merged = if secondary_settings_path.exists() {
+                            read_json_file::<Value>(&secondary_settings_path)
+                                .unwrap_or_else(|_| json!({}))
+                        } else {
+                            json!({})
+                        };
+
+                        if let (Some(merged_obj), Some(config_obj)) =
+                            (merged.as_object_mut(), config_value.as_object())
+                        {
+                            for (k, v) in config_obj {
+                                merged_obj.insert(k.clone(), v.clone());
+                            }
+                        }
+
+                        if let Err(err) = write_json_file(&secondary_settings_path, &merged) {
+                            log::warn!(
+                                "Failed to sync Gemini settings.json to secondary dir {}: {err}",
+                                secondary_dir.display()
+                            );
+                        }
+                    }
+                }
+
+                let selected_type = match auth_type {
+                    GeminiAuthType::GoogleOfficial => "oauth-personal",
+                    GeminiAuthType::Packycode | GeminiAuthType::Generic => "gemini-api-key",
+                };
+                if let Err(err) = update_selected_type_at_path(&secondary_settings_path, selected_type)
+                {
+                    log::warn!(
+                        "Failed to sync Gemini selectedType to secondary dir {}: {err}",
+                        secondary_dir.display()
+                    );
+                }
+            }
         }
     }
 

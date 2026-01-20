@@ -119,6 +119,10 @@ export interface Settings {
   language?: "en" | "zh" | "ja";
 
   // ===== 设备级目录覆盖 =====
+  // 是否启用配置目录覆盖（用于 Windows/WSL 切换等）
+  enableConfigDirOverrides?: boolean;
+  // 切换供应商时，是否同步写入默认目录与覆盖目录（尽力而为）
+  syncProviderSwitchToBothConfigDirs?: boolean;
   // 覆盖 Claude Code 配置目录（可选）
   claudeConfigDir?: string;
   // 覆盖 Codex 配置目录（可选）
@@ -294,4 +298,3 @@ export interface OpenCodeMcpServerSpec {
   // 通用字段
   enabled?: boolean;
 }
-

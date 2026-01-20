@@ -7,7 +7,7 @@ use crate::error::AppError;
 
 /// 获取用户主目录，带回退和日志
 fn get_home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| {
+    crate::paths::home_dir().unwrap_or_else(|| {
         log::warn!("无法获取用户主目录，回退到当前目录");
         PathBuf::from(".")
     })
@@ -72,7 +72,7 @@ pub fn get_app_config_dir() -> PathBuf {
         return custom;
     }
 
-    dirs::home_dir()
+    crate::paths::home_dir()
         .expect("无法获取用户主目录")
         .join(".cc-switch")
 }
