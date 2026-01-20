@@ -49,7 +49,7 @@ export function EndpointField({
       </div>
       <Input
         id={id}
-        type="url"
+        type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}

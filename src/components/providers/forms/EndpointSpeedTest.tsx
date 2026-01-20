@@ -525,7 +525,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
         <div className="space-y-1.5">
           <div className="flex gap-2">
             <Input
-              type="url"
+              type="text"
               value={customUrl}
               placeholder={t("endpointTest.addEndpointPlaceholder")}
               onChange={(event) => setCustomUrl(event.target.value)}
