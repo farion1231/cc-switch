@@ -664,6 +664,17 @@ impl RequestForwarder {
             request = request.header("anthropic-version", version_str);
         }
 
+        // 输出请求信息日志
+        let tag = adapter.name();
+        log::debug!("[{tag}] >>> 请求 URL: {url}");
+        if let Ok(body_str) = serde_json::to_string(&filtered_body) {
+            log::debug!(
+                "[{tag}] >>> 请求体内容 ({}字节): {}",
+                body_str.len(),
+                body_str
+            );
+        }
+
         // 发送请求
         let response = request.json(&filtered_body).send().await.map_err(|e| {
             if e.is_timeout() {
