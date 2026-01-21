@@ -162,6 +162,8 @@ export interface Settings {
   skipClaudeOnboarding?: boolean;
   // 是否开机自启
   launchOnStartup?: boolean;
+  // 静默启动（程序启动时不显示主窗口）
+  silentStartup?: boolean;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "ja";
 

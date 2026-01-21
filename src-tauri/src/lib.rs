@@ -745,6 +745,24 @@ pub fn run() {
                 restore_proxy_state_on_startup(&state).await;
             });
 
+            // 静默启动：根据设置决定是否显示主窗口
+            let settings = crate::settings::get_settings();
+            if let Some(window) = app.get_webview_window("main") {
+                if settings.silent_startup {
+                    // 静默启动模式：保持窗口隐藏
+                    let _ = window.hide();
+                    #[cfg(target_os = "windows")]
+                    let _ = window.set_skip_taskbar(true);
+                    #[cfg(target_os = "macos")]
+                    tray::apply_tray_policy(app.handle(), false);
+                    log::info!("静默启动模式：主窗口已隐藏");
+                } else {
+                    // 正常启动模式：显示窗口
+                    let _ = window.show();
+                    log::info!("正常启动模式：主窗口已显示");
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

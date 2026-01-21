@@ -79,6 +79,9 @@ pub struct AppSettings {
     /// 是否开机自启
     #[serde(default)]
     pub launch_on_startup: bool,
+    /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
+    #[serde(default)]
+    pub silent_startup: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
@@ -132,6 +135,7 @@ impl Default for AppSettings {
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
             launch_on_startup: false,
+            silent_startup: false,
             language: None,
             visible_apps: None,
             claude_config_dir: None,

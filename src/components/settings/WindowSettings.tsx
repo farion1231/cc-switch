@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
-import { AppWindow, MonitorUp, Power } from "lucide-react";
+import { AppWindow, MonitorUp, Power, EyeOff } from "lucide-react";
 import { ToggleRow } from "@/components/ui/toggle-row";
 
 interface WindowSettingsProps {
@@ -25,6 +25,14 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
           description={t("settings.launchOnStartupDescription")}
           checked={!!settings.launchOnStartup}
           onCheckedChange={(value) => onChange({ launchOnStartup: value })}
+        />
+
+        <ToggleRow
+          icon={<EyeOff className="h-4 w-4 text-green-500" />}
+          title={t("settings.silentStartup")}
+          description={t("settings.silentStartupDescription")}
+          checked={!!settings.silentStartup}
+          onCheckedChange={(value) => onChange({ silentStartup: value })}
         />
 
         <ToggleRow
