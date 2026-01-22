@@ -2,7 +2,7 @@
 
 # Claude Code / Codex / Gemini CLI 全方位辅助工具
 
-[![Version](https://img.shields.io/badge/version-3.9.1-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.10.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![Downloads](https://img.shields.io/endpoint?url=https://api.pinstudios.net/api/badges/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
@@ -52,7 +52,7 @@
 
 ## 功能特性
 
-### 当前版本：v3.9.1 | [完整更新日志](CHANGELOG.md) | [发布说明](docs/release-note-v3.9.0-zh.md)
+### 当前版本：v3.10.0 | [完整更新日志](CHANGELOG.md) | [发布说明](docs/release-note-v3.9.0-zh.md)
 
 **v3.8.0 重大更新（2025-11-28）**
 

@@ -50,8 +50,8 @@ export function ProxyPanel() {
     }
   }, [globalConfig]);
 
-  // 获取所有三个应用类型的故障转移队列（不包含当前供应商）
-  // 当前供应商始终优先，队列仅用于失败后的备用顺序
+  // 获取所有三个应用类型的故障转移队列
+  // 启用自动故障转移后，将按队列优先级（P1→P2→...）选择供应商
   const { data: claudeQueue = [] } = useFailoverQueue("claude");
   const { data: codexQueue = [] } = useFailoverQueue("codex");
   const { data: geminiQueue = [] } = useFailoverQueue("gemini");

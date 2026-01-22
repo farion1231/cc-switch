@@ -128,6 +128,12 @@ impl Default for SkillStore {
                     branch: "master".to_string(),
                     enabled: true,
                 },
+                SkillRepo {
+                    owner: "JimLiu".to_string(),
+                    name: "baoyu-skills".to_string(),
+                    branch: "main".to_string(),
+                    enabled: true,
+                },
             ],
         }
     }

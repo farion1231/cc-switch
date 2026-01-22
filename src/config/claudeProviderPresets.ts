@@ -100,7 +100,7 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#0F62FE",
   },
   {
-    name: "Z.ai GLM",
+    name: "Zhipu GLM en",
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     settingsConfig: {
@@ -211,6 +211,7 @@ export const providerPresets: ProviderPreset[] = [
         editorValue: "",
       },
     },
+    icon: "catcoder",
   },
   {
     name: "Longcat",
@@ -337,6 +338,42 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#006FFB",
   },
   {
+    name: "SiliconFlow",
+    websiteUrl: "https://siliconflow.cn",
+    apiKeyUrl: "https://cloud.siliconflow.cn/me/account/ak",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.siliconflow.cn",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "Pro/MiniMaxAI/MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Pro/MiniMaxAI/MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "Pro/MiniMaxAI/MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "Pro/MiniMaxAI/MiniMax-M2.1",
+      },
+    },
+    category: "aggregator",
+    icon: "siliconflow",
+    iconColor: "#6E29F6",
+  },
+  {
+    name: "SiliconFlow en",
+    websiteUrl: "https://siliconflow.com",
+    apiKeyUrl: "https://cloud.siliconflow.com/account/ak",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.siliconflow.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "MiniMaxAI/MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMaxAI/MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMaxAI/MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMaxAI/MiniMax-M2.1",
+      },
+    },
+    category: "aggregator",
+    icon: "siliconflow",
+    iconColor: "#000000",
+  },
+  {
     name: "DMXAPI",
     websiteUrl: "https://www.dmxapi.cn",
     apiKeyUrl: "https://www.dmxapi.cn",
@@ -411,6 +448,18 @@ export const providerPresets: ProviderPreset[] = [
     partnerPromotionKey: "aigocode", // 促销信息 i18n key
     icon: "aigocode",
     iconColor: "#5B7FFF",
+  },
+  {
+    name: "RightCode",
+    websiteUrl: "https://www.right.codes",
+    apiKeyUrl: "https://www.right.codes/register?aff=0bdf9bfa",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://www.right.codes/claude",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "third_party"
   },
   {
     name: "OpenRouter",

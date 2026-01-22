@@ -140,7 +140,8 @@ export function FailoverQueueManager({
           </div>
           <p className="text-xs text-muted-foreground">
             {t("proxy.failover.autoSwitchDescription", {
-              defaultValue: "开启后，请求失败时自动切换到队列中的下一个供应商",
+              defaultValue:
+                "开启后将立即切换到队列 P1，并在请求失败时自动切换到队列中的下一个供应商",
             })}
           </p>
         </div>

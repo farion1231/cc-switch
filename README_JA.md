@@ -2,7 +2,7 @@
 
 # Claude Code / Codex / Gemini CLI オールインワン・アシスタント
 
-[![Version](https://img.shields.io/badge/version-3.9.1-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.10.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![Downloads](https://img.shields.io/endpoint?url=https://api.pinstudios.net/api/badges/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
@@ -52,7 +52,7 @@
 
 ## 特長
 
-### 現在のバージョン：v3.9.1 | [完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-note-v3.9.0-ja.md)
+### 現在のバージョン：v3.10.0 | [完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-note-v3.9.0-ja.md)
 
 **v3.8.0 メジャーアップデート (2025-11-28)**
 

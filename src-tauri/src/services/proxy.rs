@@ -1530,13 +1530,45 @@ impl ProxyService {
         app_type: &str,
         provider_id: &str,
     ) -> Result<(), String> {
-        // 更新数据库中的 is_current 标记
+        // 代理模式切换供应商（热切换）：
+        // - 更新 SSOT（数据库 is_current）
+        // - 同步本地 settings（设备级 current_provider_*）
+        // - 若该应用正处于接管模式，则同步更新 Live 备份（用于停止代理时恢复）
         let app_type_enum =
             AppType::from_str(app_type).map_err(|_| format!("无效的应用类型: {app_type}"))?;
 
         self.db
             .set_current_provider(app_type_enum.as_str(), provider_id)
             .map_err(|e| format!("更新当前供应商失败: {e}"))?;
+
+        // 同步本地 settings（设备级优先）
+        crate::settings::set_current_provider(&app_type_enum, Some(provider_id))
+            .map_err(|e| format!("更新本地当前供应商失败: {e}"))?;
+
+        // 仅在确实处于接管状态时才更新 Live 备份，避免无接管时误写覆盖 Live
+        let has_backup = self
+            .db
+            .get_live_backup(app_type_enum.as_str())
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+        let live_taken_over = self.detect_takeover_in_live_config_for_app(&app_type_enum);
+
+        if let Ok(Some(provider)) = self.db.get_provider_by_id(provider_id, app_type) {
+            // 同步更新 Live 备份（用于 stop_with_restore 恢复）
+            if has_backup || live_taken_over {
+                self.update_live_backup_from_provider(app_type, &provider)
+                    .await?;
+            }
+
+            // 同步更新 ProxyStatus.active_targets（用于 UI 立即反映切换目标）
+            if let Some(server) = self.server.read().await.as_ref() {
+                server
+                    .set_active_target(app_type_enum.as_str(), &provider.id, &provider.name)
+                    .await;
+            }
+        }
 
         log::info!("代理模式：已切换 {app_type} 的目标供应商为 {provider_id}");
         Ok(())
@@ -2057,5 +2089,67 @@ model = "gpt-5.1-codex"
             !env.contains_key("ANTHROPIC_AUTH_TOKEN"),
             "should not add ANTHROPIC_AUTH_TOKEN when absent"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn switch_proxy_target_updates_live_backup_when_taken_over() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "a-key"
+                }
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "b-key"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider_a)
+            .expect("save provider a");
+        db.save_provider("claude", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("claude", "a")
+            .expect("set current provider");
+
+        // 模拟“已接管”状态：存在 Live 备份（内容不重要，会被热切换更新）
+        db.save_live_backup("claude", "{\"env\":{}}")
+            .await
+            .expect("seed live backup");
+
+        service
+            .switch_proxy_target("claude", "b")
+            .await
+            .expect("switch proxy target");
+
+        // 断言：本地 settings 的 current provider 已同步
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Claude).as_deref(),
+            Some("b")
+        );
+
+        // 断言：Live 备份已更新为目标供应商配置（用于 stop_with_restore 恢复）
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
+        assert_eq!(backup.original_config, expected);
     }
 }

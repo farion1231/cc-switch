@@ -11,7 +11,6 @@ import {
   // Bot, // TODO: Agents 功能开发中，暂时不需要
   Book,
   Wrench,
-  Server,
   RefreshCw,
   Search,
   Download,
@@ -52,6 +51,7 @@ import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
+import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 
 type View =
@@ -943,7 +943,7 @@ function App() {
                     className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
                     title={t("mcp.title")}
                   >
-                    <Server className="w-4 h-4" />
+                    <McpIcon size={16} />
                   </Button>
                 </div>
 

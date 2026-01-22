@@ -103,12 +103,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Z.ai GLM",
+    name: "Zhipu GLM en",
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Z.ai GLM",
+      name: "Zhipu GLM en",
       options: {
         baseURL: "https://api.z.ai/v1",
         apiKey: "",
@@ -302,6 +302,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
+    icon: "catcoder",
   },
   {
     name: "Longcat",
@@ -637,6 +638,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     partnerPromotionKey: "aigocode",
     icon: "aigocode",
     iconColor: "#5B7FFF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "RightCode",
+    websiteUrl: "https://www.right.codes",
+    apiKeyUrl: "https://www.right.codes/register?aff=0bdf9bfa",
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "RightCode",
+      options: {
+        baseURL: "https://right.codes/codex/v1",
+        apiKey: "",
+      },
+      models: {
+        "gpt-5.2": { name: "GPT-5.2" },
+        "gpt-5.2-codex": { name: "GPT-5.2 Codex" },
+      },
+    },
+    category: "third_party",
+    icon: "rc",
+    iconColor: "#E96B2C",
     templateValues: {
       apiKey: {
         label: "API Key",

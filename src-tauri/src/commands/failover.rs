@@ -5,6 +5,8 @@
 use crate::database::FailoverQueueItem;
 use crate::provider::Provider;
 use crate::store::AppState;
+use std::str::FromStr;
+use tauri::Emitter;
 
 /// 获取故障转移队列
 #[tauri::command]
@@ -84,6 +86,47 @@ pub async fn set_auto_failover_enabled(
         "[Failover] Setting auto_failover_enabled: app_type='{app_type}', enabled={enabled}"
     );
 
+    // 强一致语义：开启故障转移后立即切到队列 P1（并确保队列非空）
+    //
+    // 说明：
+    // - 仅在 enabled=true 时执行“切到 P1”
+    // - 若队列为空，则尝试把“当前供应商”自动加入队列作为 P1，避免用户在 UI 上陷入死锁（无法先加队列再开启）
+    let p1_provider_id = if enabled {
+        let mut queue = state
+            .db
+            .get_failover_queue(&app_type)
+            .map_err(|e| e.to_string())?;
+
+        if queue.is_empty() {
+            let app_enum = crate::app_config::AppType::from_str(&app_type)
+                .map_err(|_| format!("无效的应用类型: {app_type}"))?;
+
+            let current_id = crate::settings::get_effective_current_provider(&state.db, &app_enum)
+                .map_err(|e| e.to_string())?;
+
+            let Some(current_id) = current_id else {
+                return Err("故障转移队列为空，且未设置当前供应商，无法开启故障转移".to_string());
+            };
+
+            state
+                .db
+                .add_to_failover_queue(&app_type, &current_id)
+                .map_err(|e| e.to_string())?;
+
+            queue = state
+                .db
+                .get_failover_queue(&app_type)
+                .map_err(|e| e.to_string())?;
+        }
+
+        queue
+            .first()
+            .map(|item| item.provider_id.clone())
+            .ok_or_else(|| "故障转移队列为空，无法开启故障转移".to_string())?
+    } else {
+        String::new()
+    };
+
     // 读取当前配置
     let mut config = state
         .db
@@ -100,6 +143,22 @@ pub async fn set_auto_failover_enabled(
         .update_proxy_config_for_app(config)
         .await
         .map_err(|e| e.to_string())?;
+
+    // 开启后立即切到 P1：更新 is_current + 本地 settings + Live 备份（接管模式下）
+    if enabled {
+        state
+            .proxy_service
+            .switch_proxy_target(&app_type, &p1_provider_id)
+            .await?;
+
+        // 发射 provider-switched 事件（让前端刷新当前供应商）
+        let event_data = serde_json::json!({
+            "appType": app_type,
+            "providerId": p1_provider_id,
+            "source": "failoverEnabled"
+        });
+        let _ = app.emit("provider-switched", event_data);
+    }
 
     // 刷新托盘菜单，确保状态同步
     if let Ok(new_menu) = crate::tray::create_tray_menu(&app, &state) {

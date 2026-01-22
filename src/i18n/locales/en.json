@@ -1145,8 +1145,8 @@
       "tooltip": "Failover priority {{priority}}"
     },
     "tooltip": {
-      "enabled": "{{app}} failover enabled\nAutomatically switch to next available provider",
-      "disabled": "Enable {{app}} failover\nAutomatically switch when current provider fails"
+      "enabled": "{{app}} failover enabled\nRequests follow queue priority (P1→P2→...)",
+      "disabled": "Enable {{app}} failover\nSwitches to queue P1 immediately, then falls back on failures"
     }
   },
   "proxy": {
@@ -1248,15 +1248,18 @@
     },
     "switchFailed": "Switch failed: {{error}}",
     "failover": {
-      "proxyRequired": "Proxy service must be started to configure failover"
+      "proxyRequired": "Proxy service must be started to configure failover",
+      "autoSwitch": "Auto Failover",
+      "autoSwitchDescription": "When enabled, switches to queue P1 immediately and automatically tries the next provider in the queue on failures"
     },
     "failoverQueue": {
       "title": "Failover Queue",
       "description": "Manage failover order for each app's providers",
-      "info": "The current active provider always takes priority. When requests fail, the system will try other providers in queue order.",
+      "info": "When auto failover is enabled, requests follow the queue priority order (P1 first). On failures, the system will try the next provider in the queue.",
       "selectProvider": "Select a provider to add to queue",
       "noAvailableProviders": "No providers available to add",
       "empty": "Failover queue is empty. Add providers to enable automatic failover.",
+      "orderHint": "Queue order matches the provider list order on the Home page. Reorder providers on the Home page to change priority.",
       "dragHint": "Drag providers to adjust failover order. Lower numbers have higher priority.",
       "toggleEnabled": "Enable/Disable",
       "addSuccess": "Added to failover queue",

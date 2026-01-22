@@ -2,11 +2,13 @@
 //!
 //! 负责选择和管理代理目标供应商，实现智能故障转移
 
+use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -31,7 +33,7 @@ impl ProviderRouter {
     ///
     /// 返回按优先级排序的可用供应商列表：
     /// - 故障转移关闭时：仅返回当前供应商
-    /// - 故障转移开启时：完全按照故障转移队列顺序返回，忽略当前供应商设置
+    /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
         let mut total_providers = 0usize;
@@ -47,12 +49,25 @@ impl ProviderRouter {
         };
 
         if auto_failover_enabled {
-            // 故障转移开启：使用 in_failover_queue 标记的供应商，按 sort_index 排序
-            let failover_providers = self.db.get_failover_providers(app_type)?;
-            total_providers = failover_providers.len();
+            // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
+            let all_providers = self.db.get_all_providers(app_type)?;
 
-            for provider in failover_providers {
-                let circuit_key = format!("{}:{}", app_type, provider.id);
+            // 使用 DAO 返回的排序结果，确保和前端展示一致
+            let ordered_ids: Vec<String> = self
+                .db
+                .get_failover_queue(app_type)?
+                .into_iter()
+                .map(|item| item.provider_id)
+                .collect();
+
+            total_providers = ordered_ids.len();
+
+            for provider_id in ordered_ids {
+                let Some(provider) = all_providers.get(&provider_id).cloned() else {
+                    continue;
+                };
+
+                let circuit_key = format!("{app_type}:{}", provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
                 if breaker.is_available().await {
@@ -63,7 +78,16 @@ impl ProviderRouter {
             }
         } else {
             // 故障转移关闭：仅使用当前供应商，跳过熔断器检查
-            if let Some(current_id) = self.db.get_current_provider(app_type)? {
+            let current_id = AppType::from_str(app_type)
+                .ok()
+                .and_then(|app_enum| {
+                    crate::settings::get_effective_current_provider(&self.db, &app_enum)
+                        .ok()
+                        .flatten()
+                })
+                .or_else(|| self.db.get_current_provider(app_type).ok().flatten());
+
+            if let Some(current_id) = current_id {
                 if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
                     total_providers = 1;
                     result.push(current);
@@ -239,9 +263,53 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use serde_json::json;
+    use serial_test::serial;
+    use std::env;
+    use tempfile::TempDir;
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let original_home = env::var("HOME").ok();
+            let original_userprofile = env::var("USERPROFILE").ok();
+
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+            crate::settings::reload_settings().expect("reload settings");
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+
+            match &self.original_userprofile {
+                Some(value) => env::set_var("USERPROFILE", value),
+                None => env::remove_var("USERPROFILE"),
+            }
+        }
+    }
 
     #[tokio::test]
+    #[serial]
     async fn test_provider_router_creation() {
+        let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
         let router = ProviderRouter::new(db);
 
@@ -250,7 +318,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_failover_disabled_uses_current_provider() {
+        let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
 
         let provider_a =
@@ -271,7 +341,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_failover_enabled_uses_queue_order() {
+    #[serial]
+    async fn test_failover_enabled_uses_queue_order_ignoring_current() {
+        let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
 
         // 设置 sort_index 来控制顺序：b=1, a=2
@@ -298,13 +370,45 @@ mod tests {
         let providers = router.select_providers("claude").await.unwrap();
 
         assert_eq!(providers.len(), 2);
-        // 按 sort_index 排序：b(1) 在前，a(2) 在后
+        // 故障转移开启时：仅按队列顺序选择（忽略当前供应商）
         assert_eq!(providers[0].id, "b");
         assert_eq!(providers[1].id, "a");
     }
 
     #[tokio::test]
+    #[serial]
+    async fn test_failover_enabled_uses_queue_only_even_if_current_not_in_queue() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let mut provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        provider_b.sort_index = Some(1);
+
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        // 只把 b 加入故障转移队列（模拟“当前供应商不在队列里”的常见配置）
+        db.add_to_failover_queue("claude", "b").unwrap();
+
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let providers = router.select_providers("claude").await.unwrap();
+
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn test_select_providers_does_not_consume_half_open_permit() {
+        let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
 
         db.update_circuit_breaker_config(&CircuitBreakerConfig {
@@ -345,7 +449,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_release_permit_neutral_frees_half_open_slot() {
+        let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
 
         // 配置熔断器：1 次失败即熔断，0 秒超时立即进入 HalfOpen

@@ -1145,8 +1145,8 @@
       "tooltip": "故障转移优先级 {{priority}}"
     },
     "tooltip": {
-      "enabled": "{{app}} 故障转移已启用\n自动切换到下一个可用供应商",
-      "disabled": "启用 {{app}} 故障转移\n当当前供应商失败时自动切换"
+      "enabled": "{{app}} 故障转移已启用\n按队列优先级（P1→P2→...）选择供应商",
+      "disabled": "启用 {{app}} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个"
     }
   },
   "proxy": {
@@ -1248,15 +1248,18 @@
     },
     "switchFailed": "切换失败: {{error}}",
     "failover": {
-      "proxyRequired": "需要先启动代理服务才能配置故障转移"
+      "proxyRequired": "需要先启动代理服务才能配置故障转移",
+      "autoSwitch": "自动故障转移",
+      "autoSwitchDescription": "开启后将立即切换到队列 P1，并在请求失败时自动切换到队列中的下一个供应商"
     },
     "failoverQueue": {
       "title": "故障转移队列",
       "description": "管理各应用的供应商故障转移顺序",
-      "info": "当前激活的供应商始终优先。当请求失败时，系统会按队列顺序依次尝试其他供应商。",
+      "info": "启用自动故障转移后，将按队列优先级选择供应商（P1 优先）。当请求失败时，系统会按队列顺序依次尝试下一个供应商。",
       "selectProvider": "选择供应商添加到队列",
       "noAvailableProviders": "没有可添加的供应商",
       "empty": "故障转移队列为空。添加供应商以启用自动故障转移。",
+      "orderHint": "队列顺序与首页供应商列表顺序一致，可在首页拖拽调整顺序。",
       "dragHint": "拖拽供应商可调整故障转移顺序，序号越小优先级越高。",
       "toggleEnabled": "启用/禁用",
       "addSuccess": "已添加到故障转移队列",

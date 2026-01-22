@@ -268,6 +268,21 @@ export function useSetAutoFailoverEnabled() {
       queryClient.invalidateQueries({
         queryKey: ["autoFailoverEnabled", variables.appType],
       });
+      // 启用/关闭故障转移可能触发：
+      // - 立即切到队列 P1（当前供应商变化）
+      // - 队列为空时自动把当前供应商加入队列（队列内容变化）
+      queryClient.invalidateQueries({
+        queryKey: ["failoverQueue", variables.appType],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["availableProvidersForFailover", variables.appType],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["providers", variables.appType],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["proxyStatus"],
+      });
     },
   });
 }

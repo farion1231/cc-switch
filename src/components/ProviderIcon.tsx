@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { getIcon, hasIcon } from "@/icons/extracted";
+import { getIcon, hasIcon, getIconMetadata } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
 
 interface ProviderIconProps {
@@ -39,6 +39,19 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     };
   }, [size]);
 
+  // 获取有效颜色：优先使用传入的 color，否则从元数据获取 defaultColor
+  const effectiveColor = useMemo(() => {
+    if (color) return color;
+    if (icon) {
+      const metadata = getIconMetadata(icon);
+      // 只有当 defaultColor 不是 currentColor 时才使用
+      if (metadata?.defaultColor && metadata.defaultColor !== "currentColor") {
+        return metadata.defaultColor;
+      }
+    }
+    return undefined;
+  }, [color, icon]);
+
   // 如果有图标，显示图标
   if (iconSvg) {
     return (
@@ -47,7 +60,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
           "inline-flex items-center justify-center flex-shrink-0",
           className,
         )}
-        style={{ ...sizeStyle, color }}
+        style={{ ...sizeStyle, color: effectiveColor }}
         dangerouslySetInnerHTML={{ __html: iconSvg }}
       />
     );

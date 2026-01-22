@@ -211,6 +211,28 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
     if let Some(app_state) = app.try_state::<AppState>() {
         let app_type_str = app_type.as_str();
 
+        // 强一致语义：Auto 模式开启后立即切到队列 P1（P1→P2→...）
+        // 若队列为空，则尝试把“当前供应商”自动加入队列作为 P1，避免用户陷入无法开启的死锁。
+        let mut queue = app_state.db.get_failover_queue(app_type_str)?;
+        if queue.is_empty() {
+            let current_id =
+                crate::settings::get_effective_current_provider(&app_state.db, app_type)?;
+            let Some(current_id) = current_id else {
+                return Err(AppError::Message(
+                    "故障转移队列为空，且未设置当前供应商，无法启用 Auto 模式".to_string(),
+                ));
+            };
+            app_state
+                .db
+                .add_to_failover_queue(app_type_str, &current_id)?;
+            queue = app_state.db.get_failover_queue(app_type_str)?;
+        }
+
+        let p1_provider_id = queue
+            .first()
+            .map(|item| item.provider_id.clone())
+            .ok_or_else(|| AppError::Message("故障转移队列为空，无法启用 Auto 模式".to_string()))?;
+
         // 真正启用 failover：启动代理服务 + 执行接管 + 开启 auto_failover
         let proxy_service = &app_state.proxy_service;
 
@@ -238,6 +260,16 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
             .db
             .set_proxy_flags_sync(app_type_str, true, true)?;
 
+        // 3.1) 立即切到队列 P1（热切换：不写 Live，仅更新 DB/settings/备份）
+        if let Err(e) = futures::executor::block_on(
+            proxy_service.switch_proxy_target(app_type_str, &p1_provider_id),
+        ) {
+            log::error!("[Tray] Auto 模式切换到队列 P1 失败: {e}");
+            return Err(AppError::Message(format!(
+                "Auto 模式切换到队列 P1 失败: {e}"
+            )));
+        }
+
         // 4) 更新托盘菜单
         if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
             if let Some(tray) = app.tray_by_id("main") {
@@ -249,7 +281,8 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
         let event_data = serde_json::json!({
             "appType": app_type_str,
             "proxyEnabled": true,
-            "autoFailoverEnabled": true
+            "autoFailoverEnabled": true,
+            "providerId": p1_provider_id
         });
         if let Err(e) = app.emit("proxy-flags-changed", event_data.clone()) {
             log::error!("发射 proxy-flags-changed 事件失败: {e}");
