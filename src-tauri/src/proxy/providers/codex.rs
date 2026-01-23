@@ -144,7 +144,7 @@ impl ProviderAdapter for CodexAdapter {
         // OpenAI/Codex 的 base_url 可能是：
         // - 纯 origin: https://api.openai.com  (需要自动补 /v1)
         // - 已含 /v1: https://api.openai.com/v1 (直接拼接)
-        // - 自定义前缀: https://xxx/openai (大多数中转服务需要 /v1)
+        // - 自定义前缀: https://xxx/openai (不添加 /v1，直接拼接)
 
         // 检查 base_url 是否已经包含 /v1
         let already_has_v1 = base_trimmed.ends_with("/v1");
@@ -158,11 +158,11 @@ impl ProviderAdapter for CodexAdapter {
         let mut url = if already_has_v1 {
             // 已经有 /v1，直接拼接
             format!("{base_trimmed}/{endpoint_trimmed}")
-        } else if origin_only || !endpoint_trimmed.starts_with("v1/") {
-            // 纯 origin 或者 endpoint 不以 v1/ 开头，添加 /v1
+        } else if origin_only {
+            // 纯 origin，添加 /v1
             format!("{base_trimmed}/v1/{endpoint_trimmed}")
         } else {
-            // 其他情况，直接拼接
+            // 自定义前缀，不添加 /v1，直接拼接
             format!("{base_trimmed}/{endpoint_trimmed}")
         };
 
@@ -254,10 +254,10 @@ mod tests {
     }
 
     #[test]
-    fn test_build_url_custom_prefix_adds_v1() {
+    fn test_build_url_custom_prefix_no_v1() {
         let adapter = CodexAdapter::new();
         let url = adapter.build_url("https://example.com/openai", "/responses");
-        assert_eq!(url, "https://example.com/openai/v1/responses");
+        assert_eq!(url, "https://example.com/openai/responses");
     }
 
     #[test]
