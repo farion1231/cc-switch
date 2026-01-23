@@ -258,9 +258,16 @@ fn proxy_points_to_loopback(value: &str) -> bool {
             .unwrap_or(false)
     }
 
+    // 检查是否指向 CC Switch 自己的代理端口（15721）
+    // 只有指向自己的代理才需要跳过，避免递归
+    fn is_cc_switch_proxy_port(port: Option<u16>) -> bool {
+        port == Some(15721)
+    }
+
     if let Ok(parsed) = url::Url::parse(value) {
         if let Some(host) = parsed.host_str() {
-            return host_is_loopback(host);
+            // 只有当主机是 loopback 且端口是 CC Switch 的端口时才返回 true
+            return host_is_loopback(host) && is_cc_switch_proxy_port(parsed.port());
         }
         return false;
     }
@@ -268,7 +275,7 @@ fn proxy_points_to_loopback(value: &str) -> bool {
     let with_scheme = format!("http://{value}");
     if let Ok(parsed) = url::Url::parse(&with_scheme) {
         if let Some(host) = parsed.host_str() {
-            return host_is_loopback(host);
+            return host_is_loopback(host) && is_cc_switch_proxy_port(parsed.port());
         }
     }
 
