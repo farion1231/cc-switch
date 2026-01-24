@@ -24,6 +24,7 @@ interface ProviderActionsProps {
   isTesting?: boolean;
   isProxyTakeover?: boolean;
   onSwitch: () => void;
+  onForceSwitch?: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
@@ -45,6 +46,7 @@ export function ProviderActions({
   isTesting,
   isProxyTakeover = false,
   onSwitch,
+  onForceSwitch,
   onEdit,
   onDuplicate,
   onTest,
@@ -66,6 +68,7 @@ export function ProviderActions({
   // 故障转移模式下的按钮逻辑（OpenCode 不支持故障转移）
   const isFailoverMode =
     !isOpenCodeMode && isAutoFailoverEnabled && onToggleFailover;
+  const canForceSwitch = isFailoverMode && onForceSwitch;
 
   // 处理主按钮点击
   const handleMainButtonClick = () => {
@@ -178,6 +181,24 @@ export function ProviderActions({
       </Button>
 
       <div className="flex items-center gap-1">
+        {canForceSwitch && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onForceSwitch}
+            disabled={isCurrent}
+            title={t("provider.forceSwitch", {
+              defaultValue: "Set active (disable Auto Failover)",
+            })}
+            className={cn(
+              iconButtonClass,
+              !isCurrent && "hover:text-emerald-600 dark:hover:text-emerald-400",
+              isCurrent && "opacity-40 cursor-not-allowed text-muted-foreground",
+            )}
+          >
+            <Play className="h-4 w-4" />
+          </Button>
+        )}
         <Button
           size="icon"
           variant="ghost"

@@ -7,7 +7,7 @@ import zh from "./locales/zh.json";
 
 type Language = "zh" | "en" | "ja";
 
-const DEFAULT_LANGUAGE: Language = "zh";
+const DEFAULT_LANGUAGE: Language = "en";
 
 const getInitialLanguage = (): Language => {
   if (typeof window !== "undefined") {
