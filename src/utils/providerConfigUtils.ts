@@ -194,9 +194,7 @@ export const hasGeminiCommonConfigSnippet = (
 
     const entries = Object.entries(parsed).filter(([key, value]) => {
       if (
-        GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(
-          key as GeminiForbiddenEnvKey,
-        )
+        GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(key as GeminiForbiddenEnvKey)
       ) {
         return false;
       }
