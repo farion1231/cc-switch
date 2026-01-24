@@ -615,10 +615,12 @@
     "searchProviderPlaceholder": "プロバイダーを検索...",
     "searchModelPlaceholder": "モデルを検索...",
     "timeRange": "期間",
-    "input": "Input",
-    "output": "Output",
+    "input": "入力",
+    "output": "出力",
     "cacheWrite": "作成",
-    "cacheRead": "ヒット"
+    "cacheRead": "ヒット",
+    "successRate": "成功率",
+    "lastUpdated": "最終更新"
   },
   "usageScript": {
     "title": "利用状況を設定",

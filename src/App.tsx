@@ -52,6 +52,7 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
+import { UsageSidebarWidget } from "@/components/usage/UsageSidebarWidget";
 import { Button } from "@/components/ui/button";
 
 type View =
@@ -112,6 +113,7 @@ function App() {
   } | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
+  const [isUsageSidebarExpanded, setIsUsageSidebarExpanded] = useState(false);
 
   // 使用 Hook 保存最后有效值，用于动画退出期间保持内容显示
   const effectiveEditingProvider = useLastValidValue(editingProvider);
@@ -775,8 +777,7 @@ function App() {
                     variant="ghost"
                     size="icon"
                     onClick={() => {
-                      setSettingsDefaultTab("usage");
-                      setCurrentView("settings");
+                      setIsUsageSidebarExpanded(true);
                     }}
                     title={t("settings.usage.title", {
                       defaultValue: "使用统计",
@@ -1019,6 +1020,15 @@ function App() {
         }
         onConfirm={() => void handleConfirmAction()}
         onCancel={() => setConfirmAction(null)}
+      />
+
+      <UsageSidebarWidget
+        isExpanded={isUsageSidebarExpanded}
+        onToggleExpand={setIsUsageSidebarExpanded}
+        onOpenSettings={() => {
+          setSettingsDefaultTab("usage");
+          setCurrentView("settings");
+        }}
       />
 
       <DeepLinkImportDialog />

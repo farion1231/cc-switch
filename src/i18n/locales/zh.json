@@ -615,10 +615,12 @@
     "searchProviderPlaceholder": "搜索供应商...",
     "searchModelPlaceholder": "搜索模型...",
     "timeRange": "时间范围",
-    "input": "Input",
-    "output": "Output",
+    "input": "输入",
+    "output": "输出",
     "cacheWrite": "创建",
-    "cacheRead": "命中"
+    "cacheRead": "命中",
+    "successRate": "成功率",
+    "lastUpdated": "最后更新"
   },
   "usageScript": {
     "title": "配置用量查询",

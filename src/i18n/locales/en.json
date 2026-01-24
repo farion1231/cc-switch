@@ -618,7 +618,9 @@
     "input": "Input",
     "output": "Output",
     "cacheWrite": "Creation",
-    "cacheRead": "Hit"
+    "cacheRead": "Hit",
+    "successRate": "Success Rate",
+    "lastUpdated": "Last updated"
   },
   "usageScript": {
     "title": "Configure Usage Query",
