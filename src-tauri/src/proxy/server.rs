@@ -98,6 +98,9 @@ impl ProxyServer {
 
         log::info!("[{}] 代理服务器启动于 {addr}", log_srv::STARTED);
 
+        // 更新全局代理端口，用于系统代理检测
+        crate::proxy::http_client::set_proxy_port(self.config.listen_port);
+
         // 保存关闭句柄
         *self.shutdown_tx.write().await = Some(shutdown_tx);
 
