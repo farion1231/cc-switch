@@ -191,6 +191,17 @@ pub struct ProviderProxyConfig {
     pub proxy_password: Option<String>,
 }
 
+/// 通用配置启用状态（按应用）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CommonConfigEnabledByApp {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gemini: Option<bool>,
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -227,6 +238,18 @@ pub struct ProviderMeta {
     /// 供应商单独的代理配置
     #[serde(rename = "proxyConfig", skip_serializing_if = "Option::is_none")]
     pub proxy_config: Option<ProviderProxyConfig>,
+    /// 是否启用通用配置片段（用于跨供应商保持勾选状态）
+    #[serde(
+        rename = "commonConfigEnabled",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub common_config_enabled: Option<bool>,
+    /// 按应用记录通用配置启用状态（优先于 commonConfigEnabled）
+    #[serde(
+        rename = "commonConfigEnabledByApp",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub common_config_enabled_by_app: Option<CommonConfigEnabledByApp>,
 }
 
 impl ProviderManager {
