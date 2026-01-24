@@ -503,6 +503,10 @@ export interface UpdateTomlCommonConfigResult {
 const TOML_COMMON_CONFIG_START = "# cc-switch:common-config:start";
 const TOML_COMMON_CONFIG_END = "# cc-switch:common-config:end";
 
+/**
+ * 移除旧版标记块（兼容性清理）
+ * 仅用于清理历史遗留的标记，新版本不再写入标记
+ */
 const stripTomlCommonConfigBlock = (tomlString: string): string => {
   const startIndex = tomlString.indexOf(TOML_COMMON_CONFIG_START);
   const endIndex = tomlString.indexOf(TOML_COMMON_CONFIG_END);
@@ -514,7 +518,314 @@ const stripTomlCommonConfigBlock = (tomlString: string): string => {
   return `${before}${after}`;
 };
 
+/**
+ * 解析 TOML 文本为段落结构
+ * 返回 { topLevel: string[], sections: Map<string, string[]> }
+ * - topLevel: 顶级键值对行（在任何 [section] 之前）
+ * - sections: 每个 [section] 及其内容行
+ */
+interface TomlParsedStructure {
+  topLevel: string[];
+  sections: Map<string, string[]>;
+  sectionOrder: string[];
+}
+
+function parseTomlStructure(tomlText: string): TomlParsedStructure {
+  const lines = tomlText.split("\n");
+  const topLevel: string[] = [];
+  const sections = new Map<string, string[]>();
+  const sectionOrder: string[] = [];
+
+  let currentSection: string | null = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // 检查是否是 section 头（如 [mcp_servers.mcpServers]）
+    const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
+    if (sectionMatch) {
+      currentSection = sectionMatch[1];
+      if (!sections.has(currentSection)) {
+        sections.set(currentSection, []);
+        sectionOrder.push(currentSection);
+      }
+      continue;
+    }
+
+    if (currentSection === null) {
+      // 顶级内容
+      topLevel.push(line);
+    } else {
+      // section 内容
+      const sectionLines = sections.get(currentSection)!;
+      sectionLines.push(line);
+    }
+  }
+
+  return { topLevel, sections, sectionOrder };
+}
+
+/**
+ * 从顶级行中提取键名
+ */
+function extractKeyFromLine(line: string): string | null {
+  const trimmed = line.trim();
+  // 跳过空行和注释
+  if (!trimmed || trimmed.startsWith("#")) {
+    return null;
+  }
+  // 匹配 key = value 格式
+  const match = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=/);
+  return match ? match[1] : null;
+}
+
+/**
+ * 智能合并 TOML 配置
+ * - 顶级键值对：snippet 中的键会覆盖或添加到 base 的顶级区域
+ * - sections：同名 section 会合并内容，不同 section 会追加
+ */
+function mergeTomlConfigs(baseText: string, snippetText: string): string {
+  const base = parseTomlStructure(baseText);
+  const snippet = parseTomlStructure(snippetText);
+
+  // 1. 合并顶级键值对
+  // 提取 snippet 中的顶级键
+  const snippetTopLevelKeys = new Set<string>();
+  for (const line of snippet.topLevel) {
+    const key = extractKeyFromLine(line);
+    if (key) {
+      snippetTopLevelKeys.add(key);
+    }
+  }
+
+  // 过滤 base 中被 snippet 覆盖的键
+  const filteredBaseTopLevel = base.topLevel.filter((line) => {
+    const key = extractKeyFromLine(line);
+    return key === null || !snippetTopLevelKeys.has(key);
+  });
+
+  // 合并顶级内容：base 的非覆盖行 + snippet 的顶级行
+  const mergedTopLevel = [...filteredBaseTopLevel];
+  // 添加 snippet 的顶级行（跳过空行，除非是有意义的）
+  for (const line of snippet.topLevel) {
+    const trimmed = line.trim();
+    if (trimmed) {
+      mergedTopLevel.push(line);
+    }
+  }
+
+  // 2. 合并 sections
+  const mergedSections = new Map<string, string[]>();
+  const mergedSectionOrder: string[] = [];
+
+  // 先添加 base 的 sections
+  for (const sectionName of base.sectionOrder) {
+    mergedSections.set(sectionName, [...base.sections.get(sectionName)!]);
+    mergedSectionOrder.push(sectionName);
+  }
+
+  // 合并 snippet 的 sections
+  for (const sectionName of snippet.sectionOrder) {
+    const snippetLines = snippet.sections.get(sectionName)!;
+
+    if (mergedSections.has(sectionName)) {
+      // 同名 section：合并内容
+      const existingLines = mergedSections.get(sectionName)!;
+
+      // 提取 snippet section 中的键
+      const snippetSectionKeys = new Set<string>();
+      for (const line of snippetLines) {
+        const key = extractKeyFromLine(line);
+        if (key) {
+          snippetSectionKeys.add(key);
+        }
+      }
+
+      // 过滤 existing 中被覆盖的键
+      const filteredExisting = existingLines.filter((line) => {
+        const key = extractKeyFromLine(line);
+        return key === null || !snippetSectionKeys.has(key);
+      });
+
+      // 合并：existing 的非覆盖行 + snippet 的行
+      const merged = [...filteredExisting];
+      for (const line of snippetLines) {
+        const trimmed = line.trim();
+        if (trimmed) {
+          merged.push(line);
+        }
+      }
+      mergedSections.set(sectionName, merged);
+    } else {
+      // 新 section：直接添加
+      mergedSections.set(sectionName, [...snippetLines]);
+      mergedSectionOrder.push(sectionName);
+    }
+  }
+
+  // 3. 重建 TOML 文本
+  const resultLines: string[] = [];
+
+  // 添加顶级内容（清理多余空行）
+  let lastWasEmpty = true;
+  for (const line of mergedTopLevel) {
+    const isEmpty = !line.trim();
+    if (isEmpty && lastWasEmpty) {
+      continue; // 跳过连续空行
+    }
+    resultLines.push(line);
+    lastWasEmpty = isEmpty;
+  }
+
+  // 添加 sections
+  for (const sectionName of mergedSectionOrder) {
+    const sectionLines = mergedSections.get(sectionName)!;
+
+    // 确保 section 前有空行分隔
+    if (resultLines.length > 0 && resultLines[resultLines.length - 1].trim()) {
+      resultLines.push("");
+    }
+
+    // 添加 section 头
+    resultLines.push(`[${sectionName}]`);
+
+    // 添加 section 内容（清理多余空行）
+    lastWasEmpty = false;
+    for (const line of sectionLines) {
+      const isEmpty = !line.trim();
+      if (isEmpty && lastWasEmpty) {
+        continue;
+      }
+      resultLines.push(line);
+      lastWasEmpty = isEmpty;
+    }
+  }
+
+  // 清理末尾空行，确保以单个换行结尾
+  while (
+    resultLines.length > 0 &&
+    !resultLines[resultLines.length - 1].trim()
+  ) {
+    resultLines.pop();
+  }
+
+  return resultLines.join("\n") + "\n";
+}
+
+/**
+ * 从 TOML 配置中移除指定的片段内容
+ * - 移除 snippet 中定义的顶级键
+ * - 移除 snippet 中定义的 section 内的键（如果 section 变空则移除整个 section）
+ */
+function removeTomlSnippet(baseText: string, snippetText: string): string {
+  const base = parseTomlStructure(baseText);
+  const snippet = parseTomlStructure(snippetText);
+
+  // 1. 从顶级移除 snippet 的键
+  const snippetTopLevelKeys = new Set<string>();
+  for (const line of snippet.topLevel) {
+    const key = extractKeyFromLine(line);
+    if (key) {
+      snippetTopLevelKeys.add(key);
+    }
+  }
+
+  const filteredTopLevel = base.topLevel.filter((line) => {
+    const key = extractKeyFromLine(line);
+    return key === null || !snippetTopLevelKeys.has(key);
+  });
+
+  // 2. 从 sections 移除 snippet 的键
+  const filteredSections = new Map<string, string[]>();
+  const filteredSectionOrder: string[] = [];
+
+  for (const sectionName of base.sectionOrder) {
+    const baseLines = base.sections.get(sectionName)!;
+
+    // 检查 snippet 是否有这个 section
+    if (snippet.sections.has(sectionName)) {
+      const snippetLines = snippet.sections.get(sectionName)!;
+
+      // 提取 snippet section 中的键
+      const snippetSectionKeys = new Set<string>();
+      for (const line of snippetLines) {
+        const key = extractKeyFromLine(line);
+        if (key) {
+          snippetSectionKeys.add(key);
+        }
+      }
+
+      // 过滤掉 snippet 中的键
+      const filtered = baseLines.filter((line) => {
+        const key = extractKeyFromLine(line);
+        return key === null || !snippetSectionKeys.has(key);
+      });
+
+      // 检查过滤后是否还有实质内容
+      const hasContent = filtered.some((line) => {
+        const trimmed = line.trim();
+        return trimmed && !trimmed.startsWith("#");
+      });
+
+      if (hasContent) {
+        filteredSections.set(sectionName, filtered);
+        filteredSectionOrder.push(sectionName);
+      }
+      // 如果没有实质内容，整个 section 被移除
+    } else {
+      // snippet 中没有这个 section，保留
+      filteredSections.set(sectionName, baseLines);
+      filteredSectionOrder.push(sectionName);
+    }
+  }
+
+  // 3. 重建 TOML 文本
+  const resultLines: string[] = [];
+
+  // 添加顶级内容
+  let lastWasEmpty = true;
+  for (const line of filteredTopLevel) {
+    const isEmpty = !line.trim();
+    if (isEmpty && lastWasEmpty) {
+      continue;
+    }
+    resultLines.push(line);
+    lastWasEmpty = isEmpty;
+  }
+
+  // 添加 sections
+  for (const sectionName of filteredSectionOrder) {
+    const sectionLines = filteredSections.get(sectionName)!;
+
+    if (resultLines.length > 0 && resultLines[resultLines.length - 1].trim()) {
+      resultLines.push("");
+    }
+
+    resultLines.push(`[${sectionName}]`);
+
+    lastWasEmpty = false;
+    for (const line of sectionLines) {
+      const isEmpty = !line.trim();
+      if (isEmpty && lastWasEmpty) {
+        continue;
+      }
+      resultLines.push(line);
+      lastWasEmpty = isEmpty;
+    }
+  }
+
+  while (
+    resultLines.length > 0 &&
+    !resultLines[resultLines.length - 1].trim()
+  ) {
+    resultLines.pop();
+  }
+
+  return resultLines.length > 0 ? resultLines.join("\n") + "\n" : "";
+}
+
 // 将通用配置片段写入/移除 TOML 配置
+// 使用智能合并，避免重复定义 section
 export const updateTomlCommonConfigSnippet = (
   tomlString: string,
   snippetString: string,
@@ -522,51 +833,43 @@ export const updateTomlCommonConfigSnippet = (
 ): UpdateTomlCommonConfigResult => {
   if (enabled) {
     if (!snippetString.trim()) {
-      // 如果片段为空，直接返回原始配置
       return {
         updatedConfig: tomlString,
       };
     }
-    // 添加通用配置
-    // 先移除旧的通用配置（如果有）
-    let updatedConfig = stripTomlCommonConfigBlock(tomlString);
-    const trimmedSnippet = snippetString.trim();
-    if (updatedConfig.includes(trimmedSnippet)) {
-      updatedConfig = updatedConfig.replace(trimmedSnippet, "");
-      updatedConfig = updatedConfig.replace(/\n{3,}/g, "\n\n").trim();
-      if (updatedConfig) {
-        updatedConfig += "\n";
-      }
+
+    // 先清理旧版标记块（兼容性）
+    let baseConfig = stripTomlCommonConfigBlock(tomlString);
+    baseConfig = baseConfig.replace(/\n{3,}/g, "\n\n").trim();
+    if (baseConfig) {
+      baseConfig += "\n";
     }
 
-    const block = `${TOML_COMMON_CONFIG_START}\n${trimmedSnippet}\n${TOML_COMMON_CONFIG_END}`;
-
-    // 在文件末尾添加新的通用配置
-    // 确保有适当的换行
-    const needsNewline = updatedConfig && !updatedConfig.endsWith("\n");
-    updatedConfig = updatedConfig + (needsNewline ? "\n\n" : "\n") + block;
+    // 使用智能合并
+    const merged = mergeTomlConfigs(baseConfig, snippetString);
 
     return {
-      updatedConfig: updatedConfig.trim() + "\n",
+      updatedConfig: merged,
     };
   } else {
     // 移除通用配置
-    if (tomlString.includes(TOML_COMMON_CONFIG_START)) {
-      const updatedConfig = stripTomlCommonConfigBlock(tomlString);
-      const cleaned = updatedConfig.replace(/\n{3,}/g, "\n\n").trim();
+    // 先清理旧版标记块（兼容性）
+    const strippedConfig = stripTomlCommonConfigBlock(tomlString);
+    if (strippedConfig !== tomlString) {
+      const cleaned = strippedConfig.replace(/\n{3,}/g, "\n\n").trim();
       return {
         updatedConfig: cleaned ? cleaned + "\n" : "",
       };
     }
-    if (snippetString.trim() && tomlString.includes(snippetString.trim())) {
-      const updatedConfig = tomlString.replace(snippetString.trim(), "");
-      // 清理多余的空行
-      const cleaned = updatedConfig.replace(/\n{3,}/g, "\n\n").trim();
 
+    // 使用智能移除
+    if (snippetString.trim()) {
+      const removed = removeTomlSnippet(tomlString, snippetString);
       return {
-        updatedConfig: cleaned ? cleaned + "\n" : "",
+        updatedConfig: removed,
       };
     }
+
     return {
       updatedConfig: tomlString,
     };
@@ -579,12 +882,6 @@ export const hasTomlCommonConfigSnippet = (
   snippetString: string,
 ): boolean => {
   if (!snippetString.trim()) return false;
-  if (
-    tomlString.includes(TOML_COMMON_CONFIG_START) &&
-    tomlString.includes(TOML_COMMON_CONFIG_END)
-  ) {
-    return true;
-  }
 
   // 简单检查配置是否包含片段内容
   // 去除空白字符后比较，避免格式差异影响
@@ -598,37 +895,22 @@ export const hasTomlCommonConfigSnippet = (
 /**
  * 替换 TOML 通用配置片段（用于同步更新）
  * 先移除旧的通用配置，再添加新的通用配置
- * 注意：优先使用 marker 块移除，若 marker 不存在则回退到 oldSnippet 内容匹配
  */
 export const replaceTomlCommonConfigSnippet = (
   tomlString: string,
   oldSnippet: string,
   newSnippet: string,
 ): UpdateTomlCommonConfigResult => {
-  // 检查是否有 marker 块（使用常量避免硬编码重复）
-  const hasMarker =
-    tomlString.includes(TOML_COMMON_CONFIG_START) &&
-    tomlString.includes(TOML_COMMON_CONFIG_END);
+  // 先清理旧版标记块（兼容性）
+  let configWithoutOld = stripTomlCommonConfigBlock(tomlString);
 
-  let configWithoutOld = tomlString;
-
-  if (hasMarker) {
-    // 有 marker，使用标准移除逻辑
-    const removeResult = updateTomlCommonConfigSnippet(tomlString, "", false);
-    if (removeResult.error) {
-      return removeResult;
-    }
-    configWithoutOld = removeResult.updatedConfig;
-  } else if (oldSnippet.trim()) {
-    // 无 marker，回退到 oldSnippet 内容匹配移除
-    // 尝试直接匹配并移除旧片段
-    if (tomlString.includes(oldSnippet.trim())) {
-      configWithoutOld = tomlString.replace(oldSnippet.trim(), "");
-      // 清理多余的空行
-      configWithoutOld = configWithoutOld.replace(/\n{3,}/g, "\n\n").trim();
-      if (configWithoutOld) {
-        configWithoutOld += "\n";
-      }
+  // 通过内容匹配移除旧片段
+  if (oldSnippet.trim() && configWithoutOld.includes(oldSnippet.trim())) {
+    configWithoutOld = configWithoutOld.replace(oldSnippet.trim(), "");
+    // 清理多余的空行
+    configWithoutOld = configWithoutOld.replace(/\n{3,}/g, "\n\n").trim();
+    if (configWithoutOld) {
+      configWithoutOld += "\n";
     }
   }
 
