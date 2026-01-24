@@ -65,10 +65,17 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const addRepoMutation = useAddSkillRepo();
     const removeRepoMutation = useRemoveSkillRepo();
 
-    // 已安装的 directory 集合
-    const installedDirs = useMemo(() => {
+    // 已安装的 skill key 集合（使用 directory + repoOwner + repoName 组合判断）
+    const installedKeys = useMemo(() => {
       if (!installedSkills) return new Set<string>();
-      return new Set(installedSkills.map((s) => s.directory.toLowerCase()));
+      return new Set(
+        installedSkills.map((s) => {
+          // 构建唯一 key：directory + repoOwner + repoName
+          const owner = s.repoOwner?.toLowerCase() || "";
+          const name = s.repoName?.toLowerCase() || "";
+          return `${s.directory.toLowerCase()}:${owner}:${name}`;
+        }),
+      );
     }, [installedSkills]);
 
     type DiscoverableSkillItem = DiscoverableSkill & { installed: boolean };
@@ -80,12 +87,14 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         const installName =
           d.directory.split("/").pop()?.toLowerCase() ||
           d.directory.toLowerCase();
+        // 使用 directory + repoOwner + repoName 组合判断是否已安装
+        const key = `${installName}:${d.repoOwner.toLowerCase()}:${d.repoName.toLowerCase()}`;
         return {
           ...d,
-          installed: installedDirs.has(installName),
+          installed: installedKeys.has(key),
         };
       });
-    }, [discoverableSkills, installedDirs]);
+    }, [discoverableSkills, installedKeys]);
 
     const loading = loadingDiscoverable || fetchingDiscoverable;
 

@@ -972,6 +972,7 @@
       "downloadTimeoutHint": "ネットワークを確認するか、時間をおいて再試行してください",
       "skillPathNotFound": "リポジトリ {{owner}}/{{name}} にスキルパス '{{path}}' がありません",
       "skillDirNotFound": "スキルディレクトリが見つかりません: {{path}}",
+      "directoryConflict": "スキルディレクトリ '{{directory}}' は既に {{existing_repo}} で使用されています。{{new_repo}} からインストールできません",
       "emptyArchive": "ダウンロードしたアーカイブが空です",
       "downloadFailed": "ダウンロードに失敗しました: HTTP {{status}}",
       "allBranchesFailed": "すべてのブランチで失敗しました。試行: {{branches}}",
@@ -990,7 +991,8 @@
         "retryLater": "時間をおいて再試行してください",
         "checkRepoUrl": "リポジトリ URL とブランチ名を確認してください",
         "checkDiskSpace": "ディスク容量を確認してください",
-        "checkPermission": "ディレクトリの権限を確認してください"
+        "checkPermission": "ディレクトリの権限を確認してください",
+        "uninstallFirst": "同名のスキルを先にアンインストールしてください"
       }
     },
     "repo": {

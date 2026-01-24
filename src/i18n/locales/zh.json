@@ -972,6 +972,7 @@
       "downloadTimeoutHint": "请检查网络连接或稍后重试",
       "skillPathNotFound": "仓库 {{owner}}/{{name}} 中未找到技能路径 '{{path}}'",
       "skillDirNotFound": "技能目录不存在：{{path}}",
+      "directoryConflict": "技能目录 '{{directory}}' 已被 {{existing_repo}} 占用，无法从 {{new_repo}} 安装",
       "emptyArchive": "下载的压缩包为空",
       "downloadFailed": "下载失败：HTTP {{status}}",
       "allBranchesFailed": "所有分支下载失败，尝试了：{{branches}}",
@@ -990,7 +991,8 @@
         "retryLater": "请稍后重试",
         "checkRepoUrl": "请检查仓库地址和分支名称",
         "checkDiskSpace": "请检查磁盘空间",
-        "checkPermission": "请检查目录权限"
+        "checkPermission": "请检查目录权限",
+        "uninstallFirst": "请先卸载已安装的同名技能"
       }
     },
     "repo": {

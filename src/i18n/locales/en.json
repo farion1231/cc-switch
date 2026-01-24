@@ -972,6 +972,7 @@
       "downloadTimeoutHint": "Please check network connection or retry later",
       "skillPathNotFound": "Skill path '{{path}}' not found in repository {{owner}}/{{name}}",
       "skillDirNotFound": "Skill directory not found: {{path}}",
+      "directoryConflict": "Skill directory '{{directory}}' is already occupied by {{existing_repo}}, cannot install from {{new_repo}}",
       "emptyArchive": "Downloaded archive is empty",
       "downloadFailed": "Download failed: HTTP {{status}}",
       "allBranchesFailed": "All branches failed, tried: {{branches}}",
@@ -990,7 +991,8 @@
         "retryLater": "Please retry later",
         "checkRepoUrl": "Please check repository URL and branch name",
         "checkDiskSpace": "Please check disk space",
-        "checkPermission": "Please check directory permissions"
+        "checkPermission": "Please check directory permissions",
+        "uninstallFirst": "Please uninstall the existing skill with the same name first"
       }
     },
     "repo": {
