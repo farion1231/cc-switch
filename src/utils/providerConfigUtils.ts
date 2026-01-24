@@ -3,6 +3,14 @@
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
 import { normalizeQuotes } from "@/utils/textNormalization";
 
+// Gemini 通用配置禁止的键（共享常量，供 hook 和同步逻辑复用）
+export const GEMINI_COMMON_ENV_FORBIDDEN_KEYS = [
+  "GOOGLE_GEMINI_BASE_URL",
+  "GEMINI_API_KEY",
+] as const;
+export type GeminiForbiddenEnvKey =
+  (typeof GEMINI_COMMON_ENV_FORBIDDEN_KEYS)[number];
+
 const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
 };
@@ -162,6 +170,164 @@ export const hasCommonConfigSnippet = (
     return isSubset(config, snippet);
   } catch (err) {
     return false;
+  }
+};
+
+// 检查 Gemini 配置是否已包含通用配置片段（env JSON）
+export const hasGeminiCommonConfigSnippet = (
+  jsonString: string,
+  snippetString: string,
+): boolean => {
+  try {
+    if (!snippetString.trim()) return false;
+    const config = jsonString ? JSON.parse(jsonString) : {};
+    if (!isPlainObject(config)) return false;
+    const envValue = (config as Record<string, unknown>).env;
+    if (envValue !== undefined && !isPlainObject(envValue)) return false;
+    const env = (isPlainObject(envValue) ? envValue : {}) as Record<
+      string,
+      unknown
+    >;
+
+    const parsed = JSON.parse(snippetString);
+    if (!isPlainObject(parsed)) return false;
+
+    const entries = Object.entries(parsed).filter(([key, value]) => {
+      if (
+        GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(
+          key as GeminiForbiddenEnvKey,
+        )
+      ) {
+        return false;
+      }
+      if (typeof value !== "string") return false;
+      return value.trim().length > 0;
+    });
+
+    if (entries.length === 0) return false;
+
+    return entries.every(([key, value]) => {
+      const current = env[key];
+      return typeof current === "string" && current === value.trim();
+    });
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * 替换通用配置片段（用于同步更新）
+ * 先移除旧的通用配置，再添加新的通用配置
+ */
+export const replaceCommonConfigSnippet = (
+  jsonString: string,
+  oldSnippet: string,
+  newSnippet: string,
+): UpdateCommonConfigResult => {
+  // 先移除旧的通用配置
+  const removeResult = updateCommonConfigSnippet(jsonString, oldSnippet, false);
+  if (removeResult.error) {
+    return removeResult;
+  }
+
+  // 再添加新的通用配置
+  return updateCommonConfigSnippet(
+    removeResult.updatedConfig,
+    newSnippet,
+    true,
+  );
+};
+
+/**
+ * 替换 Gemini 通用配置片段（用于同步更新）
+ * Gemini 的通用配置是 JSON 格式的 env 对象
+ */
+export const replaceGeminiCommonConfigSnippet = (
+  jsonString: string,
+  oldSnippet: string,
+  newSnippet: string,
+): UpdateCommonConfigResult => {
+  try {
+    const config = jsonString ? JSON.parse(jsonString) : {};
+
+    // 校验 config 是对象类型
+    if (!isPlainObject(config)) {
+      return {
+        updatedConfig: jsonString,
+        error: "CONFIG_NOT_OBJECT",
+      };
+    }
+
+    const env = config.env ?? {};
+
+    // 校验 env 是对象类型
+    if (!isPlainObject(env)) {
+      return {
+        updatedConfig: jsonString,
+        error: "ENV_NOT_OBJECT",
+      };
+    }
+
+    // 解析旧的通用配置
+    let oldEnv: Record<string, string> = {};
+    if (oldSnippet.trim()) {
+      try {
+        const parsed = JSON.parse(oldSnippet);
+        if (isPlainObject(parsed)) {
+          oldEnv = parsed as Record<string, string>;
+        }
+      } catch {
+        // ignore parse error
+      }
+    }
+
+    // 解析新的通用配置
+    let newEnv: Record<string, string> = {};
+    if (newSnippet.trim()) {
+      try {
+        const parsed = JSON.parse(newSnippet);
+        if (isPlainObject(parsed)) {
+          // 过滤掉禁止的键
+          for (const [key, value] of Object.entries(parsed)) {
+            if (
+              typeof value === "string" &&
+              !GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(
+                key as GeminiForbiddenEnvKey,
+              )
+            ) {
+              newEnv[key] = value;
+            }
+          }
+        }
+      } catch {
+        return {
+          updatedConfig: jsonString,
+          error: "COMMON_CONFIG_JSON_INVALID",
+        };
+      }
+    }
+
+    // 移除旧的通用配置键值对
+    const updatedEnv = { ...env };
+    for (const [key, value] of Object.entries(oldEnv)) {
+      if (updatedEnv[key] === value) {
+        delete updatedEnv[key];
+      }
+    }
+
+    // 添加新的通用配置键值对
+    for (const [key, value] of Object.entries(newEnv)) {
+      updatedEnv[key] = value;
+    }
+
+    return {
+      updatedConfig: JSON.stringify({ ...config, env: updatedEnv }, null, 2),
+    };
+  } catch (err) {
+    return {
+      updatedConfig: jsonString,
+      error: "CONFIG_JSON_PARSE_FAILED",
+    };
   }
 };
 
@@ -336,8 +502,19 @@ export interface UpdateTomlCommonConfigResult {
   error?: string;
 }
 
-// 保存之前的通用配置片段，用于替换操作
-let previousCommonSnippet = "";
+const TOML_COMMON_CONFIG_START = "# cc-switch:common-config:start";
+const TOML_COMMON_CONFIG_END = "# cc-switch:common-config:end";
+
+const stripTomlCommonConfigBlock = (tomlString: string): string => {
+  const startIndex = tomlString.indexOf(TOML_COMMON_CONFIG_START);
+  const endIndex = tomlString.indexOf(TOML_COMMON_CONFIG_END);
+  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+    return tomlString;
+  }
+  const before = tomlString.slice(0, startIndex);
+  const after = tomlString.slice(endIndex + TOML_COMMON_CONFIG_END.length);
+  return `${before}${after}`;
+};
 
 // 将通用配置片段写入/移除 TOML 配置
 export const updateTomlCommonConfigSnippet = (
@@ -345,42 +522,48 @@ export const updateTomlCommonConfigSnippet = (
   snippetString: string,
   enabled: boolean,
 ): UpdateTomlCommonConfigResult => {
-  if (!snippetString.trim()) {
-    // 如果片段为空，直接返回原始配置
-    return {
-      updatedConfig: tomlString,
-    };
-  }
-
   if (enabled) {
+    if (!snippetString.trim()) {
+      // 如果片段为空，直接返回原始配置
+      return {
+        updatedConfig: tomlString,
+      };
+    }
     // 添加通用配置
     // 先移除旧的通用配置（如果有）
-    let updatedConfig = tomlString;
-    if (previousCommonSnippet && tomlString.includes(previousCommonSnippet)) {
-      updatedConfig = tomlString.replace(previousCommonSnippet, "");
+    let updatedConfig = stripTomlCommonConfigBlock(tomlString);
+    const trimmedSnippet = snippetString.trim();
+    if (updatedConfig.includes(trimmedSnippet)) {
+      updatedConfig = updatedConfig.replace(trimmedSnippet, "");
+      updatedConfig = updatedConfig.replace(/\n{3,}/g, "\n\n").trim();
+      if (updatedConfig) {
+        updatedConfig += "\n";
+      }
     }
+
+    const block = `${TOML_COMMON_CONFIG_START}\n${trimmedSnippet}\n${TOML_COMMON_CONFIG_END}`;
 
     // 在文件末尾添加新的通用配置
     // 确保有适当的换行
     const needsNewline = updatedConfig && !updatedConfig.endsWith("\n");
-    updatedConfig =
-      updatedConfig + (needsNewline ? "\n\n" : "\n") + snippetString;
-
-    // 保存当前通用配置片段
-    previousCommonSnippet = snippetString;
+    updatedConfig = updatedConfig + (needsNewline ? "\n\n" : "\n") + block;
 
     return {
       updatedConfig: updatedConfig.trim() + "\n",
     };
   } else {
     // 移除通用配置
-    if (tomlString.includes(snippetString)) {
-      const updatedConfig = tomlString.replace(snippetString, "");
+    if (tomlString.includes(TOML_COMMON_CONFIG_START)) {
+      const updatedConfig = stripTomlCommonConfigBlock(tomlString);
+      const cleaned = updatedConfig.replace(/\n{3,}/g, "\n\n").trim();
+      return {
+        updatedConfig: cleaned ? cleaned + "\n" : "",
+      };
+    }
+    if (snippetString.trim() && tomlString.includes(snippetString.trim())) {
+      const updatedConfig = tomlString.replace(snippetString.trim(), "");
       // 清理多余的空行
       const cleaned = updatedConfig.replace(/\n{3,}/g, "\n\n").trim();
-
-      // 清空保存的状态
-      previousCommonSnippet = "";
 
       return {
         updatedConfig: cleaned ? cleaned + "\n" : "",
@@ -398,6 +581,12 @@ export const hasTomlCommonConfigSnippet = (
   snippetString: string,
 ): boolean => {
   if (!snippetString.trim()) return false;
+  if (
+    tomlString.includes(TOML_COMMON_CONFIG_START) &&
+    tomlString.includes(TOML_COMMON_CONFIG_END)
+  ) {
+    return true;
+  }
 
   // 简单检查配置是否包含片段内容
   // 去除空白字符后比较，避免格式差异影响
@@ -406,6 +595,47 @@ export const hasTomlCommonConfigSnippet = (
   return normalizeWhitespace(tomlString).includes(
     normalizeWhitespace(snippetString),
   );
+};
+
+/**
+ * 替换 TOML 通用配置片段（用于同步更新）
+ * 先移除旧的通用配置，再添加新的通用配置
+ * 注意：优先使用 marker 块移除，若 marker 不存在则回退到 oldSnippet 内容匹配
+ */
+export const replaceTomlCommonConfigSnippet = (
+  tomlString: string,
+  oldSnippet: string,
+  newSnippet: string,
+): UpdateTomlCommonConfigResult => {
+  // 检查是否有 marker 块（使用常量避免硬编码重复）
+  const hasMarker =
+    tomlString.includes(TOML_COMMON_CONFIG_START) &&
+    tomlString.includes(TOML_COMMON_CONFIG_END);
+
+  let configWithoutOld = tomlString;
+
+  if (hasMarker) {
+    // 有 marker，使用标准移除逻辑
+    const removeResult = updateTomlCommonConfigSnippet(tomlString, "", false);
+    if (removeResult.error) {
+      return removeResult;
+    }
+    configWithoutOld = removeResult.updatedConfig;
+  } else if (oldSnippet.trim()) {
+    // 无 marker，回退到 oldSnippet 内容匹配移除
+    // 尝试直接匹配并移除旧片段
+    if (tomlString.includes(oldSnippet.trim())) {
+      configWithoutOld = tomlString.replace(oldSnippet.trim(), "");
+      // 清理多余的空行
+      configWithoutOld = configWithoutOld.replace(/\n{3,}/g, "\n\n").trim();
+      if (configWithoutOld) {
+        configWithoutOld += "\n";
+      }
+    }
+  }
+
+  // 添加新的通用配置
+  return updateTomlCommonConfigSnippet(configWithoutOld, newSnippet, true);
 };
 
 // ========== Codex base_url utils ==========
