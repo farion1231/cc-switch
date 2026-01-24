@@ -13,6 +13,7 @@ import type {
   ProviderMeta,
   ProviderTestConfig,
   ProviderProxyConfig,
+  CommonConfigEnabledByApp,
 } from "@/types";
 import {
   providerPresets,
@@ -320,8 +321,11 @@ export function ProviderForm({
   } = useCodexConfigState({ initialData });
 
   // 使用 Codex TOML 校验 hook (仅 Codex 模式)
-  const { configError: codexConfigError, debouncedValidate } =
-    useCodexTomlValidation();
+  const {
+    configError: codexConfigError,
+    debouncedValidate,
+    validateToml,
+  } = useCodexTomlValidation();
 
   // 包装 handleCodexConfigChange，添加实时校验
   const handleCodexConfigChange = useCallback(
@@ -408,12 +412,14 @@ export function ProviderForm({
     handleCommonConfigSnippetChange,
     isExtracting: isClaudeExtracting,
     handleExtract: handleClaudeExtract,
+    isLoading: isClaudeCommonConfigLoading,
   } = useCommonConfigSnippet({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: (config) => form.setValue("settingsConfig", config),
     initialData: appId === "claude" ? initialData : undefined,
     selectedPresetId: selectedPresetId ?? undefined,
     enabled: appId === "claude",
+    currentProviderId: providerId,
   });
 
   // 使用 Codex 通用配置片段 hook (仅 Codex 模式)
@@ -425,11 +431,13 @@ export function ProviderForm({
     handleCommonConfigSnippetChange: handleCodexCommonConfigSnippetChange,
     isExtracting: isCodexExtracting,
     handleExtract: handleCodexExtract,
+    isLoading: isCodexCommonConfigLoading,
   } = useCodexCommonConfig({
     codexConfig,
     onConfigChange: handleCodexConfigChange,
     initialData: appId === "codex" ? initialData : undefined,
     selectedPresetId: selectedPresetId ?? undefined,
+    currentProviderId: providerId,
   });
 
   // 使用 Gemini 配置 hook (仅 Gemini 模式)
@@ -511,6 +519,7 @@ export function ProviderForm({
     handleCommonConfigSnippetChange: handleGeminiCommonConfigSnippetChange,
     isExtracting: isGeminiExtracting,
     handleExtract: handleGeminiExtract,
+    isLoading: isGeminiCommonConfigLoading,
   } = useGeminiCommonConfig({
     envValue: geminiEnv,
     onEnvChange: handleGeminiEnvChange,
@@ -518,7 +527,18 @@ export function ProviderForm({
     envObjToString,
     initialData: appId === "gemini" ? initialData : undefined,
     selectedPresetId: selectedPresetId ?? undefined,
+    currentProviderId: providerId,
   });
+
+  const supportsCommonConfig =
+    appId === "claude" || appId === "codex" || appId === "gemini";
+  const commonConfigEnabled = supportsCommonConfig
+    ? appId === "claude"
+      ? useCommonConfig
+      : appId === "codex"
+        ? useCodexCommonConfigFlag
+        : useGeminiCommonConfigFlag
+    : undefined;
 
   // OpenCode: query existing providers for duplicate key checking
   const { data: opencodeProvidersData } = useProvidersQuery("opencode");
@@ -731,6 +751,61 @@ export function ProviderForm({
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
   const handleSubmit = (values: ProviderFormData) => {
+    // 检查通用配置是否仍在加载中
+    const isCommonConfigLoading =
+      (appId === "claude" && isClaudeCommonConfigLoading) ||
+      (appId === "codex" && isCodexCommonConfigLoading) ||
+      (appId === "gemini" && isGeminiCommonConfigLoading);
+    if (isCommonConfigLoading) {
+      toast.error(t("providerForm.commonConfigLoading"));
+      return;
+    }
+
+    const commonConfigErrorMessage =
+      appId === "claude" && useCommonConfig && commonConfigError
+        ? commonConfigError
+        : appId === "codex" &&
+            useCodexCommonConfigFlag &&
+            codexCommonConfigError
+          ? codexCommonConfigError
+          : appId === "gemini" &&
+              useGeminiCommonConfigFlag &&
+              geminiCommonConfigError
+            ? geminiCommonConfigError
+            : "";
+    if (commonConfigErrorMessage) {
+      toast.error(commonConfigErrorMessage);
+      return;
+    }
+
+    if (appId === "codex") {
+      if (codexAuthError) {
+        toast.error(codexAuthError);
+        return;
+      }
+      const isCodexConfigValid = validateToml(codexConfig);
+      if (!isCodexConfigValid) {
+        toast.error(
+          codexConfigError ||
+            t("mcp.error.tomlInvalid", {
+              defaultValue: "TOML 格式错误，请检查",
+            }),
+        );
+        return;
+      }
+    }
+
+    if (appId === "gemini") {
+      if (envError) {
+        toast.error(envError);
+        return;
+      }
+      if (geminiConfigError) {
+        toast.error(geminiConfigError);
+        return;
+      }
+    }
+
     // 验证模板变量（仅 Claude 模式）
     if (appId === "claude" && templateValueEntries.length > 0) {
       const validation = validateTemplateValues();
@@ -934,12 +1009,25 @@ export function ProviderForm({
 
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+    const existingCommonConfigEnabledByApp = baseMeta?.commonConfigEnabledByApp;
+    const commonConfigEnabledByApp = supportsCommonConfig
+      ? ({
+          ...(existingCommonConfigEnabledByApp ?? {}),
+          [appId]: commonConfigEnabled ?? false,
+        } as CommonConfigEnabledByApp)
+      : existingCommonConfigEnabledByApp;
+    const shouldPersistCommonConfigEnabledByApp =
+      supportsCommonConfig || existingCommonConfigEnabledByApp !== undefined;
+
     payload.meta = {
       ...(baseMeta ?? {}),
       endpointAutoSelect,
       // 添加高级配置
       testConfig: testConfig.enabled ? testConfig : undefined,
       proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
+      ...(shouldPersistCommonConfigEnabledByApp
+        ? { commonConfigEnabledByApp }
+        : {}),
     };
 
     onSubmit(payload);
