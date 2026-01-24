@@ -53,6 +53,7 @@
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Common Config Snippet",
     "commonConfigHint": "This snippet will be merged into settings.json when 'Write Common Config' is checked",
+    "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
     "fullSettingsHint": "Full Claude Code settings.json content",
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
@@ -438,7 +439,9 @@
     "categoryOfficial": "Official",
     "categoryCnOfficial": "Opensource Official",
     "categoryAggregation": "Aggregation",
-    "categoryThirdParty": "Third Party"
+    "categoryThirdParty": "Third Party",
+    "commonConfigLoading": "Common config is still loading, please wait before saving",
+    "commonConfigSyncFailed": "Common config sync failed for some providers. Please retry."
   },
   "endpointTest": {
     "title": "API Endpoint Management",
@@ -492,6 +495,7 @@
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Codex Common Config Snippet",
     "commonConfigHint": "This snippet will be appended to the end of config.toml when 'Write Common Config' is checked",
+    "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
     "apiUrlLabel": "API Request URL",
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",

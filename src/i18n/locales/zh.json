@@ -53,6 +53,7 @@
     "editCommonConfig": "编辑通用配置",
     "editCommonConfigTitle": "编辑通用配置片段",
     "commonConfigHint": "该片段会在勾选\"写入通用配置\"时合并到 settings.json 中",
+    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
     "fullSettingsHint": "完整的 Claude Code settings.json 配置内容",
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
@@ -438,7 +439,9 @@
     "categoryOfficial": "官方",
     "categoryCnOfficial": "开源官方",
     "categoryAggregation": "聚合服务",
-    "categoryThirdParty": "第三方"
+    "categoryThirdParty": "第三方",
+    "commonConfigLoading": "通用配置正在加载中，请稍候再保存",
+    "commonConfigSyncFailed": "通用配置同步部分失败，请重试"
   },
   "endpointTest": {
     "title": "请求地址管理",
@@ -492,6 +495,7 @@
     "editCommonConfig": "编辑通用配置",
     "editCommonConfigTitle": "编辑 Codex 通用配置片段",
     "commonConfigHint": "该片段会在勾选'写入通用配置'时追加到 config.toml 末尾",
+    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
     "apiUrlLabel": "API 请求地址",
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",

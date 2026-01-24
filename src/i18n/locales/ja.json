@@ -53,6 +53,7 @@
     "editCommonConfig": "共通設定を編集",
     "editCommonConfigTitle": "共通設定スニペットを編集",
     "commonConfigHint": "「共通設定を書き込む」がオンのとき settings.json にマージされます",
+    "noCommonConfigToApply": "共通設定スニペットが空、または適用できる項目がありません",
     "fullSettingsHint": "Claude Code の settings.json 全文",
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
@@ -438,7 +439,9 @@
     "categoryOfficial": "公式",
     "categoryCnOfficial": "オープンソース公式",
     "categoryAggregation": "アグリゲーター",
-    "categoryThirdParty": "サードパーティ"
+    "categoryThirdParty": "サードパーティ",
+    "commonConfigLoading": "共通設定を読み込み中です。保存する前にお待ちください",
+    "commonConfigSyncFailed": "共通設定の同期に失敗しました。再試行してください"
   },
   "endpointTest": {
     "title": "API エンドポイント管理",
@@ -492,6 +495,7 @@
     "editCommonConfig": "共通設定を編集",
     "editCommonConfigTitle": "Codex 共通設定スニペットを編集",
     "commonConfigHint": "「共通設定を書き込む」がオンの場合、config.toml の末尾に追記されます",
+    "noCommonConfigToApply": "共通設定スニペットが空、または適用できる項目がありません",
     "apiUrlLabel": "API リクエスト URL",
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
