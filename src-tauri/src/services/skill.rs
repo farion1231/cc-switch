@@ -252,6 +252,50 @@ impl SkillService {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| skill.directory.clone());
 
+        // 检查数据库中是否已有同名 directory 的 skill（来自其他仓库）
+        let existing_skills = db.get_all_installed_skills()?;
+        for existing in existing_skills.values() {
+            if existing.directory.eq_ignore_ascii_case(&install_name) {
+                // 检查是否来自同一仓库
+                let same_repo = existing.repo_owner.as_deref() == Some(&skill.repo_owner)
+                    && existing.repo_name.as_deref() == Some(&skill.repo_name);
+                if same_repo {
+                    // 同一仓库的同名 skill，返回现有记录（可能需要更新启用状态）
+                    let mut updated = existing.clone();
+                    updated.apps.set_enabled_for(current_app, true);
+                    db.save_skill(&updated)?;
+                    Self::sync_to_app_dir(&updated.directory, current_app)?;
+                    log::info!(
+                        "Skill {} 已存在，更新 {:?} 启用状态",
+                        updated.name,
+                        current_app
+                    );
+                    return Ok(updated);
+                } else {
+                    // 不同仓库的同名 skill，报错
+                    return Err(anyhow!(format_skill_error(
+                        "SKILL_DIRECTORY_CONFLICT",
+                        &[
+                            ("directory", &install_name),
+                            (
+                                "existing_repo",
+                                &format!(
+                                    "{}/{}",
+                                    existing.repo_owner.as_deref().unwrap_or("unknown"),
+                                    existing.repo_name.as_deref().unwrap_or("unknown")
+                                )
+                            ),
+                            (
+                                "new_repo",
+                                &format!("{}/{}", skill.repo_owner, skill.repo_name)
+                            ),
+                        ],
+                        Some("uninstallFirst"),
+                    )));
+                }
+            }
+        }
+
         let dest = ssot_dir.join(&install_name);
 
         // 如果已存在则跳过下载
@@ -933,10 +977,12 @@ impl SkillService {
         Ok(meta)
     }
 
-    /// 去重技能列表
+    /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
     fn deduplicate_discoverable_skills(skills: &mut Vec<DiscoverableSkill>) {
         let mut seen = HashMap::new();
         skills.retain(|skill| {
+            // 使用完整 key（owner/repo:directory）作为唯一标识
+            // 这样不同仓库的同名 skill 会分开显示
             let unique_key = skill.key.to_lowercase();
             if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(unique_key) {
                 e.insert(true);

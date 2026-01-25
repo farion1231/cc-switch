@@ -35,6 +35,7 @@ function getErrorI18nKey(code: string): string {
     DOWNLOAD_TIMEOUT: "skills.error.downloadTimeout",
     DOWNLOAD_FAILED: "skills.error.downloadFailed",
     SKILL_DIR_NOT_FOUND: "skills.error.skillDirNotFound",
+    SKILL_DIRECTORY_CONFLICT: "skills.error.directoryConflict",
     EMPTY_ARCHIVE: "skills.error.emptyArchive",
     GET_HOME_DIR_FAILED: "skills.error.getHomeDirFailed",
   };
@@ -52,6 +53,7 @@ function getSuggestionI18nKey(suggestion: string): string {
     retryLater: "skills.error.suggestion.retryLater",
     checkRepoUrl: "skills.error.suggestion.checkRepoUrl",
     checkPermission: "skills.error.suggestion.checkPermission",
+    uninstallFirst: "skills.error.suggestion.uninstallFirst",
     http403: "skills.error.http403",
     http404: "skills.error.http404",
     http429: "skills.error.http429",
