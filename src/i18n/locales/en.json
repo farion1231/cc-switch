@@ -480,7 +480,13 @@
     "useCustomProxy": "Use separate proxy",
     "proxyConfigDesc": "Configure separate network proxy for this provider. Uses system proxy or global settings when disabled.",
     "proxyUsername": "Username (optional)",
-    "proxyPassword": "Password (optional)"
+    "proxyPassword": "Password (optional)",
+    "formatTransform": "Format Transform",
+    "enableFormatTransform": "Enable Transform",
+    "formatTransformDesc": "Transform requests and responses between different API formats. Useful for providers using OpenAI-compatible interfaces.",
+    "sourceFormat": "Source Format (Client)",
+    "targetFormat": "Target Format (Upstream)",
+    "transformStreaming": "Transform Streaming Responses"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

@@ -480,7 +480,13 @@
     "useCustomProxy": "個別プロキシを使用",
     "proxyConfigDesc": "このプロバイダーに個別のネットワークプロキシを設定します。無効の場合はシステムプロキシまたはグローバル設定を使用します。",
     "proxyUsername": "ユーザー名（任意）",
-    "proxyPassword": "パスワード（任意）"
+    "proxyPassword": "パスワード（任意）",
+    "formatTransform": "フォーマット変換",
+    "enableFormatTransform": "変換を有効化",
+    "formatTransformDesc": "リクエストとレスポンスを異なる API フォーマット間で変換します。OpenAI 互換インターフェースを使用するプロバイダーに適しています。",
+    "sourceFormat": "ソースフォーマット（クライアント）",
+    "targetFormat": "ターゲットフォーマット（上流）",
+    "transformStreaming": "ストリーミングレスポンスを変換"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

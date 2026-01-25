@@ -480,7 +480,13 @@
     "useCustomProxy": "使用单独代理",
     "proxyConfigDesc": "为此供应商配置单独的网络代理，不启用时使用系统代理或全局设置。",
     "proxyUsername": "用户名（可选）",
-    "proxyPassword": "密码（可选）"
+    "proxyPassword": "密码（可选）",
+    "formatTransform": "格式转换",
+    "enableFormatTransform": "启用转换",
+    "formatTransformDesc": "将请求和响应在不同 API 格式之间转换。适用于使用 OpenAI 兼容接口的供应商。",
+    "sourceFormat": "源格式（客户端）",
+    "targetFormat": "目标格式（上游）",
+    "transformStreaming": "转换流式响应"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
