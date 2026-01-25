@@ -215,6 +215,12 @@ pub struct ProviderMeta {
     /// 成本倍数（用于计算实际成本）
     #[serde(rename = "costMultiplier", skip_serializing_if = "Option::is_none")]
     pub cost_multiplier: Option<String>,
+    /// 计费模式来源（response/request）
+    #[serde(
+        rename = "pricingModelSource",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pricing_model_source: Option<String>,
     /// 每日消费限额（USD）
     #[serde(rename = "limitDailyUsd", skip_serializing_if = "Option::is_none")]
     pub limit_daily_usd: Option<String>,
@@ -613,4 +619,272 @@ pub struct OpenCodeModelLimit {
     /// 输出 token 限制
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, Provider,
+        ProviderManager, ProviderMeta, UniversalProvider,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn provider_meta_serializes_pricing_model_source() {
+        let mut meta = ProviderMeta::default();
+        meta.pricing_model_source = Some("response".to_string());
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert_eq!(
+            value
+                .get("pricingModelSource")
+                .and_then(|item| item.as_str()),
+            Some("response")
+        );
+        assert!(value.get("pricing_model_source").is_none());
+    }
+
+    #[test]
+    fn provider_meta_omits_pricing_model_source_when_none() {
+        let meta = ProviderMeta::default();
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert!(value.get("pricingModelSource").is_none());
+    }
+
+    #[test]
+    fn provider_with_id_populates_defaults() {
+        let settings_config = json!({
+            "env": { "API_KEY": "test" }
+        });
+        let provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            settings_config.clone(),
+            Some("https://example.com".to_string()),
+        );
+
+        assert_eq!(provider.id, "provider-1");
+        assert_eq!(provider.name, "Provider");
+        assert_eq!(provider.settings_config, settings_config);
+        assert_eq!(provider.website_url.as_deref(), Some("https://example.com"));
+        assert!(provider.category.is_none());
+        assert!(provider.created_at.is_none());
+        assert!(provider.sort_index.is_none());
+        assert!(provider.notes.is_none());
+        assert!(provider.meta.is_none());
+        assert!(provider.icon.is_none());
+        assert!(provider.icon_color.is_none());
+        assert!(!provider.in_failover_queue);
+    }
+
+    #[test]
+    fn provider_manager_get_all_providers_returns_map() {
+        let mut manager = ProviderManager::default();
+        let provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        manager
+            .providers
+            .insert("provider-1".to_string(), provider);
+
+        assert_eq!(manager.get_all_providers().len(), 1);
+        assert!(manager.get_all_providers().contains_key("provider-1"));
+    }
+
+    #[test]
+    fn universal_provider_to_claude_provider_uses_models() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.claude = true;
+        universal.models.claude = Some(ClaudeModelConfig {
+            model: Some("claude-main".to_string()),
+            haiku_model: Some("claude-haiku".to_string()),
+            sonnet_model: Some("claude-sonnet".to_string()),
+            opus_model: Some("claude-opus".to_string()),
+        });
+
+        let provider = universal
+            .to_claude_provider()
+            .expect("claude provider");
+
+        assert_eq!(provider.id, "universal-claude-u1");
+        assert_eq!(provider.name, "Universal");
+        assert_eq!(provider.category.as_deref(), Some("aggregator"));
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/env/ANTHROPIC_MODEL")
+                .and_then(|item| item.as_str()),
+            Some("claude-main")
+        );
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/env/ANTHROPIC_DEFAULT_HAIKU_MODEL")
+                .and_then(|item| item.as_str()),
+            Some("claude-haiku")
+        );
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(|item| item.as_str()),
+            Some("claude-sonnet")
+        );
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(|item| item.as_str()),
+            Some("claude-opus")
+        );
+    }
+
+    #[test]
+    fn universal_provider_to_claude_provider_disabled_returns_none() {
+        let universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+
+        assert!(universal.to_claude_provider().is_none());
+    }
+
+    #[test]
+    fn universal_provider_to_codex_provider_appends_v1() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.codex = true;
+        universal.models.codex = Some(CodexModelConfig {
+            model: Some("gpt-4o-mini".to_string()),
+            reasoning_effort: Some("low".to_string()),
+        });
+
+        let provider = universal.to_codex_provider().expect("codex provider");
+        let config = provider
+            .settings_config
+            .get("config")
+            .and_then(|item| item.as_str())
+            .expect("config toml");
+
+        assert!(config.contains("base_url = \"https://api.example.com/v1\""));
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/auth/OPENAI_API_KEY")
+                .and_then(|item| item.as_str()),
+            Some("api-key")
+        );
+    }
+
+    #[test]
+    fn universal_provider_to_codex_provider_keeps_v1_suffix() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com/v1".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.codex = true;
+
+        let provider = universal.to_codex_provider().expect("codex provider");
+        let config = provider
+            .settings_config
+            .get("config")
+            .and_then(|item| item.as_str())
+            .expect("config toml");
+
+        assert!(config.contains("base_url = \"https://api.example.com/v1\""));
+    }
+
+    #[test]
+    fn universal_provider_to_codex_provider_disabled_returns_none() {
+        let universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+
+        assert!(universal.to_codex_provider().is_none());
+    }
+
+    #[test]
+    fn universal_provider_to_gemini_provider_defaults_model() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.gemini = true;
+
+        let provider = universal.to_gemini_provider().expect("gemini provider");
+
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/env/GEMINI_MODEL")
+                .and_then(|item| item.as_str()),
+            Some("gemini-2.5-pro")
+        );
+    }
+
+    #[test]
+    fn universal_provider_to_gemini_provider_uses_model() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.gemini = true;
+        universal.models.gemini = Some(GeminiModelConfig {
+            model: Some("gemini-custom".to_string()),
+        });
+
+        let provider = universal.to_gemini_provider().expect("gemini provider");
+
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/env/GEMINI_MODEL")
+                .and_then(|item| item.as_str()),
+            Some("gemini-custom")
+        );
+    }
+
+    #[test]
+    fn opencode_provider_config_defaults() {
+        let config = OpenCodeProviderConfig::default();
+        assert_eq!(config.npm, "@ai-sdk/openai-compatible");
+        assert!(config.name.is_none());
+        assert!(config.models.is_empty());
+        assert!(config.options.base_url.is_none());
+        assert!(config.options.api_key.is_none());
+        assert!(config.options.headers.is_none());
+        assert!(config.options.extra.is_empty());
+    }
 }
