@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,7 +8,7 @@ use crate::error::AppError;
 /// 获取用户主目录，带回退和日志
 fn get_home_dir() -> PathBuf {
     #[cfg(windows)]
-    if let Ok(home) = env::var("HOME") {
+    if let Ok(home) = std::env::var("HOME") {
         let trimmed = home.trim();
         if !trimmed.is_empty() {
             return PathBuf::from(trimmed);
