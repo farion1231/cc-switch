@@ -750,13 +750,6 @@ function App() {
                   >
                     CC Switch
                   </a>
-                  <UpdateBadge
-                    onClick={() => {
-                      setSettingsDefaultTab("about");
-                      setCurrentView("settings");
-                    }}
-                    className="absolute -top-4 -right-4"
-                  />
                 </div>
                 <Button
                   variant="ghost"
@@ -770,6 +763,12 @@ function App() {
                 >
                   <Settings className="w-4 h-4" />
                 </Button>
+                <UpdateBadge
+                  onClick={() => {
+                    setSettingsDefaultTab("about");
+                    setCurrentView("settings");
+                  }}
+                />
                 {isCurrentAppTakeoverActive && (
                   <Button
                     variant="ghost"
