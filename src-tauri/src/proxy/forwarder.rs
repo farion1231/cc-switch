@@ -9,6 +9,7 @@ use super::{
     provider_router::ProviderRouter,
     providers::{get_adapter, ProviderAdapter, ProviderType},
     thinking_rectifier::{rectify_anthropic_request, should_rectify_thinking_signature},
+    transform::{get_transformer, TransformConfig},
     types::{ProxyStatus, RectifierConfig},
     ProxyError,
 };
@@ -558,26 +559,63 @@ impl RequestForwarder {
         // 使用适配器提取 base_url
         let base_url = adapter.extract_base_url(provider)?;
 
-        // 检查是否需要格式转换
-        let needs_transform = adapter.needs_transform(provider);
+        // 获取格式转换配置
+        let transform_config = TransformConfig::from_provider(provider);
+        let needs_transform = transform_config.needs_transform();
 
-        let effective_endpoint =
-            if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
-                "/v1/chat/completions"
-            } else {
-                endpoint
-            };
+        // 如果需要转换但找不到转换器，直接返回错误（避免静默透传后在响应阶段失败）
+        let transformer = if needs_transform {
+            let t = get_transformer(
+                transform_config.source_format,
+                transform_config.target_format,
+            );
+            if t.is_none() {
+                log::error!(
+                    "[Forwarder] 格式转换已启用但找不到转换器: {:?} → {:?}",
+                    transform_config.source_format,
+                    transform_config.target_format
+                );
+                return Err(ProxyError::TransformError(format!(
+                    "No transformer registered for {:?} → {:?}. Please disable format transform or use supported formats (Anthropic ↔ OpenAI).",
+                    transform_config.source_format,
+                    transform_config.target_format
+                )));
+            }
+            t
+        } else {
+            None
+        };
+
+        // 确定有效端点
+        let effective_endpoint = if let Some(ref t) = transformer {
+            t.transform_endpoint(endpoint)
+        } else {
+            endpoint.to_string()
+        };
 
         // 使用适配器构建 URL
-        let url = adapter.build_url(&base_url, effective_endpoint);
+        let url = adapter.build_url(&base_url, &effective_endpoint);
 
         // 应用模型映射（独立于格式转换）
-        let (mapped_body, _original_model, _mapped_model) =
+        let (mut mapped_body, _original_model, _mapped_model) =
             super::model_mapper::apply_model_mapping(body.clone(), provider);
 
+        // 如果启用格式转换但禁用流式转换，强制将 stream 设为 false
+        // 避免上游返回 SSE 流但我们无法转换的情况
+        if needs_transform && !transform_config.transform_streaming {
+            if let Some(stream_val) = mapped_body.get("stream") {
+                if stream_val.as_bool() == Some(true) {
+                    log::info!("[Forwarder] transform_streaming=false，强制将 stream 设为 false");
+                    if let Some(obj) = mapped_body.as_object_mut() {
+                        obj.insert("stream".to_string(), serde_json::Value::Bool(false));
+                    }
+                }
+            }
+        }
+
         // 转换请求体（如果需要）
-        let request_body = if needs_transform {
-            adapter.transform_request(mapped_body, provider)?
+        let request_body = if let Some(ref t) = transformer {
+            t.transform_request(mapped_body)?
         } else {
             mapped_body
         };
