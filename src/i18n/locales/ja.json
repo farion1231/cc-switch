@@ -344,7 +344,21 @@
       "saved": "プロキシ設定を保存しました",
       "saveFailed": "保存に失敗しました: {{error}}",
       "testSuccess": "接続成功！遅延 {{latency}}ms",
-      "testFailed": "接続に失敗しました: {{error}}"
+      "testFailed": "接続に失敗しました: {{error}}",
+      "pricingDefaultsTitle": "課金のデフォルト設定",
+      "pricingDefaultsDescription": "アプリごとのデフォルト倍率と課金モードを設定します。",
+      "pricingAppLabel": "アプリ",
+      "defaultCostMultiplierLabel": "デフォルト倍率",
+      "defaultCostMultiplierHint": "コスト計算用の倍率（小数対応）。",
+      "pricingModelSourceLabel": "課金モード",
+      "pricingModelSourceRequest": "リクエストモデル",
+      "pricingModelSourceResponse": "レスポンスモデル",
+      "pricingSave": "課金設定を保存",
+      "pricingSaved": "課金設定を保存しました",
+      "pricingSaveFailed": "課金設定の保存に失敗しました: {{error}}",
+      "pricingLoadFailed": "課金設定の読み込みに失敗しました: {{error}}",
+      "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
+      "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
     }
   },
   "apps": {
@@ -480,7 +494,18 @@
     "useCustomProxy": "個別プロキシを使用",
     "proxyConfigDesc": "このプロバイダーに個別のネットワークプロキシを設定します。無効の場合はシステムプロキシまたはグローバル設定を使用します。",
     "proxyUsername": "ユーザー名（任意）",
-    "proxyPassword": "パスワード（任意）"
+    "proxyPassword": "パスワード（任意）",
+    "pricingConfig": "課金設定",
+    "useCustomPricing": "個別設定を使用",
+    "pricingConfigDesc": "このプロバイダーに個別の課金パラメータを設定します。無効の場合はグローバル設定を使用します。",
+    "costMultiplier": "コスト倍率",
+    "costMultiplierPlaceholder": "空白の場合はグローバル設定を使用（1）",
+    "costMultiplierHint": "実際のコスト = 基本コスト × 倍率、1.5 などの小数をサポート",
+    "pricingModelSourceLabel": "課金モード",
+    "pricingModelSourceInherit": "グローバル設定を継承",
+    "pricingModelSourceRequest": "リクエストモデル",
+    "pricingModelSourceResponse": "レスポンスモデル",
+    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
@@ -583,6 +608,9 @@
     "cacheCreationTokens": "キャッシュ作成",
     "timingInfo": "応答時間/TTFT",
     "status": "ステータス",
+    "multiplier": "倍率",
+    "requestModel": "リクエストモデル",
+    "responseModel": "レスポンスモデル",
     "noData": "データなし",
     "unknownProvider": "不明なプロバイダー",
     "stream": "ストリーム",
