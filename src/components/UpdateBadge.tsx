@@ -1,6 +1,7 @@
 import { useUpdate } from "@/contexts/UpdateContext";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { ArrowUpCircle } from "lucide-react";
 
 interface UpdateBadgeProps {
   className?: string;
@@ -30,17 +31,12 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
       aria-label={title}
       onClick={onClick}
       className={`
-        relative h-6 w-6 rounded-full
-        ${isActive ? "text-blue-600 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-500/10" : "text-muted-foreground hover:bg-muted/60"}
+        relative h-8 w-8 rounded-full
+        ${isActive ? "text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-500/10" : "text-muted-foreground hover:bg-muted/60"}
         ${className}
       `}
     >
-      <span
-        className={`
-          absolute inset-0 m-auto h-2 w-2 rounded-full ring-1 ring-background
-          ${isActive ? "bg-blue-500 dark:bg-blue-400" : "bg-blue-300/70 dark:bg-blue-300/60"}
-        `}
-      />
+      <ArrowUpCircle className="h-5 w-5" />
     </Button>
   );
 }
