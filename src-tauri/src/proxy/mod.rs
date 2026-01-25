@@ -22,6 +22,7 @@ pub mod response_processor;
 pub(crate) mod server;
 pub mod session;
 pub mod thinking_rectifier;
+pub mod transform;
 pub(crate) mod types;
 pub mod usage;
 

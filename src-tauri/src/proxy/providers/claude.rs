@@ -48,25 +48,6 @@ impl ClaudeAdapter {
         false
     }
 
-    /// 检测 OpenRouter 是否启用兼容模式
-    fn is_openrouter_compat_enabled(&self, provider: &Provider) -> bool {
-        if !self.is_openrouter(provider) {
-            return false;
-        }
-
-        let raw = provider.settings_config.get("openrouter_compat_mode");
-        match raw {
-            Some(serde_json::Value::Bool(enabled)) => *enabled,
-            Some(serde_json::Value::Number(num)) => num.as_i64().unwrap_or(0) != 0,
-            Some(serde_json::Value::String(value)) => {
-                let normalized = value.trim().to_lowercase();
-                normalized == "true" || normalized == "1"
-            }
-            // OpenRouter now supports Claude Code compatible API, default to passthrough
-            _ => false,
-        }
-    }
-
     /// 检测是否为仅 Bearer 认证模式
     fn is_bearer_only_mode(&self, provider: &Provider) -> bool {
         // 检查 settings_config 中的 auth_mode
@@ -252,27 +233,6 @@ impl ProviderAdapter for ClaudeAdapter {
             _ => request,
         }
     }
-
-    fn needs_transform(&self, _provider: &Provider) -> bool {
-        // NOTE:
-        // OpenRouter 已推出 Claude Code 兼容接口（可直接处理 `/v1/messages`），默认不再启用
-        // Anthropic ↔ OpenAI 的格式转换。
-        //
-        // 如果未来需要回退到旧的 OpenAI Chat Completions 方案，可恢复下面这行：
-        self.is_openrouter_compat_enabled(_provider)
-    }
-
-    fn transform_request(
-        &self,
-        body: serde_json::Value,
-        provider: &Provider,
-    ) -> Result<serde_json::Value, ProxyError> {
-        super::transform::anthropic_to_openai(body, provider)
-    }
-
-    fn transform_response(&self, body: serde_json::Value) -> Result<serde_json::Value, ProxyError> {
-        super::transform::openai_to_anthropic(body)
-    }
 }
 
 #[cfg(test)]
@@ -453,42 +413,5 @@ mod tests {
         // 已有查询参数时不重复添加
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar");
         assert_eq!(url, "https://api.anthropic.com/v1/messages?foo=bar");
-    }
-
-    #[test]
-    fn test_needs_transform() {
-        let adapter = ClaudeAdapter::new();
-
-        let anthropic_provider = create_provider(json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
-            }
-        }));
-        assert!(!adapter.needs_transform(&anthropic_provider));
-
-        // OpenRouter provider without explicit setting now defaults to passthrough (no transform)
-        let openrouter_provider = create_provider(json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api"
-            }
-        }));
-        assert!(!adapter.needs_transform(&openrouter_provider));
-
-        // OpenRouter provider with explicit compat mode enabled should transform
-        let openrouter_enabled = create_provider(json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api"
-            },
-            "openrouter_compat_mode": true
-        }));
-        assert!(adapter.needs_transform(&openrouter_enabled));
-
-        let openrouter_disabled = create_provider(json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api"
-            },
-            "openrouter_compat_mode": false
-        }));
-        assert!(!adapter.needs_transform(&openrouter_disabled));
     }
 }

@@ -17,8 +17,6 @@ mod claude;
 mod codex;
 mod gemini;
 pub mod models;
-pub mod streaming;
-pub mod transform;
 
 use crate::app_config::AppType;
 use crate::provider::Provider;

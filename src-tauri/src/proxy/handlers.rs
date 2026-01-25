@@ -13,9 +13,9 @@ use super::{
         CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
     },
     handler_context::RequestContext,
-    providers::{get_adapter, streaming::create_anthropic_sse_stream, transform},
     response_processor::{create_logged_passthrough_stream, process_response, SseUsageCollector},
     server::ProxyState,
+    transform::{get_transformer, TransformConfig},
     types::*,
     usage::parser::TokenUsage,
     ProxyError,
@@ -94,13 +94,20 @@ pub async fn handle_messages(
     ctx.provider = result.provider;
     let response = result.response;
 
-    // 检查是否需要格式转换（OpenRouter 等中转服务）
-    let adapter = get_adapter(&AppType::Claude);
-    let needs_transform = adapter.needs_transform(&ctx.provider);
+    // 检查是否需要格式转换（通过 Provider 配置）
+    let transform_config = TransformConfig::from_provider(&ctx.provider);
 
     // Claude 特有：格式转换处理
-    if needs_transform {
-        return handle_claude_transform(response, &ctx, &state, &body, is_stream).await;
+    if transform_config.needs_transform() {
+        return handle_claude_transform(
+            response,
+            &ctx,
+            &state,
+            &body,
+            is_stream,
+            &transform_config,
+        )
+        .await;
     }
 
     // 通用响应处理（透传模式）
@@ -116,13 +123,26 @@ async fn handle_claude_transform(
     state: &ProxyState,
     _original_body: &Value,
     is_stream: bool,
+    transform_config: &TransformConfig,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
-    if is_stream {
+    // 获取响应转换器（OpenAI → Anthropic）
+    let response_transformer = get_transformer(
+        transform_config.target_format,
+        transform_config.source_format,
+    )
+    .ok_or_else(|| {
+        ProxyError::TransformError(format!(
+            "No transformer for {:?} → {:?}",
+            transform_config.target_format, transform_config.source_format
+        ))
+    })?;
+
+    if is_stream && transform_config.transform_streaming {
         // 流式响应转换 (OpenAI SSE → Anthropic SSE)
         let stream = response.bytes_stream();
-        let sse_stream = create_anthropic_sse_stream(stream);
+        let sse_stream = response_transformer.transform_stream(Box::pin(stream));
 
         // 创建使用量收集器
         let usage_collector = {
@@ -202,10 +222,12 @@ async fn handle_claude_transform(
         ProxyError::TransformError(format!("Failed to parse OpenAI response: {e}"))
     })?;
 
-    let anthropic_response = transform::openai_to_anthropic(openai_response).map_err(|e| {
-        log::error!("[Claude] 转换响应失败: {e}");
-        e
-    })?;
+    let anthropic_response = response_transformer
+        .transform_response(openai_response)
+        .map_err(|e| {
+            log::error!("[Claude] 转换响应失败: {e}");
+            e
+        })?;
 
     // 记录使用量
     if let Some(usage) = TokenUsage::from_claude_response(&anthropic_response) {

@@ -6,6 +6,7 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 
 /// OpenAI 流式响应数据结构
 #[derive(Debug, Deserialize)]
@@ -73,7 +74,8 @@ pub fn create_anthropic_sse_stream(
         let mut content_index = 0;
         let mut has_sent_message_start = false;
         let mut current_block_type: Option<String> = None;
-        let mut tool_call_id = None;
+        // 使用 HashMap 按 index 管理多个工具调用的 ID 和 content_index
+        let mut tool_calls_map: HashMap<usize, (String, usize)> = HashMap::new();
 
         tokio::pin!(stream);
 
@@ -94,17 +96,17 @@ pub fn create_anthropic_sse_stream(
                         for l in line.lines() {
                             if let Some(data) = l.strip_prefix("data: ") {
                                 if data.trim() == "[DONE]" {
-                                    log::debug!("[Claude/OpenRouter] <<< OpenAI SSE: [DONE]");
+                                    log::debug!("[Transform] <<< OpenAI SSE: [DONE]");
                                     let event = json!({"type": "message_stop"});
                                     let sse_data = format!("event: message_stop\ndata: {}\n\n",
                                         serde_json::to_string(&event).unwrap_or_default());
-                                    log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_stop");
+                                    log::debug!("[Transform] >>> Anthropic SSE: message_stop");
                                     yield Ok(Bytes::from(sse_data));
                                     continue;
                                 }
 
                                 if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(data) {
-                                    log::debug!("[Claude/OpenRouter] <<< SSE chunk received");
+                                    log::debug!("[Transform] <<< SSE chunk received");
 
                                     if message_id.is_none() {
                                         message_id = Some(chunk.id.clone());
@@ -210,7 +212,11 @@ pub fn create_anthropic_sse_stream(
                                         // 处理工具调用
                                         if let Some(tool_calls) = &choice.delta.tool_calls {
                                             for tool_call in tool_calls {
+                                                let tc_index = tool_call.index;
+
+                                                // 检查是否是新的工具调用（有 id 表示开始新的工具调用）
                                                 if let Some(id) = &tool_call.id {
+                                                    // 关闭当前的 content block（如果有）
                                                     if current_block_type.is_some() {
                                                         let event = json!({
                                                             "type": "content_block_stop",
@@ -222,30 +228,44 @@ pub fn create_anthropic_sse_stream(
                                                         content_index += 1;
                                                     }
 
-                                                    tool_call_id = Some(id.clone());
+                                                    // 记录这个工具调用的 ID 和对应的 content_index
+                                                    tool_calls_map.insert(tc_index, (id.clone(), content_index));
+                                                    current_block_type = Some("tool_use".to_string());
                                                 }
 
+                                                // 获取当前工具调用的信息
+                                                let (tool_id, tool_content_index) = tool_calls_map
+                                                    .get(&tc_index)
+                                                    .cloned()
+                                                    .unwrap_or_else(|| {
+                                                        log::warn!(
+                                                            "[Transform] 收到未知 index 的工具调用 delta: {tc_index}"
+                                                        );
+                                                        (String::new(), content_index)
+                                                    });
+
                                                 if let Some(function) = &tool_call.function {
+                                                    // 如果有 name，发送 content_block_start
                                                     if let Some(name) = &function.name {
                                                         let event = json!({
                                                             "type": "content_block_start",
-                                                            "index": content_index,
+                                                            "index": tool_content_index,
                                                             "content_block": {
                                                                 "type": "tool_use",
-                                                                "id": tool_call_id.clone().unwrap_or_default(),
+                                                                "id": tool_id,
                                                                 "name": name
                                                             }
                                                         });
                                                         let sse_data = format!("event: content_block_start\ndata: {}\n\n",
                                                             serde_json::to_string(&event).unwrap_or_default());
                                                         yield Ok(Bytes::from(sse_data));
-                                                        current_block_type = Some("tool_use".to_string());
                                                     }
 
+                                                    // 如果有 arguments，发送 content_block_delta
                                                     if let Some(args) = &function.arguments {
                                                         let event = json!({
                                                             "type": "content_block_delta",
-                                                            "index": content_index,
+                                                            "index": tool_content_index,
                                                             "delta": {
                                                                 "type": "input_json_delta",
                                                                 "partial_json": args
