@@ -191,6 +191,23 @@ pub struct ProviderProxyConfig {
     pub proxy_password: Option<String>,
 }
 
+/// 格式转换配置（用于 OpenRouter 等需要 API 格式转换的供应商）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FormatTransformConfig {
+    /// 是否启用格式转换
+    #[serde(default)]
+    pub enabled: bool,
+    /// 源格式：anthropic, openai, gemini
+    #[serde(rename = "sourceFormat", skip_serializing_if = "Option::is_none")]
+    pub source_format: Option<String>,
+    /// 目标格式：anthropic, openai, gemini
+    #[serde(rename = "targetFormat", skip_serializing_if = "Option::is_none")]
+    pub target_format: Option<String>,
+    /// 是否转换流式响应（默认 true）
+    #[serde(rename = "transformStreaming", skip_serializing_if = "Option::is_none")]
+    pub transform_streaming: Option<bool>,
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -227,6 +244,9 @@ pub struct ProviderMeta {
     /// 供应商单独的代理配置
     #[serde(rename = "proxyConfig", skip_serializing_if = "Option::is_none")]
     pub proxy_config: Option<ProviderProxyConfig>,
+    /// 格式转换配置（用于 OpenRouter 等需要 API 格式转换的供应商）
+    #[serde(rename = "formatTransform", skip_serializing_if = "Option::is_none")]
+    pub format_transform: Option<FormatTransformConfig>,
 }
 
 impl ProviderManager {
