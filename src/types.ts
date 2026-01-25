@@ -119,6 +119,18 @@ export interface ProviderProxyConfig {
   proxyPassword?: string;
 }
 
+// 格式转换配置（用于 OpenRouter 等需要 API 格式转换的供应商）
+export interface FormatTransformConfig {
+  // 是否启用格式转换
+  enabled: boolean;
+  // 源格式：anthropic, openai, gemini
+  sourceFormat?: "anthropic" | "openai" | "gemini";
+  // 目标格式：anthropic, openai, gemini
+  targetFormat?: "anthropic" | "openai" | "gemini";
+  // 是否转换流式响应（默认 true）
+  transformStreaming?: boolean;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -135,6 +147,8 @@ export interface ProviderMeta {
   testConfig?: ProviderTestConfig;
   // 供应商单独的代理配置
   proxyConfig?: ProviderProxyConfig;
+  // 格式转换配置（用于 OpenRouter 等需要 API 格式转换的供应商）
+  formatTransform?: FormatTransformConfig;
 }
 
 // Skill 同步方式

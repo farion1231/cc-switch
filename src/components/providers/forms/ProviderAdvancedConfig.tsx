@@ -8,19 +8,33 @@ import {
   Eye,
   EyeOff,
   X,
+  ArrowLeftRight,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import type { ProviderTestConfig, ProviderProxyConfig } from "@/types";
+import type {
+  ProviderTestConfig,
+  ProviderProxyConfig,
+  FormatTransformConfig,
+} from "@/types";
 
 interface ProviderAdvancedConfigProps {
   testConfig: ProviderTestConfig;
   proxyConfig: ProviderProxyConfig;
+  formatTransform?: FormatTransformConfig;
   onTestConfigChange: (config: ProviderTestConfig) => void;
   onProxyConfigChange: (config: ProviderProxyConfig) => void;
+  onFormatTransformChange?: (config: FormatTransformConfig) => void;
 }
 
 /** 从 ProviderProxyConfig 构建完整 URL */
@@ -71,13 +85,18 @@ function parseProxyUrl(url: string): Partial<ProviderProxyConfig> {
 export function ProviderAdvancedConfig({
   testConfig,
   proxyConfig,
+  formatTransform,
   onTestConfigChange,
   onProxyConfigChange,
+  onFormatTransformChange,
 }: ProviderAdvancedConfigProps) {
   const { t } = useTranslation();
   const [isTestConfigOpen, setIsTestConfigOpen] = useState(testConfig.enabled);
   const [isProxyConfigOpen, setIsProxyConfigOpen] = useState(
     proxyConfig.enabled,
+  );
+  const [isFormatTransformOpen, setIsFormatTransformOpen] = useState(
+    formatTransform?.enabled ?? false,
   );
   const [showPassword, setShowPassword] = useState(false);
 
@@ -96,6 +115,11 @@ export function ProviderAdvancedConfig({
   useEffect(() => {
     setIsProxyConfigOpen(proxyConfig.enabled);
   }, [proxyConfig.enabled]);
+
+  // 同步外部 formatTransform.enabled 变化到展开状态
+  useEffect(() => {
+    setIsFormatTransformOpen(formatTransform?.enabled ?? false);
+  }, [formatTransform?.enabled]);
 
   // 仅在外部 proxyConfig 变化且非用户输入时同步（如：重置表单、加载数据）
   useEffect(() => {
@@ -450,6 +474,135 @@ export function ProviderAdvancedConfig({
           </div>
         </div>
       </div>
+
+      {/* 格式转换配置 */}
+      {onFormatTransformChange && (
+        <div className="rounded-lg border border-border/50 bg-muted/20">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between p-4 hover:bg-muted/30 transition-colors"
+            onClick={() => setIsFormatTransformOpen(!isFormatTransformOpen)}
+          >
+            <div className="flex items-center gap-3">
+              <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium">
+                {t("providerAdvanced.formatTransform")}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div
+                className="flex items-center gap-2"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Label
+                  htmlFor="format-transform-enabled"
+                  className="text-sm text-muted-foreground"
+                >
+                  {t("providerAdvanced.enableFormatTransform")}
+                </Label>
+                <Switch
+                  id="format-transform-enabled"
+                  checked={formatTransform?.enabled ?? false}
+                  onCheckedChange={(checked) => {
+                    onFormatTransformChange({
+                      ...(formatTransform ?? { enabled: false }),
+                      enabled: checked,
+                    });
+                    if (checked) setIsFormatTransformOpen(true);
+                  }}
+                />
+              </div>
+              {isFormatTransformOpen ? (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              )}
+            </div>
+          </button>
+          <div
+            className={cn(
+              "overflow-hidden transition-all duration-200",
+              isFormatTransformOpen
+                ? "max-h-[500px] opacity-100"
+                : "max-h-0 opacity-0",
+            )}
+          >
+            <div className="border-t border-border/50 p-4 space-y-4">
+              <p className="text-sm text-muted-foreground">
+                {t("providerAdvanced.formatTransformDesc")}
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="source-format">
+                    {t("providerAdvanced.sourceFormat")}
+                  </Label>
+                  <Select
+                    value={formatTransform?.sourceFormat ?? "anthropic"}
+                    onValueChange={(value) =>
+                      onFormatTransformChange({
+                        ...(formatTransform ?? { enabled: false }),
+                        sourceFormat: value as "anthropic" | "openai",
+                      })
+                    }
+                    disabled={!formatTransform?.enabled}
+                  >
+                    <SelectTrigger id="source-format">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="anthropic">
+                        Anthropic (Claude)
+                      </SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="target-format">
+                    {t("providerAdvanced.targetFormat")}
+                  </Label>
+                  <Select
+                    value={formatTransform?.targetFormat ?? "openai"}
+                    onValueChange={(value) =>
+                      onFormatTransformChange({
+                        ...(formatTransform ?? { enabled: false }),
+                        targetFormat: value as "anthropic" | "openai",
+                      })
+                    }
+                    disabled={!formatTransform?.enabled}
+                  >
+                    <SelectTrigger id="target-format">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="anthropic">
+                        Anthropic (Claude)
+                      </SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="transform-streaming"
+                  checked={formatTransform?.transformStreaming ?? true}
+                  onCheckedChange={(checked) =>
+                    onFormatTransformChange({
+                      ...(formatTransform ?? { enabled: false }),
+                      transformStreaming: checked,
+                    })
+                  }
+                  disabled={!formatTransform?.enabled}
+                />
+                <Label htmlFor="transform-streaming" className="text-sm">
+                  {t("providerAdvanced.transformStreaming")}
+                </Label>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

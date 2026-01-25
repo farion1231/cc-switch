@@ -13,6 +13,7 @@ import type {
   ProviderMeta,
   ProviderTestConfig,
   ProviderProxyConfig,
+  FormatTransformConfig,
 } from "@/types";
 import {
   providerPresets,
@@ -167,6 +168,9 @@ export function ProviderForm({
   );
   const [proxyConfig, setProxyConfig] = useState<ProviderProxyConfig>(
     () => initialData?.meta?.proxyConfig ?? { enabled: false },
+  );
+  const [formatTransform, setFormatTransform] = useState<FormatTransformConfig>(
+    () => initialData?.meta?.formatTransform ?? { enabled: false },
   );
 
   // 使用 category hook
@@ -940,6 +944,7 @@ export function ProviderForm({
       // 添加高级配置
       testConfig: testConfig.enabled ? testConfig : undefined,
       proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
+      formatTransform: formatTransform.enabled ? formatTransform : undefined,
     };
 
     onSubmit(payload);
@@ -1464,8 +1469,10 @@ export function ProviderForm({
         <ProviderAdvancedConfig
           testConfig={testConfig}
           proxyConfig={proxyConfig}
+          formatTransform={formatTransform}
           onTestConfigChange={setTestConfig}
           onProxyConfigChange={setProxyConfig}
+          onFormatTransformChange={setFormatTransform}
         />
 
         {showButtons && (
