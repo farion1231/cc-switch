@@ -40,6 +40,7 @@ impl CostCalculator {
     /// - input_cost: (input_tokens - cache_read_tokens) × 输入价格
     /// - cache_read_cost: cache_read_tokens × 缓存读取价格
     /// - 这样避免缓存部分被重复计费
+    /// - total_cost: 各项成本之和 × 倍率（倍率只作用于最终总价）
     pub fn calculate(
         usage: &TokenUsage,
         pricing: &ModelPricing,
@@ -50,21 +51,20 @@ impl CostCalculator {
         // 计算实际需要按输入价格计费的 token 数（减去缓存命中部分）
         let billable_input_tokens = usage.input_tokens.saturating_sub(usage.cache_read_tokens);
 
-        let input_cost = Decimal::from(billable_input_tokens) * pricing.input_cost_per_million
-            / million
-            * cost_multiplier;
-        let output_cost = Decimal::from(usage.output_tokens) * pricing.output_cost_per_million
-            / million
-            * cost_multiplier;
+        // 各项基础成本（不含倍率）
+        let input_cost =
+            Decimal::from(billable_input_tokens) * pricing.input_cost_per_million / million;
+        let output_cost =
+            Decimal::from(usage.output_tokens) * pricing.output_cost_per_million / million;
         let cache_read_cost =
-            Decimal::from(usage.cache_read_tokens) * pricing.cache_read_cost_per_million / million
-                * cost_multiplier;
+            Decimal::from(usage.cache_read_tokens) * pricing.cache_read_cost_per_million / million;
         let cache_creation_cost = Decimal::from(usage.cache_creation_tokens)
             * pricing.cache_creation_cost_per_million
-            / million
-            * cost_multiplier;
+            / million;
 
-        let total_cost = input_cost + output_cost + cache_read_cost + cache_creation_cost;
+        // 总成本 = 各项基础成本之和 × 倍率
+        let base_total = input_cost + output_cost + cache_read_cost + cache_creation_cost;
+        let total_cost = base_total * cost_multiplier;
 
         CostBreakdown {
             input_cost,
@@ -151,8 +151,9 @@ mod tests {
 
         let cost = CostCalculator::calculate(&usage, &pricing, multiplier);
 
-        // input: 1000 * 3.0 / 1M * 1.5 = 0.0045
-        assert_eq!(cost.input_cost, Decimal::from_str("0.0045").unwrap());
+        // input_cost: 基础价格（不含倍率）= 1000 * 3.0 / 1M = 0.003
+        assert_eq!(cost.input_cost, Decimal::from_str("0.003").unwrap());
+        // total_cost: 基础价格 × 倍率 = 0.003 * 1.5 = 0.0045
         assert_eq!(cost.total_cost, Decimal::from_str("0.0045").unwrap());
     }
 
