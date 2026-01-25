@@ -4,6 +4,7 @@
 
 use crate::error::AppError;
 use crate::proxy::types::*;
+use rust_decimal::Decimal;
 
 use super::super::{lock_conn, Database};
 
@@ -69,6 +70,101 @@ impl Database {
                 config.listen_port as i32,
                 if config.enable_logging { 1 } else { 0 },
             ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// 获取默认成本倍率
+    pub async fn get_default_cost_multiplier(&self, app_type: &str) -> Result<String, AppError> {
+        let result = {
+            let conn = lock_conn!(self.conn);
+            conn.query_row(
+                "SELECT default_cost_multiplier FROM proxy_config WHERE app_type = ?1",
+                [app_type],
+                |row| row.get(0),
+            )
+        };
+
+        match result {
+            Ok(value) => Ok(value),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                self.init_proxy_config_rows().await?;
+                Ok("1".to_string())
+            }
+            Err(e) => Err(AppError::Database(e.to_string())),
+        }
+    }
+
+    /// 设置默认成本倍率
+    pub async fn set_default_cost_multiplier(
+        &self,
+        app_type: &str,
+        value: &str,
+    ) -> Result<(), AppError> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::InvalidInput("倍率不能为空".to_string()));
+        }
+        trimmed
+            .parse::<Decimal>()
+            .map_err(|e| AppError::InvalidInput(format!("无效倍率: {value} - {e}")))?;
+
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE proxy_config SET
+                default_cost_multiplier = ?2,
+                updated_at = datetime('now')
+             WHERE app_type = ?1",
+            rusqlite::params![app_type, trimmed],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// 获取计费模式来源
+    pub async fn get_pricing_model_source(&self, app_type: &str) -> Result<String, AppError> {
+        let result = {
+            let conn = lock_conn!(self.conn);
+            conn.query_row(
+                "SELECT pricing_model_source FROM proxy_config WHERE app_type = ?1",
+                [app_type],
+                |row| row.get(0),
+            )
+        };
+
+        match result {
+            Ok(value) => Ok(value),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                self.init_proxy_config_rows().await?;
+                Ok("response".to_string())
+            }
+            Err(e) => Err(AppError::Database(e.to_string())),
+        }
+    }
+
+    /// 设置计费模式来源
+    pub async fn set_pricing_model_source(
+        &self,
+        app_type: &str,
+        value: &str,
+    ) -> Result<(), AppError> {
+        let trimmed = value.trim();
+        if !matches!(trimmed, "response" | "request") {
+            return Err(AppError::InvalidInput(format!(
+                "无效计费模式: {value}"
+            )));
+        }
+
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE proxy_config SET
+                pricing_model_source = ?2,
+                updated_at = datetime('now')
+             WHERE app_type = ?1",
+            rusqlite::params![app_type, trimmed],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -658,6 +754,59 @@ impl Database {
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::database::Database;
+    use crate::error::AppError;
+
+    #[tokio::test]
+    async fn test_default_cost_multiplier_round_trip() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        let default = db.get_default_cost_multiplier("claude").await?;
+        assert_eq!(default, "1");
+
+        db.set_default_cost_multiplier("claude", "1.5").await?;
+        let updated = db.get_default_cost_multiplier("claude").await?;
+        assert_eq!(updated, "1.5");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_default_cost_multiplier_validation() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        let err = db
+            .set_default_cost_multiplier("claude", "not-a-number")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pricing_model_source_round_trip_and_validation() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        let default = db.get_pricing_model_source("claude").await?;
+        assert_eq!(default, "response");
+
+        db.set_pricing_model_source("claude", "request").await?;
+        let updated = db.get_pricing_model_source("claude").await?;
+        assert_eq!(updated, "request");
+
+        let err = db
+            .set_pricing_model_source("claude", "invalid")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
 
         Ok(())
     }
