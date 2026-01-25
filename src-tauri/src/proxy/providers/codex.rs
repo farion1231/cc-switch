@@ -141,6 +141,20 @@ impl ProviderAdapter for CodexAdapter {
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
 
+        // 检查 base_url 是否已包含 endpoint 的核心路径
+        // 例如：base_url = "https://api.example.com/v1/chat/completions"
+        //       endpoint = "/v1/chat/completions"
+        // 此时不应再拼接，直接返回 base_url
+        let endpoint_core = endpoint_trimmed
+            .trim_start_matches("v1/")
+            .trim_start_matches("v1");
+        let endpoint_core = endpoint_core.trim_start_matches('/');
+
+        // 如果 base_url 已经以 endpoint 核心路径结尾，直接返回 base_url
+        if !endpoint_core.is_empty() && base_trimmed.ends_with(endpoint_core) {
+            return base_trimmed.to_string();
+        }
+
         let mut url = format!("{base_trimmed}/{endpoint_trimmed}");
 
         // 去除重复的 /v1/v1
@@ -229,6 +243,33 @@ mod tests {
         // base_url 已包含 /v1，endpoint 也包含 /v1
         let url = adapter.build_url("https://www.packyapi.com/v1", "/v1/responses");
         assert_eq!(url, "https://www.packyapi.com/v1/responses");
+    }
+
+    #[test]
+    fn test_build_url_base_already_has_chat_completions() {
+        let adapter = CodexAdapter::new();
+        // base_url 已包含 chat/completions，不应再拼接
+        let url = adapter.build_url(
+            "https://api.example.com/v1/chat/completions",
+            "/v1/chat/completions",
+        );
+        assert_eq!(url, "https://api.example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_build_url_base_already_has_responses() {
+        let adapter = CodexAdapter::new();
+        // base_url 已包含 responses，不应再拼接
+        let url = adapter.build_url("https://api.example.com/v1/responses", "/v1/responses");
+        assert_eq!(url, "https://api.example.com/v1/responses");
+    }
+
+    #[test]
+    fn test_build_url_base_without_endpoint() {
+        let adapter = CodexAdapter::new();
+        // base_url 不包含 endpoint，应正常拼接
+        let url = adapter.build_url("https://api.example.com/v1", "/v1/chat/completions");
+        assert_eq!(url, "https://api.example.com/v1/chat/completions");
     }
 
     // 官方客户端检测测试
