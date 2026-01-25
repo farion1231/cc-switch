@@ -46,7 +46,10 @@ import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
-import { ProviderAdvancedConfig } from "./ProviderAdvancedConfig";
+import {
+  ProviderAdvancedConfig,
+  type PricingModelSourceOption,
+} from "./ProviderAdvancedConfig";
 import {
   useProviderCategory,
   useApiKeyState,
@@ -121,6 +124,11 @@ interface ProviderFormProps {
   showButtons?: boolean;
 }
 
+const normalizePricingSource = (
+  value?: string,
+): PricingModelSourceOption =>
+  value === "request" || value === "response" ? value : "inherit";
+
 export function ProviderForm({
   appId,
   providerId,
@@ -168,6 +176,19 @@ export function ProviderForm({
   const [proxyConfig, setProxyConfig] = useState<ProviderProxyConfig>(
     () => initialData?.meta?.proxyConfig ?? { enabled: false },
   );
+  const [pricingConfig, setPricingConfig] = useState<{
+    enabled: boolean;
+    costMultiplier?: string;
+    pricingModelSource: PricingModelSourceOption;
+  }>(() => ({
+    enabled:
+      initialData?.meta?.costMultiplier !== undefined ||
+      initialData?.meta?.pricingModelSource !== undefined,
+    costMultiplier: initialData?.meta?.costMultiplier,
+    pricingModelSource: normalizePricingSource(
+      initialData?.meta?.pricingModelSource,
+    ),
+  }));
 
   // 使用 category hook
   const { category } = useProviderCategory({
@@ -188,6 +209,15 @@ export function ProviderForm({
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
     setProxyConfig(initialData?.meta?.proxyConfig ?? { enabled: false });
+    setPricingConfig({
+      enabled:
+        initialData?.meta?.costMultiplier !== undefined ||
+        initialData?.meta?.pricingModelSource !== undefined,
+      costMultiplier: initialData?.meta?.costMultiplier,
+      pricingModelSource: normalizePricingSource(
+        initialData?.meta?.pricingModelSource,
+      ),
+    });
   }, [appId, initialData]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -940,6 +970,11 @@ export function ProviderForm({
       // 添加高级配置
       testConfig: testConfig.enabled ? testConfig : undefined,
       proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
+      costMultiplier: pricingConfig.enabled ? pricingConfig.costMultiplier : undefined,
+      pricingModelSource:
+        pricingConfig.enabled && pricingConfig.pricingModelSource !== "inherit"
+          ? pricingConfig.pricingModelSource
+          : undefined,
     };
 
     onSubmit(payload);
@@ -1464,8 +1499,10 @@ export function ProviderForm({
         <ProviderAdvancedConfig
           testConfig={testConfig}
           proxyConfig={proxyConfig}
+          pricingConfig={pricingConfig}
           onTestConfigChange={setTestConfig}
           onProxyConfigChange={setProxyConfig}
+          onPricingConfigChange={setPricingConfig}
         />
 
         {showButtons && (

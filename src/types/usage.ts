@@ -13,6 +13,8 @@ export interface RequestLog {
   providerName?: string;
   appType: string;
   model: string;
+  requestModel?: string;
+  costMultiplier: string;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;

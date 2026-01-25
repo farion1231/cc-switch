@@ -135,6 +135,10 @@ export interface ProviderMeta {
   testConfig?: ProviderTestConfig;
   // 供应商单独的代理配置
   proxyConfig?: ProviderProxyConfig;
+  // 供应商成本倍率
+  costMultiplier?: string;
+  // 供应商计费模式来源
+  pricingModelSource?: string;
 }
 
 // Skill 同步方式
