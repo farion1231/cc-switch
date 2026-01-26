@@ -381,6 +381,7 @@ describe("useSettings hook", () => {
       "/server/claude",
       undefined,
       undefined, // geminiConfigDir
+      undefined, // opencodeConfigDir
     );
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
   });

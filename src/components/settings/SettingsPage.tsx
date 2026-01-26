@@ -36,6 +36,7 @@ import { ThemeSettings } from "@/components/settings/ThemeSettings";
 import { WindowSettings } from "@/components/settings/WindowSettings";
 import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
 import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
+import { TerminalSettings } from "@/components/settings/TerminalSettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { AboutSection } from "@/components/settings/AboutSection";
@@ -256,6 +257,12 @@ export function SettingsPage({
                       handleAutoSave({ skillSyncMethod: method })
                     }
                   />
+                  <TerminalSettings
+                    value={settings.preferredTerminal}
+                    onChange={(terminal) =>
+                      handleAutoSave({ preferredTerminal: terminal })
+                    }
+                  />
                 </motion.div>
               ) : null}
             </TabsContent>
@@ -300,6 +307,7 @@ export function SettingsPage({
                           claudeDir={settings.claudeConfigDir}
                           codexDir={settings.codexConfigDir}
                           geminiDir={settings.geminiConfigDir}
+                          opencodeDir={settings.opencodeConfigDir}
                           onDirectoryChange={updateDirectory}
                           onBrowseDirectory={browseDirectory}
                           onResetDirectory={resetDirectory}

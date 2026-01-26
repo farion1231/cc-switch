@@ -172,6 +172,8 @@ export interface Settings {
   skipClaudeOnboarding?: boolean;
   // 是否开机自启
   launchOnStartup?: boolean;
+  // 静默启动（程序启动时不显示主窗口）
+  silentStartup?: boolean;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "ja";
 
@@ -199,6 +201,13 @@ export interface Settings {
   // ===== Skill 同步设置 =====
   // Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
   skillSyncMethod?: SkillSyncMethod;
+
+  // ===== 终端设置 =====
+  // 首选终端应用（可选，默认使用系统默认终端）
+  // macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty"
+  // Windows: "cmd" | "powershell" | "wt"
+  // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
+  preferredTerminal?: string;
 }
 
 // MCP 服务器连接参数（宽松：允许扩展字段）

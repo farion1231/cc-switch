@@ -971,12 +971,18 @@ fn export_sql_returns_error_for_invalid_path() {
 
     let state = create_test_state().expect("create test state");
 
-    // Try to export to an invalid path (parent directory doesn't exist)
-    let invalid_path = PathBuf::from("/nonexistent/directory/export.sql");
+    // Try to export to an invalid path (nonexistent parent or invalid name on Windows)
+    let invalid_parent = if cfg!(windows) {
+        std::env::temp_dir().join("cc-switch-test-invalid<>dir")
+    } else {
+        PathBuf::from("/nonexistent/directory")
+    };
+    let invalid_path = invalid_parent.join("export.sql");
     let err = state
         .db
         .export_sql(&invalid_path)
         .expect_err("export to invalid path should fail");
+    let invalid_prefix = invalid_parent.to_string_lossy();
 
     // The error can be either IoContext or Io depending on where it fails
     match err {
@@ -988,8 +994,8 @@ fn export_sql_returns_error_for_invalid_path() {
         }
         AppError::Io { path, .. } => {
             assert!(
-                path.starts_with("/nonexistent"),
-                "expected error for /nonexistent path, got: {path:?}"
+                path.starts_with(invalid_prefix.as_ref()),
+                "expected error for {invalid_parent:?}, got: {path:?}"
             );
         }
         other => panic!("expected IoContext or Io error, got {other:?}"),
