@@ -114,29 +114,27 @@ export function EditProviderDialog({
                         setLiveSettings(live);
                       }
                     } else if (appId === "gemini") {
-                      // Gemini: 处理 env 格式
+                      // Gemini: common config is stored as JSON {"KEY": "VALUE"} format
                       const liveEnv =
                         (live as { env?: Record<string, string> }).env ?? {};
-                      // 将 env 格式的通用配置转换为对象
-                      const commonEnvObj: Record<string, string> = {};
-                      for (const line of commonSnippet.trim().split("\n")) {
-                        const trimmedLine = line.trim();
-                        if (trimmedLine && !trimmedLine.startsWith("#")) {
-                          const eqIndex = trimmedLine.indexOf("=");
-                          if (eqIndex > 0) {
-                            const key = trimmedLine.slice(0, eqIndex).trim();
-                            const value = trimmedLine.slice(eqIndex + 1).trim();
-                            commonEnvObj[key] = value;
-                          }
+                      // Parse common config as JSON
+                      const commonEnvObj = JSON.parse(
+                        commonSnippet.trim(),
+                      ) as Record<string, unknown>;
+                      // Convert to string record, filtering out non-string values
+                      const commonEnvStrObj: Record<string, string> = {};
+                      for (const [key, value] of Object.entries(commonEnvObj)) {
+                        if (typeof value === "string") {
+                          commonEnvStrObj[key] = value;
                         }
                       }
                       if (
                         isPlainObject(liveEnv) &&
-                        isPlainObject(commonEnvObj)
+                        isPlainObject(commonEnvStrObj)
                       ) {
                         const { customConfig } = extractDifference(
                           liveEnv,
-                          commonEnvObj,
+                          commonEnvStrObj,
                         );
                         setLiveSettings({
                           ...live,
