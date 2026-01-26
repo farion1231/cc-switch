@@ -22,6 +22,8 @@ interface JsonEditorProps {
   language?: "json" | "javascript";
   height?: string | number;
   showMinimap?: boolean; // 添加此属性以防未来使用
+  /** 只读模式 */
+  readOnly?: boolean;
 }
 
 const JsonEditor: React.FC<JsonEditorProps> = ({
@@ -33,6 +35,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   showValidation = true,
   language = "json",
   height,
+  readOnly = false,
 }) => {
   const { t } = useTranslation();
   const editorRef = useRef<HTMLDivElement>(null);
@@ -150,6 +153,22 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       }),
     ];
 
+    // 如果是只读模式，添加只读扩展
+    if (readOnly) {
+      extensions.push(EditorState.readOnly.of(true));
+      extensions.push(
+        EditorView.theme({
+          ".cm-editor": {
+            opacity: "0.8",
+            cursor: "default",
+          },
+          ".cm-content": {
+            cursor: "default",
+          },
+        }),
+      );
+    }
+
     // 如果启用深色模式，添加深色主题
     if (darkMode) {
       extensions.push(oneDark);
@@ -208,7 +227,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       view.destroy();
       viewRef.current = null;
     };
-  }, [darkMode, rows, height, language, jsonLinter]); // 依赖项中不包含 onChange 和 placeholder，避免不必要的重建
+  }, [darkMode, rows, height, language, jsonLinter, readOnly]); // 依赖项中不包含 onChange 和 placeholder，避免不必要的重建
 
   // 当 value 从外部改变时更新编辑器内容
   useEffect(() => {
