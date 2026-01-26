@@ -36,6 +36,8 @@ import type { OpenCodeModel } from "@/types";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import { applyTemplateValues } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
+import { extractDifference, isPlainObject } from "@/utils/configMerge";
+import { extractTomlDifference } from "@/utils/tomlConfigMerge";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
@@ -413,6 +415,7 @@ export function ProviderForm({
     isExtracting: isClaudeExtracting,
     handleExtract: handleClaudeExtract,
     isLoading: isClaudeCommonConfigLoading,
+    finalConfig: claudeFinalConfig,
   } = useCommonConfigSnippet({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: (config) => form.setValue("settingsConfig", config),
@@ -432,6 +435,7 @@ export function ProviderForm({
     isExtracting: isCodexExtracting,
     handleExtract: handleCodexExtract,
     isLoading: isCodexCommonConfigLoading,
+    finalConfig: codexFinalConfig,
   } = useCodexCommonConfig({
     codexConfig,
     onConfigChange: handleCodexConfigChange,
@@ -520,6 +524,7 @@ export function ProviderForm({
     isExtracting: isGeminiExtracting,
     handleExtract: handleGeminiExtract,
     isLoading: isGeminiCommonConfigLoading,
+    finalEnv: geminiFinalEnv,
   } = useGeminiCommonConfig({
     envValue: geminiEnv,
     onEnvChange: handleGeminiEnvChange,
@@ -909,9 +914,20 @@ export function ProviderForm({
     if (appId === "codex") {
       try {
         const authJson = JSON.parse(codexAuth);
+        // 如果启用了通用配置，只保存与通用配置不同的部分（自定义配置）
+        let configToSave = codexConfig ?? "";
+        if (useCodexCommonConfigFlag && codexCommonConfigSnippet.trim()) {
+          const { customToml, error } = extractTomlDifference(
+            codexConfig ?? "",
+            codexCommonConfigSnippet.trim(),
+          );
+          if (!error) {
+            configToSave = customToml;
+          }
+        }
         const configObj = {
           auth: authJson,
-          config: codexConfig ?? "",
+          config: configToSave,
         };
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
@@ -921,8 +937,16 @@ export function ProviderForm({
     } else if (appId === "gemini") {
       // Gemini: 组合 env 和 config
       try {
-        const envObj = envStringToObj(geminiEnv);
+        let envObj = envStringToObj(geminiEnv);
         const configObj = geminiConfig.trim() ? JSON.parse(geminiConfig) : {};
+        // 如果启用了通用配置，只保存与通用配置不同的部分（自定义配置）
+        if (useGeminiCommonConfigFlag && geminiCommonConfigSnippet.trim()) {
+          const commonEnvObj = envStringToObj(geminiCommonConfigSnippet.trim());
+          if (isPlainObject(envObj) && isPlainObject(commonEnvObj)) {
+            const { customConfig } = extractDifference(envObj, commonEnvObj);
+            envObj = customConfig as Record<string, string>;
+          }
+        }
         const combined = {
           env: envObj,
           config: configObj,
@@ -934,7 +958,27 @@ export function ProviderForm({
       }
     } else {
       // Claude: 使用表单配置
-      settingsConfig = values.settingsConfig.trim();
+      // 如果启用了通用配置，只保存与通用配置不同的部分（自定义配置）
+      if (useCommonConfig && commonConfigSnippet.trim()) {
+        try {
+          const currentConfig = JSON.parse(values.settingsConfig.trim());
+          const commonConfig = JSON.parse(commonConfigSnippet.trim());
+          if (isPlainObject(currentConfig) && isPlainObject(commonConfig)) {
+            const { customConfig } = extractDifference(
+              currentConfig,
+              commonConfig,
+            );
+            settingsConfig = JSON.stringify(customConfig, null, 2);
+          } else {
+            settingsConfig = values.settingsConfig.trim();
+          }
+        } catch {
+          // 如果解析失败，使用原始配置
+          settingsConfig = values.settingsConfig.trim();
+        }
+      } else {
+        settingsConfig = values.settingsConfig.trim();
+      }
     }
 
     const payload: ProviderFormValues = {
@@ -1447,6 +1491,7 @@ export function ProviderForm({
               configError={codexConfigError}
               onExtract={handleCodexExtract}
               isExtracting={isCodexExtracting}
+              finalConfig={codexFinalConfig}
             />
             {/* 配置验证错误显示 */}
             <FormField
@@ -1477,6 +1522,7 @@ export function ProviderForm({
               configError={geminiConfigError}
               onExtract={handleGeminiExtract}
               isExtracting={isGeminiExtracting}
+              finalEnv={envObjToString(geminiFinalEnv)}
             />
             {/* 配置验证错误显示 */}
             <FormField
@@ -1534,6 +1580,7 @@ export function ProviderForm({
               onModalClose={() => setIsCommonConfigModalOpen(false)}
               onExtract={handleClaudeExtract}
               isExtracting={isClaudeExtracting}
+              finalConfig={claudeFinalConfig}
             />
             {/* 配置验证错误显示 */}
             <FormField
