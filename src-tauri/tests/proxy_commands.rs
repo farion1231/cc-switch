@@ -7,6 +7,8 @@ use cc_switch_lib::{
 mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
+// 测试使用 Mutex 进行串行化，跨 await 持锁是预期行为
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn default_cost_multiplier_commands_round_trip() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
@@ -31,12 +33,17 @@ async fn default_cost_multiplier_commands_round_trip() {
     let err = set_default_cost_multiplier_test_hook(&state, "claude", "not-a-number")
         .await
         .expect_err("invalid multiplier should error");
+    // 错误已改为 Localized 类型（支持 i18n）
     match err {
-        AppError::InvalidInput(_) => {}
-        other => panic!("expected invalid input error, got {other:?}"),
+        AppError::Localized { key, .. } => {
+            assert_eq!(key, "error.invalidMultiplier");
+        }
+        other => panic!("expected localized error, got {other:?}"),
     }
 }
 
+// 测试使用 Mutex 进行串行化，跨 await 持锁是预期行为
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn pricing_model_source_commands_round_trip() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
@@ -61,8 +68,11 @@ async fn pricing_model_source_commands_round_trip() {
     let err = set_pricing_model_source_test_hook(&state, "claude", "invalid")
         .await
         .expect_err("invalid pricing model source should error");
+    // 错误已改为 Localized 类型（支持 i18n）
     match err {
-        AppError::InvalidInput(_) => {}
-        other => panic!("expected invalid input error, got {other:?}"),
+        AppError::Localized { key, .. } => {
+            assert_eq!(key, "error.invalidPricingMode");
+        }
+        other => panic!("expected localized error, got {other:?}"),
     }
 }

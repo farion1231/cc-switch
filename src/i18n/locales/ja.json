@@ -653,7 +653,19 @@
     "input": "Input",
     "output": "Output",
     "cacheWrite": "作成",
-    "cacheRead": "ヒット"
+    "cacheRead": "ヒット",
+    "baseCost": "基本",
+    "costMultiplier": "コスト倍率",
+    "withMultiplier": "倍率込み",
+    "requestDetail": "リクエスト詳細",
+    "requestNotFound": "リクエストが見つかりません",
+    "basicInfo": "基本情報",
+    "tokenUsage": "Token 使用量",
+    "cacheCreationCost": "キャッシュ作成コスト",
+    "costBreakdown": "コスト明細",
+    "performance": "パフォーマンス",
+    "latency": "レイテンシー",
+    "errorMessage": "エラーメッセージ"
   },
   "usageScript": {
     "title": "利用状況を設定",

@@ -465,7 +465,9 @@ impl Database {
                 app_type: row.get(3)?,
                 model: row.get(4)?,
                 request_model: row.get(5)?,
-                cost_multiplier: row.get::<_, Option<String>>(6)?.unwrap_or_else(|| "1".to_string()),
+                cost_multiplier: row
+                    .get::<_, Option<String>>(6)?
+                    .unwrap_or_else(|| "1".to_string()),
                 input_tokens: row.get::<_, i64>(7)? as u32,
                 output_tokens: row.get::<_, i64>(8)? as u32,
                 cache_read_tokens: row.get::<_, i64>(9)? as u32,
@@ -700,21 +702,26 @@ impl Database {
         )?;
 
         let million = rust_decimal::Decimal::from(1_000_000u64);
-        let input_cost = rust_decimal::Decimal::from(log.input_tokens as u64) * pricing.input
-            / million
-            * multiplier;
-        let output_cost = rust_decimal::Decimal::from(log.output_tokens as u64) * pricing.output
-            / million
-            * multiplier;
+
+        // 与 CostCalculator::calculate 保持一致的计算逻辑：
+        // 1. input_cost 需要扣除 cache_read_tokens（避免缓存部分被重复计费）
+        // 2. 各项成本是基础成本（不含倍率）
+        // 3. 倍率只作用于最终总价
+        let billable_input_tokens =
+            (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64);
+        let input_cost =
+            rust_decimal::Decimal::from(billable_input_tokens) * pricing.input / million;
+        let output_cost =
+            rust_decimal::Decimal::from(log.output_tokens as u64) * pricing.output / million;
         let cache_read_cost = rust_decimal::Decimal::from(log.cache_read_tokens as u64)
             * pricing.cache_read
-            / million
-            * multiplier;
+            / million;
         let cache_creation_cost = rust_decimal::Decimal::from(log.cache_creation_tokens as u64)
             * pricing.cache_creation
-            / million
-            * multiplier;
-        let total_cost = input_cost + output_cost + cache_read_cost + cache_creation_cost;
+            / million;
+        // 总成本 = 基础成本之和 × 倍率
+        let base_total = input_cost + output_cost + cache_read_cost + cache_creation_cost;
+        let total_cost = base_total * multiplier;
 
         log.input_cost_usd = format!("{input_cost:.6}");
         log.output_cost_usd = format!("{output_cost:.6}");

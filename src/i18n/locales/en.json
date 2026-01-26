@@ -653,7 +653,19 @@
     "input": "Input",
     "output": "Output",
     "cacheWrite": "Creation",
-    "cacheRead": "Hit"
+    "cacheRead": "Hit",
+    "baseCost": "Base",
+    "costMultiplier": "Cost Multiplier",
+    "withMultiplier": "with multiplier",
+    "requestDetail": "Request Detail",
+    "requestNotFound": "Request not found",
+    "basicInfo": "Basic Info",
+    "tokenUsage": "Token Usage",
+    "cacheCreationCost": "Cache Creation Cost",
+    "costBreakdown": "Cost Breakdown",
+    "performance": "Performance",
+    "latency": "Latency",
+    "errorMessage": "Error Message"
   },
   "usageScript": {
     "title": "Configure Usage Query",
