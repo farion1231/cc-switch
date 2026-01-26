@@ -216,10 +216,7 @@ pub struct ProviderMeta {
     #[serde(rename = "costMultiplier", skip_serializing_if = "Option::is_none")]
     pub cost_multiplier: Option<String>,
     /// 计费模式来源（response/request）
-    #[serde(
-        rename = "pricingModelSource",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "pricingModelSource", skip_serializing_if = "Option::is_none")]
     pub pricing_model_source: Option<String>,
     /// 每日消费限额（USD）
     #[serde(rename = "limitDailyUsd", skip_serializing_if = "Option::is_none")]
@@ -688,9 +685,7 @@ mod tests {
             json!({ "env": {} }),
             None,
         );
-        manager
-            .providers
-            .insert("provider-1".to_string(), provider);
+        manager.providers.insert("provider-1".to_string(), provider);
 
         assert_eq!(manager.get_all_providers().len(), 1);
         assert!(manager.get_all_providers().contains_key("provider-1"));
@@ -713,9 +708,7 @@ mod tests {
             opus_model: Some("claude-opus".to_string()),
         });
 
-        let provider = universal
-            .to_claude_provider()
-            .expect("claude provider");
+        let provider = universal.to_claude_provider().expect("claude provider");
 
         assert_eq!(provider.id, "universal-claude-u1");
         assert_eq!(provider.name, "Universal");

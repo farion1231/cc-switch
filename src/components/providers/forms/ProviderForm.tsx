@@ -124,9 +124,7 @@ interface ProviderFormProps {
   showButtons?: boolean;
 }
 
-const normalizePricingSource = (
-  value?: string,
-): PricingModelSourceOption =>
+const normalizePricingSource = (value?: string): PricingModelSourceOption =>
   value === "request" || value === "response" ? value : "inherit";
 
 export function ProviderForm({
@@ -970,7 +968,9 @@ export function ProviderForm({
       // 添加高级配置
       testConfig: testConfig.enabled ? testConfig : undefined,
       proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
-      costMultiplier: pricingConfig.enabled ? pricingConfig.costMultiplier : undefined,
+      costMultiplier: pricingConfig.enabled
+        ? pricingConfig.costMultiplier
+        : undefined,
       pricingModelSource:
         pricingConfig.enabled && pricingConfig.pricingModelSource !== "inherit"
           ? pricingConfig.pricingModelSource

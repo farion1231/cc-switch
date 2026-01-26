@@ -89,7 +89,9 @@ export function PricingConfigPanel() {
             return {
               app,
               multiplier,
-              source: (source === "request" ? "request" : "response") as PricingModelSource,
+              source: (source === "request"
+                ? "request"
+                : "response") as PricingModelSource,
             };
           }),
         );
@@ -153,7 +155,10 @@ export function PricingConfigPanel() {
     try {
       await Promise.all(
         PRICING_APPS.flatMap((app) => [
-          proxyApi.setDefaultCostMultiplier(app, appConfigs[app].multiplier.trim()),
+          proxyApi.setDefaultCostMultiplier(
+            app,
+            appConfigs[app].multiplier.trim(),
+          ),
           proxyApi.setPricingModelSource(app, appConfigs[app].source),
         ]),
       );
@@ -308,10 +313,14 @@ export function PricingConfigPanel() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="response">
-                            {t("settings.globalProxy.pricingModelSourceResponse")}
+                            {t(
+                              "settings.globalProxy.pricingModelSourceResponse",
+                            )}
                           </SelectItem>
                           <SelectItem value="request">
-                            {t("settings.globalProxy.pricingModelSourceRequest")}
+                            {t(
+                              "settings.globalProxy.pricingModelSourceRequest",
+                            )}
                           </SelectItem>
                         </SelectContent>
                       </Select>

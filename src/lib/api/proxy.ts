@@ -101,7 +101,10 @@ export const proxyApi = {
   },
 
   // 设置默认成本倍率
-  async setDefaultCostMultiplier(appType: string, value: string): Promise<void> {
+  async setDefaultCostMultiplier(
+    appType: string,
+    value: string,
+  ): Promise<void> {
     return invoke("set_default_cost_multiplier", { appType, value });
   },
 

@@ -275,10 +275,7 @@ fn schema_create_tables_include_pricing_model_columns() {
     let multiplier = get_column_info(&conn, "proxy_config", "default_cost_multiplier");
     assert_eq!(multiplier.r#type, "TEXT");
     assert_eq!(multiplier.notnull, 1);
-    assert_eq!(
-        normalize_default(&multiplier.default).as_deref(),
-        Some("1")
-    );
+    assert_eq!(normalize_default(&multiplier.default).as_deref(), Some("1"));
 
     let pricing_source = get_column_info(&conn, "proxy_config", "pricing_model_source");
     assert_eq!(pricing_source.r#type, "TEXT");
@@ -310,10 +307,7 @@ fn schema_migration_v4_adds_pricing_model_columns() {
     let multiplier = get_column_info(&conn, "proxy_config", "default_cost_multiplier");
     assert_eq!(multiplier.r#type, "TEXT");
     assert_eq!(multiplier.notnull, 1);
-    assert_eq!(
-        normalize_default(&multiplier.default).as_deref(),
-        Some("1")
-    );
+    assert_eq!(normalize_default(&multiplier.default).as_deref(), Some("1"));
 
     let pricing_source = get_column_info(&conn, "proxy_config", "pricing_model_source");
     assert_eq!(pricing_source.r#type, "TEXT");

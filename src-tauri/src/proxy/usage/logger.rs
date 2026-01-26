@@ -209,9 +209,7 @@ impl<'a> UsageLogger<'a> {
         let default_multiplier_raw = match self.db.get_default_cost_multiplier(app_type).await {
             Ok(value) => value,
             Err(e) => {
-                log::warn!(
-                    "[USG-003] 获取默认倍率失败 (app_type={app_type}): {e}"
-                );
+                log::warn!("[USG-003] 获取默认倍率失败 (app_type={app_type}): {e}");
                 "1".to_string()
             }
         };
@@ -228,23 +226,19 @@ impl<'a> UsageLogger<'a> {
         let default_pricing_source_raw = match self.db.get_pricing_model_source(app_type).await {
             Ok(value) => value,
             Err(e) => {
-                log::warn!(
-                    "[USG-003] 获取默认计费模式失败 (app_type={app_type}): {e}"
-                );
+                log::warn!("[USG-003] 获取默认计费模式失败 (app_type={app_type}): {e}");
                 "response".to_string()
             }
         };
-        let default_pricing_source = if matches!(
-            default_pricing_source_raw.as_str(),
-            "response" | "request"
-        ) {
-            default_pricing_source_raw
-        } else {
-            log::warn!(
+        let default_pricing_source =
+            if matches!(default_pricing_source_raw.as_str(), "response" | "request") {
+                default_pricing_source_raw
+            } else {
+                log::warn!(
                 "[USG-003] 默认计费模式无效 (app_type={app_type}): {default_pricing_source_raw}"
             );
-            "response".to_string()
-        };
+                "response".to_string()
+            };
 
         let provider = self
             .db
@@ -279,9 +273,7 @@ impl<'a> UsageLogger<'a> {
         let pricing_model_source = match provider_pricing_source {
             Some(value) if matches!(value, "response" | "request") => value.to_string(),
             Some(value) => {
-                log::warn!(
-                    "[USG-003] 供应商计费模式无效 (provider_id={provider_id}): {value}"
-                );
+                log::warn!("[USG-003] 供应商计费模式无效 (provider_id={provider_id}): {value}");
                 default_pricing_source.clone()
             }
             None => default_pricing_source.clone(),
@@ -312,9 +304,7 @@ impl<'a> UsageLogger<'a> {
         let pricing = self.get_model_pricing(&pricing_model)?;
 
         if pricing.is_none() {
-            log::warn!(
-                "[USG-002] 模型定价未找到，成本将记录为 0: {pricing_model}"
-            );
+            log::warn!("[USG-002] 模型定价未找到，成本将记录为 0: {pricing_model}");
         }
 
         let cost = CostCalculator::try_calculate(&usage, pricing.as_ref(), cost_multiplier);
