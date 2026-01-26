@@ -617,12 +617,10 @@ fn merge_claude_config(custom_config: &JsonValue, common_snippet: &str) -> Merge
     let common_value: JsonValue = match serde_json::from_str(common_snippet) {
         Ok(v) => v,
         Err(e) => {
-            log::warn!(
-                "Claude common config snippet parse error, skipping merge: {e}"
-            );
+            // Return warning without logging - caller will log if needed
             return MergeResult {
                 config: custom_config.clone(),
-                warning: Some(format!("COMMON_CONFIG_PARSE_ERROR: {e}")),
+                warning: Some(format!("Claude common config parse error: {e}")),
             };
         }
     };
@@ -643,8 +641,8 @@ fn merge_codex_config(custom_config: &JsonValue, common_snippet: &str) -> MergeR
             let (merged_toml, error) =
                 compute_final_toml_config_str(config_str, common_snippet, true);
             if let Some(e) = error {
-                log::warn!("Codex common config merge warning: {e}");
-                warning = Some(format!("CODEX_TOML_MERGE_WARNING: {e}"));
+                // Return warning without logging - caller will log if needed
+                warning = Some(format!("Codex TOML merge warning: {e}"));
             }
             obj.insert("config".to_string(), JsonValue::String(merged_toml));
         }
@@ -667,12 +665,10 @@ fn merge_gemini_config(custom_config: &JsonValue, common_snippet: &str) -> Merge
     let common_value: JsonValue = match serde_json::from_str(common_snippet) {
         Ok(v) => v,
         Err(e) => {
-            log::warn!(
-                "Gemini common config snippet parse error, skipping merge: {e}"
-            );
+            // Return warning without logging - caller will log if needed
             return MergeResult {
                 config: custom_config.clone(),
-                warning: Some(format!("COMMON_CONFIG_PARSE_ERROR: {e}")),
+                warning: Some(format!("Gemini common config parse error: {e}")),
             };
         }
     };
@@ -699,6 +695,7 @@ fn merge_gemini_config(custom_config: &JsonValue, common_snippet: &str) -> Merge
     };
 
     // Merge only the env field
+    // If custom config has env, merge common into it; otherwise initialize with common env
     if let Some(merged_obj) = merged_config.as_object_mut() {
         if let Some(merged_env) = merged_obj.get_mut("env") {
             if let Some(merged_env_obj) = merged_env.as_object_mut() {
@@ -709,6 +706,9 @@ fn merge_gemini_config(custom_config: &JsonValue, common_snippet: &str) -> Merge
                 }
                 *merged_env = JsonValue::Object(final_env);
             }
+        } else if !common_env.is_empty() {
+            // Custom config has no env field - initialize with common env
+            merged_obj.insert("env".to_string(), JsonValue::Object(common_env));
         }
     }
 

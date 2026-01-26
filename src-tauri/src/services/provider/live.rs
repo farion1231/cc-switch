@@ -167,17 +167,16 @@ fn write_live_snapshot_internal(
         }
         AppType::Codex => {
             let obj = config_to_write.as_object().ok_or_else(|| {
-                AppError::Config(
-                    "CODEX_CONFIG_NOT_OBJECT: settings_config must be a JSON object".to_string(),
-                )
+                AppError::Config("Codex provider settings_config must be a JSON object".to_string())
             })?;
             let auth = obj.get("auth").ok_or_else(|| {
-                AppError::Config(
-                    "CODEX_CONFIG_MISSING_AUTH: settings_config missing 'auth' field".to_string(),
-                )
+                AppError::Config("Codex provider settings_config missing 'auth' field".to_string())
             })?;
             let config_str = obj.get("config").and_then(|v| v.as_str()).ok_or_else(|| {
-                AppError::Config("CODEX_CONFIG_MISSING_CONFIG: settings_config missing 'config' field or not a string".to_string())
+                AppError::Config(
+                    "Codex provider settings_config missing 'config' field or not a string"
+                        .to_string(),
+                )
             })?;
 
             let auth_path = get_codex_auth_path();
