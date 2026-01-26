@@ -114,16 +114,24 @@ export function EditProviderDialog({
                         setLiveSettings(live);
                       }
                     } else if (appId === "gemini") {
-                      // Gemini: common config is stored as JSON {"KEY": "VALUE"} format
+                      // Gemini: common config supports two formats:
+                      // - Flat JSON: {"KEY": "VALUE", ...}
+                      // - Wrapped JSON: {"env": {"KEY": "VALUE", ...}}
                       const liveEnv =
                         (live as { env?: Record<string, string> }).env ?? {};
-                      // Parse common config as JSON
-                      const commonEnvObj = JSON.parse(
+                      // Parse common config as JSON with format detection
+                      const parsedSnippet = JSON.parse(
                         commonSnippet.trim(),
                       ) as Record<string, unknown>;
+                      // Check if wrapped format {"env": {...}}
+                      const commonEnvRaw =
+                        parsedSnippet.env &&
+                        typeof parsedSnippet.env === "object"
+                          ? (parsedSnippet.env as Record<string, unknown>)
+                          : parsedSnippet;
                       // Convert to string record, filtering out non-string values
                       const commonEnvStrObj: Record<string, string> = {};
-                      for (const [key, value] of Object.entries(commonEnvObj)) {
+                      for (const [key, value] of Object.entries(commonEnvRaw)) {
                         if (typeof value === "string") {
                           commonEnvStrObj[key] = value;
                         }
