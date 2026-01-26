@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Eye, EyeOff } from "lucide-react";
 import JsonEditor from "@/components/JsonEditor";
+import { Label } from "@/components/ui/label";
 
 interface GeminiEnvSectionProps {
   value: string;
@@ -11,6 +13,8 @@ interface GeminiEnvSectionProps {
   onCommonConfigToggle: (checked: boolean) => void;
   onEditCommonConfig: () => void;
   commonConfigError?: string;
+  /** 最终合并后的 env 配置（只读预览） */
+  finalEnv?: string;
 }
 
 /**
@@ -25,9 +29,11 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
   onCommonConfigToggle,
   onEditCommonConfig,
   commonConfigError,
+  finalEnv,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => {
     setIsDarkMode(document.documentElement.classList.contains("dark"));
@@ -43,6 +49,13 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
 
     return () => observer.disconnect();
   }, []);
+
+  // 当启用通用配置时，自动显示预览
+  useEffect(() => {
+    if (useCommonConfig && finalEnv) {
+      setShowPreview(true);
+    }
+  }, [useCommonConfig, finalEnv]);
 
   const handleChange = (newValue: string) => {
     onChange(newValue);
@@ -74,7 +87,32 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
         </label>
       </div>
 
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {useCommonConfig && finalEnv && (
+            <button
+              type="button"
+              onClick={() => setShowPreview(!showPreview)}
+              className="inline-flex items-center gap-1 text-xs text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+            >
+              {showPreview ? (
+                <>
+                  <EyeOff className="w-3 h-3" />
+                  {t("geminiConfig.hidePreview", {
+                    defaultValue: "隐藏合并预览",
+                  })}
+                </>
+              ) : (
+                <>
+                  <Eye className="w-3 h-3" />
+                  {t("geminiConfig.showPreview", {
+                    defaultValue: "显示合并预览",
+                  })}
+                </>
+              )}
+            </button>
+          )}
+        </div>
         <button
           type="button"
           onClick={onEditCommonConfig}
@@ -92,17 +130,59 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
         </p>
       )}
 
-      <JsonEditor
-        value={value}
-        onChange={handleChange}
-        placeholder={`GOOGLE_GEMINI_BASE_URL=https://your-api-endpoint.com/
+      {/* 自定义配置编辑器 */}
+      <div className="space-y-1">
+        {useCommonConfig && showPreview && (
+          <Label className="text-xs text-muted-foreground">
+            {t("geminiConfig.customConfig", {
+              defaultValue: "自定义配置（覆盖通用配置）",
+            })}
+          </Label>
+        )}
+        <JsonEditor
+          value={value}
+          onChange={handleChange}
+          placeholder={`GOOGLE_GEMINI_BASE_URL=https://your-api-endpoint.com/
 GEMINI_API_KEY=sk-your-api-key-here
 GEMINI_MODEL=gemini-3-pro-preview`}
-        darkMode={isDarkMode}
-        rows={6}
-        showValidation={false}
-        language="javascript"
-      />
+          darkMode={isDarkMode}
+          rows={useCommonConfig && showPreview ? 4 : 6}
+          showValidation={false}
+          language="javascript"
+        />
+      </div>
+
+      {/* 合并预览（只读）- 放在自定义配置下面 */}
+      {useCommonConfig && showPreview && finalEnv && (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground">
+              {t("geminiConfig.mergedPreview", {
+                defaultValue: "合并预览（只读）",
+              })}
+            </Label>
+            <span className="text-xs text-green-500 dark:text-green-400">
+              {t("geminiConfig.mergedPreviewHint", {
+                defaultValue: "通用配置 + 自定义配置 = 最终配置",
+              })}
+            </span>
+          </div>
+          <div className="relative">
+            <JsonEditor
+              value={finalEnv}
+              onChange={() => {}} // 只读
+              darkMode={isDarkMode}
+              rows={4}
+              showValidation={false}
+              language="javascript"
+              readOnly={true}
+            />
+            <div className="absolute top-2 right-2 px-2 py-0.5 bg-green-500/10 text-green-600 dark:text-green-400 text-xs rounded">
+              {t("common.readonly", { defaultValue: "只读" })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
