@@ -4,6 +4,7 @@
 
 use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
+use crate::config_merge::{compute_final_json_config, compute_final_toml_config_str};
 use crate::database::Database;
 use crate::provider::Provider;
 use crate::proxy::server::ProxyServer;
@@ -1232,8 +1233,82 @@ impl ProxyService {
             return Ok(false);
         };
 
-        write_live_snapshot(app_type, provider)
-            .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
+        // Check if common config should be merged
+        let common_config_snippet = self.db.get_config_snippet(app_type.as_str()).ok().flatten();
+
+        let common_config_enabled = provider
+            .meta
+            .as_ref()
+            .and_then(|m| {
+                m.common_config_enabled_by_app
+                    .as_ref()
+                    .and_then(|by_app| match app_type {
+                        AppType::Claude => by_app.claude,
+                        AppType::Codex => by_app.codex,
+                        AppType::Gemini => by_app.gemini,
+                        AppType::OpenCode => None,
+                    })
+                    .or(m.common_config_enabled)
+            })
+            .unwrap_or(false);
+
+        // If common config is enabled and snippet exists, merge before writing
+        if common_config_enabled
+            && common_config_snippet
+                .as_ref()
+                .is_some_and(|s| !s.trim().is_empty())
+        {
+            let snippet = common_config_snippet.unwrap();
+            let final_config = match app_type {
+                AppType::Claude => {
+                    let common_value: Value = serde_json::from_str(&snippet).unwrap_or(json!({}));
+                    compute_final_json_config(&provider.settings_config, &common_value, true)
+                }
+                AppType::Codex => {
+                    let mut merged_config = provider.settings_config.clone();
+                    if let Some(obj) = merged_config.as_object_mut() {
+                        if let Some(config_str) = obj.get("config").and_then(|v| v.as_str()) {
+                            let (merged_toml, _) =
+                                compute_final_toml_config_str(config_str, &snippet, true);
+                            obj.insert("config".to_string(), json!(merged_toml));
+                        }
+                    }
+                    merged_config
+                }
+                AppType::Gemini => {
+                    let common_value: Value = serde_json::from_str(&snippet).unwrap_or(json!({}));
+                    let mut merged_config = provider.settings_config.clone();
+                    if let (Some(merged_obj), Some(common_obj)) =
+                        (merged_config.as_object_mut(), common_value.as_object())
+                    {
+                        if let Some(merged_env) = merged_obj.get_mut("env") {
+                            if let (Some(merged_env_obj), Some(common_env)) = (
+                                merged_env.as_object_mut(),
+                                common_obj.get("env").and_then(|v| v.as_object()),
+                            ) {
+                                let mut final_env = common_env.clone();
+                                for (k, v) in merged_env_obj.iter() {
+                                    final_env.insert(k.clone(), v.clone());
+                                }
+                                *merged_env = json!(final_env);
+                            }
+                        }
+                    }
+                    merged_config
+                }
+                AppType::OpenCode => provider.settings_config.clone(),
+            };
+
+            let merged_provider = Provider {
+                settings_config: final_config,
+                ..provider.clone()
+            };
+            write_live_snapshot(app_type, &merged_provider)
+                .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
+        } else {
+            write_live_snapshot(app_type, provider)
+                .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
+        }
 
         Ok(true)
     }
