@@ -265,6 +265,8 @@
     "windowBehaviorHint": "最小化動作や Claude プラグイン連携を設定します。",
     "launchOnStartup": "起動時に自動実行",
     "launchOnStartupDescription": "システム起動時に CC Switch を自動起動します",
+    "silentStartup": "サイレント起動",
+    "silentStartupDescription": "起動時にメインウィンドウを表示せず、トレイのみで起動",
     "autoLaunchFailed": "自動起動の設定に失敗しました",
     "minimizeToTray": "閉じるときトレイへ最小化",
     "minimizeToTrayDescription": "チェックすると閉じるボタンでトレイに隠し、オフならアプリを終了します。",
@@ -287,6 +289,33 @@
       "copy": "ファイルコピー",
       "symlinkHint": "シンボリックリンクはディスク容量を節約し、リアルタイム同期を有効にします。注意：Windowsでは管理者権限または開発者モードが必要な場合があります"
     },
+    "terminal": {
+      "title": "優先ターミナル",
+      "description": "ターミナルボタンをクリックした時に使用するターミナルアプリを選択",
+      "fallbackHint": "選択したターミナルが利用できない場合、システムのデフォルトが使用されます",
+      "options": {
+        "macos": {
+          "terminal": "Terminal.app",
+          "iterm2": "iTerm2",
+          "alacritty": "Alacritty",
+          "kitty": "Kitty",
+          "ghostty": "Ghostty"
+        },
+        "windows": {
+          "cmd": "コマンドプロンプト",
+          "powershell": "PowerShell",
+          "wt": "Windows Terminal"
+        },
+        "linux": {
+          "gnomeTerminal": "GNOME Terminal",
+          "konsole": "Konsole",
+          "xfce4Terminal": "Xfce4 Terminal",
+          "alacritty": "Alacritty",
+          "kitty": "Kitty",
+          "ghostty": "Ghostty"
+        }
+      }
+    },
     "configDirectoryOverride": "設定ディレクトリの上書き（詳細）",
     "configDirectoryDescription": "WSL などで Claude Code や Codex を使う場合、ここで設定ディレクトリを WSL 側に合わせるとデータを揃えられます。",
     "appConfigDir": "CC Switch 設定ディレクトリ",
@@ -298,9 +327,12 @@
     "codexConfigDirDescription": "Codex の設定ディレクトリを上書きします。",
     "geminiConfigDir": "Gemini 設定ディレクトリ",
     "geminiConfigDirDescription": "Gemini の設定ディレクトリ（.env）を上書きします。",
+    "opencodeConfigDir": "OpenCode 設定ディレクトリ",
+    "opencodeConfigDirDescription": "OpenCode の設定ディレクトリ（opencode.json）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
+    "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",

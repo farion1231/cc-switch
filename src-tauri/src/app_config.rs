@@ -282,6 +282,25 @@ impl AppType {
             AppType::OpenCode => "opencode",
         }
     }
+
+    /// Check if this app uses additive mode
+    ///
+    /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)
+    /// - Additive mode (true): All providers are written to live config (OpenCode)
+    pub fn is_additive_mode(&self) -> bool {
+        matches!(self, AppType::OpenCode)
+    }
+
+    /// Return an iterator over all app types
+    pub fn all() -> impl Iterator<Item = AppType> {
+        [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+        ]
+        .into_iter()
+    }
 }
 
 impl FromStr for AppType {

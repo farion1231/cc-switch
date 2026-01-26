@@ -79,6 +79,9 @@ pub struct AppSettings {
     /// 是否开机自启
     #[serde(default)]
     pub launch_on_startup: bool,
+    /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
+    #[serde(default)]
+    pub silent_startup: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
@@ -114,6 +117,14 @@ pub struct AppSettings {
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
     #[serde(default)]
     pub skill_sync_method: SyncMethod,
+
+    // ===== 终端设置 =====
+    /// 首选终端应用（可选，默认使用系统默认终端）
+    /// - macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty"
+    /// - Windows: "cmd" | "powershell" | "wt" (Windows Terminal)
+    /// - Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_terminal: Option<String>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -132,6 +143,7 @@ impl Default for AppSettings {
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
             launch_on_startup: false,
+            silent_startup: false,
             language: None,
             visible_apps: None,
             claude_config_dir: None,
@@ -143,6 +155,7 @@ impl Default for AppSettings {
             current_provider_gemini: None,
             current_provider_opencode: None,
             skill_sync_method: SyncMethod::default(),
+            preferred_terminal: None,
         }
     }
 }
@@ -150,7 +163,11 @@ impl Default for AppSettings {
 impl AppSettings {
     fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
-        dirs::home_dir().map(|h| h.join(".cc-switch").join("settings.json"))
+        Some(
+            crate::config::get_home_dir()
+                .join(".cc-switch")
+                .join("settings.json"),
+        )
     }
 
     fn normalize_paths(&mut self) {
@@ -401,4 +418,18 @@ pub fn get_skill_sync_method() -> SyncMethod {
             e.into_inner()
         })
         .skill_sync_method
+}
+
+// ===== 终端设置管理函数 =====
+
+/// 获取首选终端应用
+pub fn get_preferred_terminal() -> Option<String> {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .preferred_terminal
+        .clone()
 }

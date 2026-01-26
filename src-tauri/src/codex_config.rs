@@ -2,20 +2,13 @@
 use std::path::PathBuf;
 
 use crate::config::{
-    atomic_write, delete_file, sanitize_provider_name, write_json_file, write_text_file,
+    atomic_write, delete_file, get_home_dir, sanitize_provider_name, write_json_file,
+    write_text_file,
 };
 use crate::error::AppError;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
-
-/// 获取用户主目录，带回退和日志
-fn get_home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| {
-        log::warn!("无法获取用户主目录，回退到当前目录");
-        PathBuf::from(".")
-    })
-}
 
 /// 获取 Codex 配置目录路径
 pub fn get_codex_config_dir() -> PathBuf {

@@ -182,33 +182,67 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     Ok(())
 }
 
+/// Sync all providers to live configuration (for additive mode apps)
+///
+/// Writes all providers from the database to the live configuration file.
+/// Used for OpenCode and other additive mode applications.
+fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
+    let providers = state.db.get_all_providers(app_type.as_str())?;
+
+    for provider in providers.values() {
+        if let Err(e) = write_live_snapshot(app_type, provider) {
+            log::warn!(
+                "Failed to sync {:?} provider '{}' to live: {e}",
+                app_type,
+                provider.id
+            );
+            // Continue syncing other providers, don't abort
+        }
+    }
+
+    log::info!(
+        "Synced {} {:?} providers to live config",
+        providers.len(),
+        app_type
+    );
+    Ok(())
+}
+
 /// Sync current provider to live configuration
 ///
 /// 使用有效的当前供应商 ID（验证过存在性）。
 /// 优先从本地 settings 读取，验证后 fallback 到数据库的 is_current 字段。
 /// 这确保了配置导入后无效 ID 会自动 fallback 到数据库。
+///
+/// For additive mode apps (OpenCode), all providers are synced instead of just the current one.
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
-    for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
-        // Use validated effective current provider
-        let current_id =
-            match crate::settings::get_effective_current_provider(&state.db, &app_type)? {
-                Some(id) => id,
-                None => continue,
-            };
+    // Sync providers based on mode
+    for app_type in AppType::all() {
+        if app_type.is_additive_mode() {
+            // Additive mode: sync ALL providers
+            sync_all_providers_to_live(state, &app_type)?;
+        } else {
+            // Switch mode: sync only current provider
+            let current_id =
+                match crate::settings::get_effective_current_provider(&state.db, &app_type)? {
+                    Some(id) => id,
+                    None => continue,
+                };
 
-        let providers = state.db.get_all_providers(app_type.as_str())?;
-        if let Some(provider) = providers.get(&current_id) {
-            write_live_snapshot(&app_type, provider)?;
+            let providers = state.db.get_all_providers(app_type.as_str())?;
+            if let Some(provider) = providers.get(&current_id) {
+                write_live_snapshot(&app_type, provider)?;
+            }
+            // Note: get_effective_current_provider already validates existence,
+            // so providers.get() should always succeed here
         }
-        // Note: get_effective_current_provider already validates existence,
-        // so providers.get() should always succeed here
     }
 
     // MCP sync
     McpService::sync_all_enabled(state)?;
 
     // Skill sync
-    for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+    for app_type in AppType::all() {
         if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {
             log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
             // Continue syncing other apps, don't abort
