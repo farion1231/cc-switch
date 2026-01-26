@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
-use crate::config_merge::{compute_final_json_config, compute_final_toml_config_str};
+use crate::config_merge::merge_config_for_live;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::mcp::McpService;
@@ -124,97 +124,31 @@ pub(crate) fn write_live_snapshot_with_merge(
     // Get common config snippet from database
     let common_config_snippet = state.db.get_config_snippet(app_type.as_str())?;
 
-    // Check if common config is enabled for this app
-    let common_config_enabled = provider
-        .meta
-        .as_ref()
-        .and_then(|m| {
-            m.common_config_enabled_by_app
-                .as_ref()
-                .and_then(|by_app| match app_type {
-                    AppType::Claude => by_app.claude,
-                    AppType::Codex => by_app.codex,
-                    AppType::Gemini => by_app.gemini,
-                    AppType::OpenCode => None, // OpenCode doesn't support common config
-                })
-                .or(m.common_config_enabled)
-        })
-        .unwrap_or(false);
+    // Use shared merge function (single source of truth)
+    let merge_result = merge_config_for_live(app_type, provider, common_config_snippet.as_deref());
 
-    // If common config is not enabled or snippet is empty, write raw config
-    if !common_config_enabled
-        || common_config_snippet
-            .as_ref()
-            .is_none_or(|s| s.trim().is_empty())
-    {
-        return write_live_snapshot(app_type, provider);
+    // Log warning if any
+    if let Some(warning) = &merge_result.warning {
+        log::warn!(
+            "Common config merge warning for {:?} provider '{}': {}",
+            app_type,
+            provider.id,
+            warning
+        );
     }
 
-    let snippet = common_config_snippet.unwrap();
-
-    // Perform runtime merge based on app type
-    let final_config = match app_type {
-        AppType::Claude => {
-            // Claude uses JSON format
-            let common_value: Value = serde_json::from_str(&snippet).unwrap_or(json!({}));
-            compute_final_json_config(&provider.settings_config, &common_value, true)
-        }
-        AppType::Codex => {
-            // Codex uses TOML for config field, JSON for auth field
-            // Merge only the config field (TOML), keep auth field unchanged
-            let mut merged_config = provider.settings_config.clone();
-            if let Some(obj) = merged_config.as_object_mut() {
-                if let Some(config_str) = obj.get("config").and_then(|v| v.as_str()) {
-                    let (merged_toml, error) =
-                        compute_final_toml_config_str(config_str, &snippet, true);
-                    if let Some(e) = error {
-                        log::warn!("Codex common config merge warning: {e}");
-                    }
-                    obj.insert("config".to_string(), json!(merged_toml));
-                }
-            }
-            merged_config
-        }
-        AppType::Gemini => {
-            // Gemini uses JSON format for env field
-            let common_value: Value = serde_json::from_str(&snippet).unwrap_or(json!({}));
-            let mut merged_config = provider.settings_config.clone();
-
-            // Merge only the env field
-            if let (Some(merged_obj), Some(common_obj)) =
-                (merged_config.as_object_mut(), common_value.as_object())
-            {
-                if let Some(merged_env) = merged_obj.get_mut("env") {
-                    if let (Some(merged_env_obj), Some(common_env)) = (
-                        merged_env.as_object_mut(),
-                        common_obj.get("env").and_then(|v| v.as_object()),
-                    ) {
-                        // Common env as base, custom env overrides
-                        let mut final_env = common_env.clone();
-                        for (k, v) in merged_env_obj.iter() {
-                            final_env.insert(k.clone(), v.clone());
-                        }
-                        *merged_env = json!(final_env);
-                    }
-                }
-            }
-            merged_config
-        }
-        AppType::OpenCode => {
-            // OpenCode doesn't support common config merge
-            provider.settings_config.clone()
-        }
-    };
-
-    log::debug!(
-        "Writing live config with common config merge for {:?} provider '{}'",
-        app_type,
-        provider.id
-    );
+    // Check if merge actually happened (config changed)
+    if merge_result.config != provider.settings_config {
+        log::debug!(
+            "Writing live config with common config merge for {:?} provider '{}'",
+            app_type,
+            provider.id
+        );
+    }
 
     // Write the merged config to live file
     let merged_provider = Provider {
-        settings_config: final_config,
+        settings_config: merge_result.config,
         ..provider.clone()
     };
     write_live_snapshot_internal(app_type, &merged_provider, &merged_provider.settings_config)
@@ -232,14 +166,18 @@ fn write_live_snapshot_internal(
             write_json_file(&path, config_to_write)?;
         }
         AppType::Codex => {
-            let obj = config_to_write
-                .as_object()
-                .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
-            let auth = obj
-                .get("auth")
-                .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
+            let obj = config_to_write.as_object().ok_or_else(|| {
+                AppError::Config(
+                    "CODEX_CONFIG_NOT_OBJECT: settings_config must be a JSON object".to_string(),
+                )
+            })?;
+            let auth = obj.get("auth").ok_or_else(|| {
+                AppError::Config(
+                    "CODEX_CONFIG_MISSING_AUTH: settings_config missing 'auth' field".to_string(),
+                )
+            })?;
             let config_str = obj.get("config").and_then(|v| v.as_str()).ok_or_else(|| {
-                AppError::Config("Codex 供应商配置缺少 'config' 字段或不是字符串".to_string())
+                AppError::Config("CODEX_CONFIG_MISSING_CONFIG: settings_config missing 'config' field or not a string".to_string())
             })?;
 
             let auth_path = get_codex_auth_path();

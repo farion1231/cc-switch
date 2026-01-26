@@ -530,6 +530,195 @@ pub fn extract_toml_difference_str(
 }
 
 // ============================================================================
+// Live Config Merge for Provider Sync
+// ============================================================================
+
+use crate::app_config::AppType;
+use crate::provider::{Provider, ProviderMeta};
+
+/// Result of merging common config with provider's custom config.
+#[derive(Debug)]
+pub struct MergeResult {
+    /// The final merged configuration
+    pub config: JsonValue,
+    /// Warning message if any (e.g., parse errors that were recovered from)
+    pub warning: Option<String>,
+}
+
+/// Check if common config is enabled for a provider and app type.
+///
+/// Priority:
+/// 1. `meta.common_config_enabled_by_app.{app_type}` (per-app setting)
+/// 2. `meta.common_config_enabled` (global setting)
+/// 3. `false` (default)
+pub fn is_common_config_enabled(meta: Option<&ProviderMeta>, app_type: &AppType) -> bool {
+    meta.and_then(|m| {
+        m.common_config_enabled_by_app
+            .as_ref()
+            .and_then(|by_app| match app_type {
+                AppType::Claude => by_app.claude,
+                AppType::Codex => by_app.codex,
+                AppType::Gemini => by_app.gemini,
+                AppType::OpenCode => None, // OpenCode doesn't support common config
+            })
+            .or(m.common_config_enabled)
+    })
+    .unwrap_or(false)
+}
+
+/// Merge common config with provider's custom config for live file writing.
+///
+/// This is the single source of truth for common config merging logic.
+/// Used by both `live.rs` and `proxy.rs`.
+///
+/// # Arguments
+/// * `app_type` - The application type (Claude, Codex, Gemini, OpenCode)
+/// * `provider` - The provider whose config is being merged
+/// * `common_snippet` - The common config snippet from database (may be empty)
+///
+/// # Returns
+/// `MergeResult` containing the final config and optional warning
+pub fn merge_config_for_live(
+    app_type: &AppType,
+    provider: &Provider,
+    common_snippet: Option<&str>,
+) -> MergeResult {
+    // Check if common config is enabled
+    let enabled = is_common_config_enabled(provider.meta.as_ref(), app_type);
+
+    // If not enabled or snippet is empty, return original config
+    let snippet = match common_snippet {
+        Some(s) if enabled && !s.trim().is_empty() => s,
+        _ => {
+            return MergeResult {
+                config: provider.settings_config.clone(),
+                warning: None,
+            }
+        }
+    };
+
+    // Perform merge based on app type
+    match app_type {
+        AppType::Claude => merge_claude_config(&provider.settings_config, snippet),
+        AppType::Codex => merge_codex_config(&provider.settings_config, snippet),
+        AppType::Gemini => merge_gemini_config(&provider.settings_config, snippet),
+        AppType::OpenCode => {
+            // OpenCode doesn't support common config merge
+            MergeResult {
+                config: provider.settings_config.clone(),
+                warning: None,
+            }
+        }
+    }
+}
+
+/// Merge Claude config (JSON format).
+fn merge_claude_config(custom_config: &JsonValue, common_snippet: &str) -> MergeResult {
+    let common_value: JsonValue = match serde_json::from_str(common_snippet) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!(
+                "Claude common config snippet parse error, skipping merge: {e}"
+            );
+            return MergeResult {
+                config: custom_config.clone(),
+                warning: Some(format!("COMMON_CONFIG_PARSE_ERROR: {e}")),
+            };
+        }
+    };
+
+    MergeResult {
+        config: compute_final_json_config(custom_config, &common_value, true),
+        warning: None,
+    }
+}
+
+/// Merge Codex config (TOML for config field, JSON for auth field).
+fn merge_codex_config(custom_config: &JsonValue, common_snippet: &str) -> MergeResult {
+    let mut merged_config = custom_config.clone();
+    let mut warning = None;
+
+    if let Some(obj) = merged_config.as_object_mut() {
+        if let Some(config_str) = obj.get("config").and_then(|v| v.as_str()) {
+            let (merged_toml, error) =
+                compute_final_toml_config_str(config_str, common_snippet, true);
+            if let Some(e) = error {
+                log::warn!("Codex common config merge warning: {e}");
+                warning = Some(format!("CODEX_TOML_MERGE_WARNING: {e}"));
+            }
+            obj.insert("config".to_string(), JsonValue::String(merged_toml));
+        }
+    }
+
+    MergeResult {
+        config: merged_config,
+        warning,
+    }
+}
+
+/// Merge Gemini config (JSON format for env field).
+///
+/// Gemini common config can be stored in two formats:
+/// - Wrapped: `{"env": {"KEY": "VALUE", ...}}` (matches provider settings_config structure)
+/// - Flat: `{"KEY": "VALUE", ...}` (simpler format used by frontend)
+///
+/// This function supports both formats for backward compatibility.
+fn merge_gemini_config(custom_config: &JsonValue, common_snippet: &str) -> MergeResult {
+    let common_value: JsonValue = match serde_json::from_str(common_snippet) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!(
+                "Gemini common config snippet parse error, skipping merge: {e}"
+            );
+            return MergeResult {
+                config: custom_config.clone(),
+                warning: Some(format!("COMMON_CONFIG_PARSE_ERROR: {e}")),
+            };
+        }
+    };
+
+    let mut merged_config = custom_config.clone();
+
+    // Get the common env object (support both wrapped and flat formats)
+    let common_env = match common_value.as_object() {
+        Some(obj) => {
+            // Check if it's wrapped format {"env": {...}}
+            if let Some(env_value) = obj.get("env").and_then(|v| v.as_object()) {
+                env_value.clone()
+            } else {
+                // Flat format {"KEY": "VALUE", ...}
+                obj.clone()
+            }
+        }
+        None => {
+            return MergeResult {
+                config: custom_config.clone(),
+                warning: Some("COMMON_CONFIG_NOT_OBJECT".to_string()),
+            };
+        }
+    };
+
+    // Merge only the env field
+    if let Some(merged_obj) = merged_config.as_object_mut() {
+        if let Some(merged_env) = merged_obj.get_mut("env") {
+            if let Some(merged_env_obj) = merged_env.as_object_mut() {
+                // Common env as base, custom env overrides
+                let mut final_env = common_env;
+                for (k, v) in merged_env_obj.iter() {
+                    final_env.insert(k.clone(), v.clone());
+                }
+                *merged_env = JsonValue::Object(final_env);
+            }
+        }
+    }
+
+    MergeResult {
+        config: merged_config,
+        warning: None,
+    }
+}
+
+// ============================================================================
 // Unit Tests
 // ============================================================================
 
