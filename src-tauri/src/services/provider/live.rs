@@ -1,6 +1,14 @@
 //! Live configuration operations
 //!
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
+//!
+//! ## Common Config Runtime Merge
+//!
+//! When writing to live files, this module performs runtime merge of:
+//! - `customConfig` (provider's settings_config) - provider-specific settings
+//! - `commonConfig` (from database settings table) - shared template settings
+//!
+//! The merge follows the rule: customConfig overrides commonConfig.
 
 use std::collections::HashMap;
 
@@ -9,6 +17,7 @@ use serde_json::{json, Value};
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
+use crate::config_merge::{compute_final_json_config, compute_final_toml_config_str};
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::mcp::McpService;
@@ -92,16 +101,138 @@ impl LiveSnapshot {
     }
 }
 
-/// Write live configuration snapshot for a provider
+/// Write live configuration snapshot for a provider (raw, without common config merge)
+///
+/// This function writes the provider's settings_config directly to the live file.
+/// Use `write_live_snapshot_with_merge` for runtime merge with common config.
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+    write_live_snapshot_internal(app_type, provider, &provider.settings_config)
+}
+
+/// Write live configuration snapshot with common config runtime merge
+///
+/// This function performs runtime merge of:
+/// - Provider's settings_config (custom config)
+/// - Common config snippet from database (shared template)
+///
+/// The merge rule is: customConfig overrides commonConfig.
+pub(crate) fn write_live_snapshot_with_merge(
+    state: &AppState,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    // Get common config snippet from database
+    let common_config_snippet = state.db.get_config_snippet(app_type.as_str())?;
+
+    // Check if common config is enabled for this app
+    let common_config_enabled = provider
+        .meta
+        .as_ref()
+        .and_then(|m| {
+            m.common_config_enabled_by_app
+                .as_ref()
+                .and_then(|by_app| match app_type {
+                    AppType::Claude => by_app.claude,
+                    AppType::Codex => by_app.codex,
+                    AppType::Gemini => by_app.gemini,
+                    AppType::OpenCode => None, // OpenCode doesn't support common config
+                })
+                .or(m.common_config_enabled)
+        })
+        .unwrap_or(false);
+
+    // If common config is not enabled or snippet is empty, write raw config
+    if !common_config_enabled
+        || common_config_snippet
+            .as_ref()
+            .is_none_or(|s| s.trim().is_empty())
+    {
+        return write_live_snapshot(app_type, provider);
+    }
+
+    let snippet = common_config_snippet.unwrap();
+
+    // Perform runtime merge based on app type
+    let final_config = match app_type {
+        AppType::Claude => {
+            // Claude uses JSON format
+            let common_value: Value = serde_json::from_str(&snippet).unwrap_or(json!({}));
+            compute_final_json_config(&provider.settings_config, &common_value, true)
+        }
+        AppType::Codex => {
+            // Codex uses TOML for config field, JSON for auth field
+            // Merge only the config field (TOML), keep auth field unchanged
+            let mut merged_config = provider.settings_config.clone();
+            if let Some(obj) = merged_config.as_object_mut() {
+                if let Some(config_str) = obj.get("config").and_then(|v| v.as_str()) {
+                    let (merged_toml, error) =
+                        compute_final_toml_config_str(config_str, &snippet, true);
+                    if let Some(e) = error {
+                        log::warn!("Codex common config merge warning: {e}");
+                    }
+                    obj.insert("config".to_string(), json!(merged_toml));
+                }
+            }
+            merged_config
+        }
+        AppType::Gemini => {
+            // Gemini uses JSON format for env field
+            let common_value: Value = serde_json::from_str(&snippet).unwrap_or(json!({}));
+            let mut merged_config = provider.settings_config.clone();
+
+            // Merge only the env field
+            if let (Some(merged_obj), Some(common_obj)) =
+                (merged_config.as_object_mut(), common_value.as_object())
+            {
+                if let Some(merged_env) = merged_obj.get_mut("env") {
+                    if let (Some(merged_env_obj), Some(common_env)) = (
+                        merged_env.as_object_mut(),
+                        common_obj.get("env").and_then(|v| v.as_object()),
+                    ) {
+                        // Common env as base, custom env overrides
+                        let mut final_env = common_env.clone();
+                        for (k, v) in merged_env_obj.iter() {
+                            final_env.insert(k.clone(), v.clone());
+                        }
+                        *merged_env = json!(final_env);
+                    }
+                }
+            }
+            merged_config
+        }
+        AppType::OpenCode => {
+            // OpenCode doesn't support common config merge
+            provider.settings_config.clone()
+        }
+    };
+
+    log::debug!(
+        "Writing live config with common config merge for {:?} provider '{}'",
+        app_type,
+        provider.id
+    );
+
+    // Write the merged config to live file
+    let merged_provider = Provider {
+        settings_config: final_config,
+        ..provider.clone()
+    };
+    write_live_snapshot_internal(app_type, &merged_provider, &merged_provider.settings_config)
+}
+
+/// Internal function to write live configuration
+fn write_live_snapshot_internal(
+    app_type: &AppType,
+    provider: &Provider,
+    config_to_write: &Value,
+) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            write_json_file(&path, &provider.settings_config)?;
+            write_json_file(&path, config_to_write)?;
         }
         AppType::Codex => {
-            let obj = provider
-                .settings_config
+            let obj = config_to_write
                 .as_object()
                 .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
             let auth = obj
@@ -118,7 +249,12 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
-            write_gemini_live(provider)?;
+            // Create a temporary provider with the merged config
+            let temp_provider = Provider {
+                settings_config: config_to_write.clone(),
+                ..provider.clone()
+            };
+            write_gemini_live(&temp_provider)?;
         }
         AppType::OpenCode => {
             // OpenCode uses additive mode - write provider to config
@@ -126,7 +262,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             use crate::provider::OpenCodeProviderConfig;
 
             // Defensive check: if settings_config is a full config structure, extract provider fragment
-            let config_to_write = if let Some(obj) = provider.settings_config.as_object() {
+            let config_to_write = if let Some(obj) = config_to_write.as_object() {
                 // Detect full config structure (has $schema or top-level provider field)
                 if obj.contains_key("$schema") || obj.contains_key("provider") {
                     log::warn!(
@@ -187,6 +323,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 /// 使用有效的当前供应商 ID（验证过存在性）。
 /// 优先从本地 settings 读取，验证后 fallback 到数据库的 is_current 字段。
 /// 这确保了配置导入后无效 ID 会自动 fallback 到数据库。
+///
+/// This function uses `write_live_snapshot_with_merge` to perform runtime merge
+/// with common config when enabled.
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
         // Use validated effective current provider
@@ -198,7 +337,8 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
-            write_live_snapshot(&app_type, provider)?;
+            // Use write_live_snapshot_with_merge to support common config runtime merge
+            write_live_snapshot_with_merge(state, &app_type, provider)?;
         }
         // Note: get_effective_current_provider already validates existence,
         // so providers.get() should always succeed here

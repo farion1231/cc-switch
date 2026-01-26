@@ -26,7 +26,7 @@ pub use live::{
 };
 
 // Internal re-exports (pub(crate))
-pub(crate) use live::write_live_snapshot;
+pub(crate) use live::{write_live_snapshot, write_live_snapshot_with_merge};
 
 // Internal re-exports
 use live::{remove_opencode_provider_from_live, write_gemini_live};
@@ -174,7 +174,8 @@ impl ProviderService {
             state
                 .db
                 .set_current_provider(app_type.as_str(), &provider.id)?;
-            write_live_snapshot(&app_type, &provider)?;
+            // Use write_live_snapshot_with_merge to support common config runtime merge
+            write_live_snapshot_with_merge(state, &app_type, &provider)?;
         }
 
         Ok(true)
@@ -225,7 +226,8 @@ impl ProviderService {
                 )
                 .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
             } else {
-                write_live_snapshot(&app_type, &provider)?;
+                // Use write_live_snapshot_with_merge to support common config runtime merge
+                write_live_snapshot_with_merge(state, &app_type, &provider)?;
                 // Sync MCP
                 McpService::sync_all_enabled(state)?;
             }
@@ -402,8 +404,9 @@ impl ProviderService {
             state.db.set_current_provider(app_type.as_str(), id)?;
         }
 
-        // Sync to live (write_gemini_live handles security flag internally for Gemini)
-        write_live_snapshot(&app_type, provider)?;
+        // Sync to live (use write_live_snapshot_with_merge for common config runtime merge)
+        // Note: write_gemini_live handles security flag internally for Gemini
+        write_live_snapshot_with_merge(state, &app_type, provider)?;
 
         // Sync MCP
         McpService::sync_all_enabled(state)?;
