@@ -539,15 +539,20 @@ fn launch_terminal_with_env(
     // 创建并写入配置文件
     write_claude_config(&config_file, &env_vars)?;
 
+    let terminal_path = crate::settings::get_settings()
+        .terminal_path
+        .as_deref()
+        .map(std::path::PathBuf::from);
+
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file)?;
+        launch_macos_terminal(&config_file, terminal_path.as_deref())?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file)?;
+        launch_linux_terminal(&config_file, terminal_path.as_deref())?;
         Ok(())
     }
 
@@ -581,9 +586,66 @@ fn write_claude_config(
     std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TerminalCandidate {
+    program: String,
+    args: Vec<&'static str>,
+    is_override: bool,
+}
+
+fn terminal_args_for_program(program: &str) -> Vec<&'static str> {
+    match program {
+        "gnome-terminal" | "mate-terminal" => vec!["--"],
+        "konsole" | "xfce4-terminal" | "lxterminal" | "alacritty" | "kitty" => vec!["-e"],
+        _ => vec!["-e"],
+    }
+}
+
+fn build_linux_terminal_candidates(
+    terminal_path: Option<&std::path::Path>,
+) -> Vec<TerminalCandidate> {
+    let mut candidates = Vec::new();
+
+    if let Some(path) = terminal_path.and_then(|p| p.to_str()) {
+        let program = path.to_string();
+        let name = std::path::Path::new(path)
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or(path);
+        candidates.push(TerminalCandidate {
+            program,
+            args: terminal_args_for_program(name),
+            is_override: true,
+        });
+    }
+
+    let defaults = [
+        ("gnome-terminal", vec!["--"]),
+        ("konsole", vec!["-e"]),
+        ("xfce4-terminal", vec!["-e"]),
+        ("mate-terminal", vec!["--"]),
+        ("lxterminal", vec!["-e"]),
+        ("alacritty", vec!["-e"]),
+        ("kitty", vec!["-e"]),
+    ];
+
+    for (terminal, args) in defaults {
+        candidates.push(TerminalCandidate {
+            program: terminal.to_string(),
+            args,
+            is_override: false,
+        });
+    }
+
+    candidates
+}
+
 /// macOS: 使用 Terminal.app 启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path) -> Result<(), String> {
+fn launch_macos_terminal(
+    config_file: &std::path::Path,
+    terminal_path: Option<&std::path::Path>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -611,6 +673,62 @@ exec bash --norc --noprofile
     std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
+    let mut override_error: Option<String> = None;
+
+    if let Some(terminal_path) = terminal_path {
+        let terminal_str = terminal_path.to_string_lossy();
+        let override_result = if terminal_str.ends_with(".app") {
+            let applescript = format!(
+                r#"tell application "{app_path}"
+    activate
+    do script "bash '{script_path}'"
+end tell"#,
+                app_path = terminal_path.display(),
+                script_path = script_file.display()
+            );
+
+            let output = Command::new("osascript")
+                .arg("-e")
+                .arg(&applescript)
+                .output()
+                .map_err(|e| format!("执行 osascript 失败: {e}"))?;
+
+            if output.status.success() {
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(format!(
+                    "自定义终端 AppleScript 执行失败 (exit code: {:?}): {}",
+                    output.status.code(),
+                    stderr
+                ))
+            }
+        } else {
+            let output = Command::new(terminal_path)
+                .arg("-e")
+                .arg("bash")
+                .arg(script_file.to_string_lossy().as_ref())
+                .output()
+                .map_err(|e| format!("执行自定义终端失败: {e}"))?;
+
+            if output.status.success() {
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(format!(
+                    "启动自定义终端失败 (exit code: {:?}): {}",
+                    output.status.code(),
+                    stderr
+                ))
+            }
+        };
+
+        match override_result {
+            Ok(()) => return Ok(()),
+            Err(err) => override_error = Some(err),
+        }
+    }
+
     // Simple AppleScript - just execute the script file
     let applescript = format!(
         r#"tell application "Terminal"
@@ -631,6 +749,14 @@ end tell"#,
         let _ = std::fs::remove_file(&script_file);
         let _ = std::fs::remove_file(config_file);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        if let Some(override_error) = override_error {
+            return Err(format!(
+                "自定义终端失败: {}；Terminal.app 启动失败 (exit code: {:?}): {}",
+                override_error,
+                output.status.code(),
+                stderr
+            ));
+        }
         return Err(format!(
             "AppleScript 执行失败 (exit code: {:?}): {}",
             output.status.code(),
@@ -643,19 +769,12 @@ end tell"#,
 
 /// Linux: 尝试使用常见终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path) -> Result<(), String> {
+fn launch_linux_terminal(
+    config_file: &std::path::Path,
+    terminal_path: Option<&std::path::Path>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
-
-    let terminals = [
-        ("gnome-terminal", vec!["--"]),
-        ("konsole", vec!["-e"]),
-        ("xfce4-terminal", vec!["-e"]),
-        ("mate-terminal", vec!["--"]),
-        ("lxterminal", vec!["-e"]),
-        ("alacritty", vec!["-e"]),
-        ("kitty", vec!["-e"]),
-    ];
 
     // Create temp script file (same approach as macOS)
     let temp_dir = std::env::temp_dir();
@@ -680,27 +799,30 @@ exec bash --norc --noprofile
         .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
     let mut last_error = String::from("未找到可用的终端");
+    let candidates = build_linux_terminal_candidates(terminal_path);
 
-    for (terminal, args) in terminals {
-        // Check if terminal exists
-        if std::path::Path::new(&format!("/usr/bin/{}", terminal)).exists()
-            || std::path::Path::new(&format!("/bin/{}", terminal)).exists()
+    for candidate in candidates {
+        if !candidate.is_override
+            && !std::path::Path::new(&format!("/usr/bin/{}", candidate.program)).exists()
+            && !std::path::Path::new(&format!("/bin/{}", candidate.program)).exists()
         {
-            let result = Command::new(terminal)
-                .args(&args)
-                .arg("bash")
-                .arg(script_file.to_string_lossy().as_ref())
-                .output();
+            continue;
+        }
 
-            match result {
-                Ok(output) if output.status.success() => return Ok(()),
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    last_error = format!("启动 {} 失败: {}", terminal, stderr);
-                }
-                Err(e) => {
-                    last_error = format!("执行 {} 失败: {}", terminal, e);
-                }
+        let result = Command::new(&candidate.program)
+            .args(&candidate.args)
+            .arg("bash")
+            .arg(script_file.to_string_lossy().as_ref())
+            .output();
+
+        match result {
+            Ok(output) if output.status.success() => return Ok(()),
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                last_error = format!("启动 {} 失败: {}", candidate.program, stderr);
+            }
+            Err(e) => {
+                last_error = format!("执行 {} 失败: {}", candidate.program, e);
             }
         }
     }
@@ -756,4 +878,27 @@ del \"%~f0\" >nul 2>&1
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_linux_terminal_candidates, terminal_args_for_program};
+    use std::path::Path;
+
+    #[test]
+    fn terminal_args_for_program_matches_known_terminals() {
+        assert_eq!(terminal_args_for_program("gnome-terminal"), vec!["--"]);
+        assert_eq!(terminal_args_for_program("kitty"), vec!["-e"]);
+        assert_eq!(terminal_args_for_program("unknown-term"), vec!["-e"]);
+    }
+
+    #[test]
+    fn linux_candidates_prefer_override() {
+        let override_path = Path::new("/opt/kitty/bin/kitty");
+        let candidates = build_linux_terminal_candidates(Some(override_path));
+
+        assert_eq!(candidates[0].program, "/opt/kitty/bin/kitty");
+        assert_eq!(candidates[0].args, vec!["-e"]);
+        assert!(candidates.len() > 1);
+    }
 }
