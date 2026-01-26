@@ -620,7 +620,7 @@ fn merge_claude_config(custom_config: &JsonValue, common_snippet: &str) -> Merge
             // Return warning without logging - caller will log if needed
             return MergeResult {
                 config: custom_config.clone(),
-                warning: Some(format!("Claude common config parse error: {e}")),
+                warning: Some(format!("COMMON_CONFIG_PARSE_ERROR: {e}")),
             };
         }
     };
@@ -642,7 +642,7 @@ fn merge_codex_config(custom_config: &JsonValue, common_snippet: &str) -> MergeR
                 compute_final_toml_config_str(config_str, common_snippet, true);
             if let Some(e) = error {
                 // Return warning without logging - caller will log if needed
-                warning = Some(format!("Codex TOML merge warning: {e}"));
+                warning = Some(format!("CODEX_TOML_MERGE_ERROR: {e}"));
             }
             obj.insert("config".to_string(), JsonValue::String(merged_toml));
         }
@@ -656,43 +656,24 @@ fn merge_codex_config(custom_config: &JsonValue, common_snippet: &str) -> MergeR
 
 /// Merge Gemini config (JSON format for env field).
 ///
-/// Gemini common config can be stored in two formats:
-/// - Wrapped: `{"env": {"KEY": "VALUE", ...}}` (matches provider settings_config structure)
-/// - Flat: `{"KEY": "VALUE", ...}` (simpler format used by frontend)
+/// Gemini common config can be stored in three formats:
+/// - ENV format: KEY=VALUE lines (one per line)
+/// - Flat JSON: `{"KEY": "VALUE", ...}`
+/// - Wrapped JSON: `{"env": {"KEY": "VALUE", ...}}`
 ///
-/// This function supports both formats for backward compatibility.
+/// This function supports all formats for backward compatibility.
 fn merge_gemini_config(custom_config: &JsonValue, common_snippet: &str) -> MergeResult {
-    let common_value: JsonValue = match serde_json::from_str(common_snippet) {
-        Ok(v) => v,
-        Err(e) => {
-            // Return warning without logging - caller will log if needed
-            return MergeResult {
-                config: custom_config.clone(),
-                warning: Some(format!("Gemini common config parse error: {e}")),
-            };
-        }
-    };
+    // Parse common config (try JSON first, then ENV format)
+    let common_env = parse_gemini_common_snippet(common_snippet);
+
+    if common_env.is_empty() {
+        return MergeResult {
+            config: custom_config.clone(),
+            warning: None,
+        };
+    }
 
     let mut merged_config = custom_config.clone();
-
-    // Get the common env object (support both wrapped and flat formats)
-    let common_env = match common_value.as_object() {
-        Some(obj) => {
-            // Check if it's wrapped format {"env": {...}}
-            if let Some(env_value) = obj.get("env").and_then(|v| v.as_object()) {
-                env_value.clone()
-            } else {
-                // Flat format {"KEY": "VALUE", ...}
-                obj.clone()
-            }
-        }
-        None => {
-            return MergeResult {
-                config: custom_config.clone(),
-                warning: Some("COMMON_CONFIG_NOT_OBJECT".to_string()),
-            };
-        }
-    };
 
     // Merge only the env field
     // If custom config has env, merge common into it; otherwise initialize with common env
@@ -716,6 +697,65 @@ fn merge_gemini_config(custom_config: &JsonValue, common_snippet: &str) -> Merge
         config: merged_config,
         warning: None,
     }
+}
+
+/// Parse Gemini common config snippet supporting multiple formats.
+///
+/// Formats supported:
+/// - ENV format: KEY=VALUE lines
+/// - Flat JSON: {"KEY": "VALUE", ...}
+/// - Wrapped JSON: {"env": {"KEY": "VALUE", ...}}
+fn parse_gemini_common_snippet(snippet: &str) -> serde_json::Map<String, JsonValue> {
+    let trimmed = snippet.trim();
+    if trimmed.is_empty() {
+        return serde_json::Map::new();
+    }
+
+    // Try JSON first
+    if let Ok(parsed) = serde_json::from_str::<JsonValue>(trimmed) {
+        if let Some(obj) = parsed.as_object() {
+            // Check if it's wrapped format {"env": {...}}
+            if let Some(env_value) = obj.get("env").and_then(|v| v.as_object()) {
+                return env_value.clone();
+            }
+            // Flat format
+            return obj.clone();
+        }
+    }
+
+    // Parse as ENV format (KEY=VALUE lines)
+    let mut result = serde_json::Map::new();
+    for line in trimmed.lines() {
+        let line_trimmed = line.trim();
+        if line_trimmed.is_empty() || line_trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(equal_index) = line_trimmed.find('=') {
+            let key = line_trimmed[..equal_index].trim();
+            let raw_value = line_trimmed[equal_index + 1..].trim();
+            // Strip surrounding quotes (single or double) from value
+            // e.g., KEY="value" or KEY='value' -> value
+            let value = strip_env_quotes(raw_value);
+            if !key.is_empty() {
+                result.insert(key.to_string(), JsonValue::String(value.to_string()));
+            }
+        }
+    }
+    result
+}
+
+/// Strip surrounding quotes from ENV value.
+/// Supports both single and double quotes: "value" -> value, 'value' -> value
+fn strip_env_quotes(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return &s[1..s.len() - 1];
+        }
+    }
+    s
 }
 
 // ============================================================================

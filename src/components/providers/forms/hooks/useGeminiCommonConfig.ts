@@ -3,14 +3,10 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { configApi } from "@/lib/api";
 import {
-  GEMINI_COMMON_ENV_FORBIDDEN_KEYS,
-  type GeminiForbiddenEnvKey,
+  parseGeminiCommonConfigSnippet,
+  GEMINI_CONFIG_ERROR_CODES,
 } from "@/utils/providerConfigUtils";
-import {
-  computeFinalConfig,
-  extractDifference,
-  isPlainObject,
-} from "@/utils/configMerge";
+import { computeFinalConfig, extractDifference } from "@/utils/configMerge";
 import type { ProviderMeta } from "@/types";
 
 const LEGACY_STORAGE_KEY = "cc-switch:gemini-common-config-snippet";
@@ -131,54 +127,38 @@ export function useGeminiCommonConfig({
     hasInitializedEditMode.current = false;
   }, [selectedPresetId]);
 
-  // 解析通用配置片段
+  // 解析通用配置片段 - 使用共享解析器
+  // 支持三种格式: ENV (KEY=VALUE), 扁平 JSON, 包裹 JSON {"env":{...}}
   const parseSnippetEnv = useCallback(
     (
       snippetString: string,
     ): { env: Record<string, string>; error?: string } => {
-      const trimmed = snippetString.trim();
-      if (!trimmed) {
-        return { env: {} };
-      }
+      const result = parseGeminiCommonConfigSnippet(snippetString, {
+        strictForbiddenKeys: true,
+      });
 
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch {
-        return { env: {}, error: t("geminiConfig.invalidJsonFormat") };
-      }
-
-      if (!isPlainObject(parsed)) {
-        return { env: {}, error: t("geminiConfig.invalidJsonFormat") };
-      }
-
-      const keys = Object.keys(parsed);
-      const forbiddenKeys = keys.filter((key) =>
-        GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(key as GeminiForbiddenEnvKey),
-      );
-      if (forbiddenKeys.length > 0) {
-        return {
-          env: {},
-          error: t("geminiConfig.commonConfigInvalidKeys", {
-            keys: forbiddenKeys.join(", "),
-          }),
-        };
-      }
-
-      const env: Record<string, string> = {};
-      for (const [key, value] of Object.entries(parsed)) {
-        if (typeof value !== "string") {
+      if (result.error) {
+        // Map error codes to i18n keys
+        if (result.error.startsWith(GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS)) {
+          const keys = result.error.split(": ")[1] ?? result.error;
+          return {
+            env: {},
+            error: t("geminiConfig.commonConfigInvalidKeys", { keys }),
+          };
+        }
+        if (
+          result.error.startsWith(GEMINI_CONFIG_ERROR_CODES.VALUE_NOT_STRING)
+        ) {
           return {
             env: {},
             error: t("geminiConfig.commonConfigInvalidValues"),
           };
         }
-        const normalized = value.trim();
-        if (!normalized) continue;
-        env[key] = normalized;
+        // Generic format error (NOT_OBJECT, ENV_NOT_OBJECT, or parse failure)
+        return { env: {}, error: t("geminiConfig.invalidJsonFormat") };
       }
 
-      return { env };
+      return { env: result.env };
     },
     [t],
   );

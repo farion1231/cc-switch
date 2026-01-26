@@ -2,6 +2,7 @@
 
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
 import { normalizeQuotes } from "@/utils/textNormalization";
+import { isPlainObject } from "@/utils/configMerge";
 
 // Gemini 通用配置禁止的键（共享常量，供 hook 和同步逻辑复用）
 export const GEMINI_COMMON_ENV_FORBIDDEN_KEYS = [
@@ -10,10 +11,6 @@ export const GEMINI_COMMON_ENV_FORBIDDEN_KEYS = [
 ] as const;
 export type GeminiForbiddenEnvKey =
   (typeof GEMINI_COMMON_ENV_FORBIDDEN_KEYS)[number];
-
-const isPlainObject = (value: unknown): value is Record<string, any> => {
-  return Object.prototype.toString.call(value) === "[object Object]";
-};
 
 const deepMerge = (
   target: Record<string, any>,
@@ -192,15 +189,20 @@ export const hasGeminiCommonConfigSnippet = (
     const parsed = JSON.parse(snippetString);
     if (!isPlainObject(parsed)) return false;
 
-    const entries = Object.entries(parsed).filter(([key, value]) => {
-      if (
-        GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(key as GeminiForbiddenEnvKey)
-      ) {
-        return false;
-      }
-      if (typeof value !== "string") return false;
-      return value.trim().length > 0;
-    });
+    const entries = Object.entries(parsed).filter(
+      (entry): entry is [string, string] => {
+        const [key, value] = entry;
+        if (
+          GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(
+            key as GeminiForbiddenEnvKey,
+          )
+        ) {
+          return false;
+        }
+        if (typeof value !== "string") return false;
+        return value.trim().length > 0;
+      },
+    );
 
     if (entries.length === 0) return false;
 
@@ -1040,3 +1042,162 @@ export const setCodexModelName = (
   const lines = normalizedText.split("\n");
   return `${replacementLine}\n${lines.join("\n")}`;
 };
+
+// ============================================================================
+// Gemini Common Config Parsing Utilities
+// ============================================================================
+
+/**
+ * Error codes for Gemini common config parsing.
+ * These codes are used for consistent error handling and i18n mapping.
+ */
+export const GEMINI_CONFIG_ERROR_CODES = {
+  NOT_OBJECT: "GEMINI_CONFIG_NOT_OBJECT",
+  ENV_NOT_OBJECT: "GEMINI_CONFIG_ENV_NOT_OBJECT",
+  VALUE_NOT_STRING: "GEMINI_CONFIG_VALUE_NOT_STRING",
+  FORBIDDEN_KEYS: "GEMINI_CONFIG_FORBIDDEN_KEYS",
+} as const;
+
+/**
+ * Result of parsing Gemini common config snippet
+ */
+export interface GeminiCommonConfigParseResult {
+  /** Parsed env key-value pairs (empty if invalid) */
+  env: Record<string, string>;
+  /** Error message if parsing/validation failed (starts with error code) */
+  error?: string;
+  /** Warning message (non-fatal, config still usable) */
+  warning?: string;
+}
+
+/**
+ * Parse Gemini common config snippet with full validation.
+ *
+ * Supports three formats:
+ * - ENV format: KEY=VALUE lines (one per line, # for comments)
+ * - Flat JSON: {"KEY": "VALUE", ...}
+ * - Wrapped JSON: {"env": {"KEY": "VALUE", ...}}
+ *
+ * Validation rules:
+ * - Forbidden keys (GOOGLE_GEMINI_BASE_URL, GEMINI_API_KEY) are rejected
+ * - Non-string values are rejected
+ * - Empty string values are filtered out
+ * - Arrays and non-plain objects are rejected
+ *
+ * @param snippet - The common config snippet string
+ * @param options - Optional configuration
+ * @returns Parse result with env, error, and warning
+ */
+export function parseGeminiCommonConfigSnippet(
+  snippet: string,
+  options?: {
+    /** If true, reject forbidden keys with error; otherwise filter them with warning */
+    strictForbiddenKeys?: boolean;
+  },
+): GeminiCommonConfigParseResult {
+  const trimmed = snippet.trim();
+  if (!trimmed) {
+    return { env: {} };
+  }
+
+  const strictForbiddenKeys = options?.strictForbiddenKeys ?? true;
+  let rawEnv: Record<string, unknown> = {};
+  let isJson = false;
+
+  // Try JSON first
+  try {
+    const parsed = JSON.parse(trimmed);
+
+    // Must be a plain object (not array, null, etc.)
+    if (!isPlainObject(parsed)) {
+      return {
+        env: {},
+        error: `${GEMINI_CONFIG_ERROR_CODES.NOT_OBJECT}: must be a JSON object, not array or primitive`,
+      };
+    }
+
+    isJson = true;
+
+    // Check if wrapped format {"env": {...}}
+    if ("env" in parsed) {
+      const envField = parsed.env;
+      if (!isPlainObject(envField)) {
+        return {
+          env: {},
+          error: `${GEMINI_CONFIG_ERROR_CODES.ENV_NOT_OBJECT}: 'env' field must be a plain object`,
+        };
+      }
+      rawEnv = envField as Record<string, unknown>;
+    } else {
+      // Flat format
+      rawEnv = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Not JSON, parse as ENV format (KEY=VALUE lines)
+    isJson = false;
+    for (const line of trimmed.split("\n")) {
+      const lineTrimmed = line.trim();
+      if (!lineTrimmed || lineTrimmed.startsWith("#")) continue;
+      const equalIndex = lineTrimmed.indexOf("=");
+      if (equalIndex > 0) {
+        const key = lineTrimmed.substring(0, equalIndex).trim();
+        // Strip surrounding quotes (single or double) from value
+        // e.g., KEY="value" or KEY='value' -> value
+        const rawValue = lineTrimmed.substring(equalIndex + 1).trim();
+        const value = rawValue.replace(/^["'](.*)["']$/, "$1");
+        if (key) {
+          rawEnv[key] = value;
+        }
+      }
+    }
+  }
+
+  // Validate and filter entries
+  const env: Record<string, string> = {};
+  const warnings: string[] = [];
+  const forbiddenKeysFound: string[] = [];
+
+  for (const [key, value] of Object.entries(rawEnv)) {
+    // Check forbidden keys
+    if (
+      GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(key as GeminiForbiddenEnvKey)
+    ) {
+      forbiddenKeysFound.push(key);
+      continue;
+    }
+
+    // Must be string
+    if (typeof value !== "string") {
+      if (isJson) {
+        return {
+          env: {},
+          error: `${GEMINI_CONFIG_ERROR_CODES.VALUE_NOT_STRING}: value for '${key}' must be a string, got ${typeof value}`,
+        };
+      }
+      // For ENV format, skip non-strings silently (shouldn't happen)
+      continue;
+    }
+
+    // Filter empty strings
+    const trimmedValue = value.trim();
+    if (!trimmedValue) {
+      continue;
+    }
+
+    env[key] = trimmedValue;
+  }
+
+  // Handle forbidden keys
+  if (forbiddenKeysFound.length > 0) {
+    const msg = `${GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS}: ${forbiddenKeysFound.join(", ")}`;
+    if (strictForbiddenKeys) {
+      return { env: {}, error: msg };
+    }
+    warnings.push(msg);
+  }
+
+  return {
+    env,
+    warning: warnings.length > 0 ? warnings.join("; ") : undefined,
+  };
+}

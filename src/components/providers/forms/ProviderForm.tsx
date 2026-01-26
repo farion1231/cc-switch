@@ -38,6 +38,7 @@ import { applyTemplateValues } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { extractDifference, isPlainObject } from "@/utils/configMerge";
 import { extractTomlDifference } from "@/utils/tomlConfigMerge";
+import { parseGeminiCommonConfigSnippet } from "@/utils/providerConfigUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
@@ -68,33 +69,33 @@ import {
 import { useProvidersQuery } from "@/lib/query/queries";
 
 /**
- * Parse Gemini common config snippet.
- * Supports two formats:
+ * Parse Gemini common config snippet for difference extraction.
+ * Uses shared parser with non-strict forbidden keys (filter instead of reject).
+ *
+ * Supports three formats:
+ * - ENV format: KEY=VALUE lines (one per line)
  * - Flat JSON: {"KEY": "VALUE", ...}
  * - Wrapped JSON: {"env": {"KEY": "VALUE", ...}}
  *
- * Returns empty object if parsing fails.
+ * Returns { env, warning } - caller should display warning via toast if present.
  */
-function parseGeminiCommonConfig(snippet: string): Record<string, string> {
-  try {
-    const parsed = JSON.parse(snippet);
-    if (!parsed || typeof parsed !== "object") {
-      return {};
-    }
-    // Check if it's wrapped format {"env": {...}}
-    const envObj =
-      parsed.env && typeof parsed.env === "object" ? parsed.env : parsed;
-    // Convert to string record
-    const result: Record<string, string> = {};
-    for (const [key, value] of Object.entries(envObj)) {
-      if (typeof value === "string") {
-        result[key] = value;
-      }
-    }
-    return result;
-  } catch {
-    return {};
+function parseGeminiCommonConfig(snippet: string): {
+  env: Record<string, string>;
+  warning?: string;
+} {
+  const result = parseGeminiCommonConfigSnippet(snippet, {
+    strictForbiddenKeys: false, // Don't fail, just filter
+  });
+
+  if (result.error) {
+    console.warn(
+      "[ProviderForm] Gemini common config parse error:",
+      result.error,
+    );
+    return { env: {} };
   }
+
+  return { env: result.env, warning: result.warning };
 }
 
 const CLAUDE_DEFAULT_CONFIG = JSON.stringify({ env: {} }, null, 2);
@@ -973,9 +974,13 @@ export function ProviderForm({
         if (useGeminiCommonConfigFlag && geminiCommonConfigSnippet.trim()) {
           // Parse common config as JSON (flat {"KEY": "VALUE"} format)
           // Note: geminiCommonConfigSnippet is stored as JSON by useGeminiCommonConfig hook
-          const commonEnvObj = parseGeminiCommonConfig(
+          const { env: commonEnvObj, warning } = parseGeminiCommonConfig(
             geminiCommonConfigSnippet.trim(),
           );
+          // Show warning toast if keys were filtered
+          if (warning) {
+            toast.warning(warning);
+          }
           if (isPlainObject(envObj) && isPlainObject(commonEnvObj)) {
             const { customConfig } = extractDifference(envObj, commonEnvObj);
             // Convert to string record with type guard to avoid type assertion issues

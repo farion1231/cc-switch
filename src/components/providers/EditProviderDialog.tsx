@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
@@ -11,6 +12,7 @@ import {
 import { providersApi, vscodeApi, configApi, type AppId } from "@/lib/api";
 import { extractDifference, isPlainObject } from "@/utils/configMerge";
 import { extractTomlDifference } from "@/utils/tomlConfigMerge";
+import { parseGeminiCommonConfigSnippet } from "@/utils/providerConfigUtils";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -114,42 +116,46 @@ export function EditProviderDialog({
                         setLiveSettings(live);
                       }
                     } else if (appId === "gemini") {
-                      // Gemini: common config supports two formats:
+                      // Gemini: common config supports three formats:
+                      // - ENV format: KEY=VALUE lines
                       // - Flat JSON: {"KEY": "VALUE", ...}
                       // - Wrapped JSON: {"env": {"KEY": "VALUE", ...}}
                       const liveEnv =
                         (live as { env?: Record<string, string> }).env ?? {};
-                      // Parse common config as JSON with format detection
-                      const parsedSnippet = JSON.parse(
-                        commonSnippet.trim(),
-                      ) as Record<string, unknown>;
-                      // Check if wrapped format {"env": {...}}
-                      const commonEnvRaw =
-                        parsedSnippet.env &&
-                        typeof parsedSnippet.env === "object"
-                          ? (parsedSnippet.env as Record<string, unknown>)
-                          : parsedSnippet;
-                      // Convert to string record, filtering out non-string values
-                      const commonEnvStrObj: Record<string, string> = {};
-                      for (const [key, value] of Object.entries(commonEnvRaw)) {
-                        if (typeof value === "string") {
-                          commonEnvStrObj[key] = value;
-                        }
-                      }
-                      if (
-                        isPlainObject(liveEnv) &&
-                        isPlainObject(commonEnvStrObj)
-                      ) {
-                        const { customConfig } = extractDifference(
-                          liveEnv,
-                          commonEnvStrObj,
+
+                      // Use shared parser with validation
+                      const parseResult = parseGeminiCommonConfigSnippet(
+                        commonSnippet,
+                        { strictForbiddenKeys: false },
+                      );
+
+                      if (parseResult.error) {
+                        console.warn(
+                          "[EditProviderDialog] Gemini common config parse error:",
+                          parseResult.error,
                         );
-                        setLiveSettings({
-                          ...live,
-                          env: customConfig,
-                        });
-                      } else {
                         setLiveSettings(live);
+                      } else {
+                        // Show warning toast if keys were filtered
+                        if (parseResult.warning) {
+                          toast.warning(parseResult.warning);
+                        }
+
+                        if (
+                          isPlainObject(liveEnv) &&
+                          Object.keys(parseResult.env).length > 0
+                        ) {
+                          const { customConfig } = extractDifference(
+                            liveEnv,
+                            parseResult.env,
+                          );
+                          setLiveSettings({
+                            ...live,
+                            env: customConfig,
+                          });
+                        } else {
+                          setLiveSettings(live);
+                        }
                       }
                     } else {
                       // Claude: 处理 JSON 格式
