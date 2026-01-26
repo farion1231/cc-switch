@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { configApi } from "@/lib/api";
 import {
   GEMINI_COMMON_ENV_FORBIDDEN_KEYS,
@@ -106,7 +107,10 @@ export function useGeminiCommonConfig({
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const enqueueSave = useCallback((saveFn: () => Promise<void>) => {
     const next = saveQueueRef.current.then(saveFn);
-    saveQueueRef.current = next.catch(() => {});
+    // Log errors to help with debugging, but don't block subsequent saves
+    saveQueueRef.current = next.catch((e) => {
+      console.error("[SaveQueue] Gemini common config save failed:", e);
+    });
     return next;
   }, []);
 
@@ -436,6 +440,12 @@ export function useGeminiCommonConfig({
         }
       }
       onEnvChange(envObjToString(newCustomEnv));
+      // Notify user that config was modified
+      toast.success(
+        t("geminiConfig.extractSuccess", {
+          defaultValue: "已提取通用配置，自定义配置已自动更新",
+        }),
+      );
     } catch (error) {
       console.error("提取 Gemini 通用配置失败:", error);
       setCommonConfigError(

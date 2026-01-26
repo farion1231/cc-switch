@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { validateJsonConfig } from "@/utils/providerConfigUtils";
 import { configApi } from "@/lib/api";
 import {
@@ -101,7 +102,10 @@ export function useCommonConfigSnippet({
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const enqueueSave = useCallback((saveFn: () => Promise<void>) => {
     const next = saveQueueRef.current.then(saveFn);
-    saveQueueRef.current = next.catch(() => {});
+    // Log errors to help with debugging, but don't block subsequent saves
+    saveQueueRef.current = next.catch((e) => {
+      console.error("[SaveQueue] Claude common config save failed:", e);
+    });
     return next;
   }, []);
 
@@ -424,9 +428,18 @@ export function useCommonConfigSnippet({
         if (isPlainObject(customParsed) && isPlainObject(extractedParsed)) {
           const diffResult = extractDifference(customParsed, extractedParsed);
           onConfigChange(JSON.stringify(diffResult.customConfig, null, 2));
+          // Notify user that config was modified
+          toast.success(
+            t("claudeConfig.extractSuccess", {
+              defaultValue: "已提取通用配置，自定义配置已自动更新",
+            }),
+          );
         }
-      } catch {
-        // 忽略解析错误
+      } catch (parseError) {
+        console.warn(
+          "[Extract] Failed to update settingsConfig after extract:",
+          parseError,
+        );
       }
     } catch (error) {
       console.error("提取通用配置失败:", error);

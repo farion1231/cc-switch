@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import TOML from "smol-toml";
 import { configApi } from "@/lib/api";
 import {
@@ -123,7 +124,10 @@ export function useCodexCommonConfig({
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const enqueueSave = useCallback((saveFn: () => Promise<void>) => {
     const next = saveQueueRef.current.then(saveFn);
-    saveQueueRef.current = next.catch(() => {});
+    // Log errors to help with debugging, but don't block subsequent saves
+    saveQueueRef.current = next.catch((e) => {
+      console.error("[SaveQueue] Codex common config save failed:", e);
+    });
     return next;
   }, []);
 
@@ -255,7 +259,7 @@ export function useCodexCommonConfig({
         const tomlError = validateTomlFormat(commonConfigSnippet);
         if (tomlError) {
           setCommonConfigError(
-            t("mcp.error.tomlInvalid", { defaultValue: "TOML 格式错误" }),
+            t("codexConfig.tomlFormatError", { defaultValue: "TOML 格式错误" }),
           );
           setUseCommonConfig(false);
           return;
@@ -322,7 +326,7 @@ export function useCodexCommonConfig({
         const tomlError = validateTomlFormat(commonConfigSnippet);
         if (tomlError) {
           setCommonConfigError(
-            t("mcp.error.tomlInvalid", { defaultValue: "TOML 格式错误" }),
+            t("codexConfig.tomlFormatError", { defaultValue: "TOML 格式错误" }),
           );
           setUseCommonConfig(false);
           return;
@@ -361,7 +365,7 @@ export function useCodexCommonConfig({
       const tomlError = validateTomlFormat(value);
       if (tomlError) {
         setCommonConfigError(
-          t("mcp.error.tomlInvalid", {
+          t("codexConfig.tomlSyntaxError", {
             defaultValue: "TOML 格式错误，请检查语法",
           }),
         );
@@ -409,8 +413,8 @@ export function useCodexCommonConfig({
       const tomlError = validateTomlFormat(extracted);
       if (tomlError) {
         setCommonConfigError(
-          t("mcp.error.tomlInvalid", {
-            defaultValue: "TOML 格式错误，请检查语法",
+          t("codexConfig.extractedTomlInvalid", {
+            defaultValue: "提取的配置 TOML 格式错误",
           }),
         );
         return;
@@ -431,8 +435,17 @@ export function useCodexCommonConfig({
           const parsed = JSON.parse(codexConfig);
           parsed.config = diffResult.customToml;
           onConfigChange(JSON.stringify(parsed, null, 2));
-        } catch {
-          // 忽略解析错误
+          // Notify user that config was modified
+          toast.success(
+            t("codexConfig.extractSuccess", {
+              defaultValue: "已提取通用配置，自定义配置已自动更新",
+            }),
+          );
+        } catch (parseError) {
+          console.warn(
+            "[Extract] Failed to update codexConfig after extract:",
+            parseError,
+          );
         }
       }
     } catch (error) {
