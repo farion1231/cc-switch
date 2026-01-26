@@ -173,6 +173,13 @@
         "title": "Configuration Directory",
         "description": "Manage storage paths for Claude, Codex and Gemini configurations"
       },
+      "terminalPath": {
+        "title": "Terminal Path",
+        "summary": "Set a custom terminal executable for opening provider terminals",
+        "label": "Terminal executable path",
+        "placeholder": "/usr/bin/kitty",
+        "description": "Optional. If set, CC Switch uses this terminal executable to open a provider terminal. Leave empty to use the system default."
+      },
       "proxy": {
         "title": "Local Proxy",
         "description": "Control proxy service toggle, view status and port info",

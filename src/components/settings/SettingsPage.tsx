@@ -8,6 +8,7 @@ import {
   Coins,
   Database,
   Server,
+  Terminal,
   ChevronDown,
   Zap,
   Globe,
@@ -40,6 +41,7 @@ import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
+import { TerminalSettings } from "@/components/settings/TerminalSettings";
 import { ProxyPanel } from "@/components/proxy";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
 import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
@@ -303,6 +305,33 @@ export function SettingsPage({
                           onDirectoryChange={updateDirectory}
                           onBrowseDirectory={browseDirectory}
                           onResetDirectory={resetDirectory}
+                        />
+                      </AccordionContent>
+                    </AccordionItem>
+
+                    <AccordionItem
+                      value="terminal"
+                      className="rounded-xl glass-card overflow-hidden"
+                    >
+                      <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <div className="flex items-center gap-3">
+                          <Terminal className="h-5 w-5 text-sky-500" />
+                          <div className="text-left">
+                            <h3 className="text-base font-semibold">
+                              {t("settings.advanced.terminalPath.title")}
+                            </h3>
+                            <p className="text-sm text-muted-foreground font-normal">
+                              {t("settings.advanced.terminalPath.summary")}
+                            </p>
+                          </div>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                        <TerminalSettings
+                          value={settings.terminalPath}
+                          onChange={(value) =>
+                            handleAutoSave({ terminalPath: value })
+                          }
                         />
                       </AccordionContent>
                     </AccordionItem>

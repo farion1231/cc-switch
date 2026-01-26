@@ -173,6 +173,13 @@
         "title": "設定ディレクトリ",
         "description": "Claude、Codex、Gemini の設定保存パスを管理"
       },
+      "terminalPath": {
+        "title": "ターミナルパス",
+        "summary": "プロバイダー端末を開くための実行ファイルを指定",
+        "label": "ターミナル実行ファイルのパス",
+        "placeholder": "/usr/bin/kitty",
+        "description": "任意。指定するとこの実行ファイルで端末を開きます。空欄の場合はシステム既定を使用します。"
+      },
       "proxy": {
         "title": "ローカルプロキシ",
         "description": "プロキシサービスの切り替え、ステータスとポート情報を表示",

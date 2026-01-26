@@ -81,6 +81,39 @@ describe("useSettingsForm Hook", () => {
     expect(changeLanguageSpy).toHaveBeenCalledWith("ja");
   });
 
+  it("should normalize terminalPath when initializing", async () => {
+    useSettingsQueryMock.mockReturnValue({
+      data: {
+        showInTray: true,
+        minimizeToTrayOnClose: true,
+        enableClaudePluginIntegration: false,
+        terminalPath: "  /usr/bin/kitty  ",
+        language: "en",
+      },
+      isLoading: false,
+    });
+
+    const { result } = renderHook(() => useSettingsForm());
+
+    await waitFor(() => {
+      expect(result.current.settings).not.toBeNull();
+    });
+
+    expect(result.current.settings?.terminalPath).toBe("/usr/bin/kitty");
+
+    act(() => {
+      result.current.resetSettings({
+        showInTray: true,
+        minimizeToTrayOnClose: true,
+        enableClaudePluginIntegration: false,
+        terminalPath: "   ",
+        language: "en",
+      });
+    });
+
+    expect(result.current.settings?.terminalPath).toBeUndefined();
+  });
+
   it("should prioritize reading language from local storage in readPersistedLanguage", () => {
     useSettingsQueryMock.mockReturnValue({
       data: null,

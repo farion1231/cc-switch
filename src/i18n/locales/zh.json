@@ -173,6 +173,13 @@
         "title": "配置文件目录",
         "description": "管理 Claude、Codex 和 Gemini 的配置存储路径"
       },
+      "terminalPath": {
+        "title": "终端路径",
+        "summary": "设置打开终端时使用的可执行文件",
+        "label": "终端可执行文件路径",
+        "placeholder": "/usr/bin/kitty",
+        "description": "可选。填写后，打开终端将使用该可执行文件；留空使用系统默认。"
+      },
       "proxy": {
         "title": "本地代理",
         "description": "控制代理服务开关、查看状态与端口信息",

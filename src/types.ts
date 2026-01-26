@@ -180,6 +180,10 @@ export interface Settings {
   // 覆盖 OpenCode 配置目录（可选）
   opencodeConfigDir?: string;
 
+  // ===== 终端启动设置 =====
+  // 自定义终端可执行文件路径（可选）
+  terminalPath?: string;
+
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
   currentProviderClaude?: string;

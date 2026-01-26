@@ -87,6 +87,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
+      terminalPath: sanitizeDir(data.terminalPath),
       language: normalizedLanguage,
     };
 
@@ -143,6 +144,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
+        terminalPath: sanitizeDir(serverData.terminalPath),
         language: normalizedLanguage,
       };
 
