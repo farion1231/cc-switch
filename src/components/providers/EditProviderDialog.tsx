@@ -8,7 +8,9 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
-import { providersApi, vscodeApi, type AppId } from "@/lib/api";
+import { providersApi, vscodeApi, configApi, type AppId } from "@/lib/api";
+import { extractDifference, isPlainObject } from "@/utils/configMerge";
+import { extractTomlDifference } from "@/utils/tomlConfigMerge";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -81,7 +83,91 @@ export function EditProviderDialog({
               appId,
             )) as Record<string, unknown>;
             if (!cancelled && live && typeof live === "object") {
-              setLiveSettings(live);
+              // 检查是否启用了通用配置
+              const metaByApp = provider.meta?.commonConfigEnabledByApp;
+              const commonConfigEnabled =
+                metaByApp?.[appId as "claude" | "codex" | "gemini"] ??
+                provider.meta?.commonConfigEnabled ??
+                false;
+
+              if (commonConfigEnabled) {
+                // 从 live 配置中提取自定义部分（去除通用配置）
+                try {
+                  const commonSnippet =
+                    await configApi.getCommonConfigSnippet(appId);
+                  if (commonSnippet && commonSnippet.trim()) {
+                    if (appId === "codex") {
+                      // Codex: 处理 TOML 格式的 config 字段
+                      const liveConfig =
+                        (live as { auth?: unknown; config?: string }).config ??
+                        "";
+                      const { customToml, error } = extractTomlDifference(
+                        liveConfig,
+                        commonSnippet.trim(),
+                      );
+                      if (!error) {
+                        setLiveSettings({
+                          ...live,
+                          config: customToml,
+                        });
+                      } else {
+                        setLiveSettings(live);
+                      }
+                    } else if (appId === "gemini") {
+                      // Gemini: 处理 env 格式
+                      const liveEnv =
+                        (live as { env?: Record<string, string> }).env ?? {};
+                      // 将 env 格式的通用配置转换为对象
+                      const commonEnvObj: Record<string, string> = {};
+                      for (const line of commonSnippet.trim().split("\n")) {
+                        const trimmedLine = line.trim();
+                        if (trimmedLine && !trimmedLine.startsWith("#")) {
+                          const eqIndex = trimmedLine.indexOf("=");
+                          if (eqIndex > 0) {
+                            const key = trimmedLine.slice(0, eqIndex).trim();
+                            const value = trimmedLine.slice(eqIndex + 1).trim();
+                            commonEnvObj[key] = value;
+                          }
+                        }
+                      }
+                      if (
+                        isPlainObject(liveEnv) &&
+                        isPlainObject(commonEnvObj)
+                      ) {
+                        const { customConfig } = extractDifference(
+                          liveEnv,
+                          commonEnvObj,
+                        );
+                        setLiveSettings({
+                          ...live,
+                          env: customConfig,
+                        });
+                      } else {
+                        setLiveSettings(live);
+                      }
+                    } else {
+                      // Claude: 处理 JSON 格式
+                      const commonConfig = JSON.parse(commonSnippet.trim());
+                      if (isPlainObject(live) && isPlainObject(commonConfig)) {
+                        const { customConfig } = extractDifference(
+                          live,
+                          commonConfig,
+                        );
+                        setLiveSettings(customConfig);
+                      } else {
+                        setLiveSettings(live);
+                      }
+                    }
+                  } else {
+                    setLiveSettings(live);
+                  }
+                } catch {
+                  // 提取失败时使用原始 live 配置
+                  setLiveSettings(live);
+                }
+              } else {
+                setLiveSettings(live);
+              }
               setHasLoadedLive(true);
             }
           } catch {
@@ -105,7 +191,14 @@ export function EditProviderDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
+  }, [
+    open,
+    provider?.id,
+    provider?.meta,
+    appId,
+    hasLoadedLive,
+    isProxyTakeover,
+  ]); // 添加 provider?.meta 依赖
 
   const initialSettingsConfig = useMemo(() => {
     return (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
