@@ -67,6 +67,36 @@ import {
 } from "./hooks";
 import { useProvidersQuery } from "@/lib/query/queries";
 
+/**
+ * Parse Gemini common config snippet.
+ * Supports two formats:
+ * - Flat JSON: {"KEY": "VALUE", ...}
+ * - Wrapped JSON: {"env": {"KEY": "VALUE", ...}}
+ *
+ * Returns empty object if parsing fails.
+ */
+function parseGeminiCommonConfig(snippet: string): Record<string, string> {
+  try {
+    const parsed = JSON.parse(snippet);
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    // Check if it's wrapped format {"env": {...}}
+    const envObj =
+      parsed.env && typeof parsed.env === "object" ? parsed.env : parsed;
+    // Convert to string record
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(envObj)) {
+      if (typeof value === "string") {
+        result[key] = value;
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
 const CLAUDE_DEFAULT_CONFIG = JSON.stringify({ env: {} }, null, 2);
 const CODEX_DEFAULT_CONFIG = JSON.stringify({ auth: {}, config: "" }, null, 2);
 const GEMINI_DEFAULT_CONFIG = JSON.stringify(
@@ -941,7 +971,11 @@ export function ProviderForm({
         const configObj = geminiConfig.trim() ? JSON.parse(geminiConfig) : {};
         // 如果启用了通用配置，只保存与通用配置不同的部分（自定义配置）
         if (useGeminiCommonConfigFlag && geminiCommonConfigSnippet.trim()) {
-          const commonEnvObj = envStringToObj(geminiCommonConfigSnippet.trim());
+          // Parse common config as JSON (flat {"KEY": "VALUE"} format)
+          // Note: geminiCommonConfigSnippet is stored as JSON by useGeminiCommonConfig hook
+          const commonEnvObj = parseGeminiCommonConfig(
+            geminiCommonConfigSnippet.trim(),
+          );
           if (isPlainObject(envObj) && isPlainObject(commonEnvObj)) {
             const { customConfig } = extractDifference(envObj, commonEnvObj);
             // Convert to string record with type guard to avoid type assertion issues
