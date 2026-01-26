@@ -944,7 +944,12 @@ export function ProviderForm({
           const commonEnvObj = envStringToObj(geminiCommonConfigSnippet.trim());
           if (isPlainObject(envObj) && isPlainObject(commonEnvObj)) {
             const { customConfig } = extractDifference(envObj, commonEnvObj);
-            envObj = customConfig as Record<string, string>;
+            // Convert to string record with type guard to avoid type assertion issues
+            const stringEnvObj: Record<string, string> = {};
+            for (const [key, value] of Object.entries(customConfig)) {
+              stringEnvObj[key] = String(value);
+            }
+            envObj = stringEnvObj;
           }
         }
         const combined = {
