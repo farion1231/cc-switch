@@ -180,58 +180,68 @@ fn get_primary_endpoint(request: &DeepLinkImportRequest) -> String {
 }
 
 /// Build provider meta with usage script configuration
+///
+/// Note: Deeplink imported providers have common config disabled by default
+/// to avoid unexpected configuration merging.
 fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<ProviderMeta>, AppError> {
     // Check if any usage script fields are provided
-    if request.usage_script.is_none()
-        && request.usage_enabled.is_none()
-        && request.usage_api_key.is_none()
-        && request.usage_base_url.is_none()
-        && request.usage_access_token.is_none()
-        && request.usage_user_id.is_none()
-        && request.usage_auto_interval.is_none()
-    {
-        return Ok(None);
-    }
+    let has_usage_fields = request.usage_script.is_some()
+        || request.usage_enabled.is_some()
+        || request.usage_api_key.is_some()
+        || request.usage_base_url.is_some()
+        || request.usage_access_token.is_some()
+        || request.usage_user_id.is_some()
+        || request.usage_auto_interval.is_some();
 
-    // Decode usage script code if provided
-    let code = if let Some(script_b64) = &request.usage_script {
-        let decoded = decode_base64_param("usage_script", script_b64)?;
-        String::from_utf8(decoded)
-            .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in usage_script: {e}")))?
+    // Build usage script if fields are provided
+    let usage_script = if has_usage_fields {
+        // Decode usage script code if provided
+        let code = if let Some(script_b64) = &request.usage_script {
+            let decoded = decode_base64_param("usage_script", script_b64)?;
+            String::from_utf8(decoded).map_err(|e| {
+                AppError::InvalidInput(format!("Invalid UTF-8 in usage_script: {e}"))
+            })?
+        } else {
+            String::new()
+        };
+
+        // Determine enabled state: explicit param > has code > false
+        let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
+
+        // Build UsageScript - use provider's API key and endpoint as defaults
+        // Note: use primary endpoint only (first one if comma-separated)
+        Some(UsageScript {
+            enabled,
+            language: "javascript".to_string(),
+            code,
+            timeout: Some(10),
+            api_key: request
+                .usage_api_key
+                .clone()
+                .or_else(|| request.api_key.clone()),
+            base_url: request.usage_base_url.clone().or_else(|| {
+                let primary = get_primary_endpoint(request);
+                if primary.is_empty() {
+                    None
+                } else {
+                    Some(primary)
+                }
+            }),
+            access_token: request.usage_access_token.clone(),
+            user_id: request.usage_user_id.clone(),
+            template_type: None, // Deeplink providers don't specify template type (will use backward compatibility logic)
+            auto_query_interval: request.usage_auto_interval,
+        })
     } else {
-        String::new()
+        None
     };
 
-    // Determine enabled state: explicit param > has code > false
-    let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
-
-    // Build UsageScript - use provider's API key and endpoint as defaults
-    // Note: use primary endpoint only (first one if comma-separated)
-    let usage_script = UsageScript {
-        enabled,
-        language: "javascript".to_string(),
-        code,
-        timeout: Some(10),
-        api_key: request
-            .usage_api_key
-            .clone()
-            .or_else(|| request.api_key.clone()),
-        base_url: request.usage_base_url.clone().or_else(|| {
-            let primary = get_primary_endpoint(request);
-            if primary.is_empty() {
-                None
-            } else {
-                Some(primary)
-            }
-        }),
-        access_token: request.usage_access_token.clone(),
-        user_id: request.usage_user_id.clone(),
-        template_type: None, // Deeplink providers don't specify template type (will use backward compatibility logic)
-        auto_query_interval: request.usage_auto_interval,
-    };
-
+    // Always return a ProviderMeta with common_config_enabled = false for deeplink imports
+    // This ensures the imported provider uses its own settings_config directly
+    // without merging with the global common config snippet
     Ok(Some(ProviderMeta {
-        usage_script: Some(usage_script),
+        usage_script,
+        common_config_enabled: Some(false),
         ..Default::default()
     }))
 }
