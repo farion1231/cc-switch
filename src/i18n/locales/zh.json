@@ -36,7 +36,8 @@
     "search": "查询",
     "reset": "重置",
     "actions": "操作",
-    "deleting": "删除中..."
+    "deleting": "删除中...",
+    "readonly": "只读"
   },
   "apiKeyInput": {
     "placeholder": "请输入API Key",
@@ -58,7 +59,12 @@
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
-    "saveFailed": "保存失败: {{error}}"
+    "saveFailed": "保存失败: {{error}}",
+    "hidePreview": "隐藏合并预览",
+    "showPreview": "显示合并预览",
+    "customConfig": "自定义配置（覆盖通用配置）",
+    "mergedPreview": "合并预览（只读）",
+    "mergedPreviewHint": "通用配置 + 自定义配置 = 最终配置"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
@@ -553,7 +559,8 @@
     "commonConfigInvalidValues": "通用配置片段的值必须是字符串",
     "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
     "configMergeFailed": "配置合并失败: {{error}}",
-    "configReplaceFailed": "配置替换失败: {{error}}"
+    "configReplaceFailed": "配置替换失败: {{error}}",
+    "forbiddenKeysWarning": "以下密钥已被自动过滤（禁止在通用配置中设置）：{{keys}}"
   },
   "opencode": {
     "npmPackage": "接口格式",

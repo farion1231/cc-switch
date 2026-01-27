@@ -705,7 +705,7 @@ fn merge_gemini_config(custom_config: &JsonValue, common_snippet: &str) -> Merge
 /// - ENV format: KEY=VALUE lines
 /// - Flat JSON: {"KEY": "VALUE", ...}
 /// - Wrapped JSON: {"env": {"KEY": "VALUE", ...}}
-fn parse_gemini_common_snippet(snippet: &str) -> serde_json::Map<String, JsonValue> {
+pub(crate) fn parse_gemini_common_snippet(snippet: &str) -> serde_json::Map<String, JsonValue> {
     let trimmed = snippet.trim();
     if trimmed.is_empty() {
         return serde_json::Map::new();

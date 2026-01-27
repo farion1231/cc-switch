@@ -73,7 +73,7 @@ export const deepEqual = (a: unknown, b: unknown): boolean => {
  * - 嵌套对象：递归合并
  * - 数组：source 完全替换 target（不做元素级合并）
  * - 原始值：source 覆盖 target
- * - undefined：不覆盖
+ * - undefined/null：不覆盖（与后端 config_merge.rs 保持一致）
  */
 export const deepMerge = <T extends Record<string, unknown>>(
   target: T,
@@ -85,8 +85,8 @@ export const deepMerge = <T extends Record<string, unknown>>(
     const sourceValue = source[key];
     const targetValue = result[key];
 
-    // undefined 不覆盖
-    if (sourceValue === undefined) {
+    // undefined 和 null 都不覆盖（与后端保持一致）
+    if (sourceValue === undefined || sourceValue === null) {
       continue;
     }
 

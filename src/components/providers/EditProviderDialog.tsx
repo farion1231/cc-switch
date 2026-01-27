@@ -12,7 +12,10 @@ import {
 import { providersApi, vscodeApi, configApi, type AppId } from "@/lib/api";
 import { extractDifference, isPlainObject } from "@/utils/configMerge";
 import { extractTomlDifference } from "@/utils/tomlConfigMerge";
-import { parseGeminiCommonConfigSnippet } from "@/utils/providerConfigUtils";
+import {
+  parseGeminiCommonConfigSnippet,
+  mapGeminiWarningToI18n,
+} from "@/utils/providerConfigUtils";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -138,7 +141,7 @@ export function EditProviderDialog({
                       } else {
                         // Show warning toast if keys were filtered
                         if (parseResult.warning) {
-                          toast.warning(parseResult.warning);
+                          toast.warning(mapGeminiWarningToI18n(parseResult.warning, t));
                         }
 
                         if (

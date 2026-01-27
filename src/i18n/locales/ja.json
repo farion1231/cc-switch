@@ -36,7 +36,8 @@
     "search": "検索",
     "reset": "リセット",
     "actions": "操作",
-    "deleting": "削除中..."
+    "deleting": "削除中...",
+    "readonly": "読み取り専用"
   },
   "apiKeyInput": {
     "placeholder": "API Key を入力",
@@ -58,7 +59,12 @@
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
     "extractFailed": "抽出に失敗しました: {{error}}",
-    "saveFailed": "保存に失敗しました: {{error}}"
+    "saveFailed": "保存に失敗しました: {{error}}",
+    "hidePreview": "マージプレビューを非表示",
+    "showPreview": "マージプレビューを表示",
+    "customConfig": "カスタム設定（共通設定を上書き）",
+    "mergedPreview": "マージプレビュー（読み取り専用）",
+    "mergedPreviewHint": "共通設定 + カスタム設定 = 最終設定"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",
@@ -553,7 +559,8 @@
     "commonConfigInvalidValues": "共通設定スニペットの値は文字列である必要があります",
     "noCommonConfigToApply": "共通設定スニペットが空、または適用できる項目がありません",
     "configMergeFailed": "設定のマージに失敗しました: {{error}}",
-    "configReplaceFailed": "設定の置換に失敗しました: {{error}}"
+    "configReplaceFailed": "設定の置換に失敗しました: {{error}}",
+    "forbiddenKeysWarning": "以下のキーはフィルタされました（共通設定では許可されていません）：{{keys}}"
   },
   "opencode": {
     "npmPackage": "API フォーマット",

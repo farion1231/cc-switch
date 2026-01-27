@@ -36,7 +36,8 @@
     "search": "Search",
     "reset": "Reset",
     "actions": "Actions",
-    "deleting": "Deleting..."
+    "deleting": "Deleting...",
+    "readonly": "Read-only"
   },
   "apiKeyInput": {
     "placeholder": "Enter API Key",
@@ -58,7 +59,12 @@
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}"
+    "saveFailed": "Save failed: {{error}}",
+    "hidePreview": "Hide merged preview",
+    "showPreview": "Show merged preview",
+    "customConfig": "Custom config (overrides common)",
+    "mergedPreview": "Merged preview (read-only)",
+    "mergedPreviewHint": "Common config + Custom config = Final config"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
@@ -553,7 +559,8 @@
     "commonConfigInvalidValues": "Common config snippet values must be strings",
     "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
     "configMergeFailed": "Config merge failed: {{error}}",
-    "configReplaceFailed": "Config replace failed: {{error}}"
+    "configReplaceFailed": "Config replace failed: {{error}}",
+    "forbiddenKeysWarning": "The following keys were filtered (not allowed in common config): {{keys}}"
   },
   "opencode": {
     "npmPackage": "API Format",

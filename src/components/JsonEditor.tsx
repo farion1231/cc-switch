@@ -280,7 +280,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
         style={{ width: "100%", height: isFullHeight ? undefined : "auto" }}
         className={isFullHeight ? "flex-1 min-h-0" : ""}
       />
-      {language === "json" && (
+      {language === "json" && !readOnly && (
         <button
           type="button"
           onClick={handleFormat}

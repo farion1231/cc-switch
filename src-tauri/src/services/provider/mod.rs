@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
+use crate::config_merge::{extract_json_difference, extract_toml_difference_str, is_common_config_enabled};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
 use crate::services::mcp::McpService;
@@ -386,7 +387,18 @@ impl ProviderService {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
-                            current_provider.settings_config = live_config;
+                            // Check if common config is enabled for this provider
+                            let common_enabled = is_common_config_enabled(current_provider.meta.as_ref(), &app_type);
+
+                            let config_to_save = if common_enabled {
+                                // Extract custom config from live (remove common config parts)
+                                Self::extract_custom_from_live(state, &app_type, &live_config)?
+                            } else {
+                                // Common config not enabled, use live config directly
+                                live_config
+                            };
+
+                            current_provider.settings_config = config_to_save;
                             // Ignore backfill failure, don't affect switch flow
                             let _ = state.db.save_provider(app_type.as_str(), &current_provider);
                         }
@@ -456,6 +468,87 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
+        }
+    }
+
+    /// Extract custom config from live config (remove common config parts).
+    ///
+    /// This is used during backfill to avoid polluting the provider's settings_config
+    /// with common config values that should remain in the common config snippet.
+    fn extract_custom_from_live(
+        state: &AppState,
+        app_type: &AppType,
+        live_config: &Value,
+    ) -> Result<Value, AppError> {
+        // Get common config snippet from database
+        let common_snippet = state
+            .db
+            .get_config_snippet(app_type.as_str())?
+            .unwrap_or_default();
+
+        if common_snippet.trim().is_empty() {
+            // No common config, return live config as-is
+            return Ok(live_config.clone());
+        }
+
+        match app_type {
+            AppType::Claude => {
+                // Parse common config as JSON
+                let common_config: Value = serde_json::from_str(&common_snippet).map_err(|e| {
+                    AppError::Config(format!("Failed to parse common config snippet: {e}"))
+                })?;
+
+                // Extract difference (custom = live - common)
+                let (custom_config, _) = extract_json_difference(live_config, &common_config);
+                Ok(custom_config)
+            }
+            AppType::Codex => {
+                // Codex: Extract TOML config field difference
+                let mut result = live_config.clone();
+
+                if let Some(config_str) = live_config.get("config").and_then(|v| v.as_str()) {
+                    // Extract TOML difference for config field
+                    // Returns (custom_toml, has_common_keys, error)
+                    let (custom_toml, _, _) = extract_toml_difference_str(config_str, &common_snippet);
+                    if let Some(obj) = result.as_object_mut() {
+                        obj.insert("config".to_string(), Value::String(custom_toml));
+                    }
+                }
+
+                Ok(result)
+            }
+            AppType::Gemini => {
+                // Gemini: Extract env field difference
+                // Parse common config (supports ENV format and JSON format)
+                let common_env = crate::config_merge::parse_gemini_common_snippet(&common_snippet);
+
+                if common_env.is_empty() {
+                    return Ok(live_config.clone());
+                }
+
+                let mut result = live_config.clone();
+
+                if let Some(live_env) = live_config.get("env").and_then(|v| v.as_object()) {
+                    // Extract difference: custom = live_env - common_env
+                    let mut custom_env = serde_json::Map::new();
+                    for (key, value) in live_env {
+                        if common_env.get(key) != Some(value) {
+                            // Key doesn't exist in common or value is different
+                            custom_env.insert(key.clone(), value.clone());
+                        }
+                    }
+
+                    if let Some(obj) = result.as_object_mut() {
+                        obj.insert("env".to_string(), Value::Object(custom_env));
+                    }
+                }
+
+                Ok(result)
+            }
+            AppType::OpenCode => {
+                // OpenCode doesn't support common config
+                Ok(live_config.clone())
+            }
         }
     }
 

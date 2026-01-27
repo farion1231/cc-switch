@@ -38,7 +38,10 @@ import { applyTemplateValues } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { extractDifference, isPlainObject } from "@/utils/configMerge";
 import { extractTomlDifference } from "@/utils/tomlConfigMerge";
-import { parseGeminiCommonConfigSnippet } from "@/utils/providerConfigUtils";
+import {
+  parseGeminiCommonConfigSnippet,
+  mapGeminiWarningToI18n,
+} from "@/utils/providerConfigUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
@@ -979,7 +982,7 @@ export function ProviderForm({
           );
           // Show warning toast if keys were filtered
           if (warning) {
-            toast.warning(warning);
+            toast.warning(mapGeminiWarningToI18n(warning, t));
           }
           if (isPlainObject(envObj) && isPlainObject(commonEnvObj)) {
             const { customConfig } = extractDifference(envObj, commonEnvObj);

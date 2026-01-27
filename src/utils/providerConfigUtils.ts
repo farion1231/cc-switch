@@ -1201,3 +1201,26 @@ export function parseGeminiCommonConfigSnippet(
     warning: warnings.length > 0 ? warnings.join("; ") : undefined,
   };
 }
+
+/**
+ * Map Gemini common config warning to i18n-friendly message.
+ *
+ * @param warning - The raw warning string from parseGeminiCommonConfigSnippet
+ * @param t - The i18n translation function
+ * @returns Translated warning message
+ */
+export function mapGeminiWarningToI18n(
+  warning: string,
+  t: (key: string, options?: { keys?: string; defaultValue?: string }) => string,
+): string {
+  if (warning.startsWith(GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS)) {
+    // Extract key list: "GEMINI_CONFIG_FORBIDDEN_KEYS: KEY1, KEY2" -> "KEY1, KEY2"
+    const keys = warning.replace(
+      `${GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS}: `,
+      "",
+    );
+    return t("geminiConfig.forbiddenKeysWarning", { keys });
+  }
+  // Other warnings: return as-is
+  return warning;
+}
