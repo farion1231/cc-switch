@@ -63,7 +63,7 @@ pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
         prefix: "claude_",
         header_id: "claude_header",
         empty_id: "claude_empty",
-        header_label: "─── Claude ───",
+        header_label: "Claude",
         log_name: "Claude",
     },
     TrayAppSection {
@@ -71,7 +71,7 @@ pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
         prefix: "codex_",
         header_id: "codex_header",
         empty_id: "codex_empty",
-        header_label: "─── Codex ───",
+        header_label: "Codex",
         log_name: "Codex",
     },
     TrayAppSection {
@@ -79,7 +79,7 @@ pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
         prefix: "gemini_",
         header_id: "gemini_header",
         empty_id: "gemini_empty",
-        header_label: "─── Gemini ───",
+        header_label: "Gemini",
         log_name: "Gemini",
     },
 ];
@@ -391,13 +391,16 @@ pub fn create_tray_menu(
             &tray_texts,
             app_state,
         )?;
+
+        // 在每个 section 后添加分隔符
+        menu_builder = menu_builder.separator();
     }
 
-    // 分隔符和退出菜单
+    // 退出菜单（分隔符已在上面的 section 循环中添加）
     let quit_item = MenuItem::with_id(app, "quit", tray_texts.quit, true, None::<&str>)
         .map_err(|e| AppError::Message(format!("创建退出菜单失败: {e}")))?;
 
-    menu_builder = menu_builder.separator().item(&quit_item);
+    menu_builder = menu_builder.item(&quit_item);
 
     menu_builder
         .build()
