@@ -92,4 +92,29 @@ export const proxyApi = {
   async updateProxyConfigForApp(config: AppProxyConfig): Promise<void> {
     return invoke("update_proxy_config_for_app", { config });
   },
+
+  // ========== 计费默认配置 API ==========
+
+  // 获取默认成本倍率
+  async getDefaultCostMultiplier(appType: string): Promise<string> {
+    return invoke("get_default_cost_multiplier", { appType });
+  },
+
+  // 设置默认成本倍率
+  async setDefaultCostMultiplier(
+    appType: string,
+    value: string,
+  ): Promise<void> {
+    return invoke("set_default_cost_multiplier", { appType, value });
+  },
+
+  // 获取计费模式来源
+  async getPricingModelSource(appType: string): Promise<string> {
+    return invoke("get_pricing_model_source", { appType });
+  },
+
+  // 设置计费模式来源
+  async setPricingModelSource(appType: string, value: string): Promise<void> {
+    return invoke("set_pricing_model_source", { appType, value });
+  },
 };

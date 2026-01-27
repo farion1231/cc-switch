@@ -141,6 +141,10 @@ export interface ProviderMeta {
   testConfig?: ProviderTestConfig;
   // 供应商单独的代理配置
   proxyConfig?: ProviderProxyConfig;
+  // 供应商成本倍率
+  costMultiplier?: string;
+  // 供应商计费模式来源
+  pricingModelSource?: string;
   // 是否启用通用配置片段（用于跨供应商保持勾选状态）
   commonConfigEnabled?: boolean;
   // 按应用记录通用配置启用状态（优先于 commonConfigEnabled）

@@ -22,9 +22,7 @@ use super::{
 };
 use crate::app_config::AppType;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
-use rust_decimal::Decimal;
 use serde_json::{json, Value};
-use std::str::FromStr;
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -145,6 +143,7 @@ async fn handle_claude_transform(
                             &provider_id,
                             "claude",
                             &model,
+                            &model,
                             usage,
                             latency_ms,
                             first_token_ms,
@@ -215,6 +214,7 @@ async fn handle_claude_transform(
             .unwrap_or("unknown");
         let latency_ms = ctx.latency_ms();
 
+        let request_model = ctx.request_model.clone();
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
@@ -225,6 +225,7 @@ async fn handle_claude_transform(
                     &provider_id,
                     "claude",
                     &model,
+                    &request_model,
                     usage,
                     latency_ms,
                     None,
@@ -441,6 +442,7 @@ async fn log_usage(
     provider_id: &str,
     app_type: &str,
     model: &str,
+    request_model: &str,
     usage: TokenUsage,
     latency_ms: u64,
     first_token_ms: Option<u64>,
@@ -451,25 +453,12 @@ async fn log_usage(
 
     let logger = UsageLogger::new(&state.db);
 
-    // 获取 provider 的 cost_multiplier
-    let multiplier = match state.db.get_provider_by_id(provider_id, app_type) {
-        Ok(Some(p)) => {
-            if let Some(meta) = p.meta {
-                if let Some(cm) = meta.cost_multiplier {
-                    Decimal::from_str(&cm).unwrap_or_else(|e| {
-                        log::warn!(
-                            "cost_multiplier 解析失败 (provider_id={provider_id}): {cm} - {e}"
-                        );
-                        Decimal::from(1)
-                    })
-                } else {
-                    Decimal::from(1)
-                }
-            } else {
-                Decimal::from(1)
-            }
-        }
-        _ => Decimal::from(1),
+    let (multiplier, pricing_model_source) =
+        logger.resolve_pricing_config(provider_id, app_type).await;
+    let pricing_model = if pricing_model_source == "request" {
+        request_model
+    } else {
+        model
     };
 
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -479,6 +468,8 @@ async fn log_usage(
         provider_id.to_string(),
         app_type.to_string(),
         model.to_string(),
+        request_model.to_string(),
+        pricing_model.to_string(),
         usage,
         multiplier,
         latency_ms,

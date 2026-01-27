@@ -383,7 +383,21 @@
       "saved": "代理设置已保存",
       "saveFailed": "保存失败：{{error}}",
       "testSuccess": "连接成功！延迟 {{latency}}ms",
-      "testFailed": "连接失败：{{error}}"
+      "testFailed": "连接失败：{{error}}",
+      "pricingDefaultsTitle": "计费默认配置",
+      "pricingDefaultsDescription": "设置各应用的默认倍率与计费模式来源。",
+      "pricingAppLabel": "应用",
+      "defaultCostMultiplierLabel": "默认倍率",
+      "defaultCostMultiplierHint": "用于成本计算的倍率，支持小数。",
+      "pricingModelSourceLabel": "计费模式",
+      "pricingModelSourceRequest": "请求模型",
+      "pricingModelSourceResponse": "返回模型",
+      "pricingSave": "保存计费配置",
+      "pricingSaved": "计费配置已保存",
+      "pricingSaveFailed": "保存计费配置失败：{{error}}",
+      "pricingLoadFailed": "加载计费配置失败：{{error}}",
+      "defaultCostMultiplierRequired": "默认倍率不能为空",
+      "defaultCostMultiplierInvalid": "默认倍率格式不正确"
     }
   },
   "apps": {
@@ -521,7 +535,18 @@
     "useCustomProxy": "使用单独代理",
     "proxyConfigDesc": "为此供应商配置单独的网络代理，不启用时使用系统代理或全局设置。",
     "proxyUsername": "用户名（可选）",
-    "proxyPassword": "密码（可选）"
+    "proxyPassword": "密码（可选）",
+    "pricingConfig": "计费配置",
+    "useCustomPricing": "使用单独配置",
+    "pricingConfigDesc": "为此供应商配置单独的计费参数，不启用时使用全局默认配置。",
+    "costMultiplier": "成本倍率",
+    "costMultiplierPlaceholder": "留空使用全局默认（1）",
+    "costMultiplierHint": "实际成本 = 基础成本 × 倍率，支持小数如 1.5",
+    "pricingModelSourceLabel": "计费模式",
+    "pricingModelSourceInherit": "继承全局默认",
+    "pricingModelSourceRequest": "请求模型",
+    "pricingModelSourceResponse": "返回模型",
+    "pricingModelSourceHint": "选择按请求模型还是返回模型进行定价匹配"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
@@ -626,6 +651,9 @@
     "cacheCreationTokens": "缓存创建",
     "timingInfo": "用时/首字",
     "status": "状态",
+    "multiplier": "倍率",
+    "requestModel": "请求模型",
+    "responseModel": "返回模型",
     "noData": "暂无数据",
     "unknownProvider": "未知供应商",
     "stream": "流",
@@ -668,7 +696,19 @@
     "input": "Input",
     "output": "Output",
     "cacheWrite": "创建",
-    "cacheRead": "命中"
+    "cacheRead": "命中",
+    "baseCost": "基础",
+    "costMultiplier": "成本倍率",
+    "withMultiplier": "含倍率",
+    "requestDetail": "请求详情",
+    "requestNotFound": "请求未找到",
+    "basicInfo": "基本信息",
+    "tokenUsage": "Token 使用量",
+    "cacheCreationCost": "缓存写入成本",
+    "costBreakdown": "成本明细",
+    "performance": "性能信息",
+    "latency": "延迟",
+    "errorMessage": "错误信息"
   },
   "usageScript": {
     "title": "配置用量查询",

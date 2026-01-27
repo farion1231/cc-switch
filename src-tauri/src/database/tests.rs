@@ -151,7 +151,7 @@ fn normalize_default(default: &Option<String>) -> Option<String> {
 }
 
 #[test]
-fn migration_sets_user_version_when_missing() {
+fn schema_migration_sets_user_version_when_missing() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
     Database::create_tables_on_conn(&conn).expect("create tables");
@@ -169,7 +169,7 @@ fn migration_sets_user_version_when_missing() {
 }
 
 #[test]
-fn migration_rejects_future_version() {
+fn schema_migration_rejects_future_version() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     Database::set_user_version(&conn, SCHEMA_VERSION + 1).expect("set future version");
@@ -183,7 +183,7 @@ fn migration_rejects_future_version() {
 }
 
 #[test]
-fn migration_adds_missing_columns_for_providers() {
+fn schema_migration_adds_missing_columns_for_providers() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
     // 创建旧版 providers 表，缺少新增列
@@ -224,7 +224,7 @@ fn migration_adds_missing_columns_for_providers() {
 }
 
 #[test]
-fn migration_aligns_column_defaults_and_types() {
+fn schema_migration_aligns_column_defaults_and_types() {
     let conn = Connection::open_in_memory().expect("open memory db");
     conn.execute_batch(LEGACY_SCHEMA_SQL)
         .expect("seed old schema");
@@ -268,7 +268,67 @@ fn migration_aligns_column_defaults_and_types() {
 }
 
 #[test]
-fn create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
+fn schema_create_tables_include_pricing_model_columns() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+
+    let multiplier = get_column_info(&conn, "proxy_config", "default_cost_multiplier");
+    assert_eq!(multiplier.r#type, "TEXT");
+    assert_eq!(multiplier.notnull, 1);
+    assert_eq!(normalize_default(&multiplier.default).as_deref(), Some("1"));
+
+    let pricing_source = get_column_info(&conn, "proxy_config", "pricing_model_source");
+    assert_eq!(pricing_source.r#type, "TEXT");
+    assert_eq!(pricing_source.notnull, 1);
+    assert_eq!(
+        normalize_default(&pricing_source.default).as_deref(),
+        Some("response")
+    );
+
+    let request_model = get_column_info(&conn, "proxy_request_logs", "request_model");
+    assert_eq!(request_model.r#type, "TEXT");
+    assert_eq!(request_model.notnull, 0);
+}
+
+#[test]
+fn schema_migration_v4_adds_pricing_model_columns() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE proxy_config (app_type TEXT PRIMARY KEY);
+        CREATE TABLE proxy_request_logs (request_id TEXT PRIMARY KEY, model TEXT NOT NULL);
+        "#,
+    )
+    .expect("seed v4 schema");
+
+    Database::set_user_version(&conn, 4).expect("set user_version=4");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    let multiplier = get_column_info(&conn, "proxy_config", "default_cost_multiplier");
+    assert_eq!(multiplier.r#type, "TEXT");
+    assert_eq!(multiplier.notnull, 1);
+    assert_eq!(normalize_default(&multiplier.default).as_deref(), Some("1"));
+
+    let pricing_source = get_column_info(&conn, "proxy_config", "pricing_model_source");
+    assert_eq!(pricing_source.r#type, "TEXT");
+    assert_eq!(pricing_source.notnull, 1);
+    assert_eq!(
+        normalize_default(&pricing_source.default).as_deref(),
+        Some("response")
+    );
+
+    let request_model = get_column_info(&conn, "proxy_request_logs", "request_model");
+    assert_eq!(request_model.r#type, "TEXT");
+    assert_eq!(request_model.notnull, 0);
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
     // 模拟测试版 v2：user_version=2，但 proxy_config 仍是单例结构（无 app_type）
@@ -433,7 +493,7 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
 }
 
 #[test]
-fn dry_run_does_not_write_to_disk() {
+fn schema_dry_run_does_not_write_to_disk() {
     // Create minimal valid config for migration
     let mut apps = HashMap::new();
     apps.insert("claude".to_string(), ProviderManager::default());
@@ -507,7 +567,7 @@ fn dry_run_validates_schema_compatibility() {
 }
 
 #[test]
-fn model_pricing_is_seeded_on_init() {
+fn schema_model_pricing_is_seeded_on_init() {
     let db = Database::memory().expect("create memory db");
 
     let conn = db.conn.lock().expect("lock conn");

@@ -184,6 +184,9 @@ export function RequestDetailPanel({
               <div>
                 <dt className="text-muted-foreground">
                   {t("usage.inputCost", "输入成本")}
+                  <span className="ml-1 text-xs">
+                    ({t("usage.baseCost", "基础")})
+                  </span>
                 </dt>
                 <dd className="font-mono">
                   ${parseFloat(request.inputCostUsd).toFixed(6)}
@@ -192,6 +195,9 @@ export function RequestDetailPanel({
               <div>
                 <dt className="text-muted-foreground">
                   {t("usage.outputCost", "输出成本")}
+                  <span className="ml-1 text-xs">
+                    ({t("usage.baseCost", "基础")})
+                  </span>
                 </dt>
                 <dd className="font-mono">
                   ${parseFloat(request.outputCostUsd).toFixed(6)}
@@ -200,6 +206,9 @@ export function RequestDetailPanel({
               <div>
                 <dt className="text-muted-foreground">
                   {t("usage.cacheReadCost", "缓存读取成本")}
+                  <span className="ml-1 text-xs">
+                    ({t("usage.baseCost", "基础")})
+                  </span>
                 </dt>
                 <dd className="font-mono">
                   ${parseFloat(request.cacheReadCostUsd).toFixed(6)}
@@ -208,14 +217,35 @@ export function RequestDetailPanel({
               <div>
                 <dt className="text-muted-foreground">
                   {t("usage.cacheCreationCost", "缓存写入成本")}
+                  <span className="ml-1 text-xs">
+                    ({t("usage.baseCost", "基础")})
+                  </span>
                 </dt>
                 <dd className="font-mono">
                   ${parseFloat(request.cacheCreationCostUsd).toFixed(6)}
                 </dd>
               </div>
-              <div className="col-span-2 border-t pt-3">
+              {/* 显示成本倍率（如果不等于1） */}
+              {request.costMultiplier &&
+                parseFloat(request.costMultiplier) !== 1 && (
+                  <div className="col-span-2 border-t pt-3">
+                    <dt className="text-muted-foreground">
+                      {t("usage.costMultiplier", "成本倍率")}
+                    </dt>
+                    <dd className="font-mono">×{request.costMultiplier}</dd>
+                  </div>
+                )}
+              <div
+                className={`col-span-2 ${request.costMultiplier && parseFloat(request.costMultiplier) !== 1 ? "" : "border-t"} pt-3`}
+              >
                 <dt className="text-muted-foreground">
                   {t("usage.totalCost", "总成本")}
+                  {request.costMultiplier &&
+                    parseFloat(request.costMultiplier) !== 1 && (
+                      <span className="ml-1 text-xs">
+                        ({t("usage.withMultiplier", "含倍率")})
+                      </span>
+                    )}
                 </dt>
                 <dd className="text-lg font-semibold text-primary">
                   ${parseFloat(request.totalCostUsd).toFixed(6)}
