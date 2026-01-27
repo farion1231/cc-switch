@@ -875,7 +875,8 @@ mod tests {
             .set_default_cost_multiplier("claude", "not-a-number")
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::InvalidInput(_)));
+        // AppError::localized returns AppError::Localized variant
+        assert!(matches!(err, AppError::Localized { key: "error.invalidMultiplier", .. }));
 
         Ok(())
     }
@@ -895,7 +896,8 @@ mod tests {
             .set_pricing_model_source("claude", "invalid")
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::InvalidInput(_)));
+        // AppError::localized returns AppError::Localized variant
+        assert!(matches!(err, AppError::Localized { key: "error.invalidPricingMode", .. }));
 
         Ok(())
     }
