@@ -59,6 +59,7 @@
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
     "extractFailed": "抽出に失敗しました: {{error}}",
+    "extractSuccessNeedSave": "共通設定を抽出しました。保存ボタンをクリックして完了してください",
     "saveFailed": "保存に失敗しました: {{error}}",
     "hidePreview": "マージプレビューを非表示",
     "showPreview": "マージプレビューを表示",
@@ -493,7 +494,8 @@
     "categoryAggregation": "アグリゲーター",
     "categoryThirdParty": "サードパーティ",
     "commonConfigLoading": "共通設定を読み込み中です。保存する前にお待ちください",
-    "commonConfigSyncFailed": "共通設定の同期に失敗しました。再試行してください"
+    "commonConfigSyncFailed": "共通設定の同期に失敗しました。再試行してください",
+    "saveCommonConfigFailed": "共通設定の保存に失敗しました"
   },
   "endpointTest": {
     "title": "API エンドポイント管理",
@@ -563,6 +565,7 @@
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
     "extractFailed": "抽出に失敗しました: {{error}}",
+    "extractSuccessNeedSave": "共通設定を抽出しました。保存ボタンをクリックして完了してください",
     "saveFailed": "保存に失敗しました: {{error}}"
   },
   "geminiConfig": {
@@ -577,6 +580,7 @@
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
     "extractFailed": "抽出に失敗しました: {{error}}",
+    "extractSuccessNeedSave": "共通設定を抽出しました。保存ボタンをクリックして完了してください",
     "saveFailed": "保存に失敗しました: {{error}}",
     "extractedConfigInvalid": "抽出した設定のフォーマットが不正です",
     "invalidJsonFormat": "共通設定スニペットの形式が不正です（有効な JSON でなければなりません）",

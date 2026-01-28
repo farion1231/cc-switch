@@ -59,6 +59,7 @@
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
+    "extractSuccessNeedSave": "已提取通用配置，点击保存按钮完成保存",
     "saveFailed": "保存失败: {{error}}",
     "hidePreview": "隐藏合并预览",
     "showPreview": "显示合并预览",
@@ -493,7 +494,8 @@
     "categoryAggregation": "聚合服务",
     "categoryThirdParty": "第三方",
     "commonConfigLoading": "通用配置正在加载中，请稍候再保存",
-    "commonConfigSyncFailed": "通用配置同步部分失败，请重试"
+    "commonConfigSyncFailed": "通用配置同步部分失败，请重试",
+    "saveCommonConfigFailed": "保存通用配置失败"
   },
   "endpointTest": {
     "title": "请求地址管理",
@@ -577,6 +579,7 @@
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
+    "extractSuccessNeedSave": "已提取通用配置，点击保存按钮完成保存",
     "saveFailed": "保存失败: {{error}}",
     "extractedConfigInvalid": "提取的配置格式错误",
     "invalidJsonFormat": "通用配置片段格式错误（必须是有效的 JSON）",

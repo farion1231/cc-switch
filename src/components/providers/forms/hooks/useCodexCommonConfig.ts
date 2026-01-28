@@ -88,6 +88,12 @@ export interface UseCodexCommonConfigReturn {
   handleExtract: () => Promise<void>;
   /** 最终配置（运行时合并结果，只读） */
   finalConfig: string;
+  /** 是否有待保存的通用配置变更 */
+  hasUnsavedCommonConfig: boolean;
+  /** 获取待保存的通用配置片段（用于 handleSubmit） */
+  getPendingCommonConfigSnippet: () => string | null;
+  /** 标记通用配置已保存 */
+  markCommonConfigSaved: () => void;
 }
 
 /**
@@ -118,18 +124,8 @@ export function useCodexCommonConfig({
   const [commonConfigError, setCommonConfigError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isExtracting, setIsExtracting] = useState(false);
-
-  // 用于避免异步保存乱序
-  const saveSequenceRef = useRef(0);
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const enqueueSave = useCallback((saveFn: () => Promise<void>) => {
-    const next = saveQueueRef.current.then(saveFn);
-    // Log errors to help with debugging, but don't block subsequent saves
-    saveQueueRef.current = next.catch((e) => {
-      console.error("[SaveQueue] Codex common config save failed:", e);
-    });
-    return next;
-  }, []);
+  // 是否有待保存的通用配置变更
+  const [hasUnsavedCommonConfig, setHasUnsavedCommonConfig] = useState(false);
 
   // 用于跟踪编辑模式是否已初始化
   const hasInitializedEditMode = useRef(false);
@@ -340,24 +336,15 @@ export function useCodexCommonConfig({
   );
 
   // ============================================================================
-  // 处理通用配置片段变化
+  // 处理通用配置片段变化（延迟保存模式：只更新本地状态，实际保存在表单提交时）
   // ============================================================================
   const handleCommonConfigSnippetChange = useCallback(
     (value: string) => {
       setCommonConfigSnippetState(value);
 
       if (!value.trim()) {
-        const saveId = ++saveSequenceRef.current;
         setCommonConfigError("");
-        enqueueSave(() => configApi.setCommonConfigSnippet("codex", "")).catch(
-          (error) => {
-            if (saveSequenceRef.current !== saveId) return;
-            console.error("保存 Codex 通用配置失败:", error);
-            setCommonConfigError(
-              t("codexConfig.saveFailed", { error: String(error) }),
-            );
-          },
-        );
+        setHasUnsavedCommonConfig(true);
         return;
       }
 
@@ -372,26 +359,17 @@ export function useCodexCommonConfig({
         return;
       }
 
-      const saveId = ++saveSequenceRef.current;
       setCommonConfigError("");
-      enqueueSave(() => configApi.setCommonConfigSnippet("codex", value)).catch(
-        (error) => {
-          if (saveSequenceRef.current !== saveId) return;
-          console.error("保存 Codex 通用配置失败:", error);
-          setCommonConfigError(
-            t("codexConfig.saveFailed", { error: String(error) }),
-          );
-        },
-      );
+      setHasUnsavedCommonConfig(true);
 
       // 注意：新架构下不再需要同步到其他供应商的 settingsConfig
       // 因为 finalConfig 是运行时计算的
     },
-    [enqueueSave, t],
+    [t],
   );
 
   // ============================================================================
-  // 从当前最终配置提取通用配置片段
+  // 从当前最终配置提取通用配置片段（延迟保存模式：只更新本地状态，实际保存在表单提交时）
   // ============================================================================
   const handleExtract = useCallback(async () => {
     setIsExtracting(true);
@@ -420,11 +398,9 @@ export function useCodexCommonConfig({
         return;
       }
 
-      // 更新片段状态
+      // 更新片段状态（延迟保存：不立即调用后端 API）
       setCommonConfigSnippetState(extracted);
-
-      // 保存到后端
-      await configApi.setCommonConfigSnippet("codex", extracted);
+      setHasUnsavedCommonConfig(true);
 
       // 提取成功后，从 config 中移除与 extracted 相同的部分
       const customToml = extractConfigToml(codexConfig);
@@ -435,10 +411,10 @@ export function useCodexCommonConfig({
           const parsed = JSON.parse(codexConfig);
           parsed.config = diffResult.customToml;
           onConfigChange(JSON.stringify(parsed, null, 2));
-          // Notify user that config was modified
+          // Notify user that config was modified (提示用户需要保存)
           toast.success(
-            t("codexConfig.extractSuccess", {
-              defaultValue: "已提取通用配置，自定义配置已自动更新",
+            t("codexConfig.extractSuccessNeedSave", {
+              defaultValue: "已提取通用配置，点击保存按钮完成保存",
             }),
           );
         } catch (parseError) {
@@ -458,6 +434,20 @@ export function useCodexCommonConfig({
     }
   }, [finalConfig, codexConfig, onConfigChange, extractConfigToml, t]);
 
+  // ============================================================================
+  // 获取待保存的通用配置片段（用于 handleSubmit 中统一保存）
+  // ============================================================================
+  const getPendingCommonConfigSnippet = useCallback(() => {
+    return hasUnsavedCommonConfig ? commonConfigSnippet : null;
+  }, [hasUnsavedCommonConfig, commonConfigSnippet]);
+
+  // ============================================================================
+  // 标记通用配置已保存
+  // ============================================================================
+  const markCommonConfigSaved = useCallback(() => {
+    setHasUnsavedCommonConfig(false);
+  }, []);
+
   return {
     useCommonConfig,
     commonConfigSnippet,
@@ -468,5 +458,8 @@ export function useCodexCommonConfig({
     handleCommonConfigSnippetChange,
     handleExtract,
     finalConfig,
+    hasUnsavedCommonConfig,
+    getPendingCommonConfigSnippet,
+    markCommonConfigSaved,
   };
 }

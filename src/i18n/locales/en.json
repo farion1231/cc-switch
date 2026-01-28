@@ -59,6 +59,7 @@
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
+    "extractSuccessNeedSave": "Common config extracted, click Save to complete",
     "saveFailed": "Save failed: {{error}}",
     "hidePreview": "Hide merged preview",
     "showPreview": "Show merged preview",
@@ -493,7 +494,8 @@
     "categoryAggregation": "Aggregation",
     "categoryThirdParty": "Third Party",
     "commonConfigLoading": "Common config is still loading, please wait before saving",
-    "commonConfigSyncFailed": "Common config sync failed for some providers. Please retry."
+    "commonConfigSyncFailed": "Common config sync failed for some providers. Please retry.",
+    "saveCommonConfigFailed": "Failed to save common config"
   },
   "endpointTest": {
     "title": "API Endpoint Management",
@@ -563,6 +565,7 @@
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
+    "extractSuccessNeedSave": "Common config extracted, click Save to complete",
     "saveFailed": "Save failed: {{error}}"
   },
   "geminiConfig": {
@@ -577,6 +580,7 @@
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
+    "extractSuccessNeedSave": "Common config extracted, click Save to complete",
     "saveFailed": "Save failed: {{error}}",
     "extractedConfigInvalid": "Extracted config format is invalid",
     "invalidJsonFormat": "Common config snippet format error (must be valid JSON)",

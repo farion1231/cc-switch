@@ -8,6 +8,7 @@ import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { AppId } from "@/lib/api";
+import { configApi } from "@/lib/api";
 import type {
   ProviderCategory,
   ProviderMeta,
@@ -478,6 +479,8 @@ export function ProviderForm({
     handleExtract: handleClaudeExtract,
     isLoading: isClaudeCommonConfigLoading,
     finalConfig: claudeFinalConfig,
+    getPendingCommonConfigSnippet: getPendingClaudeCommonConfigSnippet,
+    markCommonConfigSaved: markClaudeCommonConfigSaved,
   } = useCommonConfigSnippet({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: (config) => form.setValue("settingsConfig", config),
@@ -498,6 +501,8 @@ export function ProviderForm({
     handleExtract: handleCodexExtract,
     isLoading: isCodexCommonConfigLoading,
     finalConfig: codexFinalConfig,
+    getPendingCommonConfigSnippet: getPendingCodexCommonConfigSnippet,
+    markCommonConfigSaved: markCodexCommonConfigSaved,
   } = useCodexCommonConfig({
     codexConfig,
     onConfigChange: handleCodexConfigChange,
@@ -587,6 +592,8 @@ export function ProviderForm({
     handleExtract: handleGeminiExtract,
     isLoading: isGeminiCommonConfigLoading,
     finalEnv: geminiFinalEnv,
+    getPendingCommonConfigSnippet: getPendingGeminiCommonConfigSnippet,
+    markCommonConfigSaved: markGeminiCommonConfigSaved,
   } = useGeminiCommonConfig({
     envValue: geminiEnv,
     onEnvChange: handleGeminiEnvChange,
@@ -817,7 +824,7 @@ export function ProviderForm({
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
-  const handleSubmit = (values: ProviderFormData) => {
+  const handleSubmit = async (values: ProviderFormData) => {
     // 检查通用配置是否仍在加载中
     const isCommonConfigLoading =
       (appId === "claude" && isClaudeCommonConfigLoading) ||
@@ -968,6 +975,37 @@ export function ProviderForm({
           return;
         }
       }
+    }
+
+    // 保存待保存的通用配置（延迟保存模式：在表单提交时统一保存）
+    try {
+      if (appId === "claude") {
+        const pendingSnippet = getPendingClaudeCommonConfigSnippet();
+        if (pendingSnippet !== null) {
+          await configApi.setCommonConfigSnippet("claude", pendingSnippet);
+          markClaudeCommonConfigSaved();
+        }
+      } else if (appId === "codex") {
+        const pendingSnippet = getPendingCodexCommonConfigSnippet();
+        if (pendingSnippet !== null) {
+          await configApi.setCommonConfigSnippet("codex", pendingSnippet);
+          markCodexCommonConfigSaved();
+        }
+      } else if (appId === "gemini") {
+        const pendingSnippet = getPendingGeminiCommonConfigSnippet();
+        if (pendingSnippet !== null) {
+          await configApi.setCommonConfigSnippet("gemini", pendingSnippet);
+          markGeminiCommonConfigSaved();
+        }
+      }
+    } catch (error) {
+      console.error("保存通用配置失败:", error);
+      toast.error(
+        t("providerForm.saveCommonConfigFailed", {
+          defaultValue: "保存通用配置失败",
+        }),
+      );
+      return;
     }
 
     let settingsConfig: string;
