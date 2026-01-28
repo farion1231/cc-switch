@@ -141,7 +141,9 @@ export function EditProviderDialog({
                       } else {
                         // Show warning toast if keys were filtered
                         if (parseResult.warning) {
-                          toast.warning(mapGeminiWarningToI18n(parseResult.warning, t));
+                          toast.warning(
+                            mapGeminiWarningToI18n(parseResult.warning, t),
+                          );
                         }
 
                         if (

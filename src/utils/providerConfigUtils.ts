@@ -1211,7 +1211,10 @@ export function parseGeminiCommonConfigSnippet(
  */
 export function mapGeminiWarningToI18n(
   warning: string,
-  t: (key: string, options?: { keys?: string; defaultValue?: string }) => string,
+  t: (
+    key: string,
+    options?: { keys?: string; defaultValue?: string },
+  ) => string,
 ): string {
   if (warning.startsWith(GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS)) {
     // Extract key list: "GEMINI_CONFIG_FORBIDDEN_KEYS: KEY1, KEY2" -> "KEY1, KEY2"

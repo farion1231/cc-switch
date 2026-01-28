@@ -1518,18 +1518,11 @@ impl ProxyService {
             AppType::from_str(app_type).map_err(|_| format!("无效的应用类型: {app_type}"))?;
 
         // Get common config snippet for merge
-        let common_snippet = self
-            .db
-            .get_config_snippet(app_type)
-            .ok()
-            .flatten();
+        let common_snippet = self.db.get_config_snippet(app_type).ok().flatten();
 
         // Merge custom config with common config to get final config
-        let merge_result = merge_config_for_live(
-            &app_type_enum,
-            provider,
-            common_snippet.as_deref(),
-        );
+        let merge_result =
+            merge_config_for_live(&app_type_enum, provider, common_snippet.as_deref());
 
         // Log warning if any
         if let Some(warning) = &merge_result.warning {

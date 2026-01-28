@@ -13,7 +13,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
-use crate::config_merge::{extract_json_difference, extract_toml_difference_str, is_common_config_enabled};
+use crate::config_merge::{
+    extract_json_difference, extract_toml_difference_str, is_common_config_enabled,
+};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
 use crate::services::mcp::McpService;
@@ -388,7 +390,8 @@ impl ProviderService {
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
                             // Check if common config is enabled for this provider
-                            let common_enabled = is_common_config_enabled(current_provider.meta.as_ref(), &app_type);
+                            let common_enabled =
+                                is_common_config_enabled(current_provider.meta.as_ref(), &app_type);
 
                             let config_to_save = if common_enabled {
                                 // Extract custom config from live (remove common config parts)
@@ -509,7 +512,8 @@ impl ProviderService {
                 if let Some(config_str) = live_config.get("config").and_then(|v| v.as_str()) {
                     // Extract TOML difference for config field
                     // Returns (custom_toml, has_common_keys, error)
-                    let (custom_toml, _, _) = extract_toml_difference_str(config_str, &common_snippet);
+                    let (custom_toml, _, _) =
+                        extract_toml_difference_str(config_str, &common_snippet);
                     if let Some(obj) = result.as_object_mut() {
                         obj.insert("config".to_string(), Value::String(custom_toml));
                     }
