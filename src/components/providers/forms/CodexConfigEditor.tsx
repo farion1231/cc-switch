@@ -30,6 +30,9 @@ interface CodexConfigEditorProps {
   onExtract?: () => void;
 
   isExtracting?: boolean;
+
+  /** 最终合并后的配置（只读预览） */
+  finalConfig?: string;
 }
 
 const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
@@ -47,6 +50,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
   configError,
   onExtract,
   isExtracting,
+  finalConfig,
 }) => {
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
@@ -76,6 +80,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
         onEditCommonConfig={() => setIsCommonConfigModalOpen(true)}
         commonConfigError={commonConfigError}
         configError={configError}
+        finalConfig={finalConfig}
       />
 
       {/* Common Config Modal */}
