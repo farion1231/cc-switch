@@ -147,7 +147,8 @@ export function CommonConfigEditor({
   }
 }`}
             darkMode={isDarkMode}
-            rows={useCommonConfig && showPreview ? 10 : 14}
+            rows={useCommonConfig && showPreview ? 3 : 14}
+            autoHeight={useCommonConfig && showPreview}
             showValidation={true}
             language="json"
           />

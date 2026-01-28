@@ -146,7 +146,8 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
 GEMINI_API_KEY=sk-your-api-key-here
 GEMINI_MODEL=gemini-3-pro-preview`}
           darkMode={isDarkMode}
-          rows={useCommonConfig && showPreview ? 4 : 6}
+          rows={useCommonConfig && showPreview ? 3 : 6}
+          autoHeight={useCommonConfig && showPreview}
           showValidation={false}
           language="javascript"
         />

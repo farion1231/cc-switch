@@ -24,6 +24,8 @@ interface JsonEditorProps {
   showMinimap?: boolean; // 添加此属性以防未来使用
   /** 只读模式 */
   readOnly?: boolean;
+  /** 自动高度模式：根据内容自动调整高度，rows 作为最小行数 */
+  autoHeight?: boolean;
 }
 
 const JsonEditor: React.FC<JsonEditorProps> = ({
@@ -36,6 +38,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   language = "json",
   height,
   readOnly = false,
+  autoHeight = false,
 }) => {
   const { t } = useTranslation();
   const editorRef = useRef<HTMLDivElement>(null);
@@ -85,7 +88,14 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     if (!editorRef.current) return;
 
     // 创建编辑器扩展
-    const minHeightPx = height ? undefined : Math.max(1, rows) * 18;
+    const lineHeight = 18;
+    const minHeightPx = height ? undefined : Math.max(1, rows) * lineHeight;
+
+    // 自动高度模式：计算内容行数
+    const contentLines = value ? value.split("\n").length : 1;
+    const autoHeightPx = autoHeight
+      ? Math.max(rows, contentLines) * lineHeight + 10 // +10 for padding
+      : undefined;
 
     // 使用 baseTheme 定义基础样式，优先级低于 oneDark，但可以正确响应主题
     const baseTheme = EditorView.baseTheme({
@@ -126,9 +136,17 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
         ? `${height}px`
         : height
       : undefined;
+
+    // 确定最终高度：优先级 height > autoHeight > minHeight
+    const finalHeight = heightValue
+      ? heightValue
+      : autoHeightPx
+        ? `${autoHeightPx}px`
+        : undefined;
+
     const sizingTheme = EditorView.theme({
-      "&": heightValue
-        ? { height: heightValue }
+      "&": finalHeight
+        ? { height: finalHeight }
         : { minHeight: `${minHeightPx}px` },
       ".cm-scroller": { overflow: "auto" },
       ".cm-content": {
@@ -227,7 +245,16 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       view.destroy();
       viewRef.current = null;
     };
-  }, [darkMode, rows, height, language, jsonLinter, readOnly]); // 依赖项中不包含 onChange 和 placeholder，避免不必要的重建
+  }, [
+    darkMode,
+    rows,
+    height,
+    language,
+    jsonLinter,
+    readOnly,
+    autoHeight,
+    autoHeight ? value.split("\n").length : 0,
+  ]); // 依赖项中不包含 onChange 和 placeholder，避免不必要的重建；autoHeight 模式下根据行数变化重建
 
   // 当 value 从外部改变时更新编辑器内容
   useEffect(() => {
