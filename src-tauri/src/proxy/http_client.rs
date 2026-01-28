@@ -41,7 +41,7 @@ fn get_proxy_port() -> u16 {
         .get()
         .and_then(|lock| lock.read().ok())
         .map(|port| *port)
-        .unwrap_or(5000) // 默认端口作为回退
+        .unwrap_or(15721) // 默认端口作为回退
 }
 
 /// 初始化全局 HTTP 客户端
@@ -483,13 +483,13 @@ mod tests {
 
     #[test]
     fn test_proxy_points_to_loopback() {
-        // 设置 CC Switch 代理端口为 5000（默认值）
-        set_proxy_port(5000);
+        // 设置 CC Switch 代理端口为 15721（默认值）
+        set_proxy_port(15721);
 
         // 只有指向 CC Switch 自己端口的 loopback 地址才返回 true
-        assert!(proxy_points_to_loopback("http://127.0.0.1:5000"));
-        assert!(proxy_points_to_loopback("socks5://localhost:5000"));
-        assert!(proxy_points_to_loopback("127.0.0.1:5000"));
+        assert!(proxy_points_to_loopback("http://127.0.0.1:15721"));
+        assert!(proxy_points_to_loopback("socks5://localhost:15721"));
+        assert!(proxy_points_to_loopback("127.0.0.1:15721"));
 
         // 其他 loopback 端口不应该被跳过（允许使用其他本地代理工具）
         assert!(!proxy_points_to_loopback("http://127.0.0.1:7890"));
@@ -497,7 +497,7 @@ mod tests {
 
         // 非 loopback 地址不应该被跳过
         assert!(!proxy_points_to_loopback("http://192.168.1.10:7890"));
-        assert!(!proxy_points_to_loopback("http://192.168.1.10:5000"));
+        assert!(!proxy_points_to_loopback("http://192.168.1.10:15721"));
     }
 
     #[test]
@@ -505,7 +505,7 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
 
         // 设置 CC Switch 代理端口
-        set_proxy_port(5000);
+        set_proxy_port(15721);
 
         let keys = [
             "HTTP_PROXY",
@@ -521,7 +521,7 @@ mod tests {
         }
 
         // 指向 CC Switch 端口的代理应该被跳过
-        std::env::set_var("HTTP_PROXY", "http://127.0.0.1:5000");
+        std::env::set_var("HTTP_PROXY", "http://127.0.0.1:15721");
         assert!(system_proxy_points_to_loopback());
 
         // 指向其他端口的本地代理不应该被跳过
