@@ -876,7 +876,13 @@ mod tests {
             .await
             .unwrap_err();
         // AppError::localized returns AppError::Localized variant
-        assert!(matches!(err, AppError::Localized { key: "error.invalidMultiplier", .. }));
+        assert!(matches!(
+            err,
+            AppError::Localized {
+                key: "error.invalidMultiplier",
+                ..
+            }
+        ));
 
         Ok(())
     }
@@ -897,7 +903,13 @@ mod tests {
             .await
             .unwrap_err();
         // AppError::localized returns AppError::Localized variant
-        assert!(matches!(err, AppError::Localized { key: "error.invalidPricingMode", .. }));
+        assert!(matches!(
+            err,
+            AppError::Localized {
+                key: "error.invalidPricingMode",
+                ..
+            }
+        ));
 
         Ok(())
     }
