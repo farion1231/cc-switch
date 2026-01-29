@@ -406,23 +406,34 @@ export function useCodexCommonConfig({
       const customToml = extractConfigToml(codexConfig);
       const diffResult = extractTomlDifference(customToml, extracted);
       if (!diffResult.error) {
-        // 更新 codexConfig 中的 config 字段
+        // 更新 codexConfig
+        // codexConfig 可能是两种格式：
+        // 1. 纯 TOML 字符串（来自 useCodexConfigState）
+        // 2. JSON 字符串 { auth: {...}, config: "..." }（旧格式）
+        let updated = false;
         try {
           const parsed = JSON.parse(codexConfig);
-          parsed.config = diffResult.customToml;
-          onConfigChange(JSON.stringify(parsed, null, 2));
-          // Notify user that config was modified (提示用户需要保存)
-          toast.success(
-            t("codexConfig.extractSuccessNeedSave", {
-              defaultValue: "已提取通用配置，点击保存按钮完成保存",
-            }),
-          );
-        } catch (parseError) {
-          console.warn(
-            "[Extract] Failed to update codexConfig after extract:",
-            parseError,
-          );
+          if (typeof parsed?.config === "string") {
+            // JSON 格式，更新 config 字段
+            parsed.config = diffResult.customToml;
+            onConfigChange(JSON.stringify(parsed, null, 2));
+            updated = true;
+          }
+        } catch {
+          // JSON 解析失败，说明是纯 TOML 字符串
         }
+
+        // 如果是纯 TOML 字符串，直接更新
+        if (!updated) {
+          onConfigChange(diffResult.customToml);
+        }
+
+        // Notify user that config was modified (提示用户需要保存)
+        toast.success(
+          t("codexConfig.extractSuccessNeedSave", {
+            defaultValue: "已提取通用配置，点击保存按钮完成保存",
+          }),
+        );
       }
     } catch (error) {
       console.error("提取 Codex 通用配置失败:", error);

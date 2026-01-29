@@ -565,6 +565,7 @@
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
+    "extractSuccessNeedSave": "已提取通用配置，点击保存按钮完成保存",
     "saveFailed": "保存失败: {{error}}"
   },
   "geminiConfig": {
