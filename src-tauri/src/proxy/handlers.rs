@@ -284,7 +284,7 @@ pub async fn handle_chat_completions(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/v1/chat/completions",
+            "/chat/completions",
             body,
             headers,
             ctx.get_providers(),
@@ -325,7 +325,7 @@ pub async fn handle_responses(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/v1/responses",
+            "/responses",
             body,
             headers,
             ctx.get_providers(),

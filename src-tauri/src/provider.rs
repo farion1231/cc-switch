@@ -464,11 +464,18 @@ impl UniversalProvider {
             .and_then(|m| m.reasoning_effort.clone())
             .unwrap_or_else(|| "high".to_string());
 
-        // 确保 base_url 以 /v1 结尾（Codex 使用 OpenAI 兼容 API）
-        let codex_base_url = if self.base_url.ends_with("/v1") {
-            self.base_url.clone()
+        // Codex/OpenAI 的 base_url 既可能是纯 origin（需要补 /v1），也可能包含自定义前缀（不应强行补版本）
+        let base_trimmed = self.base_url.trim_end_matches('/');
+        let origin_only = match base_trimmed.split_once("://") {
+            Some((_scheme, rest)) => !rest.contains('/'),
+            None => !base_trimmed.contains('/'),
+        };
+        let codex_base_url = if base_trimmed.ends_with("/v1") {
+            base_trimmed.to_string()
+        } else if origin_only {
+            format!("{base_trimmed}/v1")
         } else {
-            format!("{}/v1", self.base_url.trim_end_matches('/'))
+            base_trimmed.to_string()
         };
 
         // 生成 Codex 的 config.toml 内容
@@ -541,6 +548,54 @@ requires_openai_auth = true"#
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn universal_codex_provider_origin_base_url_adds_v1() {
+        let mut p = UniversalProvider::new(
+            "id".to_string(),
+            "Test".to_string(),
+            "custom".to_string(),
+            "https://api.openai.com".to_string(),
+            "sk-test".to_string(),
+        );
+        p.apps.codex = true;
+
+        let provider = p.to_codex_provider().expect("should build codex provider");
+        let toml = provider
+            .settings_config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config should be a toml string");
+
+        assert!(toml.contains("base_url = \"https://api.openai.com/v1\""));
+    }
+
+    #[test]
+    fn universal_codex_provider_custom_prefix_does_not_force_v1() {
+        let mut p = UniversalProvider::new(
+            "id".to_string(),
+            "Test".to_string(),
+            "custom".to_string(),
+            "https://example.com/openai".to_string(),
+            "sk-test".to_string(),
+        );
+        p.apps.codex = true;
+
+        let provider = p.to_codex_provider().expect("should build codex provider");
+        let toml = provider
+            .settings_config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config should be a toml string");
+
+        assert!(toml.contains("base_url = \"https://example.com/openai\""));
+        assert!(!toml.contains("https://example.com/openai/v1"));
     }
 }
 

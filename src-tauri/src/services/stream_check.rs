@@ -373,11 +373,15 @@ impl StreamCheckService {
         timeout: std::time::Duration,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
-        // Codex CLI 使用 /v1/responses 端点 (OpenAI Responses API)
-        let url = if base.ends_with("/v1") {
-            format!("{base}/responses")
+        // Codex CLI 的 base_url 语义：base_url 是 API base（可能已包含 /v1 或其他自定义前缀），
+        // Responses 端点为 `/responses`。
+        //
+        // 兼容：如果 base_url 配成纯 origin（如 https://api.openai.com），则需要补 `/v1`。
+        // 优先尝试 `{base}/responses`，若 404 再回退 `{base}/v1/responses`。
+        let urls = if base.ends_with("/v1") {
+            vec![format!("{base}/responses")]
         } else {
-            format!("{base}/v1/responses")
+            vec![format!("{base}/responses"), format!("{base}/v1/responses")]
         };
 
         // 解析模型名和推理等级 (支持 model@level 或 model#level 格式)
@@ -399,40 +403,50 @@ impl StreamCheckService {
             body["reasoning"] = json!({ "effort": effort });
         }
 
-        // 严格按照 Codex CLI 请求格式设置 headers
-        let response = client
-            .post(&url)
-            .header("authorization", format!("Bearer {}", auth.api_key))
-            .header("content-type", "application/json")
-            .header("accept", "text/event-stream")
-            .header("accept-encoding", "identity")
-            .header(
-                "user-agent",
-                format!("codex_cli_rs/0.80.0 ({os_name} 15.7.2; {arch_name}) Terminal"),
-            )
-            .header("originator", "codex_cli_rs")
-            .timeout(timeout)
-            .json(&body)
-            .send()
-            .await
-            .map_err(Self::map_request_error)?;
+        for (i, url) in urls.iter().enumerate() {
+            // 严格按照 Codex CLI 请求格式设置 headers
+            let response = client
+                .post(url)
+                .header("authorization", format!("Bearer {}", auth.api_key))
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .header("accept-encoding", "identity")
+                .header(
+                    "user-agent",
+                    format!("codex_cli_rs/0.80.0 ({os_name} 15.7.2; {arch_name}) Terminal"),
+                )
+                .header("originator", "codex_cli_rs")
+                .timeout(timeout)
+                .json(&body)
+                .send()
+                .await
+                .map_err(Self::map_request_error)?;
 
-        let status = response.status().as_u16();
+            let status = response.status().as_u16();
 
-        if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(AppError::Message(format!("HTTP {status}: {error_text}")));
-        }
-
-        let mut stream = response.bytes_stream();
-        if let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(_) => Ok((status, model.to_string())),
-                Err(e) => Err(AppError::Message(format!("Stream read failed: {e}"))),
+            if !response.status().is_success() {
+                let error_text = response.text().await.unwrap_or_default();
+                // 回退策略：仅当首选 URL 返回 404 时尝试下一个
+                if i == 0 && status == 404 && urls.len() > 1 {
+                    continue;
+                }
+                return Err(AppError::Message(format!("HTTP {status}: {error_text}")));
             }
-        } else {
-            Err(AppError::Message("No response data received".to_string()))
+
+            let mut stream = response.bytes_stream();
+            if let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(_) => return Ok((status, actual_model)),
+                    Err(e) => return Err(AppError::Message(format!("Stream read failed: {e}"))),
+                }
+            }
+
+            return Err(AppError::Message("No response data received".to_string()));
         }
+
+        Err(AppError::Message(
+            "No valid Codex responses endpoint found".to_string(),
+        ))
     }
 
     /// Gemini 流式检查
