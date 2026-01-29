@@ -38,6 +38,7 @@ function getErrorI18nKey(code: string): string {
     SKILL_DIRECTORY_CONFLICT: "skills.error.directoryConflict",
     EMPTY_ARCHIVE: "skills.error.emptyArchive",
     GET_HOME_DIR_FAILED: "skills.error.getHomeDirFailed",
+    NO_SKILLS_IN_ZIP: "skills.error.noSkillsInZip",
   };
 
   return mapping[code] || "skills.error.unknownError";
@@ -54,6 +55,7 @@ function getSuggestionI18nKey(suggestion: string): string {
     checkRepoUrl: "skills.error.suggestion.checkRepoUrl",
     checkPermission: "skills.error.suggestion.checkPermission",
     uninstallFirst: "skills.error.suggestion.uninstallFirst",
+    checkZipContent: "skills.error.suggestion.checkZipContent",
     http403: "skills.error.http403",
     http404: "skills.error.http404",
     http429: "skills.error.http429",

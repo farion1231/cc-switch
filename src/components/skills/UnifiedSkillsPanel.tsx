@@ -9,11 +9,12 @@ import {
   useUninstallSkill,
   useScanUnmanagedSkills,
   useImportSkillsFromApps,
+  useInstallSkillsFromZip,
   type InstalledSkill,
   type AppType,
 } from "@/hooks/useSkills";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { settingsApi } from "@/lib/api";
+import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
 
 interface UnifiedSkillsPanelProps {
@@ -27,6 +28,7 @@ interface UnifiedSkillsPanelProps {
 export interface UnifiedSkillsPanelHandle {
   openDiscovery: () => void;
   openImport: () => void;
+  openInstallFromZip: () => void;
 }
 
 const UnifiedSkillsPanel = React.forwardRef<
@@ -49,6 +51,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   const { data: unmanagedSkills, refetch: scanUnmanaged } =
     useScanUnmanagedSkills();
   const importMutation = useImportSkillsFromApps();
+  const installFromZipMutation = useInstallSkillsFromZip();
 
   // Count enabled skills per app
   const enabledCounts = useMemo(() => {
@@ -127,9 +130,52 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
+  const handleInstallFromZip = async () => {
+    try {
+      // 打开文件选择对话框
+      const filePath = await skillsApi.openZipFileDialog();
+      if (!filePath) {
+        // 用户取消选择
+        return;
+      }
+
+      // 默认使用 claude 作为当前应用
+      const currentApp: AppType = "claude";
+
+      // 安装 Skills
+      const installed = await installFromZipMutation.mutateAsync({
+        filePath,
+        currentApp,
+      });
+
+      if (installed.length === 0) {
+        toast.info(t("skills.installFromZip.noSkillsFound"), {
+          closeButton: true,
+        });
+      } else if (installed.length === 1) {
+        toast.success(
+          t("skills.installFromZip.successSingle", { name: installed[0].name }),
+          { closeButton: true },
+        );
+      } else {
+        toast.success(
+          t("skills.installFromZip.successMultiple", {
+            count: installed.length,
+          }),
+          { closeButton: true },
+        );
+      }
+    } catch (error) {
+      toast.error(t("skills.installFailed"), {
+        description: String(error),
+      });
+    }
+  };
+
   React.useImperativeHandle(ref, () => ({
     openDiscovery: onOpenDiscovery,
     openImport: handleOpenImport,
+    openInstallFromZip: handleInstallFromZip,
   }));
 
   return (

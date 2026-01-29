@@ -851,6 +851,7 @@ pub fn run() {
             commands::import_config_from_file,
             commands::save_file_dialog,
             commands::open_file_dialog,
+            commands::open_zip_file_dialog,
             commands::sync_current_providers_live,
             // Deep link import
             commands::parse_deeplink,
@@ -880,6 +881,7 @@ pub fn run() {
             commands::get_skill_repos,
             commands::add_skill_repo,
             commands::remove_skill_repo,
+            commands::install_skills_from_zip,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,

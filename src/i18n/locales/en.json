@@ -1069,6 +1069,7 @@
       "http429": "Too many requests, please wait and retry",
       "parseMetadataFailed": "Failed to parse skill metadata",
       "getHomeDirFailed": "Unable to get user home directory",
+      "noSkillsInZip": "No skills found in ZIP file (requires SKILL.md file)",
       "networkError": "Network error",
       "fsError": "File system error",
       "unknownError": "Unknown error",
@@ -1079,7 +1080,8 @@
         "checkRepoUrl": "Please check repository URL and branch name",
         "checkDiskSpace": "Please check disk space",
         "checkPermission": "Please check directory permissions",
-        "uninstallFirst": "Please uninstall the existing skill with the same name first"
+        "uninstallFirst": "Please uninstall the existing skill with the same name first",
+        "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)"
       }
     },
     "repo": {
@@ -1128,6 +1130,13 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode"
+    },
+    "installFromZip": {
+      "button": "Install from ZIP",
+      "installing": "Installing...",
+      "successSingle": "Skill {{name}} installed",
+      "successMultiple": "Successfully installed {{count}} skills",
+      "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
     }
   },
   "deeplink": {

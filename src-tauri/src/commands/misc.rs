@@ -295,10 +295,10 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
 
     let home = dirs::home_dir().unwrap_or_default();
 
-    // 常见的 npm 全局安装路径
+    // 常见的安装路径（原生安装优先）
     let mut search_paths: Vec<std::path::PathBuf> = vec![
+        home.join(".local/bin"), // Native install (official recommended)
         home.join(".npm-global/bin"),
-        home.join(".local/bin"),
         home.join("n/bin"), // n version manager
     ];
 

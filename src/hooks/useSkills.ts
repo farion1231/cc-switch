@@ -147,6 +147,26 @@ export function useRemoveSkillRepo() {
   });
 }
 
+/**
+ * 从 ZIP 文件安装 Skills
+ */
+export function useInstallSkillsFromZip() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      filePath,
+      currentApp,
+    }: {
+      filePath: string;
+      currentApp: AppType;
+    }) => skillsApi.installFromZip(filePath, currentApp),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] });
+    },
+  });
+}
+
 // ========== 辅助类型 ==========
 
 export type { InstalledSkill, DiscoverableSkill, AppType };

@@ -15,6 +15,7 @@ import {
   Search,
   Download,
   BarChart2,
+  FolderArchive,
 } from "lucide-react";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -829,6 +830,17 @@ function App() {
             )}
             {currentView === "skills" && (
               <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    unifiedSkillsPanelRef.current?.openInstallFromZip()
+                  }
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <FolderArchive className="w-4 h-4 mr-2" />
+                  {t("skills.installFromZip.button")}
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"

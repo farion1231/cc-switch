@@ -1110,6 +1110,193 @@ impl SkillService {
         Ok(())
     }
 
+    // ========== 从 ZIP 文件安装 ==========
+
+    /// 从本地 ZIP 文件安装 Skills
+    ///
+    /// 流程：
+    /// 1. 解压 ZIP 到临时目录
+    /// 2. 扫描目录查找包含 SKILL.md 的技能
+    /// 3. 复制到 SSOT 并保存到数据库
+    /// 4. 同步到当前应用目录
+    pub fn install_from_zip(
+        db: &Arc<Database>,
+        zip_path: &Path,
+        current_app: &AppType,
+    ) -> Result<Vec<InstalledSkill>> {
+        // 解压到临时目录
+        let temp_dir = Self::extract_local_zip(zip_path)?;
+
+        // 扫描所有包含 SKILL.md 的目录
+        let skill_dirs = Self::scan_skills_in_dir(&temp_dir)?;
+
+        if skill_dirs.is_empty() {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(anyhow!(format_skill_error(
+                "NO_SKILLS_IN_ZIP",
+                &[],
+                Some("checkZipContent"),
+            )));
+        }
+
+        let ssot_dir = Self::get_ssot_dir()?;
+        let mut installed = Vec::new();
+        let existing_skills = db.get_all_installed_skills()?;
+
+        for skill_dir in skill_dirs {
+            // 获取目录名称作为安装名
+            let install_name = skill_dir
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            // 检查是否已有同名 directory 的 skill
+            let conflict = existing_skills
+                .values()
+                .find(|s| s.directory.eq_ignore_ascii_case(&install_name));
+
+            if let Some(existing) = conflict {
+                log::warn!(
+                    "Skill directory '{}' already exists (from {}), skipping",
+                    install_name,
+                    existing.id
+                );
+                continue;
+            }
+
+            // 解析元数据
+            let skill_md = skill_dir.join("SKILL.md");
+            let (name, description) = if skill_md.exists() {
+                match Self::parse_skill_metadata_static(&skill_md) {
+                    Ok(meta) => (
+                        meta.name.unwrap_or_else(|| install_name.clone()),
+                        meta.description,
+                    ),
+                    Err(_) => (install_name.clone(), None),
+                }
+            } else {
+                (install_name.clone(), None)
+            };
+
+            // 复制到 SSOT
+            let dest = ssot_dir.join(&install_name);
+            if dest.exists() {
+                let _ = fs::remove_dir_all(&dest);
+            }
+            Self::copy_dir_recursive(&skill_dir, &dest)?;
+
+            // 创建 InstalledSkill 记录
+            let skill = InstalledSkill {
+                id: format!("local:{install_name}"),
+                name,
+                description,
+                directory: install_name.clone(),
+                repo_owner: None,
+                repo_name: None,
+                repo_branch: None,
+                readme_url: None,
+                apps: SkillApps::only(current_app),
+                installed_at: chrono::Utc::now().timestamp(),
+            };
+
+            // 保存到数据库
+            db.save_skill(&skill)?;
+
+            // 同步到当前应用目录
+            Self::sync_to_app_dir(&install_name, current_app)?;
+
+            log::info!(
+                "Skill {} installed from ZIP, enabled for {:?}",
+                skill.name,
+                current_app
+            );
+            installed.push(skill);
+        }
+
+        // 清理临时目录
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        Ok(installed)
+    }
+
+    /// 解压本地 ZIP 文件到临时目录
+    fn extract_local_zip(zip_path: &Path) -> Result<PathBuf> {
+        let file = fs::File::open(zip_path)
+            .with_context(|| format!("Failed to open ZIP file: {}", zip_path.display()))?;
+
+        let mut archive = zip::ZipArchive::new(file)
+            .with_context(|| format!("Failed to read ZIP file: {}", zip_path.display()))?;
+
+        if archive.is_empty() {
+            return Err(anyhow!(format_skill_error(
+                "EMPTY_ARCHIVE",
+                &[],
+                Some("checkZipContent"),
+            )));
+        }
+
+        let temp_dir = tempfile::tempdir()?;
+        let temp_path = temp_dir.path().to_path_buf();
+        let _ = temp_dir.keep(); // Keep the directory, we'll clean up later
+
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let file_path = match file.enclosed_name() {
+                Some(path) => path.to_owned(),
+                None => continue,
+            };
+
+            let outpath = temp_path.join(&file_path);
+
+            if file.is_dir() {
+                fs::create_dir_all(&outpath)?;
+            } else {
+                if let Some(parent) = outpath.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut outfile = fs::File::create(&outpath)?;
+                std::io::copy(&mut file, &mut outfile)?;
+            }
+        }
+
+        Ok(temp_path)
+    }
+
+    /// 递归扫描目录查找包含 SKILL.md 的技能目录
+    fn scan_skills_in_dir(dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut skill_dirs = Vec::new();
+        Self::scan_skills_recursive(dir, &mut skill_dirs)?;
+        Ok(skill_dirs)
+    }
+
+    /// 递归扫描辅助函数
+    fn scan_skills_recursive(current: &Path, results: &mut Vec<PathBuf>) -> Result<()> {
+        // 检查当前目录是否包含 SKILL.md
+        let skill_md = current.join("SKILL.md");
+        if skill_md.exists() {
+            results.push(current.to_path_buf());
+            // 找到后不再递归子目录（一个 skill 目录）
+            return Ok(());
+        }
+
+        // 递归子目录
+        if let Ok(entries) = fs::read_dir(current) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    // 跳过隐藏目录
+                    let dir_name = entry.file_name().to_string_lossy().to_string();
+                    if dir_name.starts_with('.') {
+                        continue;
+                    }
+                    Self::scan_skills_recursive(&path, results)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     // ========== 仓库管理（保留原有逻辑）==========
 
     /// 列出仓库

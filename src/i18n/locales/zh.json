@@ -1069,6 +1069,7 @@
       "http429": "请求过于频繁，请等待后重试",
       "parseMetadataFailed": "解析技能元数据失败",
       "getHomeDirFailed": "无法获取用户主目录",
+      "noSkillsInZip": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）",
       "networkError": "网络错误",
       "fsError": "文件系统错误",
       "unknownError": "未知错误",
@@ -1079,7 +1080,8 @@
         "checkRepoUrl": "请检查仓库地址和分支名称",
         "checkDiskSpace": "请检查磁盘空间",
         "checkPermission": "请检查目录权限",
-        "uninstallFirst": "请先卸载已安装的同名技能"
+        "uninstallFirst": "请先卸载已安装的同名技能",
+        "checkZipContent": "请确认 ZIP 文件包含有效的技能目录（含 SKILL.md 文件）"
       }
     },
     "repo": {
@@ -1128,6 +1130,13 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode"
+    },
+    "installFromZip": {
+      "button": "从 ZIP 安装",
+      "installing": "安装中...",
+      "successSingle": "技能 {{name}} 已安装",
+      "successMultiple": "成功安装 {{count}} 个技能",
+      "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）"
     }
   },
   "deeplink": {

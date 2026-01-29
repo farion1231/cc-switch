@@ -109,3 +109,17 @@ pub async fn open_file_dialog<R: tauri::Runtime>(
 
     Ok(result.map(|p| p.to_string()))
 }
+
+/// 打开 ZIP 文件选择对话框
+#[tauri::command]
+pub async fn open_zip_file_dialog<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<String>, String> {
+    let dialog = app.dialog();
+    let result = dialog
+        .file()
+        .add_filter("ZIP", &["zip"])
+        .blocking_pick_file();
+
+    Ok(result.map(|p| p.to_string()))
+}

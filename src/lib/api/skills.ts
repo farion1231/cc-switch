@@ -159,4 +159,19 @@ export const skillsApi = {
   async removeRepo(owner: string, name: string): Promise<boolean> {
     return await invoke("remove_skill_repo", { owner, name });
   },
+
+  // ========== ZIP 安装 ==========
+
+  /** 打开 ZIP 文件选择对话框 */
+  async openZipFileDialog(): Promise<string | null> {
+    return await invoke("open_zip_file_dialog");
+  },
+
+  /** 从 ZIP 文件安装 Skills */
+  async installFromZip(
+    filePath: string,
+    currentApp: AppType,
+  ): Promise<InstalledSkill[]> {
+    return await invoke("install_skills_from_zip", { filePath, currentApp });
+  },
 };
