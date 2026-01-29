@@ -7,7 +7,7 @@ release/
 .env.local
 *.tsbuildinfo
 .npmrc
-CLAUDE.md
+# AGENTS.md and GEMINI.md are local config files, but CLAUDE.md is project documentation
 AGENTS.md
 GEMINI.md
 /.claude
