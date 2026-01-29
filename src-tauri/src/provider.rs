@@ -697,7 +697,7 @@ pub struct OpenCodeModelLimit {
 }
 
 #[cfg(test)]
-mod tests {
+mod provider_tests {
     use super::{
         ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, Provider,
         ProviderManager, ProviderMeta, UniversalProvider,

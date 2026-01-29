@@ -2,7 +2,7 @@
 
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
 import { normalizeQuotes } from "@/utils/textNormalization";
-import { isPlainObject } from "@/utils/configMerge";
+import { isPlainObject, deepClone, deepMerge } from "@/utils/configMerge";
 
 // Gemini 通用配置禁止的键（共享常量，供 hook 和同步逻辑复用）
 export const GEMINI_COMMON_ENV_FORBIDDEN_KEYS = [
@@ -11,24 +11,6 @@ export const GEMINI_COMMON_ENV_FORBIDDEN_KEYS = [
 ] as const;
 export type GeminiForbiddenEnvKey =
   (typeof GEMINI_COMMON_ENV_FORBIDDEN_KEYS)[number];
-
-const deepMerge = (
-  target: Record<string, any>,
-  source: Record<string, any>,
-): Record<string, any> => {
-  Object.entries(source).forEach(([key, value]) => {
-    if (isPlainObject(value)) {
-      if (!isPlainObject(target[key])) {
-        target[key] = {};
-      }
-      deepMerge(target[key], value);
-    } else {
-      // 直接覆盖非对象字段（数组/基础类型）
-      target[key] = value;
-    }
-  });
-  return target;
-};
 
 const deepRemove = (
   target: Record<string, any>,
@@ -64,23 +46,6 @@ const isSubset = (target: any, source: any): boolean => {
   }
 
   return target === source;
-};
-
-// 深拷贝函数
-const deepClone = <T>(obj: T): T => {
-  if (obj === null || typeof obj !== "object") return obj;
-  if (obj instanceof Date) return new Date(obj.getTime()) as T;
-  if (obj instanceof Array) return obj.map((item) => deepClone(item)) as T;
-  if (obj instanceof Object) {
-    const clonedObj = {} as T;
-    for (const key in obj) {
-      if (obj.hasOwnProperty(key)) {
-        clonedObj[key] = deepClone(obj[key]);
-      }
-    }
-    return clonedObj;
-  }
-  return obj;
 };
 
 export interface UpdateCommonConfigResult {

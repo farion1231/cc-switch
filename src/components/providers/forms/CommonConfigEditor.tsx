@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Save, Download, Loader2, Eye, EyeOff } from "lucide-react";
 import JsonEditor from "@/components/JsonEditor";
+import { useDarkMode } from "@/hooks/useDarkMode";
 
 interface CommonConfigEditorProps {
   value: string;
@@ -39,23 +40,8 @@ export function CommonConfigEditor({
   finalConfig,
 }: CommonConfigEditorProps) {
   const { t } = useTranslation();
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const isDarkMode = useDarkMode();
   const [showPreview, setShowPreview] = useState(false);
-
-  useEffect(() => {
-    setIsDarkMode(document.documentElement.classList.contains("dark"));
-
-    const observer = new MutationObserver(() => {
-      setIsDarkMode(document.documentElement.classList.contains("dark"));
-    });
-
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-
-    return () => observer.disconnect();
-  }, []);
 
   // 当启用通用配置时，自动显示预览
   useEffect(() => {

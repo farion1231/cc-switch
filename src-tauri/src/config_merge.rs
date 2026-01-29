@@ -6,9 +6,6 @@
 //!
 //! Supports JSON (Claude, Gemini) and TOML (Codex) formats.
 
-// Allow dead code as this is a utility module with functions available for future use
-#![allow(dead_code)]
-
 use serde_json::{Map, Value as JsonValue};
 use toml::Value as TomlValue;
 
@@ -92,55 +89,6 @@ pub fn compute_final_json_config(
     deep_merge_json(&mut result, custom_obj);
 
     result
-}
-
-/// Compute final JSON config from strings.
-///
-/// # Arguments
-/// * `custom_config_json` - Custom configuration as JSON string
-/// * `common_config_json` - Common configuration as JSON string
-/// * `enabled` - Whether common config is enabled
-///
-/// # Returns
-/// Tuple of (final_config_json, error_message)
-pub fn compute_final_json_config_str(
-    custom_config_json: &str,
-    common_config_json: &str,
-    enabled: bool,
-) -> (String, Option<String>) {
-    let custom_config: JsonValue = match serde_json::from_str(custom_config_json) {
-        Ok(v) => v,
-        Err(_) => {
-            return (
-                custom_config_json.to_string(),
-                Some("Failed to parse custom config JSON".to_string()),
-            )
-        }
-    };
-
-    let common_config: JsonValue = if common_config_json.trim().is_empty() {
-        JsonValue::Object(Map::new())
-    } else {
-        match serde_json::from_str(common_config_json) {
-            Ok(v) => v,
-            Err(_) => {
-                return (
-                    custom_config_json.to_string(),
-                    Some("Failed to parse common config JSON".to_string()),
-                )
-            }
-        }
-    };
-
-    let final_config = compute_final_json_config(&custom_config, &common_config, enabled);
-
-    match serde_json::to_string_pretty(&final_config) {
-        Ok(s) => (s, None),
-        Err(e) => (
-            custom_config_json.to_string(),
-            Some(format!("Failed to serialize: {e}")),
-        ),
-    }
 }
 
 /// Check if two JSON values are deeply equal.
@@ -245,52 +193,6 @@ pub fn extract_json_difference(
     );
 
     (JsonValue::Object(custom_config), has_common_keys)
-}
-
-/// Extract difference from JSON strings.
-///
-/// # Returns
-/// Tuple of (custom_config_json, has_common_keys, error_message)
-pub fn extract_json_difference_str(
-    live_config_json: &str,
-    common_config_json: &str,
-) -> (String, bool, Option<String>) {
-    let live_config: JsonValue = match serde_json::from_str(live_config_json) {
-        Ok(v) => v,
-        Err(_) => {
-            return (
-                live_config_json.to_string(),
-                false,
-                Some("Failed to parse live config JSON".to_string()),
-            )
-        }
-    };
-
-    let common_config: JsonValue = if common_config_json.trim().is_empty() {
-        JsonValue::Object(Map::new())
-    } else {
-        match serde_json::from_str(common_config_json) {
-            Ok(v) => v,
-            Err(_) => {
-                return (
-                    live_config_json.to_string(),
-                    false,
-                    Some("Failed to parse common config JSON".to_string()),
-                )
-            }
-        }
-    };
-
-    let (custom_config, has_common_keys) = extract_json_difference(&live_config, &common_config);
-
-    match serde_json::to_string_pretty(&custom_config) {
-        Ok(s) => (s, has_common_keys, None),
-        Err(e) => (
-            live_config_json.to_string(),
-            false,
-            Some(format!("Failed to serialize: {e}")),
-        ),
-    }
 }
 
 // ============================================================================

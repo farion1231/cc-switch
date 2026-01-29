@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Eye, EyeOff } from "lucide-react";
 import JsonEditor from "@/components/JsonEditor";
 import { Label } from "@/components/ui/label";
+import { useDarkMode } from "@/hooks/useDarkMode";
 
 interface CodexAuthSectionProps {
   value: string;
@@ -21,22 +22,7 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
   error,
 }) => {
   const { t } = useTranslation();
-  const [isDarkMode, setIsDarkMode] = useState(false);
-
-  useEffect(() => {
-    setIsDarkMode(document.documentElement.classList.contains("dark"));
-
-    const observer = new MutationObserver(() => {
-      setIsDarkMode(document.documentElement.classList.contains("dark"));
-    });
-
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-
-    return () => observer.disconnect();
-  }, []);
+  const isDarkMode = useDarkMode();
 
   const handleChange = (newValue: string) => {
     onChange(newValue);
@@ -104,23 +90,8 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   finalConfig,
 }) => {
   const { t } = useTranslation();
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const isDarkMode = useDarkMode();
   const [showPreview, setShowPreview] = useState(false);
-
-  useEffect(() => {
-    setIsDarkMode(document.documentElement.classList.contains("dark"));
-
-    const observer = new MutationObserver(() => {
-      setIsDarkMode(document.documentElement.classList.contains("dark"));
-    });
-
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-
-    return () => observer.disconnect();
-  }, []);
 
   // 当启用通用配置时，自动显示预览
   useEffect(() => {

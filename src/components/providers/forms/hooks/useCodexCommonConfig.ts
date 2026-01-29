@@ -1,17 +1,14 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import TOML from "smol-toml";
 import { configApi } from "@/lib/api";
 import {
-  computeFinalTomlConfig,
-  extractTomlDifference,
-} from "@/utils/tomlConfigMerge";
+  useCommonConfigBase,
+  type UseCommonConfigBaseReturn,
+} from "@/hooks/useCommonConfigBase";
+import { codexAdapter } from "@/hooks/commonConfigAdapters";
+import { extractTomlDifference } from "@/utils/tomlConfigMerge";
 import type { ProviderMeta } from "@/types";
-
-const LEGACY_STORAGE_KEY = "cc-switch:codex-common-config-snippet";
-const DEFAULT_CODEX_COMMON_CONFIG_SNIPPET = `# Common Codex config
-# Add your common TOML configuration here`;
 
 /** TOML 校验错误码 */
 export type TomlValidationErrorCode =
@@ -19,33 +16,9 @@ export type TomlValidationErrorCode =
   | "TOML_PARSE_FAILED"
   | "";
 
-/**
- * 校验 TOML 格式
- * @param tomlText - 待校验的 TOML 文本
- * @returns 错误码，如果校验通过则返回空字符串
- */
-function validateTomlFormat(tomlText: string): TomlValidationErrorCode {
-  // 空字符串或仅包含注释/空行视为合法
-  const lines = tomlText.split("\n");
-  const hasContent = lines.some((line) => {
-    const trimmed = line.trim();
-    return trimmed && !trimmed.startsWith("#");
-  });
-  if (!hasContent) {
-    return "";
-  }
-
-  try {
-    TOML.parse(tomlText);
-    return "";
-  } catch {
-    return "TOML_SYNTAX_ERROR";
-  }
-}
-
 interface UseCodexCommonConfigProps {
   /**
-   * 当前 Codex 配置（JSON 格式，包含 auth 和 config）
+   * 当前 Codex 配置（可能是纯 TOML 或 JSON wrapper 格式）
    */
   codexConfig: string;
   /**
@@ -97,300 +70,74 @@ export interface UseCodexCommonConfigReturn {
 }
 
 /**
- * 管理 Codex 通用配置片段（重构版）
+ * 检测 codexConfig 是否是 JSON wrapper 格式
+ * @returns 如果是 JSON wrapper 返回解析后的对象，否则返回 null
+ */
+function detectJsonWrapperFormat(
+  codexConfig: string,
+): { auth?: unknown; config?: string } | null {
+  try {
+    const parsed = JSON.parse(codexConfig);
+    if (typeof parsed?.config === "string") {
+      return parsed;
+    }
+    if (typeof parsed === "object" && parsed !== null) {
+      return parsed; // JSON 对象但没有 config 字段
+    }
+  } catch {
+    // 不是 JSON
+  }
+  return null;
+}
+
+/**
+ * 管理 Codex 通用配置片段
  *
- * 新架构：
- * - codexConfig：传入当前配置（JSON 格式，包含 auth 和 config）
- * - commonConfigSnippet：存储在数据库中的通用 TOML 配置片段
- * - finalConfig：运行时计算 = merge(commonConfig, config)
- * - 开启/关闭通用配置只改变 enabled 状态，不修改 codexConfig
+ * 基于 useCommonConfigBase 泛型 Hook + Codex TOML 适配器实现。
+ * 额外处理 Codex 双格式（纯 TOML / JSON wrapper）的写回逻辑。
  */
 export function useCodexCommonConfig({
   codexConfig,
   onConfigChange,
   initialData,
   selectedPresetId,
-  // currentProviderId is reserved for future use
 }: UseCodexCommonConfigProps): UseCodexCommonConfigReturn {
   const { t } = useTranslation();
+  const adapter = useMemo(() => codexAdapter, []);
 
-  // 内部管理的通用配置启用状态
-  const [useCommonConfig, setUseCommonConfig] = useState(false);
+  // 额外的 isExtracting 状态（base hook 的 handleExtract 不适用于 Codex）
+  const [localIsExtracting, setLocalIsExtracting] = useState(false);
+  const [localExtractError, setLocalExtractError] = useState("");
 
-  // 通用配置片段（从数据库加载）
-  const [commonConfigSnippet, setCommonConfigSnippetState] = useState<string>(
-    DEFAULT_CODEX_COMMON_CONFIG_SNIPPET,
-  );
-  const [commonConfigError, setCommonConfigError] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
-  const [isExtracting, setIsExtracting] = useState(false);
-  // 是否有待保存的通用配置变更
-  const [hasUnsavedCommonConfig, setHasUnsavedCommonConfig] = useState(false);
+  const base: UseCommonConfigBaseReturn<string> = useCommonConfigBase({
+    adapter,
+    inputValue: codexConfig,
+    onInputChange: onConfigChange,
+    initialData,
+    selectedPresetId,
+  });
 
-  // 用于跟踪编辑模式是否已初始化
-  const hasInitializedEditMode = useRef(false);
-  // 用于跟踪新建模式是否已初始化
-  const hasInitializedNewMode = useRef(false);
-
-  // 检查 TOML 片段是否有实质内容
-  const hasSnippetContent = useCallback((snippet: string) => {
-    const lines = snippet.split("\n");
-    return lines.some((line) => {
-      const trimmed = line.trim();
-      return trimmed && !trimmed.startsWith("#");
-    });
-  }, []);
-
-  // 从 codexConfig 提取 config 字段（TOML 格式）
-  // 注意：codexConfig 可能是以下两种格式之一：
-  // 1. 直接的 TOML 字符串（来自 useCodexConfigState）
-  // 2. JSON 字符串 { auth: {...}, config: "..." }（旧的 settingsConfig 格式）
-  const extractConfigToml = useCallback((configInput: string): string => {
-    if (!configInput || !configInput.trim()) {
-      return "";
-    }
-
-    // 尝试解析为 JSON（旧格式）
-    try {
-      const parsed = JSON.parse(configInput);
-      if (typeof parsed?.config === "string") {
-        return parsed.config;
-      }
-      // 如果是 JSON 对象但没有 config 字段，返回空
-      if (typeof parsed === "object" && parsed !== null) {
-        return "";
-      }
-    } catch {
-      // JSON 解析失败，说明是直接的 TOML 字符串
-    }
-
-    // 直接返回作为 TOML 字符串
-    return configInput;
-  }, []);
-
-  // 当预设变化时，重置初始化标记
-  useEffect(() => {
-    hasInitializedNewMode.current = false;
-    hasInitializedEditMode.current = false;
-  }, [selectedPresetId]);
-
-  // ============================================================================
-  // 加载通用配置片段（从数据库，支持 localStorage 迁移）
-  // ============================================================================
-  useEffect(() => {
-    let mounted = true;
-
-    const loadSnippet = async () => {
-      try {
-        const snippet = await configApi.getCommonConfigSnippet("codex");
-
-        if (snippet && snippet.trim()) {
-          if (mounted) {
-            setCommonConfigSnippetState(snippet);
-          }
-        } else {
-          // 尝试从 localStorage 迁移
-          if (typeof window !== "undefined") {
-            try {
-              const legacySnippet =
-                window.localStorage.getItem(LEGACY_STORAGE_KEY);
-              if (legacySnippet && legacySnippet.trim()) {
-                const tomlError = validateTomlFormat(legacySnippet);
-                if (!tomlError) {
-                  await configApi.setCommonConfigSnippet(
-                    "codex",
-                    legacySnippet,
-                  );
-                  if (mounted) {
-                    setCommonConfigSnippetState(legacySnippet);
-                  }
-                  window.localStorage.removeItem(LEGACY_STORAGE_KEY);
-                  console.log(
-                    "[迁移] Codex 通用配置已从 localStorage 迁移到数据库",
-                  );
-                }
-              }
-            } catch (e) {
-              console.warn("[迁移] 从 localStorage 迁移失败:", e);
-            }
-          }
-        }
-      } catch (error) {
-        console.error("加载 Codex 通用配置失败:", error);
-      } finally {
-        if (mounted) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    loadSnippet();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  // ============================================================================
-  // 编辑模式初始化：从 meta 读取启用状态
-  // ============================================================================
-  useEffect(() => {
-    if (initialData && !isLoading && !hasInitializedEditMode.current) {
-      hasInitializedEditMode.current = true;
-
-      const metaByApp = initialData.meta?.commonConfigEnabledByApp;
-      const resolvedMetaEnabled =
-        metaByApp?.codex ?? initialData.meta?.commonConfigEnabled;
-
-      if (resolvedMetaEnabled !== undefined) {
-        if (!resolvedMetaEnabled) {
-          setUseCommonConfig(false);
-          return;
-        }
-        if (!hasSnippetContent(commonConfigSnippet)) {
-          setCommonConfigError(t("codexConfig.noCommonConfigToApply"));
-          setUseCommonConfig(false);
-          return;
-        }
-        const tomlError = validateTomlFormat(commonConfigSnippet);
-        if (tomlError) {
-          setCommonConfigError(
-            t("codexConfig.tomlFormatError", { defaultValue: "TOML 格式错误" }),
-          );
-          setUseCommonConfig(false);
-          return;
-        }
-        setCommonConfigError("");
-        setUseCommonConfig(true);
-      } else {
-        setUseCommonConfig(false);
-      }
-    }
-  }, [initialData, isLoading, commonConfigSnippet, hasSnippetContent, t]);
-
-  // ============================================================================
-  // 新建模式初始化：如果通用配置有效，默认启用
-  // ============================================================================
-  useEffect(() => {
-    if (!initialData && !isLoading && !hasInitializedNewMode.current) {
-      hasInitializedNewMode.current = true;
-
-      if (hasSnippetContent(commonConfigSnippet)) {
-        const tomlError = validateTomlFormat(commonConfigSnippet);
-        if (!tomlError) {
-          setUseCommonConfig(true);
-        }
-      }
-    }
-  }, [initialData, commonConfigSnippet, isLoading, hasSnippetContent]);
-
-  // ============================================================================
-  // 计算最终配置（运行时合并）
-  // ============================================================================
-  const finalConfig = useMemo((): string => {
-    const customToml = extractConfigToml(codexConfig);
-
-    if (!useCommonConfig) {
-      return customToml;
-    }
-
-    const result = computeFinalTomlConfig(
-      customToml,
-      commonConfigSnippet,
-      true,
-    );
-
-    if (result.error) {
-      // 合并失败时返回原配置
-      return customToml;
-    }
-
-    return result.finalConfig;
-  }, [codexConfig, commonConfigSnippet, useCommonConfig, extractConfigToml]);
-
-  // ============================================================================
-  // 处理通用配置开关
-  // ============================================================================
-  const handleCommonConfigToggle = useCallback(
-    (checked: boolean) => {
-      if (checked) {
-        if (!hasSnippetContent(commonConfigSnippet)) {
-          setCommonConfigError(t("codexConfig.noCommonConfigToApply"));
-          setUseCommonConfig(false);
-          return;
-        }
-        const tomlError = validateTomlFormat(commonConfigSnippet);
-        if (tomlError) {
-          setCommonConfigError(
-            t("codexConfig.tomlFormatError", { defaultValue: "TOML 格式错误" }),
-          );
-          setUseCommonConfig(false);
-          return;
-        }
-      }
-      setCommonConfigError("");
-      setUseCommonConfig(checked);
-      // 新架构：不修改 codexConfig，只改变 enabled 状态
-    },
-    [commonConfigSnippet, hasSnippetContent, t],
-  );
-
-  // ============================================================================
-  // 处理通用配置片段变化（延迟保存模式：只更新本地状态，实际保存在表单提交时）
-  // ============================================================================
-  const handleCommonConfigSnippetChange = useCallback(
-    (value: string) => {
-      setCommonConfigSnippetState(value);
-
-      if (!value.trim()) {
-        setCommonConfigError("");
-        setHasUnsavedCommonConfig(true);
-        return;
-      }
-
-      // TOML 格式校验
-      const tomlError = validateTomlFormat(value);
-      if (tomlError) {
-        setCommonConfigError(
-          t("codexConfig.tomlSyntaxError", {
-            defaultValue: "TOML 格式错误，请检查语法",
-          }),
-        );
-        return;
-      }
-
-      setCommonConfigError("");
-      setHasUnsavedCommonConfig(true);
-
-      // 注意：新架构下不再需要同步到其他供应商的 settingsConfig
-      // 因为 finalConfig 是运行时计算的
-    },
-    [t],
-  );
-
-  // ============================================================================
-  // 从当前最终配置提取通用配置片段（延迟保存模式：只更新本地状态，实际保存在表单提交时）
-  // ============================================================================
+  // Codex 自定义 handleExtract：处理双格式写回 + 状态管理
   const handleExtract = useCallback(async () => {
-    setIsExtracting(true);
-    setCommonConfigError("");
+    setLocalIsExtracting(true);
+    setLocalExtractError("");
 
     try {
-      const extracted = await configApi.extractCommonConfigSnippet("codex", {
-        settingsConfig: JSON.stringify({
-          config: finalConfig ?? "",
-        }),
-      });
+      const request = adapter.buildExtractRequest(base.finalValue);
+      const extracted = await configApi.extractCommonConfigSnippet(
+        "codex",
+        request,
+      );
 
       if (!extracted || !extracted.trim()) {
-        setCommonConfigError(t("codexConfig.extractNoCommonConfig"));
+        setLocalExtractError(t("codexConfig.extractNoCommonConfig"));
         return;
       }
 
       // 验证 TOML 格式
-      const tomlError = validateTomlFormat(extracted);
-      if (tomlError) {
-        setCommonConfigError(
+      const parseResult = adapter.parseSnippet(extracted);
+      if (parseResult.error || parseResult.config === null) {
+        setLocalExtractError(
           t("codexConfig.extractedTomlInvalid", {
             defaultValue: "提取的配置 TOML 格式错误",
           }),
@@ -398,37 +145,26 @@ export function useCodexCommonConfig({
         return;
       }
 
-      // 更新片段状态（延迟保存：不立即调用后端 API）
-      setCommonConfigSnippetState(extracted);
-      setHasUnsavedCommonConfig(true);
+      // 更新 snippet 状态（通过 base 的 handler）
+      base.handleCommonConfigSnippetChange(extracted);
 
-      // 提取成功后，从 config 中移除与 extracted 相同的部分
-      const customToml = extractConfigToml(codexConfig);
+      // 从 config 中移除与 extracted 相同的部分
+      const customToml = adapter.parseInput(codexConfig);
       const diffResult = extractTomlDifference(customToml, extracted);
-      if (!diffResult.error) {
-        // 更新 codexConfig
-        // codexConfig 可能是两种格式：
-        // 1. 纯 TOML 字符串（来自 useCodexConfigState）
-        // 2. JSON 字符串 { auth: {...}, config: "..." }（旧格式）
-        let updated = false;
-        try {
-          const parsed = JSON.parse(codexConfig);
-          if (typeof parsed?.config === "string") {
-            // JSON 格式，更新 config 字段
-            parsed.config = diffResult.customToml;
-            onConfigChange(JSON.stringify(parsed, null, 2));
-            updated = true;
-          }
-        } catch {
-          // JSON 解析失败，说明是纯 TOML 字符串
-        }
 
-        // 如果是纯 TOML 字符串，直接更新
-        if (!updated) {
+      if (!diffResult.error) {
+        // Codex 双格式写回：检测原始格式并保持一致
+        const jsonWrapper = detectJsonWrapperFormat(codexConfig);
+
+        if (jsonWrapper && typeof jsonWrapper.config === "string") {
+          // JSON wrapper 格式，更新 config 字段
+          jsonWrapper.config = diffResult.customToml;
+          onConfigChange(JSON.stringify(jsonWrapper, null, 2));
+        } else {
+          // 纯 TOML 格式
           onConfigChange(diffResult.customToml);
         }
 
-        // Notify user that config was modified (提示用户需要保存)
         toast.success(
           t("codexConfig.extractSuccessNeedSave", {
             defaultValue: "已提取通用配置，点击保存按钮完成保存",
@@ -437,40 +173,32 @@ export function useCodexCommonConfig({
       }
     } catch (error) {
       console.error("提取 Codex 通用配置失败:", error);
-      setCommonConfigError(
-        t("codexConfig.extractFailed", { error: String(error) }),
+      setLocalExtractError(
+        t("codexConfig.extractFailed", {
+          error: String(error),
+          defaultValue: "提取失败",
+        }),
       );
     } finally {
-      setIsExtracting(false);
+      setLocalIsExtracting(false);
     }
-  }, [finalConfig, codexConfig, onConfigChange, extractConfigToml, t]);
+  }, [adapter, base, codexConfig, onConfigChange, t]);
 
-  // ============================================================================
-  // 获取待保存的通用配置片段（用于 handleSubmit 中统一保存）
-  // ============================================================================
-  const getPendingCommonConfigSnippet = useCallback(() => {
-    return hasUnsavedCommonConfig ? commonConfigSnippet : null;
-  }, [hasUnsavedCommonConfig, commonConfigSnippet]);
-
-  // ============================================================================
-  // 标记通用配置已保存
-  // ============================================================================
-  const markCommonConfigSaved = useCallback(() => {
-    setHasUnsavedCommonConfig(false);
-  }, []);
+  // 合并 error：优先显示 extract 错误，其次是 base 的错误
+  const combinedError = localExtractError || base.commonConfigError;
 
   return {
-    useCommonConfig,
-    commonConfigSnippet,
-    commonConfigError,
-    isLoading,
-    isExtracting,
-    handleCommonConfigToggle,
-    handleCommonConfigSnippetChange,
+    useCommonConfig: base.useCommonConfig,
+    commonConfigSnippet: base.commonConfigSnippet,
+    commonConfigError: combinedError,
+    isLoading: base.isLoading,
+    isExtracting: localIsExtracting,
+    handleCommonConfigToggle: base.handleCommonConfigToggle,
+    handleCommonConfigSnippetChange: base.handleCommonConfigSnippetChange,
     handleExtract,
-    finalConfig,
-    hasUnsavedCommonConfig,
-    getPendingCommonConfigSnippet,
-    markCommonConfigSaved,
+    finalConfig: base.finalValue,
+    hasUnsavedCommonConfig: base.hasUnsavedCommonConfig,
+    getPendingCommonConfigSnippet: base.getPendingCommonConfigSnippet,
+    markCommonConfigSaved: base.markCommonConfigSaved,
   };
 }

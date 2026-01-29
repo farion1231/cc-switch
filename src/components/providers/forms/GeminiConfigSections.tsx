@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Eye, EyeOff } from "lucide-react";
 import JsonEditor from "@/components/JsonEditor";
 import { Label } from "@/components/ui/label";
+import { useDarkMode } from "@/hooks/useDarkMode";
 
 interface GeminiEnvSectionProps {
   value: string;
@@ -32,23 +33,8 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
   finalEnv,
 }) => {
   const { t } = useTranslation();
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const isDarkMode = useDarkMode();
   const [showPreview, setShowPreview] = useState(false);
-
-  useEffect(() => {
-    setIsDarkMode(document.documentElement.classList.contains("dark"));
-
-    const observer = new MutationObserver(() => {
-      setIsDarkMode(document.documentElement.classList.contains("dark"));
-    });
-
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-
-    return () => observer.disconnect();
-  }, []);
 
   // 当启用通用配置时，自动显示预览
   useEffect(() => {
@@ -215,22 +201,7 @@ export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
   configError,
 }) => {
   const { t } = useTranslation();
-  const [isDarkMode, setIsDarkMode] = useState(false);
-
-  useEffect(() => {
-    setIsDarkMode(document.documentElement.classList.contains("dark"));
-
-    const observer = new MutationObserver(() => {
-      setIsDarkMode(document.documentElement.classList.contains("dark"));
-    });
-
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-
-    return () => observer.disconnect();
-  }, []);
+  const isDarkMode = useDarkMode();
 
   return (
     <div className="space-y-2">
