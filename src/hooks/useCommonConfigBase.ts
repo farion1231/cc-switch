@@ -176,7 +176,10 @@ export function useCommonConfigBase<TConfig, TFinal>({
   initialData,
   selectedPresetId,
   enabled = true,
-}: UseCommonConfigBaseProps<TConfig, TFinal>): UseCommonConfigBaseReturn<TFinal> {
+}: UseCommonConfigBaseProps<
+  TConfig,
+  TFinal
+>): UseCommonConfigBaseReturn<TFinal> {
   const { t } = useTranslation();
 
   // ============================================================================

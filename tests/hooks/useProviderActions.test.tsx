@@ -450,17 +450,18 @@ describe("useProviderActions", () => {
 
     expect(result.current.isLoading).toBe(true);
   });
-});
-it("clears loading flag when all mutations idle", () => {
-  addProviderMutation.isPending = false;
-  updateProviderMutation.isPending = false;
-  deleteProviderMutation.isPending = false;
-  switchProviderMutation.isPending = false;
 
-  const { wrapper } = createWrapper();
-  const { result } = renderHook(() => useProviderActions("claude"), {
-    wrapper,
+  it("clears loading flag when all mutations idle", () => {
+    addProviderMutation.isPending = false;
+    updateProviderMutation.isPending = false;
+    deleteProviderMutation.isPending = false;
+    switchProviderMutation.isPending = false;
+
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("claude"), {
+      wrapper,
+    });
+
+    expect(result.current.isLoading).toBe(false);
   });
-
-  expect(result.current.isLoading).toBe(false);
 });

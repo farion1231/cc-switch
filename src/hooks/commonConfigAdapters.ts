@@ -205,7 +205,9 @@ export const codexAdapter: CommonConfigAdapter<string, string> = {
     }
     const error = validateTomlFormat(snippet);
     if (error) {
-      return t("codexConfig.tomlFormatError", { defaultValue: "TOML 格式错误" });
+      return t("codexConfig.tomlFormatError", {
+        defaultValue: "TOML 格式错误",
+      });
     }
     return "";
   },
@@ -214,11 +216,7 @@ export const codexAdapter: CommonConfigAdapter<string, string> = {
     return extractConfigToml(input);
   },
 
-  computeFinal: (
-    custom: string,
-    common: string,
-    enabled: boolean,
-  ): string => {
+  computeFinal: (custom: string, common: string, enabled: boolean): string => {
     if (!enabled || !hasTomlContent(common)) {
       return custom;
     }
@@ -274,9 +272,7 @@ export function createGeminiAdapter(
     defaultSnippet: GEMINI_DEFAULT_SNIPPET,
     legacyStorageKey: GEMINI_LEGACY_STORAGE_KEY,
 
-    parseSnippet: (
-      snippet: string,
-    ): ParseResult<Record<string, string>> => {
+    parseSnippet: (snippet: string): ParseResult<Record<string, string>> => {
       const result = parseGeminiCommonConfigSnippet(snippet, {
         strictForbiddenKeys: true,
       });
