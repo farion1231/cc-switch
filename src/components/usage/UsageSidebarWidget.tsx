@@ -60,12 +60,15 @@ export function UsageSidebarWidget({
       return usageApi.getUsageSummary(startDate, endDate);
     },
     enabled: shouldFetch,
+    refetchInterval: isExpanded ? 30000 : false,
   });
 
   useEffect(() => {
     if (isExpanded && !shouldFetch) {
       setShouldFetch(true);
       void refetch();
+    } else if (!isExpanded && shouldFetch) {
+      setShouldFetch(false);
     }
   }, [isExpanded, shouldFetch, refetch]);
 
