@@ -11,6 +11,4 @@ export { useCodexTomlValidation } from "./useCodexTomlValidation";
 export { useGeminiConfigState } from "./useGeminiConfigState";
 
 // Common Config Hooks
-export { useCommonConfigSnippet } from "./useCommonConfigSnippet";
 export { useCodexCommonConfig } from "./useCodexCommonConfig";
-export { useGeminiCommonConfig } from "./useGeminiCommonConfig";

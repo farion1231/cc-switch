@@ -249,7 +249,7 @@ export const codexAdapter: CommonConfigAdapter<string, string> = {
 // ============================================================================
 
 const GEMINI_LEGACY_STORAGE_KEY = "cc-switch:gemini-common-config-snippet";
-const GEMINI_DEFAULT_SNIPPET = "{}";
+const GEMINI_DEFAULT_SNIPPET = "";
 
 export interface GeminiAdapterOptions {
   /** 字符串转对象 */
@@ -306,7 +306,9 @@ export function createGeminiAdapter(
         ) {
           return t("geminiConfig.commonConfigInvalidValues");
         }
-        return t("geminiConfig.invalidJsonFormat");
+        return t("geminiConfig.invalidEnvFormat", {
+          defaultValue: "配置格式错误",
+        });
       }
 
       if (Object.keys(result.env).length === 0) {

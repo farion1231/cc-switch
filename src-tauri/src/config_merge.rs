@@ -565,13 +565,24 @@ fn merge_codex_config(custom_config: &JsonValue, common_snippet: &str) -> MergeR
 ///
 /// This function supports all formats for backward compatibility.
 fn merge_gemini_config(custom_config: &JsonValue, common_snippet: &str) -> MergeResult {
-    // Parse common config (try JSON first, then ENV format)
-    let common_env = parse_gemini_common_snippet(common_snippet);
+    // Parse and validate common config (filters forbidden keys)
+    let validation = validate_gemini_common_snippet(common_snippet);
+    let common_env = validation.env;
+
+    // Generate warning if forbidden keys were found
+    let warning = if !validation.forbidden_keys_found.is_empty() {
+        Some(format!(
+            "GEMINI_FORBIDDEN_KEYS:{}",
+            validation.forbidden_keys_found.join(",")
+        ))
+    } else {
+        None
+    };
 
     if common_env.is_empty() {
         return MergeResult {
             config: custom_config.clone(),
-            warning: None,
+            warning,
         };
     }
 
@@ -597,7 +608,7 @@ fn merge_gemini_config(custom_config: &JsonValue, common_snippet: &str) -> Merge
 
     MergeResult {
         config: merged_config,
-        warning: None,
+        warning,
     }
 }
 
@@ -644,6 +655,47 @@ pub(crate) fn parse_gemini_common_snippet(snippet: &str) -> serde_json::Map<Stri
         }
     }
     result
+}
+
+/// Gemini common config forbidden keys - these should never be in common config
+/// as they are provider-specific credentials/endpoints.
+const GEMINI_FORBIDDEN_KEYS: &[&str] = &["GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY"];
+
+/// Result of validating Gemini common config snippet
+#[derive(Debug, Clone)]
+pub struct GeminiSnippetValidation {
+    /// Parsed environment variables (with forbidden keys filtered out)
+    pub env: serde_json::Map<String, JsonValue>,
+    /// List of forbidden keys that were found and filtered
+    pub forbidden_keys_found: Vec<String>,
+    /// Whether the snippet is valid (parseable and non-empty after filtering)
+    pub is_valid: bool,
+}
+
+/// Parse and validate Gemini common config snippet.
+///
+/// This function:
+/// 1. Parses the snippet (supports ENV/JSON formats)
+/// 2. Filters out forbidden keys (GOOGLE_GEMINI_BASE_URL, GEMINI_API_KEY)
+/// 3. Returns validation result with filtered env and forbidden keys found
+pub fn validate_gemini_common_snippet(snippet: &str) -> GeminiSnippetValidation {
+    let raw_env = parse_gemini_common_snippet(snippet);
+    let mut filtered_env = serde_json::Map::new();
+    let mut forbidden_keys_found = Vec::new();
+
+    for (key, value) in raw_env {
+        if GEMINI_FORBIDDEN_KEYS.contains(&key.as_str()) {
+            forbidden_keys_found.push(key);
+        } else {
+            filtered_env.insert(key, value);
+        }
+    }
+
+    GeminiSnippetValidation {
+        is_valid: !filtered_env.is_empty() || snippet.trim().is_empty(),
+        env: filtered_env,
+        forbidden_keys_found,
+    }
 }
 
 /// Strip surrounding quotes from ENV value.

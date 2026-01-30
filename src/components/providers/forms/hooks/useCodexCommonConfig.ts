@@ -10,12 +10,6 @@ import { codexAdapter } from "@/hooks/commonConfigAdapters";
 import { extractTomlDifference } from "@/utils/tomlConfigMerge";
 import type { ProviderMeta } from "@/types";
 
-/** TOML 校验错误码 */
-export type TomlValidationErrorCode =
-  | "TOML_SYNTAX_ERROR"
-  | "TOML_PARSE_FAILED"
-  | "";
-
 interface UseCodexCommonConfigProps {
   /**
    * 当前 Codex 配置（可能是纯 TOML 或 JSON wrapper 格式）

@@ -66,13 +66,16 @@ import {
   useCodexConfigState,
   useApiKeyLink,
   useTemplateValues,
-  useCommonConfigSnippet,
   useCodexCommonConfig,
   useSpeedTestEndpoints,
   useCodexTomlValidation,
   useGeminiConfigState,
-  useGeminiCommonConfig,
 } from "./hooks";
+import { useCommonConfigBase } from "@/hooks/useCommonConfigBase";
+import {
+  claudeAdapter,
+  createGeminiAdapter,
+} from "@/hooks/commonConfigAdapters";
 import { useProvidersQuery } from "@/lib/query/queries";
 
 /**
@@ -469,6 +472,17 @@ export function ProviderForm({
   });
 
   // 使用通用配置片段 hook (仅 Claude 模式)
+  // 直接使用 useCommonConfigBase + claudeAdapter
+  const claudeCommonConfig = useCommonConfigBase({
+    adapter: claudeAdapter,
+    inputValue: form.getValues("settingsConfig"),
+    onInputChange: (config) => form.setValue("settingsConfig", config),
+    initialData: appId === "claude" ? initialData : undefined,
+    selectedPresetId: selectedPresetId ?? undefined,
+    enabled: appId === "claude",
+  });
+
+  // 解构 Claude 通用配置
   const {
     useCommonConfig,
     commonConfigSnippet,
@@ -478,17 +492,10 @@ export function ProviderForm({
     isExtracting: isClaudeExtracting,
     handleExtract: handleClaudeExtract,
     isLoading: isClaudeCommonConfigLoading,
-    finalConfig: claudeFinalConfig,
+    finalValue: claudeFinalConfig,
     getPendingCommonConfigSnippet: getPendingClaudeCommonConfigSnippet,
     markCommonConfigSaved: markClaudeCommonConfigSaved,
-  } = useCommonConfigSnippet({
-    settingsConfig: form.getValues("settingsConfig"),
-    onConfigChange: (config) => form.setValue("settingsConfig", config),
-    initialData: appId === "claude" ? initialData : undefined,
-    selectedPresetId: selectedPresetId ?? undefined,
-    enabled: appId === "claude",
-    currentProviderId: providerId,
-  });
+  } = claudeCommonConfig;
 
   // 使用 Codex 通用配置片段 hook (仅 Codex 模式)
   const {
@@ -537,14 +544,16 @@ export function ProviderForm({
     (key: string) => {
       originalHandleGeminiApiKeyChange(key);
       // 同步更新 settingsConfig
+      let config: { env?: Record<string, unknown> };
       try {
-        const config = JSON.parse(form.getValues("settingsConfig") || "{}");
-        if (!config.env) config.env = {};
-        config.env.GEMINI_API_KEY = key.trim();
-        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+        config = JSON.parse(form.getValues("settingsConfig") || "{}");
       } catch {
-        // ignore
+        // 解析失败时初始化为有效结构
+        config = { env: {} };
       }
+      if (!config.env) config.env = {};
+      config.env.GEMINI_API_KEY = key.trim();
+      form.setValue("settingsConfig", JSON.stringify(config, null, 2));
     },
     [originalHandleGeminiApiKeyChange, form],
   );
@@ -553,14 +562,16 @@ export function ProviderForm({
     (url: string) => {
       originalHandleGeminiBaseUrlChange(url);
       // 同步更新 settingsConfig
+      let config: { env?: Record<string, unknown> };
       try {
-        const config = JSON.parse(form.getValues("settingsConfig") || "{}");
-        if (!config.env) config.env = {};
-        config.env.GOOGLE_GEMINI_BASE_URL = url.trim().replace(/\/+$/, "");
-        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+        config = JSON.parse(form.getValues("settingsConfig") || "{}");
       } catch {
-        // ignore
+        // 解析失败时初始化为有效结构
+        config = { env: {} };
       }
+      if (!config.env) config.env = {};
+      config.env.GOOGLE_GEMINI_BASE_URL = url.trim().replace(/\/+$/, "");
+      form.setValue("settingsConfig", JSON.stringify(config, null, 2));
     },
     [originalHandleGeminiBaseUrlChange, form],
   );
@@ -569,19 +580,36 @@ export function ProviderForm({
     (model: string) => {
       originalHandleGeminiModelChange(model);
       // 同步更新 settingsConfig
+      let config: { env?: Record<string, unknown> };
       try {
-        const config = JSON.parse(form.getValues("settingsConfig") || "{}");
-        if (!config.env) config.env = {};
-        config.env.GEMINI_MODEL = model.trim();
-        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+        config = JSON.parse(form.getValues("settingsConfig") || "{}");
       } catch {
-        // ignore
+        // 解析失败时初始化为有效结构
+        config = { env: {} };
       }
+      if (!config.env) config.env = {};
+      config.env.GEMINI_MODEL = model.trim();
+      form.setValue("settingsConfig", JSON.stringify(config, null, 2));
     },
     [originalHandleGeminiModelChange, form],
   );
 
   // 使用 Gemini 通用配置 hook (仅 Gemini 模式)
+  // 直接使用 useCommonConfigBase + createGeminiAdapter
+  const geminiAdapter = useMemo(
+    () => createGeminiAdapter({ envStringToObj, envObjToString }),
+    [envStringToObj, envObjToString],
+  );
+  const geminiCommonConfig = useCommonConfigBase({
+    adapter: geminiAdapter,
+    inputValue: geminiEnv,
+    onInputChange: handleGeminiEnvChange,
+    initialData: appId === "gemini" ? initialData : undefined,
+    selectedPresetId: selectedPresetId ?? undefined,
+    enabled: appId === "gemini",
+  });
+
+  // 解构 Gemini 通用配置
   const {
     useCommonConfig: useGeminiCommonConfigFlag,
     commonConfigSnippet: geminiCommonConfigSnippet,
@@ -591,18 +619,10 @@ export function ProviderForm({
     isExtracting: isGeminiExtracting,
     handleExtract: handleGeminiExtract,
     isLoading: isGeminiCommonConfigLoading,
-    finalEnv: geminiFinalEnv,
+    finalValue: geminiFinalEnv,
     getPendingCommonConfigSnippet: getPendingGeminiCommonConfigSnippet,
     markCommonConfigSaved: markGeminiCommonConfigSaved,
-  } = useGeminiCommonConfig({
-    envValue: geminiEnv,
-    onEnvChange: handleGeminiEnvChange,
-    envStringToObj,
-    envObjToString,
-    initialData: appId === "gemini" ? initialData : undefined,
-    selectedPresetId: selectedPresetId ?? undefined,
-    currentProviderId: providerId,
-  });
+  } = geminiCommonConfig;
 
   const supportsCommonConfig =
     appId === "claude" || appId === "codex" || appId === "gemini";
@@ -1041,8 +1061,8 @@ export function ProviderForm({
         const configObj = geminiConfig.trim() ? JSON.parse(geminiConfig) : {};
         // 如果启用了通用配置，只保存与通用配置不同的部分（自定义配置）
         if (useGeminiCommonConfigFlag && geminiCommonConfigSnippet.trim()) {
-          // Parse common config as JSON (flat {"KEY": "VALUE"} format)
-          // Note: geminiCommonConfigSnippet is stored as JSON by useGeminiCommonConfig hook
+          // Parse common config snippet (supports ENV/Flat JSON/Wrapped JSON formats)
+          // Uses parseGeminiCommonConfigSnippet for unified parsing
           const { env: commonEnvObj, warning } = parseGeminiCommonConfig(
             geminiCommonConfigSnippet.trim(),
           );

@@ -81,7 +81,10 @@ export async function getCommonConfigSnippet(
  * 设置通用配置片段（统一接口）
  * @param appType - 应用类型（claude/codex/gemini）
  * @param snippet - 通用配置片段（原始字符串）
- * @throws 如果格式无效（Claude/Gemini 验证 JSON，Codex 暂不验证）
+ * @throws 如果格式无效
+ *         - Claude: 验证 JSON 格式
+ *         - Gemini: 验证 ENV/JSON 格式，拒绝包含禁用键（GEMINI_API_KEY/GOOGLE_GEMINI_BASE_URL）
+ *         - Codex: TOML 格式，暂不验证
  */
 export async function setCommonConfigSnippet(
   appType: AppType,
@@ -98,7 +101,7 @@ export async function setCommonConfigSnippet(
  *
  * @param appType - 应用类型（claude/codex/gemini）
  * @param options - 可选：提取来源
- * @returns 提取的通用配置片段（JSON/TOML 字符串）
+ * @returns 提取的通用配置片段（Claude: JSON, Codex: TOML, Gemini: ENV）
  */
 export type ExtractCommonConfigSnippetOptions = {
   settingsConfig?: string;
@@ -201,10 +204,6 @@ async function executeSyncWithLock(appType: AppType): Promise<void> {
     // 输出结果
     if (result.error) {
       console.warn(`[syncCommonConfig] ${appType} 同步失败: ${result.error}`);
-    } else if (result.count > 0) {
-      console.log(
-        `[syncCommonConfig] 共更新 ${result.count} 个 ${appType} 供应商`,
-      );
     }
 
     // 通知回调
@@ -321,15 +320,11 @@ async function doSyncCommonConfigToProviders(
             },
           },
         };
-        console.log(
-          `[syncCommonConfig] 供应商 ${id} 检测到通用配置，已补写 meta`,
-        );
       }
 
       try {
         await providersApi.update(providerToSave, appType);
         updatedCount++;
-        console.log(`[syncCommonConfig] 已更新供应商 ${id}`);
       } catch (updateError) {
         errors.push(`供应商 ${id}: 保存失败 - ${String(updateError)}`);
       }

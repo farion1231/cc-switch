@@ -584,6 +584,7 @@
     "saveFailed": "Save failed: {{error}}",
     "extractedConfigInvalid": "Extracted config format is invalid",
     "invalidJsonFormat": "Common config snippet format error (must be valid JSON)",
+    "invalidEnvFormat": "Config format error (use KEY=VALUE format, one per line)",
     "commonConfigInvalidKeys": "Common config snippet must not include GOOGLE_GEMINI_BASE_URL or GEMINI_API_KEY (found: {{keys}})",
     "commonConfigInvalidValues": "Common config snippet values must be strings",
     "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",

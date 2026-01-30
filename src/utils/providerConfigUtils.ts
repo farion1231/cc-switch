@@ -63,13 +63,26 @@ export const hasCommonConfigSnippet = (
   }
 };
 
-// 检查 Gemini 配置是否已包含通用配置片段（env JSON）
+/**
+ * 检查 Gemini 配置是否已包含通用配置片段
+ *
+ * 支持三种 snippet 格式:
+ * - ENV 格式: KEY=VALUE (一行一个)
+ * - Flat JSON: {"KEY": "VALUE", ...}
+ * - Wrapped JSON: {"env": {"KEY": "VALUE", ...}}
+ *
+ * @param jsonString - Provider 的 settingsConfig (JSON 字符串)
+ * @param snippetString - 通用配置片段 (ENV/JSON 格式)
+ * @returns 是否已包含通用配置
+ */
 export const hasGeminiCommonConfigSnippet = (
   jsonString: string,
   snippetString: string,
 ): boolean => {
   try {
     if (!snippetString.trim()) return false;
+
+    // 解析 provider 的 settingsConfig
     const config = jsonString ? JSON.parse(jsonString) : {};
     if (!isPlainObject(config)) return false;
     const envValue = (config as Record<string, unknown>).env;
@@ -79,27 +92,18 @@ export const hasGeminiCommonConfigSnippet = (
       unknown
     >;
 
-    const parsed = JSON.parse(snippetString);
-    if (!isPlainObject(parsed)) return false;
+    // 使用 parseGeminiCommonConfigSnippet 解析 snippet (支持 ENV/JSON)
+    const parseResult = parseGeminiCommonConfigSnippet(snippetString, {
+      strictForbiddenKeys: false, // 过滤禁用键而非报错
+    });
 
-    const entries = Object.entries(parsed).filter(
-      (entry): entry is [string, string] => {
-        const [key, value] = entry;
-        if (
-          GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(
-            key as GeminiForbiddenEnvKey,
-          )
-        ) {
-          return false;
-        }
-        if (typeof value !== "string") return false;
-        return value.trim().length > 0;
-      },
-    );
+    // 解析失败或为空
+    if (parseResult.error || Object.keys(parseResult.env).length === 0) {
+      return false;
+    }
 
-    if (entries.length === 0) return false;
-
-    return entries.every(([key, value]) => {
+    // 检查所有有效键值对是否都存在于 provider.env 中
+    return Object.entries(parseResult.env).every(([key, value]) => {
       const current = env[key];
       return typeof current === "string" && current === value.trim();
     });

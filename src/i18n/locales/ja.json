@@ -584,6 +584,7 @@
     "saveFailed": "保存に失敗しました: {{error}}",
     "extractedConfigInvalid": "抽出した設定のフォーマットが不正です",
     "invalidJsonFormat": "共通設定スニペットの形式が不正です（有効な JSON でなければなりません）",
+    "invalidEnvFormat": "設定フォーマットエラー（KEY=VALUE 形式を使用してください、各行に1つ）",
     "commonConfigInvalidKeys": "共通設定スニペットに GOOGLE_GEMINI_BASE_URL または GEMINI_API_KEY を含めることはできません（検出: {{keys}}）",
     "commonConfigInvalidValues": "共通設定スニペットの値は文字列である必要があります",
     "noCommonConfigToApply": "共通設定スニペットが空、または適用できる項目がありません",

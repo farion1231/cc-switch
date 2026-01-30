@@ -584,6 +584,7 @@
     "saveFailed": "保存失败: {{error}}",
     "extractedConfigInvalid": "提取的配置格式错误",
     "invalidJsonFormat": "通用配置片段格式错误（必须是有效的 JSON）",
+    "invalidEnvFormat": "配置格式错误（请使用 KEY=VALUE 格式，每行一个）",
     "commonConfigInvalidKeys": "通用配置片段不能包含 GOOGLE_GEMINI_BASE_URL 或 GEMINI_API_KEY（发现：{{keys}}）",
     "commonConfigInvalidValues": "通用配置片段的值必须是字符串",
     "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",

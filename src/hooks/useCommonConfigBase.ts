@@ -234,7 +234,9 @@ export function useCommonConfigBase<TConfig, TFinal>({
             );
             if (legacySnippet && legacySnippet.trim()) {
               const parsed = adapter.parseSnippet(legacySnippet);
-              if (!parsed.error) {
+              // 只有在解析成功且有有效内容时才迁移
+              // 这避免了将 "{}" 这样的空 JSON 迁移为"有效配置"
+              if (!parsed.error && adapter.hasValidContent(legacySnippet)) {
                 await configApi.setCommonConfigSnippet(
                   adapter.appKey,
                   legacySnippet,
@@ -246,6 +248,9 @@ export function useCommonConfigBase<TConfig, TFinal>({
                 console.log(
                   `[迁移] ${adapter.appKey} 通用配置已从 localStorage 迁移到数据库`,
                 );
+              } else {
+                // 解析失败或无有效内容，清理 localStorage 不迁移
+                window.localStorage.removeItem(adapter.legacyStorageKey);
               }
             }
           } catch (e) {

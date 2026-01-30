@@ -654,15 +654,19 @@ impl ProviderService {
         Ok(cleaned.trim().to_string())
     }
 
-    /// Extract common config for Gemini (JSON format)
+    /// Extract common config for Gemini (ENV format)
     ///
     /// Extracts `.env` values while excluding provider-specific credentials:
     /// - GOOGLE_GEMINI_BASE_URL
     /// - GEMINI_API_KEY
+    ///
+    /// Returns ENV format (KEY=VALUE per line) instead of JSON.
+    /// Values containing newlines/carriage returns are skipped to prevent
+    /// ENV format injection/truncation.
     fn extract_gemini_common_config(settings: &Value) -> Result<String, AppError> {
         let env = settings.get("env").and_then(|v| v.as_object());
 
-        let mut snippet = serde_json::Map::new();
+        let mut lines: Vec<String> = Vec::new();
         if let Some(env) = env {
             for (key, value) in env {
                 if key == "GOOGLE_GEMINI_BASE_URL" || key == "GEMINI_API_KEY" {
@@ -673,17 +677,22 @@ impl ProviderService {
                 };
                 let trimmed = v.trim();
                 if !trimmed.is_empty() {
-                    snippet.insert(key.to_string(), Value::String(trimmed.to_string()));
+                    // Skip values containing newlines to prevent ENV format injection
+                    if trimmed.contains('\n') || trimmed.contains('\r') {
+                        continue;
+                    }
+                    lines.push(format!("{key}={trimmed}"));
                 }
             }
         }
 
-        if snippet.is_empty() {
-            return Ok("{}".to_string());
+        if lines.is_empty() {
+            return Ok(String::new());
         }
 
-        serde_json::to_string_pretty(&Value::Object(snippet))
-            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+        // Sort for consistent output
+        lines.sort();
+        Ok(lines.join("\n"))
     }
 
     /// Extract common config for OpenCode (JSON format)
