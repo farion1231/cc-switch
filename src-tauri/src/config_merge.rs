@@ -199,32 +199,35 @@ pub fn extract_json_difference(
 // TOML Configuration Merge Functions
 // ============================================================================
 
-/// Deep merge two TOML tables where `source` overrides `target`.
-fn deep_merge_toml(target: &mut TomlValue, source: &TomlValue) {
-    // First check if both are tables without destructuring
+/// Deep merge TOML tables while preserving target's key order (custom first, then common).
+///
+/// - Keeps target's existing values (target = custom config has priority)
+/// - Only adds keys from source that don't exist in target (common-only keys)
+/// - For nested tables, recursively merges while preserving target's keys first
+fn deep_merge_toml_preserve_order(target: &mut TomlValue, source: &TomlValue) {
     let both_tables =
         matches!(target, TomlValue::Table(_)) && matches!(source, TomlValue::Table(_));
 
     if both_tables {
-        // Safe to destructure now since we know both are tables
         if let (TomlValue::Table(target_map), TomlValue::Table(source_map)) = (target, source) {
             for (key, source_value) in source_map {
                 match target_map.get_mut(key) {
                     Some(target_value) if target_value.is_table() && source_value.is_table() => {
-                        // Nested table: recursive merge
-                        deep_merge_toml(target_value, source_value);
+                        // Nested table: recursive merge (preserving target's keys first)
+                        deep_merge_toml_preserve_order(target_value, source_value);
                     }
-                    _ => {
-                        // Other cases: source overrides
+                    Some(_) => {
+                        // Key exists in target: keep target's value (custom overrides common)
+                    }
+                    None => {
+                        // Key only in source: add to target (common-only keys appear after)
                         target_map.insert(key.clone(), source_value.clone());
                     }
                 }
             }
         }
-    } else {
-        // Non-table: source overrides
-        *target = source.clone();
     }
+    // Non-table case: keep target as-is (custom has priority)
 }
 
 /// Compute final TOML config.
@@ -278,11 +281,12 @@ pub fn compute_final_toml_config_str(
         }
     };
 
-    // Start with common config as base
-    let mut result = common_config;
+    // Start with custom config (so custom keys appear first in output)
+    let mut result = custom_config;
 
-    // Merge custom config on top
-    deep_merge_toml(&mut result, &custom_config);
+    // Add common config keys that don't exist in custom (these appear after custom keys)
+    // Custom values always take priority (they're already in result)
+    deep_merge_toml_preserve_order(&mut result, &common_config);
 
     // Serialize back to TOML string
     match toml::to_string_pretty(&result) {
@@ -832,6 +836,19 @@ shared_key = "shared"
         assert!(error.is_none());
         assert!(result.contains("custom-model")); // custom wins
         assert!(result.contains("shared_key")); // from common
+
+        // Verify ordering: custom keys appear before common-only keys
+        let model_pos = result.find("model").unwrap();
+        let custom_section_pos = result.find("custom_section").unwrap();
+        let shared_key_pos = result.find("shared_key").unwrap();
+        assert!(
+            model_pos < shared_key_pos,
+            "custom 'model' should appear before common-only 'shared_key'"
+        );
+        assert!(
+            custom_section_pos < shared_key_pos || model_pos < shared_key_pos,
+            "custom keys should appear before common-only keys"
+        );
     }
 
     #[test]
