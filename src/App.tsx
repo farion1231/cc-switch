@@ -14,7 +14,6 @@ import {
   RefreshCw,
   Search,
   Download,
-  BarChart2,
   FolderArchive,
 } from "lucide-react";
 import type { Provider, VisibleApps } from "@/types";
@@ -773,21 +772,6 @@ function App() {
                     setCurrentView("settings");
                   }}
                 />
-                {isCurrentAppTakeoverActive && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      setIsUsageSidebarExpanded(true);
-                    }}
-                    title={t("settings.usage.title", {
-                      defaultValue: "使用统计",
-                    })}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <BarChart2 className="w-4 h-4" />
-                  </Button>
-                )}
               </div>
             )}
           </div>

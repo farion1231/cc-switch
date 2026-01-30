@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   BarChart2,
@@ -11,7 +11,8 @@ import {
   Layers,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useUsageSummary } from "@/lib/query/usage";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { usageApi } from "@/lib/api/usage";
 import type { TimeRange } from "@/types/usage";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,12 @@ interface UsageSidebarWidgetProps {
   onOpenSettings?: () => void;
 }
 
+const getWindow = (days: number) => {
+  const endDate = Math.floor(Date.now() / 1000);
+  const startDate = endDate - days * 24 * 60 * 60;
+  return { startDate, endDate };
+};
+
 export function UsageSidebarWidget({
   isExpanded: controlledExpanded,
   onToggleExpand,
@@ -31,6 +38,8 @@ export function UsageSidebarWidget({
   const { t } = useTranslation();
   const [internalExpanded, setInternalExpanded] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>("1d");
+  const [shouldFetch, setShouldFetch] = useState(false);
+  const queryClient = useQueryClient();
   const isExpanded = controlledExpanded ?? internalExpanded;
   const setExpanded = (val: boolean) => {
     if (controlledExpanded === undefined) {
@@ -40,7 +49,25 @@ export function UsageSidebarWidget({
   };
 
   const days = timeRange === "1d" ? 1 : timeRange === "7d" ? 7 : 30;
-  const { data: summary, isLoading, refetch } = useUsageSummary(days);
+  const {
+    data: summary,
+    isLoading,
+    refetch,
+  } = useQuery({
+    queryKey: ["usage", "summary", days],
+    queryFn: async () => {
+      const { startDate, endDate } = getWindow(days);
+      return usageApi.getUsageSummary(startDate, endDate);
+    },
+    enabled: shouldFetch,
+  });
+
+  useEffect(() => {
+    if (isExpanded && !shouldFetch) {
+      setShouldFetch(true);
+      void refetch();
+    }
+  }, [isExpanded, shouldFetch, refetch]);
 
   const totalCost = parseFloat(summary?.totalCost || "0");
   const totalRequests = summary?.totalRequests ?? 0;
@@ -49,6 +76,7 @@ export function UsageSidebarWidget({
   const successRate = summary?.successRate ?? 100;
 
   const handleRefresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["usage", "summary"] });
     void refetch();
   };
 
