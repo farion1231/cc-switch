@@ -1,17 +1,9 @@
-use crate::config::write_text_file;
+use crate::config::{get_home_dir, write_text_file};
 use crate::error::AppError;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-
-/// 获取用户主目录，带回退和日志
-fn get_home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| {
-        log::warn!("无法获取用户主目录，回退到当前目录");
-        PathBuf::from(".")
-    })
-}
 
 /// 获取 Gemini 配置目录路径（支持设置覆盖）
 pub fn get_gemini_dir() -> PathBuf {

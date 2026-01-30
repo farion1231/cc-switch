@@ -13,6 +13,7 @@ import type {
   ProviderMeta,
   ProviderTestConfig,
   ProviderProxyConfig,
+  ClaudeApiFormat,
 } from "@/types";
 import {
   providerPresets,
@@ -46,7 +47,10 @@ import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
-import { ProviderAdvancedConfig } from "./ProviderAdvancedConfig";
+import {
+  ProviderAdvancedConfig,
+  type PricingModelSourceOption,
+} from "./ProviderAdvancedConfig";
 import {
   useProviderCategory,
   useApiKeyState,
@@ -121,6 +125,9 @@ interface ProviderFormProps {
   showButtons?: boolean;
 }
 
+const normalizePricingSource = (value?: string): PricingModelSourceOption =>
+  value === "request" || value === "response" ? value : "inherit";
+
 export function ProviderForm({
   appId,
   providerId,
@@ -168,6 +175,19 @@ export function ProviderForm({
   const [proxyConfig, setProxyConfig] = useState<ProviderProxyConfig>(
     () => initialData?.meta?.proxyConfig ?? { enabled: false },
   );
+  const [pricingConfig, setPricingConfig] = useState<{
+    enabled: boolean;
+    costMultiplier?: string;
+    pricingModelSource: PricingModelSourceOption;
+  }>(() => ({
+    enabled:
+      initialData?.meta?.costMultiplier !== undefined ||
+      initialData?.meta?.pricingModelSource !== undefined,
+    costMultiplier: initialData?.meta?.costMultiplier,
+    pricingModelSource: normalizePricingSource(
+      initialData?.meta?.pricingModelSource,
+    ),
+  }));
 
   // 使用 category hook
   const { category } = useProviderCategory({
@@ -188,6 +208,15 @@ export function ProviderForm({
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
     setProxyConfig(initialData?.meta?.proxyConfig ?? { enabled: false });
+    setPricingConfig({
+      enabled:
+        initialData?.meta?.costMultiplier !== undefined ||
+        initialData?.meta?.pricingModelSource !== undefined,
+      costMultiplier: initialData?.meta?.costMultiplier,
+      pricingModelSource: normalizePricingSource(
+        initialData?.meta?.pricingModelSource,
+      ),
+    });
   }, [appId, initialData]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -215,8 +244,6 @@ export function ProviderForm({
     defaultValues,
     mode: "onSubmit",
   });
-
-  const settingsConfigValue = form.getValues("settingsConfig");
 
   // 使用 API Key hook
   const {
@@ -256,52 +283,16 @@ export function ProviderForm({
     onConfigChange: (config) => form.setValue("settingsConfig", config),
   });
 
-  const isOpenRouterProvider = useMemo(() => {
-    if (appId !== "claude") return false;
-    const normalized = baseUrl.trim().toLowerCase();
-    if (normalized.includes("openrouter.ai")) {
-      return true;
-    }
-    try {
-      const config = JSON.parse(settingsConfigValue || "{}");
-      const envUrl = config?.env?.ANTHROPIC_BASE_URL;
-      return typeof envUrl === "string" && envUrl.includes("openrouter.ai");
-    } catch {
-      return false;
-    }
-  }, [appId, baseUrl, settingsConfigValue]);
+  // Claude API Format state - stored in meta, not settingsConfig
+  // Read initial value from meta.apiFormat, default to "anthropic"
+  const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
+    if (appId !== "claude") return "anthropic";
+    return initialData?.meta?.apiFormat ?? "anthropic";
+  });
 
-  const openRouterCompatEnabled = useMemo(() => {
-    if (!isOpenRouterProvider) return false;
-    try {
-      const config = JSON.parse(settingsConfigValue || "{}");
-      const raw = config?.openrouter_compat_mode;
-      if (typeof raw === "boolean") return raw;
-      if (typeof raw === "number") return raw !== 0;
-      if (typeof raw === "string") {
-        const normalized = raw.trim().toLowerCase();
-        return normalized === "true" || normalized === "1";
-      }
-    } catch {
-      // ignore
-    }
-    return false; // OpenRouter now supports Claude Code compatible API, no need for transform
-  }, [isOpenRouterProvider, settingsConfigValue]);
-
-  const handleOpenRouterCompatChange = useCallback(
-    (enabled: boolean) => {
-      try {
-        const currentConfig = JSON.parse(
-          form.getValues("settingsConfig") || "{}",
-        );
-        currentConfig.openrouter_compat_mode = enabled;
-        form.setValue("settingsConfig", JSON.stringify(currentConfig, null, 2));
-      } catch {
-        // ignore
-      }
-    },
-    [form],
-  );
+  const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
+    setLocalApiFormat(format);
+  }, []);
 
   // 使用 Codex 配置 hook (仅 Codex 模式)
   const {
@@ -940,6 +931,18 @@ export function ProviderForm({
       // 添加高级配置
       testConfig: testConfig.enabled ? testConfig : undefined,
       proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
+      costMultiplier: pricingConfig.enabled
+        ? pricingConfig.costMultiplier
+        : undefined,
+      pricingModelSource:
+        pricingConfig.enabled && pricingConfig.pricingModelSource !== "inherit"
+          ? pricingConfig.pricingModelSource
+          : undefined,
+      // Claude API 格式（仅非官方 Claude 供应商使用）
+      apiFormat:
+        appId === "claude" && category !== "official"
+          ? localApiFormat
+          : undefined,
     };
 
     onSubmit(payload);
@@ -1136,6 +1139,14 @@ export function ProviderForm({
       preset.templateValues,
     );
 
+    // Sync preset's apiFormat to local state (for Claude providers)
+    if (preset.apiFormat) {
+      setLocalApiFormat(preset.apiFormat);
+    } else {
+      // Reset to default if preset doesn't specify apiFormat
+      setLocalApiFormat("anthropic");
+    }
+
     form.reset({
       name: preset.name,
       websiteUrl: preset.websiteUrl ?? "",
@@ -1259,9 +1270,8 @@ export function ProviderForm({
             defaultOpusModel={defaultOpusModel}
             onModelChange={handleModelChange}
             speedTestEndpoints={speedTestEndpoints}
-            showOpenRouterCompatToggle={false}
-            openRouterCompatEnabled={openRouterCompatEnabled}
-            onOpenRouterCompatChange={handleOpenRouterCompatChange}
+            apiFormat={localApiFormat}
+            onApiFormatChange={handleApiFormatChange}
           />
         )}
 
@@ -1464,8 +1474,10 @@ export function ProviderForm({
         <ProviderAdvancedConfig
           testConfig={testConfig}
           proxyConfig={proxyConfig}
+          pricingConfig={pricingConfig}
           onTestConfigChange={setTestConfig}
           onProxyConfigChange={setProxyConfig}
+          onPricingConfigChange={setPricingConfig}
         />
 
         {showButtons && (

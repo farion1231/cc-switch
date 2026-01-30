@@ -51,19 +51,19 @@ export function useModelState({
 }: UseModelStateProps) {
   // Initialize state by parsing config directly (fixes edit mode backfill)
   const [claudeModel, setClaudeModel] = useState(
-    () => parseModelsFromConfig(settingsConfig).model
+    () => parseModelsFromConfig(settingsConfig).model,
   );
   const [reasoningModel, setReasoningModel] = useState(
-    () => parseModelsFromConfig(settingsConfig).reasoning
+    () => parseModelsFromConfig(settingsConfig).reasoning,
   );
   const [defaultHaikuModel, setDefaultHaikuModel] = useState(
-    () => parseModelsFromConfig(settingsConfig).haiku
+    () => parseModelsFromConfig(settingsConfig).haiku,
   );
   const [defaultSonnetModel, setDefaultSonnetModel] = useState(
-    () => parseModelsFromConfig(settingsConfig).sonnet
+    () => parseModelsFromConfig(settingsConfig).sonnet,
   );
   const [defaultOpusModel, setDefaultOpusModel] = useState(
-    () => parseModelsFromConfig(settingsConfig).opus
+    () => parseModelsFromConfig(settingsConfig).opus,
   );
 
   const isUserEditingRef = useRef(false);

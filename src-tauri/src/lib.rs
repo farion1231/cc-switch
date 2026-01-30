@@ -745,6 +745,24 @@ pub fn run() {
                 restore_proxy_state_on_startup(&state).await;
             });
 
+            // 静默启动：根据设置决定是否显示主窗口
+            let settings = crate::settings::get_settings();
+            if let Some(window) = app.get_webview_window("main") {
+                if settings.silent_startup {
+                    // 静默启动模式：保持窗口隐藏
+                    let _ = window.hide();
+                    #[cfg(target_os = "windows")]
+                    let _ = window.set_skip_taskbar(true);
+                    #[cfg(target_os = "macos")]
+                    tray::apply_tray_policy(app.handle(), false);
+                    log::info!("静默启动模式：主窗口已隐藏");
+                } else {
+                    // 正常启动模式：显示窗口
+                    let _ = window.show();
+                    log::info!("正常启动模式：主窗口已显示");
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -832,6 +850,7 @@ pub fn run() {
             commands::import_config_from_file,
             commands::save_file_dialog,
             commands::open_file_dialog,
+            commands::open_zip_file_dialog,
             commands::sync_current_providers_live,
             // Deep link import
             commands::parse_deeplink,
@@ -861,6 +880,7 @@ pub fn run() {
             commands::get_skill_repos,
             commands::add_skill_repo,
             commands::remove_skill_repo,
+            commands::install_skills_from_zip,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,
@@ -877,6 +897,10 @@ pub fn run() {
             commands::update_global_proxy_config,
             commands::get_proxy_config_for_app,
             commands::update_proxy_config_for_app,
+            commands::get_default_cost_multiplier,
+            commands::set_default_cost_multiplier,
+            commands::get_pricing_model_source,
+            commands::set_pricing_model_source,
             commands::is_proxy_running,
             commands::is_live_takeover_active,
             commands::switch_proxy_provider,

@@ -135,7 +135,23 @@ export interface ProviderMeta {
   testConfig?: ProviderTestConfig;
   // 供应商单独的代理配置
   proxyConfig?: ProviderProxyConfig;
+  // 供应商成本倍率
+  costMultiplier?: string;
+  // 供应商计费模式来源
+  pricingModelSource?: string;
+  // Claude API 格式（仅 Claude 供应商使用）
+  // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
+  // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
+  apiFormat?: "anthropic" | "openai_chat";
 }
+
+// Skill 同步方式
+export type SkillSyncMethod = "auto" | "symlink" | "copy";
+
+// Claude API 格式类型
+// - "anthropic": 原生 Anthropic Messages API 格式，直接透传
+// - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
+export type ClaudeApiFormat = "anthropic" | "openai_chat";
 
 // 主页面显示的应用配置
 export interface VisibleApps {
@@ -159,6 +175,8 @@ export interface Settings {
   skipClaudeOnboarding?: boolean;
   // 是否开机自启
   launchOnStartup?: boolean;
+  // 静默启动（程序启动时不显示主窗口）
+  silentStartup?: boolean;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "ja";
 
@@ -182,6 +200,17 @@ export interface Settings {
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
+
+  // ===== Skill 同步设置 =====
+  // Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
+  skillSyncMethod?: SkillSyncMethod;
+
+  // ===== 终端设置 =====
+  // 首选终端应用（可选，默认使用系统默认终端）
+  // macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty"
+  // Windows: "cmd" | "powershell" | "wt"
+  // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
+  preferredTerminal?: string;
 }
 
 // MCP 服务器连接参数（宽松：允许扩展字段）

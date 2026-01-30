@@ -155,7 +155,8 @@
     "deleteSuccess": "供应商已删除",
     "deleteFailed": "删除供应商失败：{{error}}",
     "settingsSaved": "设置已保存",
-    "settingsSaveFailed": "保存设置失败：{{error}}"
+    "settingsSaveFailed": "保存设置失败：{{error}}",
+    "openAIChatFormatHint": "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -265,6 +266,8 @@
     "windowBehaviorHint": "配置窗口最小化与 Claude 插件联动策略。",
     "launchOnStartup": "开机自启",
     "launchOnStartupDescription": "随系统启动自动运行 CC Switch",
+    "silentStartup": "静默启动",
+    "silentStartupDescription": "程序启动时不显示主窗口，仅在系统托盘运行",
     "autoLaunchFailed": "设置开机自启失败",
     "minimizeToTray": "关闭时最小化到托盘",
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
@@ -280,6 +283,40 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI"
     },
+    "skillSync": {
+      "title": "Skill 同步方式",
+      "description": "选择 Skills 的文件同步策略",
+      "symlink": "软连接",
+      "copy": "文件复制",
+      "symlinkHint": "软连接节省磁盘空间并支持实时同步。注意：Windows 可能需要管理员权限或开启开发者模式"
+    },
+    "terminal": {
+      "title": "首选终端",
+      "description": "选择点击终端按钮时使用的终端应用",
+      "fallbackHint": "如果选择的终端不可用，将自动使用系统默认终端",
+      "options": {
+        "macos": {
+          "terminal": "Terminal.app",
+          "iterm2": "iTerm2",
+          "alacritty": "Alacritty",
+          "kitty": "Kitty",
+          "ghostty": "Ghostty"
+        },
+        "windows": {
+          "cmd": "命令提示符",
+          "powershell": "PowerShell",
+          "wt": "Windows Terminal"
+        },
+        "linux": {
+          "gnomeTerminal": "GNOME Terminal",
+          "konsole": "Konsole",
+          "xfce4Terminal": "Xfce4 Terminal",
+          "alacritty": "Alacritty",
+          "kitty": "Kitty",
+          "ghostty": "Ghostty"
+        }
+      }
+    },
     "configDirectoryOverride": "配置目录覆盖（高级）",
     "configDirectoryDescription": "在 WSL 等环境使用 Claude Code 或 Codex 的时候，可手动指定为 WSL 里的配置目录，供应商数据与主环境保持一致。",
     "appConfigDir": "CC Switch 配置目录",
@@ -291,9 +328,12 @@
     "codexConfigDirDescription": "覆盖 Codex 配置目录。",
     "geminiConfigDir": "Gemini 配置目录",
     "geminiConfigDirDescription": "覆盖 Gemini 配置目录 (.env)。",
+    "opencodeConfigDir": "OpenCode 配置目录",
+    "opencodeConfigDirDescription": "覆盖 OpenCode 配置目录 (opencode.json)。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
+    "browsePlaceholderOpencode": "例如：/home/<你的用户名>/.config/opencode",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -337,7 +377,21 @@
       "saved": "代理设置已保存",
       "saveFailed": "保存失败：{{error}}",
       "testSuccess": "连接成功！延迟 {{latency}}ms",
-      "testFailed": "连接失败：{{error}}"
+      "testFailed": "连接失败：{{error}}",
+      "pricingDefaultsTitle": "计费默认配置",
+      "pricingDefaultsDescription": "设置各应用的默认倍率与计费模式来源。",
+      "pricingAppLabel": "应用",
+      "defaultCostMultiplierLabel": "默认倍率",
+      "defaultCostMultiplierHint": "用于成本计算的倍率，支持小数。",
+      "pricingModelSourceLabel": "计费模式",
+      "pricingModelSourceRequest": "请求模型",
+      "pricingModelSourceResponse": "返回模型",
+      "pricingSave": "保存计费配置",
+      "pricingSaved": "计费配置已保存",
+      "pricingSaveFailed": "保存计费配置失败：{{error}}",
+      "pricingLoadFailed": "加载计费配置失败：{{error}}",
+      "defaultCostMultiplierRequired": "默认倍率不能为空",
+      "defaultCostMultiplierInvalid": "默认倍率格式不正确"
     }
   },
   "apps": {
@@ -419,8 +473,10 @@
     "anthropicModel": "主模型",
     "anthropicSmallFastModel": "快速模型",
     "anthropicReasoningModel": "推理模型 (Thinking)",
-    "openrouterCompatMode": "OpenRouter 兼容模式",
-    "openrouterCompatModeHint": "使用 OpenAI Chat Completions 接口并转换为 Anthropic SSE。",
+    "apiFormat": "API 格式",
+    "apiFormatHint": "选择供应商 API 的输入格式",
+    "apiFormatAnthropic": "Anthropic Messages (原生)",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启代理)",
     "anthropicDefaultHaikuModel": "Haiku 默认模型",
     "anthropicDefaultSonnetModel": "Sonnet 默认模型",
     "anthropicDefaultOpusModel": "Opus 默认模型",
@@ -473,7 +529,18 @@
     "useCustomProxy": "使用单独代理",
     "proxyConfigDesc": "为此供应商配置单独的网络代理，不启用时使用系统代理或全局设置。",
     "proxyUsername": "用户名（可选）",
-    "proxyPassword": "密码（可选）"
+    "proxyPassword": "密码（可选）",
+    "pricingConfig": "计费配置",
+    "useCustomPricing": "使用单独配置",
+    "pricingConfigDesc": "为此供应商配置单独的计费参数，不启用时使用全局默认配置。",
+    "costMultiplier": "成本倍率",
+    "costMultiplierPlaceholder": "留空使用全局默认（1）",
+    "costMultiplierHint": "实际成本 = 基础成本 × 倍率，支持小数如 1.5",
+    "pricingModelSourceLabel": "计费模式",
+    "pricingModelSourceInherit": "继承全局默认",
+    "pricingModelSourceRequest": "请求模型",
+    "pricingModelSourceResponse": "返回模型",
+    "pricingModelSourceHint": "选择按请求模型还是返回模型进行定价匹配"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
@@ -576,6 +643,9 @@
     "cacheCreationTokens": "缓存创建",
     "timingInfo": "用时/首字",
     "status": "状态",
+    "multiplier": "倍率",
+    "requestModel": "请求模型",
+    "responseModel": "返回模型",
     "noData": "暂无数据",
     "unknownProvider": "未知供应商",
     "stream": "流",
@@ -619,8 +689,21 @@
     "output": "输出",
     "cacheWrite": "创建",
     "cacheRead": "命中",
-    "successRate": "成功率",
-    "lastUpdated": "最后更新"
+<<<<<<< HEAD
+     "successRate": "成功率",
+     "lastUpdated": "最后更新",
+     "baseCost": "基础",
+     "costMultiplier": "成本倍率",
+     "withMultiplier": "含倍率",
+     "requestDetail": "请求详情",
+     "requestNotFound": "请求未找到",
+     "basicInfo": "基本信息",
+     "tokenUsage": "Token 使用量",
+     "cacheCreationCost": "缓存写入成本",
+     "costBreakdown": "成本明细",
+     "performance": "性能信息",
+     "latency": "延迟",
+     "errorMessage": "错误信息"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -967,6 +1050,7 @@
       "downloadTimeoutHint": "请检查网络连接或稍后重试",
       "skillPathNotFound": "仓库 {{owner}}/{{name}} 中未找到技能路径 '{{path}}'",
       "skillDirNotFound": "技能目录不存在：{{path}}",
+      "directoryConflict": "技能目录 '{{directory}}' 已被 {{existing_repo}} 占用，无法从 {{new_repo}} 安装",
       "emptyArchive": "下载的压缩包为空",
       "downloadFailed": "下载失败：HTTP {{status}}",
       "allBranchesFailed": "所有分支下载失败，尝试了：{{branches}}",
@@ -976,6 +1060,7 @@
       "http429": "请求过于频繁，请等待后重试",
       "parseMetadataFailed": "解析技能元数据失败",
       "getHomeDirFailed": "无法获取用户主目录",
+      "noSkillsInZip": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）",
       "networkError": "网络错误",
       "fsError": "文件系统错误",
       "unknownError": "未知错误",
@@ -985,7 +1070,9 @@
         "retryLater": "请稍后重试",
         "checkRepoUrl": "请检查仓库地址和分支名称",
         "checkDiskSpace": "请检查磁盘空间",
-        "checkPermission": "请检查目录权限"
+        "checkPermission": "请检查目录权限",
+        "uninstallFirst": "请先卸载已安装的同名技能",
+        "checkZipContent": "请确认 ZIP 文件包含有效的技能目录（含 SKILL.md 文件）"
       }
     },
     "repo": {
@@ -1034,6 +1121,13 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode"
+    },
+    "installFromZip": {
+      "button": "从 ZIP 安装",
+      "installing": "安装中...",
+      "successSingle": "技能 {{name}} 已安装",
+      "successMultiple": "成功安装 {{count}} 个技能",
+      "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）"
     }
   },
   "deeplink": {

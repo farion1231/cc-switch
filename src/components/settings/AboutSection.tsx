@@ -32,8 +32,11 @@ interface ToolVersion {
   error: string | null;
 }
 
-const ONE_CLICK_INSTALL_COMMANDS = `npm i -g @anthropic-ai/claude-code@latest
+const ONE_CLICK_INSTALL_COMMANDS = `# Claude Code (Native install - recommended)
+curl -fsSL https://claude.ai/install.sh | bash
+# Codex
 npm i -g @openai/codex@latest
+# Gemini CLI
 npm i -g @google/gemini-cli@latest`;
 
 export function AboutSection({ isPortable }: AboutSectionProps) {

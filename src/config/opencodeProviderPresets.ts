@@ -169,18 +169,18 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Kimi k2",
+    name: "Kimi k2.5",
     websiteUrl: "https://platform.moonshot.cn/console",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Kimi k2",
+      name: "Kimi k2.5",
       options: {
         baseURL: "https://api.moonshot.cn/v1",
         apiKey: "",
       },
       models: {
-        "kimi-k2-thinking": { name: "Kimi K2 Thinking" },
+        "kimi-k2.5": { name: "Kimi K2.5" },
       },
     },
     category: "cn_official",
@@ -554,6 +554,32 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "sk-or-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Nvidia",
+    websiteUrl: "https://build.nvidia.com",
+    apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Nvidia",
+      options: {
+        baseURL: "https://integrate.api.nvidia.com/v1",
+        apiKey: "",
+      },
+      models: {
+        "moonshotai/kimi-k2.5": { name: "Kimi K2.5" },
+      },
+    },
+    category: "aggregator",
+    icon: "nvidia",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
         editorValue: "",
       },
     },

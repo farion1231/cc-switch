@@ -155,7 +155,8 @@
     "deleteSuccess": "Provider deleted",
     "deleteFailed": "Failed to delete provider: {{error}}",
     "settingsSaved": "Settings saved",
-    "settingsSaveFailed": "Failed to save settings: {{error}}"
+    "settingsSaveFailed": "Failed to save settings: {{error}}",
+    "openAIChatFormatHint": "This provider uses OpenAI Chat format and requires the proxy service to be enabled"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -265,6 +266,8 @@
     "windowBehaviorHint": "Configure window minimize and Claude plugin integration policies.",
     "launchOnStartup": "Launch on Startup",
     "launchOnStartupDescription": "Automatically run CC Switch when system starts",
+    "silentStartup": "Silent Startup",
+    "silentStartupDescription": "Start in background mode without showing main window",
     "autoLaunchFailed": "Failed to set auto-launch",
     "minimizeToTray": "Minimize to tray on close",
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
@@ -280,6 +283,40 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI"
     },
+    "skillSync": {
+      "title": "Skill Sync Method",
+      "description": "Choose how to sync Skills files",
+      "symlink": "Symlink",
+      "copy": "Copy Files",
+      "symlinkHint": "Symlinks save disk space and enable real-time sync. Note: May require admin privileges or Developer Mode on Windows"
+    },
+    "terminal": {
+      "title": "Preferred Terminal",
+      "description": "Choose which terminal app to use when clicking the terminal button",
+      "fallbackHint": "If the selected terminal is unavailable, the system default will be used",
+      "options": {
+        "macos": {
+          "terminal": "Terminal.app",
+          "iterm2": "iTerm2",
+          "alacritty": "Alacritty",
+          "kitty": "Kitty",
+          "ghostty": "Ghostty"
+        },
+        "windows": {
+          "cmd": "Command Prompt",
+          "powershell": "PowerShell",
+          "wt": "Windows Terminal"
+        },
+        "linux": {
+          "gnomeTerminal": "GNOME Terminal",
+          "konsole": "Konsole",
+          "xfce4Terminal": "Xfce4 Terminal",
+          "alacritty": "Alacritty",
+          "kitty": "Kitty",
+          "ghostty": "Ghostty"
+        }
+      }
+    },
     "configDirectoryOverride": "Configuration Directory Override (Advanced)",
     "configDirectoryDescription": "When using Claude Code or Codex in environments like WSL, you can manually specify the configuration directory to the one in WSL to keep provider data consistent with the main environment.",
     "appConfigDir": "CC Switch Configuration Directory",
@@ -291,9 +328,12 @@
     "codexConfigDirDescription": "Override Codex configuration directory.",
     "geminiConfigDir": "Gemini Configuration Directory",
     "geminiConfigDirDescription": "Override Gemini configuration directory (.env).",
+    "opencodeConfigDir": "OpenCode Configuration Directory",
+    "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
+    "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -337,7 +377,21 @@
       "saved": "Proxy settings saved",
       "saveFailed": "Save failed: {{error}}",
       "testSuccess": "Connected! Latency {{latency}}ms",
-      "testFailed": "Connection failed: {{error}}"
+      "testFailed": "Connection failed: {{error}}",
+      "pricingDefaultsTitle": "Pricing Defaults",
+      "pricingDefaultsDescription": "Set the default multiplier and pricing model source per app.",
+      "pricingAppLabel": "App",
+      "defaultCostMultiplierLabel": "Default Multiplier",
+      "defaultCostMultiplierHint": "Multiplier for cost calculation, decimals supported.",
+      "pricingModelSourceLabel": "Pricing Model Source",
+      "pricingModelSourceRequest": "Request model",
+      "pricingModelSourceResponse": "Response model",
+      "pricingSave": "Save Pricing Defaults",
+      "pricingSaved": "Pricing defaults saved",
+      "pricingSaveFailed": "Failed to save pricing defaults: {{error}}",
+      "pricingLoadFailed": "Failed to load pricing defaults: {{error}}",
+      "defaultCostMultiplierRequired": "Default multiplier is required",
+      "defaultCostMultiplierInvalid": "Invalid multiplier format"
     }
   },
   "apps": {
@@ -419,8 +473,10 @@
     "anthropicModel": "Main Model",
     "anthropicSmallFastModel": "Fast Model",
     "anthropicReasoningModel": "Reasoning Model (Thinking)",
-    "openrouterCompatMode": "OpenRouter Compatibility Mode",
-    "openrouterCompatModeHint": "Use OpenAI Chat Completions interface and convert to Anthropic SSE.",
+    "apiFormat": "API Format",
+    "apiFormatHint": "Select the input format for the provider's API",
+    "apiFormatAnthropic": "Anthropic Messages (Native)",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires proxy)",
     "anthropicDefaultHaikuModel": "Default Haiku Model",
     "anthropicDefaultSonnetModel": "Default Sonnet Model",
     "anthropicDefaultOpusModel": "Default Opus Model",
@@ -473,7 +529,18 @@
     "useCustomProxy": "Use separate proxy",
     "proxyConfigDesc": "Configure separate network proxy for this provider. Uses system proxy or global settings when disabled.",
     "proxyUsername": "Username (optional)",
-    "proxyPassword": "Password (optional)"
+    "proxyPassword": "Password (optional)",
+    "pricingConfig": "Pricing Config",
+    "useCustomPricing": "Use separate config",
+    "pricingConfigDesc": "Configure separate pricing parameters for this provider. Uses global defaults when disabled.",
+    "costMultiplier": "Cost Multiplier",
+    "costMultiplierPlaceholder": "Leave empty to use global default (1)",
+    "costMultiplierHint": "Actual cost = Base cost × Multiplier, supports decimals like 1.5",
+    "pricingModelSourceLabel": "Pricing Mode",
+    "pricingModelSourceInherit": "Inherit global default",
+    "pricingModelSourceRequest": "Request model",
+    "pricingModelSourceResponse": "Response model",
+    "pricingModelSourceHint": "Choose whether to match pricing by request model or response model"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
@@ -576,6 +643,9 @@
     "cacheCreationTokens": "Cache Creation",
     "timingInfo": "Duration/TTFT",
     "status": "Status",
+    "multiplier": "Multiplier",
+    "requestModel": "Request Model",
+    "responseModel": "Response Model",
     "noData": "No data",
     "unknownProvider": "Unknown Provider",
     "stream": "Stream",
@@ -619,8 +689,21 @@
     "output": "Output",
     "cacheWrite": "Creation",
     "cacheRead": "Hit",
-    "successRate": "Success Rate",
-    "lastUpdated": "Last updated"
+<<<<<<< HEAD
+     "successRate": "Success Rate",
+     "lastUpdated": "Last updated",
+     "baseCost": "Base",
+     "costMultiplier": "Cost Multiplier",
+     "withMultiplier": "with multiplier",
+     "requestDetail": "Request Detail",
+     "requestNotFound": "Request not found",
+     "basicInfo": "Basic Info",
+     "tokenUsage": "Token Usage",
+     "cacheCreationCost": "Cache Creation Cost",
+     "costBreakdown": "Cost Breakdown",
+     "performance": "Performance",
+     "latency": "Latency",
+     "errorMessage": "Error Message"
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -967,6 +1050,7 @@
       "downloadTimeoutHint": "Please check network connection or retry later",
       "skillPathNotFound": "Skill path '{{path}}' not found in repository {{owner}}/{{name}}",
       "skillDirNotFound": "Skill directory not found: {{path}}",
+      "directoryConflict": "Skill directory '{{directory}}' is already occupied by {{existing_repo}}, cannot install from {{new_repo}}",
       "emptyArchive": "Downloaded archive is empty",
       "downloadFailed": "Download failed: HTTP {{status}}",
       "allBranchesFailed": "All branches failed, tried: {{branches}}",
@@ -976,6 +1060,7 @@
       "http429": "Too many requests, please wait and retry",
       "parseMetadataFailed": "Failed to parse skill metadata",
       "getHomeDirFailed": "Unable to get user home directory",
+      "noSkillsInZip": "No skills found in ZIP file (requires SKILL.md file)",
       "networkError": "Network error",
       "fsError": "File system error",
       "unknownError": "Unknown error",
@@ -985,7 +1070,9 @@
         "retryLater": "Please retry later",
         "checkRepoUrl": "Please check repository URL and branch name",
         "checkDiskSpace": "Please check disk space",
-        "checkPermission": "Please check directory permissions"
+        "checkPermission": "Please check directory permissions",
+        "uninstallFirst": "Please uninstall the existing skill with the same name first",
+        "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)"
       }
     },
     "repo": {
@@ -1034,6 +1121,13 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode"
+    },
+    "installFromZip": {
+      "button": "Install from ZIP",
+      "installing": "Installing...",
+      "successSingle": "Skill {{name}} installed",
+      "successMultiple": "Successfully installed {{count}} skills",
+      "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
     }
   },
   "deeplink": {

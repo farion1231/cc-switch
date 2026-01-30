@@ -155,7 +155,8 @@
     "deleteSuccess": "プロバイダーを削除しました",
     "deleteFailed": "プロバイダーの削除に失敗しました: {{error}}",
     "settingsSaved": "設定を保存しました",
-    "settingsSaveFailed": "設定の保存に失敗しました: {{error}}"
+    "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
+    "openAIChatFormatHint": "このプロバイダーは OpenAI Chat フォーマットを使用しており、プロキシサービスの有効化が必要です"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -265,6 +266,8 @@
     "windowBehaviorHint": "最小化動作や Claude プラグイン連携を設定します。",
     "launchOnStartup": "起動時に自動実行",
     "launchOnStartupDescription": "システム起動時に CC Switch を自動起動します",
+    "silentStartup": "サイレント起動",
+    "silentStartupDescription": "起動時にメインウィンドウを表示せず、トレイのみで起動",
     "autoLaunchFailed": "自動起動の設定に失敗しました",
     "minimizeToTray": "閉じるときトレイへ最小化",
     "minimizeToTrayDescription": "チェックすると閉じるボタンでトレイに隠し、オフならアプリを終了します。",
@@ -280,6 +283,40 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI"
     },
+    "skillSync": {
+      "title": "スキル同期方式",
+      "description": "スキルファイルの同期方法を選択",
+      "symlink": "シンボリックリンク",
+      "copy": "ファイルコピー",
+      "symlinkHint": "シンボリックリンクはディスク容量を節約し、リアルタイム同期を有効にします。注意：Windowsでは管理者権限または開発者モードが必要な場合があります"
+    },
+    "terminal": {
+      "title": "優先ターミナル",
+      "description": "ターミナルボタンをクリックした時に使用するターミナルアプリを選択",
+      "fallbackHint": "選択したターミナルが利用できない場合、システムのデフォルトが使用されます",
+      "options": {
+        "macos": {
+          "terminal": "Terminal.app",
+          "iterm2": "iTerm2",
+          "alacritty": "Alacritty",
+          "kitty": "Kitty",
+          "ghostty": "Ghostty"
+        },
+        "windows": {
+          "cmd": "コマンドプロンプト",
+          "powershell": "PowerShell",
+          "wt": "Windows Terminal"
+        },
+        "linux": {
+          "gnomeTerminal": "GNOME Terminal",
+          "konsole": "Konsole",
+          "xfce4Terminal": "Xfce4 Terminal",
+          "alacritty": "Alacritty",
+          "kitty": "Kitty",
+          "ghostty": "Ghostty"
+        }
+      }
+    },
     "configDirectoryOverride": "設定ディレクトリの上書き（詳細）",
     "configDirectoryDescription": "WSL などで Claude Code や Codex を使う場合、ここで設定ディレクトリを WSL 側に合わせるとデータを揃えられます。",
     "appConfigDir": "CC Switch 設定ディレクトリ",
@@ -291,9 +328,12 @@
     "codexConfigDirDescription": "Codex の設定ディレクトリを上書きします。",
     "geminiConfigDir": "Gemini 設定ディレクトリ",
     "geminiConfigDirDescription": "Gemini の設定ディレクトリ（.env）を上書きします。",
+    "opencodeConfigDir": "OpenCode 設定ディレクトリ",
+    "opencodeConfigDirDescription": "OpenCode の設定ディレクトリ（opencode.json）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
+    "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -337,7 +377,21 @@
       "saved": "プロキシ設定を保存しました",
       "saveFailed": "保存に失敗しました: {{error}}",
       "testSuccess": "接続成功！遅延 {{latency}}ms",
-      "testFailed": "接続に失敗しました: {{error}}"
+      "testFailed": "接続に失敗しました: {{error}}",
+      "pricingDefaultsTitle": "課金のデフォルト設定",
+      "pricingDefaultsDescription": "アプリごとのデフォルト倍率と課金モードを設定します。",
+      "pricingAppLabel": "アプリ",
+      "defaultCostMultiplierLabel": "デフォルト倍率",
+      "defaultCostMultiplierHint": "コスト計算用の倍率（小数対応）。",
+      "pricingModelSourceLabel": "課金モード",
+      "pricingModelSourceRequest": "リクエストモデル",
+      "pricingModelSourceResponse": "レスポンスモデル",
+      "pricingSave": "課金設定を保存",
+      "pricingSaved": "課金設定を保存しました",
+      "pricingSaveFailed": "課金設定の保存に失敗しました: {{error}}",
+      "pricingLoadFailed": "課金設定の読み込みに失敗しました: {{error}}",
+      "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
+      "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
     }
   },
   "apps": {
@@ -419,8 +473,10 @@
     "anthropicModel": "メインモデル",
     "anthropicSmallFastModel": "高速モデル",
     "anthropicReasoningModel": "推論モデル（Thinking）",
-    "openrouterCompatMode": "OpenRouter 互換モード",
-    "openrouterCompatModeHint": "OpenAI Chat Completions インターフェースを使用し、Anthropic SSE に変換します。",
+    "apiFormat": "API フォーマット",
+    "apiFormatHint": "プロバイダー API の入力フォーマットを選択",
+    "apiFormatAnthropic": "Anthropic Messages（ネイティブ）",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions（プロキシが必要）",
     "anthropicDefaultHaikuModel": "既定 Haiku モデル",
     "anthropicDefaultSonnetModel": "既定 Sonnet モデル",
     "anthropicDefaultOpusModel": "既定 Opus モデル",
@@ -473,7 +529,18 @@
     "useCustomProxy": "個別プロキシを使用",
     "proxyConfigDesc": "このプロバイダーに個別のネットワークプロキシを設定します。無効の場合はシステムプロキシまたはグローバル設定を使用します。",
     "proxyUsername": "ユーザー名（任意）",
-    "proxyPassword": "パスワード（任意）"
+    "proxyPassword": "パスワード（任意）",
+    "pricingConfig": "課金設定",
+    "useCustomPricing": "個別設定を使用",
+    "pricingConfigDesc": "このプロバイダーに個別の課金パラメータを設定します。無効の場合はグローバル設定を使用します。",
+    "costMultiplier": "コスト倍率",
+    "costMultiplierPlaceholder": "空白の場合はグローバル設定を使用（1）",
+    "costMultiplierHint": "実際のコスト = 基本コスト × 倍率、1.5 などの小数をサポート",
+    "pricingModelSourceLabel": "課金モード",
+    "pricingModelSourceInherit": "グローバル設定を継承",
+    "pricingModelSourceRequest": "リクエストモデル",
+    "pricingModelSourceResponse": "レスポンスモデル",
+    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
@@ -576,6 +643,9 @@
     "cacheCreationTokens": "キャッシュ作成",
     "timingInfo": "応答時間/TTFT",
     "status": "ステータス",
+    "multiplier": "倍率",
+    "requestModel": "リクエストモデル",
+    "responseModel": "レスポンスモデル",
     "noData": "データなし",
     "unknownProvider": "不明なプロバイダー",
     "stream": "ストリーム",
@@ -619,8 +689,21 @@
     "output": "出力",
     "cacheWrite": "作成",
     "cacheRead": "ヒット",
-    "successRate": "成功率",
-    "lastUpdated": "最終更新"
+<<<<<<< HEAD
+     "successRate": "成功率",
+     "lastUpdated": "最終更新",
+     "baseCost": "基本",
+     "costMultiplier": "コスト倍率",
+     "withMultiplier": "倍率込み",
+     "requestDetail": "リクエスト詳細",
+     "requestNotFound": "リクエストが見つかりません",
+     "basicInfo": "基本情報",
+     "tokenUsage": "Token 使用量",
+     "cacheCreationCost": "キャッシュ作成コスト",
+     "costBreakdown": "コスト明細",
+     "performance": "パフォーマンス",
+     "latency": "レイテンシー",
+     "errorMessage": "エラーメッセージ"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -967,6 +1050,7 @@
       "downloadTimeoutHint": "ネットワークを確認するか、時間をおいて再試行してください",
       "skillPathNotFound": "リポジトリ {{owner}}/{{name}} にスキルパス '{{path}}' がありません",
       "skillDirNotFound": "スキルディレクトリが見つかりません: {{path}}",
+      "directoryConflict": "スキルディレクトリ '{{directory}}' は既に {{existing_repo}} で使用されています。{{new_repo}} からインストールできません",
       "emptyArchive": "ダウンロードしたアーカイブが空です",
       "downloadFailed": "ダウンロードに失敗しました: HTTP {{status}}",
       "allBranchesFailed": "すべてのブランチで失敗しました。試行: {{branches}}",
@@ -985,7 +1069,8 @@
         "retryLater": "時間をおいて再試行してください",
         "checkRepoUrl": "リポジトリ URL とブランチ名を確認してください",
         "checkDiskSpace": "ディスク容量を確認してください",
-        "checkPermission": "ディレクトリの権限を確認してください"
+        "checkPermission": "ディレクトリの権限を確認してください",
+        "uninstallFirst": "同名のスキルを先にアンインストールしてください"
       }
     },
     "repo": {

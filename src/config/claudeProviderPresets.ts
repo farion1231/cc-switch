@@ -43,6 +43,11 @@ export interface ProviderPreset {
   // 图标配置
   icon?: string; // 图标名称
   iconColor?: string; // 图标颜色
+
+  // Claude API 格式（仅 Claude 供应商使用）
+  // - "anthropic" (默认): Anthropic Messages API 格式，直接透传
+  // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
+  apiFormat?: "anthropic" | "openai_chat";
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -143,10 +148,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.moonshot.cn/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "kimi-k2-thinking",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k2-thinking",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k2-thinking",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k2-thinking",
+        ANTHROPIC_MODEL: "kimi-k2.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k2.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k2.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k2.5",
       },
     },
     category: "cn_official",
@@ -160,10 +165,6 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "kimi-for-coding",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-for-coding",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-for-coding",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-for-coding",
       },
     },
     category: "cn_official",
@@ -482,6 +483,25 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "openrouter",
     iconColor: "#6566F1",
+  },
+  {
+    name: "Nvidia",
+    websiteUrl: "https://build.nvidia.com",
+    apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://integrate.api.nvidia.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "moonshotai/kimi-k2.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "moonshotai/kimi-k2.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "moonshotai/kimi-k2.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "moonshotai/kimi-k2.5",
+      },
+    },
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    icon: "nvidia",
+    iconColor: "#000000",
   },
   {
     name: "Xiaomi MiMo",

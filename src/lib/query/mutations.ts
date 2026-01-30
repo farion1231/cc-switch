@@ -171,17 +171,8 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         );
       }
 
-      // OpenCode: show "added to config" message instead of "switched"
-      const messageKey =
-        appId === "opencode"
-          ? "notifications.addToConfigSuccess"
-          : "notifications.switchSuccess";
-      const defaultMessage =
-        appId === "opencode" ? "已添加到配置" : "切换供应商成功";
-
-      toast.success(t(messageKey, { defaultValue: defaultMessage }), {
-        closeButton: true,
-      });
+      // Note: Success toast is handled by useProviderActions.switchProvider
+      // to allow customization based on provider properties (e.g., apiFormat)
     },
     onError: (error: Error) => {
       const detail = extractErrorMessage(error) || t("common.unknown");

@@ -64,9 +64,12 @@ describe("useDirectorySettings", () => {
     );
 
     getAppConfigDirOverrideMock.mockResolvedValue(null);
-    getConfigDirMock.mockImplementation(async (app: string) =>
-      app === "claude" ? "/remote/claude" : "/remote/codex",
-    );
+    getConfigDirMock.mockImplementation(async (app: string) => {
+      if (app === "claude") return "/remote/claude";
+      if (app === "codex") return "/remote/codex";
+      if (app === "gemini") return "/remote/gemini";
+      return "/remote/opencode";
+    });
     selectConfigDirectoryMock.mockReset();
   });
 
@@ -84,7 +87,8 @@ describe("useDirectorySettings", () => {
       appConfig: "/override/app",
       claude: "/remote/claude",
       codex: "/remote/codex",
-      gemini: "/remote/codex", // Gemini 使用 codex 作为默认
+      gemini: "/remote/gemini",
+      opencode: "/remote/opencode",
     });
   });
 
@@ -214,10 +218,17 @@ describe("useDirectorySettings", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     act(() => {
-      result.current.resetAllDirectories("/server/claude", "/server/codex");
+      result.current.resetAllDirectories(
+        "/server/claude",
+        "/server/codex",
+        "/server/gemini",
+        "/server/opencode",
+      );
     });
 
     expect(result.current.resolvedDirs.claude).toBe("/server/claude");
     expect(result.current.resolvedDirs.codex).toBe("/server/codex");
+    expect(result.current.resolvedDirs.gemini).toBe("/server/gemini");
+    expect(result.current.resolvedDirs.opencode).toBe("/server/opencode");
   });
 });

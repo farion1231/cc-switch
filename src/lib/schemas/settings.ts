@@ -25,6 +25,9 @@ export const settingsSchema = z.object({
   currentProviderClaude: z.string().optional(),
   currentProviderCodex: z.string().optional(),
   currentProviderGemini: z.string().optional(),
+
+  // Skill 同步设置
+  skillSyncMethod: z.enum(["auto", "symlink", "copy"]).optional(),
 });
 
 export type SettingsFormData = z.infer<typeof settingsSchema>;

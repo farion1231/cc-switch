@@ -1,10 +1,16 @@
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
-import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField } from "./shared";
-import type { ProviderCategory } from "@/types";
+import type { ProviderCategory, ClaudeApiFormat } from "@/types";
 import type { TemplateValueConfig } from "@/config/claudeProviderPresets";
 
 interface EndpointCandidate {
@@ -59,10 +65,9 @@ interface ClaudeFormFieldsProps {
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 
-  // OpenRouter Compat
-  showOpenRouterCompatToggle: boolean;
-  openRouterCompatEnabled: boolean;
-  onOpenRouterCompatChange: (enabled: boolean) => void;
+  // API Format (for third-party providers that use OpenAI Chat Completions format)
+  apiFormat: ClaudeApiFormat;
+  onApiFormatChange: (format: ClaudeApiFormat) => void;
 }
 
 export function ClaudeFormFields({
@@ -95,9 +100,8 @@ export function ClaudeFormFields({
   defaultOpusModel,
   onModelChange,
   speedTestEndpoints,
-  showOpenRouterCompatToggle,
-  openRouterCompatEnabled,
-  onOpenRouterCompatChange,
+  apiFormat,
+  onApiFormatChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -180,25 +184,34 @@ export function ClaudeFormFields({
         />
       )}
 
-      {showOpenRouterCompatToggle && (
-        <div className="flex items-center justify-between rounded-lg border border-white/10 bg-background/60 p-4">
-          <div className="space-y-1">
-            <FormLabel>
-              {t("providerForm.openrouterCompatMode", {
-                defaultValue: "OpenRouter 兼容模式",
-              })}
-            </FormLabel>
-            <p className="text-xs text-muted-foreground">
-              {t("providerForm.openrouterCompatModeHint", {
-                defaultValue:
-                  "使用 OpenAI Chat Completions 接口并转换为 Anthropic SSE。",
-              })}
-            </p>
-          </div>
-          <Switch
-            checked={openRouterCompatEnabled}
-            onCheckedChange={onOpenRouterCompatChange}
-          />
+      {/* API 格式选择（仅非官方供应商显示） */}
+      {shouldShowModelSelector && (
+        <div className="space-y-2">
+          <FormLabel htmlFor="apiFormat">
+            {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+          </FormLabel>
+          <Select value={apiFormat} onValueChange={onApiFormatChange}>
+            <SelectTrigger id="apiFormat" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="anthropic">
+                {t("providerForm.apiFormatAnthropic", {
+                  defaultValue: "Anthropic Messages (原生)",
+                })}
+              </SelectItem>
+              <SelectItem value="openai_chat">
+                {t("providerForm.apiFormatOpenAIChat", {
+                  defaultValue: "OpenAI Chat Completions (需转换)",
+                })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.apiFormatHint", {
+              defaultValue: "选择供应商 API 的输入格式",
+            })}
+          </p>
         </div>
       )}
 

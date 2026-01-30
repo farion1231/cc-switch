@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.10.2] - 2026-01-24
+
+### Patch Release
+
+This maintenance release adds skill sync options and includes important bug fixes.
+
+### Added
+
+- **Skills**: Add skill sync method setting with symlink/copy options
+- **Partners**: Add RightCode as official partner
+
+### Fixed
+
+- **Prompts**: Clear prompt file when all prompts are disabled
+- **OpenCode**: Preserve extra model fields during serialization
+- **Provider Form**: Backfill model fields when editing Claude provider
+
+---
+
 ## [3.10.1] - 2026-01-23
 
 ### Patch Release

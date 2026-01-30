@@ -109,6 +109,7 @@ export function useSettings(): UseSettingsResult {
       sanitizeDir(data?.claudeConfigDir),
       sanitizeDir(data?.codexConfigDir),
       sanitizeDir(data?.geminiConfigDir),
+      sanitizeDir(data?.opencodeConfigDir),
     );
     setRequiresRestart(false);
   }, [
@@ -131,12 +132,16 @@ export function useSettings(): UseSettingsResult {
         const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
         const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
         const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
+        const sanitizedOpencodeDir = sanitizeDir(
+          mergedSettings.opencodeConfigDir,
+        );
 
         const payload: Settings = {
           ...mergedSettings,
           claudeConfigDir: sanitizedClaudeDir,
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
+          opencodeConfigDir: sanitizedOpencodeDir,
           language: mergedSettings.language,
         };
 
@@ -238,16 +243,21 @@ export function useSettings(): UseSettingsResult {
         const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
         const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
         const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
+        const sanitizedOpencodeDir = sanitizeDir(
+          mergedSettings.opencodeConfigDir,
+        );
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
         const previousGeminiDir = sanitizeDir(data?.geminiConfigDir);
+        const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
 
         const payload: Settings = {
           ...mergedSettings,
           claudeConfigDir: sanitizedClaudeDir,
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
+          opencodeConfigDir: sanitizedOpencodeDir,
           language: mergedSettings.language,
         };
 
@@ -344,11 +354,17 @@ export function useSettings(): UseSettingsResult {
           console.warn("[useSettings] Failed to refresh tray menu", error);
         }
 
-        // 如果 Claude/Codex/Gemini 的目录覆盖发生变化，则立即将“当前使用的供应商”写回对应应用的 live 配置
+        // 如果 Claude/Codex/Gemini/OpenCode 的目录覆盖发生变化，则立即将"当前使用的供应商"写回对应应用的 live 配置
         const claudeDirChanged = sanitizedClaudeDir !== previousClaudeDir;
         const codexDirChanged = sanitizedCodexDir !== previousCodexDir;
         const geminiDirChanged = sanitizedGeminiDir !== previousGeminiDir;
-        if (claudeDirChanged || codexDirChanged || geminiDirChanged) {
+        const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
+        if (
+          claudeDirChanged ||
+          codexDirChanged ||
+          geminiDirChanged ||
+          opencodeDirChanged
+        ) {
           const syncResult = await syncCurrentProvidersLiveSafe();
           if (!syncResult.ok) {
             console.warn(

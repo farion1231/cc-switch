@@ -141,10 +141,33 @@ impl ProviderAdapter for CodexAdapter {
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
 
-        let mut url = format!("{base_trimmed}/{endpoint_trimmed}");
+        // OpenAI/Codex 的 base_url 可能是：
+        // - 纯 origin: https://api.openai.com  (需要自动补 /v1)
+        // - 已含 /v1: https://api.openai.com/v1 (直接拼接)
+        // - 自定义前缀: https://xxx/openai (不添加 /v1，直接拼接)
 
-        // 去除重复的 /v1/v1
-        if url.contains("/v1/v1") {
+        // 检查 base_url 是否已经包含 /v1
+        let already_has_v1 = base_trimmed.ends_with("/v1");
+
+        // 检查是否是纯 origin（没有路径部分）
+        let origin_only = match base_trimmed.split_once("://") {
+            Some((_scheme, rest)) => !rest.contains('/'),
+            None => !base_trimmed.contains('/'),
+        };
+
+        let mut url = if already_has_v1 {
+            // 已经有 /v1，直接拼接
+            format!("{base_trimmed}/{endpoint_trimmed}")
+        } else if origin_only {
+            // 纯 origin，添加 /v1
+            format!("{base_trimmed}/v1/{endpoint_trimmed}")
+        } else {
+            // 自定义前缀，不添加 /v1，直接拼接
+            format!("{base_trimmed}/{endpoint_trimmed}")
+        };
+
+        // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
+        while url.contains("/v1/v1") {
             url = url.replace("/v1/v1", "/v1");
         }
 
@@ -221,6 +244,20 @@ mod tests {
         let adapter = CodexAdapter::new();
         let url = adapter.build_url("https://api.openai.com/v1", "/responses");
         assert_eq!(url, "https://api.openai.com/v1/responses");
+    }
+
+    #[test]
+    fn test_build_url_origin_adds_v1() {
+        let adapter = CodexAdapter::new();
+        let url = adapter.build_url("https://api.openai.com", "/responses");
+        assert_eq!(url, "https://api.openai.com/v1/responses");
+    }
+
+    #[test]
+    fn test_build_url_custom_prefix_no_v1() {
+        let adapter = CodexAdapter::new();
+        let url = adapter.build_url("https://example.com/openai", "/responses");
+        assert_eq!(url, "https://example.com/openai/responses");
     }
 
     #[test]

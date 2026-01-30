@@ -15,6 +15,7 @@ import {
   Search,
   Download,
   BarChart2,
+  FolderArchive,
 } from "lucide-react";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -637,6 +638,7 @@ function App() {
       <AnimatePresence mode="wait">
         <motion.div
           key={currentView}
+          className="flex-1 min-h-0"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -752,13 +754,6 @@ function App() {
                   >
                     CC Switch
                   </a>
-                  <UpdateBadge
-                    onClick={() => {
-                      setSettingsDefaultTab("about");
-                      setCurrentView("settings");
-                    }}
-                    className="absolute -top-4 -right-4"
-                  />
                 </div>
                 <Button
                   variant="ghost"
@@ -772,6 +767,12 @@ function App() {
                 >
                   <Settings className="w-4 h-4" />
                 </Button>
+                <UpdateBadge
+                  onClick={() => {
+                    setSettingsDefaultTab("about");
+                    setCurrentView("settings");
+                  }}
+                />
                 {isCurrentAppTakeoverActive && (
                   <Button
                     variant="ghost"
@@ -830,6 +831,17 @@ function App() {
             )}
             {currentView === "skills" && (
               <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    unifiedSkillsPanelRef.current?.openInstallFromZip()
+                  }
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <FolderArchive className="w-4 h-4 mr-2" />
+                  {t("skills.installFromZip.button")}
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -961,8 +973,8 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 pb-12 animate-fade-in ">
-        <div className="pb-12">{renderContent()}</div>
+      <main className="flex-1 min-h-0 flex flex-col animate-fade-in">
+        {renderContent()}
       </main>
 
       <AddProviderDialog
