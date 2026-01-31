@@ -2,11 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Provider } from "@/types";
 import { providersApi } from "./providers";
-import {
-  hasCommonConfigSnippet,
-  hasTomlCommonConfigSnippet,
-  hasGeminiCommonConfigSnippet,
-} from "@/utils/providerConfigUtils";
+import { hasContentByAppType } from "@/hooks/commonConfigAdapters";
 
 export type AppType = "claude" | "codex" | "gemini";
 
@@ -358,22 +354,10 @@ function detectCommonConfigEnabledByContent(
   );
   if (candidates.length === 0) return false;
 
-  switch (appType) {
-    case "codex":
-      return candidates.some((snippet) =>
-        hasTomlCommonConfigSnippet(settingsConfigStr, snippet),
-      );
-    case "gemini":
-      return candidates.some((snippet) =>
-        hasGeminiCommonConfigSnippet(settingsConfigStr, snippet),
-      );
-    case "claude":
-      return candidates.some((snippet) =>
-        hasCommonConfigSnippet(settingsConfigStr, snippet),
-      );
-    default:
-      return false;
-  }
+  // 使用统一的 adapter-based hasContent 检查
+  return candidates.some((snippet) =>
+    hasContentByAppType(appType, settingsConfigStr, snippet),
+  );
 }
 
 /** 更新供应商配置的结果 */

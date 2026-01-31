@@ -12,22 +12,6 @@ export const GEMINI_COMMON_ENV_FORBIDDEN_KEYS = [
 export type GeminiForbiddenEnvKey =
   (typeof GEMINI_COMMON_ENV_FORBIDDEN_KEYS)[number];
 
-const isSubset = (target: any, source: any): boolean => {
-  if (isPlainObject(source)) {
-    if (!isPlainObject(target)) return false;
-    return Object.entries(source).every(([key, value]) =>
-      isSubset(target[key], value),
-    );
-  }
-
-  if (Array.isArray(source)) {
-    if (!Array.isArray(target) || target.length !== source.length) return false;
-    return source.every((item, index) => isSubset(target[index], item));
-  }
-
-  return target === source;
-};
-
 // 验证JSON配置格式
 export const validateJsonConfig = (
   value: string,
@@ -44,71 +28,6 @@ export const validateJsonConfig = (
     return "";
   } catch {
     return `${fieldName}JSON格式错误，请检查语法`;
-  }
-};
-
-// 检查当前配置是否已包含通用配置片段
-export const hasCommonConfigSnippet = (
-  jsonString: string,
-  snippetString: string,
-): boolean => {
-  try {
-    if (!snippetString.trim()) return false;
-    const config = jsonString ? JSON.parse(jsonString) : {};
-    const snippet = JSON.parse(snippetString);
-    if (!isPlainObject(snippet)) return false;
-    return isSubset(config, snippet);
-  } catch (err) {
-    return false;
-  }
-};
-
-/**
- * 检查 Gemini 配置是否已包含通用配置片段
- *
- * 支持三种 snippet 格式:
- * - ENV 格式: KEY=VALUE (一行一个)
- * - Flat JSON: {"KEY": "VALUE", ...}
- * - Wrapped JSON: {"env": {"KEY": "VALUE", ...}}
- *
- * @param jsonString - Provider 的 settingsConfig (JSON 字符串)
- * @param snippetString - 通用配置片段 (ENV/JSON 格式)
- * @returns 是否已包含通用配置
- */
-export const hasGeminiCommonConfigSnippet = (
-  jsonString: string,
-  snippetString: string,
-): boolean => {
-  try {
-    if (!snippetString.trim()) return false;
-
-    // 解析 provider 的 settingsConfig
-    const config = jsonString ? JSON.parse(jsonString) : {};
-    if (!isPlainObject(config)) return false;
-    const envValue = (config as Record<string, unknown>).env;
-    if (envValue !== undefined && !isPlainObject(envValue)) return false;
-    const env = (isPlainObject(envValue) ? envValue : {}) as Record<
-      string,
-      unknown
-    >;
-
-    // 使用 parseGeminiCommonConfigSnippet 解析 snippet (支持 ENV/JSON)
-    const parseResult = parseGeminiCommonConfigSnippet(snippetString, {
-      strictForbiddenKeys: false, // 过滤禁用键而非报错
-    });
-
-    // 解析失败或为空
-    if (parseResult.error || Object.keys(parseResult.env).length === 0) {
-      return false;
-    }
-
-    // 检查所有有效键值对是否都存在于 provider.env 中
-    return Object.entries(parseResult.env).every(([key, value]) => {
-      const current = env[key];
-      return typeof current === "string" && current === value.trim();
-    });
-  } catch {
-    return false;
   }
 };
 
@@ -274,22 +193,6 @@ export const setApiKeyInConfig = (
   } catch (err) {
     return jsonString;
   }
-};
-
-// 检查 TOML 配置是否已包含通用配置片段
-export const hasTomlCommonConfigSnippet = (
-  tomlString: string,
-  snippetString: string,
-): boolean => {
-  if (!snippetString.trim()) return false;
-
-  // 简单检查配置是否包含片段内容
-  // 去除空白字符后比较，避免格式差异影响
-  const normalizeWhitespace = (str: string) => str.replace(/\s+/g, " ").trim();
-
-  return normalizeWhitespace(tomlString).includes(
-    normalizeWhitespace(snippetString),
-  );
 };
 
 // ========== Codex base_url utils ==========

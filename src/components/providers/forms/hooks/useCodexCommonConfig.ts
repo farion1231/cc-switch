@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { configApi } from "@/lib/api";
@@ -6,7 +6,10 @@ import {
   useCommonConfigBase,
   type UseCommonConfigBaseReturn,
 } from "@/hooks/useCommonConfigBase";
-import { codexAdapter } from "@/hooks/commonConfigAdapters";
+import {
+  codexAdapter,
+  preserveCodexConfigFormat,
+} from "@/hooks/commonConfigAdapters";
 import { extractTomlDifference } from "@/utils/tomlConfigMerge";
 import type { ProviderMeta } from "@/types";
 
@@ -64,27 +67,6 @@ export interface UseCodexCommonConfigReturn {
 }
 
 /**
- * 检测 codexConfig 是否是 JSON wrapper 格式
- * @returns 如果是 JSON wrapper 返回解析后的对象，否则返回 null
- */
-function detectJsonWrapperFormat(
-  codexConfig: string,
-): { auth?: unknown; config?: string } | null {
-  try {
-    const parsed = JSON.parse(codexConfig);
-    if (typeof parsed?.config === "string") {
-      return parsed;
-    }
-    if (typeof parsed === "object" && parsed !== null) {
-      return parsed; // JSON 对象但没有 config 字段
-    }
-  } catch {
-    // 不是 JSON
-  }
-  return null;
-}
-
-/**
  * 管理 Codex 通用配置片段
  *
  * 基于 useCommonConfigBase 泛型 Hook + Codex TOML 适配器实现。
@@ -97,14 +79,13 @@ export function useCodexCommonConfig({
   selectedPresetId,
 }: UseCodexCommonConfigProps): UseCodexCommonConfigReturn {
   const { t } = useTranslation();
-  const adapter = useMemo(() => codexAdapter, []);
 
   // 额外的 isExtracting 状态（base hook 的 handleExtract 不适用于 Codex）
   const [localIsExtracting, setLocalIsExtracting] = useState(false);
   const [localExtractError, setLocalExtractError] = useState("");
 
   const base: UseCommonConfigBaseReturn<string> = useCommonConfigBase({
-    adapter,
+    adapter: codexAdapter,
     inputValue: codexConfig,
     onInputChange: onConfigChange,
     initialData,
@@ -117,7 +98,7 @@ export function useCodexCommonConfig({
     setLocalExtractError("");
 
     try {
-      const request = adapter.buildExtractRequest(base.finalValue);
+      const request = codexAdapter.buildExtractRequest(base.finalValue);
       const extracted = await configApi.extractCommonConfigSnippet(
         "codex",
         request,
@@ -129,7 +110,7 @@ export function useCodexCommonConfig({
       }
 
       // 验证 TOML 格式
-      const parseResult = adapter.parseSnippet(extracted);
+      const parseResult = codexAdapter.parseSnippet(extracted);
       if (parseResult.error || parseResult.config === null) {
         setLocalExtractError(
           t("codexConfig.extractedTomlInvalid", {
@@ -143,21 +124,14 @@ export function useCodexCommonConfig({
       base.handleCommonConfigSnippetChange(extracted);
 
       // 从 config 中移除与 extracted 相同的部分
-      const customToml = adapter.parseInput(codexConfig);
+      const customToml = codexAdapter.parseInput(codexConfig);
       const diffResult = extractTomlDifference(customToml, extracted);
 
       if (!diffResult.error) {
-        // Codex 双格式写回：检测原始格式并保持一致
-        const jsonWrapper = detectJsonWrapperFormat(codexConfig);
-
-        if (jsonWrapper && typeof jsonWrapper.config === "string") {
-          // JSON wrapper 格式，更新 config 字段
-          jsonWrapper.config = diffResult.customToml;
-          onConfigChange(JSON.stringify(jsonWrapper, null, 2));
-        } else {
-          // 纯 TOML 格式
-          onConfigChange(diffResult.customToml);
-        }
+        // 使用共享的格式保留函数写回
+        onConfigChange(
+          preserveCodexConfigFormat(codexConfig, diffResult.customToml),
+        );
 
         toast.success(
           t("codexConfig.extractSuccessNeedSave", {
@@ -176,7 +150,7 @@ export function useCodexCommonConfig({
     } finally {
       setLocalIsExtracting(false);
     }
-  }, [adapter, base, codexConfig, onConfigChange, t]);
+  }, [base, codexConfig, onConfigChange, t]);
 
   // 合并 error：优先显示 extract 错误，其次是 base 的错误
   const combinedError = localExtractError || base.commonConfigError;

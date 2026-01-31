@@ -67,6 +67,15 @@ export interface CommonConfigAdapter<TConfig, TFinal> {
   hasValidContent: (snippet: string) => boolean;
 
   /**
+   * 检查配置是否包含指定的片段内容
+   * 用于检测供应商配置是否已应用通用配置
+   * @param configStr - 供应商的配置字符串 (settingsConfig)
+   * @param snippetStr - 通用配置片段字符串
+   * @returns 是否包含片段内容
+   */
+  hasContent: (configStr: string, snippetStr: string) => boolean;
+
+  /**
    * 获取片段应用错误（用于 toggle 时验证）
    * @param snippet - 片段字符串
    * @param t - i18n 翻译函数

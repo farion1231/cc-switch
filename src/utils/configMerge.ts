@@ -62,6 +62,26 @@ export const deepEqual = (a: unknown, b: unknown): boolean => {
   return false;
 };
 
+/**
+ * 检查 source 是否是 target 的子集
+ * 即 source 中的所有键值对都存在于 target 中
+ */
+export const isSubset = (target: unknown, source: unknown): boolean => {
+  if (isPlainObject(source)) {
+    if (!isPlainObject(target)) return false;
+    return Object.entries(source).every(([key, value]) =>
+      isSubset(target[key], value),
+    );
+  }
+
+  if (Array.isArray(source)) {
+    if (!Array.isArray(target) || target.length !== source.length) return false;
+    return source.every((item, index) => isSubset(target[index], item));
+  }
+
+  return target === source;
+};
+
 // ============================================================================
 // 配置合并函数
 // ============================================================================
