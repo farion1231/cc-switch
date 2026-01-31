@@ -689,6 +689,8 @@
     "output": "Output",
     "cacheWrite": "Creation",
     "cacheRead": "Hit",
+    "successRate": "Success Rate",
+    "lastUpdated": "Last updated",
     "baseCost": "Base",
     "costMultiplier": "Cost Multiplier",
     "withMultiplier": "with multiplier",

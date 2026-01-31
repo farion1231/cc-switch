@@ -1,0 +1,258 @@
+import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  BarChart2,
+  DollarSign,
+  Activity,
+  TrendingUp,
+  ChevronRight,
+  Settings,
+  RefreshCw,
+  Layers,
+} from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { usageApi } from "@/lib/api/usage";
+import type { TimeRange } from "@/types/usage";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+
+interface UsageSidebarWidgetProps {
+  isExpanded?: boolean;
+  onToggleExpand?: (expanded: boolean) => void;
+  onOpenSettings?: () => void;
+}
+
+const getWindow = (days: number) => {
+  const endDate = Math.floor(Date.now() / 1000);
+  const startDate = endDate - days * 24 * 60 * 60;
+  return { startDate, endDate };
+};
+
+export function UsageSidebarWidget({
+  isExpanded: controlledExpanded,
+  onToggleExpand,
+  onOpenSettings,
+}: UsageSidebarWidgetProps) {
+  const { t } = useTranslation();
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const [timeRange, setTimeRange] = useState<TimeRange>("1d");
+  const [shouldFetch, setShouldFetch] = useState(false);
+  const queryClient = useQueryClient();
+  const isExpanded = controlledExpanded ?? internalExpanded;
+  const setExpanded = (val: boolean) => {
+    if (controlledExpanded === undefined) {
+      setInternalExpanded(val);
+    }
+    onToggleExpand?.(val);
+  };
+
+  const days = timeRange === "1d" ? 1 : timeRange === "7d" ? 7 : 30;
+  const {
+    data: summary,
+    isLoading,
+    refetch,
+  } = useQuery({
+    queryKey: ["usage", "summary", days],
+    queryFn: async () => {
+      const { startDate, endDate } = getWindow(days);
+      return usageApi.getUsageSummary(startDate, endDate);
+    },
+    enabled: shouldFetch,
+    refetchInterval: isExpanded ? 30000 : false,
+  });
+
+  useEffect(() => {
+    if (isExpanded && !shouldFetch) {
+      setShouldFetch(true);
+      void refetch();
+    } else if (!isExpanded && shouldFetch) {
+      setShouldFetch(false);
+    }
+  }, [isExpanded, shouldFetch, refetch]);
+
+  const totalCost = parseFloat(summary?.totalCost || "0");
+  const totalRequests = summary?.totalRequests ?? 0;
+  const totalTokens =
+    (summary?.totalInputTokens ?? 0) + (summary?.totalOutputTokens ?? 0);
+  const successRate = summary?.successRate ?? 100;
+
+  const handleRefresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["usage", "summary"] });
+    void refetch();
+  };
+
+  return (
+    <div
+      className={cn(
+        "fixed right-0 top-1/2 -translate-y-1/2 z-40 flex items-center transition-all duration-300 ease-out",
+        isExpanded ? "translate-x-0" : "translate-x-[calc(100%-48px)]",
+      )}
+    >
+      <AnimatePresence mode="wait">
+        {isExpanded && (
+          <motion.div
+            initial={{ opacity: 0, x: 24 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 24 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="mr-3"
+          >
+            <Card className="w-80 border-border/60 bg-card/95 backdrop-blur-2xl shadow-lg rounded-2xl overflow-hidden">
+              <CardContent className="p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-primary/10">
+                      <BarChart2 className="h-4 w-4 text-primary" />
+                    </div>
+                    <h3 className="font-semibold text-sm">
+                      {t("usage.title")}
+                    </h3>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleRefresh}
+                      className="h-8 w-8 hover:bg-accent cursor-pointer transition-colors"
+                      title={t("common.refresh")}
+                    >
+                      <RefreshCw
+                        className={cn(
+                          "h-4 w-4 transition-transform",
+                          isLoading ? "animate-spin" : "hover:rotate-180",
+                        )}
+                      />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onOpenSettings}
+                      className="h-8 w-8 hover:bg-accent cursor-pointer transition-colors"
+                      title={t("common.settings")}
+                    >
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex gap-1 p-1 bg-accent/50 rounded-xl">
+                  {(["1d", "7d", "30d"] as TimeRange[]).map((range) => (
+                    <button
+                      key={range}
+                      onClick={() => setTimeRange(range)}
+                      className={cn(
+                        "flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200 cursor-pointer",
+                        timeRange === range
+                          ? "bg-background shadow-sm text-foreground"
+                          : "text-muted-foreground hover:text-foreground hover:bg-background/50",
+                      )}
+                    >
+                      {range === "1d"
+                        ? t("usage.today")
+                        : range === "7d"
+                          ? t("usage.last7days")
+                          : t("usage.last30days")}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="p-3.5 rounded-xl bg-emerald-500/5 border border-emerald-500/10 hover:border-emerald-500/20 transition-colors">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="p-1 rounded-md bg-emerald-500/10">
+                        <DollarSign className="h-3.5 w-3.5 text-emerald-500" />
+                      </div>
+                      <span className="text-xs text-muted-foreground font-medium">
+                        {t("usage.totalCost")}
+                      </span>
+                    </div>
+                    <p className="text-xl font-bold tracking-tight">
+                      ${totalCost.toFixed(4)}
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-blue-500/5 border border-blue-500/10 hover:border-blue-500/20 transition-colors">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="p-1 rounded-md bg-blue-500/10">
+                        <Activity className="h-3.5 w-3.5 text-blue-500" />
+                      </div>
+                      <span className="text-xs text-muted-foreground font-medium">
+                        {t("usage.totalRequests")}
+                      </span>
+                    </div>
+                    <p className="text-xl font-bold tracking-tight">
+                      {totalRequests.toLocaleString()}
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-violet-500/5 border border-violet-500/10 hover:border-violet-500/20 transition-colors">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="p-1 rounded-md bg-violet-500/10">
+                        <Layers className="h-3.5 w-3.5 text-violet-500" />
+                      </div>
+                      <span className="text-xs text-muted-foreground font-medium">
+                        {t("usage.totalTokens")}
+                      </span>
+                    </div>
+                    <p className="text-xl font-bold tracking-tight">
+                      {(totalTokens / 1000).toFixed(1)}k
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-amber-500/5 border border-amber-500/10 hover:border-amber-500/20 transition-colors">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="p-1 rounded-md bg-amber-500/10">
+                        <TrendingUp className="h-3.5 w-3.5 text-amber-500" />
+                      </div>
+                      <span className="text-xs text-muted-foreground font-medium">
+                        {t("usage.successRate")}
+                      </span>
+                    </div>
+                    <p className="text-xl font-bold tracking-tight">
+                      {successRate.toFixed(1)}%
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-border/50">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      {t("usage.lastUpdated", {
+                        defaultValue: "Last updated",
+                      })}
+                    </span>
+                    <span className="font-mono tabular-nums">
+                      {isLoading ? "..." : new Date().toLocaleTimeString()}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <Button
+        variant="secondary"
+        size="icon"
+        onClick={() => setExpanded(!isExpanded)}
+        className={cn(
+          "h-16 w-12 rounded-l-xl rounded-r-none border-y border-l border-border/60 bg-card/90 backdrop-blur-xl shadow-md hover:bg-accent hover:shadow-lg cursor-pointer transition-all duration-300",
+          isExpanded && "bg-accent/80",
+        )}
+      >
+        {isExpanded ? (
+          <ChevronRight className="h-5 w-5 transition-transform duration-200" />
+        ) : (
+          <div className="flex flex-col items-center gap-1.5">
+            <BarChart2 className="h-4 w-4 text-primary" />
+            <DollarSign className="h-3 w-3 text-amber-500" />
+          </div>
+        )}
+      </Button>
+    </div>
+  );
+}

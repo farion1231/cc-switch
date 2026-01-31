@@ -14,7 +14,6 @@ import {
   RefreshCw,
   Search,
   Download,
-  BarChart2,
   FolderArchive,
 } from "lucide-react";
 import type { Provider, VisibleApps } from "@/types";
@@ -53,6 +52,7 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
+import { UsageSidebarWidget } from "@/components/usage/UsageSidebarWidget";
 import { Button } from "@/components/ui/button";
 
 type View =
@@ -113,6 +113,7 @@ function App() {
   } | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
+  const [isUsageSidebarExpanded, setIsUsageSidebarExpanded] = useState(false);
 
   // 使用 Hook 保存最后有效值，用于动画退出期间保持内容显示
   const effectiveEditingProvider = useLastValidValue(editingProvider);
@@ -771,22 +772,6 @@ function App() {
                     setCurrentView("settings");
                   }}
                 />
-                {isCurrentAppTakeoverActive && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      setSettingsDefaultTab("usage");
-                      setCurrentView("settings");
-                    }}
-                    title={t("settings.usage.title", {
-                      defaultValue: "使用统计",
-                    })}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <BarChart2 className="w-4 h-4" />
-                  </Button>
-                )}
               </div>
             )}
           </div>
@@ -1031,6 +1016,15 @@ function App() {
         }
         onConfirm={() => void handleConfirmAction()}
         onCancel={() => setConfirmAction(null)}
+      />
+
+      <UsageSidebarWidget
+        isExpanded={isUsageSidebarExpanded}
+        onToggleExpand={setIsUsageSidebarExpanded}
+        onOpenSettings={() => {
+          setSettingsDefaultTab("usage");
+          setCurrentView("settings");
+        }}
       />
 
       <DeepLinkImportDialog />
