@@ -28,6 +28,7 @@ import {
   useFailoverQueue,
   useAddToFailoverQueue,
   useRemoveFromFailoverQueue,
+  useSetAutoFailoverEnabled,
 } from "@/lib/query/failover";
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
@@ -101,6 +102,7 @@ export function ProviderList({
   const { data: failoverQueue } = useFailoverQueue(appId);
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
+  const setAutoFailoverEnabled = useSetAutoFailoverEnabled();
 
   // 联动状态：只有当前应用开启代理接管且故障转移开启时才启用故障转移模式
   const isFailoverModeActive =
@@ -142,6 +144,23 @@ export function ProviderList({
   const handleTest = (provider: Provider) => {
     checkProvider(provider.id, provider.name);
   };
+
+  const handleManualSwitch = useCallback(
+    async (provider: Provider) => {
+      try {
+        if (isFailoverModeActive) {
+          await setAutoFailoverEnabled.mutateAsync({
+            appType: appId,
+            enabled: false,
+          });
+        }
+        await onSwitch(provider);
+      } catch {
+        // Errors are handled by mutation/toast handlers.
+      }
+    },
+    [appId, isFailoverModeActive, onSwitch, setAutoFailoverEnabled],
+  );
 
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -222,6 +241,7 @@ export function ProviderList({
               appId={appId}
               isInConfig={isProviderInConfig(provider.id)}
               onSwitch={onSwitch}
+              onForceSwitch={handleManualSwitch}
               onEdit={onEdit}
               onDelete={onDelete}
               onRemoveFromConfig={onRemoveFromConfig}
