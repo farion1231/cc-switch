@@ -458,6 +458,7 @@
     "fastModelPlaceholder": "例如: GLM-4.5-Air",
     "modelHint": "💡 留空将使用供应商的默认模型",
     "apiHint": "💡 填写兼容 Claude API 的服务端点地址，不要以斜杠结尾",
+    "apiHintOAI": "💡 填写兼容 OpenAI Chat Completions 的服务端点地址，不要以斜杠结尾",
     "codexApiHint": "💡 填写兼容 OpenAI Response 格式的服务端点地址",
     "fillSupplierName": "请填写供应商名称",
     "fillConfigContent": "请填写配置内容",

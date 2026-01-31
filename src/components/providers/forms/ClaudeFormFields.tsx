@@ -163,7 +163,11 @@ export function ClaudeFormFields({
           value={baseUrl}
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.apiEndpointPlaceholder")}
-          hint={t("providerForm.apiHint")}
+          hint={
+            apiFormat === "openai_chat"
+              ? t("providerForm.apiHintOAI")
+              : t("providerForm.apiHint")
+          }
           onManageClick={() => onEndpointModalToggle(true)}
         />
       )}
