@@ -14,7 +14,6 @@ GEMINI.md
 /.codex
 /.gemini
 /.cc-switch
-/.opencode
 /.idea
 /.vscode
 vitest-report.json
