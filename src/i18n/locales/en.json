@@ -163,7 +163,8 @@
     "deleteSuccess": "Provider deleted",
     "deleteFailed": "Failed to delete provider: {{error}}",
     "settingsSaved": "Settings saved",
-    "settingsSaveFailed": "Failed to save settings: {{error}}"
+    "settingsSaveFailed": "Failed to save settings: {{error}}",
+    "openAIChatFormatHint": "This provider uses OpenAI Chat format and requires the proxy service to be enabled"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -359,7 +360,7 @@
     "viewReleaseNotes": "View release notes for this version",
     "viewCurrentReleaseNotes": "View current version release notes",
     "oneClickInstall": "One-click Install",
-    "oneClickInstallHint": "Install Claude Code / Codex / Gemini CLI",
+    "oneClickInstallHint": "Install Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "Local environment check",
     "installCommandsCopied": "Install commands copied",
     "installCommandsCopyFailed": "Copy failed, please copy manually.",
@@ -455,7 +456,8 @@
       "dmxapi": "Claude Code exclusive model 66% OFF now!",
       "cubence": "Cubence is an official partner of CC Switch. Register using this link and enter \"CCSWITCH\" promo code during recharge to get 10% off every top-up",
       "aigocode": "AIGoCode is an official partner of CC Switch. Register using this link and get 10% bonus credit on your first top-up!",
-      "rightcode": "RightCode is an official partner of CC Switch. Register using this link and get 5% bonus credit on every top-up!"
+      "rightcode": "RightCode is an official partner of CC Switch. Register using this link and get 5% bonus credit on every top-up!",
+      "aicodemirror": "AICodeMirror is an official partner of CC Switch. Register using this link to get 20% off!"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
@@ -480,8 +482,10 @@
     "anthropicModel": "Main Model",
     "anthropicSmallFastModel": "Fast Model",
     "anthropicReasoningModel": "Reasoning Model (Thinking)",
-    "openrouterCompatMode": "OpenRouter Compatibility Mode",
-    "openrouterCompatModeHint": "Use OpenAI Chat Completions interface and convert to Anthropic SSE.",
+    "apiFormat": "API Format",
+    "apiFormatHint": "Select the input format for the provider's API",
+    "apiFormatAnthropic": "Anthropic Messages (Native)",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires proxy)",
     "anthropicDefaultHaikuModel": "Default Haiku Model",
     "anthropicDefaultSonnetModel": "Default Sonnet Model",
     "anthropicDefaultOpusModel": "Default Opus Model",

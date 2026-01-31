@@ -149,10 +149,19 @@ export interface ProviderMeta {
   commonConfigEnabled?: boolean;
   // 按应用记录通用配置启用状态（优先于 commonConfigEnabled）
   commonConfigEnabledByApp?: CommonConfigEnabledByApp;
+  // Claude API 格式（仅 Claude 供应商使用）
+  // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
+  // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
+  apiFormat?: "anthropic" | "openai_chat";
 }
 
 // Skill 同步方式
 export type SkillSyncMethod = "auto" | "symlink" | "copy";
+
+// Claude API 格式类型
+// - "anthropic": 原生 Anthropic Messages API 格式，直接透传
+// - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
+export type ClaudeApiFormat = "anthropic" | "openai_chat";
 
 // 主页面显示的应用配置
 export interface VisibleApps {

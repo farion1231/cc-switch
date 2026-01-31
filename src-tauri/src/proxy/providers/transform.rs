@@ -3,77 +3,16 @@
 //! 实现 Anthropic ↔ OpenAI 格式转换，用于 OpenRouter 支持
 //! 参考: anthropic-proxy-rs
 
-use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
-/// 从 Provider 配置中获取模型映射
-fn get_model_from_provider(model: &str, provider: &Provider, body: &Value) -> String {
-    let env = provider.settings_config.get("env");
-    let model_lower = model.to_lowercase();
-
-    // 检测 thinking 参数
-    let has_thinking = body
-        .get("thinking")
-        .and_then(|v| v.as_object())
-        .and_then(|o| o.get("type"))
-        .and_then(|t| t.as_str())
-        == Some("enabled");
-
-    if let Some(env) = env {
-        // 如果启用 thinking，优先使用推理模型
-        if has_thinking {
-            if let Some(m) = env
-                .get("ANTHROPIC_REASONING_MODEL")
-                .and_then(|v| v.as_str())
-            {
-                log::debug!("[Transform] 使用推理模型: {m}");
-                return m.to_string();
-            }
-        }
-
-        // 根据模型类型选择配置模型
-        if model_lower.contains("haiku") {
-            if let Some(m) = env
-                .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
-                .and_then(|v| v.as_str())
-            {
-                return m.to_string();
-            }
-        }
-        if model_lower.contains("opus") {
-            if let Some(m) = env
-                .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
-                .and_then(|v| v.as_str())
-            {
-                return m.to_string();
-            }
-        }
-        if model_lower.contains("sonnet") {
-            if let Some(m) = env
-                .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
-                .and_then(|v| v.as_str())
-            {
-                return m.to_string();
-            }
-        }
-        // 默认使用 ANTHROPIC_MODEL
-        if let Some(m) = env.get("ANTHROPIC_MODEL").and_then(|v| v.as_str()) {
-            return m.to_string();
-        }
-    }
-
-    model.to_string()
-}
-
 /// Anthropic 请求 → OpenAI 请求
-pub fn anthropic_to_openai(body: Value, provider: &Provider) -> Result<Value, ProxyError> {
+pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
-    // 模型映射：使用 Provider 配置中的模型（支持 thinking 参数）
+    // NOTE: 模型映射由上游统一处理（proxy::model_mapper），格式转换层只做结构转换。
     if let Some(model) = body.get("model").and_then(|m| m.as_str()) {
-        let mapped_model = get_model_from_provider(model, provider, &body);
-        result["model"] = json!(mapped_model);
+        result["model"] = json!(model);
     }
 
     let mut messages = Vec::new();
@@ -381,45 +320,16 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
 mod tests {
     use super::*;
 
-    fn create_provider(env_config: Value) -> Provider {
-        Provider {
-            id: "test".to_string(),
-            name: "Test Provider".to_string(),
-            settings_config: json!({"env": env_config}),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: None,
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        }
-    }
-
-    fn create_openrouter_provider() -> Provider {
-        create_provider(json!({
-            "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
-            "ANTHROPIC_MODEL": "anthropic/claude-sonnet-4.5",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "anthropic/claude-haiku-4.5",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL": "anthropic/claude-sonnet-4.5",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL": "anthropic/claude-opus-4.5"
-        }))
-    }
-
     #[test]
     fn test_anthropic_to_openai_simple() {
-        let provider = create_openrouter_provider();
         let input = json!({
             "model": "claude-3-opus",
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input, &provider).unwrap();
-        // opus 模型映射到配置的 ANTHROPIC_DEFAULT_OPUS_MODEL
-        assert_eq!(result["model"], "anthropic/claude-opus-4.5");
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["model"], "claude-3-opus");
         assert_eq!(result["max_tokens"], 1024);
         assert_eq!(result["messages"][0]["role"], "user");
         assert_eq!(result["messages"][0]["content"], "Hello");
@@ -427,7 +337,6 @@ mod tests {
 
     #[test]
     fn test_anthropic_to_openai_with_system() {
-        let provider = create_openrouter_provider();
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
@@ -435,7 +344,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input, &provider).unwrap();
+        let result = anthropic_to_openai(input).unwrap();
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(
             result["messages"][0]["content"],
@@ -446,7 +355,6 @@ mod tests {
 
     #[test]
     fn test_anthropic_to_openai_with_tools() {
-        let provider = create_openrouter_provider();
         let input = json!({
             "model": "claude-3-opus",
             "max_tokens": 1024,
@@ -458,14 +366,13 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input, &provider).unwrap();
+        let result = anthropic_to_openai(input).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
         assert_eq!(result["tools"][0]["function"]["name"], "get_weather");
     }
 
     #[test]
     fn test_anthropic_to_openai_tool_use() {
-        let provider = create_openrouter_provider();
         let input = json!({
             "model": "claude-3-opus",
             "max_tokens": 1024,
@@ -478,7 +385,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input, &provider).unwrap();
+        let result = anthropic_to_openai(input).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "assistant");
         assert!(msg.get("tool_calls").is_some());
@@ -487,7 +394,6 @@ mod tests {
 
     #[test]
     fn test_anthropic_to_openai_tool_result() {
-        let provider = create_openrouter_provider();
         let input = json!({
             "model": "claude-3-opus",
             "max_tokens": 1024,
@@ -499,7 +405,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input, &provider).unwrap();
+        let result = anthropic_to_openai(input).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "tool");
         assert_eq!(msg["tool_call_id"], "call_123");
@@ -563,78 +469,15 @@ mod tests {
     }
 
     #[test]
-    fn test_model_mapping_from_provider() {
-        let provider = create_openrouter_provider();
-        let body = json!({"model": "test"});
-
-        // sonnet 模型
-        assert_eq!(
-            get_model_from_provider("claude-sonnet-4-5-20250929", &provider, &body),
-            "anthropic/claude-sonnet-4.5"
-        );
-
-        // haiku 模型
-        assert_eq!(
-            get_model_from_provider("claude-haiku-4-5-20250929", &provider, &body),
-            "anthropic/claude-haiku-4.5"
-        );
-
-        // opus 模型
-        assert_eq!(
-            get_model_from_provider("claude-opus-4-5", &provider, &body),
-            "anthropic/claude-opus-4.5"
-        );
-    }
-
-    #[test]
-    fn test_anthropic_to_openai_model_mapping() {
-        let provider = create_openrouter_provider();
+    fn test_model_passthrough() {
+        // 格式转换层只做结构转换，模型映射由上游 proxy::model_mapper 处理
         let input = json!({
-            "model": "claude-sonnet-4-5-20250929",
+            "model": "gpt-4o",
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input, &provider).unwrap();
-        assert_eq!(result["model"], "anthropic/claude-sonnet-4.5");
-    }
-
-    #[test]
-    fn test_thinking_parameter_detection() {
-        let mut provider = create_openrouter_provider();
-        // 添加推理模型配置
-        if let Some(env) = provider.settings_config.get_mut("env") {
-            env["ANTHROPIC_REASONING_MODEL"] = json!("anthropic/claude-sonnet-4.5:extended");
-        }
-
-        let input = json!({
-            "model": "claude-sonnet-4-5",
-            "max_tokens": 1024,
-            "thinking": {"type": "enabled"},
-            "messages": [{"role": "user", "content": "Solve this problem"}]
-        });
-
-        let result = anthropic_to_openai(input, &provider).unwrap();
-        // 应该使用推理模型
-        assert_eq!(result["model"], "anthropic/claude-sonnet-4.5:extended");
-    }
-
-    #[test]
-    fn test_thinking_parameter_disabled() {
-        let mut provider = create_openrouter_provider();
-        if let Some(env) = provider.settings_config.get_mut("env") {
-            env["ANTHROPIC_REASONING_MODEL"] = json!("anthropic/claude-sonnet-4.5:extended");
-        }
-
-        let input = json!({
-            "model": "claude-sonnet-4-5",
-            "max_tokens": 1024,
-            "thinking": {"type": "disabled"},
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-
-        let result = anthropic_to_openai(input, &provider).unwrap();
-        // 应该使用普通模型
-        assert_eq!(result["model"], "anthropic/claude-sonnet-4.5");
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["model"], "gpt-4o");
     }
 }

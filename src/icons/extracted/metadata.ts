@@ -359,6 +359,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["xiaomimimo", "xiaomi", "mimo"],
     defaultColor: "#000000",
   },
+  nvidia: {
+    name: "nvidia",
+    displayName: "NVIDIA",
+    category: "ai-provider",
+    keywords: ["nvidia", "nim", "gpu"],
+    defaultColor: "#74B71B",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

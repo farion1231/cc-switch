@@ -117,6 +117,29 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#5B7FFF",
   },
   {
+    name: "AICodeMirror",
+    websiteUrl: "https://www.aicodemirror.com",
+    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.aicodemirror.com/api/gemini",
+        GEMINI_MODEL: "gemini-3-pro",
+      },
+    },
+    baseURL: "https://api.aicodemirror.com/api/gemini",
+    model: "gemini-3-pro",
+    description: "AICodeMirror",
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "aicodemirror",
+    endpointCandidates: [
+      "https://api.aicodemirror.com/api/gemini",
+      "https://api.claudecode.net.cn/api/gemini",
+    ],
+    icon: "aicodemirror",
+    iconColor: "#000000",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",

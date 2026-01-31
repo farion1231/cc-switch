@@ -666,7 +666,11 @@ impl RequestForwarder {
 
         // 输出请求信息日志
         let tag = adapter.name();
-        log::info!("[{tag}] >>> 请求 URL: {url}");
+        let request_model = filtered_body
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<none>");
+        log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
         if let Ok(body_str) = serde_json::to_string(&filtered_body) {
             log::debug!(
                 "[{tag}] >>> 请求体内容 ({}字节): {}",

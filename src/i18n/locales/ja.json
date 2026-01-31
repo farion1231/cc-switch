@@ -163,7 +163,8 @@
     "deleteSuccess": "プロバイダーを削除しました",
     "deleteFailed": "プロバイダーの削除に失敗しました: {{error}}",
     "settingsSaved": "設定を保存しました",
-    "settingsSaveFailed": "設定の保存に失敗しました: {{error}}"
+    "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
+    "openAIChatFormatHint": "このプロバイダーは OpenAI Chat フォーマットを使用しており、プロキシサービスの有効化が必要です"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -359,7 +360,7 @@
     "viewReleaseNotes": "このバージョンのリリースノートを見る",
     "viewCurrentReleaseNotes": "現在のバージョンのリリースノートを見る",
     "oneClickInstall": "ワンクリックインストール",
-    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI をインストール",
+    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / OpenCode をインストール",
     "localEnvCheck": "ローカル環境チェック",
     "installCommandsCopied": "インストールコマンドをコピーしました",
     "installCommandsCopyFailed": "コピーに失敗しました。手動でコピーしてください。",
@@ -455,7 +456,8 @@
       "dmxapi": "Claude Code 専用モデル 66% OFF 実施中！",
       "cubence": "Cubence は CC Switch の公式パートナーです。登録後チャージ時に \"CCSWITCH\" を入力すると、毎回 10% オフ",
       "aigocode": "AIGoCode は CC Switch の公式パートナーです。このリンクから登録すると、初回チャージ時に 10% のボーナスクレジットがもらえます！",
-      "rightcode": "RightCode は CC Switch の公式パートナーです。このリンクから登録すると、毎回のチャージに 5% のボーナスクレジットがもらえます！"
+      "rightcode": "RightCode は CC Switch の公式パートナーです。このリンクから登録すると、毎回のチャージに 5% のボーナスクレジットがもらえます！",
+      "aicodemirror": "AICodeMirror は CC Switch の公式パートナーです。このリンクから登録すると20%オフ！"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
@@ -480,8 +482,10 @@
     "anthropicModel": "メインモデル",
     "anthropicSmallFastModel": "高速モデル",
     "anthropicReasoningModel": "推論モデル（Thinking）",
-    "openrouterCompatMode": "OpenRouter 互換モード",
-    "openrouterCompatModeHint": "OpenAI Chat Completions インターフェースを使用し、Anthropic SSE に変換します。",
+    "apiFormat": "API フォーマット",
+    "apiFormatHint": "プロバイダー API の入力フォーマットを選択",
+    "apiFormatAnthropic": "Anthropic Messages（ネイティブ）",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions（プロキシが必要）",
     "anthropicDefaultHaikuModel": "既定 Haiku モデル",
     "anthropicDefaultSonnetModel": "既定 Sonnet モデル",
     "anthropicDefaultOpusModel": "既定 Opus モデル",

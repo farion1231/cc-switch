@@ -37,7 +37,9 @@ curl -fsSL https://claude.ai/install.sh | bash
 # Codex
 npm i -g @openai/codex@latest
 # Gemini CLI
-npm i -g @google/gemini-cli@latest`;
+npm i -g @google/gemini-cli@latest
+# OpenCode
+curl -fsSL https://opencode.ai/install | bash`;
 
 export function AboutSection({ isPortable }: AboutSectionProps) {
   // ... (use hooks as before) ...
@@ -315,10 +317,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             {isLoadingTools ? t("common.refreshing") : t("common.refresh")}
           </Button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3 px-1">
-          {["claude", "codex", "gemini"].map((toolName, index) => {
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 px-1">
+          {["claude", "codex", "gemini", "opencode"].map((toolName, index) => {
             const tool = toolVersions.find((item) => item.name === toolName);
-            const displayName = tool?.name ?? toolName;
+            // Special case for OpenCode (capital C), others use capitalize
+            const displayName =
+              toolName === "opencode"
+                ? "OpenCode"
+                : toolName.charAt(0).toUpperCase() + toolName.slice(1);
             const title = tool?.version || tool?.error || t("common.unknown");
 
             return (
@@ -333,9 +339,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Terminal className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium capitalize">
-                      {displayName}
-                    </span>
+                    <span className="text-sm font-medium">{displayName}</span>
                   </div>
                   {isLoadingTools ? (
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />

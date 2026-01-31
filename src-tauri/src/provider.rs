@@ -253,6 +253,11 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub common_config_enabled_by_app: Option<CommonConfigEnabledByApp>,
+    /// Claude API 格式（仅 Claude 供应商使用）
+    /// - "anthropic": 原生 Anthropic Messages API，直接透传
+    /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
+    #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
+    pub api_format: Option<String>,
 }
 
 impl ProviderManager {
@@ -548,54 +553,6 @@ requires_openai_auth = true"#
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn universal_codex_provider_origin_base_url_adds_v1() {
-        let mut p = UniversalProvider::new(
-            "id".to_string(),
-            "Test".to_string(),
-            "custom".to_string(),
-            "https://api.openai.com".to_string(),
-            "sk-test".to_string(),
-        );
-        p.apps.codex = true;
-
-        let provider = p.to_codex_provider().expect("should build codex provider");
-        let toml = provider
-            .settings_config
-            .get("config")
-            .and_then(|v| v.as_str())
-            .expect("config should be a toml string");
-
-        assert!(toml.contains("base_url = \"https://api.openai.com/v1\""));
-    }
-
-    #[test]
-    fn universal_codex_provider_custom_prefix_does_not_force_v1() {
-        let mut p = UniversalProvider::new(
-            "id".to_string(),
-            "Test".to_string(),
-            "custom".to_string(),
-            "https://example.com/openai".to_string(),
-            "sk-test".to_string(),
-        );
-        p.apps.codex = true;
-
-        let provider = p.to_codex_provider().expect("should build codex provider");
-        let toml = provider
-            .settings_config
-            .get("config")
-            .and_then(|v| v.as_str())
-            .expect("config should be a toml string");
-
-        assert!(toml.contains("base_url = \"https://example.com/openai\""));
-        assert!(!toml.contains("https://example.com/openai/v1"));
     }
 }
 
@@ -957,5 +914,48 @@ mod provider_tests {
         assert!(config.options.api_key.is_none());
         assert!(config.options.headers.is_none());
         assert!(config.options.extra.is_empty());
+    }
+
+    #[test]
+    fn universal_codex_provider_origin_base_url_adds_v1() {
+        let mut p = UniversalProvider::new(
+            "id".to_string(),
+            "Test".to_string(),
+            "custom".to_string(),
+            "https://api.openai.com".to_string(),
+            "sk-test".to_string(),
+        );
+        p.apps.codex = true;
+
+        let provider = p.to_codex_provider().expect("should build codex provider");
+        let toml = provider
+            .settings_config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config should be a toml string");
+
+        assert!(toml.contains("base_url = \"https://api.openai.com/v1\""));
+    }
+
+    #[test]
+    fn universal_codex_provider_custom_prefix_does_not_force_v1() {
+        let mut p = UniversalProvider::new(
+            "id".to_string(),
+            "Test".to_string(),
+            "custom".to_string(),
+            "https://example.com/openai".to_string(),
+            "sk-test".to_string(),
+        );
+        p.apps.codex = true;
+
+        let provider = p.to_codex_provider().expect("should build codex provider");
+        let toml = provider
+            .settings_config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config should be a toml string");
+
+        assert!(toml.contains("base_url = \"https://example.com/openai\""));
+        assert!(!toml.contains("https://example.com/openai/v1"));
     }
 }

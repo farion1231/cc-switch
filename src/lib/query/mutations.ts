@@ -61,10 +61,11 @@ export const useAddProviderMutation = (appId: AppId) => {
       );
     },
     onError: (error: Error) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
       toast.error(
         t("notifications.addFailed", {
           defaultValue: "添加供应商失败: {{error}}",
-          error: error.message,
+          error: detail,
         }),
       );
     },
@@ -92,10 +93,11 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       );
     },
     onError: (error: Error) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
       toast.error(
         t("notifications.updateFailed", {
           defaultValue: "更新供应商失败: {{error}}",
-          error: error.message,
+          error: detail,
         }),
       );
     },
@@ -133,10 +135,11 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       );
     },
     onError: (error: Error) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
       toast.error(
         t("notifications.deleteFailed", {
           defaultValue: "删除供应商失败: {{error}}",
-          error: error.message,
+          error: detail,
         }),
       );
     },
@@ -171,17 +174,8 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         );
       }
 
-      // OpenCode: show "added to config" message instead of "switched"
-      const messageKey =
-        appId === "opencode"
-          ? "notifications.addToConfigSuccess"
-          : "notifications.switchSuccess";
-      const defaultMessage =
-        appId === "opencode" ? "已添加到配置" : "切换供应商成功";
-
-      toast.success(t(messageKey, { defaultValue: defaultMessage }), {
-        closeButton: true,
-      });
+      // Note: Success toast is handled by useProviderActions.switchProvider
+      // to allow customization based on provider properties (e.g., apiFormat)
     },
     onError: (error: Error) => {
       const detail = extractErrorMessage(error) || t("common.unknown");

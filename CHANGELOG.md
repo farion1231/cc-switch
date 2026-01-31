@@ -9,6 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.10.3] - 2026-01-30
+
+### Feature Release
+
+This release introduces a generic API format selector, pricing configuration enhancements, and multiple UX improvements.
+
+### Added
+
+- **API Key Link for OpenCode**: API key link support for OpenCode provider form, enabling quick access to provider key management pages
+- **AICodeMirror Partner Preset**: Added AICodeMirror partner preset for all apps (Claude, Codex, Gemini, OpenCode)
+- **API Format Selector**: Generic API format chooser for Claude providers, replacing the OpenRouter-specific toggle. Supports Anthropic Messages (native) and OpenAI Chat Completions format
+- **API Format Presets**: Allow preset providers to specify API format (anthropic or openai_chat) for third-party proxy services
+- **Proxy Hint**: Display info toast when switching to OpenAI Chat format provider, reminding users to enable proxy
+- **Pricing Config Enhancement**: Per-provider cost multiplier, pricing model source (request/response), request model logging, and enriched usage UI (#781)
+- **Skills ZIP Install**: Install skills directly from local ZIP files with recursive scanning support
+- **Preferred Terminal**: Choose preferred terminal app per platform (macOS: Terminal.app/iTerm2/Alacritty/Kitty/Ghostty; Windows: cmd/PowerShell/Windows Terminal; Linux: GNOME Terminal/Konsole/Xfce4/Alacritty/Kitty/Ghostty)
+- **Silent Startup**: Option to prevent window popup on launch (#713)
+- **OpenCode Environment Check**: Version detection with Go path scanning and one-click install from GitHub Releases
+- **OpenCode Directory Sync**: Auto-sync all providers to live config on directory change with additive mode support
+- **NVIDIA NIM Preset**: New provider preset for Claude and OpenCode with nvidia.svg icon
+- **n1n.ai Preset**: New provider preset (#667)
+- **Update Badge Icon**: Replace update badge dot with ArrowUpCircle icon
+- **Linux ARM64**: CI build support for Linux ARM64 architecture
+
+### Changed
+
+- **API Format Migration**: Migrate api_format from settings_config to ProviderMeta to prevent polluting ~/.claude/settings.json
+- **DeepSeek max_tokens**: Remove max_tokens clamp from proxy transform layer
+- **Terminal Functions**: Consolidate redundant terminal launch functions
+- **Home Dir Utility**: Consolidate get_home_dir into single public function
+- **Kimi/Moonshot**: Upgrade provider presets to k2.5 model
+
+### Fixed
+
+- **Codex 404 & Timeout**: Fix 404 errors and connection timeout with custom base_url; improve /v1 prefix handling and system proxy detection (#760)
+- **Proxy URL Building**: Fix duplicate /v1/v1 in URL; extend ?beta=true to /v1/chat/completions endpoint
+- **OpenRouter Compat Mode**: Improve backward compatibility supporting number and string types
+- **Gemini Visibility**: Correct Gemini default visibility to true (#818)
+- **Footer Layout**: Correct footer layout in advanced settings tab
+- **Claude Code Detection**: Prioritize native install path for detection
+- **Tray Menu**: Simplify title labels and optimize menu separators (#796)
+- **Duplicate Skills**: Prevent duplicate skill installation from different repos (#778)
+- **Windows Tests**: Stabilize test environment (#644)
+- **i18n**: Update apiFormatOpenAIChat label to mention proxy requirement
+- **Error Display**: Use extractErrorMessage for complete error display in mutations
+- **Sponsors**: Add AICodeMirror and reorder sponsor list
+
+---
+
 ## [3.10.2] - 2026-01-24
 
 ### Patch Release

@@ -20,6 +20,8 @@ jobs:
         include:
           - os: windows-2022
           - os: ubuntu-22.04
+          - os: ubuntu-22.04-arm
+            arch: arm64
           - os: macos-14
 
     steps:
@@ -85,8 +87,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-pnpm-store-
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
@@ -256,10 +258,11 @@ jobs:
           set -euxo pipefail
           mkdir -p release-assets
           VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
+          ARCH="${{ matrix.arch || 'x86_64' }}"
           # Updater artifact: AppImage（含对应 .sig）
           APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
           if [ -n "$APPIMAGE" ]; then
-            NEW_APPIMAGE="CC-Switch-${VERSION}-Linux.AppImage"
+            NEW_APPIMAGE="CC-Switch-${VERSION}-Linux-${ARCH}.AppImage"
             cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
             [ -f "$APPIMAGE.sig" ] && cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig" || echo ".sig for AppImage not found"
             echo "AppImage copied: $NEW_APPIMAGE"
@@ -269,18 +272,16 @@ jobs:
           # 额外上传 .deb（用于手动安装，不参与 Updater）
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
           if [ -n "$DEB" ]; then
-            NEW_DEB="CC-Switch-${VERSION}-Linux.deb"
-            cp "$DEB" "release-assets/$NEW_DEB"
-            echo "Deb package copied: $NEW_DEB"
+            cp "$DEB" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+            echo "Deb package copied: CC-Switch-${VERSION}-Linux-${ARCH}.deb"
           else
             echo "No .deb found (optional)"
           fi
           # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等，不参与 Updater）
           RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
           if [ -n "$RPM" ]; then
-            NEW_RPM="CC-Switch-${VERSION}-Linux.rpm"
-            cp "$RPM" "release-assets/$NEW_RPM"
-            echo "RPM package copied: $NEW_RPM"
+            cp "$RPM" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+            echo "RPM package copied: CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
           else
             echo "No .rpm found (optional)"
           fi
@@ -312,7 +313,8 @@ jobs:
 
             - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）或 `CC-Switch-${{ github.ref_name }}-macOS.tar.gz`（Homebrew）
             - **Windows**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
-            - **Linux**: `CC-Switch-${{ github.ref_name }}-Linux.AppImage`（AppImage）或 `CC-Switch-${{ github.ref_name }}-Linux.deb`（Debian/Ubuntu）或 `CC-Switch-${{ github.ref_name }}-Linux.rpm`（Fedora/RHEL/openSUSE）
+            - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
+            - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
 
             ---
             提示：macOS 如遇"已损坏"提示，可在终端执行：`xattr -cr "/Applications/CC Switch.app"`
@@ -360,7 +362,8 @@ jobs:
           # 初始化空平台映射
           mac_url=""; mac_sig=""
           win_url=""; win_sig=""
-          linux_url=""; linux_sig=""
+          linux_x64_url=""; linux_x64_sig=""
+          linux_arm64_url=""; linux_arm64_sig=""
           shopt -s nullglob
           for sig in dl/*.sig; do
             base=${sig%.sig}
@@ -371,8 +374,10 @@ jobs:
               *.tar.gz)
                 # 视为 macOS updater artifact
                 mac_url="$url"; mac_sig="$sig_content";;
-              *.AppImage|*.appimage)
-                linux_url="$url"; linux_sig="$sig_content";;
+              *-Linux-arm64.AppImage|*-Linux-arm64.appimage)
+                linux_arm64_url="$url"; linux_arm64_sig="$sig_content";;
+              *-Linux-x86_64.AppImage|*-Linux-x86_64.appimage)
+                linux_x64_url="$url"; linux_x64_sig="$sig_content";;
               *.msi|*.exe)
                 win_url="$url"; win_sig="$sig_content";;
             esac
@@ -399,9 +404,14 @@ jobs:
               echo "    \"windows-x86_64\": {\"signature\": \"$win_sig\", \"url\": \"$win_url\"}"
               first=0
             fi
-            if [ -n "$linux_url" ] && [ -n "$linux_sig" ]; then
+            if [ -n "$linux_x64_url" ] && [ -n "$linux_x64_sig" ]; then
               [ $first -eq 0 ] && echo ','
-              echo "    \"linux-x86_64\": {\"signature\": \"$linux_sig\", \"url\": \"$linux_url\"}"
+              echo "    \"linux-x86_64\": {\"signature\": \"$linux_x64_sig\", \"url\": \"$linux_x64_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_arm64_url" ] && [ -n "$linux_arm64_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-aarch64\": {\"signature\": \"$linux_arm64_sig\", \"url\": \"$linux_arm64_url\"}"
               first=0
             fi
             echo '  }'

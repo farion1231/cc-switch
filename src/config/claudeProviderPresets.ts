@@ -43,6 +43,11 @@ export interface ProviderPreset {
   // 图标配置
   icon?: string; // 图标名称
   iconColor?: string; // 图标颜色
+
+  // Claude API 格式（仅 Claude 供应商使用）
+  // - "anthropic" (默认): Anthropic Messages API 格式，直接透传
+  // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
+  apiFormat?: "anthropic" | "openai_chat";
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -462,6 +467,26 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#E96B2C",
   },
   {
+    name: "AICodeMirror",
+    websiteUrl: "https://www.aicodemirror.com",
+    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.aicodemirror.com/api/claudecode",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: [
+      "https://api.aicodemirror.com/api/claudecode",
+      "https://api.claudecode.net.cn/api/claudecode",
+    ],
+    category: "third_party",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "aicodemirror", // 促销信息 i18n key
+    icon: "aicodemirror",
+    iconColor: "#000000",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
@@ -478,6 +503,25 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "openrouter",
     iconColor: "#6566F1",
+  },
+  {
+    name: "Nvidia",
+    websiteUrl: "https://build.nvidia.com",
+    apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://integrate.api.nvidia.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "moonshotai/kimi-k2.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "moonshotai/kimi-k2.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "moonshotai/kimi-k2.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "moonshotai/kimi-k2.5",
+      },
+    },
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    icon: "nvidia",
+    iconColor: "#000000",
   },
   {
     name: "Xiaomi MiMo",

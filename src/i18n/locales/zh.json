@@ -163,7 +163,8 @@
     "deleteSuccess": "供应商已删除",
     "deleteFailed": "删除供应商失败：{{error}}",
     "settingsSaved": "设置已保存",
-    "settingsSaveFailed": "保存设置失败：{{error}}"
+    "settingsSaveFailed": "保存设置失败：{{error}}",
+    "openAIChatFormatHint": "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -359,7 +360,7 @@
     "viewReleaseNotes": "查看该版本更新日志",
     "viewCurrentReleaseNotes": "查看当前版本更新日志",
     "oneClickInstall": "一键安装",
-    "oneClickInstallHint": "安装 Claude Code / Codex / Gemini CLI",
+    "oneClickInstallHint": "安装 Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "本地环境检查",
     "installCommandsCopied": "安装命令已复制",
     "installCommandsCopyFailed": "复制失败，请手动复制。",
@@ -455,7 +456,8 @@
       "dmxapi": "Claude Code 专属模型 3.4 折优惠进行中！",
       "cubence": "Cubence 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"CCSWITCH\" 优惠码，每次充值均可享受9折优惠",
       "aigocode": "AIGoCode 是 CC Switch 的官方合作伙伴，使用此链接注册首次充值时可以获得10%额度奖励！",
-      "rightcode": "RightCode 是 CC Switch 的官方合作伙伴，使用此链接注册每次充值均可赠送5%额外额度！"
+      "rightcode": "RightCode 是 CC Switch 的官方合作伙伴，使用此链接注册每次充值均可赠送5%额外额度！",
+      "aicodemirror": "AICodeMirror 是 CC Switch 的官方合作伙伴，使用此链接注册可享受8折优惠！"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -480,8 +482,10 @@
     "anthropicModel": "主模型",
     "anthropicSmallFastModel": "快速模型",
     "anthropicReasoningModel": "推理模型 (Thinking)",
-    "openrouterCompatMode": "OpenRouter 兼容模式",
-    "openrouterCompatModeHint": "使用 OpenAI Chat Completions 接口并转换为 Anthropic SSE。",
+    "apiFormat": "API 格式",
+    "apiFormatHint": "选择供应商 API 的输入格式",
+    "apiFormatAnthropic": "Anthropic Messages (原生)",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启代理)",
     "anthropicDefaultHaikuModel": "Haiku 默认模型",
     "anthropicDefaultSonnetModel": "Sonnet 默认模型",
     "anthropicDefaultOpusModel": "Opus 默认模型",

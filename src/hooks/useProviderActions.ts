@@ -84,11 +84,43 @@ export function useProviderActions(activeApp: AppId) {
       try {
         await switchProviderMutation.mutateAsync(provider.id);
         await syncClaudePlugin(provider);
+
+        // 根据供应商类型显示不同的成功提示
+        if (
+          activeApp === "claude" &&
+          provider.category !== "official" &&
+          provider.meta?.apiFormat === "openai_chat"
+        ) {
+          // OpenAI Chat 格式供应商：显示代理提示
+          toast.info(
+            t("notifications.openAIChatFormatHint", {
+              defaultValue:
+                "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用",
+            }),
+            {
+              duration: 5000,
+              closeButton: true,
+            },
+          );
+        } else {
+          // 普通供应商：显示切换成功
+          // OpenCode: show "added to config" message instead of "switched"
+          const messageKey =
+            activeApp === "opencode"
+              ? "notifications.addToConfigSuccess"
+              : "notifications.switchSuccess";
+          const defaultMessage =
+            activeApp === "opencode" ? "已添加到配置" : "切换成功！";
+
+          toast.success(t(messageKey, { defaultValue: defaultMessage }), {
+            closeButton: true,
+          });
+        }
       } catch {
-        // 错误提示由 mutation 与同步函数处理
+        // 错误提示由 mutation 处理
       }
     },
-    [switchProviderMutation, syncClaudePlugin],
+    [switchProviderMutation, syncClaudePlugin, activeApp, t],
   );
 
   // 删除供应商

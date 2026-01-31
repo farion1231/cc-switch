@@ -139,6 +139,8 @@ interface OpenCodeFormFieldsProps {
   category?: ProviderCategory;
   shouldShowApiKeyLink: boolean;
   websiteUrl: string;
+  isPartner?: boolean;
+  partnerPromotionKey?: string;
 
   // Base URL
   baseUrl: string;
@@ -161,6 +163,8 @@ export function OpenCodeFormFields({
   category,
   shouldShowApiKeyLink,
   websiteUrl,
+  isPartner,
+  partnerPromotionKey,
   baseUrl,
   onBaseUrlChange,
   models,
@@ -376,6 +380,8 @@ export function OpenCodeFormFields({
         category={category}
         shouldShowLink={shouldShowApiKeyLink}
         websiteUrl={websiteUrl}
+        isPartner={isPartner}
+        partnerPromotionKey={partnerPromotionKey}
       />
 
       {/* Base URL */}

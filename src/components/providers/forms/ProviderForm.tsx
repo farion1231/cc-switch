@@ -15,6 +15,7 @@ import type {
   ProviderTestConfig,
   ProviderProxyConfig,
   CommonConfigEnabledByApp,
+  ClaudeApiFormat,
 } from "@/types";
 import {
   providerPresets,
@@ -285,8 +286,6 @@ export function ProviderForm({
     mode: "onSubmit",
   });
 
-  const settingsConfigValue = form.getValues("settingsConfig");
-
   // 使用 API Key hook
   const {
     apiKey,
@@ -325,52 +324,16 @@ export function ProviderForm({
     onConfigChange: (config) => form.setValue("settingsConfig", config),
   });
 
-  const isOpenRouterProvider = useMemo(() => {
-    if (appId !== "claude") return false;
-    const normalized = baseUrl.trim().toLowerCase();
-    if (normalized.includes("openrouter.ai")) {
-      return true;
-    }
-    try {
-      const config = JSON.parse(settingsConfigValue || "{}");
-      const envUrl = config?.env?.ANTHROPIC_BASE_URL;
-      return typeof envUrl === "string" && envUrl.includes("openrouter.ai");
-    } catch {
-      return false;
-    }
-  }, [appId, baseUrl, settingsConfigValue]);
+  // Claude API Format state - stored in meta, not settingsConfig
+  // Read initial value from meta.apiFormat, default to "anthropic"
+  const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
+    if (appId !== "claude") return "anthropic";
+    return initialData?.meta?.apiFormat ?? "anthropic";
+  });
 
-  const openRouterCompatEnabled = useMemo(() => {
-    if (!isOpenRouterProvider) return false;
-    try {
-      const config = JSON.parse(settingsConfigValue || "{}");
-      const raw = config?.openrouter_compat_mode;
-      if (typeof raw === "boolean") return raw;
-      if (typeof raw === "number") return raw !== 0;
-      if (typeof raw === "string") {
-        const normalized = raw.trim().toLowerCase();
-        return normalized === "true" || normalized === "1";
-      }
-    } catch {
-      // ignore
-    }
-    return false; // OpenRouter now supports Claude Code compatible API, no need for transform
-  }, [isOpenRouterProvider, settingsConfigValue]);
-
-  const handleOpenRouterCompatChange = useCallback(
-    (enabled: boolean) => {
-      try {
-        const currentConfig = JSON.parse(
-          form.getValues("settingsConfig") || "{}",
-        );
-        currentConfig.openrouter_compat_mode = enabled;
-        form.setValue("settingsConfig", JSON.stringify(currentConfig, null, 2));
-      } catch {
-        // ignore
-      }
-    },
-    [form],
-  );
+  const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
+    setLocalApiFormat(format);
+  }, []);
 
   // 使用 Codex 配置 hook (仅 Codex 模式)
   const {
@@ -1212,6 +1175,11 @@ export function ProviderForm({
       ...(shouldPersistCommonConfigEnabledByApp
         ? { commonConfigEnabledByApp }
         : {}),
+      // Claude API 格式（仅非官方 Claude 供应商使用）
+      apiFormat:
+        appId === "claude" && category !== "official"
+          ? localApiFormat
+          : undefined,
     };
 
     onSubmit(payload);
@@ -1273,6 +1241,20 @@ export function ProviderForm({
     partnerPromotionKey: geminiPartnerPromotionKey,
   } = useApiKeyLink({
     appId: "gemini",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
+  // 使用 API Key 链接 hook (OpenCode)
+  const {
+    shouldShowApiKeyLink: shouldShowOpencodeApiKeyLink,
+    websiteUrl: opencodeWebsiteUrl,
+    isPartner: isOpencodePartner,
+    partnerPromotionKey: opencodePartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "opencode",
     category,
     selectedPresetId,
     presetEntries,
@@ -1408,6 +1390,14 @@ export function ProviderForm({
       preset.templateValues,
     );
 
+    // Sync preset's apiFormat to local state (for Claude providers)
+    if (preset.apiFormat) {
+      setLocalApiFormat(preset.apiFormat);
+    } else {
+      // Reset to default if preset doesn't specify apiFormat
+      setLocalApiFormat("anthropic");
+    }
+
     form.reset({
       name: preset.name,
       websiteUrl: preset.websiteUrl ?? "",
@@ -1531,9 +1521,8 @@ export function ProviderForm({
             defaultOpusModel={defaultOpusModel}
             onModelChange={handleModelChange}
             speedTestEndpoints={speedTestEndpoints}
-            showOpenRouterCompatToggle={false}
-            openRouterCompatEnabled={openRouterCompatEnabled}
-            onOpenRouterCompatChange={handleOpenRouterCompatChange}
+            apiFormat={localApiFormat}
+            onApiFormatChange={handleApiFormatChange}
           />
         )}
 
@@ -1603,8 +1592,10 @@ export function ProviderForm({
             apiKey={opencodeApiKey}
             onApiKeyChange={handleOpencodeApiKeyChange}
             category={category}
-            shouldShowApiKeyLink={false}
-            websiteUrl=""
+            shouldShowApiKeyLink={shouldShowOpencodeApiKeyLink}
+            websiteUrl={opencodeWebsiteUrl}
+            isPartner={isOpencodePartner}
+            partnerPromotionKey={opencodePartnerPromotionKey}
             baseUrl={opencodeBaseUrl}
             onBaseUrlChange={handleOpencodeBaseUrlChange}
             models={opencodeModels}

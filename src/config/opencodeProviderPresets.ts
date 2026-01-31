@@ -558,6 +558,32 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "Nvidia",
+    websiteUrl: "https://build.nvidia.com",
+    apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Nvidia",
+      options: {
+        baseURL: "https://integrate.api.nvidia.com/v1",
+        apiKey: "",
+      },
+      models: {
+        "moonshotai/kimi-k2.5": { name: "Kimi K2.5" },
+      },
+    },
+    category: "aggregator",
+    icon: "nvidia",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
 
   // ========== 第三方合作伙伴 ==========
   {
@@ -667,6 +693,35 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     partnerPromotionKey: "rightcode",
     icon: "rc",
     iconColor: "#E96B2C",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "AICodeMirror",
+    websiteUrl: "https://www.aicodemirror.com",
+    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "AICodeMirror",
+      options: {
+        baseURL: "https://api.aicodemirror.com/api/claudecode",
+        apiKey: "",
+      },
+      models: {
+        "claude-sonnet-4.5": { name: "Claude Sonnet 4.5" },
+        "claude-opus-4.5": { name: "Claude Opus 4.5" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "aicodemirror",
+    icon: "aicodemirror",
+    iconColor: "#000000",
     templateValues: {
       apiKey: {
         label: "API Key",

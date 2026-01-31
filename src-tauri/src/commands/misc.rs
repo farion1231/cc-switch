@@ -89,7 +89,7 @@ pub struct ToolVersion {
 
 #[tauri::command]
 pub async fn get_tool_versions() -> Result<Vec<ToolVersion>, String> {
-    let tools = vec!["claude", "codex", "gemini"];
+    let tools = vec!["claude", "codex", "gemini", "opencode"];
     let mut results = Vec::new();
 
     // 使用全局 HTTP 客户端（已包含代理配置）
@@ -116,6 +116,7 @@ pub async fn get_tool_versions() -> Result<Vec<ToolVersion>, String> {
             "claude" => fetch_npm_latest_version(&client, "@anthropic-ai/claude-code").await,
             "codex" => fetch_npm_latest_version(&client, "@openai/codex").await,
             "gemini" => fetch_npm_latest_version(&client, "@google/gemini-cli").await,
+            "opencode" => fetch_github_latest_version(&client, "anomalyco/opencode").await,
             _ => None,
         };
 
@@ -140,6 +141,29 @@ async fn fetch_npm_latest_version(client: &reqwest::Client, package: &str) -> Op
                     .and_then(|tags| tags.get("latest"))
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+/// Helper function to fetch latest version from GitHub releases
+async fn fetch_github_latest_version(client: &reqwest::Client, repo: &str) -> Option<String> {
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    match client
+        .get(&url)
+        .header("User-Agent", "cc-switch")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                json.get("tag_name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.strip_prefix('v').unwrap_or(s).to_string())
             } else {
                 None
             }
@@ -224,7 +248,7 @@ fn try_get_version_wsl(tool: &str, distro: &str) -> (Option<String>, Option<Stri
 
     // 防御性断言：tool 只能是预定义的值
     debug_assert!(
-        ["claude", "codex", "gemini"].contains(&tool),
+        ["claude", "codex", "gemini", "opencode"].contains(&tool),
         "unexpected tool name: {tool}"
     );
 
@@ -348,6 +372,14 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         }
     }
 
+    // 添加 Go 路径支持 (opencode 使用 go install 安装)
+    if tool == "opencode" {
+        search_paths.push(home.join("go/bin")); // go install 默认路径
+        if let Ok(gopath) = std::env::var("GOPATH") {
+            search_paths.push(std::path::PathBuf::from(gopath).join("bin"));
+        }
+    }
+
     // 在每个路径中查找工具
     for path in &search_paths {
         let tool_path = if cfg!(target_os = "windows") {
@@ -405,6 +437,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "claude" => crate::settings::get_claude_override_dir(),
         "codex" => crate::settings::get_codex_override_dir(),
         "gemini" => crate::settings::get_gemini_override_dir(),
+        "opencode" => crate::settings::get_opencode_override_dir(),
         _ => None,
     }?;
 
