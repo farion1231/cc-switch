@@ -65,18 +65,46 @@ export const deepEqual = (a: unknown, b: unknown): boolean => {
 /**
  * 检查 source 是否是 target 的子集
  * 即 source 中的所有键值对都存在于 target 中
+ *
+ * 注意：此函数有深度和节点数限制，避免大对象导致的性能问题或栈溢出
  */
-export const isSubset = (target: unknown, source: unknown): boolean => {
+const IS_SUBSET_MAX_DEPTH = 20;
+const IS_SUBSET_MAX_NODES = 10000;
+
+export const isSubset = (
+  target: unknown,
+  source: unknown,
+  _depth: number = 0,
+  _nodeCounter: { count: number } = { count: 0 },
+): boolean => {
+  // 超过最大深度或节点数限制，返回 false（保守判断）
+  if (_depth > IS_SUBSET_MAX_DEPTH) {
+    console.warn(
+      `[isSubset] Max depth (${IS_SUBSET_MAX_DEPTH}) exceeded, returning false`,
+    );
+    return false;
+  }
+
+  _nodeCounter.count++;
+  if (_nodeCounter.count > IS_SUBSET_MAX_NODES) {
+    console.warn(
+      `[isSubset] Max nodes (${IS_SUBSET_MAX_NODES}) exceeded, returning false`,
+    );
+    return false;
+  }
+
   if (isPlainObject(source)) {
     if (!isPlainObject(target)) return false;
     return Object.entries(source).every(([key, value]) =>
-      isSubset(target[key], value),
+      isSubset(target[key], value, _depth + 1, _nodeCounter),
     );
   }
 
   if (Array.isArray(source)) {
     if (!Array.isArray(target) || target.length !== source.length) return false;
-    return source.every((item, index) => isSubset(target[index], item));
+    return source.every((item, index) =>
+      isSubset(target[index], item, _depth + 1, _nodeCounter),
+    );
   }
 
   return target === source;

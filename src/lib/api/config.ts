@@ -2,7 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Provider } from "@/types";
 import { providersApi } from "./providers";
-import { hasContentByAppType } from "@/hooks/commonConfigAdapters";
+import { detectContent } from "@/utils/commonConfigDetection";
 
 export type AppType = "claude" | "codex" | "gemini";
 
@@ -354,10 +354,21 @@ function detectCommonConfigEnabledByContent(
   );
   if (candidates.length === 0) return false;
 
-  // 使用统一的 adapter-based hasContent 检查
-  return candidates.some((snippet) =>
-    hasContentByAppType(appType, settingsConfigStr, snippet),
-  );
+  // 使用 detectContent 获取完整结果（包含解析错误信息）
+  for (const snippet of candidates) {
+    const result = detectContent(appType, settingsConfigStr, snippet);
+    if (result.hasContent) {
+      return true;
+    }
+    // 如果解析失败，记录错误（便于排障）
+    if (result.parseError) {
+      console.warn(
+        `[detectCommonConfigEnabledByContent] Parse error for ${appType}: ${result.parseError}`,
+      );
+    }
+  }
+
+  return false;
 }
 
 /** 更新供应商配置的结果 */
@@ -373,7 +384,8 @@ function getSettingsConfigString(
   provider: Provider,
   appType: AppType,
 ): string | null {
-  const config = provider.settingsConfig;
+  // Runtime type may be string (JSON-serialized) despite Record<string, any> declaration
+  const config = provider.settingsConfig as Record<string, unknown> | string;
   if (!config) return null;
 
   switch (appType) {
@@ -385,8 +397,7 @@ function getSettingsConfigString(
       // Codex: settingsConfig.config 是 TOML 字符串
       // 先校验 settingsConfig 是对象类型
       if (typeof config === "string") {
-        // settingsConfig 是字符串（可能是之前保存失败的情况）
-        // 尝试解析为 JSON
+        // settingsConfig 是字符串，尝试解析为 JSON
         try {
           const parsed = JSON.parse(config);
           if (
@@ -396,10 +407,15 @@ function getSettingsConfigString(
           ) {
             return parsed.config;
           }
+          // JSON 对象但没有 string config 字段
+          // 可能是历史数据或异常保存的情况
+          return null;
         } catch {
-          console.warn(
-            `[getSettingsConfigString] Codex provider settingsConfig 是无效字符串，跳过`,
-          );
+          // JSON 解析失败，可能是纯 TOML 字符串
+          // 返回原字符串当 TOML 处理，而不是静默跳过
+          if (config.trim()) {
+            return config;
+          }
         }
         return null;
       }

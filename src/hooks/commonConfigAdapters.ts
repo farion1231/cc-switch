@@ -25,6 +25,10 @@ import type {
   ExtractResult,
 } from "./useCommonConfigBase";
 
+// Re-export from utils for backward compatibility
+export { hasContentByAppType } from "@/utils/commonConfigDetection";
+import { hasGeminiContent } from "@/utils/commonConfigDetection";
+
 // ============================================================================
 // Claude Adapter (JSON)
 // ============================================================================
@@ -163,20 +167,30 @@ function validateTomlFormat(tomlText: string): string | null {
  * 支持两种格式：
  * 1. 直接的 TOML 字符串
  * 2. JSON 字符串 { auth: {...}, config: "TOML" }
+ *
+ * 注意：如果 config 字段存在但不是 string，这表示 schema 异常
+ * 此时返回空字符串并打印警告，避免静默处理错误数据
  */
 function extractConfigToml(configInput: string): string {
   if (!configInput || !configInput.trim()) {
     return "";
   }
 
-  // 尝试解析为 JSON（旧格式）
+  // 尝试解析为 JSON（wrapper 格式）
   try {
     const parsed = JSON.parse(configInput);
     if (typeof parsed?.config === "string") {
       return parsed.config;
     }
-    // 如果是 JSON 对象但没有 config 字段，返回空
+    // 如果是 JSON 对象
     if (typeof parsed === "object" && parsed !== null) {
+      // config 字段存在但不是 string，这是 schema 异常
+      if ("config" in parsed && typeof parsed.config !== "string") {
+        console.warn(
+          `[extractConfigToml] config field is ${typeof parsed.config}, expected string`,
+        );
+      }
+      // JSON 对象没有有效的 config 字段，返回空（无 TOML 可提取）
       return "";
     }
   } catch {
@@ -192,19 +206,31 @@ function extractConfigToml(configInput: string): string {
  */
 function detectJsonWrapperFormat(
   codexConfig: string,
-): { auth?: unknown; config?: string } | null {
+): { auth?: unknown; config?: unknown; [key: string]: unknown } | null {
   try {
     const parsed = JSON.parse(codexConfig);
-    if (typeof parsed?.config === "string") {
-      return parsed;
-    }
-    if (typeof parsed === "object" && parsed !== null) {
+    // 只有当解析结果是对象时才认为是 JSON wrapper
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed)
+    ) {
       return parsed;
     }
   } catch {
     // 不是 JSON
   }
   return null;
+}
+
+/**
+ * Codex 配置格式保留结果
+ */
+export interface PreserveCodexConfigResult {
+  /** 格式化后的配置字符串 */
+  config: string;
+  /** 错误信息（如果有） */
+  error?: string;
 }
 
 /**
@@ -215,20 +241,39 @@ function detectJsonWrapperFormat(
  *
  * @param originalConfig - 原始配置字符串
  * @param updatedToml - 更新后的 TOML 内容
- * @returns 格式化后的配置字符串
+ * @returns 格式化后的配置字符串和可能的错误
  */
 export function preserveCodexConfigFormat(
   originalConfig: string,
   updatedToml: string,
-): string {
+): PreserveCodexConfigResult {
   const jsonWrapper = detectJsonWrapperFormat(originalConfig);
-  if (jsonWrapper && typeof jsonWrapper.config === "string") {
-    // JSON wrapper 格式，更新 config 字段
-    jsonWrapper.config = updatedToml;
-    return JSON.stringify(jsonWrapper, null, 2);
+
+  if (jsonWrapper) {
+    // 是 JSON wrapper 格式
+    if ("config" in jsonWrapper) {
+      // 存在 config 字段
+      if (typeof jsonWrapper.config !== "string") {
+        // config 字段不是 string，这是意外的 schema
+        // 返回原配置并报错，避免数据丢失
+        return {
+          config: originalConfig,
+          error: `Codex config field is ${typeof jsonWrapper.config}, expected string. Cannot update safely.`,
+        };
+      }
+      // 正常更新 config 字段
+      jsonWrapper.config = updatedToml;
+      return { config: JSON.stringify(jsonWrapper, null, 2) };
+    } else {
+      // 没有 config 字段，但是是 JSON 对象（可能包含 auth 等其他字段）
+      // 添加 config 字段
+      jsonWrapper.config = updatedToml;
+      return { config: JSON.stringify(jsonWrapper, null, 2) };
+    }
   }
+
   // 纯 TOML 格式
-  return updatedToml;
+  return { config: updatedToml };
 }
 
 export const codexAdapter: CommonConfigAdapter<string, string> = {
@@ -353,7 +398,7 @@ export function createGeminiAdapter(
     },
 
     hasContent: (configStr: string, snippetStr: string): boolean => {
-      return geminiHasContentStatic(configStr, snippetStr);
+      return hasGeminiContent(configStr, snippetStr).hasContent;
     },
 
     getApplyError: (snippet: string, t): string => {
@@ -361,16 +406,24 @@ export function createGeminiAdapter(
         strictForbiddenKeys: true,
       });
 
+      if (result.errorInfo) {
+        // Use structured error info for type-safe handling
+        switch (result.errorInfo.code) {
+          case GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS:
+            return t("geminiConfig.commonConfigInvalidKeys", {
+              keys: result.errorInfo.keys?.join(", ") ?? "",
+            });
+          case GEMINI_CONFIG_ERROR_CODES.VALUE_NOT_STRING:
+            return t("geminiConfig.commonConfigInvalidValues");
+          default:
+            return t("geminiConfig.invalidEnvFormat", {
+              defaultValue: "配置格式错误",
+            });
+        }
+      }
+
+      // Fallback for legacy error string (backward compatibility)
       if (result.error) {
-        if (result.error.startsWith(GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS)) {
-          const keys = result.error.split(": ")[1] ?? result.error;
-          return t("geminiConfig.commonConfigInvalidKeys", { keys });
-        }
-        if (
-          result.error.startsWith(GEMINI_CONFIG_ERROR_CODES.VALUE_NOT_STRING)
-        ) {
-          return t("geminiConfig.commonConfigInvalidValues");
-        }
         return t("geminiConfig.invalidEnvFormat", {
           defaultValue: "配置格式错误",
         });
@@ -448,72 +501,4 @@ export function createGeminiAdapter(
       };
     },
   };
-}
-
-// ============================================================================
-// 静态 hasContent 检查（用于 config.ts 同步检测）
-// ============================================================================
-
-/**
- * 检查配置是否包含通用配置片段（按 appType 分发）
- *
- * 用于 config.ts 中的 detectCommonConfigEnabledByContent，
- * 替代原有的三个独立函数（hasCommonConfigSnippet, hasTomlCommonConfigSnippet, hasGeminiCommonConfigSnippet）
- *
- * @param appType - 应用类型
- * @param configStr - 供应商的 settingsConfig 字符串
- * @param snippetStr - 通用配置片段字符串
- * @returns 是否包含片段内容
- */
-export function hasContentByAppType(
-  appType: "claude" | "codex" | "gemini",
-  configStr: string,
-  snippetStr: string,
-): boolean {
-  switch (appType) {
-    case "claude":
-      return claudeAdapter.hasContent(configStr, snippetStr);
-    case "codex":
-      return codexAdapter.hasContent(configStr, snippetStr);
-    case "gemini":
-      // Gemini 使用静态实现（不需要 envStringToObj/envObjToString）
-      return geminiHasContentStatic(configStr, snippetStr);
-    default:
-      return false;
-  }
-}
-
-/**
- * Gemini hasContent 的静态实现（不依赖 adapter options）
- */
-function geminiHasContentStatic(
-  configStr: string,
-  snippetStr: string,
-): boolean {
-  try {
-    if (!snippetStr.trim()) return false;
-
-    const config = configStr ? JSON.parse(configStr) : {};
-    if (!isPlainObject(config)) return false;
-    const envValue = (config as Record<string, unknown>).env;
-    if (envValue !== undefined && !isPlainObject(envValue)) return false;
-    const env = (isPlainObject(envValue) ? envValue : {}) as Record<
-      string,
-      unknown
-    >;
-
-    const parseResult = parseGeminiCommonConfigSnippet(snippetStr, {
-      strictForbiddenKeys: false,
-    });
-    if (parseResult.error || Object.keys(parseResult.env).length === 0) {
-      return false;
-    }
-
-    return Object.entries(parseResult.env).every(([key, value]) => {
-      const current = env[key];
-      return typeof current === "string" && current === value.trim();
-    });
-  } catch {
-    return false;
-  }
 }

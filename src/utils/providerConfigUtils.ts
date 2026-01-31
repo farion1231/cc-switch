@@ -327,11 +327,31 @@ export const setCodexModelName = (
  * These codes are used for consistent error handling and i18n mapping.
  */
 export const GEMINI_CONFIG_ERROR_CODES = {
-  NOT_OBJECT: "GEMINI_CONFIG_NOT_OBJECT",
-  ENV_NOT_OBJECT: "GEMINI_CONFIG_ENV_NOT_OBJECT",
-  VALUE_NOT_STRING: "GEMINI_CONFIG_VALUE_NOT_STRING",
-  FORBIDDEN_KEYS: "GEMINI_CONFIG_FORBIDDEN_KEYS",
+  NOT_OBJECT: "NOT_OBJECT",
+  ENV_NOT_OBJECT: "ENV_NOT_OBJECT",
+  VALUE_NOT_STRING: "VALUE_NOT_STRING",
+  FORBIDDEN_KEYS: "FORBIDDEN_KEYS",
 } as const;
+
+export type GeminiConfigErrorCode =
+  (typeof GEMINI_CONFIG_ERROR_CODES)[keyof typeof GEMINI_CONFIG_ERROR_CODES];
+
+/**
+ * Structured error info for Gemini common config parsing.
+ * Replaces fragile string prefix matching with type-safe error handling.
+ */
+export interface GeminiConfigErrorInfo {
+  /** Error code for programmatic handling */
+  code: GeminiConfigErrorCode;
+  /** Human-readable error message */
+  message: string;
+  /** For FORBIDDEN_KEYS: the list of forbidden keys found */
+  keys?: string[];
+  /** For VALUE_NOT_STRING: the key with invalid value */
+  key?: string;
+  /** For VALUE_NOT_STRING: the actual type of the value */
+  valueType?: string;
+}
 
 /**
  * Result of parsing Gemini common config snippet
@@ -339,10 +359,17 @@ export const GEMINI_CONFIG_ERROR_CODES = {
 export interface GeminiCommonConfigParseResult {
   /** Parsed env key-value pairs (empty if invalid) */
   env: Record<string, string>;
-  /** Error message if parsing/validation failed (starts with error code) */
+  /**
+   * Error message if parsing/validation failed.
+   * @deprecated Use errorInfo for type-safe error handling
+   */
   error?: string;
+  /** Structured error info for type-safe handling */
+  errorInfo?: GeminiConfigErrorInfo;
   /** Warning message (non-fatal, config still usable) */
   warning?: string;
+  /** Structured warning info */
+  warningInfo?: GeminiConfigErrorInfo;
 }
 
 /**
@@ -385,9 +412,14 @@ export function parseGeminiCommonConfigSnippet(
 
     // Must be a plain object (not array, null, etc.)
     if (!isPlainObject(parsed)) {
+      const errorInfo: GeminiConfigErrorInfo = {
+        code: GEMINI_CONFIG_ERROR_CODES.NOT_OBJECT,
+        message: "must be a JSON object, not array or primitive",
+      };
       return {
         env: {},
-        error: `${GEMINI_CONFIG_ERROR_CODES.NOT_OBJECT}: must be a JSON object, not array or primitive`,
+        error: `${errorInfo.code}: ${errorInfo.message}`,
+        errorInfo,
       };
     }
 
@@ -397,9 +429,14 @@ export function parseGeminiCommonConfigSnippet(
     if ("env" in parsed) {
       const envField = parsed.env;
       if (!isPlainObject(envField)) {
+        const errorInfo: GeminiConfigErrorInfo = {
+          code: GEMINI_CONFIG_ERROR_CODES.ENV_NOT_OBJECT,
+          message: "'env' field must be a plain object",
+        };
         return {
           env: {},
-          error: `${GEMINI_CONFIG_ERROR_CODES.ENV_NOT_OBJECT}: 'env' field must be a plain object`,
+          error: `${errorInfo.code}: ${errorInfo.message}`,
+          errorInfo,
         };
       }
       rawEnv = envField as Record<string, unknown>;
@@ -429,7 +466,6 @@ export function parseGeminiCommonConfigSnippet(
 
   // Validate and filter entries
   const env: Record<string, string> = {};
-  const warnings: string[] = [];
   const forbiddenKeysFound: string[] = [];
 
   for (const [key, value] of Object.entries(rawEnv)) {
@@ -444,9 +480,16 @@ export function parseGeminiCommonConfigSnippet(
     // Must be string
     if (typeof value !== "string") {
       if (isJson) {
+        const errorInfo: GeminiConfigErrorInfo = {
+          code: GEMINI_CONFIG_ERROR_CODES.VALUE_NOT_STRING,
+          message: `value for '${key}' must be a string, got ${typeof value}`,
+          key,
+          valueType: typeof value,
+        };
         return {
           env: {},
-          error: `${GEMINI_CONFIG_ERROR_CODES.VALUE_NOT_STRING}: value for '${key}' must be a string, got ${typeof value}`,
+          error: `${errorInfo.code}: ${errorInfo.message}`,
+          errorInfo,
         };
       }
       // For ENV format, skip non-strings silently (shouldn't happen)
@@ -464,21 +507,92 @@ export function parseGeminiCommonConfigSnippet(
 
   // Handle forbidden keys
   if (forbiddenKeysFound.length > 0) {
-    const msg = `${GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS}: ${forbiddenKeysFound.join(", ")}`;
+    const errorInfo: GeminiConfigErrorInfo = {
+      code: GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS,
+      message: forbiddenKeysFound.join(", "),
+      keys: forbiddenKeysFound,
+    };
+    const msg = `${errorInfo.code}: ${errorInfo.message}`;
     if (strictForbiddenKeys) {
-      return { env: {}, error: msg };
+      return { env: {}, error: msg, errorInfo };
     }
-    warnings.push(msg);
+    // Return as warning instead of error
+    return {
+      env,
+      warning: msg,
+      warningInfo: errorInfo,
+    };
   }
 
-  return {
-    env,
-    warning: warnings.length > 0 ? warnings.join("; ") : undefined,
-  };
+  return { env };
+}
+
+/**
+ * Map Gemini common config error/warning info to i18n-friendly message.
+ * Prefers structured errorInfo, falls back to string parsing for backward compatibility.
+ *
+ * @param info - Structured error info or raw warning string
+ * @param t - The i18n translation function
+ * @returns Translated message
+ */
+export function mapGeminiErrorToI18n(
+  info: GeminiConfigErrorInfo | string,
+  t: (
+    key: string,
+    options?: { keys?: string; key?: string; defaultValue?: string },
+  ) => string,
+): string {
+  // Handle structured error info (preferred)
+  if (typeof info === "object") {
+    switch (info.code) {
+      case GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS:
+        return t("geminiConfig.forbiddenKeysWarning", {
+          keys: info.keys?.join(", ") ?? info.message,
+        });
+      case GEMINI_CONFIG_ERROR_CODES.VALUE_NOT_STRING:
+        return t("geminiConfig.commonConfigInvalidValues", {
+          key: info.key,
+          defaultValue: info.message,
+        });
+      case GEMINI_CONFIG_ERROR_CODES.NOT_OBJECT:
+      case GEMINI_CONFIG_ERROR_CODES.ENV_NOT_OBJECT:
+        return t("geminiConfig.invalidEnvFormat", {
+          defaultValue: info.message,
+        });
+      default:
+        return info.message;
+    }
+  }
+
+  // Backward compatibility: parse string format
+  if (info.startsWith(GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS)) {
+    const keys = info.replace(
+      `${GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS}: `,
+      "",
+    );
+    return t("geminiConfig.forbiddenKeysWarning", { keys });
+  }
+  if (info.startsWith(GEMINI_CONFIG_ERROR_CODES.VALUE_NOT_STRING)) {
+    return t("geminiConfig.commonConfigInvalidValues", {
+      defaultValue: "Invalid value type",
+    });
+  }
+  if (
+    info.startsWith(GEMINI_CONFIG_ERROR_CODES.NOT_OBJECT) ||
+    info.startsWith(GEMINI_CONFIG_ERROR_CODES.ENV_NOT_OBJECT)
+  ) {
+    return t("geminiConfig.invalidEnvFormat", {
+      defaultValue: "Invalid format",
+    });
+  }
+
+  // Unknown format, return as-is
+  return info;
 }
 
 /**
  * Map Gemini common config warning to i18n-friendly message.
+ * @deprecated Use mapGeminiErrorToI18n with structured errorInfo/warningInfo instead
  *
  * @param warning - The raw warning string from parseGeminiCommonConfigSnippet
  * @param t - The i18n translation function
@@ -491,14 +605,5 @@ export function mapGeminiWarningToI18n(
     options?: { keys?: string; defaultValue?: string },
   ) => string,
 ): string {
-  if (warning.startsWith(GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS)) {
-    // Extract key list: "GEMINI_CONFIG_FORBIDDEN_KEYS: KEY1, KEY2" -> "KEY1, KEY2"
-    const keys = warning.replace(
-      `${GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS}: `,
-      "",
-    );
-    return t("geminiConfig.forbiddenKeysWarning", { keys });
-  }
-  // Other warnings: return as-is
-  return warning;
+  return mapGeminiErrorToI18n(warning, t);
 }

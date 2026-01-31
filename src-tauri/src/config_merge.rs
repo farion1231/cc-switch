@@ -837,17 +837,32 @@ shared_key = "shared"
         assert!(result.contains("custom-model")); // custom wins
         assert!(result.contains("shared_key")); // from common
 
-        // Verify ordering: custom keys appear before common-only keys
-        let model_pos = result.find("model").unwrap();
-        let custom_section_pos = result.find("custom_section").unwrap();
-        let shared_key_pos = result.find("shared_key").unwrap();
+        // With preserve_order feature enabled, verify key ordering via parsing
+        // instead of relying on string position (which is fragile)
+        let parsed: TomlValue = result.parse().expect("result should be valid TOML");
+        let table = parsed.as_table().expect("result should be a table");
+        let keys: Vec<&String> = table.keys().collect();
+
+        // Custom keys should appear before common-only keys
+        let model_idx = keys.iter().position(|k| *k == "model");
+        let custom_section_idx = keys.iter().position(|k| *k == "custom_section");
+        let shared_key_idx = keys.iter().position(|k| *k == "shared_key");
+
+        assert!(model_idx.is_some(), "model key should exist in result");
         assert!(
-            model_pos < shared_key_pos,
-            "custom 'model' should appear before common-only 'shared_key'"
+            custom_section_idx.is_some(),
+            "custom_section key should exist in result"
         );
         assert!(
-            custom_section_pos < shared_key_pos || model_pos < shared_key_pos,
-            "custom keys should appear before common-only keys"
+            shared_key_idx.is_some(),
+            "shared_key key should exist in result"
+        );
+
+        // With preserve_order, custom keys (model, custom_section) should come before common-only keys (shared_key)
+        assert!(
+            model_idx.unwrap() < shared_key_idx.unwrap(),
+            "custom 'model' should appear before common-only 'shared_key' (got model_idx={:?}, shared_key_idx={:?})",
+            model_idx, shared_key_idx
         );
     }
 

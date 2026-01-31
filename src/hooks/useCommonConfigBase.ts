@@ -407,7 +407,11 @@ export function useCommonConfigBase<TConfig, TFinal>({
         request,
       );
 
-      if (!extracted || extracted === "{}" || !extracted.trim()) {
+      if (
+        !extracted ||
+        !extracted.trim() ||
+        !adapter.hasValidContent(extracted)
+      ) {
         setCommonConfigError(
           t(`${adapter.appKey}Config.extractNoCommonConfig`, {
             defaultValue: "无法提取通用配置",

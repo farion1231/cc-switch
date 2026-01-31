@@ -120,25 +120,48 @@ export function useCodexCommonConfig({
         return;
       }
 
-      // 更新 snippet 状态（通过 base 的 handler）
-      base.handleCommonConfigSnippetChange(extracted);
-
       // 从 config 中移除与 extracted 相同的部分
       const customToml = codexAdapter.parseInput(codexConfig);
       const diffResult = extractTomlDifference(customToml, extracted);
 
-      if (!diffResult.error) {
-        // 使用共享的格式保留函数写回
-        onConfigChange(
-          preserveCodexConfigFormat(codexConfig, diffResult.customToml),
-        );
-
-        toast.success(
-          t("codexConfig.extractSuccessNeedSave", {
-            defaultValue: "已提取通用配置，点击保存按钮完成保存",
+      if (diffResult.error) {
+        // 差异提取失败，显示错误而不是静默吞掉
+        setLocalExtractError(
+          t("codexConfig.extractDiffFailed", {
+            error: diffResult.error,
+            defaultValue: `差异提取失败: ${diffResult.error}`,
           }),
         );
+        return;
       }
+
+      // 更新 snippet 状态（在差异提取成功后再更新，避免状态不一致）
+      base.handleCommonConfigSnippetChange(extracted);
+
+      // 使用共享的格式保留函数写回
+      const preserveResult = preserveCodexConfigFormat(
+        codexConfig,
+        diffResult.customToml,
+      );
+
+      if (preserveResult.error) {
+        // 格式保留失败，显示错误
+        setLocalExtractError(
+          t("codexConfig.preserveFormatFailed", {
+            error: preserveResult.error,
+            defaultValue: `配置格式保留失败: ${preserveResult.error}`,
+          }),
+        );
+        return;
+      }
+
+      onConfigChange(preserveResult.config);
+
+      toast.success(
+        t("codexConfig.extractSuccessNeedSave", {
+          defaultValue: "已提取通用配置，点击保存按钮完成保存",
+        }),
+      );
     } catch (error) {
       console.error("提取 Codex 通用配置失败:", error);
       setLocalExtractError(
