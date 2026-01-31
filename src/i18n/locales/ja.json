@@ -458,6 +458,7 @@
     "fastModelPlaceholder": "例: GLM-4.5-Air",
     "modelHint": "💡 空欄ならプロバイダーのデフォルトモデルを使用します",
     "apiHint": "💡 Claude API 互換サービスのエンドポイントを入力してください。末尾にスラッシュを付けないでください",
+    "apiHintOAI": "💡 OpenAI Chat Completions 互換サービスのエンドポイントを入力してください。末尾にスラッシュを付けないでください",
     "codexApiHint": "💡 OpenAI Response 互換のサービスエンドポイントを入力してください",
     "fillSupplierName": "プロバイダー名を入力してください",
     "fillConfigContent": "設定内容を入力してください",
