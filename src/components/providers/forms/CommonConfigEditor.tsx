@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Save, Download, Loader2 } from "lucide-react";
+import { Save, Download, Loader2, Eye, EyeOff } from "lucide-react";
 import JsonEditor from "@/components/JsonEditor";
+import { useDarkMode } from "@/hooks/useDarkMode";
 
 interface CommonConfigEditorProps {
   value: string;
@@ -19,6 +20,8 @@ interface CommonConfigEditorProps {
   onModalClose: () => void;
   onExtract?: () => void;
   isExtracting?: boolean;
+  /** 最终合并后的配置（只读预览） */
+  finalConfig?: string;
 }
 
 export function CommonConfigEditor({
@@ -34,24 +37,18 @@ export function CommonConfigEditor({
   onModalClose,
   onExtract,
   isExtracting,
+  finalConfig,
 }: CommonConfigEditorProps) {
   const { t } = useTranslation();
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const isDarkMode = useDarkMode();
+  const [showPreview, setShowPreview] = useState(false);
 
+  // 当启用通用配置时，自动显示预览
   useEffect(() => {
-    setIsDarkMode(document.documentElement.classList.contains("dark"));
-
-    const observer = new MutationObserver(() => {
-      setIsDarkMode(document.documentElement.classList.contains("dark"));
-    });
-
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-
-    return () => observer.disconnect();
-  }, []);
+    if (useCommonConfig && finalConfig) {
+      setShowPreview(true);
+    }
+  }, [useCommonConfig, finalConfig]);
 
   return (
     <>
@@ -75,7 +72,32 @@ export function CommonConfigEditor({
             </label>
           </div>
         </div>
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {useCommonConfig && finalConfig && (
+              <button
+                type="button"
+                onClick={() => setShowPreview(!showPreview)}
+                className="inline-flex items-center gap-1 text-xs text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+              >
+                {showPreview ? (
+                  <>
+                    <EyeOff className="w-3 h-3" />
+                    {t("claudeConfig.hidePreview", {
+                      defaultValue: "隐藏合并预览",
+                    })}
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-3 h-3" />
+                    {t("claudeConfig.showPreview", {
+                      defaultValue: "显示合并预览",
+                    })}
+                  </>
+                )}
+              </button>
+            )}
+          </div>
           <button
             type="button"
             onClick={onEditClick}
@@ -91,20 +113,64 @@ export function CommonConfigEditor({
             {commonConfigError}
           </p>
         )}
-        <JsonEditor
-          value={value}
-          onChange={onChange}
-          placeholder={`{
+
+        {/* 自定义配置编辑器 */}
+        <div className="space-y-1">
+          {useCommonConfig && showPreview && (
+            <Label className="text-xs text-muted-foreground">
+              {t("claudeConfig.customConfig", {
+                defaultValue: "自定义配置（覆盖通用配置）",
+              })}
+            </Label>
+          )}
+          <JsonEditor
+            value={value}
+            onChange={onChange}
+            placeholder={`{
   "env": {
     "ANTHROPIC_BASE_URL": "https://your-api-endpoint.com",
     "ANTHROPIC_AUTH_TOKEN": "your-api-key-here"
   }
 }`}
-          darkMode={isDarkMode}
-          rows={14}
-          showValidation={true}
-          language="json"
-        />
+            darkMode={isDarkMode}
+            rows={useCommonConfig && showPreview ? 3 : 14}
+            autoHeight={useCommonConfig && showPreview}
+            showValidation={true}
+            language="json"
+          />
+        </div>
+
+        {/* 合并预览（只读）- 放在自定义配置下面 */}
+        {useCommonConfig && showPreview && finalConfig && (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs text-muted-foreground">
+                {t("claudeConfig.mergedPreview", {
+                  defaultValue: "合并预览（只读）",
+                })}
+              </Label>
+              <span className="text-xs text-green-500 dark:text-green-400">
+                {t("claudeConfig.mergedPreviewHint", {
+                  defaultValue: "通用配置 + 自定义配置 = 最终配置",
+                })}
+              </span>
+            </div>
+            <div className="relative">
+              <JsonEditor
+                value={finalConfig}
+                onChange={() => {}} // 只读
+                darkMode={isDarkMode}
+                rows={8}
+                showValidation={false}
+                language="json"
+                readOnly={true}
+              />
+              <div className="absolute top-2 right-2 px-2 py-0.5 bg-green-500/10 text-green-600 dark:text-green-400 text-xs rounded">
+                {t("common.readonly", { defaultValue: "只读" })}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <FullScreenPanel

@@ -6,9 +6,9 @@ export { useCodexConfigState } from "./useCodexConfigState";
 export { useApiKeyLink } from "./useApiKeyLink";
 export { useCustomEndpoints } from "./useCustomEndpoints";
 export { useTemplateValues } from "./useTemplateValues";
-export { useCommonConfigSnippet } from "./useCommonConfigSnippet";
-export { useCodexCommonConfig } from "./useCodexCommonConfig";
 export { useSpeedTestEndpoints } from "./useSpeedTestEndpoints";
 export { useCodexTomlValidation } from "./useCodexTomlValidation";
 export { useGeminiConfigState } from "./useGeminiConfigState";
-export { useGeminiCommonConfig } from "./useGeminiCommonConfig";
+
+// Common Config Hooks
+export { useCodexCommonConfig } from "./useCodexCommonConfig";

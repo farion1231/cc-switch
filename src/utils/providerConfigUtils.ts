@@ -2,86 +2,15 @@
 
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
 import { normalizeQuotes } from "@/utils/textNormalization";
+import { isPlainObject } from "@/utils/configMerge";
 
-const isPlainObject = (value: unknown): value is Record<string, any> => {
-  return Object.prototype.toString.call(value) === "[object Object]";
-};
-
-const deepMerge = (
-  target: Record<string, any>,
-  source: Record<string, any>,
-): Record<string, any> => {
-  Object.entries(source).forEach(([key, value]) => {
-    if (isPlainObject(value)) {
-      if (!isPlainObject(target[key])) {
-        target[key] = {};
-      }
-      deepMerge(target[key], value);
-    } else {
-      // 直接覆盖非对象字段（数组/基础类型）
-      target[key] = value;
-    }
-  });
-  return target;
-};
-
-const deepRemove = (
-  target: Record<string, any>,
-  source: Record<string, any>,
-) => {
-  Object.entries(source).forEach(([key, value]) => {
-    if (!(key in target)) return;
-
-    if (isPlainObject(value) && isPlainObject(target[key])) {
-      // 只移除完全匹配的嵌套属性
-      deepRemove(target[key], value);
-      if (Object.keys(target[key]).length === 0) {
-        delete target[key];
-      }
-    } else if (isSubset(target[key], value)) {
-      // 只有当值完全匹配时才删除
-      delete target[key];
-    }
-  });
-};
-
-const isSubset = (target: any, source: any): boolean => {
-  if (isPlainObject(source)) {
-    if (!isPlainObject(target)) return false;
-    return Object.entries(source).every(([key, value]) =>
-      isSubset(target[key], value),
-    );
-  }
-
-  if (Array.isArray(source)) {
-    if (!Array.isArray(target) || target.length !== source.length) return false;
-    return source.every((item, index) => isSubset(target[index], item));
-  }
-
-  return target === source;
-};
-
-// 深拷贝函数
-const deepClone = <T>(obj: T): T => {
-  if (obj === null || typeof obj !== "object") return obj;
-  if (obj instanceof Date) return new Date(obj.getTime()) as T;
-  if (obj instanceof Array) return obj.map((item) => deepClone(item)) as T;
-  if (obj instanceof Object) {
-    const clonedObj = {} as T;
-    for (const key in obj) {
-      if (obj.hasOwnProperty(key)) {
-        clonedObj[key] = deepClone(obj[key]);
-      }
-    }
-    return clonedObj;
-  }
-  return obj;
-};
-
-export interface UpdateCommonConfigResult {
-  updatedConfig: string;
-  error?: string;
-}
+// Gemini 通用配置禁止的键（共享常量，供 hook 和同步逻辑复用）
+export const GEMINI_COMMON_ENV_FORBIDDEN_KEYS = [
+  "GOOGLE_GEMINI_BASE_URL",
+  "GEMINI_API_KEY",
+] as const;
+export type GeminiForbiddenEnvKey =
+  (typeof GEMINI_COMMON_ENV_FORBIDDEN_KEYS)[number];
 
 // 验证JSON配置格式
 export const validateJsonConfig = (
@@ -99,69 +28,6 @@ export const validateJsonConfig = (
     return "";
   } catch {
     return `${fieldName}JSON格式错误，请检查语法`;
-  }
-};
-
-// 将通用配置片段写入/移除 settingsConfig
-export const updateCommonConfigSnippet = (
-  jsonString: string,
-  snippetString: string,
-  enabled: boolean,
-): UpdateCommonConfigResult => {
-  let config: Record<string, any>;
-  try {
-    config = jsonString ? JSON.parse(jsonString) : {};
-  } catch (err) {
-    return {
-      updatedConfig: jsonString,
-      error: "配置 JSON 解析失败，无法写入通用配置",
-    };
-  }
-
-  if (!snippetString.trim()) {
-    return {
-      updatedConfig: JSON.stringify(config, null, 2),
-    };
-  }
-
-  // 使用统一的验证函数
-  const snippetError = validateJsonConfig(snippetString, "通用配置片段");
-  if (snippetError) {
-    return {
-      updatedConfig: JSON.stringify(config, null, 2),
-      error: snippetError,
-    };
-  }
-
-  const snippet = JSON.parse(snippetString) as Record<string, any>;
-
-  if (enabled) {
-    const merged = deepMerge(deepClone(config), snippet);
-    return {
-      updatedConfig: JSON.stringify(merged, null, 2),
-    };
-  }
-
-  const cloned = deepClone(config);
-  deepRemove(cloned, snippet);
-  return {
-    updatedConfig: JSON.stringify(cloned, null, 2),
-  };
-};
-
-// 检查当前配置是否已包含通用配置片段
-export const hasCommonConfigSnippet = (
-  jsonString: string,
-  snippetString: string,
-): boolean => {
-  try {
-    if (!snippetString.trim()) return false;
-    const config = jsonString ? JSON.parse(jsonString) : {};
-    const snippet = JSON.parse(snippetString);
-    if (!isPlainObject(snippet)) return false;
-    return isSubset(config, snippet);
-  } catch (err) {
-    return false;
   }
 };
 
@@ -329,85 +195,6 @@ export const setApiKeyInConfig = (
   }
 };
 
-// ========== TOML Config Utilities ==========
-
-export interface UpdateTomlCommonConfigResult {
-  updatedConfig: string;
-  error?: string;
-}
-
-// 保存之前的通用配置片段，用于替换操作
-let previousCommonSnippet = "";
-
-// 将通用配置片段写入/移除 TOML 配置
-export const updateTomlCommonConfigSnippet = (
-  tomlString: string,
-  snippetString: string,
-  enabled: boolean,
-): UpdateTomlCommonConfigResult => {
-  if (!snippetString.trim()) {
-    // 如果片段为空，直接返回原始配置
-    return {
-      updatedConfig: tomlString,
-    };
-  }
-
-  if (enabled) {
-    // 添加通用配置
-    // 先移除旧的通用配置（如果有）
-    let updatedConfig = tomlString;
-    if (previousCommonSnippet && tomlString.includes(previousCommonSnippet)) {
-      updatedConfig = tomlString.replace(previousCommonSnippet, "");
-    }
-
-    // 在文件末尾添加新的通用配置
-    // 确保有适当的换行
-    const needsNewline = updatedConfig && !updatedConfig.endsWith("\n");
-    updatedConfig =
-      updatedConfig + (needsNewline ? "\n\n" : "\n") + snippetString;
-
-    // 保存当前通用配置片段
-    previousCommonSnippet = snippetString;
-
-    return {
-      updatedConfig: updatedConfig.trim() + "\n",
-    };
-  } else {
-    // 移除通用配置
-    if (tomlString.includes(snippetString)) {
-      const updatedConfig = tomlString.replace(snippetString, "");
-      // 清理多余的空行
-      const cleaned = updatedConfig.replace(/\n{3,}/g, "\n\n").trim();
-
-      // 清空保存的状态
-      previousCommonSnippet = "";
-
-      return {
-        updatedConfig: cleaned ? cleaned + "\n" : "",
-      };
-    }
-    return {
-      updatedConfig: tomlString,
-    };
-  }
-};
-
-// 检查 TOML 配置是否已包含通用配置片段
-export const hasTomlCommonConfigSnippet = (
-  tomlString: string,
-  snippetString: string,
-): boolean => {
-  if (!snippetString.trim()) return false;
-
-  // 简单检查配置是否包含片段内容
-  // 去除空白字符后比较，避免格式差异影响
-  const normalizeWhitespace = (str: string) => str.replace(/\s+/g, " ").trim();
-
-  return normalizeWhitespace(tomlString).includes(
-    normalizeWhitespace(snippetString),
-  );
-};
-
 // ========== Codex base_url utils ==========
 
 // 从 Codex 的 TOML 配置文本中提取 base_url（支持单/双引号）
@@ -530,3 +317,293 @@ export const setCodexModelName = (
   const lines = normalizedText.split("\n");
   return `${replacementLine}\n${lines.join("\n")}`;
 };
+
+// ============================================================================
+// Gemini Common Config Parsing Utilities
+// ============================================================================
+
+/**
+ * Error codes for Gemini common config parsing.
+ * These codes are used for consistent error handling and i18n mapping.
+ */
+export const GEMINI_CONFIG_ERROR_CODES = {
+  NOT_OBJECT: "NOT_OBJECT",
+  ENV_NOT_OBJECT: "ENV_NOT_OBJECT",
+  VALUE_NOT_STRING: "VALUE_NOT_STRING",
+  FORBIDDEN_KEYS: "FORBIDDEN_KEYS",
+} as const;
+
+export type GeminiConfigErrorCode =
+  (typeof GEMINI_CONFIG_ERROR_CODES)[keyof typeof GEMINI_CONFIG_ERROR_CODES];
+
+/**
+ * Structured error info for Gemini common config parsing.
+ * Replaces fragile string prefix matching with type-safe error handling.
+ */
+export interface GeminiConfigErrorInfo {
+  /** Error code for programmatic handling */
+  code: GeminiConfigErrorCode;
+  /** Human-readable error message */
+  message: string;
+  /** For FORBIDDEN_KEYS: the list of forbidden keys found */
+  keys?: string[];
+  /** For VALUE_NOT_STRING: the key with invalid value */
+  key?: string;
+  /** For VALUE_NOT_STRING: the actual type of the value */
+  valueType?: string;
+}
+
+/**
+ * Result of parsing Gemini common config snippet
+ */
+export interface GeminiCommonConfigParseResult {
+  /** Parsed env key-value pairs (empty if invalid) */
+  env: Record<string, string>;
+  /**
+   * Error message if parsing/validation failed.
+   * @deprecated Use errorInfo for type-safe error handling
+   */
+  error?: string;
+  /** Structured error info for type-safe handling */
+  errorInfo?: GeminiConfigErrorInfo;
+  /** Warning message (non-fatal, config still usable) */
+  warning?: string;
+  /** Structured warning info */
+  warningInfo?: GeminiConfigErrorInfo;
+}
+
+/**
+ * Parse Gemini common config snippet with full validation.
+ *
+ * Supports three formats:
+ * - ENV format: KEY=VALUE lines (one per line, # for comments)
+ * - Flat JSON: {"KEY": "VALUE", ...}
+ * - Wrapped JSON: {"env": {"KEY": "VALUE", ...}}
+ *
+ * Validation rules:
+ * - Forbidden keys (GOOGLE_GEMINI_BASE_URL, GEMINI_API_KEY) are rejected
+ * - Non-string values are rejected
+ * - Empty string values are filtered out
+ * - Arrays and non-plain objects are rejected
+ *
+ * @param snippet - The common config snippet string
+ * @param options - Optional configuration
+ * @returns Parse result with env, error, and warning
+ */
+export function parseGeminiCommonConfigSnippet(
+  snippet: string,
+  options?: {
+    /** If true, reject forbidden keys with error; otherwise filter them with warning */
+    strictForbiddenKeys?: boolean;
+  },
+): GeminiCommonConfigParseResult {
+  const trimmed = snippet.trim();
+  if (!trimmed) {
+    return { env: {} };
+  }
+
+  const strictForbiddenKeys = options?.strictForbiddenKeys ?? true;
+  let rawEnv: Record<string, unknown> = {};
+  let isJson = false;
+
+  // Try JSON first
+  try {
+    const parsed = JSON.parse(trimmed);
+
+    // Must be a plain object (not array, null, etc.)
+    if (!isPlainObject(parsed)) {
+      const errorInfo: GeminiConfigErrorInfo = {
+        code: GEMINI_CONFIG_ERROR_CODES.NOT_OBJECT,
+        message: "must be a JSON object, not array or primitive",
+      };
+      return {
+        env: {},
+        error: `${errorInfo.code}: ${errorInfo.message}`,
+        errorInfo,
+      };
+    }
+
+    isJson = true;
+
+    // Check if wrapped format {"env": {...}}
+    if ("env" in parsed) {
+      const envField = parsed.env;
+      if (!isPlainObject(envField)) {
+        const errorInfo: GeminiConfigErrorInfo = {
+          code: GEMINI_CONFIG_ERROR_CODES.ENV_NOT_OBJECT,
+          message: "'env' field must be a plain object",
+        };
+        return {
+          env: {},
+          error: `${errorInfo.code}: ${errorInfo.message}`,
+          errorInfo,
+        };
+      }
+      rawEnv = envField as Record<string, unknown>;
+    } else {
+      // Flat format
+      rawEnv = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Not JSON, parse as ENV format (KEY=VALUE lines)
+    isJson = false;
+    for (const line of trimmed.split("\n")) {
+      const lineTrimmed = line.trim();
+      if (!lineTrimmed || lineTrimmed.startsWith("#")) continue;
+      const equalIndex = lineTrimmed.indexOf("=");
+      if (equalIndex > 0) {
+        const key = lineTrimmed.substring(0, equalIndex).trim();
+        // Strip surrounding quotes (single or double) from value
+        // e.g., KEY="value" or KEY='value' -> value
+        const rawValue = lineTrimmed.substring(equalIndex + 1).trim();
+        const value = rawValue.replace(/^["'](.*)["']$/, "$1");
+        if (key) {
+          rawEnv[key] = value;
+        }
+      }
+    }
+  }
+
+  // Validate and filter entries
+  const env: Record<string, string> = {};
+  const forbiddenKeysFound: string[] = [];
+
+  for (const [key, value] of Object.entries(rawEnv)) {
+    // Check forbidden keys
+    if (
+      GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(key as GeminiForbiddenEnvKey)
+    ) {
+      forbiddenKeysFound.push(key);
+      continue;
+    }
+
+    // Must be string
+    if (typeof value !== "string") {
+      if (isJson) {
+        const errorInfo: GeminiConfigErrorInfo = {
+          code: GEMINI_CONFIG_ERROR_CODES.VALUE_NOT_STRING,
+          message: `value for '${key}' must be a string, got ${typeof value}`,
+          key,
+          valueType: typeof value,
+        };
+        return {
+          env: {},
+          error: `${errorInfo.code}: ${errorInfo.message}`,
+          errorInfo,
+        };
+      }
+      // For ENV format, skip non-strings silently (shouldn't happen)
+      continue;
+    }
+
+    // Filter empty strings
+    const trimmedValue = value.trim();
+    if (!trimmedValue) {
+      continue;
+    }
+
+    env[key] = trimmedValue;
+  }
+
+  // Handle forbidden keys
+  if (forbiddenKeysFound.length > 0) {
+    const errorInfo: GeminiConfigErrorInfo = {
+      code: GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS,
+      message: forbiddenKeysFound.join(", "),
+      keys: forbiddenKeysFound,
+    };
+    const msg = `${errorInfo.code}: ${errorInfo.message}`;
+    if (strictForbiddenKeys) {
+      return { env: {}, error: msg, errorInfo };
+    }
+    // Return as warning instead of error
+    return {
+      env,
+      warning: msg,
+      warningInfo: errorInfo,
+    };
+  }
+
+  return { env };
+}
+
+/**
+ * Map Gemini common config error/warning info to i18n-friendly message.
+ * Prefers structured errorInfo, falls back to string parsing for backward compatibility.
+ *
+ * @param info - Structured error info or raw warning string
+ * @param t - The i18n translation function
+ * @returns Translated message
+ */
+export function mapGeminiErrorToI18n(
+  info: GeminiConfigErrorInfo | string,
+  t: (
+    key: string,
+    options?: { keys?: string; key?: string; defaultValue?: string },
+  ) => string,
+): string {
+  // Handle structured error info (preferred)
+  if (typeof info === "object") {
+    switch (info.code) {
+      case GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS:
+        return t("geminiConfig.forbiddenKeysWarning", {
+          keys: info.keys?.join(", ") ?? info.message,
+        });
+      case GEMINI_CONFIG_ERROR_CODES.VALUE_NOT_STRING:
+        return t("geminiConfig.commonConfigInvalidValues", {
+          key: info.key,
+          defaultValue: info.message,
+        });
+      case GEMINI_CONFIG_ERROR_CODES.NOT_OBJECT:
+      case GEMINI_CONFIG_ERROR_CODES.ENV_NOT_OBJECT:
+        return t("geminiConfig.invalidEnvFormat", {
+          defaultValue: info.message,
+        });
+      default:
+        return info.message;
+    }
+  }
+
+  // Backward compatibility: parse string format
+  if (info.startsWith(GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS)) {
+    const keys = info.replace(
+      `${GEMINI_CONFIG_ERROR_CODES.FORBIDDEN_KEYS}: `,
+      "",
+    );
+    return t("geminiConfig.forbiddenKeysWarning", { keys });
+  }
+  if (info.startsWith(GEMINI_CONFIG_ERROR_CODES.VALUE_NOT_STRING)) {
+    return t("geminiConfig.commonConfigInvalidValues", {
+      defaultValue: "Invalid value type",
+    });
+  }
+  if (
+    info.startsWith(GEMINI_CONFIG_ERROR_CODES.NOT_OBJECT) ||
+    info.startsWith(GEMINI_CONFIG_ERROR_CODES.ENV_NOT_OBJECT)
+  ) {
+    return t("geminiConfig.invalidEnvFormat", {
+      defaultValue: "Invalid format",
+    });
+  }
+
+  // Unknown format, return as-is
+  return info;
+}
+
+/**
+ * Map Gemini common config warning to i18n-friendly message.
+ * @deprecated Use mapGeminiErrorToI18n with structured errorInfo/warningInfo instead
+ *
+ * @param warning - The raw warning string from parseGeminiCommonConfigSnippet
+ * @param t - The i18n translation function
+ * @returns Translated warning message
+ */
+export function mapGeminiWarningToI18n(
+  warning: string,
+  t: (
+    key: string,
+    options?: { keys?: string; defaultValue?: string },
+  ) => string,
+): string {
+  return mapGeminiErrorToI18n(warning, t);
+}

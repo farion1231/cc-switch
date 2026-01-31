@@ -217,14 +217,30 @@ pub async fn set_common_config_snippet(
     // 验证格式（根据应用类型）
     if !snippet.trim().is_empty() {
         match app_type.as_str() {
-            "claude" | "gemini" => {
+            "claude" => {
                 // 验证 JSON 格式
                 serde_json::from_str::<serde_json::Value>(&snippet)
                     .map_err(invalid_json_format_error)?;
             }
+            "gemini" => {
+                // 验证 ENV/JSON 格式并拒绝禁用键
+                let validation = crate::config_merge::validate_gemini_common_snippet(&snippet);
+
+                // 如果有禁用键，返回错误
+                if !validation.forbidden_keys_found.is_empty() {
+                    return Err(format!(
+                        "GEMINI_FORBIDDEN_KEYS:{}",
+                        validation.forbidden_keys_found.join(",")
+                    ));
+                }
+
+                // 如果非空但解析后无有效内容，返回错误
+                if !validation.is_valid {
+                    return Err("GEMINI_INVALID_SNIPPET".to_string());
+                }
+            }
             "codex" => {
-                // TOML 格式暂不验证（或可使用 toml crate）
-                // 注意：TOML 验证较为复杂，暂时跳过
+                // TOML 格式，暂不验证（前端验证）
             }
             _ => {}
         }

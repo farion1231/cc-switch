@@ -17,6 +17,8 @@ interface GeminiConfigEditorProps {
   configError: string;
   onExtract?: () => void;
   isExtracting?: boolean;
+  /** 最终合并后的 env 配置（只读预览） */
+  finalEnv?: string;
 }
 
 const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
@@ -34,6 +36,7 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
   configError,
   onExtract,
   isExtracting,
+  finalEnv,
 }) => {
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
@@ -56,6 +59,7 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
         onCommonConfigToggle={onCommonConfigToggle}
         onEditCommonConfig={() => setIsCommonConfigModalOpen(true)}
         commonConfigError={commonConfigError}
+        finalEnv={finalEnv}
       />
 
       {/* Config JSON Section */}

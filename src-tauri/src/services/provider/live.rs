@@ -1,6 +1,14 @@
 //! Live configuration operations
 //!
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
+//!
+//! ## Common Config Runtime Merge
+//!
+//! When writing to live files, this module performs runtime merge of:
+//! - `customConfig` (provider's settings_config) - provider-specific settings
+//! - `commonConfig` (from database settings table) - shared template settings
+//!
+//! The merge follows the rule: customConfig overrides commonConfig.
 
 use std::collections::HashMap;
 
@@ -9,6 +17,7 @@ use serde_json::{json, Value};
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
+use crate::config_merge::merge_config_for_live;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::mcp::McpService;
@@ -104,24 +113,86 @@ impl LiveSnapshot {
     }
 }
 
-/// Write live configuration snapshot for a provider
+/// Write live configuration snapshot for a provider (raw, without common config merge)
+///
+/// This function writes the provider's settings_config directly to the live file.
+/// Use `write_live_snapshot_with_merge` for runtime merge with common config.
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+    write_live_snapshot_internal(app_type, provider, &provider.settings_config)
+}
+
+/// Write live configuration snapshot with common config runtime merge
+///
+/// This function performs runtime merge of:
+/// - Provider's settings_config (custom config)
+/// - Common config snippet from database (shared template)
+///
+/// The merge rule is: customConfig overrides commonConfig.
+pub(crate) fn write_live_snapshot_with_merge(
+    state: &AppState,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    // Get common config snippet from database
+    let common_config_snippet = state.db.get_config_snippet(app_type.as_str())?;
+
+    // Use shared merge function (single source of truth)
+    let merge_result = merge_config_for_live(app_type, provider, common_config_snippet.as_deref());
+
+    // Log warning if any
+    if let Some(warning) = &merge_result.warning {
+        log::warn!(
+            "Common config merge warning for {:?} provider '{}': {}",
+            app_type,
+            provider.id,
+            warning
+        );
+    }
+
+    // Check if merge actually happened (config changed)
+    if merge_result.config != provider.settings_config {
+        log::debug!(
+            "Writing live config with common config merge for {:?} provider '{}'",
+            app_type,
+            provider.id
+        );
+    }
+
+    // Write the merged config to live file
+    let merged_provider = Provider {
+        settings_config: merge_result.config,
+        ..provider.clone()
+    };
+    write_live_snapshot_internal(app_type, &merged_provider, &merged_provider.settings_config)
+}
+
+/// Internal function to write live configuration
+fn write_live_snapshot_internal(
+    app_type: &AppType,
+    provider: &Provider,
+    config_to_write: &Value,
+) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let settings = sanitize_claude_settings_for_live(config_to_write);
             write_json_file(&path, &settings)?;
         }
         AppType::Codex => {
-            let obj = provider
-                .settings_config
-                .as_object()
-                .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
-            let auth = obj
-                .get("auth")
-                .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
+            let obj = config_to_write.as_object().ok_or_else(|| {
+                AppError::Config(
+                    "CODEX_CONFIG_NOT_OBJECT: settings_config must be a JSON object".to_string(),
+                )
+            })?;
+            let auth = obj.get("auth").ok_or_else(|| {
+                AppError::Config(
+                    "CODEX_CONFIG_MISSING_AUTH: settings_config missing 'auth' field".to_string(),
+                )
+            })?;
             let config_str = obj.get("config").and_then(|v| v.as_str()).ok_or_else(|| {
-                AppError::Config("Codex 供应商配置缺少 'config' 字段或不是字符串".to_string())
+                AppError::Config(
+                    "CODEX_CONFIG_MISSING_CONFIG: settings_config missing 'config' field or not a string".to_string(),
+                )
             })?;
 
             let auth_path = get_codex_auth_path();
@@ -131,7 +202,12 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
-            write_gemini_live(provider)?;
+            // Create a temporary provider with the merged config
+            let temp_provider = Provider {
+                settings_config: config_to_write.clone(),
+                ..provider.clone()
+            };
+            write_gemini_live(&temp_provider)?;
         }
         AppType::OpenCode => {
             // OpenCode uses additive mode - write provider to config
@@ -139,7 +215,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             use crate::provider::OpenCodeProviderConfig;
 
             // Defensive check: if settings_config is a full config structure, extract provider fragment
-            let config_to_write = if let Some(obj) = provider.settings_config.as_object() {
+            let config_to_write = if let Some(obj) = config_to_write.as_object() {
                 // Detect full config structure (has $schema or top-level provider field)
                 if obj.contains_key("$schema") || obj.contains_key("provider") {
                     log::warn!(
@@ -227,6 +303,8 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
 /// 优先从本地 settings 读取，验证后 fallback 到数据库的 is_current 字段。
 /// 这确保了配置导入后无效 ID 会自动 fallback 到数据库。
 ///
+/// This function uses `write_live_snapshot_with_merge` to perform runtime merge
+/// with common config when enabled.
 /// For additive mode apps (OpenCode), all providers are synced instead of just the current one.
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     // Sync providers based on mode
@@ -244,7 +322,8 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
             let providers = state.db.get_all_providers(app_type.as_str())?;
             if let Some(provider) = providers.get(&current_id) {
-                write_live_snapshot(&app_type, provider)?;
+                // Use write_live_snapshot_with_merge to support common config runtime merge
+                write_live_snapshot_with_merge(state, &app_type, provider)?;
             }
             // Note: get_effective_current_provider already validates existence,
             // so providers.get() should always succeed here

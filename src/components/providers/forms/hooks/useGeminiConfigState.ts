@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 
 interface UseGeminiConfigStateProps {
   initialData?: {
@@ -13,6 +14,7 @@ interface UseGeminiConfigStateProps {
 export function useGeminiConfigState({
   initialData,
 }: UseGeminiConfigStateProps) {
+  const { t } = useTranslation();
   const [geminiEnv, setGeminiEnvState] = useState("");
   const [geminiConfig, setGeminiConfigState] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");
@@ -119,18 +121,21 @@ export function useGeminiConfigState({
   }, [geminiEnv, envStringToObj, geminiApiKey, geminiBaseUrl, geminiModel]);
 
   // 验证 Gemini Config JSON
-  const validateGeminiConfig = useCallback((value: string): string => {
-    if (!value.trim()) return ""; // 空值允许
-    try {
-      const parsed = JSON.parse(value);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return "";
+  const validateGeminiConfig = useCallback(
+    (value: string): string => {
+      if (!value.trim()) return ""; // 空值允许
+      try {
+        const parsed = JSON.parse(value);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return "";
+        }
+        return t("providerForm.configJsonError");
+      } catch {
+        return t("providerForm.configJsonError");
       }
-      return "Config must be a JSON object";
-    } catch {
-      return "Invalid JSON format";
-    }
-  }, []);
+    },
+    [t],
+  );
 
   // 设置 env
   const setGeminiEnv = useCallback((value: string) => {
