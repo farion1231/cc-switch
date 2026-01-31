@@ -12,7 +12,7 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::providers::{get_adapter, AuthInfo};
+use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
 /// 健康状态枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -303,12 +303,18 @@ impl StreamCheckService {
         let os_name = Self::get_os_name();
         let arch_name = Self::get_arch_name();
 
-        // 严格按照 Claude CLI 请求格式设置 headers
-        let response = client
+        // 根据 auth.strategy 构建认证 headers
+        let mut request_builder = client
             .post(&url)
-            // 认证 headers（双重认证）
-            .header("authorization", format!("Bearer {}", auth.api_key))
-            .header("x-api-key", &auth.api_key)
+            .header("authorization", format!("Bearer {}", auth.api_key));
+
+        // 只有 Anthropic 官方策略才添加 x-api-key
+        if auth.strategy == AuthStrategy::Anthropic {
+            request_builder = request_builder.header("x-api-key", &auth.api_key);
+        }
+
+        // 严格按照 Claude CLI 请求格式设置其他 headers
+        let response = request_builder
             // Anthropic 必需 headers
             .header("anthropic-version", "2023-06-01")
             .header(
@@ -702,5 +708,23 @@ mod tests {
         // 在 x86_64 上应该返回 "x86_64"
         #[cfg(target_arch = "x86_64")]
         assert_eq!(arch_name, "x86_64");
+    }
+
+    #[test]
+    fn test_auth_strategy_imports() {
+        // 验证 AuthStrategy 枚举可以正常使用
+        let anthropic = AuthStrategy::Anthropic;
+        let claude_auth = AuthStrategy::ClaudeAuth;
+        let bearer = AuthStrategy::Bearer;
+
+        // 验证不同的策略是不相等的
+        assert_ne!(anthropic, claude_auth);
+        assert_ne!(anthropic, bearer);
+        assert_ne!(claude_auth, bearer);
+
+        // 验证相同策略是相等的
+        assert_eq!(anthropic, AuthStrategy::Anthropic);
+        assert_eq!(claude_auth, AuthStrategy::ClaudeAuth);
+        assert_eq!(bearer, AuthStrategy::Bearer);
     }
 }
