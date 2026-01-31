@@ -112,6 +112,65 @@ function removeEmptyParentSections(toml: string): string {
 }
 
 // ============================================================================
+// 键顺序重排工具
+// ============================================================================
+
+/**
+ * 重排合并后的对象键顺序：自定义配置的键在前，通用配置独有的键在后
+ *
+ * 这确保序列化后的 TOML 中用户自定义的键（如 model_provider, model）显示在顶部，
+ * 而通用配置独有的键（如 model_reasoning_effort）显示在下面。
+ *
+ * @param merged - 合并后的配置对象
+ * @param custom - 自定义配置对象
+ * @param common - 通用配置对象
+ * @returns 重排键顺序后的配置对象
+ */
+function reorderMergedKeys(
+  merged: Record<string, unknown>,
+  custom: Record<string, unknown>,
+  common: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  // 1. 先添加自定义配置中的键（保持自定义配置中的顺序）
+  for (const key of Object.keys(custom)) {
+    if (key in merged) {
+      const mergedValue = merged[key];
+      const customValue = custom[key];
+      const commonValue = common[key];
+
+      // 如果是嵌套对象，递归重排
+      if (
+        isPlainObject(mergedValue) &&
+        isPlainObject(customValue) &&
+        isPlainObject(commonValue)
+      ) {
+        result[key] = reorderMergedKeys(
+          mergedValue as Record<string, unknown>,
+          customValue as Record<string, unknown>,
+          commonValue as Record<string, unknown>,
+        );
+      } else if (isPlainObject(mergedValue) && isPlainObject(customValue)) {
+        // 通用配置中没有这个嵌套对象，直接使用合并后的值
+        result[key] = mergedValue;
+      } else {
+        result[key] = mergedValue;
+      }
+    }
+  }
+
+  // 2. 再添加通用配置独有的键（不在自定义配置中）
+  for (const key of Object.keys(common)) {
+    if (!(key in custom) && key in merged) {
+      result[key] = merged[key];
+    }
+  }
+
+  return result;
+}
+
+// ============================================================================
 // TOML 配置合并函数
 // ============================================================================
 
@@ -158,8 +217,16 @@ export const computeFinalTomlConfig = (
     true, // enabled 已在上面检查
   );
 
+  // 重排键顺序：自定义配置的键在前，通用配置独有的键在后
+  // 这样序列化后 TOML 输出中用户自定义的键（如 model_provider, model）会在顶部
+  const reordered = reorderMergedKeys(
+    merged,
+    customResult.config!,
+    commonResult.config!,
+  );
+
   // 序列化回 TOML
-  const stringifyResult = safeStringifyToml(merged);
+  const stringifyResult = safeStringifyToml(reordered);
   if (stringifyResult.error) {
     return {
       finalConfig: customToml,
