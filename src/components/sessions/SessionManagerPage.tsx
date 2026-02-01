@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
   TooltipContent,
@@ -35,6 +36,7 @@ import {
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
+import { ProviderIcon } from "@/components/ProviderIcon";
 
 const TERMINAL_TARGET_KEY = "session_manager_terminal_target";
 
@@ -80,12 +82,11 @@ const getProviderLabel = (providerId: string, t: (key: string) => string) => {
   return translated === key ? providerId : translated;
 };
 
-const getProviderColor = (providerId: string) => {
-  if (providerId === "codex")
-    return "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
-  if (providerId === "claude")
-    return "bg-orange-500/10 text-orange-500 border-orange-500/20";
-  return "bg-primary/10 text-primary border-primary/20";
+// 根据 providerId 获取对应的图标名称
+const getProviderIconName = (providerId: string) => {
+  if (providerId === "codex") return "openai";
+  if (providerId === "claude") return "claude";
+  return providerId;
 };
 
 const getRoleTone = (role: string) => {
@@ -302,78 +303,92 @@ export function SessionManagerPage() {
                   </Badge>
                 </div>
               </CardHeader>
-              <CardContent className="flex-1 overflow-y-auto p-2">
-                {isLoading ? (
-                  <div className="flex items-center justify-center py-12">
-                    <RefreshCw className="size-5 animate-spin text-muted-foreground" />
-                  </div>
-                ) : filteredSessions.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
-                    <p className="text-sm text-muted-foreground">
-                      {t("sessionManager.noSessions")}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {filteredSessions.map((session) => {
-                      const isSelected =
-                        selectedKey && getSessionKey(session) === selectedKey;
-                      const title = formatSessionTitle(session);
-                      const lastActive =
-                        session.lastActiveAt || session.createdAt || undefined;
+              <CardContent className="flex-1 overflow-hidden p-0">
+                <ScrollArea className="h-full">
+                  <div className="p-2">
+                    {isLoading ? (
+                      <div className="flex items-center justify-center py-12">
+                        <RefreshCw className="size-5 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : filteredSessions.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-12 text-center">
+                        <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
+                        <p className="text-sm text-muted-foreground">
+                          {t("sessionManager.noSessions")}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {filteredSessions.map((session) => {
+                          const isSelected =
+                            selectedKey &&
+                            getSessionKey(session) === selectedKey;
+                          const title = formatSessionTitle(session);
+                          const lastActive =
+                            session.lastActiveAt ||
+                            session.createdAt ||
+                            undefined;
 
-                      return (
-                        <button
-                          key={getSessionKey(session)}
-                          type="button"
-                          onClick={() => {
-                            setSelectedKey(getSessionKey(session));
-                            scrollToDetail();
-                          }}
-                          className={cn(
-                            "w-full text-left rounded-lg px-3 py-2.5 transition-all group",
-                            isSelected
-                              ? "bg-primary/10 border border-primary/30"
-                              : "hover:bg-muted/60 border border-transparent"
-                          )}
-                        >
-                          {/* 第一行：Provider + 标题 */}
-                          <div className="flex items-center gap-2 mb-1">
-                            <Badge
-                              variant="outline"
+                          return (
+                            <button
+                              key={getSessionKey(session)}
+                              type="button"
+                              onClick={() => {
+                                setSelectedKey(getSessionKey(session));
+                                scrollToDetail();
+                              }}
                               className={cn(
-                                "text-[10px] px-1.5 py-0 h-5",
-                                getProviderColor(session.providerId)
+                                "w-full text-left rounded-lg px-3 py-2.5 transition-all group",
+                                isSelected
+                                  ? "bg-primary/10 border border-primary/30"
+                                  : "hover:bg-muted/60 border border-transparent"
                               )}
                             >
-                              {getProviderLabel(session.providerId, t)}
-                            </Badge>
-                            <span className="text-sm font-medium truncate flex-1">
-                              {title}
-                            </span>
-                            <ChevronRight
-                              className={cn(
-                                "size-4 text-muted-foreground/50 shrink-0 transition-transform",
-                                isSelected && "text-primary rotate-90"
-                              )}
-                            />
-                          </div>
+                              {/* 第一行：Provider Icon + 标题 */}
+                              <div className="flex items-center gap-2 mb-1">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="shrink-0">
+                                      <ProviderIcon
+                                        icon={getProviderIconName(
+                                          session.providerId
+                                        )}
+                                        name={session.providerId}
+                                        size={18}
+                                      />
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {getProviderLabel(session.providerId, t)}
+                                  </TooltipContent>
+                                </Tooltip>
+                                <span className="text-sm font-medium truncate flex-1">
+                                  {title}
+                                </span>
+                                <ChevronRight
+                                  className={cn(
+                                    "size-4 text-muted-foreground/50 shrink-0 transition-transform",
+                                    isSelected && "text-primary rotate-90"
+                                  )}
+                                />
+                              </div>
 
-                          {/* 第二行：时间 */}
-                          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                            <Clock className="size-3" />
-                            <span>
-                              {lastActive
-                                ? formatRelativeTime(lastActive)
-                                : t("common.unknown")}
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })}
+                              {/* 第二行：时间 */}
+                              <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                                <Clock className="size-3" />
+                                <span>
+                                  {lastActive
+                                    ? formatRelativeTime(lastActive)
+                                    : t("common.unknown")}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                )}
+                </ScrollArea>
               </CardContent>
             </Card>
 
@@ -395,15 +410,22 @@ export function SessionManagerPage() {
                       {/* 左侧：会话信息 */}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 mb-1">
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-[10px] px-1.5 py-0 h-5",
-                              getProviderColor(selectedSession.providerId)
-                            )}
-                          >
-                            {getProviderLabel(selectedSession.providerId, t)}
-                          </Badge>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="shrink-0">
+                                <ProviderIcon
+                                  icon={getProviderIconName(
+                                    selectedSession.providerId
+                                  )}
+                                  name={selectedSession.providerId}
+                                  size={20}
+                                />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {getProviderLabel(selectedSession.providerId, t)}
+                            </TooltipContent>
+                          </Tooltip>
                           <h2 className="text-base font-semibold truncate">
                             {formatSessionTitle(selectedSession)}
                           </h2>
@@ -539,69 +561,99 @@ export function SessionManagerPage() {
                   </CardHeader>
 
                   {/* 消息列表 */}
-                  <CardContent className="flex-1 overflow-y-auto p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <MessageSquare className="size-4 text-muted-foreground" />
-                      <span className="text-sm font-medium">
-                        {t("sessionManager.conversationHistory", {
-                          defaultValue: "对话记录",
-                        })}
-                      </span>
-                      <Badge variant="secondary" className="text-xs">
-                        {messages.length}
-                      </Badge>
-                    </div>
+                  <CardContent className="flex-1 overflow-hidden p-0">
+                    <ScrollArea className="h-full">
+                      <div className="p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <MessageSquare className="size-4 text-muted-foreground" />
+                          <span className="text-sm font-medium">
+                            {t("sessionManager.conversationHistory", {
+                              defaultValue: "对话记录",
+                            })}
+                          </span>
+                          <Badge variant="secondary" className="text-xs">
+                            {messages.length}
+                          </Badge>
+                        </div>
 
-                    {isLoadingMessages ? (
-                      <div className="flex items-center justify-center py-12">
-                        <RefreshCw className="size-5 animate-spin text-muted-foreground" />
-                      </div>
-                    ) : messages.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-12 text-center">
-                        <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
-                        <p className="text-sm text-muted-foreground">
-                          {t("sessionManager.emptySession")}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {messages.map(
-                          (message: SessionMessage, index: number) => (
-                            <div
-                              key={`${message.role}-${index}`}
-                              className={cn(
-                                "rounded-lg border px-3 py-2.5",
-                                message.role.toLowerCase() === "user"
-                                  ? "bg-primary/5 border-primary/20 ml-8"
-                                  : message.role.toLowerCase() === "assistant"
-                                    ? "bg-blue-500/5 border-blue-500/20 mr-8"
-                                    : "bg-muted/40 border-border/60"
-                              )}
-                            >
-                              <div className="flex items-center justify-between text-xs mb-1.5">
-                                <span
+                        {isLoadingMessages ? (
+                          <div className="flex items-center justify-center py-12">
+                            <RefreshCw className="size-5 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : messages.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-12 text-center">
+                            <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
+                            <p className="text-sm text-muted-foreground">
+                              {t("sessionManager.emptySession")}
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {messages.map(
+                              (message: SessionMessage, index: number) => (
+                                <div
+                                  key={`${message.role}-${index}`}
                                   className={cn(
-                                    "font-semibold",
-                                    getRoleTone(message.role)
+                                    "rounded-lg border px-3 py-2.5 relative group",
+                                    message.role.toLowerCase() === "user"
+                                      ? "bg-primary/5 border-primary/20 ml-8"
+                                      : message.role.toLowerCase() ===
+                                          "assistant"
+                                        ? "bg-blue-500/5 border-blue-500/20 mr-8"
+                                        : "bg-muted/40 border-border/60"
                                   )}
                                 >
-                                  {getRoleLabel(message.role)}
-                                </span>
-                                {message.ts && (
-                                  <span className="text-muted-foreground">
-                                    {formatTimestamp(message.ts)}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                                {message.content}
-                              </div>
-                            </div>
-                          )
+                                  {/* 悬浮复制按钮 */}
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="absolute top-2 right-2 size-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        onClick={() =>
+                                          void handleCopy(
+                                            message.content,
+                                            t("sessionManager.messageCopied", {
+                                              defaultValue: "已复制消息内容",
+                                            })
+                                          )
+                                        }
+                                      >
+                                        <Copy className="size-3" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      {t("sessionManager.copyMessage", {
+                                        defaultValue: "复制内容",
+                                      })}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                  <div className="flex items-center justify-between text-xs mb-1.5 pr-6">
+                                    <span
+                                      className={cn(
+                                        "font-semibold",
+                                        getRoleTone(message.role)
+                                      )}
+                                    >
+                                      {getRoleLabel(message.role)}
+                                    </span>
+                                    {message.ts && (
+                                      <span className="text-muted-foreground">
+                                        {formatTimestamp(message.ts)}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                                    {message.content}
+                                  </div>
+                                </div>
+                              )
+                            )}
+                            <div ref={messagesEndRef} />
+                          </div>
                         )}
-                        <div ref={messagesEndRef} />
                       </div>
-                    )}
+                    </ScrollArea>
                   </CardContent>
                 </>
               )}
