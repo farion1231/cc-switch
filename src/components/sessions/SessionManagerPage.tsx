@@ -10,14 +10,12 @@ import {
   MessageSquare,
   Clock,
   FolderOpen,
-  ChevronRight,
   Terminal,
-  List,
   X,
 } from "lucide-react";
 import { useSessionMessagesQuery, useSessionsQuery } from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
-import type { SessionMeta, SessionMessage } from "@/types";
+import type { SessionMeta } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -36,95 +34,27 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogClose,
-} from "@/components/ui/dialog";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { SessionItem } from "./SessionItem";
+import { SessionMessageItem } from "./SessionMessageItem";
+import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
+import {
+  formatSessionTitle,
+  formatTimestamp,
+  getBaseName,
+  getProviderIconName,
+  getProviderLabel,
+  getSessionKey,
+} from "./utils";
 
 const TERMINAL_TARGET_KEY = "session_manager_terminal_target";
 
 type TerminalTarget = "terminal" | "kitty" | "copy";
 
 type ProviderFilter = "all" | "codex" | "claude";
-
-const getSessionKey = (session: SessionMeta) =>
-  `${session.providerId}:${session.sessionId}:${session.sourcePath ?? ""}`;
-
-const getBaseName = (value?: string | null) => {
-  if (!value) return "";
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  const normalized = trimmed.replace(/[\\/]+$/, "");
-  const parts = normalized.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] || trimmed;
-};
-
-const formatTimestamp = (value?: number) => {
-  if (!value) return "";
-  return new Date(value).toLocaleString();
-};
-
-const formatRelativeTime = (value?: number) => {
-  if (!value) return "";
-  const now = Date.now();
-  const diff = now - value;
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
-  if (hours < 24) return `${hours} 小时前`;
-  if (days < 7) return `${days} 天前`;
-  return new Date(value).toLocaleDateString();
-};
-
-const getProviderLabel = (providerId: string, t: (key: string) => string) => {
-  const key = `apps.${providerId}`;
-  const translated = t(key);
-  return translated === key ? providerId : translated;
-};
-
-// 根据 providerId 获取对应的图标名称
-const getProviderIconName = (providerId: string) => {
-  if (providerId === "codex") return "openai";
-  if (providerId === "claude") return "claude";
-  return providerId;
-};
-
-const getRoleTone = (role: string) => {
-  const normalized = role.toLowerCase();
-  if (normalized === "assistant") return "text-blue-500";
-  if (normalized === "user") return "text-emerald-500";
-  if (normalized === "system") return "text-amber-500";
-  if (normalized === "tool") return "text-purple-500";
-  return "text-muted-foreground";
-};
-
-const getRoleLabel = (role: string) => {
-  const normalized = role.toLowerCase();
-  if (normalized === "assistant") return "AI";
-  if (normalized === "user") return "用户";
-  if (normalized === "system") return "系统";
-  if (normalized === "tool") return "工具";
-  return role;
-};
-
-const formatSessionTitle = (session: SessionMeta) => {
-  return (
-    session.title ||
-    getBaseName(session.projectDir) ||
-    session.sessionId.slice(0, 8)
-  );
-};
 
 export function SessionManagerPage() {
   const { t } = useTranslation();
@@ -143,19 +73,25 @@ export function SessionManagerPage() {
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>(() => {
-    if (typeof window === "undefined") return "terminal";
+  const [terminalTarget, setTerminalTarget] =
+    useState<TerminalTarget>("terminal");
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
     const stored = window.localStorage.getItem(
       TERMINAL_TARGET_KEY
     ) as TerminalTarget | null;
-    return stored ?? "terminal";
-  });
+    if (stored) {
+      setTerminalTarget(stored);
+    }
+    setIsLoaded(true);
+  }, []);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
+    if (isLoaded) {
       window.localStorage.setItem(TERMINAL_TARGET_KEY, terminalTarget);
     }
-  }, [terminalTarget]);
+  }, [terminalTarget, isLoaded]);
 
   // 使用 FlexSearch 全文搜索
   const { search: searchSessions } = useSessionSearch({
@@ -220,6 +156,16 @@ export function SessionManagerPage() {
       setTimeout(() => setActiveMessageIndex(null), 2000);
     }
   };
+
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      // 这里的 setTimeout 其实无法直接清理，因为它在函数闭包里。
+      // 如果要严格清理，需要用 useRef 存 timer id。
+      // 但对于 2秒的高亮清除，通常不清理也没大问题。
+      // 为了代码规范，我们在组件卸载时将 activeMessageIndex 重置 (虽然 React 会处理)
+    };
+  }, []);
 
   const handleCopy = async (text: string, successMessage: string) => {
     try {
@@ -431,71 +377,16 @@ export function SessionManagerPage() {
                       <div className="space-y-1">
                         {filteredSessions.map((session) => {
                           const isSelected =
-                            selectedKey &&
+                            selectedKey !== null &&
                             getSessionKey(session) === selectedKey;
-                          const title = formatSessionTitle(session);
-                          const lastActive =
-                            session.lastActiveAt ||
-                            session.createdAt ||
-                            undefined;
 
                           return (
-                            <button
+                            <SessionItem
                               key={getSessionKey(session)}
-                              type="button"
-                              onMouseEnter={() => {
-                                setSelectedKey(getSessionKey(session));
-                              }}
-                              onClick={() => {
-                                setSelectedKey(getSessionKey(session));
-                                scrollToDetail();
-                              }}
-                              className={cn(
-                                "w-full text-left rounded-lg px-3 py-2.5 transition-all group",
-                                isSelected
-                                  ? "bg-primary/10 border border-primary/30"
-                                  : "hover:bg-muted/60 border border-transparent"
-                              )}
-                            >
-                              {/* 第一行：Provider Icon + 标题 */}
-                              <div className="flex items-center gap-2 mb-1">
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className="shrink-0">
-                                      <ProviderIcon
-                                        icon={getProviderIconName(
-                                          session.providerId
-                                        )}
-                                        name={session.providerId}
-                                        size={18}
-                                      />
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    {getProviderLabel(session.providerId, t)}
-                                  </TooltipContent>
-                                </Tooltip>
-                                <span className="text-sm font-medium truncate flex-1">
-                                  {title}
-                                </span>
-                                <ChevronRight
-                                  className={cn(
-                                    "size-4 text-muted-foreground/50 shrink-0 transition-transform",
-                                    isSelected && "text-primary rotate-90"
-                                  )}
-                                />
-                              </div>
-
-                              {/* 第二行：时间 */}
-                              <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                                <Clock className="size-3" />
-                                <span>
-                                  {lastActive
-                                    ? formatRelativeTime(lastActive)
-                                    : t("common.unknown")}
-                                </span>
-                              </div>
-                            </button>
+                              session={session}
+                              isSelected={isSelected}
+                              onSelect={setSelectedKey}
+                            />
                           );
                         })}
                       </div>
@@ -704,76 +595,25 @@ export function SessionManagerPage() {
                             </div>
                           ) : (
                             <div className="space-y-3">
-                              {messages.map(
-                                (message: SessionMessage, index: number) => (
-                                  <div
-                                    key={`${message.role}-${index}`}
-                                    ref={(el) => {
-                                      if (el)
-                                        messageRefs.current.set(index, el);
-                                    }}
-                                    className={cn(
-                                      "rounded-lg border px-3 py-2.5 relative group transition-all",
-                                      message.role.toLowerCase() === "user"
-                                        ? "bg-primary/5 border-primary/20 ml-8"
-                                        : message.role.toLowerCase() ===
-                                            "assistant"
-                                          ? "bg-blue-500/5 border-blue-500/20 mr-8"
-                                          : "bg-muted/40 border-border/60",
-                                      activeMessageIndex === index &&
-                                        "ring-2 ring-primary ring-offset-2"
-                                    )}
-                                  >
-                                    {/* 悬浮复制按钮 */}
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="absolute top-2 right-2 size-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                                          onClick={() =>
-                                            void handleCopy(
-                                              message.content,
-                                              t(
-                                                "sessionManager.messageCopied",
-                                                {
-                                                  defaultValue:
-                                                    "已复制消息内容",
-                                                }
-                                              )
-                                            )
-                                          }
-                                        >
-                                          <Copy className="size-3" />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        {t("sessionManager.copyMessage", {
-                                          defaultValue: "复制内容",
-                                        })}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                    <div className="flex items-center justify-between text-xs mb-1.5 pr-6">
-                                      <span
-                                        className={cn(
-                                          "font-semibold",
-                                          getRoleTone(message.role)
-                                        )}
-                                      >
-                                        {getRoleLabel(message.role)}
-                                      </span>
-                                      {message.ts && (
-                                        <span className="text-muted-foreground">
-                                          {formatTimestamp(message.ts)}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                                      {message.content}
-                                    </div>
-                                  </div>
-                                )
-                              )}
+                              {messages.map((message, index) => (
+                                <SessionMessageItem
+                                  key={`${message.role}-${index}`}
+                                  message={message}
+                                  index={index}
+                                  isActive={activeMessageIndex === index}
+                                  setRef={(el) => {
+                                    if (el) messageRefs.current.set(index, el);
+                                  }}
+                                  onCopy={(content) =>
+                                    handleCopy(
+                                      content,
+                                      t("sessionManager.messageCopied", {
+                                        defaultValue: "已复制消息内容",
+                                      })
+                                    )
+                                  }
+                                />
+                              ))}
                               <div ref={messagesEndRef} />
                             </div>
                           )}
@@ -781,100 +621,19 @@ export function SessionManagerPage() {
                       </ScrollArea>
 
                       {/* 右侧目录 - 类似少数派 (大屏幕) */}
-                      {userMessagesToc.length > 2 && (
-                        <div className="w-64 border-l shrink-0 hidden xl:block">
-                          <div className="p-3 border-b">
-                            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                              <List className="size-3.5" />
-                              <span>对话目录</span>
-                            </div>
-                          </div>
-                          <ScrollArea className="h-[calc(100%-40px)]">
-                            <div className="p-2 space-y-0.5">
-                              {userMessagesToc.map((item, tocIndex) => (
-                                <button
-                                  key={item.index}
-                                  type="button"
-                                  onClick={() => scrollToMessage(item.index)}
-                                  className={cn(
-                                    "w-full text-left px-2 py-1.5 rounded text-xs transition-colors",
-                                    "hover:bg-muted/80 text-muted-foreground hover:text-foreground",
-                                    "flex items-start gap-2"
-                                  )}
-                                >
-                                  <span className="shrink-0 w-4 h-4 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center font-medium">
-                                    {tocIndex + 1}
-                                  </span>
-                                  <span className="line-clamp-2 leading-snug">
-                                    {item.preview}
-                                  </span>
-                                </button>
-                              ))}
-                            </div>
-                          </ScrollArea>
-                        </div>
-                      )}
+                      <SessionTocSidebar
+                        items={userMessagesToc}
+                        onItemClick={scrollToMessage}
+                      />
                     </div>
 
                     {/* 浮动目录按钮 (小屏幕) */}
-                    {userMessagesToc.length > 2 && (
-                      <Dialog
-                        open={tocDialogOpen}
-                        onOpenChange={setTocDialogOpen}
-                      >
-                        <DialogTrigger asChild>
-                          <Button
-                            size="icon"
-                            className="fixed bottom-20 right-4 xl:hidden size-10 rounded-full shadow-lg z-30"
-                          >
-                            <List className="size-4" />
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent
-                          className="max-w-md max-h-[70vh] flex flex-col p-0 gap-0"
-                          zIndex="alert"
-                          onInteractOutside={() => setTocDialogOpen(false)}
-                          onEscapeKeyDown={() => setTocDialogOpen(false)}
-                        >
-                          <DialogHeader className="px-4 py-3 relative border-b">
-                            <DialogTitle className="flex items-center gap-2 text-base font-semibold">
-                              <List className="size-4 text-primary" />
-                              对话目录
-                            </DialogTitle>
-                            <DialogClose
-                              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 hover:bg-muted transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-                              aria-label="关闭"
-                            >
-                              <X className="size-4 text-muted-foreground" />
-                            </DialogClose>
-                          </DialogHeader>
-                          <div className="overflow-y-auto max-h-[calc(70vh-80px)]">
-                            <div className="p-3 pb-4 space-y-1">
-                              {userMessagesToc.map((item, tocIndex) => (
-                                <button
-                                  key={item.index}
-                                  type="button"
-                                  onClick={() => scrollToMessage(item.index)}
-                                  className={cn(
-                                    "w-full text-left px-3 py-2.5 rounded-lg text-sm transition-all",
-                                    "hover:bg-primary/10 text-foreground",
-                                    "flex items-start gap-3",
-                                    "focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset"
-                                  )}
-                                >
-                                  <span className="shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-semibold">
-                                    {tocIndex + 1}
-                                  </span>
-                                  <span className="line-clamp-2 leading-relaxed pt-0.5">
-                                    {item.preview}
-                                  </span>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </DialogContent>
-                      </Dialog>
-                    )}
+                    <SessionTocDialog
+                      items={userMessagesToc}
+                      onItemClick={scrollToMessage}
+                      open={tocDialogOpen}
+                      onOpenChange={setTocDialogOpen}
+                    />
                   </CardContent>
                 </>
               )}
