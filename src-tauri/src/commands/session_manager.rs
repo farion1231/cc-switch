@@ -29,13 +29,20 @@ pub async fn launch_session_terminal(
     target: String,
     command: String,
     cwd: Option<String>,
+    custom_config: Option<String>,
 ) -> Result<bool, String> {
     let command = command.clone();
     let target = target.clone();
     let cwd = cwd.clone();
+    let custom_config = custom_config.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        session_manager::terminal::launch_terminal(&target, &command, cwd.as_deref())
+        session_manager::terminal::launch_terminal(
+            &target,
+            &command,
+            cwd.as_deref(),
+            custom_config.as_deref(),
+        )
     })
     .await
     .map_err(|e| format!("Failed to launch terminal: {e}"))??;

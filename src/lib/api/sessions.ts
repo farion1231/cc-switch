@@ -6,7 +6,10 @@ export const sessionsApi = {
     return await invoke("list_sessions");
   },
 
-  async getMessages(providerId: string, sourcePath: string): Promise<SessionMessage[]> {
+  async getMessages(
+    providerId: string,
+    sourcePath: string
+  ): Promise<SessionMessage[]> {
     return await invoke("get_session_messages", { providerId, sourcePath });
   },
 
@@ -14,8 +17,14 @@ export const sessionsApi = {
     target: string;
     command: string;
     cwd?: string | null;
+    customConfig?: string | null;
   }): Promise<boolean> {
-    const { target, command, cwd } = options;
-    return await invoke("launch_session_terminal", { target, command, cwd });
+    const { target, command, cwd, customConfig } = options;
+    return await invoke("launch_session_terminal", {
+      target,
+      command,
+      cwd,
+      customConfig,
+    });
   },
 };

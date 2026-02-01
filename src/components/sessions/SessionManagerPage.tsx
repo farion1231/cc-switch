@@ -12,10 +12,10 @@ import {
   FolderOpen,
   Terminal,
   X,
+  SquareTerminal,
 } from "lucide-react";
 import { useSessionMessagesQuery, useSessionsQuery } from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
-import type { SessionMeta } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -36,8 +36,14 @@ import {
 } from "@/components/ui/tooltip";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
-import { cn } from "@/lib/utils";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import {
+  AlacrittyIcon,
+  GhosttyIcon,
+  ITermIcon,
+  KittyIcon,
+  WezTermIcon,
+} from "@/components/icons/TerminalIcons";
 import { SessionItem } from "./SessionItem";
 import { SessionMessageItem } from "./SessionMessageItem";
 import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
@@ -52,7 +58,13 @@ import {
 
 const TERMINAL_TARGET_KEY = "session_manager_terminal_target";
 
-type TerminalTarget = "terminal" | "kitty" | "copy";
+type TerminalTarget =
+  | "terminal"
+  | "iterm"
+  | "ghostty"
+  | "kitty"
+  | "wezterm"
+  | "alacritty";
 
 type ProviderFilter = "all" | "codex" | "claude";
 
@@ -78,12 +90,13 @@ export function SessionManagerPage() {
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(
+    const storedTarget = window.localStorage.getItem(
       TERMINAL_TARGET_KEY
     ) as TerminalTarget | null;
-    if (stored) {
-      setTerminalTarget(stored);
+    if (storedTarget) {
+      setTerminalTarget(storedTarget);
     }
+
     setIsLoaded(true);
   }, []);
 
@@ -182,7 +195,7 @@ export function SessionManagerPage() {
   const handleResume = async () => {
     if (!selectedSession?.resumeCommand) return;
 
-    if (terminalTarget === "copy" || !isMac()) {
+    if (!isMac()) {
       await handleCopy(
         selectedSession.resumeCommand,
         t("sessionManager.resumeCommandCopied")
@@ -202,10 +215,6 @@ export function SessionManagerPage() {
       await handleCopy(fallback, t("sessionManager.resumeFallbackCopied"));
       toast.error(extractErrorMessage(error) || t("sessionManager.openFailed"));
     }
-  };
-
-  const scrollToDetail = () => {
-    detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   return (
@@ -489,16 +498,46 @@ export function SessionManagerPage() {
                             setTerminalTarget(value as TerminalTarget)
                           }
                         >
-                          <SelectTrigger className="h-8 w-[110px] text-xs">
-                            <Terminal className="size-3 mr-1" />
+                          <SelectTrigger className="h-8 min-w-[110px] w-auto text-xs px-2.5">
+                            <Terminal className="size-3 mr-1.5" />
                             <SelectValue />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent align="end">
                             <SelectItem value="terminal">
-                              {t("sessionManager.terminalTargetTerminal")}
+                              <div className="flex items-center gap-2">
+                                <SquareTerminal className="size-3.5" />
+                                <span>Terminal</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="iterm">
+                              <div className="flex items-center gap-2">
+                                <ITermIcon className="size-3.5" />
+                                <span>iTerm2 (Untested)</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="ghostty">
+                              <div className="flex items-center gap-2">
+                                <GhosttyIcon className="size-3.5" />
+                                <span>Ghostty</span>
+                              </div>
                             </SelectItem>
                             <SelectItem value="kitty">
-                              {t("sessionManager.terminalTargetKitty")}
+                              <div className="flex items-center gap-2">
+                                <KittyIcon className="size-3.5" />
+                                <span>Kitty</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="wezterm">
+                              <div className="flex items-center gap-2">
+                                <WezTermIcon className="size-3.5" />
+                                <span>WezTerm (Untested)</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="alacritty">
+                              <div className="flex items-center gap-2">
+                                <AlacrittyIcon className="size-3.5" />
+                                <span>Alacritty (Untested)</span>
+                              </div>
                             </SelectItem>
                           </SelectContent>
                         </Select>
