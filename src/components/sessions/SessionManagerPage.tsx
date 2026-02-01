@@ -11,6 +11,8 @@ import {
   FolderOpen,
   ChevronRight,
   Terminal,
+  List,
+  X,
 } from "lucide-react";
 import { useSessionMessagesQuery, useSessionsQuery } from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
@@ -33,6 +35,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogClose,
+} from "@/components/ui/dialog";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
@@ -121,6 +131,11 @@ export function SessionManagerPage() {
   const sessions = data ?? [];
   const detailRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const [activeMessageIndex, setActiveMessageIndex] = useState<number | null>(
+    null
+  );
+  const [tocDialogOpen, setTocDialogOpen] = useState(false);
 
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
@@ -195,6 +210,30 @@ export function SessionManagerPage() {
       selectedSession?.providerId,
       selectedSession?.sourcePath
     );
+
+  // 提取用户消息用于目录
+  const userMessagesToc = useMemo(() => {
+    return messages
+      .map((msg, index) => ({ msg, index }))
+      .filter(({ msg }) => msg.role.toLowerCase() === "user")
+      .map(({ msg, index }) => ({
+        index,
+        preview:
+          msg.content.slice(0, 50) + (msg.content.length > 50 ? "..." : ""),
+        ts: msg.ts,
+      }));
+  }, [messages]);
+
+  const scrollToMessage = (index: number) => {
+    const el = messageRefs.current.get(index);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setActiveMessageIndex(index);
+      setTocDialogOpen(false); // 关闭弹窗
+      // 清除高亮状态
+      setTimeout(() => setActiveMessageIndex(null), 2000);
+    }
+  };
 
   const handleCopy = async (text: string, successMessage: string) => {
     try {
@@ -560,100 +599,208 @@ export function SessionManagerPage() {
                     )}
                   </CardHeader>
 
-                  {/* 消息列表 */}
+                  {/* 消息列表区域 */}
                   <CardContent className="flex-1 overflow-hidden p-0">
-                    <ScrollArea className="h-full">
-                      <div className="p-4">
-                        <div className="flex items-center gap-2 mb-3">
-                          <MessageSquare className="size-4 text-muted-foreground" />
-                          <span className="text-sm font-medium">
-                            {t("sessionManager.conversationHistory", {
-                              defaultValue: "对话记录",
-                            })}
-                          </span>
-                          <Badge variant="secondary" className="text-xs">
-                            {messages.length}
-                          </Badge>
-                        </div>
+                    <div className="flex h-full">
+                      {/* 消息列表 */}
+                      <ScrollArea className="flex-1">
+                        <div className="p-4">
+                          <div className="flex items-center gap-2 mb-3">
+                            <MessageSquare className="size-4 text-muted-foreground" />
+                            <span className="text-sm font-medium">
+                              {t("sessionManager.conversationHistory", {
+                                defaultValue: "对话记录",
+                              })}
+                            </span>
+                            <Badge variant="secondary" className="text-xs">
+                              {messages.length}
+                            </Badge>
+                          </div>
 
-                        {isLoadingMessages ? (
-                          <div className="flex items-center justify-center py-12">
-                            <RefreshCw className="size-5 animate-spin text-muted-foreground" />
+                          {isLoadingMessages ? (
+                            <div className="flex items-center justify-center py-12">
+                              <RefreshCw className="size-5 animate-spin text-muted-foreground" />
+                            </div>
+                          ) : messages.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-12 text-center">
+                              <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
+                              <p className="text-sm text-muted-foreground">
+                                {t("sessionManager.emptySession")}
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {messages.map(
+                                (message: SessionMessage, index: number) => (
+                                  <div
+                                    key={`${message.role}-${index}`}
+                                    ref={(el) => {
+                                      if (el)
+                                        messageRefs.current.set(index, el);
+                                    }}
+                                    className={cn(
+                                      "rounded-lg border px-3 py-2.5 relative group transition-all",
+                                      message.role.toLowerCase() === "user"
+                                        ? "bg-primary/5 border-primary/20 ml-8"
+                                        : message.role.toLowerCase() ===
+                                            "assistant"
+                                          ? "bg-blue-500/5 border-blue-500/20 mr-8"
+                                          : "bg-muted/40 border-border/60",
+                                      activeMessageIndex === index &&
+                                        "ring-2 ring-primary ring-offset-2"
+                                    )}
+                                  >
+                                    {/* 悬浮复制按钮 */}
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="absolute top-2 right-2 size-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                                          onClick={() =>
+                                            void handleCopy(
+                                              message.content,
+                                              t(
+                                                "sessionManager.messageCopied",
+                                                {
+                                                  defaultValue:
+                                                    "已复制消息内容",
+                                                }
+                                              )
+                                            )
+                                          }
+                                        >
+                                          <Copy className="size-3" />
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        {t("sessionManager.copyMessage", {
+                                          defaultValue: "复制内容",
+                                        })}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    <div className="flex items-center justify-between text-xs mb-1.5 pr-6">
+                                      <span
+                                        className={cn(
+                                          "font-semibold",
+                                          getRoleTone(message.role)
+                                        )}
+                                      >
+                                        {getRoleLabel(message.role)}
+                                      </span>
+                                      {message.ts && (
+                                        <span className="text-muted-foreground">
+                                          {formatTimestamp(message.ts)}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                                      {message.content}
+                                    </div>
+                                  </div>
+                                )
+                              )}
+                              <div ref={messagesEndRef} />
+                            </div>
+                          )}
+                        </div>
+                      </ScrollArea>
+
+                      {/* 右侧目录 - 类似少数派 (大屏幕) */}
+                      {userMessagesToc.length > 2 && (
+                        <div className="w-64 border-l shrink-0 hidden xl:block">
+                          <div className="p-3 border-b">
+                            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                              <List className="size-3.5" />
+                              <span>对话目录</span>
+                            </div>
                           </div>
-                        ) : messages.length === 0 ? (
-                          <div className="flex flex-col items-center justify-center py-12 text-center">
-                            <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
-                            <p className="text-sm text-muted-foreground">
-                              {t("sessionManager.emptySession")}
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            {messages.map(
-                              (message: SessionMessage, index: number) => (
-                                <div
-                                  key={`${message.role}-${index}`}
+                          <ScrollArea className="h-[calc(100%-40px)]">
+                            <div className="p-2 space-y-0.5">
+                              {userMessagesToc.map((item, tocIndex) => (
+                                <button
+                                  key={item.index}
+                                  type="button"
+                                  onClick={() => scrollToMessage(item.index)}
                                   className={cn(
-                                    "rounded-lg border px-3 py-2.5 relative group",
-                                    message.role.toLowerCase() === "user"
-                                      ? "bg-primary/5 border-primary/20 ml-8"
-                                      : message.role.toLowerCase() ===
-                                          "assistant"
-                                        ? "bg-blue-500/5 border-blue-500/20 mr-8"
-                                        : "bg-muted/40 border-border/60"
+                                    "w-full text-left px-2 py-1.5 rounded text-xs transition-colors",
+                                    "hover:bg-muted/80 text-muted-foreground hover:text-foreground",
+                                    "flex items-start gap-2"
                                   )}
                                 >
-                                  {/* 悬浮复制按钮 */}
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="absolute top-2 right-2 size-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                                        onClick={() =>
-                                          void handleCopy(
-                                            message.content,
-                                            t("sessionManager.messageCopied", {
-                                              defaultValue: "已复制消息内容",
-                                            })
-                                          )
-                                        }
-                                      >
-                                        <Copy className="size-3" />
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      {t("sessionManager.copyMessage", {
-                                        defaultValue: "复制内容",
-                                      })}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                  <div className="flex items-center justify-between text-xs mb-1.5 pr-6">
-                                    <span
-                                      className={cn(
-                                        "font-semibold",
-                                        getRoleTone(message.role)
-                                      )}
-                                    >
-                                      {getRoleLabel(message.role)}
-                                    </span>
-                                    {message.ts && (
-                                      <span className="text-muted-foreground">
-                                        {formatTimestamp(message.ts)}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                                    {message.content}
-                                  </div>
-                                </div>
-                              )
-                            )}
-                            <div ref={messagesEndRef} />
+                                  <span className="shrink-0 w-4 h-4 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center font-medium">
+                                    {tocIndex + 1}
+                                  </span>
+                                  <span className="line-clamp-2 leading-snug">
+                                    {item.preview}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 浮动目录按钮 (小屏幕) */}
+                    {userMessagesToc.length > 2 && (
+                      <Dialog
+                        open={tocDialogOpen}
+                        onOpenChange={setTocDialogOpen}
+                      >
+                        <DialogTrigger asChild>
+                          <Button
+                            size="icon"
+                            className="fixed bottom-20 right-4 xl:hidden size-10 rounded-full shadow-lg z-30"
+                          >
+                            <List className="size-4" />
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent
+                          className="max-w-md max-h-[70vh] flex flex-col p-0 gap-0"
+                          zIndex="alert"
+                          onInteractOutside={() => setTocDialogOpen(false)}
+                          onEscapeKeyDown={() => setTocDialogOpen(false)}
+                        >
+                          <DialogHeader className="px-4 py-3 relative border-b">
+                            <DialogTitle className="flex items-center gap-2 text-base font-semibold">
+                              <List className="size-4 text-primary" />
+                              对话目录
+                            </DialogTitle>
+                            <DialogClose
+                              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 hover:bg-muted transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                              aria-label="关闭"
+                            >
+                              <X className="size-4 text-muted-foreground" />
+                            </DialogClose>
+                          </DialogHeader>
+                          <div className="overflow-y-auto max-h-[calc(70vh-80px)]">
+                            <div className="p-3 pb-4 space-y-1">
+                              {userMessagesToc.map((item, tocIndex) => (
+                                <button
+                                  key={item.index}
+                                  type="button"
+                                  onClick={() => scrollToMessage(item.index)}
+                                  className={cn(
+                                    "w-full text-left px-3 py-2.5 rounded-lg text-sm transition-all",
+                                    "hover:bg-primary/10 text-foreground",
+                                    "flex items-start gap-3",
+                                    "focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset"
+                                  )}
+                                >
+                                  <span className="shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-semibold">
+                                    {tocIndex + 1}
+                                  </span>
+                                  <span className="line-clamp-2 leading-relaxed pt-0.5">
+                                    {item.preview}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    </ScrollArea>
+                        </DialogContent>
+                      </Dialog>
+                    )}
                   </CardContent>
                 </>
               )}
