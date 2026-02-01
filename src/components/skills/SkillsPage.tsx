@@ -84,8 +84,9 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const skills: DiscoverableSkillItem[] = useMemo(() => {
       if (!discoverableSkills) return [];
       return discoverableSkills.map((d) => {
+        // 同时处理 / 和 \ 路径分隔符（兼容 Windows 和 Unix）
         const installName =
-          d.directory.split("/").pop()?.toLowerCase() ||
+          d.directory.split(/[/\\]/).pop()?.toLowerCase() ||
           d.directory.toLowerCase();
         // 使用 directory + repoOwner + repoName 组合判断是否已安装
         const key = `${installName}:${d.repoOwner.toLowerCase()}:${d.repoName.toLowerCase()}`;
