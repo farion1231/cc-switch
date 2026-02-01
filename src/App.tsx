@@ -84,14 +84,38 @@ const getInitialApp = (): AppId => {
   return "claude";
 };
 
+const VIEW_STORAGE_KEY = "cc-switch-last-view";
+const VALID_VIEWS: View[] = [
+  "providers",
+  "settings",
+  "prompts",
+  "skills",
+  "skillsDiscovery",
+  "mcp",
+  "agents",
+  "universal",
+];
+
+const getInitialView = (): View => {
+  const saved = localStorage.getItem(VIEW_STORAGE_KEY) as View | null;
+  if (saved && VALID_VIEWS.includes(saved)) {
+    return saved;
+  }
+  return "providers";
+};
+
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
-  const [currentView, setCurrentView] = useState<View>("providers");
+  const [currentView, setCurrentView] = useState<View>(getInitialView);
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem(VIEW_STORAGE_KEY, currentView);
+  }, [currentView]);
 
   // Get settings for visibleApps
   const { data: settingsData } = useSettingsQuery();
