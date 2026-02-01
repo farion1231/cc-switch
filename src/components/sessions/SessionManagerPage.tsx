@@ -137,6 +137,8 @@ export function SessionManagerPage() {
     null
   );
   const [tocDialogOpen, setTocDialogOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
@@ -264,67 +266,152 @@ export function SessionManagerPage() {
     <TooltipProvider>
       <div className="mx-auto px-4 sm:px-6 flex flex-col h-[calc(100vh-8rem)]">
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
-          {/* 搜索和筛选工具栏 */}
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center bg-background/80 backdrop-blur-sm py-2 -mx-1 px-1">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={t("sessionManager.searchPlaceholder")}
-                className="pl-9"
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Select
-                value={providerFilter}
-                onValueChange={(value) =>
-                  setProviderFilter(value as ProviderFilter)
-                }
-              >
-                <SelectTrigger className="w-[140px]">
-                  <SelectValue
-                    placeholder={t("sessionManager.providerFilterAll")}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">
-                    {t("sessionManager.providerFilterAll")}
-                  </SelectItem>
-                  <SelectItem value="codex">Codex</SelectItem>
-                  <SelectItem value="claude">Claude Code</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => void refetch()}
-                  >
-                    <RefreshCw className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("common.refresh")}</TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
-
           {/* 主内容区域 - 左右分栏 */}
           <div className="flex-1 overflow-hidden grid gap-4 md:grid-cols-[320px_1fr]">
             {/* 左侧会话列表 */}
             <Card className="flex flex-col overflow-hidden">
-              <CardHeader className="py-3 px-4 border-b">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-medium">
-                    {t("sessionManager.sessionList")}
-                  </CardTitle>
-                  <Badge variant="secondary" className="text-xs">
-                    {filteredSessions.length}
-                  </Badge>
-                </div>
+              <CardHeader className="py-2 px-3 border-b">
+                {isSearchOpen ? (
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                    <Input
+                      ref={searchInputRef}
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder={t("sessionManager.searchPlaceholder")}
+                      className="h-8 pl-8 pr-8 text-sm"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          setIsSearchOpen(false);
+                          setSearch("");
+                        }
+                      }}
+                      onBlur={() => {
+                        if (search.trim() === "") {
+                          setIsSearchOpen(false);
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-1 top-1/2 -translate-y-1/2 size-6"
+                      onClick={() => {
+                        setIsSearchOpen(false);
+                        setSearch("");
+                      }}
+                    >
+                      <X className="size-3" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <CardTitle className="text-sm font-medium">
+                        {t("sessionManager.sessionList")}
+                      </CardTitle>
+                      <Badge variant="secondary" className="text-xs">
+                        {filteredSessions.length}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7"
+                            onClick={() => {
+                              setIsSearchOpen(true);
+                              setTimeout(
+                                () => searchInputRef.current?.focus(),
+                                0
+                              );
+                            }}
+                          >
+                            <Search className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>搜索会话</TooltipContent>
+                      </Tooltip>
+
+                      <Select
+                        value={providerFilter}
+                        onValueChange={(value) =>
+                          setProviderFilter(value as ProviderFilter)
+                        }
+                      >
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <SelectTrigger className="size-7 p-0 justify-center border-0 bg-transparent hover:bg-muted">
+                              <ProviderIcon
+                                icon={
+                                  providerFilter === "all"
+                                    ? "apps"
+                                    : providerFilter === "codex"
+                                      ? "openai"
+                                      : "claude"
+                                }
+                                name={providerFilter}
+                                size={14}
+                              />
+                            </SelectTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {providerFilter === "all"
+                              ? t("sessionManager.providerFilterAll")
+                              : providerFilter}
+                          </TooltipContent>
+                        </Tooltip>
+                        <SelectContent>
+                          <SelectItem value="all">
+                            <div className="flex items-center gap-2">
+                              <ProviderIcon icon="apps" name="all" size={14} />
+                              <span>
+                                {t("sessionManager.providerFilterAll")}
+                              </span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="codex">
+                            <div className="flex items-center gap-2">
+                              <ProviderIcon
+                                icon="openai"
+                                name="codex"
+                                size={14}
+                              />
+                              <span>Codex</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="claude">
+                            <div className="flex items-center gap-2">
+                              <ProviderIcon
+                                icon="claude"
+                                name="claude"
+                                size={14}
+                              />
+                              <span>Claude Code</span>
+                            </div>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7"
+                            onClick={() => void refetch()}
+                          >
+                            <RefreshCw className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("common.refresh")}</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </div>
+                )}
               </CardHeader>
               <CardContent className="flex-1 overflow-hidden p-0">
                 <ScrollArea className="h-full">
@@ -356,6 +443,9 @@ export function SessionManagerPage() {
                             <button
                               key={getSessionKey(session)}
                               type="button"
+                              onMouseEnter={() => {
+                                setSelectedKey(getSessionKey(session));
+                              }}
                               onClick={() => {
                                 setSelectedKey(getSessionKey(session));
                                 scrollToDetail();
