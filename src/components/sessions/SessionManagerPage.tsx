@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -154,32 +155,15 @@ export function SessionManagerPage() {
     }
   }, [terminalTarget]);
 
-  const filteredSessions = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    const filtered = sessions.filter((session) => {
-      if (providerFilter !== "all" && session.providerId !== providerFilter) {
-        return false;
-      }
-      if (!needle) return true;
-      const haystack = [
-        session.sessionId,
-        session.title,
-        session.summary,
-        session.projectDir,
-        session.sourcePath,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(needle);
-    });
+  // 使用 FlexSearch 全文搜索
+  const { search: searchSessions } = useSessionSearch({
+    sessions,
+    providerFilter,
+  });
 
-    return [...filtered].sort((a, b) => {
-      const aTs = a.lastActiveAt ?? a.createdAt ?? 0;
-      const bTs = b.lastActiveAt ?? b.createdAt ?? 0;
-      return bTs - aTs;
-    });
-  }, [providerFilter, search, sessions]);
+  const filteredSessions = useMemo(() => {
+    return searchSessions(search);
+  }, [searchSessions, search]);
 
   useEffect(() => {
     if (filteredSessions.length === 0) {
