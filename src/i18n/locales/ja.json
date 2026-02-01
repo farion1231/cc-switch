@@ -1097,7 +1097,9 @@
       "placeholder": "状態で絞り込み",
       "all": "すべて",
       "installed": "インストール済み",
-      "uninstalled": "未インストール"
+      "uninstalled": "未インストール",
+      "repo": "リポジトリで絞り込み",
+      "allRepos": "すべてのリポジトリ"
     },
     "noResults": "一致するスキルが見つかりませんでした",
     "noInstalled": "インストールされたスキルがありません",

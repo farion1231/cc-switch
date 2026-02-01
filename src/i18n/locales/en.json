@@ -1099,7 +1099,9 @@
       "placeholder": "Filter by status",
       "all": "All",
       "installed": "Installed",
-      "uninstalled": "Not installed"
+      "uninstalled": "Not installed",
+      "repo": "Filter by repo",
+      "allRepos": "All repos"
     },
     "noResults": "No matching skills found",
     "noInstalled": "No skills installed",

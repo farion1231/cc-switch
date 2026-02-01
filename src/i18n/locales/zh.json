@@ -1099,7 +1099,9 @@
       "placeholder": "状态筛选",
       "all": "全部",
       "installed": "已安装",
-      "uninstalled": "未安装"
+      "uninstalled": "未安装",
+      "repo": "仓库筛选",
+      "allRepos": "全部仓库"
     },
     "noResults": "未找到匹配的技能",
     "noInstalled": "暂无已安装的技能",
