@@ -73,11 +73,22 @@ const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
 const CONTENT_TOP_OFFSET = DRAG_BAR_HEIGHT + HEADER_HEIGHT;
 
+const STORAGE_KEY = "cc-switch-last-app";
+const VALID_APPS: AppId[] = ["claude", "codex", "gemini", "opencode"];
+
+const getInitialApp = (): AppId => {
+  const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
+  if (saved && VALID_APPS.includes(saved)) {
+    return saved;
+  }
+  return "claude";
+};
+
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
-  const [activeApp, setActiveApp] = useState<AppId>("claude");
+  const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
   const [currentView, setCurrentView] = useState<View>("providers");
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
