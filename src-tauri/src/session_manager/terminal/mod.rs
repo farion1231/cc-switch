@@ -19,7 +19,13 @@ pub fn launch_terminal(target: &str, command: &str, cwd: Option<&str>) -> Result
 fn launch_macos_terminal(command: &str, cwd: Option<&str>) -> Result<(), String> {
     let full_command = build_shell_command(command, cwd);
     let escaped = escape_osascript(&full_command);
-    let script = format!("tell application \"Terminal\" to do script \"{escaped}\"");
+    let script = format!(
+        r#"tell application "Terminal"
+    activate
+    do script "{}"
+end tell"#,
+        escaped
+    );
 
     let status = Command::new("osascript")
         .arg("-e")
@@ -35,24 +41,34 @@ fn launch_macos_terminal(command: &str, cwd: Option<&str>) -> Result<(), String>
 }
 
 fn launch_kitty(command: &str, cwd: Option<&str>) -> Result<(), String> {
-    let mut cmd = Command::new("kitty");
-    cmd.arg("@").arg("launch").arg("--type=window");
-    if let Some(dir) = cwd {
-        if !dir.trim().is_empty() {
-            cmd.arg("--cwd").arg(dir);
-        }
-    }
+    let full_command = build_shell_command(command, cwd);
 
-    cmd.arg("bash").arg("-lc").arg(command);
+    // 获取用户默认 shell
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
-    let status = cmd
+    // 直接使用 open 命令启动 Kitty
+    // -n: 打开新实例
+    // -a: 指定应用程序
+    // --args: 传递参数给应用程序
+    // -e: 指定要执行的程序
+    // -l: login shell
+    // -c: 执行命令
+    let status = Command::new("open")
+        .arg("-na")
+        .arg("/Applications/kitty.app")
+        .arg("--args")
+        .arg("-e")
+        .arg(&shell)
+        .arg("-l")
+        .arg("-c")
+        .arg(&full_command)
         .status()
-        .map_err(|e| format!("Failed to launch kitty: {e}"))?;
+        .map_err(|e| format!("Failed to launch Kitty: {e}"))?;
 
     if status.success() {
         Ok(())
     } else {
-        Err("Kitty launch failed. Ensure kitty is running with remote control enabled.".to_string())
+        Err("Failed to launch Kitty. Make sure Kitty is installed in /Applications.".to_string())
     }
 }
 
@@ -67,7 +83,7 @@ fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
 
 fn shell_escape(value: &str) -> String {
     let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+    format!("\"{}\"", escaped)
 }
 
 fn escape_osascript(value: &str) -> String {
