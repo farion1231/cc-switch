@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { ProviderHealthStatus } from "@/types/proxy";
 import { useTranslation } from "react-i18next";
@@ -17,8 +18,8 @@ export function ProviderHealthBadge({
 }: ProviderHealthBadgeProps) {
   const { t } = useTranslation();
 
-  // 根据失败次数计算状态
-  const getStatus = () => {
+  // 根据失败次数计算状态 - 使用 useMemo 避免不必要的重计算
+  const statusConfig = useMemo(() => {
     if (consecutiveFailures === 0) {
       return {
         labelKey: "health.operational",
@@ -47,9 +48,8 @@ export function ProviderHealthBadge({
         textColor: "text-red-700 dark:text-red-400",
       };
     }
-  };
+  }, [consecutiveFailures]);
 
-  const statusConfig = getStatus();
   const label = t(statusConfig.labelKey, {
     defaultValue: statusConfig.labelFallback,
   });
@@ -58,6 +58,7 @@ export function ProviderHealthBadge({
     <div
       className={cn(
         "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium tracking-wide",
+        "transition-all duration-200 ease-out",
         statusConfig.bgColor,
         statusConfig.textColor,
         className,
@@ -67,7 +68,12 @@ export function ProviderHealthBadge({
         defaultValue: `连续失败 ${consecutiveFailures} 次`,
       })}
     >
-      <div className={cn("w-1.5 h-1.5 rounded-full", statusConfig.color)} />
+      <div
+        className={cn(
+          "w-1.5 h-1.5 rounded-full transition-colors duration-200",
+          statusConfig.color,
+        )}
+      />
       <span>{label}</span>
     </div>
   );

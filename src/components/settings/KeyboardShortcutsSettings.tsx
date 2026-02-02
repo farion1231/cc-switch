@@ -31,14 +31,14 @@ function formatShortcutDisplay(shortcut: string): string {
 // Parse keyboard event to shortcut string
 function eventToShortcut(event: KeyboardEvent): string | null {
   const key = event.key.toLowerCase();
-  
+
   // Ignore modifier-only keys
   if (["control", "shift", "alt", "meta"].includes(key)) {
     return null;
   }
 
   const parts: string[] = [];
-  
+
   // Use "mod" for platform-appropriate modifier
   if (isMac ? event.metaKey : event.ctrlKey) {
     parts.push("mod");
@@ -49,20 +49,19 @@ function eventToShortcut(event: KeyboardEvent): string | null {
   if (event.altKey) {
     parts.push("alt");
   }
-  
+
   // Only allow shortcuts with at least one modifier
   if (parts.length === 0) {
     return null;
   }
-  
+
   parts.push(key);
   return parts.join("+");
 }
 
-export const KeyboardShortcutsSettings: React.FC<KeyboardShortcutsSettingsProps> = ({
-  searchShortcut = "mod+k",
-  onChange,
-}) => {
+export const KeyboardShortcutsSettings: React.FC<
+  KeyboardShortcutsSettingsProps
+> = ({ searchShortcut = "mod+k", onChange }) => {
   const { t } = useTranslation();
   const [isRecording, setIsRecording] = useState(false);
   const [tempShortcut, setTempShortcut] = useState<string | null>(null);
@@ -164,7 +163,13 @@ export const KeyboardShortcutsSettings: React.FC<KeyboardShortcutsSettingsProps>
           <div className="flex items-center gap-2">
             <Input
               ref={inputRef}
-              value={isRecording ? t("settings.keyboard.recording", { defaultValue: "按下快捷键..." }) : displayValue}
+              value={
+                isRecording
+                  ? t("settings.keyboard.recording", {
+                      defaultValue: "按下快捷键...",
+                    })
+                  : displayValue
+              }
               readOnly
               onClick={handleStartRecording}
               className={`w-32 text-center cursor-pointer font-mono ${
@@ -178,7 +183,9 @@ export const KeyboardShortcutsSettings: React.FC<KeyboardShortcutsSettingsProps>
               variant="ghost"
               size="icon"
               onClick={handleReset}
-              title={t("settings.keyboard.reset", { defaultValue: "重置为默认" })}
+              title={t("settings.keyboard.reset", {
+                defaultValue: "重置为默认",
+              })}
               className="h-9 w-9"
             >
               <RotateCcw className="h-4 w-4" />

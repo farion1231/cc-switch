@@ -862,6 +862,7 @@
     "disableFailed": "無効化に失敗しました",
     "importSuccess": "インポートしました",
     "importFailed": "インポートに失敗しました",
+    "searchPlaceholder": "プロンプトを検索...",
     "confirm": {
       "deleteTitle": "削除の確認",
       "deleteMessage": "プロンプト「{{name}}」を削除してもよろしいですか？"
@@ -930,6 +931,7 @@
     "installFailed": "インストールに失敗しました",
     "uninstallSuccess": "スキル {{name}} をアンインストールしました",
     "uninstallFailed": "アンインストールに失敗しました",
+    "searchPlaceholder": "スキルを検索...",
     "error": {
       "skillNotFound": "スキルが見つかりません: {{directory}}",
       "missingRepoInfo": "リポジトリ情報（owner または name）が不足しています",
@@ -1294,7 +1296,11 @@
     "ariaLabel": "アイテムを検索",
     "closeAriaLabel": "検索を閉じる",
     "closeHint": "Escで閉じる",
-    "noResults": "一致する結果がありません"
+    "noResults": "一致する結果がありません",
+    "recentSearches": "最近の検索",
+    "clearHistory": "クリア",
+    "syntaxHint": "検索構文：",
+    "clearAndShowAll": "検索をクリアしてすべて表示"
   },
   "universalProvider": {
     "title": "統合プロバイダー",

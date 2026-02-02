@@ -254,8 +254,7 @@ impl ProviderService {
         // For other apps: Check both local settings and database
         let local_current = crate::settings::get_current_provider(&app_type);
         let db_current = state.db.get_current_provider(app_type.as_str())?;
-        let is_current =
-            local_current.as_deref() == Some(id) || db_current.as_deref() == Some(id);
+        let is_current = local_current.as_deref() == Some(id) || db_current.as_deref() == Some(id);
 
         if is_current {
             // Get all providers to check if there are alternatives

@@ -4,16 +4,46 @@ import { cn } from "@/lib/utils";
 
 // Pastel background colors for fallback avatars
 const PASTEL_COLORS = [
-  { bg: "bg-blue-100 dark:bg-blue-900/40", text: "text-blue-600 dark:text-blue-400" },
-  { bg: "bg-green-100 dark:bg-green-900/40", text: "text-green-600 dark:text-green-400" },
-  { bg: "bg-purple-100 dark:bg-purple-900/40", text: "text-purple-600 dark:text-purple-400" },
-  { bg: "bg-pink-100 dark:bg-pink-900/40", text: "text-pink-600 dark:text-pink-400" },
-  { bg: "bg-amber-100 dark:bg-amber-900/40", text: "text-amber-600 dark:text-amber-400" },
-  { bg: "bg-cyan-100 dark:bg-cyan-900/40", text: "text-cyan-600 dark:text-cyan-400" },
-  { bg: "bg-indigo-100 dark:bg-indigo-900/40", text: "text-indigo-600 dark:text-indigo-400" },
-  { bg: "bg-rose-100 dark:bg-rose-900/40", text: "text-rose-600 dark:text-rose-400" },
-  { bg: "bg-teal-100 dark:bg-teal-900/40", text: "text-teal-600 dark:text-teal-400" },
-  { bg: "bg-orange-100 dark:bg-orange-900/40", text: "text-orange-600 dark:text-orange-400" },
+  {
+    bg: "bg-blue-100 dark:bg-blue-900/60",
+    text: "text-blue-600 dark:text-blue-400",
+  },
+  {
+    bg: "bg-green-100 dark:bg-green-900/60",
+    text: "text-green-600 dark:text-green-400",
+  },
+  {
+    bg: "bg-purple-100 dark:bg-purple-900/60",
+    text: "text-purple-600 dark:text-purple-400",
+  },
+  {
+    bg: "bg-pink-100 dark:bg-pink-900/60",
+    text: "text-pink-600 dark:text-pink-400",
+  },
+  {
+    bg: "bg-amber-100 dark:bg-amber-900/60",
+    text: "text-amber-600 dark:text-amber-400",
+  },
+  {
+    bg: "bg-cyan-100 dark:bg-cyan-900/60",
+    text: "text-cyan-600 dark:text-cyan-400",
+  },
+  {
+    bg: "bg-indigo-100 dark:bg-indigo-900/60",
+    text: "text-indigo-600 dark:text-indigo-400",
+  },
+  {
+    bg: "bg-rose-100 dark:bg-rose-900/60",
+    text: "text-rose-600 dark:text-rose-400",
+  },
+  {
+    bg: "bg-teal-100 dark:bg-teal-900/60",
+    text: "text-teal-600 dark:text-teal-400",
+  },
+  {
+    bg: "bg-orange-100 dark:bg-orange-900/60",
+    text: "text-orange-600 dark:text-orange-400",
+  },
 ];
 
 // Generate consistent color based on name
@@ -85,14 +115,14 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
       .toUpperCase()
       .slice(0, 2);
     const colorScheme = getColorForName(name);
-    
+
     const fallbackFontSize =
       typeof size === "number" ? `${Math.max(size * 0.5, 12)}px` : "0.5em";
-    
+
     return (
       <span
         className={cn(
-          "inline-flex items-center justify-center rounded-[inherit] absolute inset-0",
+          "inline-flex items-center justify-center rounded-[inherit] w-full h-full",
           colorScheme.bg,
           colorScheme.text,
           "font-semibold",

@@ -189,9 +189,14 @@ pub fn run() {
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
     panic_hook::setup_panic_hook();
 
+    #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
 
-    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    // 仅在 release 模式下启用单实例限制，开发模式允许多实例并行
+    #[cfg(all(
+        not(debug_assertions),
+        any(target_os = "macos", target_os = "windows", target_os = "linux")
+    ))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             log::info!("=== Single Instance Callback Triggered ===");

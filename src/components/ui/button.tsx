@@ -16,13 +16,12 @@ const buttonVariants = cva(
           "bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700",
         // 轮廓按钮
         outline:
-          "border border-border-default bg-background hover:bg-gray-100 hover:border-border-hover dark:hover:bg-gray-800",
+          "border border-border-default bg-background text-foreground hover:bg-accent hover:text-accent-foreground",
         // 次按钮：灰色（对应旧版 secondary）
         secondary:
-          "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200",
+          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         // 幽灵按钮（对应旧版 ghost）
-        ghost:
-          "text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
         // MCP 专属按钮：祖母绿
         mcp: "bg-emerald-500 text-white hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
         // 链接按钮
@@ -49,12 +48,14 @@ export interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, type, ...props }, ref) => {
     const Comp = asChild ? Slot : "button";
+    const resolvedType = asChild ? type : (type ?? "button");
     return (
       <Comp
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
+        type={resolvedType}
         {...props}
       />
     );

@@ -42,7 +42,9 @@ interface ListToolbarProps {
 }
 
 // Detect platform for keyboard shortcut display
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+const isMac =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
 const modKey = isMac ? "⌘" : "Ctrl";
 
 export const ListToolbar: React.FC<ListToolbarProps> = ({
@@ -63,19 +65,18 @@ export const ListToolbar: React.FC<ListToolbarProps> = ({
   onSearchOpen,
 }) => {
   const { t } = useTranslation();
-
   return (
     <div className="flex items-center justify-between gap-2 py-2">
       <div className="flex items-center gap-2">
         {/* View Switcher */}
         {showViewSwitcher && (
-          <div className="flex items-center rounded-lg border border-border bg-muted/30 p-0.5">
+          <div className="flex items-center rounded-lg border border-border bg-muted/50 p-0.5">
             <Button
               variant="ghost"
               size="sm"
               className={cn(
-                "h-7 w-7 p-0 rounded-md hover:bg-muted",
-                viewMode === "list" && "bg-muted shadow-sm"
+                "h-7 w-7 p-0 rounded-md hover:bg-muted hover:text-foreground",
+                viewMode === "list" && "bg-muted shadow-sm",
               )}
               onClick={() => onViewModeChange("list")}
               disabled={isLoading}
@@ -87,8 +88,8 @@ export const ListToolbar: React.FC<ListToolbarProps> = ({
               variant="ghost"
               size="sm"
               className={cn(
-                "h-7 w-7 p-0 rounded-md hover:bg-muted",
-                viewMode === "card" && "bg-muted shadow-sm"
+                "h-7 w-7 p-0 rounded-md hover:bg-muted hover:text-foreground",
+                viewMode === "card" && "bg-muted shadow-sm",
               )}
               onClick={() => onViewModeChange("card")}
               disabled={isLoading}
@@ -106,7 +107,7 @@ export const ListToolbar: React.FC<ListToolbarProps> = ({
             size="sm"
             className={cn(
               "h-8 gap-1.5 text-muted-foreground hover:text-foreground",
-              isSearchOpen && "bg-accent text-accent-foreground"
+              isSearchOpen && "bg-accent text-accent-foreground",
             )}
             onClick={onSearchOpen}
             disabled={isLoading}
@@ -115,29 +116,33 @@ export const ListToolbar: React.FC<ListToolbarProps> = ({
             <span className="text-xs">{modKey}K</span>
           </Button>
         )}
-
         {/* Anonymous Mode Toggle */}
         {showAnonymousToggle && onAnonymousModeToggle && (
           <Button
             variant="outline"
             size="sm"
             className={cn(
-              "h-8 gap-1.5",
-              isAnonymousMode 
-                ? "bg-amber-500/10 text-amber-600 border-amber-500/30 hover:bg-amber-500/20 hover:text-amber-600" 
-                : "text-muted-foreground hover:text-foreground"
+              "h-8 w-8 p-0",
+              isAnonymousMode
+                ? "bg-amber-500/10 text-amber-600 border-amber-500/30 hover:bg-amber-500/20 hover:text-amber-600"
+                : "text-muted-foreground hover:text-foreground",
             )}
             onClick={onAnonymousModeToggle}
             disabled={isLoading}
-            title={isAnonymousMode 
-              ? t("listToolbar.anonymousModeOn", { defaultValue: "隐私模式已开启，点击关闭" })
-              : t("listToolbar.anonymousModeOff", { defaultValue: "开启隐私模式，隐藏敏感信息" })
+            title={
+              isAnonymousMode
+                ? t("listToolbar.anonymousModeOn", {
+                    defaultValue: "隐私模式已开启，点击关闭",
+                  })
+                : t("listToolbar.anonymousModeOff", {
+                    defaultValue: "开启隐私模式，隐藏敏感信息",
+                  })
             }
           >
             {isAnonymousMode ? (
-              <EyeOff className="h-3.5 w-3.5" />
+              <EyeOff className="h-4 w-4" />
             ) : (
-              <Eye className="h-3.5 w-3.5" />
+              <Eye className="h-4 w-4" />
             )}
           </Button>
         )}

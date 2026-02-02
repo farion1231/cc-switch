@@ -1,55 +1,48 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Edit3, Trash2, ExternalLink } from "lucide-react";
+import { Trash2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import type { McpServer } from "@/types";
-import type { AppId } from "@/lib/api/types";
+import { type InstalledSkill, type AppType } from "@/hooks/useSkills";
 import { settingsApi } from "@/lib/api";
-import { mcpPresets } from "@/config/mcpPresets";
 import { cn } from "@/lib/utils";
 
-interface McpCardCompactProps {
-  id: string;
-  server: McpServer;
-  onToggleApp: (serverId: string, app: AppId, enabled: boolean) => void;
-  onEdit: (id: string) => void;
-  onDelete: (id: string) => void;
+interface SkillCardCompactProps {
+  skill: InstalledSkill;
+  onToggleApp: (id: string, app: AppType, enabled: boolean) => void;
+  onUninstall: () => void;
 }
 
-export const McpCardCompact: React.FC<McpCardCompactProps> = ({
-  id,
-  server,
+export const SkillCardCompact: React.FC<SkillCardCompactProps> = ({
+  skill,
   onToggleApp,
-  onEdit,
-  onDelete,
+  onUninstall,
 }) => {
   const { t } = useTranslation();
-  const name = server.name || id;
-  const description = server.description || "";
-
-  // Match preset metadata
-  const meta = mcpPresets.find((p) => p.id === id);
-  const docsUrl = server.docs || meta?.docs;
-  const homepageUrl = server.homepage || meta?.homepage;
-  const tags = server.tags || meta?.tags;
 
   const openDocs = async () => {
-    const url = docsUrl || homepageUrl;
-    if (!url) return;
+    if (!skill.readmeUrl) return;
     try {
-      await settingsApi.openExternal(url);
+      await settingsApi.openExternal(skill.readmeUrl);
     } catch {
       // ignore
     }
   };
 
+  // 生成来源标签
+  const sourceLabel = useMemo(() => {
+    if (skill.repoOwner && skill.repoName) {
+      return `${skill.repoOwner}/${skill.repoName}`;
+    }
+    return t("skills.local");
+  }, [skill.repoOwner, skill.repoName, t]);
+
   // Count enabled apps
   const enabledCount = [
-    server.apps.claude,
-    server.apps.codex,
-    server.apps.gemini,
-    server.apps.opencode,
+    skill.apps.claude,
+    skill.apps.codex,
+    skill.apps.gemini,
+    skill.apps.opencode,
   ].filter(Boolean).length;
 
   return (
@@ -59,31 +52,28 @@ export const McpCardCompact: React.FC<McpCardCompactProps> = ({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="font-medium text-sm text-foreground truncate">
-              {name}
+              {skill.name}
             </h3>
-            {(docsUrl || homepageUrl) && (
+            {skill.readmeUrl && (
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
                 onClick={openDocs}
-                title={t("mcp.presets.docs")}
               >
                 <ExternalLink className="h-3 w-3" />
               </Button>
             )}
           </div>
-          {description && (
+          {skill.description && (
             <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-              {description}
+              {skill.description}
             </p>
           )}
-          {!description && tags && tags.length > 0 && (
-            <p className="text-xs text-muted-foreground/70 truncate mt-1">
-              {tags.slice(0, 3).join(", ")}
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground/70 truncate mt-1">
+            {sourceLabel}
+          </p>
         </div>
 
         {/* Quick actions */}
@@ -92,19 +82,9 @@ export const McpCardCompact: React.FC<McpCardCompactProps> = ({
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 w-7 p-0"
-            onClick={() => onEdit(id)}
-            title={t("common.edit")}
-          >
-            <Edit3 size={14} />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
             className="h-7 w-7 p-0 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
-            onClick={() => onDelete(id)}
-            title={t("common.delete")}
+            onClick={onUninstall}
+            title={t("skills.uninstall")}
           >
             <Trash2 size={14} />
           </Button>
@@ -117,31 +97,29 @@ export const McpCardCompact: React.FC<McpCardCompactProps> = ({
       {/* App toggles - compact grid */}
       <div className="mt-3 pt-2 border-t border-border/50">
         <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
-          <span>
-            {t("mcp.unifiedPanel.enabledApps", { defaultValue: "Enabled" })}
-          </span>
+          <span>{t("skills.enabledApps", { defaultValue: "Enabled" })}</span>
           <span className="font-medium">{enabledCount}/4</span>
         </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
           <AppToggle
             label="Claude"
-            checked={server.apps.claude}
-            onChange={(checked) => onToggleApp(id, "claude", checked)}
+            checked={skill.apps.claude}
+            onChange={(checked) => onToggleApp(skill.id, "claude", checked)}
           />
           <AppToggle
             label="Codex"
-            checked={server.apps.codex}
-            onChange={(checked) => onToggleApp(id, "codex", checked)}
+            checked={skill.apps.codex}
+            onChange={(checked) => onToggleApp(skill.id, "codex", checked)}
           />
           <AppToggle
             label="Gemini"
-            checked={server.apps.gemini}
-            onChange={(checked) => onToggleApp(id, "gemini", checked)}
+            checked={skill.apps.gemini}
+            onChange={(checked) => onToggleApp(skill.id, "gemini", checked)}
           />
           <AppToggle
             label="OpenCode"
-            checked={server.apps.opencode}
-            onChange={(checked) => onToggleApp(id, "opencode", checked)}
+            checked={skill.apps.opencode}
+            onChange={(checked) => onToggleApp(skill.id, "opencode", checked)}
           />
         </div>
       </div>
@@ -176,4 +154,4 @@ const AppToggle: React.FC<AppToggleProps> = ({ label, checked, onChange }) => {
   );
 };
 
-export default McpCardCompact;
+export default SkillCardCompact;

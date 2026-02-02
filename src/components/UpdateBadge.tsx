@@ -15,7 +15,6 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
   if (!hasUpdate || isDismissed || !updateInfo) {
     return null;
   }
-
   return (
     <div
       className={`
@@ -25,7 +24,7 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
         rounded-lg text-xs
         shadow-sm
         transition-all duration-200
-        ${onClick ? "cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750" : ""}
+        ${onClick ? "cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700" : ""}
         ${className}
       `}
       role={onClick ? "button" : undefined}

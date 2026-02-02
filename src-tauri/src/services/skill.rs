@@ -323,7 +323,12 @@ impl SkillService {
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
         // 从所有应用目录删除
-        for app in [AppType::Claude, AppType::Codex, AppType::Gemini, AppType::OpenCode] {
+        for app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+        ] {
             let _ = Self::remove_from_app(&skill.directory, &app);
         }
 
@@ -382,7 +387,12 @@ impl SkillService {
 
         let mut unmanaged: HashMap<String, UnmanagedSkill> = HashMap::new();
 
-        for app in [AppType::Claude, AppType::Codex, AppType::Gemini, AppType::OpenCode] {
+        for app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+        ] {
             let app_dir = match Self::get_app_skills_dir(&app) {
                 Ok(d) => d,
                 Err(_) => continue,
@@ -464,7 +474,12 @@ impl SkillService {
             let mut source_path: Option<PathBuf> = None;
             let mut found_in: Vec<String> = Vec::new();
 
-            for app in [AppType::Claude, AppType::Codex, AppType::Gemini, AppType::OpenCode] {
+            for app in [
+                AppType::Claude,
+                AppType::Codex,
+                AppType::Gemini,
+                AppType::OpenCode,
+            ] {
                 if let Ok(app_dir) = Self::get_app_skills_dir(&app) {
                     let skill_path = app_dir.join(&dir_name);
                     if skill_path.exists() {
@@ -985,7 +1000,12 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
     let mut discovered: HashMap<String, SkillApps> = HashMap::new();
 
     // 扫描各应用目录
-    for app in [AppType::Claude, AppType::Codex, AppType::Gemini, AppType::OpenCode] {
+    for app in [
+        AppType::Claude,
+        AppType::Codex,
+        AppType::Gemini,
+        AppType::OpenCode,
+    ] {
         let app_dir = match SkillService::get_app_skills_dir(&app) {
             Ok(d) => d,
             Err(_) => continue,

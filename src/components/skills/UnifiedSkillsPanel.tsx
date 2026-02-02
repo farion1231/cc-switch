@@ -12,7 +12,13 @@ import {
   type InstalledSkill,
   type AppType,
 } from "@/hooks/useSkills";
+import { useListControls } from "@/hooks/useListControls";
+import { useSearchShortcut } from "@/components/common/SearchOverlay";
+import { useSettingsQuery } from "@/lib/query";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ListToolbar } from "@/components/common/ListToolbar";
+import { SearchOverlay } from "@/components/common/SearchOverlay";
+import SkillCardCompact from "./SkillCardCompact";
 import { settingsApi } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -42,6 +48,29 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
 
+  // List controls (view mode, search, sort)
+  const {
+    viewMode,
+    searchTerm,
+    sortField,
+    sortOrder,
+    isSearchOpen,
+    setViewMode,
+    setSearchTerm,
+    setSortField,
+    toggleSortOrder,
+    openSearch,
+    closeSearch,
+    clearSearch,
+    filterItems,
+    sortItems,
+  } = useListControls({ panelId: "skills" });
+
+  // Keyboard shortcut for search
+  const { data: settings } = useSettingsQuery();
+  const searchShortcut = settings?.searchShortcut || "mod+k";
+  useSearchShortcut(openSearch, searchShortcut);
+
   // Queries and Mutations
   const { data: skills, isLoading } = useInstalledSkills();
   const toggleAppMutation = useToggleSkillApp();
@@ -62,6 +91,28 @@ const UnifiedSkillsPanel = React.forwardRef<
     });
     return counts;
   }, [skills]);
+
+  // Apply filtering and sorting
+  const processedSkills = useMemo(() => {
+    if (!skills) return [];
+    // Convert to filterable/sortable format
+    const items = skills.map((skill) => ({
+      ...skill,
+      name: skill.name,
+      description: skill.description,
+      tags: undefined,
+      createdAt: undefined,
+      sortIndex: undefined,
+    }));
+
+    // Apply filter
+    const filtered = filterItems(items);
+
+    // Apply sort (for custom, keep original order)
+    const sorted = sortField === "custom" ? filtered : sortItems(filtered);
+
+    return sorted;
+  }, [skills, filterItems, sortItems, sortField]);
 
   const handleToggleApp = async (
     id: string,
@@ -145,6 +196,38 @@ const UnifiedSkillsPanel = React.forwardRef<
         </div>
       </div>
 
+      {/* Toolbar */}
+      <div className="flex-shrink-0 mb-4">
+        <ListToolbar
+          viewMode={viewMode}
+          sortField={sortField}
+          sortOrder={sortOrder}
+          isSearchOpen={isSearchOpen}
+          isLoading={isLoading}
+          showViewSwitcher={true}
+          showAnonymousToggle={false}
+          onViewModeChange={setViewMode}
+          onSortFieldChange={setSortField}
+          onSortOrderToggle={toggleSortOrder}
+          onSearchOpen={openSearch}
+        />
+      </div>
+
+      {/* Search Overlay */}
+      <SearchOverlay
+        isOpen={isSearchOpen}
+        searchTerm={searchTerm}
+        placeholder={t("skills.searchPlaceholder", {
+          defaultValue: "Search skills...",
+        })}
+        scopeHint={t("search.scopeHint", {
+          defaultValue: "Matches name, description, and tags.",
+        })}
+        onSearchChange={setSearchTerm}
+        onClose={closeSearch}
+        onClear={clearSearch}
+      />
+
       {/* Content - Scrollable */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
@@ -163,9 +246,26 @@ const UnifiedSkillsPanel = React.forwardRef<
               {t("skills.noInstalledDescription")}
             </p>
           </div>
+        ) : processedSkills.length === 0 ? (
+          <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
+            {t("search.noResults", {
+              defaultValue: "No matching results",
+            })}
+          </div>
+        ) : viewMode === "card" ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {processedSkills.map((skill) => (
+              <SkillCardCompact
+                key={skill.id}
+                skill={skill}
+                onToggleApp={handleToggleApp}
+                onUninstall={() => handleUninstall(skill)}
+              />
+            ))}
+          </div>
         ) : (
           <div className="space-y-3">
-            {skills.map((skill) => (
+            {processedSkills.map((skill) => (
               <InstalledSkillListItem
                 key={skill.id}
                 skill={skill}

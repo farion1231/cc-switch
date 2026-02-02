@@ -862,6 +862,7 @@
     "disableFailed": "Failed to disable",
     "importSuccess": "Imported successfully",
     "importFailed": "Failed to import",
+    "searchPlaceholder": "Search prompts...",
     "confirm": {
       "deleteTitle": "Confirm Delete",
       "deleteMessage": "Are you sure you want to delete prompt \"{{name}}\"?"
@@ -930,6 +931,7 @@
     "installFailed": "Failed to install",
     "uninstallSuccess": "Skill {{name}} uninstalled",
     "uninstallFailed": "Failed to uninstall",
+    "searchPlaceholder": "Search skills...",
     "error": {
       "skillNotFound": "Skill not found: {{directory}}",
       "missingRepoInfo": "Missing repository info (owner or name)",
@@ -1310,7 +1312,11 @@
     "ariaLabel": "Search items",
     "closeAriaLabel": "Close search",
     "closeHint": "Press Esc to close",
-    "noResults": "No matching results"
+    "noResults": "No matching results",
+    "recentSearches": "Recent",
+    "clearHistory": "Clear",
+    "syntaxHint": "Search syntax:",
+    "clearAndShowAll": "Clear search and show all"
   },
   "universalProvider": {
     "title": "Universal Provider",

@@ -862,6 +862,7 @@
     "disableFailed": "禁用失败",
     "importSuccess": "导入成功",
     "importFailed": "导入失败",
+    "searchPlaceholder": "搜索提示词...",
     "confirm": {
       "deleteTitle": "确认删除",
       "deleteMessage": "确定要删除提示词 \"{{name}}\" 吗？"
@@ -930,6 +931,7 @@
     "installFailed": "安装失败",
     "uninstallSuccess": "技能 {{name}} 已卸载",
     "uninstallFailed": "卸载失败",
+    "searchPlaceholder": "搜索技能...",
     "error": {
       "skillNotFound": "技能不存在：{{directory}}",
       "missingRepoInfo": "缺少仓库信息（owner 或 name）",
@@ -1310,7 +1312,11 @@
     "ariaLabel": "搜索项目",
     "closeAriaLabel": "关闭搜索",
     "closeHint": "按 Esc 关闭",
-    "noResults": "没有匹配的结果"
+    "noResults": "没有匹配的结果",
+    "recentSearches": "最近搜索",
+    "clearHistory": "清除",
+    "syntaxHint": "搜索语法：",
+    "clearAndShowAll": "清除搜索并显示全部"
   },
   "universalProvider": {
     "title": "统一供应商",

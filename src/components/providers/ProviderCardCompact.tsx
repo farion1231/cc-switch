@@ -1,6 +1,16 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { GripVertical, Key, Globe, Cpu, Building2, Info, Copy, Check } from "lucide-react";
+import {
+  GripVertical,
+  Key,
+  Globe,
+  Cpu,
+  Building2,
+  Info,
+  Copy,
+  Check,
+  Calendar,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import type {
@@ -15,22 +25,23 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import { useProviderHealth } from "@/lib/query/failover";
+import { highlightText } from "@/utils/highlightText";
 
 // 可复制值组件 - 抽离到组件外部避免重复创建
-function CopyableValue({ 
-  value, 
+function CopyableValue({
+  value,
   displayValue,
   className,
-  onCopy 
-}: { 
-  value: string; 
+  onCopy,
+}: {
+  value: string;
   displayValue?: string;
   className?: string;
   onCopy: (value: string) => Promise<void>;
 }) {
   const [copied, setCopied] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  
+
   // 清理 timeout
   useEffect(() => {
     return () => {
@@ -39,7 +50,7 @@ function CopyableValue({
       }
     };
   }, []);
-  
+
   const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
@@ -60,7 +71,7 @@ function CopyableValue({
       onClick={handleCopy}
       className={cn(
         "group/copy inline-flex items-center gap-1 hover:bg-muted/50 rounded px-1 -mx-1 transition-colors cursor-pointer text-left",
-        className
+        className,
       )}
     >
       <span className="break-all">{displayValue || value}</span>
@@ -84,6 +95,7 @@ interface ProviderCardCompactProps {
   isCurrent: boolean;
   appId: AppId;
   isInConfig?: boolean;
+  isConfigLoading?: boolean;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
@@ -104,6 +116,10 @@ interface ProviderCardCompactProps {
   activeProviderId?: string;
   // 匿名模式
   isAnonymousMode?: boolean;
+  // 搜索高亮
+  highlightQuery?: string;
+  // 当前排序字段
+  sortField?: "custom" | "name" | "createdAt";
 }
 
 export function ProviderCardCompact({
@@ -111,6 +127,7 @@ export function ProviderCardCompact({
   isCurrent,
   appId,
   isInConfig = true,
+  isConfigLoading = false,
   onSwitch,
   onEdit,
   onDelete,
@@ -130,6 +147,8 @@ export function ProviderCardCompact({
   onToggleFailover,
   activeProviderId,
   isAnonymousMode = false,
+  highlightQuery = "",
+  sortField,
 }: ProviderCardCompactProps) {
   const { t } = useTranslation();
   const { data: health } = useProviderHealth(provider.id, appId);
@@ -143,17 +162,32 @@ export function ProviderCardCompact({
     const env = (config as { env?: Record<string, string> }).env;
     if (env && typeof env === "object") {
       const baseUrl = env.ANTHROPIC_BASE_URL || env.GOOGLE_GEMINI_BASE_URL;
-      const apiKey = env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY || env.GOOGLE_API_KEY;
+      const apiKey =
+        env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY || env.GOOGLE_API_KEY;
       const model = env.ANTHROPIC_MODEL || env.GOOGLE_GEMINI_MODEL;
       const haikuModel = env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
       const sonnetModel = env.ANTHROPIC_DEFAULT_SONNET_MODEL;
       const opusModel = env.ANTHROPIC_DEFAULT_OPUS_MODEL;
       return {
         baseUrl: baseUrl || null,
-        baseUrlHost: baseUrl ? (() => { try { return new URL(baseUrl).host; } catch { return baseUrl; } })() : null,
+        baseUrlHost: baseUrl
+          ? (() => {
+              try {
+                return new URL(baseUrl).host;
+              } catch {
+                return baseUrl;
+              }
+            })()
+          : null,
         hasApiKey: !!apiKey && apiKey.length > 0,
         apiKey: apiKey || null,
-        apiKeyPreview: apiKey ? (apiKey.length > 12 ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}` : apiKey.length > 4 ? `${apiKey.slice(0, 4)}...` : '***') : null,
+        apiKeyPreview: apiKey
+          ? apiKey.length > 12
+            ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}`
+            : apiKey.length > 4
+              ? `${apiKey.slice(0, 4)}...`
+              : "***"
+          : null,
         model: model || null,
         haikuModel: haikuModel || null,
         sonnetModel: sonnetModel || null,
@@ -166,14 +200,30 @@ export function ProviderCardCompact({
     if (codexConfig.config && typeof codexConfig.config === "string") {
       // 简单解析 TOML 中的 model 和 api_base_url
       const modelMatch = codexConfig.config.match(/model\s*=\s*"([^"]+)"/);
-      const baseUrlMatch = codexConfig.config.match(/api_base_url\s*=\s*"([^"]+)"/);
+      const baseUrlMatch = codexConfig.config.match(
+        /api_base_url\s*=\s*"([^"]+)"/,
+      );
       const baseUrl = baseUrlMatch ? baseUrlMatch[1] : null;
       return {
         baseUrl: baseUrl,
-        baseUrlHost: baseUrl ? (() => { try { return new URL(baseUrl).host; } catch { return baseUrl; } })() : null,
+        baseUrlHost: baseUrl
+          ? (() => {
+              try {
+                return new URL(baseUrl).host;
+              } catch {
+                return baseUrl;
+              }
+            })()
+          : null,
         hasApiKey: !!codexConfig.auth && codexConfig.auth.length > 0,
         apiKey: codexConfig.auth || null,
-        apiKeyPreview: codexConfig.auth ? (codexConfig.auth.length > 12 ? `${codexConfig.auth.slice(0, 8)}...${codexConfig.auth.slice(-4)}` : codexConfig.auth.length > 4 ? `${codexConfig.auth.slice(0, 4)}...` : '***') : null,
+        apiKeyPreview: codexConfig.auth
+          ? codexConfig.auth.length > 12
+            ? `${codexConfig.auth.slice(0, 8)}...${codexConfig.auth.slice(-4)}`
+            : codexConfig.auth.length > 4
+              ? `${codexConfig.auth.slice(0, 4)}...`
+              : "***"
+          : null,
         model: modelMatch ? modelMatch[1] : null,
         haikuModel: null,
         sonnetModel: null,
@@ -217,7 +267,7 @@ export function ProviderCardCompact({
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 });
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  
+
   // callback ref for tooltip
   const setTooltipRef = useCallback((node: HTMLDivElement | null) => {
     tooltipRef.current = node;
@@ -273,15 +323,15 @@ export function ProviderCardCompact({
       const tooltipHeight = 280;
       const viewportHeight = window.innerHeight;
       const viewportWidth = window.innerWidth;
-      
+
       let left = rect.left;
       left = Math.max(8, Math.min(left, viewportWidth - tooltipWidth - 8));
-      
+
       let top = rect.bottom + 4;
       if (top + tooltipHeight > viewportHeight - 8) {
         top = rect.top - tooltipHeight - 4;
       }
-      
+
       setTooltipPos({ top, left });
     }
   }, [showTooltip]);
@@ -307,21 +357,21 @@ export function ProviderCardCompact({
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === "Escape") {
         setShowTooltip(false);
         setIsPinned(false);
       }
     };
 
     // 监听滚动（捕获阶段，确保能捕获到所有滚动）
-    window.addEventListener('scroll', handleScroll, true);
-    document.addEventListener('click', handleClickOutside, true);
-    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener("scroll", handleScroll, true);
+    document.addEventListener("click", handleClickOutside, true);
+    document.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      window.removeEventListener('scroll', handleScroll, true);
-      document.removeEventListener('click', handleClickOutside, true);
-      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener("scroll", handleScroll, true);
+      document.removeEventListener("click", handleClickOutside, true);
+      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [isPinned]);
 
@@ -331,7 +381,9 @@ export function ProviderCardCompact({
       official: t("provider.category.official", { defaultValue: "官方" }),
       cn_official: t("provider.category.cnOfficial", { defaultValue: "国产" }),
       aggregator: t("provider.category.aggregator", { defaultValue: "聚合" }),
-      third_party: t("provider.category.thirdParty", { defaultValue: "第三方" }),
+      third_party: t("provider.category.thirdParty", {
+        defaultValue: "第三方",
+      }),
       custom: t("provider.category.custom", { defaultValue: "自定义" }),
     };
     return provider.category ? categoryMap[provider.category] : null;
@@ -345,14 +397,17 @@ export function ProviderCardCompact({
         : isCurrent;
 
   // 复制到剪贴板
-  const copyToClipboard = useCallback(async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(t("common.copied", { defaultValue: "已复制" }));
-    } catch {
-      toast.error(t("common.copyFailed", { defaultValue: "复制失败" }));
-    }
-  }, [t]);
+  const copyToClipboard = useCallback(
+    async (text: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        toast.success(t("common.copied", { defaultValue: "已复制" }));
+      } catch {
+        toast.error(t("common.copyFailed", { defaultValue: "复制失败" }));
+      }
+    },
+    [t],
+  );
 
   const shouldUseGreen = isProxyTakeover && isActiveProvider;
   const shouldUseBlue = !isProxyTakeover && isActiveProvider;
@@ -360,27 +415,29 @@ export function ProviderCardCompact({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border/60 p-4 transition-all duration-300",
+        "relative overflow-hidden rounded-xl border border-border/60 p-4",
         "bg-card text-card-foreground group h-full flex flex-col",
-        // Hover 效果：轻微上浮 + 柔和阴影
-        "hover:-translate-y-1 hover:shadow-lg hover:shadow-gray-200/50 dark:hover:shadow-gray-900/30",
+        // 使用 GPU 加速的属性，避免 shadow 动画
+        "transition-[border-color,transform] duration-150 ease-out will-change-transform",
+        // Hover 效果：仅边框变化，移除 shadow 动画
         isAutoFailoverEnabled || isProxyTakeover
-          ? "hover:border-emerald-500/40"
-          : "hover:border-gray-300 dark:hover:border-gray-600",
-        shouldUseGreen && "border-emerald-500/50 shadow-sm shadow-emerald-500/10",
-        shouldUseBlue && "border-blue-500/50 shadow-sm shadow-blue-500/10",
-        dragHandleProps?.isDragging && "cursor-grabbing border-primary shadow-xl scale-105 z-[100]"
+          ? "hover:border-emerald-500/50"
+          : "hover:border-primary/30",
+        shouldUseGreen && "border-emerald-500/50",
+        shouldUseBlue && "border-blue-500/50",
+        dragHandleProps?.isDragging &&
+          "cursor-grabbing border-primary scale-[1.02] z-[100]",
       )}
       onDoubleClick={() => onEdit(provider)}
     >
-      {/* Background gradient */}
+      {/* Background gradient - 移除动画，使用 opacity 切换 */}
       <div
         className={cn(
-          "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
+          "absolute inset-0 bg-gradient-to-r to-transparent pointer-events-none",
           shouldUseGreen && "from-emerald-500/10",
           shouldUseBlue && "from-blue-500/10",
-          !isActiveProvider && "from-primary/10",
-          isActiveProvider ? "opacity-100" : "opacity-0"
+          !isActiveProvider && "from-primary/5",
+          isActiveProvider ? "opacity-100" : "opacity-0",
         )}
       />
 
@@ -392,7 +449,7 @@ export function ProviderCardCompact({
           className={cn(
             "-ml-1 flex-shrink-0 cursor-grab active:cursor-grabbing p-1",
             "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
-            dragHandleProps?.isDragging && "cursor-grabbing"
+            dragHandleProps?.isDragging && "cursor-grabbing",
           )}
           aria-label={t("provider.dragHandle")}
           {...(dragHandleProps?.attributes ?? {})}
@@ -415,32 +472,53 @@ export function ProviderCardCompact({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <h3 className="text-sm font-semibold leading-tight truncate">
-              {provider.name}
+              {highlightQuery
+                ? highlightText(provider.name, highlightQuery)
+                : provider.name}
             </h3>
-            {provider.category === "third_party" && provider.meta?.isPartner && (
-              <span
-                className="text-yellow-500 dark:text-yellow-400 text-xs"
-                title={t("provider.officialPartner", { defaultValue: "官方合作伙伴" })}
-              >
-                ⭐
-              </span>
-            )}
+            {provider.category === "third_party" &&
+              provider.meta?.isPartner && (
+                <span
+                  className="text-yellow-500 dark:text-yellow-400 text-xs"
+                  title={t("provider.officialPartner", {
+                    defaultValue: "官方合作伙伴",
+                  })}
+                >
+                  ⭐
+                </span>
+              )}
           </div>
 
-          {/* Status badges */}
-          <div className="flex items-center gap-1.5 mt-1">
-            {isProxyRunning && isInFailoverQueue && health && (
-              <ProviderHealthBadge consecutiveFailures={health.consecutive_failures} />
-            )}
-            {isAutoFailoverEnabled && isInFailoverQueue && failoverPriority && (
-              <FailoverPriorityBadge priority={failoverPriority} />
-            )}
+          {/* Status badges - 始终渲染，用 opacity 控制可见性避免布局跳动 */}
+          <div className="flex items-center gap-1.5 mt-1 h-[18px]">
+            <div
+              className={cn(
+                "transition-opacity duration-200",
+                isProxyRunning && isInFailoverQueue && health
+                  ? "opacity-100"
+                  : "opacity-0 pointer-events-none",
+              )}
+            >
+              <ProviderHealthBadge
+                consecutiveFailures={health?.consecutive_failures ?? 0}
+              />
+            </div>
+            <div
+              className={cn(
+                "transition-opacity duration-200",
+                isAutoFailoverEnabled && isInFailoverQueue && failoverPriority
+                  ? "opacity-100"
+                  : "opacity-0 pointer-events-none",
+              )}
+            >
+              <FailoverPriorityBadge priority={failoverPriority ?? 1} />
+            </div>
           </div>
         </div>
 
         {/* Info icon - 右上角 */}
         {configInfo && (
-          <div 
+          <div
             ref={containerRef}
             className="flex-shrink-0"
             onMouseEnter={handleMouseEnter}
@@ -450,7 +528,7 @@ export function ProviderCardCompact({
               type="button"
               className={cn(
                 "flex items-center justify-center h-5 w-5 rounded transition-colors",
-                isPinned ? "bg-primary/20 text-primary" : "hover:bg-muted"
+                isPinned ? "bg-primary/20 text-primary" : "hover:bg-muted",
               )}
               onClick={(e) => {
                 e.stopPropagation();
@@ -464,126 +542,196 @@ export function ProviderCardCompact({
                 }
               }}
             >
-              <Info className={cn(
-                "h-3.5 w-3.5",
-                isPinned ? "text-primary" : "text-muted-foreground hover:text-foreground"
-              )} />
+              <Info
+                className={cn(
+                  "h-3.5 w-3.5",
+                  isPinned
+                    ? "text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              />
             </button>
 
             {/* Hover Tooltip */}
-            {showTooltip && createPortal(
-              <div 
-                ref={setTooltipRef}
-                className="fixed z-[9999] w-72 p-3 rounded-lg border border-border bg-popover text-popover-foreground shadow-xl text-xs select-text"
-                style={{ top: tooltipPos.top, left: tooltipPos.left }}
-                onMouseEnter={handleMouseEnter}
-                onMouseLeave={handleMouseLeave}
-              >
-                <div className="space-y-2">
-                  {/* API Key */}
-                  <div className="flex items-start gap-2">
-                    <Key className={cn("h-3.5 w-3.5 mt-0.5 flex-shrink-0", configInfo.hasApiKey ? "text-emerald-500" : "text-amber-500")} />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-foreground">API Key</div>
-                      <div className={cn("mt-0.5", configInfo.hasApiKey ? "text-emerald-500" : "text-amber-500")}>
-                        {isAnonymousMode 
-                          ? (configInfo.hasApiKey ? "••••••••" : t("provider.notConfigured", { defaultValue: "未配置" }))
-                          : (configInfo.hasApiKey && configInfo.apiKey
-                              ? <CopyableValue 
-                                  value={configInfo.apiKey} 
-                                  displayValue={configInfo.apiKeyPreview || undefined}
-                                  className="text-emerald-500" 
-                                  onCopy={copyToClipboard}
-                                />
-                              : t("provider.notConfigured", { defaultValue: "未配置" })
+            {showTooltip &&
+              createPortal(
+                <div
+                  ref={setTooltipRef}
+                  className="fixed z-[9999] w-72 p-3 rounded-lg border border-border bg-popover text-popover-foreground shadow-xl text-xs select-text"
+                  style={{ top: tooltipPos.top, left: tooltipPos.left }}
+                  onMouseEnter={handleMouseEnter}
+                  onMouseLeave={handleMouseLeave}
+                >
+                  <div className="space-y-2">
+                    {/* API Key */}
+                    <div className="flex items-start gap-2">
+                      <Key
+                        className={cn(
+                          "h-3.5 w-3.5 mt-0.5 flex-shrink-0",
+                          configInfo.hasApiKey
+                            ? "text-emerald-500"
+                            : "text-amber-500",
+                        )}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-foreground">
+                          API Key
+                        </div>
+                        <div
+                          className={cn(
+                            "mt-0.5",
+                            configInfo.hasApiKey
+                              ? "text-emerald-500"
+                              : "text-amber-500",
+                          )}
+                        >
+                          {isAnonymousMode ? (
+                            configInfo.hasApiKey ? (
+                              "••••••••"
+                            ) : (
+                              t("provider.notConfigured", {
+                                defaultValue: "未配置",
+                              })
                             )
-                        }
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Base URL */}
-                  {configInfo.baseUrl && (
-                    <div className="flex items-start gap-2">
-                      <Globe className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-blue-500" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-foreground">Base URL</div>
-                        <div className="mt-0.5 text-muted-foreground">
-                          {isAnonymousMode 
-                            ? "••••••••.com" 
-                            : <CopyableValue value={configInfo.baseUrl} onCopy={copyToClipboard} />
-                          }
+                          ) : configInfo.hasApiKey && configInfo.apiKey ? (
+                            <CopyableValue
+                              value={configInfo.apiKey}
+                              displayValue={
+                                configInfo.apiKeyPreview || undefined
+                              }
+                              className="text-emerald-500"
+                              onCopy={copyToClipboard}
+                            />
+                          ) : (
+                            t("provider.notConfigured", {
+                              defaultValue: "未配置",
+                            })
+                          )}
                         </div>
                       </div>
                     </div>
-                  )}
 
-                  {/* 模型配置 */}
-                  {configInfo.model && (
-                    <div className="flex items-start gap-2">
-                      <Cpu className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-purple-500" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-foreground">{t("provider.model", { defaultValue: "模型" })}</div>
-                        <div className="mt-0.5 text-muted-foreground">
-                          <CopyableValue value={configInfo.model} onCopy={copyToClipboard} />
-                        </div>
-                        {/* 显示其他模型配置 */}
-                        {(configInfo.haikuModel || configInfo.sonnetModel || configInfo.opusModel) && (
-                          <div className="mt-1 pt-1 border-t border-border/50 space-y-0.5 text-[10px]">
-                            {configInfo.haikuModel && (
-                              <div className="flex items-center">
-                                <span className="text-muted-foreground/70 mr-1">Haiku:</span>
-                                <CopyableValue value={configInfo.haikuModel} onCopy={copyToClipboard} />
-                              </div>
-                            )}
-                            {configInfo.sonnetModel && (
-                              <div className="flex items-center">
-                                <span className="text-muted-foreground/70 mr-1">Sonnet:</span>
-                                <CopyableValue value={configInfo.sonnetModel} onCopy={copyToClipboard} />
-                              </div>
-                            )}
-                            {configInfo.opusModel && (
-                              <div className="flex items-center">
-                                <span className="text-muted-foreground/70 mr-1">Opus:</span>
-                                <CopyableValue value={configInfo.opusModel} onCopy={copyToClipboard} />
-                              </div>
+                    {/* Base URL */}
+                    {configInfo.baseUrl && (
+                      <div className="flex items-start gap-2">
+                        <Globe className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-blue-500" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-foreground">
+                            Base URL
+                          </div>
+                          <div className="mt-0.5 text-muted-foreground">
+                            {isAnonymousMode ? (
+                              "••••••••.com"
+                            ) : (
+                              <CopyableValue
+                                value={configInfo.baseUrl}
+                                onCopy={copyToClipboard}
+                              />
                             )}
                           </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 分类 */}
-                  {categoryLabel && (
-                    <div className="flex items-start gap-2">
-                      <Building2 className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-gray-500" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-foreground">{t("provider.categoryLabel", { defaultValue: "分类" })}</div>
-                        <div className={cn(
-                          "mt-0.5",
-                          provider.category === "official" && "text-blue-500",
-                          provider.category === "cn_official" && "text-emerald-500",
-                          provider.category === "aggregator" && "text-purple-500",
-                          provider.category === "third_party" && "text-amber-500",
-                          provider.category === "custom" && "text-gray-500"
-                        )}>
-                          {categoryLabel}
                         </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {/* 创建时间 */}
-                  {provider.createdAt && (
-                    <div className="pt-1 border-t border-border/50 text-[10px] text-muted-foreground/70">
-                      {t("provider.createdAt", { defaultValue: "添加于" })}: {new Date(provider.createdAt).toLocaleDateString()}
-                    </div>
-                  )}
-                </div>
-              </div>,
-              document.body
-            )}
+                    {/* 模型配置 */}
+                    {configInfo.model && (
+                      <div className="flex items-start gap-2">
+                        <Cpu className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-purple-500" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-foreground">
+                            {t("provider.model", { defaultValue: "模型" })}
+                          </div>
+                          <div className="mt-0.5 text-muted-foreground">
+                            <CopyableValue
+                              value={configInfo.model}
+                              onCopy={copyToClipboard}
+                            />
+                          </div>
+                          {/* 显示其他模型配置 */}
+                          {(configInfo.haikuModel ||
+                            configInfo.sonnetModel ||
+                            configInfo.opusModel) && (
+                            <div className="mt-1 pt-1 border-t border-border/50 space-y-0.5 text-[10px]">
+                              {configInfo.haikuModel && (
+                                <div className="flex items-center">
+                                  <span className="text-muted-foreground/70 mr-1">
+                                    Haiku:
+                                  </span>
+                                  <CopyableValue
+                                    value={configInfo.haikuModel}
+                                    onCopy={copyToClipboard}
+                                  />
+                                </div>
+                              )}
+                              {configInfo.sonnetModel && (
+                                <div className="flex items-center">
+                                  <span className="text-muted-foreground/70 mr-1">
+                                    Sonnet:
+                                  </span>
+                                  <CopyableValue
+                                    value={configInfo.sonnetModel}
+                                    onCopy={copyToClipboard}
+                                  />
+                                </div>
+                              )}
+                              {configInfo.opusModel && (
+                                <div className="flex items-center">
+                                  <span className="text-muted-foreground/70 mr-1">
+                                    Opus:
+                                  </span>
+                                  <CopyableValue
+                                    value={configInfo.opusModel}
+                                    onCopy={copyToClipboard}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 分类 */}
+                    {categoryLabel && (
+                      <div className="flex items-start gap-2">
+                        <Building2 className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-gray-500" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-foreground">
+                            {t("provider.categoryLabel", {
+                              defaultValue: "分类",
+                            })}
+                          </div>
+                          <div
+                            className={cn(
+                              "mt-0.5",
+                              provider.category === "official" &&
+                                "text-blue-500",
+                              provider.category === "cn_official" &&
+                                "text-emerald-500",
+                              provider.category === "aggregator" &&
+                                "text-purple-500",
+                              provider.category === "third_party" &&
+                                "text-amber-500",
+                              provider.category === "custom" && "text-gray-500",
+                            )}
+                          >
+                            {categoryLabel}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 创建时间 */}
+                    {provider.createdAt && (
+                      <div className="pt-1 border-t border-border/50 text-[10px] text-muted-foreground/70">
+                        {t("provider.createdAt", { defaultValue: "添加于" })}:{" "}
+                        {new Date(provider.createdAt).toLocaleDateString()}
+                      </div>
+                    )}
+                  </div>
+                </div>,
+                document.body,
+              )}
           </div>
         )}
       </div>
@@ -592,16 +740,27 @@ export function ProviderCardCompact({
       {displayUrl && (
         <button
           type="button"
-          onClick={() => isClickableUrl && !isAnonymousMode && clickableFullUrl && onOpenWebsite(clickableFullUrl)}
+          onClick={() =>
+            isClickableUrl &&
+            !isAnonymousMode &&
+            clickableFullUrl &&
+            onOpenWebsite(clickableFullUrl)
+          }
           className={cn(
             "relative mt-2.5 text-xs max-w-full truncate text-left transition-colors",
             isAnonymousMode
               ? "text-muted-foreground/40 cursor-default"
               : isClickableUrl
-                ? "text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:underline cursor-pointer"
-                : "text-gray-400 dark:text-gray-500 cursor-default"
+                ? "text-muted-foreground group-hover:text-foreground/70 hover:text-primary hover:underline cursor-pointer"
+                : "text-muted-foreground/70 group-hover:text-foreground/60 cursor-default",
           )}
-          title={isAnonymousMode ? t("provider.hiddenInAnonymousMode", { defaultValue: "隐私模式下已隐藏" }) : displayUrl}
+          title={
+            isAnonymousMode
+              ? t("provider.hiddenInAnonymousMode", {
+                  defaultValue: "隐私模式下已隐藏",
+                })
+              : displayUrl
+          }
           disabled={!isClickableUrl || isAnonymousMode}
         >
           {isAnonymousMode ? "••••••••.com/••••" : displayUrl}
@@ -612,11 +771,22 @@ export function ProviderCardCompact({
       <div className="flex-1 min-h-2" />
 
       {/* Actions - isolated bottom area with subtle background */}
-      <div className="relative mt-3 pt-3 px-1 -mx-1 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/30 rounded-b-lg flex items-center justify-end">
+      <div className="relative mt-3 pt-3 px-1 -mx-1 border-t border-border/40 bg-muted/30 rounded-b-lg flex items-center justify-between">
+        {/* 左侧：时间排序时显示创建时间 */}
+        {sortField === "createdAt" && provider.createdAt ? (
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <Calendar className="h-3 w-3" />
+            <span>{new Date(provider.createdAt).toLocaleDateString()}</span>
+          </div>
+        ) : (
+          <div />
+        )}
+
         <ProviderActions
           appId={appId}
           isCurrent={isCurrent}
           isInConfig={isInConfig}
+          isConfigLoading={isConfigLoading}
           isTesting={isTesting}
           isProxyTakeover={isProxyTakeover}
           onSwitch={() => onSwitch(provider)}
@@ -625,8 +795,12 @@ export function ProviderCardCompact({
           onTest={onTest ? () => onTest(provider) : undefined}
           onConfigureUsage={() => onConfigureUsage(provider)}
           onDelete={() => onDelete(provider)}
-          onRemoveFromConfig={onRemoveFromConfig ? () => onRemoveFromConfig(provider) : undefined}
-          onOpenTerminal={onOpenTerminal ? () => onOpenTerminal(provider) : undefined}
+          onRemoveFromConfig={
+            onRemoveFromConfig ? () => onRemoveFromConfig(provider) : undefined
+          }
+          onOpenTerminal={
+            onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+          }
           isAutoFailoverEnabled={isAutoFailoverEnabled}
           isInFailoverQueue={isInFailoverQueue}
           onToggleFailover={onToggleFailover}

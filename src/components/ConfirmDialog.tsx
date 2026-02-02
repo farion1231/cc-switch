@@ -39,7 +39,7 @@ export function ConfirmDialog({
         onConfirm();
       }
     },
-    [onConfirm]
+    [onConfirm],
   );
 
   useEffect(() => {

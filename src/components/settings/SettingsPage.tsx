@@ -245,7 +245,9 @@ export function SettingsPage({
                   />
                   <KeyboardShortcutsSettings
                     searchShortcut={settings.searchShortcut}
-                    onChange={(shortcut) => handleAutoSave({ searchShortcut: shortcut })}
+                    onChange={(shortcut) =>
+                      handleAutoSave({ searchShortcut: shortcut })
+                    }
                   />
                 </motion.div>
               ) : null}

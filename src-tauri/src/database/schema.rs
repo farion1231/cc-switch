@@ -348,9 +348,14 @@ impl Database {
                         Self::set_user_version(conn, 3)?;
                     }
                     3 => {
-                        log::info!("迁移数据库从 v3 到 v4（OpenCode 支持）");
+                        log::info!("迁移数据库从 v3 到 v4（OpenCode 支持 - mcp_servers/skills）");
                         Self::migrate_v3_to_v4(conn)?;
                         Self::set_user_version(conn, 4)?;
+                    }
+                    4 => {
+                        log::info!("迁移数据库从 v4 到 v5（OpenCode proxy_config 支持）");
+                        Self::migrate_v4_to_v5(conn)?;
+                        Self::set_user_version(conn, 5)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -876,6 +881,97 @@ impl Database {
         )?;
 
         log::info!("v3 -> v4 迁移完成：已添加 OpenCode 支持");
+        Ok(())
+    }
+
+    /// v4 -> v5 迁移：为 proxy_config 添加 opencode 支持
+    ///
+    /// 扩展 proxy_config 表的 CHECK 约束以支持 opencode，并插入 opencode 默认配置行。
+    fn migrate_v4_to_v5(conn: &Connection) -> Result<(), AppError> {
+        // proxy_config 表的 CHECK 约束无法直接修改，需要重建表
+        // 但由于 CREATE TABLE IF NOT EXISTS 使用的是新的 CHECK 约束，
+        // 对于已存在的表，我们只需要插入 opencode 行即可
+        
+        // 尝试插入 opencode 配置行（如果表结构允许）
+        // 注意：如果旧表有严格的 CHECK 约束，这会失败，需要重建表
+        let insert_result = conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+            streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+            circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+            circuit_error_rate_threshold, circuit_min_requests)
+            VALUES ('opencode', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+            [],
+        );
+
+        match insert_result {
+            Ok(_) => {
+                log::info!("v4 -> v5 迁移完成：已添加 opencode proxy_config 行");
+            }
+            Err(e) => {
+                // CHECK 约束阻止插入，需要重建表
+                log::info!("需要重建 proxy_config 表以支持 opencode: {e}");
+                Self::rebuild_proxy_config_for_opencode(conn)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 重建 proxy_config 表以支持 opencode（更新 CHECK 约束）
+    fn rebuild_proxy_config_for_opencode(conn: &Connection) -> Result<(), AppError> {
+        // 1. 备份现有数据
+        conn.execute(
+            "CREATE TABLE proxy_config_backup AS SELECT * FROM proxy_config",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("备份 proxy_config 失败: {e}")))?;
+
+        // 2. 删除旧表
+        conn.execute("DROP TABLE proxy_config", [])
+            .map_err(|e| AppError::Database(format!("删除旧 proxy_config 表失败: {e}")))?;
+
+        // 3. 创建新表（包含 opencode 的 CHECK 约束）
+        conn.execute(
+            "CREATE TABLE proxy_config (
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','opencode')),
+            proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+            listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
+            enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+            max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+            streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+            circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+            circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+            circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            live_takeover_active INTEGER NOT NULL DEFAULT 0
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建新 proxy_config 表失败: {e}")))?;
+
+        // 4. 恢复数据
+        conn.execute(
+            "INSERT INTO proxy_config SELECT * FROM proxy_config_backup",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("恢复 proxy_config 数据失败: {e}")))?;
+
+        // 5. 插入 opencode 默认配置
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+            streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+            circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+            circuit_error_rate_threshold, circuit_min_requests)
+            VALUES ('opencode', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("插入 opencode 配置失败: {e}")))?;
+
+        // 6. 删除备份表
+        conn.execute("DROP TABLE proxy_config_backup", [])
+            .map_err(|e| AppError::Database(format!("删除备份表失败: {e}")))?;
+
+        log::info!("proxy_config 表已重建，支持 opencode");
         Ok(())
     }
 

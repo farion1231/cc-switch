@@ -5,7 +5,7 @@
  * 启用时自动接管 Live 配置，关闭时恢复原始配置
  */
 
-import { Radio, Loader2 } from "lucide-react";
+import { Radio } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { cn } from "@/lib/utils";
@@ -54,23 +54,15 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
       });
 
   return (
-    <div
-      className={cn("transition-all", className)}
-      title={tooltipText}
-    >
-      <div className="flex items-center gap-1.5 px-2 h-7 rounded-full bg-gray-100/80 dark:bg-gray-800/50 cursor-default">
-        {isPending ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
-        ) : (
-          <Radio
-            className={cn(
-              "h-3.5 w-3.5 transition-colors",
-              takeoverEnabled
-                ? "text-emerald-500 animate-pulse"
-                : "text-gray-400",
-            )}
-          />
-        )}
+    <div className={cn("transition-all", className)} title={tooltipText}>
+      <div className="flex items-center gap-1.5 px-2 h-7 rounded-full bg-muted/60 cursor-default">
+        <Radio
+          className={cn(
+            "h-3.5 w-3.5 transition-colors",
+            takeoverEnabled ? "text-emerald-500" : "text-gray-400",
+            isPending && "opacity-50",
+          )}
+        />
         <span
           className={cn(
             "text-xs font-medium transition-colors select-none",

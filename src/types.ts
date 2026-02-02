@@ -298,4 +298,3 @@ export interface OpenCodeMcpServerSpec {
   // 通用字段
   enabled?: boolean;
 }
-

@@ -31,7 +31,10 @@ export function useDragSort(
   // 兼容旧的调用方式
   const options: UseDragSortOptions =
     appIdParam !== undefined
-      ? { providers: providersOrOptions as Record<string, Provider>, appId: appIdParam }
+      ? {
+          providers: providersOrOptions as Record<string, Provider>,
+          appId: appIdParam,
+        }
       : (providersOrOptions as UseDragSortOptions);
 
   const {
@@ -143,7 +146,15 @@ export function useDragSort(
         );
       }
     },
-    [sortedProviders, displayedProviders, sortField, onSwitchToCustomSort, appId, queryClient, t],
+    [
+      sortedProviders,
+      displayedProviders,
+      sortField,
+      onSwitchToCustomSort,
+      appId,
+      queryClient,
+      t,
+    ],
   );
 
   return {

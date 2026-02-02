@@ -1,4 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  keepPreviousData,
+} from "@tanstack/react-query";
 import { failoverApi } from "@/lib/api/failover";
 
 // ========== 熔断器 Hooks ==========
@@ -13,6 +18,7 @@ export function useProviderHealth(providerId: string, appType: string) {
     enabled: !!providerId && !!appType,
     refetchInterval: 5000, // 每 5 秒刷新一次
     retry: false,
+    placeholderData: keepPreviousData, // 保持上一次数据，防止闪烁
   });
 }
 
@@ -187,8 +193,6 @@ export function useAutoFailoverEnabled(appType: string) {
   return useQuery({
     queryKey: ["autoFailoverEnabled", appType],
     queryFn: () => failoverApi.getAutoFailoverEnabled(appType),
-    // 默认值为 false（与后端保持一致）
-    placeholderData: false,
   });
 }
 

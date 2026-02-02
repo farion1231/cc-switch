@@ -20,8 +20,12 @@ import {
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { IconPicker } from "@/components/IconPicker";
 import { getIconMetadata } from "@/icons/extracted/metadata";
+import { isWindows, isLinux } from "@/lib/platform";
 import type { UseFormReturn } from "react-hook-form";
 import type { ProviderFormData } from "@/lib/schemas/provider";
+
+// macOS needs space for traffic light buttons
+const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28;
 
 interface BasicFormFieldsProps {
   form: UseFormReturn<ProviderFormData>;
@@ -29,7 +33,10 @@ interface BasicFormFieldsProps {
   beforeNameSlot?: ReactNode;
 }
 
-export function BasicFormFields({ form, beforeNameSlot }: BasicFormFieldsProps) {
+export function BasicFormFields({
+  form,
+  beforeNameSlot,
+}: BasicFormFieldsProps) {
   const { t } = useTranslation();
   const [iconDialogOpen, setIconDialogOpen] = useState(false);
 
@@ -80,7 +87,25 @@ export function BasicFormFields({ form, beforeNameSlot }: BasicFormFieldsProps) 
             className="p-0 sm:rounded-none"
           >
             <div className="flex h-full flex-col">
-              <div className="flex-shrink-0 py-4 border-b border-border-default bg-muted/40">
+              {/* Drag region for macOS traffic lights */}
+              {DRAG_BAR_HEIGHT > 0 && (
+                <div
+                  className="bg-muted/40"
+                  data-tauri-drag-region
+                  style={
+                    {
+                      WebkitAppRegion: "drag",
+                      height: DRAG_BAR_HEIGHT,
+                      flexShrink: 0,
+                    } as React.CSSProperties
+                  }
+                />
+              )}
+              <div
+                className="flex-shrink-0 py-4 border-b border-border-default bg-muted/40"
+                data-tauri-drag-region
+                style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+              >
                 <div className="px-6 flex items-center gap-4">
                   <DialogClose asChild>
                     <Button type="button" variant="outline" size="icon">

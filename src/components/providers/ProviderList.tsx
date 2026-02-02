@@ -6,10 +6,7 @@ import {
   verticalListSortingStrategy,
   rectSortingStrategy,
 } from "@dnd-kit/sortable";
-import {
-  useMemo,
-  type CSSProperties,
-} from "react";
+import { useMemo, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import type { Provider } from "@/types";
@@ -26,6 +23,7 @@ import { ProviderCardCompact } from "@/components/providers/ProviderCardCompact"
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 import { ListToolbar } from "@/components/common/ListToolbar";
 import { SearchOverlay } from "@/components/common/SearchOverlay";
+import { Button } from "@/components/ui/button";
 import {
   useAutoFailoverEnabled,
   useFailoverQueue,
@@ -79,10 +77,13 @@ export function ProviderList({
   const {
     viewMode,
     searchTerm,
+    deferredSearchTerm,
+    highlightQuery,
     sortField,
     sortOrder,
     isSearchOpen,
     isAnonymousMode,
+    searchHistory,
     setViewMode,
     setSearchTerm,
     setSortField,
@@ -91,8 +92,10 @@ export function ProviderList({
     closeSearch,
     clearSearch,
     toggleAnonymousMode,
+    addToSearchHistory,
+    clearSearchHistory,
+    selectFromHistory,
     filterItems,
-    sortItems,
   } = useListControls({ panelId });
 
   // Keyboard shortcut for search (from settings or default Cmd/Ctrl+K)
@@ -108,7 +111,8 @@ export function ProviderList({
       return [...providerList].sort((a, b) => {
         const indexA = a.sortIndex ?? Number.MAX_SAFE_INTEGER;
         const indexB = b.sortIndex ?? Number.MAX_SAFE_INTEGER;
-        if (indexA !== indexB) return sortOrder === "asc" ? indexA - indexB : indexB - indexA;
+        if (indexA !== indexB)
+          return sortOrder === "asc" ? indexA - indexB : indexB - indexA;
         return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
       });
     } else if (sortField === "createdAt") {
@@ -121,7 +125,9 @@ export function ProviderList({
     } else {
       // 按名称排序
       return [...providerList].sort((a, b) => {
-        const comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        const comparison = a.name
+          .toLowerCase()
+          .localeCompare(b.name.toLowerCase());
         return sortOrder === "asc" ? comparison : -comparison;
       });
     }
@@ -137,19 +143,21 @@ export function ProviderList({
   });
 
   // OpenCode: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
-  const { data: opencodeLiveIds } = useQuery({
-    queryKey: ["opencodeLiveProviderIds"],
-    queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
-    enabled: appId === "opencode",
-  });
+  const { data: opencodeLiveIds, isLoading: isOpenCodeConfigLoading } =
+    useQuery({
+      queryKey: ["opencodeLiveProviderIds"],
+      queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
+      enabled: appId === "opencode",
+    });
 
   // OpenCode: 判断供应商是否已添加到 opencode.json
   const isProviderInConfig = useCallback(
     (providerId: string): boolean => {
       if (appId !== "opencode") return true; // 非 OpenCode 应用始终返回 true
+      if (isOpenCodeConfigLoading) return false;
       return opencodeLiveIds?.includes(providerId) ?? false;
     },
-    [appId, opencodeLiveIds],
+    [appId, opencodeLiveIds, isOpenCodeConfigLoading],
   );
 
   // 流式健康检查
@@ -208,7 +216,11 @@ export function ProviderList({
     return filterItems(currentDisplayedProviders);
   }, [currentDisplayedProviders, filterItems]);
 
-  if (isLoading) {
+  // 计算总数用于搜索结果显示
+  const totalProviderCount = sortedProviders.length;
+
+  // 仅在没有数据且正在加载时显示骨架屏，避免刷新时的闪烁
+  if (isLoading && sortedProviders.length === 0) {
     return (
       <div className="space-y-3">
         {[0, 1, 2].map((index) => (
@@ -243,6 +255,7 @@ export function ProviderList({
               isCurrent={provider.id === currentProviderId}
               appId={appId}
               isInConfig={isProviderInConfig(provider.id)}
+              isConfigLoading={isOpenCodeConfigLoading}
               onSwitch={onSwitch}
               onEdit={onEdit}
               onDelete={onDelete}
@@ -264,6 +277,8 @@ export function ProviderList({
               activeProviderId={activeProviderId}
               viewMode="list"
               isAnonymousMode={isAnonymousMode}
+              highlightQuery={highlightQuery}
+              sortField={sortField}
             />
           ))}
         </div>
@@ -289,6 +304,7 @@ export function ProviderList({
               isCurrent={provider.id === currentProviderId}
               appId={appId}
               isInConfig={isProviderInConfig(provider.id)}
+              isConfigLoading={isOpenCodeConfigLoading}
               onSwitch={onSwitch}
               onEdit={onEdit}
               onDelete={onDelete}
@@ -310,6 +326,8 @@ export function ProviderList({
               activeProviderId={activeProviderId}
               viewMode="card"
               isAnonymousMode={isAnonymousMode}
+              highlightQuery={highlightQuery}
+              sortField={sortField}
             />
           ))}
         </div>
@@ -318,7 +336,7 @@ export function ProviderList({
   );
 
   return (
-    <div className="mt-4 space-y-4">
+    <div className="space-y-3">
       {/* Toolbar */}
       <ListToolbar
         viewMode={viewMode}
@@ -344,17 +362,37 @@ export function ProviderList({
         scopeHint={t("provider.searchScopeHint", {
           defaultValue: "Matches provider name, notes, and URL.",
         })}
+        resultCount={deferredSearchTerm ? processedProviders.length : undefined}
+        totalCount={deferredSearchTerm ? totalProviderCount : undefined}
+        searchHistory={searchHistory}
         onSearchChange={setSearchTerm}
         onClose={closeSearch}
         onClear={clearSearch}
+        onSelectHistory={selectFromHistory}
+        onClearHistory={clearSearchHistory}
+        onSearchSubmit={addToSearchHistory}
       />
 
       {/* Content */}
       {processedProviders.length === 0 ? (
         <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
-          {t("provider.noSearchResults", {
-            defaultValue: "No providers match your search.",
-          })}
+          <p className="mb-2">
+            {t("provider.noSearchResults", {
+              defaultValue: "No providers match your search.",
+            })}
+          </p>
+          {searchTerm && (
+            <Button
+              variant="link"
+              size="sm"
+              className="text-xs"
+              onClick={clearSearch}
+            >
+              {t("search.clearAndShowAll", {
+                defaultValue: "Clear search and show all",
+              })}
+            </Button>
+          )}
         </div>
       ) : viewMode === "card" ? (
         renderCardView()
@@ -370,6 +408,7 @@ interface SortableProviderCardProps {
   isCurrent: boolean;
   appId: AppId;
   isInConfig: boolean;
+  isConfigLoading?: boolean;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
@@ -392,6 +431,10 @@ interface SortableProviderCardProps {
   viewMode: "list" | "card";
   // 匿名模式
   isAnonymousMode?: boolean;
+  // 搜索高亮
+  highlightQuery?: string;
+  // 当前排序字段
+  sortField?: "custom" | "name" | "createdAt";
 }
 
 function SortableProviderCard({
@@ -399,6 +442,7 @@ function SortableProviderCard({
   isCurrent,
   appId,
   isInConfig,
+  isConfigLoading,
   onSwitch,
   onEdit,
   onDelete,
@@ -418,6 +462,8 @@ function SortableProviderCard({
   activeProviderId,
   viewMode,
   isAnonymousMode,
+  highlightQuery,
+  sortField,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -444,12 +490,15 @@ function SortableProviderCard({
     isCurrent,
     appId,
     isInConfig,
+    isConfigLoading,
     onSwitch,
     onEdit,
     onDelete,
     onRemoveFromConfig,
     onDuplicate,
-    onConfigureUsage: onConfigureUsage ? (item: Provider) => onConfigureUsage(item) : () => undefined,
+    onConfigureUsage: onConfigureUsage
+      ? (item: Provider) => onConfigureUsage(item)
+      : () => undefined,
     onOpenWebsite,
     onOpenTerminal,
     onTest,
@@ -463,10 +512,19 @@ function SortableProviderCard({
     onToggleFailover,
     activeProviderId,
     isAnonymousMode,
+    highlightQuery,
+    sortField,
   };
 
   return (
-    <div ref={setNodeRef} style={style} className={cn(viewMode === "card" && "h-full", isDragging && "relative z-[100]")}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        viewMode === "card" && "h-full",
+        isDragging && "relative z-[100]",
+      )}
+    >
       {viewMode === "card" ? (
         <ProviderCardCompact {...commonProps} />
       ) : (

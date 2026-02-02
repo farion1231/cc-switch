@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Search,
   Download,
+  BarChart2,
 } from "lucide-react";
 import type { Provider } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -33,7 +34,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
 import { isWindows, isLinux } from "@/lib/platform";
-import { AppSwitcher } from "@/components/AppSwitcher";
+import { AppSwitcher, APP_LIST } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
@@ -42,6 +43,7 @@ import { SettingsPage } from "@/components/settings/SettingsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { ProxyToggle } from "@/components/proxy/ProxyToggle";
+import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
@@ -308,6 +310,23 @@ function App() {
         return;
       }
 
+      // Cmd/Ctrl + 1~4 切换应用
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.shiftKey &&
+        !event.altKey
+      ) {
+        const keyNum = parseInt(event.key, 10);
+        if (keyNum >= 1 && keyNum <= APP_LIST.length) {
+          event.preventDefault();
+          const targetApp = APP_LIST[keyNum - 1];
+          if (targetApp) {
+            setActiveApp(targetApp);
+          }
+          return;
+        }
+      }
+
       // ESC 键返回
       if (event.key !== "Escape" || event.defaultPrevented) return;
 
@@ -376,7 +395,10 @@ function App() {
   };
 
   // Generate a unique provider key for OpenCode duplication
-  const generateUniqueOpencodeKey = (originalKey: string, existingKeys: string[]): string => {
+  const generateUniqueOpencodeKey = (
+    originalKey: string,
+    existingKeys: string[],
+  ): string => {
     const baseKey = `${originalKey}-copy`;
 
     if (!existingKeys.includes(baseKey)) {
@@ -397,7 +419,9 @@ function App() {
     const newSortIndex =
       provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
 
-    const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & { providerKey?: string } = {
+    const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & {
+      providerKey?: string;
+    } = {
       name: `${provider.name} copy`,
       settingsConfig: JSON.parse(JSON.stringify(provider.settingsConfig)), // 深拷贝
       websiteUrl: provider.websiteUrl,
@@ -413,7 +437,10 @@ function App() {
     // OpenCode: generate unique provider key (used as ID)
     if (activeApp === "opencode") {
       const existingKeys = Object.keys(providers);
-      duplicatedProvider.providerKey = generateUniqueOpencodeKey(provider.id, existingKeys);
+      duplicatedProvider.providerKey = generateUniqueOpencodeKey(
+        provider.id,
+        existingKeys,
+      );
     }
 
     // 2️⃣ 如果原供应商有 sortIndex，需要将后续所有供应商的 sortIndex +1
@@ -522,7 +549,12 @@ function App() {
             />
           );
         case "skillsDiscovery":
-          return <SkillsPage ref={skillsPageRef} initialApp={activeApp === "opencode" ? "claude" : activeApp} />;
+          return (
+            <SkillsPage
+              ref={skillsPageRef}
+              initialApp={activeApp === "opencode" ? "claude" : activeApp}
+            />
+          );
         case "mcp":
           return (
             <UnifiedMcpPanel
@@ -718,9 +750,21 @@ function App() {
                       setCurrentView("settings");
                     }}
                     title={t("common.settings")}
-                    className="hover:bg-black/5 dark:hover:bg-white/5 h-7 w-7"
+                    className="hover:bg-accent hover:text-accent-foreground h-7 w-7"
                   >
                     <Settings className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      setSettingsDefaultTab("usage");
+                      setCurrentView("settings");
+                    }}
+                    title={t("settings.usage", { defaultValue: "使用统计" })}
+                    className="hover:bg-accent hover:text-accent-foreground h-7 w-7"
+                  >
+                    <BarChart2 className="w-3.5 h-3.5" />
                   </Button>
                 </div>
                 <UpdateBadge
@@ -742,7 +786,7 @@ function App() {
                 variant="ghost"
                 size="sm"
                 onClick={() => promptPanelRef.current?.openAdd()}
-                className="hover:bg-black/5 dark:hover:bg-white/5"
+                className="hover:bg-accent hover:text-accent-foreground"
               >
                 <Plus className="w-4 h-4 mr-2" />
                 {t("prompts.add")}
@@ -754,7 +798,7 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => mcpPanelRef.current?.openImport()}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <Download className="w-4 h-4 mr-2" />
                   {t("mcp.importExisting")}
@@ -763,7 +807,7 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => mcpPanelRef.current?.openAdd()}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <Plus className="w-4 h-4 mr-2" />
                   {t("mcp.addMcp")}
@@ -776,7 +820,7 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => unifiedSkillsPanelRef.current?.openImport()}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <Download className="w-4 h-4 mr-2" />
                   {t("skills.import")}
@@ -785,7 +829,7 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => setCurrentView("skillsDiscovery")}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <Search className="w-4 h-4 mr-2" />
                   {t("skills.discover")}
@@ -798,7 +842,7 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => skillsPageRef.current?.refresh()}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <RefreshCw className="w-4 h-4 mr-2" />
                   {t("skills.refresh")}
@@ -807,7 +851,7 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => skillsPageRef.current?.openRepoManager()}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <Settings className="w-4 h-4 mr-2" />
                   {t("skills.repoManager")}
@@ -817,7 +861,19 @@ function App() {
             {currentView === "providers" && (
               <>
                 {activeApp !== "opencode" && (
-                  <ProxyToggle activeApp={activeApp} />
+                  <>
+                    <ProxyToggle activeApp={activeApp} />
+                    <div
+                      className={cn(
+                        "transition-all duration-300 ease-in-out overflow-hidden",
+                        isCurrentAppTakeoverActive
+                          ? "opacity-100 max-w-[100px] scale-100"
+                          : "opacity-0 max-w-0 scale-75 pointer-events-none",
+                      )}
+                    >
+                      <FailoverToggle activeApp={activeApp} />
+                    </div>
+                  </>
                 )}
 
                 <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
@@ -828,7 +884,7 @@ function App() {
                     size="sm"
                     onClick={() => setCurrentView("skills")}
                     className={cn(
-                      "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                      "text-muted-foreground hover:text-foreground hover:bg-accent hover:text-accent-foreground",
                       "transition-all duration-200 ease-in-out overflow-hidden",
                       hasSkillsSupport
                         ? "opacity-100 w-8 scale-100 px-2"
@@ -838,23 +894,11 @@ function App() {
                   >
                     <Wrench className="flex-shrink-0 w-4 h-4" />
                   </Button>
-                  {/* TODO: Agents 功能开发中，暂时隐藏入口 */}
-                  {/* {isClaudeApp && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setCurrentView("agents")}
-                        className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                        title="Agents"
-                      >
-                        <Bot className="w-4 h-4" />
-                      </Button>
-                    )} */}
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => setCurrentView("prompts")}
-                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                    className="text-muted-foreground hover:text-foreground hover:bg-accent hover:text-accent-foreground"
                     title={t("prompts.manage")}
                   >
                     <Book className="w-4 h-4" />
@@ -863,7 +907,7 @@ function App() {
                     variant="ghost"
                     size="sm"
                     onClick={() => setCurrentView("mcp")}
-                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                    className="text-muted-foreground hover:text-foreground hover:bg-accent hover:text-accent-foreground"
                     title={t("mcp.title")}
                   >
                     <Server className="w-4 h-4" />
