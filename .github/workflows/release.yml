@@ -59,7 +59,8 @@ jobs:
             rpm \
             flatpak \
             flatpak-builder \
-            elfutils
+            elfutils \
+            xdg-utils
           # GTK/GLib stack for gdk-3.0, glib-2.0, gio-2.0
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev \

@@ -2,6 +2,8 @@
 //!
 //! 用于 Anthropic Messages API 的请求/响应格式转换
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

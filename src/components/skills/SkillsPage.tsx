@@ -43,6 +43,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const { t } = useTranslation();
     const [repoManagerOpen, setRepoManagerOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
+    const [filterRepo, setFilterRepo] = useState<string>("all");
     const [filterStatus, setFilterStatus] = useState<
       "all" | "installed" | "uninstalled"
     >("all");
@@ -80,12 +81,25 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     type DiscoverableSkillItem = DiscoverableSkill & { installed: boolean };
 
+    // 从可发现技能中提取所有仓库选项
+    const repoOptions = useMemo(() => {
+      if (!discoverableSkills) return [];
+      const repoSet = new Set<string>();
+      discoverableSkills.forEach((s) => {
+        if (s.repoOwner && s.repoName) {
+          repoSet.add(`${s.repoOwner}/${s.repoName}`);
+        }
+      });
+      return Array.from(repoSet).sort();
+    }, [discoverableSkills]);
+
     // 为发现列表补齐 installed 状态，供 SkillCard 使用
     const skills: DiscoverableSkillItem[] = useMemo(() => {
       if (!discoverableSkills) return [];
       return discoverableSkills.map((d) => {
+        // 同时处理 / 和 \ 路径分隔符（兼容 Windows 和 Unix）
         const installName =
-          d.directory.split("/").pop()?.toLowerCase() ||
+          d.directory.split(/[/\\]/).pop()?.toLowerCase() ||
           d.directory.toLowerCase();
         // 使用 directory + repoOwner + repoName 组合判断是否已安装
         const key = `${installName}:${d.repoOwner.toLowerCase()}:${d.repoName.toLowerCase()}`;
@@ -179,12 +193,21 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     // 过滤技能列表
     const filteredSkills = useMemo(() => {
-      const byStatus = skills.filter((skill) => {
+      // 按仓库筛选
+      const byRepo = skills.filter((skill) => {
+        if (filterRepo === "all") return true;
+        const skillRepo = `${skill.repoOwner}/${skill.repoName}`;
+        return skillRepo === filterRepo;
+      });
+
+      // 按安装状态筛选
+      const byStatus = byRepo.filter((skill) => {
         if (filterStatus === "installed") return skill.installed;
         if (filterStatus === "uninstalled") return !skill.installed;
         return true;
       });
 
+      // 按搜索关键词筛选
       if (!searchQuery.trim()) return byStatus;
 
       const query = searchQuery.toLowerCase();
@@ -199,7 +222,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
           directory.includes(query)
         );
       });
-    }, [skills, searchQuery, filterStatus]);
+    }, [skills, searchQuery, filterRepo, filterStatus]);
 
     return (
       <div className="px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden bg-background/50">
@@ -228,7 +251,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
               </div>
             ) : (
               <>
-                {/* 搜索框 */}
+                {/* 搜索框和筛选器 */}
                 <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
                   <div className="relative flex-1 min-w-0">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -240,7 +263,39 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                       className="pl-9 pr-3"
                     />
                   </div>
-                  <div className="w-full md:w-48">
+                  {/* 仓库筛选 */}
+                  <div className="w-full md:w-56">
+                    <Select value={filterRepo} onValueChange={setFilterRepo}>
+                      <SelectTrigger className="bg-card border shadow-sm text-foreground">
+                        <SelectValue
+                          placeholder={t("skills.filter.repo")}
+                          className="text-left truncate"
+                        />
+                      </SelectTrigger>
+                      <SelectContent className="bg-card text-foreground shadow-lg max-h-64 min-w-[var(--radix-select-trigger-width)]">
+                        <SelectItem
+                          value="all"
+                          className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"
+                        >
+                          {t("skills.filter.allRepos")}
+                        </SelectItem>
+                        {repoOptions.map((repo) => (
+                          <SelectItem
+                            key={repo}
+                            value={repo}
+                            className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"
+                            title={repo}
+                          >
+                            <span className="truncate block max-w-[200px]">
+                              {repo}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {/* 安装状态筛选 */}
+                  <div className="w-full md:w-36">
                     <Select
                       value={filterStatus}
                       onValueChange={(val) =>

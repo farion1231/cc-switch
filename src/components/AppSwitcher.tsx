@@ -10,6 +10,7 @@ interface AppSwitcherProps {
 }
 
 const ALL_APPS: AppId[] = ["claude", "codex", "gemini", "opencode"];
+const STORAGE_KEY = "cc-switch-last-app";
 
 export function AppSwitcher({
   activeApp,
@@ -19,6 +20,7 @@ export function AppSwitcher({
 }: AppSwitcherProps) {
   const handleSwitch = (app: AppId) => {
     if (app === activeApp) return;
+    localStorage.setItem(STORAGE_KEY, app);
     onSwitch(app);
   };
   const iconSize = 20;
