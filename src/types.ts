@@ -101,6 +101,13 @@ export interface ProviderMeta {
   partnerPromotionKey?: string;
 }
 
+export interface VisibleApps {
+  claude: boolean;
+  codex: boolean;
+  gemini: boolean;
+  opencode: boolean;
+}
+
 // 应用设置类型（用于设置对话框与 Tauri API）
 // 存储在本地 ~/.cc-switch/settings.json，不随数据库同步
 export interface Settings {
@@ -117,6 +124,9 @@ export interface Settings {
   launchOnStartup?: boolean;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "ja";
+
+  // ===== 应用可见性设置 =====
+  visibleApps?: VisibleApps;
 
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
@@ -139,6 +149,24 @@ export interface Settings {
   // ===== 键盘快捷键设置 =====
   // 搜索快捷键（默认: "mod+k"，mod = Mac 上的 Cmd, Windows 上的 Ctrl）
   searchShortcut?: string;
+}
+
+export interface SessionMeta {
+  providerId: string;
+  sessionId: string;
+  title?: string;
+  summary?: string;
+  projectDir?: string | null;
+  createdAt?: number;
+  lastActiveAt?: number;
+  sourcePath?: string;
+  resumeCommand?: string;
+}
+
+export interface SessionMessage {
+  role: string;
+  content: string;
+  ts?: number;
 }
 
 // MCP 服务器连接参数（宽松：允许扩展字段）
