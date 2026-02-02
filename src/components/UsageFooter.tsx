@@ -122,7 +122,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             <Clock size={10} />
             {lastQueriedAt
               ? formatRelativeTime(lastQueriedAt, now, t)
-              : t("usage.never", { defaultValue: "从未更新" })}
+              : t("usage.never", { defaultValue: "Never updated" })}
           </span>
 
           {/* 刷新按钮 */}

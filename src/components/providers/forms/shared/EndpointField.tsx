@@ -29,7 +29,7 @@ export function EndpointField({
   const { t } = useTranslation();
 
   const defaultManageLabel = t("providerForm.manageAndTest", {
-    defaultValue: "管理和测速",
+    defaultValue: "Manage and Test",
   });
 
   return (

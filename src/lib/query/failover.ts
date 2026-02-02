@@ -233,11 +233,11 @@ export function useSetAutoFailoverEnabled() {
         variables.enabled
           ? t("failover.enabled", {
               app: appLabel,
-              defaultValue: `${appLabel} 故障转移已启用`,
+              defaultValue: `\${appLabel} failover enabled`,
             })
           : t("failover.disabled", {
               app: appLabel,
-              defaultValue: `${appLabel} 故障转移已关闭`,
+              defaultValue: `\${appLabel} failover disabled`,
             }),
         { closeButton: true },
       );
@@ -254,11 +254,11 @@ export function useSetAutoFailoverEnabled() {
 
       const detail =
         extractErrorMessage(error) ||
-        t("common.unknown", { defaultValue: "未知错误" });
+        t("common.unknown", { defaultValue: "Unknown error" });
       toast.error(
         t("failover.toggleFailed", {
           detail,
-          defaultValue: `操作失败: ${detail}`,
+          defaultValue: `Operation failed: \${detail}`,
         }),
       );
     },

@@ -126,7 +126,7 @@ export function ClaudeFormFields({
           <FormLabel>
             {t("providerForm.parameterConfig", {
               name: templatePresetName,
-              defaultValue: `${templatePresetName} 参数配置`,
+              defaultValue: `${templatePresetName} Parameter Configuration`,
             })}
           </FormLabel>
           <div className="space-y-4">
@@ -192,7 +192,7 @@ export function ClaudeFormFields({
       {shouldShowModelSelector && (
         <div className="space-y-2">
           <FormLabel htmlFor="apiFormat">
-            {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+            {t("providerForm.apiFormat", { defaultValue: "API Format" })}
           </FormLabel>
           <Select value={apiFormat} onValueChange={onApiFormatChange}>
             <SelectTrigger id="apiFormat" className="w-full">
@@ -201,19 +201,19 @@ export function ClaudeFormFields({
             <SelectContent>
               <SelectItem value="anthropic">
                 {t("providerForm.apiFormatAnthropic", {
-                  defaultValue: "Anthropic Messages (原生)",
+                  defaultValue: "Anthropic Messages (Native)",
                 })}
               </SelectItem>
               <SelectItem value="openai_chat">
                 {t("providerForm.apiFormatOpenAIChat", {
-                  defaultValue: "OpenAI Chat Completions (需转换)",
+                  defaultValue: "OpenAI Chat Completions (Conversion Required)",
                 })}
               </SelectItem>
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
             {t("providerForm.apiFormatHint", {
-              defaultValue: "选择供应商 API 的输入格式",
+              defaultValue: "Select the input format for provider API",
             })}
           </p>
         </div>
@@ -226,7 +226,9 @@ export function ClaudeFormFields({
             {/* 主模型 */}
             <div className="space-y-2">
               <FormLabel htmlFor="claudeModel">
-                {t("providerForm.anthropicModel", { defaultValue: "主模型" })}
+                {t("providerForm.anthropicModel", {
+                  defaultValue: "Main Model",
+                })}
               </FormLabel>
               <Input
                 id="claudeModel"
@@ -262,7 +264,7 @@ export function ClaudeFormFields({
             <div className="space-y-2">
               <FormLabel htmlFor="claudeDefaultHaikuModel">
                 {t("providerForm.anthropicDefaultHaikuModel", {
-                  defaultValue: "Haiku 默认模型",
+                  defaultValue: "Haiku Default Model",
                 })}
               </FormLabel>
               <Input
@@ -283,7 +285,7 @@ export function ClaudeFormFields({
             <div className="space-y-2">
               <FormLabel htmlFor="claudeDefaultSonnetModel">
                 {t("providerForm.anthropicDefaultSonnetModel", {
-                  defaultValue: "Sonnet 默认模型",
+                  defaultValue: "Sonnet Default Model",
                 })}
               </FormLabel>
               <Input
@@ -307,7 +309,7 @@ export function ClaudeFormFields({
             <div className="space-y-2">
               <FormLabel htmlFor="claudeDefaultOpusModel">
                 {t("providerForm.anthropicDefaultOpusModel", {
-                  defaultValue: "Opus 默认模型",
+                  defaultValue: "Opus Default Model",
                 })}
               </FormLabel>
               <Input

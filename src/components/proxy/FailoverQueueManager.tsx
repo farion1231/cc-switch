@@ -129,12 +129,12 @@ export function FailoverQueueManager({
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">
               {t("proxy.failover.autoSwitch", {
-                defaultValue: "自动故障转移",
+                defaultValue: "Auto Failover",
               })}
             </span>
             {isFailoverEnabled && (
               <span className="px-2 py-0.5 text-xs rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
-                {t("common.enabled", { defaultValue: "已开启" })}
+                {t("common.enabled", { defaultValue: "Enabled" })}
               </span>
             )}
           </div>

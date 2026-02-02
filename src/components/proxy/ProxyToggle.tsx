@@ -44,13 +44,13 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
   const tooltipText = takeoverEnabled
     ? isRunning
       ? t("proxy.takeover.tooltip.active", {
-          defaultValue: `${appLabel} 已接管 - ${status?.address}:${status?.port}\n切换该应用供应商为热切换`,
+          defaultValue: `${appLabel} takeover active - ${status?.address}:${status?.port}\nSwitch provider for this app to hot-swap`,
         })
       : t("proxy.takeover.tooltip.broken", {
-          defaultValue: `${appLabel} 已接管，但代理服务未运行`,
+          defaultValue: `${appLabel} takeover active but proxy service is not running`,
         })
     : t("proxy.takeover.tooltip.inactive", {
-        defaultValue: `接管 ${appLabel} 的 Live 配置，让该应用请求走本地代理`,
+        defaultValue: `Take over ${appLabel} Live config to route requests through local proxy`,
       });
 
   return (

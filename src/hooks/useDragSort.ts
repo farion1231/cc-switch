@@ -90,7 +90,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
 
         toast.success(
           t("provider.sortUpdated", {
-            defaultValue: "排序已更新",
+            defaultValue: "Sort order updated",
           }),
           { closeButton: true },
         );
@@ -98,7 +98,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         console.error("Failed to update provider sort order", error);
         toast.error(
           t("provider.sortUpdateFailed", {
-            defaultValue: "排序更新失败",
+            defaultValue: "Failed to update sort order",
           }),
         );
       }

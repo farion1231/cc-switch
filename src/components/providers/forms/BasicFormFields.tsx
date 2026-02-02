@@ -61,10 +61,10 @@ export function BasicFormFields({
               title={
                 currentIcon
                   ? t("providerIcon.clickToChange", {
-                      defaultValue: "点击更换图标",
+                      defaultValue: "Click to change icon",
                     })
                   : t("providerIcon.clickToSelect", {
-                      defaultValue: "点击选择图标",
+                      defaultValue: "Click to select icon",
                     })
               }
             >
@@ -92,7 +92,7 @@ export function BasicFormFields({
                   </DialogClose>
                   <p className="text-lg font-semibold leading-tight">
                     {t("providerIcon.selectIcon", {
-                      defaultValue: "选择图标",
+                      defaultValue: "Select Icon",
                     })}
                   </p>
                 </div>
@@ -107,7 +107,7 @@ export function BasicFormFields({
                   <div className="flex justify-end gap-2">
                     <DialogClose asChild>
                       <Button type="button" variant="outline">
-                        {t("common.done", { defaultValue: "完成" })}
+                        {t("common.done", { defaultValue: "Done" })}
                       </Button>
                     </DialogClose>
                   </div>

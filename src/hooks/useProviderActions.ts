@@ -44,7 +44,7 @@ export function useProviderActions(activeApp: AppId) {
         const detail =
           extractErrorMessage(error) ||
           t("notifications.syncClaudePluginFailed", {
-            defaultValue: "同步 Claude 插件失败",
+            defaultValue: "Failed to sync Claude plugin",
           });
         toast.error(detail, { duration: 4200 });
       }
@@ -154,7 +154,7 @@ export function useProviderActions(activeApp: AppId) {
         });
         toast.success(
           t("provider.usageSaved", {
-            defaultValue: "用量查询配置已保存",
+            defaultValue: "Usage query configuration saved",
           }),
           { closeButton: true },
         );
@@ -162,7 +162,7 @@ export function useProviderActions(activeApp: AppId) {
         const detail =
           extractErrorMessage(error) ||
           t("provider.usageSaveFailed", {
-            defaultValue: "用量查询配置保存失败",
+            defaultValue: "Failed to save usage query configuration",
           });
         toast.error(detail);
       }

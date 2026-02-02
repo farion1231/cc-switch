@@ -338,16 +338,16 @@ export function ProviderForm({
   const presetCategoryLabels: Record<string, string> = useMemo(
     () => ({
       official: t("providerForm.categoryOfficial", {
-        defaultValue: "官方",
+        defaultValue: "Official",
       }),
       cn_official: t("providerForm.categoryCnOfficial", {
-        defaultValue: "国内官方",
+        defaultValue: "CN Official",
       }),
       aggregator: t("providerForm.categoryAggregation", {
-        defaultValue: "聚合服务",
+        defaultValue: "Aggregation",
       }),
       third_party: t("providerForm.categoryThirdParty", {
-        defaultValue: "第三方",
+        defaultValue: "Third Party",
       }),
     }),
     [t],
@@ -729,7 +729,7 @@ export function ProviderForm({
         toast.error(
           t("providerForm.fillParameter", {
             label: validation.missingField.label,
-            defaultValue: `请填写 ${validation.missingField.label}`,
+            defaultValue: `Please fill in \${validation.missingField.label}`,
           }),
         );
         return;
@@ -740,7 +740,7 @@ export function ProviderForm({
     if (!values.name.trim()) {
       toast.error(
         t("providerForm.fillSupplierName", {
-          defaultValue: "请填写供应商名称",
+          defaultValue: "Please enter provider name",
         }),
       );
       return;
@@ -769,7 +769,7 @@ export function ProviderForm({
         if (!baseUrl.trim()) {
           toast.error(
             t("providerForm.endpointRequired", {
-              defaultValue: "非官方供应商请填写 API 端点",
+              defaultValue: "Non-official providers must enter API endpoint",
             }),
           );
           return;
@@ -777,7 +777,7 @@ export function ProviderForm({
         if (!apiKey.trim()) {
           toast.error(
             t("providerForm.apiKeyRequired", {
-              defaultValue: "非官方供应商请填写 API Key",
+              defaultValue: "Non-official providers must enter API Key",
             }),
           );
           return;
@@ -786,7 +786,7 @@ export function ProviderForm({
         if (!codexBaseUrl.trim()) {
           toast.error(
             t("providerForm.endpointRequired", {
-              defaultValue: "非官方供应商请填写 API 端点",
+              defaultValue: "Non-official providers must enter API endpoint",
             }),
           );
           return;
@@ -794,7 +794,7 @@ export function ProviderForm({
         if (!codexApiKey.trim()) {
           toast.error(
             t("providerForm.apiKeyRequired", {
-              defaultValue: "非官方供应商请填写 API Key",
+              defaultValue: "Non-official providers must enter API Key",
             }),
           );
           return;
@@ -803,7 +803,7 @@ export function ProviderForm({
         if (!geminiBaseUrl.trim()) {
           toast.error(
             t("providerForm.endpointRequired", {
-              defaultValue: "非官方供应商请填写 API 端点",
+              defaultValue: "Non-official providers must enter API endpoint",
             }),
           );
           return;
@@ -811,7 +811,7 @@ export function ProviderForm({
         if (!geminiApiKey.trim()) {
           toast.error(
             t("providerForm.apiKeyRequired", {
-              defaultValue: "非官方供应商请填写 API Key",
+              defaultValue: "Non-official providers must enter API Key",
             }),
           );
           return;

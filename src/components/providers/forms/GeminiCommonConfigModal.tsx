@@ -44,7 +44,7 @@ export const GeminiCommonConfigModal: React.FC<
     <FullScreenPanel
       isOpen={isOpen}
       title={t("geminiConfig.editCommonConfigTitle", {
-        defaultValue: "编辑 Gemini 通用配置片段",
+        defaultValue: "Edit Gemini Common Config Snippet",
       })}
       onClose={onClose}
       footer={
@@ -63,7 +63,7 @@ export const GeminiCommonConfigModal: React.FC<
                 <Download className="w-4 h-4" />
               )}
               {t("geminiConfig.extractFromCurrent", {
-                defaultValue: "从编辑内容提取",
+                defaultValue: "Extract from Editor",
               })}
             </Button>
           )}

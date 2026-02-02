@@ -121,7 +121,7 @@ export function PricingEditModal({
                 setFormData({ ...formData, modelId: e.target.value })
               }
               placeholder={t("usage.modelIdPlaceholder", {
-                defaultValue: "例如: claude-3-5-sonnet-20241022",
+                defaultValue: "e.g., claude-3-5-sonnet-20241022",
               })}
               required
             />
@@ -139,7 +139,7 @@ export function PricingEditModal({
               setFormData({ ...formData, displayName: e.target.value })
             }
             placeholder={t("usage.displayNamePlaceholder", {
-              defaultValue: "例如: Claude 3.5 Sonnet",
+              defaultValue: "e.g., Claude 3.5 Sonnet",
             })}
             required
           />

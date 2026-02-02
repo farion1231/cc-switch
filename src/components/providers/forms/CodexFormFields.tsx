@@ -76,10 +76,10 @@ export function CodexFormFields({
         partnerPromotionKey={partnerPromotionKey}
         placeholder={{
           official: t("providerForm.codexOfficialNoApiKey", {
-            defaultValue: "官方供应商无需 API Key",
+            defaultValue: "Official provider does not require API Key",
           }),
           thirdParty: t("providerForm.codexApiKeyAutoFill", {
-            defaultValue: "输入 API Key，将自动填充到配置",
+            defaultValue: "Enter API Key, it will be auto-filled to config",
           }),
         }}
       />
@@ -104,7 +104,7 @@ export function CodexFormFields({
             htmlFor="codexModelName"
             className="block text-sm font-medium text-foreground"
           >
-            {t("codexConfig.modelName", { defaultValue: "模型名称" })}
+            {t("codexConfig.modelName", { defaultValue: "Model Name" })}
           </label>
           <input
             id="codexModelName"
@@ -112,13 +112,14 @@ export function CodexFormFields({
             value={modelName}
             onChange={(e) => onModelNameChange(e.target.value)}
             placeholder={t("codexConfig.modelNamePlaceholder", {
-              defaultValue: "例如: gpt-5-codex",
+              defaultValue: "e.g. gpt-5-codex",
             })}
             className="w-full px-3 py-2 border border-border-default bg-background text-foreground rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 transition-colors"
           />
           <p className="text-xs text-muted-foreground">
             {t("codexConfig.modelNameHint", {
-              defaultValue: "指定使用的模型，将自动更新到 config.toml 中",
+              defaultValue:
+                "Specify the model to use, will be auto-updated to config.toml",
             })}
           </p>
         </div>

@@ -43,7 +43,7 @@ export function useProxyStatus() {
     onSuccess: (info) => {
       toast.success(
         t("proxy.server.started", {
-          defaultValue: `代理服务已启动 - ${info.address}:${info.port}`,
+          defaultValue: `Proxy server started - ${info.address}:${info.port}`,
         }),
         { closeButton: true },
       );
@@ -52,10 +52,10 @@ export function useProxyStatus() {
     onError: (error: Error) => {
       const detail =
         extractErrorMessage(error) ||
-        t("common.unknown", { defaultValue: "未知错误" });
+        t("common.unknown", { defaultValue: "Unknown error" });
       toast.error(
         t("proxy.server.startFailed", {
-          defaultValue: `启动代理服务失败: ${detail}`,
+          defaultValue: `Failed to start proxy server: ${detail}`,
         }),
       );
     },
@@ -67,7 +67,8 @@ export function useProxyStatus() {
     onSuccess: () => {
       toast.success(
         t("proxy.stoppedWithRestore", {
-          defaultValue: "代理服务已关闭，已恢复所有接管配置",
+          defaultValue:
+            "Proxy server stopped, all takeover configurations restored",
         }),
         { closeButton: true },
       );
@@ -82,10 +83,10 @@ export function useProxyStatus() {
     onError: (error: Error) => {
       const detail =
         extractErrorMessage(error) ||
-        t("common.unknown", { defaultValue: "未知错误" });
+        t("common.unknown", { defaultValue: "Unknown error" });
       toast.error(
         t("proxy.stopWithRestoreFailed", {
-          defaultValue: `停止失败: ${detail}`,
+          defaultValue: `Stop failed: ${detail}`,
         }),
       );
     },
@@ -108,10 +109,10 @@ export function useProxyStatus() {
       toast.success(
         variables.enabled
           ? t("proxy.takeover.enabled", {
-              defaultValue: `已接管 ${appLabel} 配置（请求将走本地代理）`,
+              defaultValue: `${appLabel} configuration taken over (requests will go through local proxy)`,
             })
           : t("proxy.takeover.disabled", {
-              defaultValue: `已恢复 ${appLabel} 配置`,
+              defaultValue: `${appLabel} configuration restored`,
             }),
         { closeButton: true },
       );
@@ -122,10 +123,10 @@ export function useProxyStatus() {
     onError: (error: Error) => {
       const detail =
         extractErrorMessage(error) ||
-        t("common.unknown", { defaultValue: "未知错误" });
+        t("common.unknown", { defaultValue: "Unknown error" });
       toast.error(
         t("proxy.takeover.failed", {
-          defaultValue: `操作失败: ${detail}`,
+          defaultValue: `Operation failed: ${detail}`,
         }),
       );
     },
@@ -146,11 +147,11 @@ export function useProxyStatus() {
     onError: (error: Error) => {
       const detail =
         extractErrorMessage(error) ||
-        t("common.unknown", { defaultValue: "未知错误" });
+        t("common.unknown", { defaultValue: "Unknown error" });
       toast.error(
         t("proxy.switchFailed", {
           error: detail,
-          defaultValue: `切换失败: ${detail}`,
+          defaultValue: `Switch failed: ${detail}`,
         }),
       );
     },

@@ -30,13 +30,13 @@ export const IconPicker: React.FC<IconPickerProps> = ({
     <div className="space-y-4">
       <div>
         <Label htmlFor="icon-search">
-          {t("iconPicker.search", { defaultValue: "搜索图标" })}
+          {t("iconPicker.search", { defaultValue: "Search Icons" })}
         </Label>
         <Input
           id="icon-search"
           type="text"
           placeholder={t("iconPicker.searchPlaceholder", {
-            defaultValue: "输入图标名称...",
+            defaultValue: "Enter icon name...",
           })}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
@@ -77,7 +77,9 @@ export const IconPicker: React.FC<IconPickerProps> = ({
 
       {filteredIcons.length === 0 && (
         <div className="text-center py-8 text-muted-foreground">
-          {t("iconPicker.noResults", { defaultValue: "未找到匹配的图标" })}
+          {t("iconPicker.noResults", {
+            defaultValue: "No matching icons found",
+          })}
         </div>
       )}
     </div>
