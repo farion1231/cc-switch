@@ -135,6 +135,10 @@ export interface Settings {
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
+
+  // ===== 键盘快捷键设置 =====
+  // 搜索快捷键（默认: "mod+k"，mod = Mac 上的 Cmd, Windows 上的 Ctrl）
+  searchShortcut?: string;
 }
 
 // MCP 服务器连接参数（宽松：允许扩展字段）

@@ -319,6 +319,17 @@ impl Database {
         Ok(())
     }
 
+    /// 清除当前供应商（将所有供应商的 is_current 设为 0）
+    pub fn clear_current_provider(&self, app_type: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET is_current = 0 WHERE app_type = ?1",
+            params![app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     /// 更新供应商的 settings_config（仅更新配置，不改变其他字段）
     pub fn update_provider_settings_config(
         &self,

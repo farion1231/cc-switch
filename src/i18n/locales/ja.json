@@ -93,6 +93,18 @@
     "editCodexProvider": "Codex プロバイダーを編集",
     "configError": "設定エラー",
     "notConfigured": "公式サイト用に未設定",
+    "configured": "設定済み",
+    "hiddenInAnonymousMode": "プライバシーモードで非表示",
+    "model": "モデル",
+    "categoryLabel": "カテゴリ",
+    "category": {
+      "official": "公式",
+      "cnOfficial": "中国公式",
+      "aggregator": "アグリゲーター",
+      "thirdParty": "サードパーティ",
+      "custom": "カスタム"
+    },
+    "createdAt": "追加日",
     "applyToClaudePlugin": "Claude プラグインに適用",
     "removeFromClaudePlugin": "Claude プラグインから解除",
     "dragToReorder": "ドラッグで並べ替え",
@@ -307,6 +319,14 @@
       "saveFailed": "保存に失敗しました: {{error}}",
       "testSuccess": "接続成功！遅延 {{latency}}ms",
       "testFailed": "接続に失敗しました: {{error}}"
+    },
+    "keyboard": {
+      "title": "キーボードショートカット",
+      "description": "アプリ内のキーボードショートカットをカスタマイズ",
+      "search": "検索を開く",
+      "recording": "ショートカットを押してください...",
+      "reset": "デフォルトにリセット",
+      "hint": "入力欄をクリックして新しいショートカットを押してください"
     }
   },
   "apps": {
@@ -1256,6 +1276,25 @@
     "streamingFirstByte": "ストリーミング初回バイトタイムアウト",
     "streamingIdle": "ストリーミングアイドルタイムアウト",
     "nonStreaming": "非ストリーミングタイムアウト"
+  },
+  "listToolbar": {
+    "listView": "リスト表示",
+    "cardView": "カード表示",
+    "sortCustom": "カスタム",
+    "sortName": "名前",
+    "sortCreatedAt": "追加日",
+    "sortAsc": "昇順",
+    "sortDesc": "降順",
+    "anonymousModeOn": "プライバシーモードがオン、クリックで無効化",
+    "anonymousModeOff": "プライバシーモードを有効にして機密情報を非表示"
+  },
+  "search": {
+    "placeholder": "検索...",
+    "scopeHint": "名前、説明、タグに一致します。",
+    "ariaLabel": "アイテムを検索",
+    "closeAriaLabel": "検索を閉じる",
+    "closeHint": "Escで閉じる",
+    "noResults": "一致する結果がありません"
   },
   "universalProvider": {
     "title": "統合プロバイダー",

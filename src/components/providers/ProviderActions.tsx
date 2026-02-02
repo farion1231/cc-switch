@@ -36,6 +36,8 @@ interface ProviderActionsProps {
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
+  /** 紧凑模式：用于卡片视图 */
+  compact?: boolean;
 }
 
 export function ProviderActions({
@@ -56,16 +58,19 @@ export function ProviderActions({
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
+  compact = false,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
-  const iconButtonClass = "h-8 w-8 p-1";
+  const iconButtonClass = cn(
+    compact ? "h-6 w-6 p-0.5" : "h-8 w-8 p-1",
+    "text-gray-400 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
+  );
 
   // OpenCode 使用累加模式
   const isOpenCodeMode = appId === "opencode";
 
   // 故障转移模式下的按钮逻辑（OpenCode 不支持故障转移）
   const isFailoverMode = !isOpenCodeMode && isAutoFailoverEnabled && onToggleFailover;
-
   // 处理主按钮点击
   const handleMainButtonClick = () => {
     if (isOpenCodeMode) {
@@ -96,18 +101,18 @@ export function ProviderActions({
       if (isInConfig) {
         return {
           disabled: false,
-          variant: "secondary" as const,
+          variant: "ghost" as const,
           className:
-            "bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-900/70",
+            "bg-orange-50 text-orange-600 hover:bg-orange-100 dark:bg-orange-900/30 dark:text-orange-400 dark:hover:bg-orange-900/50 border border-orange-200 dark:border-orange-800",
           icon: <Minus className="h-4 w-4" />,
           text: t("provider.removeFromConfig", { defaultValue: "移除" }),
         };
       }
       return {
         disabled: false,
-        variant: "default" as const,
+        variant: "ghost" as const,
         className:
-          "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
+          "bg-emerald-50 text-emerald-600 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50 border border-emerald-200 dark:border-emerald-800",
         icon: <Plus className="h-4 w-4" />,
         text: t("provider.addToConfig", { defaultValue: "添加" }),
       };
@@ -118,18 +123,18 @@ export function ProviderActions({
       if (isInFailoverQueue) {
         return {
           disabled: false,
-          variant: "secondary" as const,
+          variant: "ghost" as const,
           className:
-            "bg-blue-100 text-blue-600 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-400 dark:hover:bg-blue-900/70",
+            "bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-800",
           icon: <Check className="h-4 w-4" />,
           text: t("failover.inQueue", { defaultValue: "已加入" }),
         };
       }
       return {
         disabled: false,
-        variant: "default" as const,
+        variant: "ghost" as const,
         className:
-          "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+          "bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-800",
         icon: <Plus className="h-4 w-4" />,
         text: t("failover.addQueue", { defaultValue: "加入" }),
       };
@@ -139,9 +144,9 @@ export function ProviderActions({
     if (isCurrent) {
       return {
         disabled: true,
-        variant: "secondary" as const,
+        variant: "ghost" as const,
         className:
-          "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+          "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500 border border-gray-200 dark:border-gray-700",
         icon: <Check className="h-4 w-4" />,
         text: t("provider.inUse"),
       };
@@ -149,10 +154,10 @@ export function ProviderActions({
 
     return {
       disabled: false,
-      variant: "default" as const,
+      variant: "ghost" as const,
       className: isProxyTakeover
-        ? "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
-        : "",
+        ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50 border border-emerald-200 dark:border-emerald-800"
+        : "bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-800",
       icon: <Play className="h-4 w-4" />,
       text: t("provider.enable"),
     };
@@ -160,23 +165,24 @@ export function ProviderActions({
 
   const buttonState = getMainButtonState();
 
-  // OpenCode 模式下删除按钮始终可用（主按钮"移除"是从 live 配置移除，删除是从数据库删除）
-  const canDelete = isOpenCodeMode ? true : !isCurrent;
-
   return (
-    <div className="flex items-center gap-1.5">
+    <div className={cn("flex items-center", compact ? "gap-2" : "gap-3")}>
       <Button
         size="sm"
         variant={buttonState.variant}
         onClick={handleMainButtonClick}
         disabled={buttonState.disabled}
-        className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+        className={cn(
+          compact ? "w-[3.5rem] px-1.5 h-7 text-xs" : "w-[4.5rem] px-2.5",
+          "rounded-lg",
+          buttonState.className
+        )}
       >
         {buttonState.icon}
-        {buttonState.text}
+        {!compact && buttonState.text}
       </Button>
 
-      <div className="flex items-center gap-1">
+      <div className={cn("flex items-center", compact ? "gap-1.5" : "gap-2")}>
         <Button
           size="icon"
           variant="ghost"
@@ -242,12 +248,11 @@ export function ProviderActions({
         <Button
           size="icon"
           variant="ghost"
-          onClick={canDelete ? onDelete : undefined}
+          onClick={onDelete}
           title={t("common.delete")}
           className={cn(
             iconButtonClass,
-            canDelete && "hover:text-red-500 dark:hover:text-red-400",
-            !canDelete && "opacity-40 cursor-not-allowed text-muted-foreground",
+            "hover:text-red-500 dark:hover:text-red-400",
           )}
         >
           <Trash2 className="h-4 w-4" />

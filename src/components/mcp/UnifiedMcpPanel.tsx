@@ -9,10 +9,16 @@ import {
   useDeleteMcpServer,
   useImportMcpFromApps,
 } from "@/hooks/useMcp";
+import { useListControls } from "@/hooks/useListControls";
+import { useSearchShortcut } from "@/components/common/SearchOverlay";
+import { useSettingsQuery } from "@/lib/query";
 import type { McpServer } from "@/types";
 import type { AppId } from "@/lib/api/types";
 import McpFormModal from "./McpFormModal";
+import McpCardCompact from "./McpCardCompact";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { ListToolbar } from "@/components/common/ListToolbar";
+import { SearchOverlay } from "@/components/common/SearchOverlay";
 import { Edit3, Trash2 } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import { mcpPresets } from "@/config/mcpPresets";
@@ -45,6 +51,29 @@ const UnifiedMcpPanel = React.forwardRef<
     onConfirm: () => void;
   } | null>(null);
 
+  // List controls (view mode, search, sort)
+  const {
+    viewMode,
+    searchTerm,
+    sortField,
+    sortOrder,
+    isSearchOpen,
+    setViewMode,
+    setSearchTerm,
+    setSortField,
+    toggleSortOrder,
+    openSearch,
+    closeSearch,
+    clearSearch,
+    filterItems,
+    sortItems,
+  } = useListControls({ panelId: "mcp" });
+
+  // Keyboard shortcut for search (from settings or default Cmd/Ctrl+K)
+  const { data: settings } = useSettingsQuery();
+  const searchShortcut = settings?.searchShortcut || "mod+k";
+  useSearchShortcut(openSearch, searchShortcut);
+
   // Queries and Mutations
   const { data: serversMap, isLoading } = useAllMcpServers();
   const toggleAppMutation = useToggleMcpApp();
@@ -56,6 +85,28 @@ const UnifiedMcpPanel = React.forwardRef<
     if (!serversMap) return [];
     return Object.entries(serversMap);
   }, [serversMap]);
+
+  // Apply filtering and sorting
+  const processedEntries = useMemo(() => {
+    // Convert to filterable/sortable format
+    const items = serverEntries.map(([id, server]) => ({
+      id,
+      server,
+      name: server.name || id,
+      description: server.description,
+      tags: server.tags,
+      createdAt: undefined, // MCP servers don't have createdAt
+      sortIndex: undefined, // MCP servers don't have sortIndex yet
+    }));
+
+    // Apply filter
+    const filtered = filterItems(items);
+
+    // Apply sort (for custom, keep original order)
+    const sorted = sortField === "custom" ? filtered : sortItems(filtered);
+
+    return sorted.map((item) => [item.id, item.server] as [string, McpServer]);
+  }, [serverEntries, filterItems, sortItems, sortField]);
 
   // Count enabled servers per app
   const enabledCounts = useMemo(() => {
@@ -154,6 +205,36 @@ const UnifiedMcpPanel = React.forwardRef<
         </div>
       </div>
 
+      {/* Toolbar */}
+      <div className="flex-shrink-0 mb-4">
+        <ListToolbar
+          viewMode={viewMode}
+          sortField={sortField}
+          sortOrder={sortOrder}
+          isSearchOpen={isSearchOpen}
+          isLoading={isLoading}
+          onViewModeChange={setViewMode}
+          onSortFieldChange={setSortField}
+          onSortOrderToggle={toggleSortOrder}
+          onSearchOpen={openSearch}
+        />
+      </div>
+
+      {/* Search Overlay */}
+      <SearchOverlay
+        isOpen={isSearchOpen}
+        searchTerm={searchTerm}
+        placeholder={t("mcp.searchPlaceholder", {
+          defaultValue: "Search MCP servers...",
+        })}
+        scopeHint={t("search.scopeHint", {
+          defaultValue: "Matches name, description, and tags.",
+        })}
+        onSearchChange={setSearchTerm}
+        onClose={closeSearch}
+        onClear={clearSearch}
+      />
+
       {/* Content - Scrollable */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
@@ -172,9 +253,28 @@ const UnifiedMcpPanel = React.forwardRef<
               {t("mcp.emptyDescription")}
             </p>
           </div>
+        ) : processedEntries.length === 0 ? (
+          <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
+            {t("search.noResults", {
+              defaultValue: "No matching results",
+            })}
+          </div>
+        ) : viewMode === "card" ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {processedEntries.map(([id, server]) => (
+              <McpCardCompact
+                key={id}
+                id={id}
+                server={server}
+                onToggleApp={handleToggleApp}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+              />
+            ))}
+          </div>
         ) : (
           <div className="space-y-3">
-            {serverEntries.map(([id, server]) => (
+            {processedEntries.map(([id, server]) => (
               <UnifiedMcpListItem
                 key={id}
                 id={id}

@@ -174,3 +174,21 @@ pub fn set_mcp_servers_map(
     write_json_value(&path, &root)?;
     Ok(())
 }
+
+/// 获取 Gemini MCP 状态
+pub fn get_mcp_status() -> Result<McpStatus, AppError> {
+    let path = user_config_path();
+    let (exists, count) = if path.exists() {
+        let v = read_json_value(&path)?;
+        let servers = v.get("mcpServers").and_then(|x| x.as_object());
+        (true, servers.map(|m| m.len()).unwrap_or(0))
+    } else {
+        (false, 0)
+    };
+
+    Ok(McpStatus {
+        user_config_path: path.to_string_lossy().to_string(),
+        user_config_exists: exists,
+        server_count: count,
+    })
+}

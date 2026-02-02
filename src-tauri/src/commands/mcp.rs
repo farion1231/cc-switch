@@ -8,6 +8,7 @@ use tauri::State;
 
 use crate::app_config::AppType;
 use crate::claude_mcp;
+use crate::gemini_mcp;
 use crate::services::McpService;
 use crate::store::AppState;
 
@@ -15,6 +16,12 @@ use crate::store::AppState;
 #[tauri::command]
 pub async fn get_claude_mcp_status() -> Result<claude_mcp::McpStatus, String> {
     claude_mcp::get_mcp_status().map_err(|e| e.to_string())
+}
+
+/// 获取 Gemini MCP 状态
+#[tauri::command]
+pub async fn get_gemini_mcp_status() -> Result<gemini_mcp::McpStatus, String> {
+    gemini_mcp::get_mcp_status().map_err(|e| e.to_string())
 }
 
 /// 读取 mcp.json 文本内容

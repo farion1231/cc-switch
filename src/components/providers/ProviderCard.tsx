@@ -47,6 +47,8 @@ interface ProviderCardProps {
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
   onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
+  // 匿名模式
+  isAnonymousMode?: boolean;
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -108,6 +110,7 @@ export function ProviderCard({
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
+  isAnonymousMode = false,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -207,19 +210,19 @@ export function ProviderCard({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
+        "relative overflow-hidden rounded-xl border border-border/60 p-4 transition-all duration-300",
         "bg-card text-card-foreground group",
-        // hover 时的边框效果
+        // Hover 效果：轻微上浮 + 柔和阴影
+        "hover:-translate-y-1 hover:shadow-lg hover:shadow-gray-200/50 dark:hover:shadow-gray-900/30",
         isAutoFailoverEnabled || isProxyTakeover
-          ? "hover:border-emerald-500/50"
-          : "hover:border-border-active",
+          ? "hover:border-emerald-500/40"
+          : "hover:border-gray-300 dark:hover:border-gray-600",
         // 当前激活的供应商边框样式
         shouldUseGreen &&
-          "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
-        shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
-        !isActiveProvider && "hover:shadow-sm",
+          "border-emerald-500/50 shadow-sm shadow-emerald-500/10",
+        shouldUseBlue && "border-blue-500/50 shadow-sm shadow-blue-500/10",
         dragHandleProps?.isDragging &&
-          "cursor-grabbing border-primary shadow-lg scale-105 z-10",
+          "cursor-grabbing border-primary shadow-xl scale-105 z-10",
       )}
     >
       <div
@@ -249,7 +252,7 @@ export function ProviderCard({
           </button>
 
           {/* 供应商图标 */}
-          <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
+          <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300 relative overflow-hidden">
             <ProviderIcon
               icon={provider.icon}
               name={provider.name}
@@ -296,15 +299,17 @@ export function ProviderCard({
                 type="button"
                 onClick={handleOpenWebsite}
                 className={cn(
-                  "inline-flex items-center text-sm max-w-[280px]",
-                  isClickableUrl
-                    ? "text-blue-500 transition-colors hover:underline dark:text-blue-400 cursor-pointer"
-                    : "text-muted-foreground cursor-default",
+                  "inline-flex items-center text-sm max-w-[280px] truncate transition-colors",
+                  isAnonymousMode
+                    ? "text-muted-foreground/40 cursor-default"
+                    : isClickableUrl
+                      ? "text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:underline cursor-pointer"
+                      : "text-gray-400 dark:text-gray-500 cursor-default",
                 )}
-                title={displayUrl}
-                disabled={!isClickableUrl}
+                title={isAnonymousMode ? t("provider.hiddenInAnonymousMode", { defaultValue: "隐私模式下已隐藏" }) : displayUrl}
+                disabled={!isClickableUrl || isAnonymousMode}
               >
-                <span className="truncate">{displayUrl}</span>
+                <span className="truncate">{isAnonymousMode ? "••••••••.com/••••" : displayUrl}</span>
               </button>
             )}
           </div>

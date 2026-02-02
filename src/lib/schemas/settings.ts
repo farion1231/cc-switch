@@ -25,6 +25,9 @@ export const settingsSchema = z.object({
   currentProviderClaude: z.string().optional(),
   currentProviderCodex: z.string().optional(),
   currentProviderGemini: z.string().optional(),
+
+  // 键盘快捷键设置
+  searchShortcut: z.string().optional(), // 默认: "mod+k" (mod = Mac 上的 Cmd, Windows 上的 Ctrl)
 });
 
 export type SettingsFormData = z.infer<typeof settingsSchema>;

@@ -696,13 +696,13 @@ function App() {
               </div>
             ) : (
               <>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
                   <a
                     href="https://github.com/farion1231/cc-switch"
                     target="_blank"
                     rel="noreferrer"
                     className={cn(
-                      "text-xl font-semibold transition-colors",
+                      "text-base font-semibold transition-colors",
                       isProxyRunning && isCurrentAppTakeoverActive
                         ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
                         : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
@@ -718,9 +718,9 @@ function App() {
                       setCurrentView("settings");
                     }}
                     title={t("common.settings")}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                    className="hover:bg-black/5 dark:hover:bg-white/5 h-7 w-7"
                   >
-                    <Settings className="w-4 h-4" />
+                    <Settings className="w-3.5 h-3.5" />
                   </Button>
                 </div>
                 <UpdateBadge
@@ -822,7 +822,7 @@ function App() {
 
                 <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
 
-                <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
+                <div className="flex items-center gap-0.5 p-1 bg-muted rounded-xl">
                   <Button
                     variant="ghost"
                     size="sm"
@@ -873,7 +873,7 @@ function App() {
                 <Button
                   onClick={() => setIsAddOpen(true)}
                   size="icon"
-                  className={`ml-2 ${addActionButtonClass}`}
+                  className={`ml-1 ${addActionButtonClass}`}
                 >
                   <Plus className="w-5 h-5" />
                 </Button>

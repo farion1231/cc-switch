@@ -25,9 +25,8 @@ export function ProviderHealthBadge({
         labelFallback: "正常",
         status: ProviderHealthStatus.Healthy,
         color: "bg-green-500",
-        // 使用更深/柔和的背景色，去除可能的白色内容感
-        bgColor: "bg-green-500/10",
-        textColor: "text-green-600 dark:text-green-400",
+        bgColor: "bg-green-100 dark:bg-green-900/40",
+        textColor: "text-green-700 dark:text-green-400",
       };
     } else if (consecutiveFailures < 5) {
       return {
@@ -35,8 +34,8 @@ export function ProviderHealthBadge({
         labelFallback: "降级",
         status: ProviderHealthStatus.Degraded,
         color: "bg-yellow-500",
-        bgColor: "bg-yellow-500/10",
-        textColor: "text-yellow-600 dark:text-yellow-400",
+        bgColor: "bg-yellow-100 dark:bg-yellow-900/40",
+        textColor: "text-yellow-700 dark:text-yellow-400",
       };
     } else {
       return {
@@ -44,8 +43,8 @@ export function ProviderHealthBadge({
         labelFallback: "熔断",
         status: ProviderHealthStatus.Failed,
         color: "bg-red-500",
-        bgColor: "bg-red-500/10",
-        textColor: "text-red-600 dark:text-red-400",
+        bgColor: "bg-red-100 dark:bg-red-900/40",
+        textColor: "text-red-700 dark:text-red-400",
       };
     }
   };
@@ -58,7 +57,7 @@ export function ProviderHealthBadge({
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium",
+        "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium tracking-wide",
         statusConfig.bgColor,
         statusConfig.textColor,
         className,
@@ -68,7 +67,7 @@ export function ProviderHealthBadge({
         defaultValue: `连续失败 ${consecutiveFailures} 次`,
       })}
     >
-      <div className={cn("w-2 h-2 rounded-full", statusConfig.color)} />
+      <div className={cn("w-1.5 h-1.5 rounded-full", statusConfig.color)} />
       <span>{label}</span>
     </div>
   );

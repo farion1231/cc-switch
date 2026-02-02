@@ -37,6 +37,7 @@ import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
+import { KeyboardShortcutsSettings } from "@/components/settings/KeyboardShortcutsSettings";
 import { ProxyPanel } from "@/components/proxy";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
 import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
@@ -241,6 +242,10 @@ export function SettingsPage({
                   <WindowSettings
                     settings={settings}
                     onChange={handleAutoSave}
+                  />
+                  <KeyboardShortcutsSettings
+                    searchShortcut={settings.searchShortcut}
+                    onChange={(shortcut) => handleAutoSave({ searchShortcut: shortcut })}
                   />
                 </motion.div>
               ) : null}

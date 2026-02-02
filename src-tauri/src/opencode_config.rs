@@ -140,8 +140,32 @@ pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
 }
 
 /// 删除供应商配置
+///
+/// 如果配置文件不存在或无法读取，视为删除成功（幂等操作）
 pub fn remove_provider(id: &str) -> Result<(), AppError> {
-    let mut config = read_opencode_config()?;
+    let config_path = get_opencode_config_path();
+
+    // 如果配置文件不存在，视为删除成功
+    if !config_path.exists() {
+        log::debug!(
+            "OpenCode config file doesn't exist, skipping removal of '{}'",
+            id
+        );
+        return Ok(());
+    }
+
+    // 尝试读取配置，如果读取失败（如 JSON 格式错误），记录警告但不阻止删除
+    let mut config = match read_opencode_config() {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!(
+                "Failed to read OpenCode config while removing '{}': {}, treating as success",
+                id,
+                e
+            );
+            return Ok(());
+        }
+    };
 
     if let Some(providers) = config.get_mut("provider").and_then(|v| v.as_object_mut()) {
         providers.remove(id);

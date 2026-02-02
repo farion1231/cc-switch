@@ -93,6 +93,18 @@
     "editCodexProvider": "编辑 Codex 供应商",
     "configError": "配置错误",
     "notConfigured": "未配置官网地址",
+    "configured": "已配置",
+    "hiddenInAnonymousMode": "隐私模式下已隐藏",
+    "model": "模型",
+    "categoryLabel": "分类",
+    "category": {
+      "official": "官方",
+      "cnOfficial": "国产",
+      "aggregator": "聚合",
+      "thirdParty": "第三方",
+      "custom": "自定义"
+    },
+    "createdAt": "添加于",
     "applyToClaudePlugin": "应用到 Claude 插件",
     "removeFromClaudePlugin": "从 Claude 插件移除",
     "dragToReorder": "拖拽以重新排序",
@@ -307,6 +319,14 @@
       "saveFailed": "保存失败：{{error}}",
       "testSuccess": "连接成功！延迟 {{latency}}ms",
       "testFailed": "连接失败：{{error}}"
+    },
+    "keyboard": {
+      "title": "键盘快捷键",
+      "description": "自定义应用内的键盘快捷键",
+      "search": "打开搜索",
+      "recording": "按下快捷键...",
+      "reset": "重置为默认",
+      "hint": "点击输入框后按下新的快捷键组合"
     }
   },
   "apps": {
@@ -1272,6 +1292,25 @@
     "validationFailed": "以下字段超出有效范围: {{fields}}",
     "configSaved": "熔断器配置已保存",
     "saveFailed": "保存失败"
+  },
+  "listToolbar": {
+    "listView": "列表视图",
+    "cardView": "卡片视图",
+    "sortCustom": "自定义",
+    "sortName": "名称",
+    "sortCreatedAt": "添加时间",
+    "sortAsc": "升序",
+    "sortDesc": "降序",
+    "anonymousModeOn": "隐私模式已开启，点击关闭",
+    "anonymousModeOff": "开启隐私模式，隐藏敏感信息"
+  },
+  "search": {
+    "placeholder": "搜索...",
+    "scopeHint": "匹配名称、描述和标签。",
+    "ariaLabel": "搜索项目",
+    "closeAriaLabel": "关闭搜索",
+    "closeHint": "按 Esc 关闭",
+    "noResults": "没有匹配的结果"
   },
   "universalProvider": {
     "title": "统一供应商",

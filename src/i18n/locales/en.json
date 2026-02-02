@@ -93,6 +93,18 @@
     "editCodexProvider": "Edit Codex Provider",
     "configError": "Configuration Error",
     "notConfigured": "Not configured for official website",
+    "configured": "Configured",
+    "hiddenInAnonymousMode": "Hidden in privacy mode",
+    "model": "Model",
+    "categoryLabel": "Category",
+    "category": {
+      "official": "Official",
+      "cnOfficial": "CN Official",
+      "aggregator": "Aggregator",
+      "thirdParty": "Third Party",
+      "custom": "Custom"
+    },
+    "createdAt": "Added on",
     "applyToClaudePlugin": "Apply to Claude plugin",
     "removeFromClaudePlugin": "Remove from Claude plugin",
     "dragToReorder": "Drag to reorder",
@@ -307,6 +319,14 @@
       "saveFailed": "Save failed: {{error}}",
       "testSuccess": "Connected! Latency {{latency}}ms",
       "testFailed": "Connection failed: {{error}}"
+    },
+    "keyboard": {
+      "title": "Keyboard Shortcuts",
+      "description": "Customize keyboard shortcuts in the app",
+      "search": "Open Search",
+      "recording": "Press shortcut...",
+      "reset": "Reset to default",
+      "hint": "Click the input box and press a new shortcut combination"
     }
   },
   "apps": {
@@ -1272,6 +1292,25 @@
     "validationFailed": "The following fields are out of valid range: {{fields}}",
     "configSaved": "Circuit breaker config saved",
     "saveFailed": "Failed to save"
+  },
+  "listToolbar": {
+    "listView": "List View",
+    "cardView": "Card View",
+    "sortCustom": "Custom",
+    "sortName": "Name",
+    "sortCreatedAt": "Date Added",
+    "sortAsc": "Ascending",
+    "sortDesc": "Descending",
+    "anonymousModeOn": "Privacy mode on, click to disable",
+    "anonymousModeOff": "Enable privacy mode to hide sensitive info"
+  },
+  "search": {
+    "placeholder": "Search...",
+    "scopeHint": "Matches name, description, and tags.",
+    "ariaLabel": "Search items",
+    "closeAriaLabel": "Close search",
+    "closeHint": "Press Esc to close",
+    "noResults": "No matching results"
   },
   "universalProvider": {
     "title": "Universal Provider",

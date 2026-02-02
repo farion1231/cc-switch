@@ -772,6 +772,8 @@ pub fn run() {
             commands::upsert_claude_mcp_server,
             commands::delete_claude_mcp_server,
             commands::validate_mcp_command,
+            // Gemini MCP management
+            commands::get_gemini_mcp_status,
             // usage query
             commands::queryProviderUsage,
             commands::testUsageScript,

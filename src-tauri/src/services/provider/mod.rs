@@ -236,26 +236,40 @@ impl ProviderService {
 
     /// Delete a provider
     ///
-    /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
+    /// 同时检查本地 settings 和数据库的当前供应商。
     /// 对于 OpenCode（累加模式），可以随时删除任意供应商，同时从 live 配置中移除。
+    /// 对于其他应用：
+    /// - 如果删除的是当前供应商且还有其他供应商，自动切换到另一个供应商
+    /// - 如果删除的是唯一的供应商，清空当前供应商设置后删除
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         // OpenCode uses additive mode - no current provider concept
         if matches!(app_type, AppType::OpenCode) {
-            // Remove from database
-            state.db.delete_provider(app_type.as_str(), id)?;
-            // Also remove from live config
+            // First remove from live config (if this fails, database remains intact)
             remove_opencode_provider_from_live(id)?;
+            // Then remove from database
+            state.db.delete_provider(app_type.as_str(), id)?;
             return Ok(());
         }
 
         // For other apps: Check both local settings and database
         let local_current = crate::settings::get_current_provider(&app_type);
         let db_current = state.db.get_current_provider(app_type.as_str())?;
+        let is_current =
+            local_current.as_deref() == Some(id) || db_current.as_deref() == Some(id);
 
-        if local_current.as_deref() == Some(id) || db_current.as_deref() == Some(id) {
-            return Err(AppError::Message(
-                "无法删除当前正在使用的供应商".to_string(),
-            ));
+        if is_current {
+            // Get all providers to check if there are alternatives
+            let providers = state.db.get_all_providers(app_type.as_str())?;
+            let other_provider = providers.keys().find(|&pid| pid != id);
+
+            if let Some(other_id) = other_provider {
+                // Switch to another provider first
+                Self::switch(state, app_type.clone(), other_id)?;
+            } else {
+                // This is the only provider - clear current provider settings
+                crate::settings::set_current_provider(&app_type, None)?;
+                state.db.clear_current_provider(app_type.as_str())?;
+            }
         }
 
         state.db.delete_provider(app_type.as_str(), id)

@@ -13,7 +13,35 @@ import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
 
-export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
+export interface UseDragSortOptions {
+  providers: Record<string, Provider>;
+  appId: AppId;
+  /** 当前显示的排序列表（可能是按时间、名称等排序后的结果） */
+  displayedProviders?: Provider[];
+  /** 当前排序字段，用于判断是否需要切换到自定义排序 */
+  sortField?: string;
+  /** 切换到自定义排序的回调 */
+  onSwitchToCustomSort?: () => void;
+}
+
+export function useDragSort(
+  providersOrOptions: Record<string, Provider> | UseDragSortOptions,
+  appIdParam?: AppId,
+) {
+  // 兼容旧的调用方式
+  const options: UseDragSortOptions =
+    appIdParam !== undefined
+      ? { providers: providersOrOptions as Record<string, Provider>, appId: appIdParam }
+      : (providersOrOptions as UseDragSortOptions);
+
+  const {
+    providers,
+    appId,
+    displayedProviders,
+    sortField,
+    onSwitchToCustomSort,
+  } = options;
+
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation();
 
@@ -52,10 +80,17 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         return;
       }
 
-      const oldIndex = sortedProviders.findIndex(
+      // 如果当前不是自定义排序，使用显示的排序列表作为基础
+      // 这样拖动后会保留当前显示顺序并应用拖动变化
+      const baseList =
+        sortField !== "custom" && displayedProviders
+          ? displayedProviders
+          : sortedProviders;
+
+      const oldIndex = baseList.findIndex(
         (provider) => provider.id === active.id,
       );
-      const newIndex = sortedProviders.findIndex(
+      const newIndex = baseList.findIndex(
         (provider) => provider.id === over.id,
       );
 
@@ -63,7 +98,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         return;
       }
 
-      const reordered = arrayMove(sortedProviders, oldIndex, newIndex);
+      const reordered = arrayMove(baseList, oldIndex, newIndex);
       const updates = reordered.map((provider, index) => ({
         id: provider.id,
         sortIndex: index,
@@ -88,6 +123,11 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
           // 托盘菜单更新失败不影响排序成功
         }
 
+        // 如果当前不是自定义排序，自动切换到自定义排序模式
+        if (sortField !== "custom" && onSwitchToCustomSort) {
+          onSwitchToCustomSort();
+        }
+
         toast.success(
           t("provider.sortUpdated", {
             defaultValue: "排序已更新",
@@ -103,7 +143,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         );
       }
     },
-    [sortedProviders, appId, queryClient, t],
+    [sortedProviders, displayedProviders, sortField, onSwitchToCustomSort, appId, queryClient, t],
   );
 
   return {

@@ -1,3 +1,4 @@
+import { useEffect, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +31,25 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const { t } = useTranslation();
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        onConfirm();
+      }
+    },
+    [onConfirm]
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      document.addEventListener("keydown", handleKeyDown);
+      return () => {
+        document.removeEventListener("keydown", handleKeyDown);
+      };
+    }
+  }, [isOpen, handleKeyDown]);
 
   return (
     <Dialog

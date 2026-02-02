@@ -66,7 +66,9 @@ export const useProvidersQuery = (
         console.error("获取当前供应商失败:", error);
       }
 
-      if (Object.keys(providers).length === 0) {
+      // OpenCode 使用累加模式，不自动导入默认配置
+      // 其他应用（Claude/Codex/Gemini）使用独占模式，需要自动导入
+      if (Object.keys(providers).length === 0 && appId !== "opencode") {
         try {
           const success = await providersApi.importDefault(appId);
           if (success) {

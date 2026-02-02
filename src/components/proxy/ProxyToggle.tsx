@@ -55,28 +55,28 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
 
   return (
     <div
-      className={cn("p-1 rounded-xl transition-all", className)}
+      className={cn("transition-all", className)}
       title={tooltipText}
     >
-      <div className="flex items-center gap-2 px-2 h-8 rounded-md cursor-default">
+      <div className="flex items-center gap-1.5 px-2 h-7 rounded-full bg-gray-100/80 dark:bg-gray-800/50 cursor-default">
         {isPending ? (
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
         ) : (
           <Radio
             className={cn(
-              "h-4 w-4 transition-colors",
+              "h-3.5 w-3.5 transition-colors",
               takeoverEnabled
                 ? "text-emerald-500 animate-pulse"
-                : "text-muted-foreground",
+                : "text-gray-400",
             )}
           />
         )}
         <span
           className={cn(
-            "text-sm font-medium transition-colors select-none",
+            "text-xs font-medium transition-colors select-none",
             takeoverEnabled
               ? "text-emerald-600 dark:text-emerald-400"
-              : "text-muted-foreground",
+              : "text-gray-500 dark:text-gray-400",
           )}
         >
           Proxy
@@ -85,7 +85,7 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
           checked={takeoverEnabled}
           onCheckedChange={handleToggle}
           disabled={isPending}
-          className="ml-1"
+          className="ml-0.5 scale-90"
         />
       </div>
     </div>
