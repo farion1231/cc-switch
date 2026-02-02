@@ -153,7 +153,7 @@ describe("useImportExport Hook", () => {
     expect(result.current.status).toBe("error");
     expect(result.current.errorMessage).toBe("Import failed");
     expect(toastErrorMock).toHaveBeenCalledWith(
-      expect.stringContaining("导入配置失败:"),
+      expect.stringContaining("Failed to import configuration:"),
     );
   });
 
