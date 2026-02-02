@@ -48,6 +48,7 @@ export function useSettingsForm(): UseSettingsFormResult {
   );
 
   const initialLanguageRef = useRef<Language>("zh");
+  const isResettingRef = useRef(false);
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
@@ -71,6 +72,12 @@ export function useSettingsForm(): UseSettingsFormResult {
 
   // 初始化设置数据
   useEffect(() => {
+    // Skip if we're in the middle of a reset operation
+    if (isResettingRef.current) {
+      isResettingRef.current = false;
+      return;
+    }
+
     if (!data) return;
 
     const normalizedLanguage = normalizeLanguage(
@@ -150,10 +157,13 @@ export function useSettingsForm(): UseSettingsFormResult {
         language: normalizedLanguage,
       };
 
+      // Set flag to prevent useEffect from overriding our changes
+      isResettingRef.current = true;
       setSettingsState(normalized);
-      syncLanguage(initialLanguageRef.current);
+      // Always sync to initial language on reset, bypassing the current language check
+      void i18n.changeLanguage(initialLanguageRef.current);
     },
-    [readPersistedLanguage, syncLanguage],
+    [readPersistedLanguage, i18n],
   );
 
   return {
