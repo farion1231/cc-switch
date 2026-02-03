@@ -2,7 +2,12 @@ import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 import {
   useAllMcpServers,
   useToggleMcpApp,
@@ -13,10 +18,45 @@ import type { McpServer } from "@/types";
 import type { AppId } from "@/lib/api/types";
 import McpFormModal from "./McpFormModal";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { Edit3, Trash2 } from "lucide-react";
+import { Edit3, Trash2, ExternalLink } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import { mcpPresets } from "@/config/mcpPresets";
 import { toast } from "sonner";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  GeminiIcon,
+} from "@/components/BrandIcons";
+import { ProviderIcon } from "@/components/ProviderIcon";
+import { Badge } from "@/components/ui/badge";
+
+const APP_ICON_MAP: Record<AppId, { label: string; icon: React.ReactNode; activeClass: string; badgeClass: string }> = {
+  claude: {
+    label: "Claude",
+    icon: <ClaudeIcon size={14} />,
+    activeClass: "bg-orange-500/10 ring-1 ring-orange-500/20 hover:bg-orange-500/20 text-orange-600 dark:text-orange-400",
+    badgeClass: "bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-500/20 border-0 gap-1.5"
+  },
+  codex: {
+    label: "Codex",
+    icon: <CodexIcon size={14} />,
+    activeClass: "bg-green-500/10 ring-1 ring-green-500/20 hover:bg-green-500/20 text-green-600 dark:text-green-400",
+    badgeClass: "bg-green-500/10 text-green-700 dark:text-green-300 hover:bg-green-500/20 border-0 gap-1.5"
+  },
+  gemini: {
+    label: "Gemini",
+    icon: <GeminiIcon size={14} />,
+    activeClass: "bg-blue-500/10 ring-1 ring-blue-500/20 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400",
+    badgeClass: "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 border-0 gap-1.5"
+  },
+  opencode: {
+    label: "OpenCode",
+    icon: <ProviderIcon icon="opencode" name="OpenCode" size={14} showFallback={false} />,
+    activeClass: "bg-indigo-500/10 ring-1 ring-indigo-500/20 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400",
+    badgeClass: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/20 border-0 gap-1.5"
+  },
+};
+const APP_IDS: AppId[] = ["claude", "codex", "gemini", "opencode"];
 
 interface UnifiedMcpPanelProps {
   onOpenChange: (open: boolean) => void;
@@ -144,13 +184,21 @@ const UnifiedMcpPanel = React.forwardRef<
   return (
     <div className="px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
       {/* Info Section */}
-      <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6">
-        <div className="text-sm text-muted-foreground">
-          {t("mcp.serverCount", { count: serverEntries.length })} ·{" "}
-          {t("mcp.unifiedPanel.apps.claude")}: {enabledCounts.claude} ·{" "}
-          {t("mcp.unifiedPanel.apps.codex")}: {enabledCounts.codex} ·{" "}
-          {t("mcp.unifiedPanel.apps.gemini")}: {enabledCounts.gemini} ·{" "}
-          {t("mcp.unifiedPanel.apps.opencode")}: {enabledCounts.opencode}
+      <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6 flex items-center justify-between gap-4">
+        <Badge variant="outline" className="bg-background/50 h-7 px-3">
+          {t("mcp.serverCount", { count: serverEntries.length })}
+        </Badge>
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+          {APP_IDS.map((app) => (
+            <Badge
+              key={app}
+              variant="secondary"
+              className={APP_ICON_MAP[app].badgeClass}
+            >
+              <span className="opacity-75">{APP_ICON_MAP[app].label}:</span>
+              <span className="font-bold ml-1">{enabledCounts[app]}</span>
+            </Badge>
+          ))}
         </div>
       </div>
 
@@ -173,18 +221,21 @@ const UnifiedMcpPanel = React.forwardRef<
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {serverEntries.map(([id, server]) => (
-              <UnifiedMcpListItem
-                key={id}
-                id={id}
-                server={server}
-                onToggleApp={handleToggleApp}
-                onEdit={handleEdit}
-                onDelete={handleDelete}
-              />
-            ))}
-          </div>
+          <TooltipProvider delayDuration={300}>
+            <div className="rounded-xl border border-border-default overflow-hidden">
+              {serverEntries.map(([id, server], index) => (
+                <UnifiedMcpListItem
+                  key={id}
+                  id={id}
+                  server={server}
+                  onToggleApp={handleToggleApp}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                  isLast={index === serverEntries.length - 1}
+                />
+              ))}
+            </div>
+          </TooltipProvider>
         )}
       </div>
 
@@ -221,16 +272,15 @@ const UnifiedMcpPanel = React.forwardRef<
 
 UnifiedMcpPanel.displayName = "UnifiedMcpPanel";
 
-/**
- * 统一 MCP 列表项组件
- * 展示服务器名称、描述，以及三个应用的复选框
- */
+
+
 interface UnifiedMcpListItemProps {
   id: string;
   server: McpServer;
   onToggleApp: (serverId: string, app: AppId, enabled: boolean) => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  isLast?: boolean;
 }
 
 const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
@@ -239,12 +289,12 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
   onToggleApp,
   onEdit,
   onDelete,
+  isLast,
 }) => {
   const { t } = useTranslation();
   const name = server.name || id;
   const description = server.description || "";
 
-  // 匹配预设元信息
   const meta = mcpPresets.find((p) => p.id === id);
   const docsUrl = server.docs || meta?.docs;
   const homepageUrl = server.homepage || meta?.homepage;
@@ -261,123 +311,87 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
   };
 
   return (
-    <div className="group relative flex items-center gap-4 p-4 rounded-xl border border-border-default bg-muted/50 hover:bg-muted hover:border-border-default/80 hover:shadow-sm transition-all duration-300">
-      {/* 左侧：服务器信息 */}
+    <div
+      className={`group flex items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors ${
+        !isLast ? "border-b border-border-default" : ""
+      }`}
+    >
+      {/* Name & description */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <h3 className="font-medium text-foreground">{name}</h3>
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-sm text-foreground truncate">{name}</span>
           {docsUrl && (
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
               onClick={openDocs}
+              className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
               title={t("mcp.presets.docs")}
             >
-              {t("mcp.presets.docs")}
-            </Button>
+              <ExternalLink size={12} />
+            </button>
           )}
         </div>
         {description && (
-          <p className="text-sm text-muted-foreground line-clamp-2">
+          <p className="text-xs text-muted-foreground truncate" title={description}>
             {description}
           </p>
         )}
         {!description && tags && tags.length > 0 && (
-          <p className="text-xs text-muted-foreground/70 truncate">
+          <p className="text-xs text-muted-foreground/60 truncate">
             {tags.join(", ")}
           </p>
         )}
       </div>
 
-      {/* 中间：应用开关 */}
-      <div className="flex flex-col gap-2 flex-shrink-0 min-w-[120px]">
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${id}-claude`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("mcp.unifiedPanel.apps.claude")}
-          </label>
-          <Switch
-            id={`${id}-claude`}
-            checked={server.apps.claude}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(id, "claude", checked)
-            }
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${id}-codex`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("mcp.unifiedPanel.apps.codex")}
-          </label>
-          <Switch
-            id={`${id}-codex`}
-            checked={server.apps.codex}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(id, "codex", checked)
-            }
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${id}-gemini`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("mcp.unifiedPanel.apps.gemini")}
-          </label>
-          <Switch
-            id={`${id}-gemini`}
-            checked={server.apps.gemini}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(id, "gemini", checked)
-            }
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${id}-opencode`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("mcp.unifiedPanel.apps.opencode")}
-          </label>
-          <Switch
-            id={`${id}-opencode`}
-            checked={server.apps.opencode}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(id, "opencode", checked)
-            }
-          />
-        </div>
+      {/* App toggles */}
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {APP_IDS.map((app) => {
+          const { label, icon, activeClass } = APP_ICON_MAP[app];
+          const enabled = server.apps[app];
+          return (
+            <Tooltip key={app}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onToggleApp(id, app, !enabled)}
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                    enabled
+                      ? activeClass
+                      : "opacity-35 hover:opacity-70"
+                  }`}
+                >
+                  {icon}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>{label}{enabled ? " ✓" : ""}</p>
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
       </div>
 
-      {/* 右侧：操作按钮 */}
-      <div className="flex items-center gap-2 flex-shrink-0">
+      {/* Actions — hover only */}
+      <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
         <Button
           type="button"
           variant="ghost"
           size="icon"
+          className="h-7 w-7"
           onClick={() => onEdit(id)}
           title={t("common.edit")}
         >
-          <Edit3 size={16} />
+          <Edit3 size={14} />
         </Button>
-
         <Button
           type="button"
           variant="ghost"
           size="icon"
+          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
           onClick={() => onDelete(id)}
-          className="hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
           title={t("common.delete")}
         >
-          <Trash2 size={16} />
+          <Trash2 size={14} />
         </Button>
       </div>
     </div>

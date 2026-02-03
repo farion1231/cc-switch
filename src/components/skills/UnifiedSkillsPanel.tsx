@@ -2,7 +2,12 @@ import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Sparkles, Trash2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 import {
   useInstalledSkills,
   useToggleSkillApp,
@@ -16,6 +21,41 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  GeminiIcon,
+} from "@/components/BrandIcons";
+import { ProviderIcon } from "@/components/ProviderIcon";
+import { Badge } from "@/components/ui/badge";
+
+const SKILL_APP_ICON_MAP: Record<AppType, { label: string; icon: React.ReactNode; activeClass: string; badgeClass: string }> = {
+  claude: {
+    label: "Claude",
+    icon: <ClaudeIcon size={14} />,
+    activeClass: "bg-orange-500/10 ring-1 ring-orange-500/20 hover:bg-orange-500/20 text-orange-600 dark:text-orange-400",
+    badgeClass: "bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-500/20 border-0 gap-1.5"
+  },
+  codex: {
+    label: "Codex",
+    icon: <CodexIcon size={14} />,
+    activeClass: "bg-green-500/10 ring-1 ring-green-500/20 hover:bg-green-500/20 text-green-600 dark:text-green-400",
+    badgeClass: "bg-green-500/10 text-green-700 dark:text-green-300 hover:bg-green-500/20 border-0 gap-1.5"
+  },
+  gemini: {
+    label: "Gemini",
+    icon: <GeminiIcon size={14} />,
+    activeClass: "bg-blue-500/10 ring-1 ring-blue-500/20 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400",
+    badgeClass: "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 border-0 gap-1.5"
+  },
+  opencode: {
+    label: "OpenCode",
+    icon: <ProviderIcon icon="opencode" name="OpenCode" size={14} showFallback={false} />,
+    activeClass: "bg-indigo-500/10 ring-1 ring-indigo-500/20 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400",
+    badgeClass: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/20 border-0 gap-1.5"
+  },
+};
+const SKILL_APP_IDS: AppType[] = ["claude", "codex", "gemini", "opencode"];
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
@@ -181,13 +221,21 @@ const UnifiedSkillsPanel = React.forwardRef<
   return (
     <div className="px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
       {/* Info Section */}
-      <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6">
-        <div className="text-sm text-muted-foreground">
-          {t("skills.installed", { count: skills?.length || 0 })} ·{" "}
-          {t("skills.apps.claude")}: {enabledCounts.claude} ·{" "}
-          {t("skills.apps.codex")}: {enabledCounts.codex} ·{" "}
-          {t("skills.apps.gemini")}: {enabledCounts.gemini} ·{" "}
-          {t("skills.apps.opencode")}: {enabledCounts.opencode}
+      <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6 flex items-center justify-between gap-4">
+        <Badge variant="outline" className="bg-background/50 h-7 px-3">
+          {t("skills.installed", { count: skills?.length || 0 })}
+        </Badge>
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+          {SKILL_APP_IDS.map((app) => (
+            <Badge
+              key={app}
+              variant="secondary"
+              className={SKILL_APP_ICON_MAP[app].badgeClass}
+            >
+              <span className="opacity-75">{SKILL_APP_ICON_MAP[app].label}:</span>
+              <span className="font-bold ml-1">{enabledCounts[app]}</span>
+            </Badge>
+          ))}
         </div>
       </div>
 
@@ -210,16 +258,19 @@ const UnifiedSkillsPanel = React.forwardRef<
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {skills.map((skill) => (
-              <InstalledSkillListItem
-                key={skill.id}
-                skill={skill}
-                onToggleApp={handleToggleApp}
-                onUninstall={() => handleUninstall(skill)}
-              />
-            ))}
-          </div>
+          <TooltipProvider delayDuration={300}>
+            <div className="rounded-xl border border-border-default overflow-hidden">
+              {skills.map((skill, index) => (
+                <InstalledSkillListItem
+                  key={skill.id}
+                  skill={skill}
+                  onToggleApp={handleToggleApp}
+                  onUninstall={() => handleUninstall(skill)}
+                  isLast={index === skills.length - 1}
+                />
+              ))}
+            </div>
+          </TooltipProvider>
         )}
       </div>
 
@@ -248,19 +299,18 @@ const UnifiedSkillsPanel = React.forwardRef<
 
 UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
-/**
- * 已安装 Skill 列表项组件
- */
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
   onToggleApp: (id: string, app: AppType, enabled: boolean) => void;
   onUninstall: () => void;
+  isLast?: boolean;
 }
 
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   skill,
   onToggleApp,
   onUninstall,
+  isLast,
 }) => {
   const { t } = useTranslation();
 
@@ -273,7 +323,6 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
     }
   };
 
-  // 生成来源标签
   const sourceLabel = useMemo(() => {
     if (skill.repoOwner && skill.repoName) {
       return `${skill.repoOwner}/${skill.repoName}`;
@@ -282,109 +331,72 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   }, [skill.repoOwner, skill.repoName, t]);
 
   return (
-    <div className="group relative flex items-center gap-4 p-4 rounded-xl border border-border-default bg-muted/50 hover:bg-muted hover:border-border-default/80 hover:shadow-sm transition-all duration-300">
-      {/* 左侧：Skill 信息 */}
+    <div
+      className={`group flex items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors ${
+        !isLast ? "border-b border-border-default" : ""
+      }`}
+    >
+      {/* Name & description */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <h3 className="font-medium text-foreground">{skill.name}</h3>
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-sm text-foreground truncate">{skill.name}</span>
           {skill.readmeUrl && (
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
               onClick={openDocs}
-              className="h-6 px-2"
+              className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
             >
-              <ExternalLink size={14} />
-            </Button>
+              <ExternalLink size={12} />
+            </button>
           )}
+          <span className="text-xs text-muted-foreground/50 flex-shrink-0">{sourceLabel}</span>
         </div>
         {skill.description && (
-          <p className="text-sm text-muted-foreground line-clamp-2">
+          <p className="text-xs text-muted-foreground truncate" title={skill.description}>
             {skill.description}
           </p>
         )}
-        <p className="text-xs text-muted-foreground/70 mt-1">{sourceLabel}</p>
       </div>
 
-      {/* 中间：应用开关 */}
-      <div className="flex flex-col gap-2 flex-shrink-0 min-w-[120px]">
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${skill.id}-claude`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("skills.apps.claude")}
-          </label>
-          <Switch
-            id={`${skill.id}-claude`}
-            checked={skill.apps.claude}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(skill.id, "claude", checked)
-            }
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${skill.id}-codex`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("skills.apps.codex")}
-          </label>
-          <Switch
-            id={`${skill.id}-codex`}
-            checked={skill.apps.codex}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(skill.id, "codex", checked)
-            }
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${skill.id}-gemini`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("skills.apps.gemini")}
-          </label>
-          <Switch
-            id={`${skill.id}-gemini`}
-            checked={skill.apps.gemini}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(skill.id, "gemini", checked)
-            }
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${skill.id}-opencode`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("skills.apps.opencode")}
-          </label>
-          <Switch
-            id={`${skill.id}-opencode`}
-            checked={skill.apps.opencode}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(skill.id, "opencode", checked)
-            }
-          />
-        </div>
+      {/* App toggles */}
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {SKILL_APP_IDS.map((app) => {
+          const { label, icon, activeClass } = SKILL_APP_ICON_MAP[app];
+          const enabled = skill.apps[app];
+          return (
+            <Tooltip key={app}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onToggleApp(skill.id, app, !enabled)}
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                    enabled
+                      ? activeClass
+                      : "opacity-35 hover:opacity-70"
+                  }`}
+                >
+                  {icon}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>{label}{enabled ? " ✓" : ""}</p>
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
       </div>
 
-      {/* 右侧：删除按钮 */}
-      <div className="flex items-center gap-2 flex-shrink-0">
+      {/* Delete — hover only */}
+      <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
         <Button
           type="button"
           variant="ghost"
           size="icon"
+          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
           onClick={onUninstall}
-          className="hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
           title={t("skills.uninstall")}
         >
-          <Trash2 size={16} />
+          <Trash2 size={14} />
         </Button>
       </div>
     </div>
