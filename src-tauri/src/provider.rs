@@ -191,6 +191,17 @@ pub struct ProviderProxyConfig {
     pub proxy_password: Option<String>,
 }
 
+/// 请求体重写器配置（用于过滤或覆盖 JSON 字段）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RequestBodyRewriter {
+    /// 是否启用
+    #[serde(default)]
+    pub enabled: bool,
+    /// 重写规则：key 为字段路径（支持点分隔如 "text.verbosity"），value 为新值（null 表示删除）
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub rules: HashMap<String, Option<Value>>,
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -238,6 +249,9 @@ pub struct ProviderMeta {
     /// Codex 模型映射配置（每个渠道独立配置）
     #[serde(rename = "codexModelMapping", skip_serializing_if = "Option::is_none")]
     pub codex_model_mapping: Option<crate::proxy::codex_model_mapper::CodexModelMappingConfig>,
+    /// 请求体重写器配置（用于过滤或覆盖 JSON 字段）
+    #[serde(rename = "requestBodyRewriter", skip_serializing_if = "Option::is_none")]
+    pub request_body_rewriter: Option<RequestBodyRewriter>,
 }
 
 impl ProviderManager {

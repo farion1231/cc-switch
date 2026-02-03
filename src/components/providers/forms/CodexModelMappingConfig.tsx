@@ -70,9 +70,14 @@ export function CodexModelMappingConfig({
   const simpleInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const effortInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
-  // 从 config 初始化行数据
+  // Refs to track whether component has been initialized from config
+  const simpleInitialized = useRef(false);
+  const effortInitialized = useRef(false);
+
   // 从 config 初始化 Simple 行数据
+  // 仅在首次加载或 config 从外部真正变化时同步（非本组件触发的变化）
   useEffect(() => {
+    // 构建 config 对应的行数据
     const existingSimple: SimpleMappingRow[] = Object.entries(config.modelMap).map(
       ([source, target]) => ({
         id: `simple-${source}`,
@@ -81,15 +86,31 @@ export function CodexModelMappingConfig({
         isNew: false,
       })
     );
-    // 只有当本地没有正在编辑的新行时，或者 config 确实发生了变化（这里简单处理，直接覆盖，但移除了自动添加空行的逻辑）
-    // 为了防止正在输入的行被 config 更新覆盖（如果 config 没变），我们理想情况应该做比较。
-    // 但鉴于目前逻辑是：只有 valid 这里才会 update config，所以 config 中永远只有 valid rows。
-    // 如果我们移除了自动添加空行，useEffect 将只显示 valid rows。
-    // 用户点击 Add -> 本地有了新行 -> config 没变 -> useEffect 没触发 -> 新行保留。
-    // 用户填完 -> config 变了 -> useEffect 触发 -> 重置为 config 内容（包含新行）-> 新行状态变非 isNew。正确。
-    // 唯一问题：如果用户填了一半，config 没变，但 modelMap 引用变了？
-    // 通常 parent 会 ensure stable object if deep equal, or we rely on React rendering.
-    setSimpleRows(existingSimple);
+
+    // 首次初始化：直接设置
+    if (!simpleInitialized.current) {
+      simpleInitialized.current = true;
+      setSimpleRows(existingSimple);
+      return;
+    }
+
+    // 后续更新：仅当 config 来自外部（非本组件的 sync）时才覆盖
+    // 比较当前 rows 生成的 map 与 config.modelMap 是否相等
+    // 如果相等，说明是本组件的 sync 触发的，不需要覆盖
+    setSimpleRows((currentRows) => {
+      const currentMap: Record<string, string> = {};
+      currentRows.forEach((row) => {
+        if (row.source.trim() && row.target.trim()) {
+          currentMap[row.source.trim()] = row.target.trim();
+        }
+      });
+      // 如果当前行生成的 map 与 config 完全匹配，跳过覆盖
+      if (JSON.stringify(currentMap) === JSON.stringify(config.modelMap)) {
+        return currentRows;
+      }
+      // 否则，config 是从外部更新的，需要同步
+      return existingSimple;
+    });
   }, [config.modelMap]);
 
   // 从 config 初始化 Effort 行数据
@@ -106,7 +127,28 @@ export function CodexModelMappingConfig({
         };
       }
     );
-    setEffortRows(existingEffort);
+
+    // 首次初始化：直接设置
+    if (!effortInitialized.current) {
+      effortInitialized.current = true;
+      setEffortRows(existingEffort);
+      return;
+    }
+
+    // 后续更新：仅当 config 来自外部时才覆盖
+    setEffortRows((currentRows) => {
+      const currentMap: Record<string, string> = {};
+      currentRows.forEach((row) => {
+        if (row.model.trim() && row.target.trim()) {
+          const key = `${row.model.trim()}@${row.effort}`;
+          currentMap[key] = row.target.trim();
+        }
+      });
+      if (JSON.stringify(currentMap) === JSON.stringify(config.effortMap)) {
+        return currentRows;
+      }
+      return existingEffort;
+    });
   }, [config.effortMap]);
 
   // 同步 enabled 状态

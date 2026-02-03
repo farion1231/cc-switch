@@ -149,6 +149,11 @@ export interface ProviderMeta {
     modelMap: Record<string, string>;
     effortMap: Record<string, string>;
   };
+  // 请求体重写器配置（用于过滤或覆盖 JSON 字段）
+  requestBodyRewriter?: {
+    enabled: boolean;
+    rules: Record<string, any>; // null = 删除, 其他值 = 覆盖
+  };
 }
 
 // Skill 同步方式

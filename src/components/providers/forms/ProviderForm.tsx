@@ -57,6 +57,11 @@ import {
   type CodexModelMappingConfig as CodexModelMappingConfigType,
 } from "./CodexModelMappingConfig";
 import {
+  RequestBodyRewriterConfig,
+  defaultRequestBodyRewriterConfig,
+  type RequestBodyRewriterConfig as RequestBodyRewriterConfigType,
+} from "./RequestBodyRewriterConfig";
+import {
   useProviderCategory,
   useApiKeyState,
   useBaseUrlState,
@@ -199,6 +204,13 @@ export function ProviderForm({
     useState<CodexModelMappingConfigType>(() => {
       if (appId !== "codex") return defaultCodexModelMappingConfig;
       return initialData?.meta?.codexModelMapping ?? defaultCodexModelMappingConfig;
+    });
+
+  // 请求体重写器配置状态
+  const [requestBodyRewriter, setRequestBodyRewriter] =
+    useState<RequestBodyRewriterConfigType>(() => {
+      if (appId !== "codex") return defaultRequestBodyRewriterConfig;
+      return initialData?.meta?.requestBodyRewriter ?? defaultRequestBodyRewriterConfig;
     });
 
   // 使用 category hook
@@ -960,6 +972,11 @@ export function ProviderForm({
         appId === "codex" && codexModelMapping.enabled
           ? codexModelMapping
           : undefined,
+      // 请求体重写器配置（仅 Codex 供应商使用）
+      requestBodyRewriter:
+        appId === "codex" && requestBodyRewriter.enabled
+          ? requestBodyRewriter
+          : undefined,
     };
 
     onSubmit(payload);
@@ -1518,6 +1535,14 @@ export function ProviderForm({
           <CodexModelMappingConfig
             config={codexModelMapping}
             onConfigChange={setCodexModelMapping}
+          />
+        )}
+
+        {/* 请求体字段重写器（仅 Codex） */}
+        {appId === "codex" && (
+          <RequestBodyRewriterConfig
+            config={requestBodyRewriter}
+            onConfigChange={setRequestBodyRewriter}
           />
         )}
 

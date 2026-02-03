@@ -71,6 +71,35 @@ const HEADER_BLACKLIST: &[&str] = &[
     "x-real-ip",
 ];
 
+/// 应用重写规则到 JSON 对象
+/// path 支持点分隔（如 "text.verbosity"），value 为 None 表示删除该字段，Some(v) 表示覆盖
+fn apply_rewrite_rule(obj: &mut serde_json::Map<String, Value>, path: &str, value: Option<Value>) {
+    let parts: Vec<&str> = path.split('.').collect();
+    if parts.is_empty() {
+        return;
+    }
+
+    if parts.len() == 1 {
+        // 单层路径：直接删除或覆盖
+        let key = parts[0];
+        match value {
+            None => {
+                obj.remove(key);
+            }
+            Some(v) => {
+                obj.insert(key.to_string(), v);
+            }
+        }
+    } else {
+        // 嵌套路径：递归处理
+        let key = parts[0];
+        if let Some(Value::Object(inner)) = obj.get_mut(key) {
+            let remaining_path = parts[1..].join(".");
+            apply_rewrite_rule(inner, &remaining_path, value);
+        }
+    }
+}
+
 pub struct ForwardResult {
     pub response: Response,
     pub provider: Provider,
@@ -589,7 +618,18 @@ impl RequestForwarder {
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
-        let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+        let mut filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+
+        // 应用请求体重写器（用户自定义字段过滤/覆盖）
+        if let Some(rewriter) = provider.meta.as_ref().and_then(|m| m.request_body_rewriter.as_ref()) {
+            if rewriter.enabled {
+                if let Some(obj) = filtered_body.as_object_mut() {
+                    for (path, value) in &rewriter.rules {
+                        apply_rewrite_rule(obj, path, value.clone());
+                    }
+                }
+            }
+        }
 
         // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
         let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
