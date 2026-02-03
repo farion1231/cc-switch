@@ -235,6 +235,9 @@ pub struct ProviderMeta {
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// Codex 模型映射配置（每个渠道独立配置）
+    #[serde(rename = "codexModelMapping", skip_serializing_if = "Option::is_none")]
+    pub codex_model_mapping: Option<crate::proxy::codex_model_mapper::CodexModelMappingConfig>,
 }
 
 impl ProviderManager {

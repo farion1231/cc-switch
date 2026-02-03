@@ -15,6 +15,7 @@ mod health;
 pub mod http_client;
 pub mod log_codes;
 pub mod model_mapper;
+pub mod codex_model_mapper;
 pub mod provider_router;
 pub mod providers;
 pub mod response_handler;

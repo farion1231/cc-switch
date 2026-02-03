@@ -52,6 +52,11 @@ import {
   type PricingModelSourceOption,
 } from "./ProviderAdvancedConfig";
 import {
+  CodexModelMappingConfig,
+  defaultCodexModelMappingConfig,
+  type CodexModelMappingConfig as CodexModelMappingConfigType,
+} from "./CodexModelMappingConfig";
+import {
   useProviderCategory,
   useApiKeyState,
   useBaseUrlState,
@@ -98,10 +103,10 @@ const OPENCODE_DEFAULT_CONFIG = JSON.stringify(
 type PresetEntry = {
   id: string;
   preset:
-    | ProviderPreset
-    | CodexProviderPreset
-    | GeminiProviderPreset
-    | OpenCodeProviderPreset;
+  | ProviderPreset
+  | CodexProviderPreset
+  | GeminiProviderPreset
+  | OpenCodeProviderPreset;
 };
 
 interface ProviderFormProps {
@@ -188,6 +193,13 @@ export function ProviderForm({
       initialData?.meta?.pricingModelSource,
     ),
   }));
+
+  // Codex 模型映射配置状态
+  const [codexModelMapping, setCodexModelMapping] =
+    useState<CodexModelMappingConfigType>(() => {
+      if (appId !== "codex") return defaultCodexModelMappingConfig;
+      return initialData?.meta?.codexModelMapping ?? defaultCodexModelMappingConfig;
+    });
 
   // 使用 category hook
   const { category } = useProviderCategory({
@@ -943,6 +955,11 @@ export function ProviderForm({
         appId === "claude" && category !== "official"
           ? localApiFormat
           : undefined,
+      // Codex 模型映射配置（仅 Codex 供应商使用）
+      codexModelMapping:
+        appId === "codex" && codexModelMapping.enabled
+          ? codexModelMapping
+          : undefined,
     };
 
     onSubmit(payload);
@@ -1214,8 +1231,8 @@ export function ProviderForm({
                   className={
                     (existingOpencodeKeys.includes(opencodeProviderKey) &&
                       !isEditMode) ||
-                    (opencodeProviderKey.trim() !== "" &&
-                      !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opencodeProviderKey))
+                      (opencodeProviderKey.trim() !== "" &&
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opencodeProviderKey))
                       ? "border-destructive"
                       : ""
                   }
@@ -1495,6 +1512,14 @@ export function ProviderForm({
           onProxyConfigChange={setProxyConfig}
           onPricingConfigChange={setPricingConfig}
         />
+
+        {/* Codex 模型映射配置 */}
+        {appId === "codex" && (
+          <CodexModelMappingConfig
+            config={codexModelMapping}
+            onConfigChange={setCodexModelMapping}
+          />
+        )}
 
         {showButtons && (
           <div className="flex justify-end gap-2">

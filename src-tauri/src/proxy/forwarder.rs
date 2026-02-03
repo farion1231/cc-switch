@@ -571,9 +571,14 @@ impl RequestForwarder {
         // 使用适配器构建 URL
         let url = adapter.build_url(&base_url, effective_endpoint);
 
-        // 应用模型映射（独立于格式转换）
-        let (mapped_body, _original_model, _mapped_model) =
-            super::model_mapper::apply_model_mapping(body.clone(), provider);
+        // 应用模型映射（根据适配器类型选择不同的映射器）
+        let (mapped_body, _original_model, _mapped_model) = if adapter.name() == "Codex" {
+            // Codex 使用专用映射器，支持 effort 组合映射
+            super::codex_model_mapper::apply_codex_model_mapping(body.clone(), provider)
+        } else {
+            // Claude 和其他使用原有映射器
+            super::model_mapper::apply_model_mapping(body.clone(), provider)
+        };
 
         // 转换请求体（如果需要）
         let request_body = if needs_transform {
