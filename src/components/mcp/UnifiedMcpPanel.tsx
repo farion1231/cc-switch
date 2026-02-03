@@ -2,12 +2,7 @@ import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-  TooltipProvider,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   useAllMcpServers,
   useToggleMcpApp,
@@ -22,50 +17,15 @@ import { Edit3, Trash2, ExternalLink } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import { mcpPresets } from "@/config/mcpPresets";
 import { toast } from "sonner";
-import {
-  ClaudeIcon,
-  CodexIcon,
-  GeminiIcon,
-} from "@/components/BrandIcons";
-import { ProviderIcon } from "@/components/ProviderIcon";
-import { Badge } from "@/components/ui/badge";
-
-const APP_ICON_MAP: Record<AppId, { label: string; icon: React.ReactNode; activeClass: string; badgeClass: string }> = {
-  claude: {
-    label: "Claude",
-    icon: <ClaudeIcon size={14} />,
-    activeClass: "bg-orange-500/10 ring-1 ring-orange-500/20 hover:bg-orange-500/20 text-orange-600 dark:text-orange-400",
-    badgeClass: "bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-500/20 border-0 gap-1.5"
-  },
-  codex: {
-    label: "Codex",
-    icon: <CodexIcon size={14} />,
-    activeClass: "bg-green-500/10 ring-1 ring-green-500/20 hover:bg-green-500/20 text-green-600 dark:text-green-400",
-    badgeClass: "bg-green-500/10 text-green-700 dark:text-green-300 hover:bg-green-500/20 border-0 gap-1.5"
-  },
-  gemini: {
-    label: "Gemini",
-    icon: <GeminiIcon size={14} />,
-    activeClass: "bg-blue-500/10 ring-1 ring-blue-500/20 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400",
-    badgeClass: "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 border-0 gap-1.5"
-  },
-  opencode: {
-    label: "OpenCode",
-    icon: <ProviderIcon icon="opencode" name="OpenCode" size={14} showFallback={false} />,
-    activeClass: "bg-indigo-500/10 ring-1 ring-indigo-500/20 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400",
-    badgeClass: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/20 border-0 gap-1.5"
-  },
-};
-const APP_IDS: AppId[] = ["claude", "codex", "gemini", "opencode"];
+import { APP_IDS } from "@/config/appConfig";
+import { AppCountBar } from "@/components/common/AppCountBar";
+import { AppToggleGroup } from "@/components/common/AppToggleGroup";
+import { ListItemRow } from "@/components/common/ListItemRow";
 
 interface UnifiedMcpPanelProps {
   onOpenChange: (open: boolean) => void;
 }
 
-/**
- * 统一 MCP 管理面板
- * v3.7.0 新架构：所有 MCP 服务器统一管理，每个服务器通过复选框控制应用到哪些客户端
- */
 export interface UnifiedMcpPanelHandle {
   openAdd: () => void;
   openImport: () => void;
@@ -85,26 +45,22 @@ const UnifiedMcpPanel = React.forwardRef<
     onConfirm: () => void;
   } | null>(null);
 
-  // Queries and Mutations
   const { data: serversMap, isLoading } = useAllMcpServers();
   const toggleAppMutation = useToggleMcpApp();
   const deleteServerMutation = useDeleteMcpServer();
   const importMutation = useImportMcpFromApps();
 
-  // Convert serversMap to array for easier rendering
   const serverEntries = useMemo((): Array<[string, McpServer]> => {
     if (!serversMap) return [];
     return Object.entries(serversMap);
   }, [serversMap]);
 
-  // Count enabled servers per app
   const enabledCounts = useMemo(() => {
     const counts = { claude: 0, codex: 0, gemini: 0, opencode: 0 };
     serverEntries.forEach(([_, server]) => {
-      if (server.apps.claude) counts.claude++;
-      if (server.apps.codex) counts.codex++;
-      if (server.apps.gemini) counts.gemini++;
-      if (server.apps.opencode) counts.opencode++;
+      for (const app of APP_IDS) {
+        if (server.apps[app]) counts[app]++;
+      }
     });
     return counts;
   }, [serverEntries]);
@@ -117,9 +73,7 @@ const UnifiedMcpPanel = React.forwardRef<
     try {
       await toggleAppMutation.mutateAsync({ serverId, app, enabled });
     } catch (error) {
-      toast.error(t("common.error"), {
-        description: String(error),
-      });
+      toast.error(t("common.error"), { description: String(error) });
     }
   };
 
@@ -146,9 +100,7 @@ const UnifiedMcpPanel = React.forwardRef<
         });
       }
     } catch (error) {
-      toast.error(t("common.error"), {
-        description: String(error),
-      });
+      toast.error(t("common.error"), { description: String(error) });
     }
   };
 
@@ -168,9 +120,7 @@ const UnifiedMcpPanel = React.forwardRef<
           setConfirmDialog(null);
           toast.success(t("common.success"), { closeButton: true });
         } catch (error) {
-          toast.error(t("common.error"), {
-            description: String(error),
-          });
+          toast.error(t("common.error"), { description: String(error) });
         }
       },
     });
@@ -183,26 +133,11 @@ const UnifiedMcpPanel = React.forwardRef<
 
   return (
     <div className="px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
-      {/* Info Section */}
-      <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6 flex items-center justify-between gap-4">
-        <Badge variant="outline" className="bg-background/50 h-7 px-3">
-          {t("mcp.serverCount", { count: serverEntries.length })}
-        </Badge>
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-          {APP_IDS.map((app) => (
-            <Badge
-              key={app}
-              variant="secondary"
-              className={APP_ICON_MAP[app].badgeClass}
-            >
-              <span className="opacity-75">{APP_ICON_MAP[app].label}:</span>
-              <span className="font-bold ml-1">{enabledCounts[app]}</span>
-            </Badge>
-          ))}
-        </div>
-      </div>
+      <AppCountBar
+        totalLabel={t("mcp.serverCount", { count: serverEntries.length })}
+        counts={enabledCounts}
+      />
 
-      {/* Content - Scrollable */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -239,7 +174,6 @@ const UnifiedMcpPanel = React.forwardRef<
         )}
       </div>
 
-      {/* Form Modal */}
       {isFormOpen && (
         <McpFormModal
           editingId={editingId || undefined}
@@ -256,7 +190,6 @@ const UnifiedMcpPanel = React.forwardRef<
         />
       )}
 
-      {/* Confirm Dialog */}
       {confirmDialog && (
         <ConfirmDialog
           isOpen={confirmDialog.isOpen}
@@ -271,8 +204,6 @@ const UnifiedMcpPanel = React.forwardRef<
 });
 
 UnifiedMcpPanel.displayName = "UnifiedMcpPanel";
-
-
 
 interface UnifiedMcpListItemProps {
   id: string;
@@ -311,12 +242,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
   };
 
   return (
-    <div
-      className={`group flex items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors ${
-        !isLast ? "border-b border-border-default" : ""
-      }`}
-    >
-      {/* Name & description */}
+    <ListItemRow isLast={isLast}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="font-medium text-sm text-foreground truncate">{name}</span>
@@ -343,35 +269,11 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
         )}
       </div>
 
-      {/* App toggles */}
-      <div className="flex items-center gap-1.5 flex-shrink-0">
-        {APP_IDS.map((app) => {
-          const { label, icon, activeClass } = APP_ICON_MAP[app];
-          const enabled = server.apps[app];
-          return (
-            <Tooltip key={app}>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => onToggleApp(id, app, !enabled)}
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
-                    enabled
-                      ? activeClass
-                      : "opacity-35 hover:opacity-70"
-                  }`}
-                >
-                  {icon}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                <p>{label}{enabled ? " ✓" : ""}</p>
-              </TooltipContent>
-            </Tooltip>
-          );
-        })}
-      </div>
+      <AppToggleGroup
+        apps={server.apps}
+        onToggle={(app, enabled) => onToggleApp(id, app, enabled)}
+      />
 
-      {/* Actions — hover only */}
       <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
         <Button
           type="button"
@@ -394,7 +296,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
           <Trash2 size={14} />
         </Button>
       </div>
-    </div>
+    </ListItemRow>
   );
 };
 
