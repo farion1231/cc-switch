@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Settings } from "@/types";
+import type { Settings, WebDavBackupSettings } from "@/types";
 import type { AppId } from "./types";
 
 export interface ConfigTransferResult {
@@ -7,6 +7,25 @@ export interface ConfigTransferResult {
   message: string;
   filePath?: string;
   backupId?: string;
+}
+
+export interface WebDavTestResult {
+  success: boolean;
+  message?: string;
+}
+
+export interface WebDavBackupResult {
+  success: boolean;
+  message?: string;
+  remoteUrl?: string;
+  fileName?: string;
+  sizeBytes?: number;
+}
+
+export interface WebDavRestoreResult {
+  success: boolean;
+  message?: string;
+  fileName?: string;
 }
 
 export const settingsApi = {
@@ -91,6 +110,24 @@ export const settingsApi = {
 
   async importConfigFromFile(filePath: string): Promise<ConfigTransferResult> {
     return await invoke("import_config_from_file", { filePath });
+  },
+
+  async webdavTestConnection(
+    config: WebDavBackupSettings & { url: string },
+  ): Promise<WebDavTestResult> {
+    return await invoke("webdav_test_connection", { config });
+  },
+
+  async webdavBackupNow(
+    config: WebDavBackupSettings & { url: string },
+  ): Promise<WebDavBackupResult> {
+    return await invoke("webdav_backup_now", { config });
+  },
+
+  async webdavRestoreLatest(
+    config: WebDavBackupSettings & { url: string },
+  ): Promise<WebDavRestoreResult> {
+    return await invoke("webdav_restore_latest", { config });
   },
 
   async syncCurrentProvidersLive(): Promise<void> {

@@ -9,6 +9,7 @@ pub mod skill;
 pub mod speedtest;
 pub mod stream_check;
 pub mod usage_stats;
+pub mod webdav;
 
 pub use config::ConfigService;
 pub use mcp::McpService;

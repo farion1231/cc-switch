@@ -28,6 +28,17 @@ export const settingsSchema = z.object({
 
   // Skill 同步设置
   skillSyncMethod: z.enum(["auto", "symlink", "copy"]).optional(),
+
+  // WebDAV 备份设置
+  webdavBackup: z
+    .object({
+      url: z.string().trim().optional().or(z.literal("")),
+      username: z.string().trim().optional().or(z.literal("")),
+      password: z.string().optional(),
+      remotePath: z.string().trim().optional().or(z.literal("")),
+      fileName: z.string().trim().optional().or(z.literal("")),
+    })
+    .optional(),
 });
 
 export type SettingsFormData = z.infer<typeof settingsSchema>;

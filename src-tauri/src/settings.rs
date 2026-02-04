@@ -58,6 +58,40 @@ impl VisibleApps {
     }
 }
 
+/// WebDAV 备份设置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavBackupSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+}
+
+impl WebDavBackupSettings {
+    fn normalize(&mut self) {
+        self.url = normalize_optional_string(&self.url);
+        self.username = normalize_optional_string(&self.username);
+        self.password = normalize_optional_string(&self.password);
+        self.remote_path = normalize_optional_string(&self.remote_path);
+        self.file_name = normalize_optional_string(&self.file_name);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.url.is_none()
+            && self.username.is_none()
+            && self.password.is_none()
+            && self.remote_path.is_none()
+            && self.file_name.is_none()
+    }
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -118,6 +152,10 @@ pub struct AppSettings {
     #[serde(default)]
     pub skill_sync_method: SyncMethod,
 
+    // ===== WebDAV 备份设置 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webdav_backup: Option<WebDavBackupSettings>,
+
     // ===== 终端设置 =====
     /// 首选终端应用（可选，默认使用系统默认终端）
     /// - macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty"
@@ -133,6 +171,14 @@ fn default_show_in_tray() -> bool {
 
 fn default_minimize_to_tray_on_close() -> bool {
     true
+}
+
+fn normalize_optional_string(value: &Option<String>) -> Option<String> {
+    value
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
 }
 
 impl Default for AppSettings {
@@ -155,6 +201,7 @@ impl Default for AppSettings {
             current_provider_gemini: None,
             current_provider_opencode: None,
             skill_sync_method: SyncMethod::default(),
+            webdav_backup: None,
             preferred_terminal: None,
         }
     }
@@ -205,6 +252,13 @@ impl AppSettings {
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "ja"))
             .map(|s| s.to_string());
+
+        if let Some(webdav) = &mut self.webdav_backup {
+            webdav.normalize();
+            if webdav.is_empty() {
+                self.webdav_backup = None;
+            }
+        }
     }
 
     fn load_from_file() -> Self {

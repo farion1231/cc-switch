@@ -161,6 +161,15 @@ export interface VisibleApps {
   opencode: boolean;
 }
 
+// WebDAV 备份配置
+export interface WebDavBackupSettings {
+  url?: string;
+  username?: string;
+  password?: string;
+  remotePath?: string;
+  fileName?: string;
+}
+
 // 应用设置类型（用于设置对话框与 Tauri API）
 // 存储在本地 ~/.cc-switch/settings.json，不随数据库同步
 export interface Settings {
@@ -204,6 +213,9 @@ export interface Settings {
   // ===== Skill 同步设置 =====
   // Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
   skillSyncMethod?: SkillSyncMethod;
+
+  // ===== WebDAV 备份设置 =====
+  webdavBackup?: WebDavBackupSettings;
 
   // ===== 终端设置 =====
   // 首选终端应用（可选，默认使用系统默认终端）

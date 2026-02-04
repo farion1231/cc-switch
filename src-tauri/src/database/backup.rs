@@ -16,10 +16,15 @@ use tempfile::NamedTempFile;
 const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
 
 impl Database {
+    /// 导出为 SQLite 兼容的 SQL 文本（内存字符串）
+    pub fn export_sql_string(&self) -> Result<String, AppError> {
+        let snapshot = self.snapshot_to_memory()?;
+        Self::dump_sql(&snapshot)
+    }
+
     /// 导出为 SQLite 兼容的 SQL 文本
     pub fn export_sql(&self, target_path: &Path) -> Result<(), AppError> {
-        let snapshot = self.snapshot_to_memory()?;
-        let dump = Self::dump_sql(&snapshot)?;
+        let dump = self.export_sql_string()?;
 
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -38,6 +43,12 @@ impl Database {
         }
 
         let sql_raw = fs::read_to_string(source_path).map_err(|e| AppError::io(source_path, e))?;
+        let sql_content = sql_raw.trim_start_matches('\u{feff}');
+        self.import_sql_string(sql_content)
+    }
+
+    /// 从 SQL 字符串导入，返回生成的备份 ID（若无备份则为空字符串）
+    pub fn import_sql_string(&self, sql_raw: &str) -> Result<String, AppError> {
         let sql_content = sql_raw.trim_start_matches('\u{feff}');
         Self::validate_cc_switch_sql_export(sql_content)?;
 
