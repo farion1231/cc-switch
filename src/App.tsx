@@ -175,7 +175,7 @@ function App() {
   // 当前应用代理实际使用的供应商 ID（从 active_targets 中获取）
   const activeProviderId = useMemo(() => {
     const target = proxyStatus?.active_targets?.find(
-      (t) => t.app_type === activeApp
+      (t) => t.app_type === activeApp,
     );
     return target?.provider_id;
   }, [proxyStatus?.active_targets, activeApp]);
@@ -208,7 +208,7 @@ function App() {
             if (event.appType === activeApp) {
               await refetch();
             }
-          }
+          },
         );
       } catch (error) {
         console.error("[App] Failed to subscribe provider switch event", error);
@@ -242,7 +242,7 @@ function App() {
       } catch (error) {
         console.error(
           "[App] Failed to subscribe universal-provider-synced event",
-          error
+          error,
         );
       }
     };
@@ -270,7 +270,7 @@ function App() {
       } catch (error) {
         console.error(
           "[App] Failed to check environment conflicts on startup:",
-          error
+          error,
         );
       }
     };
@@ -286,7 +286,7 @@ function App() {
         if (migrated) {
           toast.success(
             t("migration.success", { defaultValue: "配置迁移成功" }),
-            { closeButton: true }
+            { closeButton: true },
           );
         }
       } catch (error) {
@@ -302,7 +302,7 @@ function App() {
     const checkSkillsMigration = async () => {
       try {
         const result = await invoke<{ count: number; error?: string } | null>(
-          "get_skills_migration_result"
+          "get_skills_migration_result",
         );
         if (result?.error) {
           toast.error(t("migration.skillsFailed"), {
@@ -336,10 +336,10 @@ function App() {
           // 合并新检测到的冲突
           setEnvConflicts((prev) => {
             const existingKeys = new Set(
-              prev.map((c) => `${c.varName}:${c.sourcePath}`)
+              prev.map((c) => `${c.varName}:${c.sourcePath}`),
             );
             const newConflicts = conflicts.filter(
-              (c) => !existingKeys.has(`${c.varName}:${c.sourcePath}`)
+              (c) => !existingKeys.has(`${c.varName}:${c.sourcePath}`),
             );
             return [...prev, ...newConflicts];
           });
@@ -351,7 +351,7 @@ function App() {
       } catch (error) {
         console.error(
           "[App] Failed to check environment conflicts on app switch:",
-          error
+          error,
         );
       }
     };
@@ -433,7 +433,7 @@ function App() {
         t("notifications.removeFromConfigSuccess", {
           defaultValue: "已从配置移除",
         }),
-        { closeButton: true }
+        { closeButton: true },
       );
     } else {
       // Delete from database
@@ -445,7 +445,7 @@ function App() {
   // Generate a unique provider key for OpenCode duplication
   const generateUniqueOpencodeKey = (
     originalKey: string,
-    existingKeys: string[]
+    existingKeys: string[],
   ): string => {
     const baseKey = `${originalKey}-copy`;
 
@@ -487,7 +487,7 @@ function App() {
       const existingKeys = Object.keys(providers);
       duplicatedProvider.providerKey = generateUniqueOpencodeKey(
         provider.id,
-        existingKeys
+        existingKeys,
       );
     }
 
@@ -498,7 +498,7 @@ function App() {
           (p) =>
             p.sortIndex !== undefined &&
             p.sortIndex >= newSortIndex! &&
-            p.id !== provider.id
+            p.id !== provider.id,
         )
         .map((p) => ({
           id: p.id,
@@ -514,7 +514,7 @@ function App() {
           toast.error(
             t("provider.sortUpdateFailed", {
               defaultValue: "排序更新失败",
-            })
+            }),
           );
           return; // 如果排序更新失败，不继续添加
         }
@@ -532,7 +532,7 @@ function App() {
       toast.success(
         t("provider.terminalOpened", {
           defaultValue: "终端已打开",
-        })
+        }),
       );
     } catch (error) {
       console.error("[App] Failed to open terminal", error);
@@ -540,7 +540,7 @@ function App() {
       toast.error(
         t("provider.terminalOpenFailed", {
           defaultValue: "打开终端失败",
-        }) + (errorMessage ? `: ${errorMessage}` : "")
+        }) + (errorMessage ? `: ${errorMessage}` : ""),
       );
     }
   };
@@ -721,7 +721,7 @@ function App() {
             } catch (error) {
               console.error(
                 "[App] Failed to re-check conflicts after deletion:",
-                error
+                error,
               );
             }
           }}
@@ -755,7 +755,9 @@ function App() {
                   size="icon"
                   onClick={() =>
                     setCurrentView(
-                      currentView === "skillsDiscovery" ? "skills" : "providers"
+                      currentView === "skillsDiscovery"
+                        ? "skills"
+                        : "providers",
                     )
                   }
                   className="mr-2 rounded-lg"
@@ -788,7 +790,7 @@ function App() {
                       "text-xl font-semibold transition-colors",
                       isProxyRunning && isCurrentAppTakeoverActive
                         ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
-                        : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300"
+                        : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
                     )}
                   >
                     CC Switch
@@ -934,7 +936,7 @@ function App() {
                         "transition-all duration-300 ease-in-out overflow-hidden",
                         isCurrentAppTakeoverActive
                           ? "opacity-100 max-w-[100px] scale-100"
-                          : "opacity-0 max-w-0 scale-75 pointer-events-none"
+                          : "opacity-0 max-w-0 scale-75 pointer-events-none",
                       )}
                     >
                       <FailoverToggle activeApp={activeApp} />
@@ -962,7 +964,7 @@ function App() {
                       "transition-all duration-200 ease-in-out overflow-hidden",
                       hasSkillsSupport
                         ? "opacity-100 w-8 scale-100 px-2"
-                        : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1"
+                        : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
                     )}
                     title={t("skills.manage")}
                   >

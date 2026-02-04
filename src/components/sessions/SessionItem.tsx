@@ -40,7 +40,7 @@ export function SessionItem({
         "w-full text-left rounded-lg px-3 py-2.5 transition-all group",
         isSelected
           ? "bg-primary/10 border border-primary/30"
-          : "hover:bg-muted/60 border border-transparent"
+          : "hover:bg-muted/60 border border-transparent",
       )}
     >
       <div className="flex items-center gap-2 mb-1">
@@ -62,7 +62,7 @@ export function SessionItem({
         <ChevronRight
           className={cn(
             "size-4 text-muted-foreground/50 shrink-0 transition-transform",
-            isSelected && "text-primary rotate-90"
+            isSelected && "text-primary rotate-90",
           )}
         />
       </div>

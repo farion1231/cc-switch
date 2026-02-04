@@ -8,7 +8,7 @@ export const sessionsApi = {
 
   async getMessages(
     providerId: string,
-    sourcePath: string
+    sourcePath: string,
   ): Promise<SessionMessage[]> {
     return await invoke("get_session_messages", { providerId, sourcePath });
   },
