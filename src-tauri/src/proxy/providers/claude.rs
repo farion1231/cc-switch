@@ -252,11 +252,28 @@ impl ProviderAdapter for ClaudeAdapter {
         // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
         // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
 
-        let mut base = format!(
-            "{}/{}",
-            base_url.trim_end_matches('/'),
-            endpoint.trim_start_matches('/')
-        );
+        let base_trimmed = base_url.trim_end_matches('/');
+        let endpoint_trimmed = endpoint.trim_start_matches('/');
+
+        // 检测 base_url 是否已经以 API 路径结尾（用户填写了完整路径）
+        // 支持的 API 路径模式：/v1/messages, /messages, /v1/chat/completions, /chat/completions
+        let api_path_patterns = [
+            "/v1/messages",
+            "/messages",
+            "/v1/chat/completions",
+            "/chat/completions",
+        ];
+
+        let base_ends_with_api_path = api_path_patterns
+            .iter()
+            .any(|pattern| base_trimmed.to_lowercase().ends_with(pattern));
+
+        // 如果 base_url 已经以 API 路径结尾，直接使用 base_url，不再追加 endpoint
+        let mut base = if base_ends_with_api_path {
+            base_trimmed.to_string()
+        } else {
+            format!("{base_trimmed}/{endpoint_trimmed}")
+        };
 
         // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
         while base.contains("/v1/v1") {
@@ -266,9 +283,11 @@ impl ProviderAdapter for ClaudeAdapter {
         // 为 Claude 相关端点添加 ?beta=true 参数
         // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
         // 注：openai_chat 模式下会转发到 /v1/chat/completions，此处也需要保持一致
-        if (endpoint.contains("/v1/messages") || endpoint.contains("/v1/chat/completions"))
-            && !endpoint.contains('?')
-        {
+        // 检查最终 URL 是否包含需要 beta 参数的路径，且没有查询参数
+        let needs_beta = (base.contains("/v1/messages") || base.contains("/v1/chat/completions"))
+            && !base.contains('?');
+
+        if needs_beta {
             format!("{base}?beta=true")
         } else {
             base
@@ -511,6 +530,59 @@ mod tests {
         // 已有查询参数时不重复添加
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar");
         assert_eq!(url, "https://api.anthropic.com/v1/messages?foo=bar");
+    }
+
+    #[test]
+    fn test_build_url_full_path_messages() {
+        let adapter = ClaudeAdapter::new();
+        // base_url 已包含完整路径 /v1/messages，不再追加
+        let url = adapter.build_url("https://example.com/api/v1/messages", "/v1/messages");
+        assert_eq!(url, "https://example.com/api/v1/messages?beta=true");
+    }
+
+    #[test]
+    fn test_build_url_full_path_chat_completions() {
+        let adapter = ClaudeAdapter::new();
+        // base_url 已包含完整路径 /v1/chat/completions，不再追加
+        let url = adapter.build_url(
+            "https://opencode.ai/zen/v1/chat/completions",
+            "/v1/chat/completions",
+        );
+        assert_eq!(url, "https://opencode.ai/zen/v1/chat/completions?beta=true");
+    }
+
+    #[test]
+    fn test_build_url_full_path_short_suffix() {
+        let adapter = ClaudeAdapter::new();
+        // base_url 以 /messages 结尾（无 /v1 前缀）
+        let url = adapter.build_url("https://example.com/api/messages", "/v1/messages");
+        assert_eq!(url, "https://example.com/api/messages");
+
+        // base_url 以 /chat/completions 结尾（无 /v1 前缀）
+        let url2 = adapter.build_url(
+            "https://example.com/api/chat/completions",
+            "/v1/chat/completions",
+        );
+        assert_eq!(url2, "https://example.com/api/chat/completions");
+    }
+
+    #[test]
+    fn test_build_url_v1_base_dedup() {
+        let adapter = ClaudeAdapter::new();
+        // base_url 以 /v1 结尾，endpoint 也以 /v1 开头，应该去重
+        // 场景：https://integrate.api.nvidia.com/v1 + /v1/chat/completions
+        let url = adapter.build_url(
+            "https://integrate.api.nvidia.com/v1",
+            "/v1/chat/completions",
+        );
+        assert_eq!(
+            url,
+            "https://integrate.api.nvidia.com/v1/chat/completions?beta=true"
+        );
+
+        // 另一个场景：/v1 + /v1/messages
+        let url2 = adapter.build_url("https://api.example.com/v1", "/v1/messages");
+        assert_eq!(url2, "https://api.example.com/v1/messages?beta=true");
     }
 
     #[test]

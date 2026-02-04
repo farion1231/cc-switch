@@ -195,7 +195,10 @@ function App() {
     switchProvider,
     deleteProvider,
     saveUsageScript,
-  } = useProviderActions(activeApp);
+  } = useProviderActions(activeApp, {
+    isProxyRunning,
+    isTakeoverActive: isCurrentAppTakeoverActive,
+  });
 
   // 监听来自托盘菜单的切换事件
   useEffect(() => {

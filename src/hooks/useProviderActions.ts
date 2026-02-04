@@ -12,11 +12,96 @@ import {
 } from "@/lib/query";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
+// API 路径后缀模式，用于检测是否是全链接
+const API_PATH_SUFFIX_PATTERNS = [
+  "/v1/messages",
+  "/messages",
+  "/v1/chat/completions",
+  "/chat/completions",
+  "/v1/responses",
+  "/responses",
+  "/v1beta/models",
+];
+
+/**
+ * 从 Codex TOML 配置字符串中提取 base_url
+ */
+function extractCodexBaseUrlFromToml(tomlConfig: string | null): string | null {
+  if (!tomlConfig || typeof tomlConfig !== "string") return null;
+  // 匹配 base_url = "xxx" 或 base_url = 'xxx'
+  const match = tomlConfig.match(/base_url\s*=\s*(['"])([^'"]+)\1/);
+  return match?.[2]?.trim() || null;
+}
+
+/**
+ * 从 provider 配置中提取 base URL
+ */
+function extractBaseUrl(provider: Provider, appId: AppId): string | null {
+  try {
+    const config = provider.settingsConfig;
+    if (!config) return null;
+
+    if (appId === "claude") {
+      // Claude: env.ANTHROPIC_BASE_URL
+      const envUrl = config?.env?.ANTHROPIC_BASE_URL;
+      return typeof envUrl === "string" ? envUrl.trim() : null;
+    }
+
+    if (appId === "codex") {
+      // Codex: base_url 存储在 config 字段中（TOML 字符串）
+      const tomlConfig = config?.config;
+      if (typeof tomlConfig === "string") {
+        return extractCodexBaseUrlFromToml(tomlConfig);
+      }
+      // 回退：尝试直接获取 base_url 字段
+      const baseUrl = config?.base_url;
+      return typeof baseUrl === "string" ? baseUrl.trim() : null;
+    }
+
+    if (appId === "gemini") {
+      // Gemini: env.GOOGLE_GEMINI_BASE_URL 或 GEMINI_API_BASE
+      const envUrl = config?.env?.GOOGLE_GEMINI_BASE_URL;
+      if (typeof envUrl === "string") return envUrl.trim();
+      const baseUrl = config?.GEMINI_API_BASE || config?.base_url;
+      return typeof baseUrl === "string" ? baseUrl.trim() : null;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 检测 URL 是否以 API 路径后缀结尾（全链接）
+ */
+function isFullApiUrl(url: string | null): boolean {
+  if (!url) return false;
+
+  // 移除查询参数和尾部斜杠
+  const pathPart = url.split("?")[0].replace(/\/+$/, "").toLowerCase();
+
+  return API_PATH_SUFFIX_PATTERNS.some((pattern) =>
+    pathPart.endsWith(pattern.toLowerCase()),
+  );
+}
+
+interface UseProviderActionsOptions {
+  /** 代理服务是否正在运行 */
+  isProxyRunning?: boolean;
+  /** 当前应用的代理接管是否激活 */
+  isTakeoverActive?: boolean;
+}
+
 /**
  * Hook for managing provider actions (add, update, delete, switch)
  * Extracts business logic from App.tsx
  */
-export function useProviderActions(activeApp: AppId) {
+export function useProviderActions(
+  activeApp: AppId,
+  options: UseProviderActionsOptions = {},
+) {
+  const { isProxyRunning = false, isTakeoverActive = false } = options;
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
@@ -81,46 +166,64 @@ export function useProviderActions(activeApp: AppId) {
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
+      // 检测是否是全链接配置（URL 以 API 路径结尾）
+      const baseUrl = extractBaseUrl(provider, activeApp);
+      const hasFullApiUrl = isFullApiUrl(baseUrl);
+
+      // 检测是否是 Claude OpenAI Chat 格式（需要代理进行格式转换）
+      const isClaudeOpenAIChatFormat =
+        activeApp === "claude" &&
+        provider.category !== "official" &&
+        provider.meta?.apiFormat === "openai_chat";
+
+      // 如果需要代理但代理未激活，阻止切换并提示
+      const needsProxy = hasFullApiUrl || isClaudeOpenAIChatFormat;
+      if (needsProxy && !(isProxyRunning && isTakeoverActive)) {
+        const message = isClaudeOpenAIChatFormat
+          ? t("notifications.openAIChatFormatRequiresProxy", {
+              defaultValue:
+                "此供应商使用 OpenAI Chat 格式，需要开启代理服务进行格式转换才能正常使用。请先开启代理并接管当前应用。",
+            })
+          : t("notifications.fullUrlRequiresProxy", {
+              defaultValue:
+                "此供应商配置了完整 API 路径，需要开启代理服务才能正常使用。请先开启代理并接管当前应用。",
+            });
+
+        toast.warning(message, {
+          duration: 6000,
+          closeButton: true,
+        });
+        return; // 阻止切换
+      }
+
       try {
         await switchProviderMutation.mutateAsync(provider.id);
         await syncClaudePlugin(provider);
 
-        // 根据供应商类型显示不同的成功提示
-        if (
-          activeApp === "claude" &&
-          provider.category !== "official" &&
-          provider.meta?.apiFormat === "openai_chat"
-        ) {
-          // OpenAI Chat 格式供应商：显示代理提示
-          toast.info(
-            t("notifications.openAIChatFormatHint", {
-              defaultValue:
-                "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用",
-            }),
-            {
-              duration: 5000,
-              closeButton: true,
-            },
-          );
-        } else {
-          // 普通供应商：显示切换成功
-          // OpenCode: show "added to config" message instead of "switched"
-          const messageKey =
-            activeApp === "opencode"
-              ? "notifications.addToConfigSuccess"
-              : "notifications.switchSuccess";
-          const defaultMessage =
-            activeApp === "opencode" ? "已添加到配置" : "切换成功！";
+        // 普通供应商：显示切换成功
+        // OpenCode: show "added to config" message instead of "switched"
+        const messageKey =
+          activeApp === "opencode"
+            ? "notifications.addToConfigSuccess"
+            : "notifications.switchSuccess";
+        const defaultMessage =
+          activeApp === "opencode" ? "已添加到配置" : "切换成功！";
 
-          toast.success(t(messageKey, { defaultValue: defaultMessage }), {
-            closeButton: true,
-          });
-        }
+        toast.success(t(messageKey, { defaultValue: defaultMessage }), {
+          closeButton: true,
+        });
       } catch {
         // 错误提示由 mutation 处理
       }
     },
-    [switchProviderMutation, syncClaudePlugin, activeApp, t],
+    [
+      switchProviderMutation,
+      syncClaudePlugin,
+      activeApp,
+      t,
+      isProxyRunning,
+      isTakeoverActive,
+    ],
   );
 
   // 删除供应商

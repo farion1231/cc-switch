@@ -156,7 +156,9 @@
     "deleteFailed": "プロバイダーの削除に失敗しました: {{error}}",
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
-    "openAIChatFormatHint": "このプロバイダーは OpenAI Chat フォーマットを使用しており、プロキシサービスの有効化が必要です"
+    "openAIChatFormatHint": "このプロバイダーは OpenAI Chat フォーマットを使用しており、プロキシサービスの有効化が必要です",
+    "openAIChatFormatRequiresProxy": "このプロバイダーは OpenAI Chat フォーマットを使用しており、フォーマット変換のためにプロキシサービスが必要です。先にプロキシを有効にして、現在のアプリをテイクオーバーしてください。",
+    "fullUrlRequiresProxy": "このプロバイダーは完全な API パスで構成されており、プロキシサービスが必要です。先にプロキシを有効にして、現在のアプリをテイクオーバーしてください。"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -489,6 +491,16 @@
     "apiHint": "💡 Claude API 互換サービスのエンドポイントを入力してください。末尾にスラッシュを付けないでください",
     "apiHintOAI": "💡 OpenAI Chat Completions 互換サービスのエンドポイントを入力してください。末尾にスラッシュを付けないでください",
     "codexApiHint": "💡 OpenAI Response 互換のサービスエンドポイントを入力してください",
+    "codexApiHintChat": "💡 OpenAI Chat Completions 互換のサービスエンドポイントを入力してください",
+    "codexApiFormatResponses": "OpenAI Responses（デフォルト）",
+    "codexApiFormatChat": "OpenAI Chat Completions",
+    "codexApiFormatHint": "プロバイダーがサポートする API フォーマットを選択",
+    "directRequestUrl": "直接接続リクエスト URL：",
+    "directRequestUrlDesc": "プロキシ無効時、クライアントはこの URL に直接リクエストします",
+    "proxyRequestUrl": "プロキシリクエスト URL：",
+    "proxyRequestUrlDesc": "プロキシ有効時、リクエストはこの URL に転送されます（フォーマット変換対応）",
+    "fullUrlWarningTitle": "完全な API パスを検出",
+    "fullUrlWarning": "URL には完全な API パスが含まれています。この設定はプロキシモードでのみ有効です。直接接続モードではベース URL のみを入力してください。",
     "fillSupplierName": "プロバイダー名を入力してください",
     "fillConfigContent": "設定内容を入力してください",
     "fillParameter": "{{label}} を入力してください",

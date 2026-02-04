@@ -156,7 +156,9 @@
     "deleteFailed": "删除供应商失败：{{error}}",
     "settingsSaved": "设置已保存",
     "settingsSaveFailed": "保存设置失败：{{error}}",
-    "openAIChatFormatHint": "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用"
+    "openAIChatFormatHint": "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用",
+    "openAIChatFormatRequiresProxy": "此供应商使用 OpenAI Chat 格式，需要开启代理服务进行格式转换才能正常使用。请先开启代理并接管当前应用。",
+    "fullUrlRequiresProxy": "此供应商配置了完整 API 路径，需要开启代理服务才能正常使用。请先开启代理并接管当前应用。"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -489,6 +491,16 @@
     "apiHint": "💡 填写兼容 Claude API 的服务端点地址，不要以斜杠结尾",
     "apiHintOAI": "💡 填写兼容 OpenAI Chat Completions 的服务端点地址，不要以斜杠结尾",
     "codexApiHint": "💡 填写兼容 OpenAI Response 格式的服务端点地址",
+    "codexApiHintChat": "💡 填写兼容 OpenAI Chat Completions 格式的服务端点地址",
+    "codexApiFormatResponses": "OpenAI Responses (默认)",
+    "codexApiFormatChat": "OpenAI Chat Completions",
+    "codexApiFormatHint": "选择供应商支持的 API 格式",
+    "directRequestUrl": "直连请求地址：",
+    "directRequestUrlDesc": "不开启代理时，客户端直接请求此地址",
+    "proxyRequestUrl": "代理请求地址：",
+    "proxyRequestUrlDesc": "开启代理后，代理服务会将请求转发到此地址（支持格式转换）",
+    "fullUrlWarningTitle": "检测到完整 API 路径",
+    "fullUrlWarning": "填写了包含 API 路径的完整地址，此配置仅在代理模式下生效。直连模式下请只填写基础地址。",
     "fillSupplierName": "请填写供应商名称",
     "fillConfigContent": "请填写配置内容",
     "fillParameter": "请填写 {{label}}",

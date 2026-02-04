@@ -2,10 +2,21 @@ import { useTranslation } from "react-i18next";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField } from "./shared";
 import type { ProviderCategory } from "@/types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { FormLabel } from "@/components/ui/form";
 
 interface EndpointCandidate {
   url: string;
 }
+
+// Codex API 格式类型
+export type CodexApiFormat = "responses" | "chat";
 
 interface CodexFormFieldsProps {
   providerId?: string;
@@ -35,6 +46,11 @@ interface CodexFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+
+  // API Format (for Codex providers)
+  apiFormat?: CodexApiFormat;
+  onApiFormatChange?: (format: CodexApiFormat) => void;
+  shouldShowApiFormatSelector?: boolean;
 }
 
 export function CodexFormFields({
@@ -58,8 +74,20 @@ export function CodexFormFields({
   modelName = "",
   onModelNameChange,
   speedTestEndpoints,
+  apiFormat = "responses",
+  onApiFormatChange,
+  shouldShowApiFormatSelector = false,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
+
+  // 根据 API 格式选择提示文本
+  const apiHint =
+    apiFormat === "chat"
+      ? t("providerForm.codexApiHintChat", {
+          defaultValue:
+            "💡 填写兼容 OpenAI Chat Completions 格式的服务端点地址",
+        })
+      : t("providerForm.codexApiHint");
 
   return (
     <>
@@ -84,6 +112,37 @@ export function CodexFormFields({
         }}
       />
 
+      {/* API 格式选择器 */}
+      {shouldShowApiFormatSelector && onApiFormatChange && (
+        <div className="space-y-2">
+          <FormLabel htmlFor="codexApiFormat">
+            {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+          </FormLabel>
+          <Select value={apiFormat} onValueChange={onApiFormatChange}>
+            <SelectTrigger id="codexApiFormat" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="responses">
+                {t("providerForm.codexApiFormatResponses", {
+                  defaultValue: "OpenAI Responses (默认)",
+                })}
+              </SelectItem>
+              <SelectItem value="chat">
+                {t("providerForm.codexApiFormatChat", {
+                  defaultValue: "OpenAI Chat Completions",
+                })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.codexApiFormatHint", {
+              defaultValue: "选择供应商支持的 API 格式",
+            })}
+          </p>
+        </div>
+      )}
+
       {/* Codex Base URL 输入框 */}
       {shouldShowSpeedTest && (
         <EndpointField
@@ -92,8 +151,10 @@ export function CodexFormFields({
           value={codexBaseUrl}
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.codexApiEndpointPlaceholder")}
-          hint={t("providerForm.codexApiHint")}
+          hint={apiHint}
           onManageClick={() => onEndpointModalToggle(true)}
+          appType="codex"
+          apiFormat={apiFormat}
         />
       )}
 

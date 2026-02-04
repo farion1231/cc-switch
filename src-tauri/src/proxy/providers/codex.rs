@@ -141,6 +141,24 @@ impl ProviderAdapter for CodexAdapter {
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
 
+        // 检测 base_url 是否已经以 API 路径结尾（用户填写了完整路径）
+        // 支持的 API 路径模式：/v1/responses, /responses, /v1/chat/completions, /chat/completions
+        let api_path_patterns = [
+            "/v1/responses",
+            "/responses",
+            "/v1/chat/completions",
+            "/chat/completions",
+        ];
+
+        let base_ends_with_api_path = api_path_patterns
+            .iter()
+            .any(|pattern| base_trimmed.to_lowercase().ends_with(pattern));
+
+        // 如果 base_url 已经以 API 路径结尾，直接使用 base_url，不再追加 endpoint
+        if base_ends_with_api_path {
+            return base_trimmed.to_string();
+        }
+
         // OpenAI/Codex 的 base_url 可能是：
         // - 纯 origin: https://api.openai.com  (需要自动补 /v1)
         // - 已含 /v1: https://api.openai.com/v1 (直接拼接)
@@ -266,6 +284,49 @@ mod tests {
         // base_url 已包含 /v1，endpoint 也包含 /v1
         let url = adapter.build_url("https://www.packyapi.com/v1", "/v1/responses");
         assert_eq!(url, "https://www.packyapi.com/v1/responses");
+    }
+
+    #[test]
+    fn test_build_url_full_path_responses() {
+        let adapter = CodexAdapter::new();
+        // base_url 已包含完整路径 /v1/responses，不再追加
+        let url = adapter.build_url("https://example.com/v1/responses", "/responses");
+        assert_eq!(url, "https://example.com/v1/responses");
+    }
+
+    #[test]
+    fn test_build_url_full_path_chat_completions() {
+        let adapter = CodexAdapter::new();
+        // base_url 已包含完整路径 /v1/chat/completions，不再追加
+        let url = adapter.build_url(
+            "https://example.com/v1/chat/completions",
+            "/chat/completions",
+        );
+        assert_eq!(url, "https://example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_build_url_full_path_short_suffix() {
+        let adapter = CodexAdapter::new();
+        // base_url 以 /responses 结尾（无 /v1 前缀）
+        let url = adapter.build_url("https://example.com/api/responses", "/responses");
+        assert_eq!(url, "https://example.com/api/responses");
+    }
+
+    #[test]
+    fn test_build_url_v1_base_dedup() {
+        let adapter = CodexAdapter::new();
+        // base_url 以 /v1 结尾，endpoint 也以 /v1 开头，应该去重
+        // 场景：https://integrate.api.nvidia.com/v1 + /v1/responses
+        let url = adapter.build_url("https://integrate.api.nvidia.com/v1", "/v1/responses");
+        assert_eq!(url, "https://integrate.api.nvidia.com/v1/responses");
+
+        // 另一个场景：/v1 + /v1/chat/completions
+        let url2 = adapter.build_url(
+            "https://integrate.api.nvidia.com/v1",
+            "/v1/chat/completions",
+        );
+        assert_eq!(url2, "https://integrate.api.nvidia.com/v1/chat/completions");
     }
 
     // 官方客户端检测测试
