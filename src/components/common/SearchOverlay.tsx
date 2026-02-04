@@ -22,7 +22,7 @@ interface SearchOverlayProps {
 }
 
 // 搜索语法前缀
-const SEARCH_SYNTAX_PREFIXES = ["name:", "tag:", "note:", "url:"] as const;
+const SEARCH_SYNTAX_PREFIXES = ["name:", "url:"] as const;
 
 // Detect platform for keyboard shortcut display
 const isMac =

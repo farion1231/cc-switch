@@ -53,6 +53,7 @@ interface ProviderCardProps {
   isAnonymousMode?: boolean;
   // 搜索高亮
   highlightQuery?: string;
+  highlightField?: "name" | "url" | null; // 高亮的字段
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -117,6 +118,7 @@ export function ProviderCard({
   activeProviderId,
   isAnonymousMode = false,
   highlightQuery = "",
+  highlightField = null,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -270,7 +272,7 @@ export function ProviderCard({
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2 min-h-7">
               <h3 className="text-base font-semibold leading-none">
-                {highlightQuery
+                {highlightQuery && (!highlightField || highlightField === "name")
                   ? highlightText(provider.name, highlightQuery)
                   : provider.name}
               </h3>
@@ -324,7 +326,11 @@ export function ProviderCard({
                 disabled={!isClickableUrl || isAnonymousMode}
               >
                 <span className="truncate">
-                  {isAnonymousMode ? "••••••••.com/••••" : displayUrl}
+                  {isAnonymousMode
+                    ? "••••••••.com/••••"
+                    : highlightQuery && highlightField === "url"
+                      ? highlightText(displayUrl, highlightQuery)
+                      : displayUrl}
                 </span>
               </button>
             )}

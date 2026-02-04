@@ -211,6 +211,10 @@ export interface Settings {
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
+
+  // ===== 快捷键设置 =====
+  // 搜索快捷键（默认 mod+k）
+  searchShortcut?: string;
 }
 
 export interface SessionMeta {

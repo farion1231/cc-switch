@@ -1492,5 +1492,26 @@
     "saveAndSyncError": "保存と同期に失敗しました",
     "configJsonPreview": "設定 JSON プレビュー",
     "configJsonPreviewHint": "以下は各アプリに同期される設定内容です（表示されているフィールドのみ上書きされ、他のカスタム設定は保持されます）"
+  },
+  "listToolbar": {
+    "listView": "リスト表示",
+    "cardView": "カード表示",
+    "sortCustom": "カスタム",
+    "sortName": "名前",
+    "sortCreatedAt": "追加日",
+    "sortAsc": "昇順",
+    "sortDesc": "降順",
+    "anonymousModeOn": "プライバシーモードがオンです。クリックでオフ",
+    "anonymousModeOff": "プライバシーモードをオンにして機密情報を非表示"
+  },
+  "search": {
+    "placeholder": "検索...",
+    "scopeHint": "名前、説明、タグを検索します。",
+    "ariaLabel": "項目を検索",
+    "closeAriaLabel": "検索を閉じる",
+    "closeHint": "Esc で閉じる",
+    "recentSearches": "最近の検索",
+    "clearHistory": "クリア",
+    "syntaxHint": "検索構文："
   }
 }

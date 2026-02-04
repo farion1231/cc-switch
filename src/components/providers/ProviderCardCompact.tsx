@@ -100,7 +100,7 @@ interface ProviderCardCompactProps {
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
-  onConfigureUsage: (provider: Provider) => void;
+  onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
@@ -118,6 +118,7 @@ interface ProviderCardCompactProps {
   isAnonymousMode?: boolean;
   // 搜索高亮
   highlightQuery?: string;
+  highlightField?: "name" | "url" | null;
   // 当前排序字段
   sortField?: "custom" | "name" | "createdAt";
 }
@@ -148,6 +149,7 @@ export function ProviderCardCompact({
   activeProviderId,
   isAnonymousMode = false,
   highlightQuery = "",
+  highlightField = null,
   sortField,
 }: ProviderCardCompactProps) {
   const { t } = useTranslation();
@@ -479,7 +481,7 @@ export function ProviderCardCompact({
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <h3 className="text-sm font-semibold leading-tight truncate">
-                  {highlightQuery
+                  {highlightQuery && (!highlightField || highlightField === "name")
                     ? highlightText(provider.name, highlightQuery)
                     : provider.name}
                 </h3>
@@ -510,7 +512,7 @@ export function ProviderCardCompact({
             // 无徽章时：单行布局，标题和图标对齐
             <div className="flex-1 min-w-0 flex items-center gap-1.5">
               <h3 className="text-sm font-semibold leading-tight truncate">
-                {highlightQuery
+                {highlightQuery && (!highlightField || highlightField === "name")
                   ? highlightText(provider.name, highlightQuery)
                   : provider.name}
               </h3>
@@ -776,7 +778,11 @@ export function ProviderCardCompact({
           }
           disabled={!isClickableUrl || isAnonymousMode}
         >
-          {isAnonymousMode ? "••••••••.com/••••" : displayUrl}
+          {isAnonymousMode
+            ? "••••••••.com/••••"
+            : highlightQuery && highlightField === "url"
+              ? highlightText(displayUrl, highlightQuery)
+              : displayUrl}
         </button>
       )}
 
@@ -806,7 +812,9 @@ export function ProviderCardCompact({
           onEdit={() => onEdit(provider)}
           onDuplicate={() => onDuplicate(provider)}
           onTest={onTest ? () => onTest(provider) : undefined}
-          onConfigureUsage={() => onConfigureUsage(provider)}
+          onConfigureUsage={
+            onConfigureUsage ? () => onConfigureUsage(provider) : undefined
+          }
           onDelete={() => onDelete(provider)}
           onRemoveFromConfig={
             onRemoveFromConfig ? () => onRemoveFromConfig(provider) : undefined

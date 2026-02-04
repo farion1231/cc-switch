@@ -37,7 +37,7 @@ interface ProviderActionsProps {
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
-  onConfigureUsage: () => void;
+  onConfigureUsage?: () => void;
   onDelete: () => void;
   /** OpenCode: remove from live config (not delete from database) */
   onRemoveFromConfig?: () => void;
@@ -238,10 +238,12 @@ export function ProviderActions({
                   {t("modelTest.testProvider", "测试模型")}
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onClick={onConfigureUsage}>
-                <BarChart3 className="h-4 w-4 mr-2" />
-                {t("provider.configureUsage")}
-              </DropdownMenuItem>
+              {onConfigureUsage && (
+                <DropdownMenuItem onClick={onConfigureUsage}>
+                  <BarChart3 className="h-4 w-4 mr-2" />
+                  {t("provider.configureUsage")}
+                </DropdownMenuItem>
+              )}
               {onOpenTerminal && (
                 <DropdownMenuItem onClick={onOpenTerminal}>
                   <Terminal className="h-4 w-4 mr-2" />
@@ -299,15 +301,17 @@ export function ProviderActions({
             </Button>
           )}
 
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={onConfigureUsage}
-            title={t("provider.configureUsage")}
-            className={iconButtonClass}
-          >
-            <BarChart3 className="h-4 w-4" />
-          </Button>
+          {onConfigureUsage && (
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={onConfigureUsage}
+              title={t("provider.configureUsage")}
+              className={iconButtonClass}
+            >
+              <BarChart3 className="h-4 w-4" />
+            </Button>
+          )}
 
           {onOpenTerminal && (
             <Button
