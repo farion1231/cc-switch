@@ -6,42 +6,6 @@ interface UseModelStateProps {
 }
 
 /**
- * Parse model values from settings config JSON
- */
-function parseModelsFromConfig(settingsConfig: string) {
-  try {
-    const cfg = settingsConfig ? JSON.parse(settingsConfig) : {};
-    const env = cfg?.env || {};
-    const model =
-      typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "";
-    const reasoning =
-      typeof env.ANTHROPIC_REASONING_MODEL === "string"
-        ? env.ANTHROPIC_REASONING_MODEL
-        : "";
-    const small =
-      typeof env.ANTHROPIC_SMALL_FAST_MODEL === "string"
-        ? env.ANTHROPIC_SMALL_FAST_MODEL
-        : "";
-    const haiku =
-      typeof env.ANTHROPIC_DEFAULT_HAIKU_MODEL === "string"
-        ? env.ANTHROPIC_DEFAULT_HAIKU_MODEL
-        : small || model;
-    const sonnet =
-      typeof env.ANTHROPIC_DEFAULT_SONNET_MODEL === "string"
-        ? env.ANTHROPIC_DEFAULT_SONNET_MODEL
-        : model || small;
-    const opus =
-      typeof env.ANTHROPIC_DEFAULT_OPUS_MODEL === "string"
-        ? env.ANTHROPIC_DEFAULT_OPUS_MODEL
-        : model || small;
-
-    return { model, reasoning, haiku, sonnet, opus };
-  } catch {
-    return { model: "", reasoning: "", haiku: "", sonnet: "", opus: "" };
-  }
-}
-
-/**
  * 管理模型选择状态
  * 支持 ANTHROPIC_MODEL, ANTHROPIC_REASONING_MODEL 和各类型默认模型
  */
@@ -49,22 +13,11 @@ export function useModelState({
   settingsConfig,
   onConfigChange,
 }: UseModelStateProps) {
-  // Initialize state by parsing config directly (fixes edit mode backfill)
-  const [claudeModel, setClaudeModel] = useState(
-    () => parseModelsFromConfig(settingsConfig).model,
-  );
-  const [reasoningModel, setReasoningModel] = useState(
-    () => parseModelsFromConfig(settingsConfig).reasoning,
-  );
-  const [defaultHaikuModel, setDefaultHaikuModel] = useState(
-    () => parseModelsFromConfig(settingsConfig).haiku,
-  );
-  const [defaultSonnetModel, setDefaultSonnetModel] = useState(
-    () => parseModelsFromConfig(settingsConfig).sonnet,
-  );
-  const [defaultOpusModel, setDefaultOpusModel] = useState(
-    () => parseModelsFromConfig(settingsConfig).opus,
-  );
+  const [claudeModel, setClaudeModel] = useState("");
+  const [reasoningModel, setReasoningModel] = useState("");
+  const [defaultHaikuModel, setDefaultHaikuModel] = useState("");
+  const [defaultSonnetModel, setDefaultSonnetModel] = useState("");
+  const [defaultOpusModel, setDefaultOpusModel] = useState("");
 
   const isUserEditingRef = useRef(false);
   const lastConfigRef = useRef(settingsConfig);

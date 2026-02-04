@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 
@@ -10,7 +11,7 @@ interface FailoverPriorityBadgeProps {
  * 故障转移优先级徽章
  * 显示供应商在故障转移队列中的优先级顺序
  */
-export function FailoverPriorityBadge({
+export const FailoverPriorityBadge = memo(function FailoverPriorityBadge({
   priority,
   className,
 }: FailoverPriorityBadgeProps) {
@@ -19,8 +20,9 @@ export function FailoverPriorityBadge({
   return (
     <div
       className={cn(
-        "inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold",
-        "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+        "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide",
+        "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400",
+        "transition-opacity duration-200 ease-out",
         className,
       )}
       title={t("failover.priority.tooltip", {
@@ -31,4 +33,4 @@ export function FailoverPriorityBadge({
       P{priority}
     </div>
   );
-}
+});

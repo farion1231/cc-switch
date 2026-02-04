@@ -15,7 +15,6 @@ interface DirectorySettingsProps {
   claudeDir?: string;
   codexDir?: string;
   geminiDir?: string;
-  opencodeDir?: string;
   onDirectoryChange: (app: AppId, value?: string) => void;
   onBrowseDirectory: (app: AppId) => Promise<void>;
   onResetDirectory: (app: AppId) => Promise<void>;
@@ -30,7 +29,6 @@ export function DirectorySettings({
   claudeDir,
   codexDir,
   geminiDir,
-  opencodeDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -118,17 +116,6 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("gemini", val)}
           onBrowse={() => onBrowseDirectory("gemini")}
           onReset={() => onResetDirectory("gemini")}
-        />
-
-        <DirectoryInput
-          label={t("settings.opencodeConfigDir")}
-          description={undefined}
-          value={opencodeDir}
-          resolvedValue={resolvedDirs.opencode}
-          placeholder={t("settings.browsePlaceholderOpencode")}
-          onChange={(val) => onDirectoryChange("opencode", val)}
-          onBrowse={() => onBrowseDirectory("opencode")}
-          onReset={() => onResetDirectory("opencode")}
         />
       </section>
     </>

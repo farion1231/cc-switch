@@ -250,7 +250,7 @@ export function RequestLogTable() {
                   <TableHead className="whitespace-nowrap">
                     {t("usage.provider")}
                   </TableHead>
-                  <TableHead className="min-w-[200px] whitespace-nowrap">
+                  <TableHead className="min-w-[280px] whitespace-nowrap">
                     {t("usage.billingModel")}
                   </TableHead>
                   <TableHead className="text-right whitespace-nowrap">
@@ -264,9 +264,6 @@ export function RequestLogTable() {
                   </TableHead>
                   <TableHead className="text-right min-w-[90px] whitespace-nowrap">
                     {t("usage.cacheCreationTokens")}
-                  </TableHead>
-                  <TableHead className="text-right whitespace-nowrap">
-                    {t("usage.multiplier")}
                   </TableHead>
                   <TableHead className="text-right whitespace-nowrap">
                     {t("usage.totalCost")}
@@ -283,7 +280,7 @@ export function RequestLogTable() {
                 {logs.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={11}
+                      colSpan={10}
                       className="text-center text-muted-foreground"
                     >
                       {t("usage.noData")}
@@ -300,25 +297,11 @@ export function RequestLogTable() {
                       <TableCell>
                         {log.providerName || t("usage.unknownProvider")}
                       </TableCell>
-                      <TableCell className="font-mono text-xs max-w-[200px]">
-                        <div
-                          className="truncate"
-                          title={
-                            log.requestModel && log.requestModel !== log.model
-                              ? `${t("usage.requestModel")}: ${log.requestModel}\n${t("usage.responseModel")}: ${log.model}`
-                              : log.model
-                          }
-                        >
-                          {log.model}
-                        </div>
-                        {log.requestModel && log.requestModel !== log.model && (
-                          <div
-                            className="truncate text-muted-foreground text-[10px]"
-                            title={log.requestModel}
-                          >
-                            ← {log.requestModel}
-                          </div>
-                        )}
+                      <TableCell
+                        className="font-mono text-sm max-w-[280px] truncate"
+                        title={log.model}
+                      >
+                        {log.model}
                       </TableCell>
                       <TableCell className="text-right">
                         {log.inputTokens.toLocaleString()}
@@ -331,15 +314,6 @@ export function RequestLogTable() {
                       </TableCell>
                       <TableCell className="text-right">
                         {log.cacheCreationTokens.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {parseFloat(log.costMultiplier) !== 1 ? (
-                          <span className="text-orange-600">
-                            ×{log.costMultiplier}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">×1</span>
-                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         ${parseFloat(log.totalCostUsd).toFixed(6)}

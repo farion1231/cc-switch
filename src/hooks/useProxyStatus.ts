@@ -95,27 +95,7 @@ export function useProxyStatus() {
   const setTakeoverForAppMutation = useMutation({
     mutationFn: ({ appType, enabled }: { appType: string; enabled: boolean }) =>
       invoke("set_proxy_takeover_for_app", { appType, enabled }),
-    onSuccess: (_data, variables) => {
-      const appLabel =
-        variables.appType === "claude"
-          ? "Claude"
-          : variables.appType === "codex"
-            ? "Codex"
-            : variables.appType === "gemini"
-              ? "Gemini"
-              : "OpenCode";
-
-      toast.success(
-        variables.enabled
-          ? t("proxy.takeover.enabled", {
-              defaultValue: `已接管 ${appLabel} 配置（请求将走本地代理）`,
-            })
-          : t("proxy.takeover.disabled", {
-              defaultValue: `已恢复 ${appLabel} 配置`,
-            }),
-        { closeButton: true },
-      );
-
+    onSuccess: (_data, _variables) => {
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
       queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] });
     },

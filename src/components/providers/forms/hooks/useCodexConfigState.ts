@@ -3,6 +3,8 @@ import {
   extractCodexBaseUrl,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
   extractCodexModelName,
+  removeCodexBaseUrl,
+  removeCodexModelName,
   setCodexModelName as setCodexModelNameInConfig,
 } from "@/utils/providerConfigUtils";
 import { normalizeTomlText } from "@/utils/textNormalization";
@@ -166,6 +168,11 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       setCodexBaseUrl(sanitized);
 
       if (!sanitized) {
+        isUpdatingCodexBaseUrlRef.current = true;
+        setCodexConfig((prev) => removeCodexBaseUrl(prev));
+        setTimeout(() => {
+          isUpdatingCodexBaseUrlRef.current = false;
+        }, 0);
         return;
       }
 
@@ -185,6 +192,11 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       setCodexModelName(trimmed);
 
       if (!trimmed) {
+        isUpdatingCodexModelNameRef.current = true;
+        setCodexConfig((prev) => removeCodexModelName(prev));
+        setTimeout(() => {
+          isUpdatingCodexModelNameRef.current = false;
+        }, 0);
         return;
       }
 

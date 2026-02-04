@@ -4,7 +4,7 @@
  * 放置在主界面头部，用于一键启用/关闭自动故障转移
  */
 
-import { Shuffle, Loader2 } from "lucide-react";
+import { Shuffle } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
   useAutoFailoverEnabled,
@@ -21,9 +21,13 @@ interface FailoverToggleProps {
 
 export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
   const { t } = useTranslation();
-  const { data: isEnabled = false, isLoading } =
-    useAutoFailoverEnabled(activeApp);
+  const {
+    data: isEnabled,
+    isLoading,
+    isFetching,
+  } = useAutoFailoverEnabled(activeApp);
   const setEnabled = useSetAutoFailoverEnabled();
+  const isToggleLoading = isLoading || isFetching;
 
   const handleToggle = (checked: boolean) => {
     setEnabled.mutate({ appType: activeApp, enabled: checked });
@@ -54,22 +58,17 @@ export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
       )}
       title={tooltipText}
     >
-      {setEnabled.isPending || isLoading ? (
-        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-      ) : (
-        <Shuffle
-          className={cn(
-            "h-4 w-4 transition-colors",
-            isEnabled
-              ? "text-emerald-500 animate-pulse"
-              : "text-muted-foreground",
-          )}
-        />
-      )}
+      <Shuffle
+        className={cn(
+          "h-4 w-4 transition-colors duration-200",
+          isEnabled ? "text-emerald-500" : "text-muted-foreground",
+          (setEnabled.isPending || isToggleLoading) && "opacity-50",
+        )}
+      />
       <Switch
-        checked={isEnabled}
+        checked={!!isEnabled}
         onCheckedChange={handleToggle}
-        disabled={setEnabled.isPending || isLoading}
+        disabled={setEnabled.isPending || isToggleLoading}
       />
     </div>
   );

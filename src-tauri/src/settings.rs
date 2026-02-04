@@ -84,6 +84,9 @@ pub struct AppSettings {
     pub silent_startup: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// 搜索快捷键（默认由前端处理为 "mod+k"）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_shortcut: Option<String>,
 
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,6 +148,7 @@ impl Default for AppSettings {
             launch_on_startup: false,
             silent_startup: false,
             language: None,
+            search_shortcut: None,
             visible_apps: None,
             claude_config_dir: None,
             codex_config_dir: None,
@@ -204,6 +208,13 @@ impl AppSettings {
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "ja"))
+            .map(|s| s.to_string());
+
+        self.search_shortcut = self
+            .search_shortcut
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
     }
 

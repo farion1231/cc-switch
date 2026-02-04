@@ -147,6 +147,7 @@ export function useRemoveSkillRepo() {
   });
 }
 
+<<<<<<< HEAD
 /**
  * 从 ZIP 文件安装 Skills
  */
@@ -167,6 +168,8 @@ export function useInstallSkillsFromZip() {
   });
 }
 
+=======
+>>>>>>> e5401fc (refactor(ui): redesign component architecture with compact cards and unified panels)
 // ========== 辅助类型 ==========
 
 export type { InstalledSkill, DiscoverableSkill, AppId };
