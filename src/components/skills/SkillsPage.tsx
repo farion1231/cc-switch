@@ -20,13 +20,13 @@ import {
   useSkillRepos,
   useAddSkillRepo,
   useRemoveSkillRepo,
-  type AppType,
 } from "@/hooks/useSkills";
+import type { AppId } from "@/lib/api/types";
 import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
 import { formatSkillError } from "@/lib/errors/skillErrorParser";
 
 interface SkillsPageProps {
-  initialApp?: AppType;
+  initialApp?: AppId;
 }
 
 export interface SkillsPageHandle {
