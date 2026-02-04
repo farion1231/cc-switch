@@ -117,7 +117,7 @@ export function useSessionSearch({
         .filter(
           (session) =>
             session &&
-            (providerFilter === "all" || session.providerId === providerFilter)
+            (providerFilter === "all" || session.providerId === providerFilter),
         );
 
       // 按时间排序
@@ -127,7 +127,7 @@ export function useSessionSearch({
         return bTs - aTs;
       });
     },
-    [sessions, providerFilter]
+    [sessions, providerFilter],
   );
 
   return useMemo(() => ({ search, isIndexing }), [search, isIndexing]);
