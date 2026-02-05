@@ -300,7 +300,8 @@
           "iterm2": "iTerm2",
           "alacritty": "Alacritty",
           "kitty": "Kitty",
-          "ghostty": "Ghostty"
+          "ghostty": "Ghostty",
+          "wezterm": "WezTerm"
         },
         "windows": {
           "cmd": "コマンドプロンプト",
@@ -404,6 +405,7 @@
     "title": "セッション管理",
     "subtitle": "Codex / Claude Code のセッションを管理",
     "searchPlaceholder": "内容・ディレクトリ・ID で検索",
+    "searchSessions": "セッションを検索",
     "providerFilterAll": "すべて",
     "sessionList": "セッション一覧",
     "loadingSessions": "セッションを読み込み中...",
@@ -427,7 +429,16 @@
     "copySourcePath": "元ファイルをコピー",
     "sourcePathCopied": "元ファイルをコピーしました",
     "loadingMessages": "内容を読み込み中...",
-    "emptySession": "表示できる内容がありません"
+    "emptySession": "表示できる内容がありません",
+    "clickToCopyPath": "クリックしてパスをコピー",
+    "tocTitle": "目次",
+    "justNow": "たった今",
+    "minutesAgo": "{{count}}分前",
+    "hoursAgo": "{{count}}時間前",
+    "daysAgo": "{{count}}日前",
+    "roleUser": "ユーザー",
+    "roleSystem": "システム",
+    "roleTool": "ツール"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",

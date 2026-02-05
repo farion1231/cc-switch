@@ -7,16 +7,25 @@ use crate::error::AppError;
 
 /// 获取用户主目录，带回退和日志
 ///
-/// On Windows, respects the `HOME` environment variable (if set) to support
-/// test isolation. Falls back to `dirs::home_dir()` otherwise.
+/// ## Windows 注意事项
+///
+/// - `dirs::home_dir()` 在 Windows 上使用 `SHGetKnownFolderPath(FOLDERID_Profile)`，
+///   返回的是真实用户目录（类似 `C:\\Users\\Alice`），与 v3.10.2 行为一致。
+/// - 不要直接使用 `HOME` 环境变量：它可能由 Git/Cygwin/MSYS 等第三方工具注入，
+///   且不一定等于用户目录，可能导致 `.cc-switch/cc-switch.db` 路径变化，从而“看起来像数据丢失”。
+///
+/// ## 测试隔离
+///
+/// 为了让 Windows CI/本地测试能稳定隔离真实用户数据，可通过 `CC_SWITCH_TEST_HOME`
+/// 显式覆盖 home dir（仅用于测试/调试场景）。
 pub fn get_home_dir() -> PathBuf {
-    #[cfg(windows)]
-    if let Ok(home) = std::env::var("HOME") {
+    if let Ok(home) = std::env::var("CC_SWITCH_TEST_HOME") {
         let trimmed = home.trim();
         if !trimmed.is_empty() {
             return PathBuf::from(trimmed);
         }
     }
+
     dirs::home_dir().unwrap_or_else(|| {
         log::warn!("无法获取用户主目录，回退到当前目录");
         PathBuf::from(".")
@@ -81,7 +90,35 @@ pub fn get_app_config_dir() -> PathBuf {
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
         return custom;
     }
-    get_home_dir().join(".cc-switch")
+
+    let default_dir = get_home_dir().join(".cc-switch");
+
+    // 兼容 v3.10.3：当用户环境存在 `HOME` 且与真实用户目录不同，
+    // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
+    // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
+    // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
+    #[cfg(windows)]
+    {
+        let default_db = default_dir.join("cc-switch.db");
+        if !default_db.exists() {
+            if let Ok(home_env) = std::env::var("HOME") {
+                let trimmed = home_env.trim();
+                if !trimmed.is_empty() {
+                    let legacy_dir = PathBuf::from(trimmed).join(".cc-switch");
+                    if legacy_dir.join("cc-switch.db").exists() {
+                        log::info!(
+                            "Detected v3.10.3 legacy database at {}, using it instead of {}",
+                            legacy_dir.display(),
+                            default_dir.display()
+                        );
+                        return legacy_dir;
+                    }
+                }
+            }
+        }
+    }
+
+    default_dir
 }
 
 /// 获取应用配置文件路径

@@ -20,7 +20,7 @@ import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { useDragSort } from "@/hooks/useDragSort";
-import { useStreamCheck } from "@/hooks/useStreamCheck";
+// import { useStreamCheck } from "@/hooks/useStreamCheck"; // 测试功能已隐藏
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 import {
@@ -93,8 +93,8 @@ export function ProviderList({
     [appId, opencodeLiveIds],
   );
 
-  // 流式健康检查
-  const { checkProvider, isChecking } = useStreamCheck(appId);
+  // 流式健康检查 - 功能已隐藏
+  // const { checkProvider, isChecking } = useStreamCheck(appId);
 
   // 故障转移相关
   const { data: isAutoFailoverEnabled } = useAutoFailoverEnabled(appId);
@@ -139,9 +139,10 @@ export function ProviderList({
     [appId, addToQueue, removeFromQueue],
   );
 
-  const handleTest = (provider: Provider) => {
-    checkProvider(provider.id, provider.name);
-  };
+  // handleTest 功能已隐藏 - 供应商请求格式复杂难以统一测试
+  // const handleTest = (provider: Provider) => {
+  //   checkProvider(provider.id, provider.name);
+  // };
 
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -229,8 +230,9 @@ export function ProviderList({
               onConfigureUsage={onConfigureUsage}
               onOpenWebsite={onOpenWebsite}
               onOpenTerminal={onOpenTerminal}
-              onTest={appId !== "opencode" ? handleTest : undefined}
-              isTesting={isChecking(provider.id)}
+              // onTest 功能已隐藏 - 供应商请求格式复杂难以统一测试
+              // onTest={appId !== "opencode" ? handleTest : undefined}
+              isTesting={false} // isChecking(provider.id) - 测试功能已隐藏
               isProxyRunning={isProxyRunning}
               isProxyTakeover={isProxyTakeover}
               // 故障转移相关：联动状态

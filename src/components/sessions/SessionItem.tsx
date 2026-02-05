@@ -70,7 +70,7 @@ export function SessionItem({
       <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
         <Clock className="size-3" />
         <span>
-          {lastActive ? formatRelativeTime(lastActive) : t("common.unknown")}
+          {lastActive ? formatRelativeTime(lastActive, t) : t("common.unknown")}
         </span>
       </div>
     </button>

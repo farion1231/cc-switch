@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Sparkles, Trash2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   useInstalledSkills,
   useToggleSkillApp,
@@ -11,20 +11,20 @@ import {
   useImportSkillsFromApps,
   useInstallSkillsFromZip,
   type InstalledSkill,
-  type AppType,
 } from "@/hooks/useSkills";
+import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
+import { APP_IDS } from "@/config/appConfig";
+import { AppCountBar } from "@/components/common/AppCountBar";
+import { AppToggleGroup } from "@/components/common/AppToggleGroup";
+import { ListItemRow } from "@/components/common/ListItemRow";
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
 }
 
-/**
- * 统一 Skills 管理面板
- * v3.10.0 新架构：所有 Skills 统一管理，每个 Skill 通过开关控制应用到哪些客户端
- */
 export interface UnifiedSkillsPanelHandle {
   openDiscovery: () => void;
   openImport: () => void;
@@ -44,7 +44,6 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
 
-  // Queries and Mutations
   const { data: skills, isLoading } = useInstalledSkills();
   const toggleAppMutation = useToggleSkillApp();
   const uninstallMutation = useUninstallSkill();
@@ -53,30 +52,26 @@ const UnifiedSkillsPanel = React.forwardRef<
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
 
-  // Count enabled skills per app
   const enabledCounts = useMemo(() => {
     const counts = { claude: 0, codex: 0, gemini: 0, opencode: 0 };
     if (!skills) return counts;
     skills.forEach((skill) => {
-      if (skill.apps.claude) counts.claude++;
-      if (skill.apps.codex) counts.codex++;
-      if (skill.apps.gemini) counts.gemini++;
-      if (skill.apps.opencode) counts.opencode++;
+      for (const app of APP_IDS) {
+        if (skill.apps[app]) counts[app]++;
+      }
     });
     return counts;
   }, [skills]);
 
   const handleToggleApp = async (
     id: string,
-    app: AppType,
+    app: AppId,
     enabled: boolean,
   ) => {
     try {
       await toggleAppMutation.mutateAsync({ id, app, enabled });
     } catch (error) {
-      toast.error(t("common.error"), {
-        description: String(error),
-      });
+      toast.error(t("common.error"), { description: String(error) });
     }
   };
 
@@ -93,9 +88,7 @@ const UnifiedSkillsPanel = React.forwardRef<
             closeButton: true,
           });
         } catch (error) {
-          toast.error(t("common.error"), {
-            description: String(error),
-          });
+          toast.error(t("common.error"), { description: String(error) });
         }
       },
     });
@@ -110,9 +103,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       }
       setImportDialogOpen(true);
     } catch (error) {
-      toast.error(t("common.error"), {
-        description: String(error),
-      });
+      toast.error(t("common.error"), { description: String(error) });
     }
   };
 
@@ -124,25 +115,16 @@ const UnifiedSkillsPanel = React.forwardRef<
         closeButton: true,
       });
     } catch (error) {
-      toast.error(t("common.error"), {
-        description: String(error),
-      });
+      toast.error(t("common.error"), { description: String(error) });
     }
   };
 
   const handleInstallFromZip = async () => {
     try {
-      // 打开文件选择对话框
       const filePath = await skillsApi.openZipFileDialog();
-      if (!filePath) {
-        // 用户取消选择
-        return;
-      }
+      if (!filePath) return;
 
-      // 默认使用 claude 作为当前应用
-      const currentApp: AppType = "claude";
-
-      // 安装 Skills
+      const currentApp: AppId = "claude";
       const installed = await installFromZipMutation.mutateAsync({
         filePath,
         currentApp,
@@ -166,9 +148,7 @@ const UnifiedSkillsPanel = React.forwardRef<
         );
       }
     } catch (error) {
-      toast.error(t("skills.installFailed"), {
-        description: String(error),
-      });
+      toast.error(t("skills.installFailed"), { description: String(error) });
     }
   };
 
@@ -180,18 +160,11 @@ const UnifiedSkillsPanel = React.forwardRef<
 
   return (
     <div className="px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
-      {/* Info Section */}
-      <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6">
-        <div className="text-sm text-muted-foreground">
-          {t("skills.installed", { count: skills?.length || 0 })} ·{" "}
-          {t("skills.apps.claude")}: {enabledCounts.claude} ·{" "}
-          {t("skills.apps.codex")}: {enabledCounts.codex} ·{" "}
-          {t("skills.apps.gemini")}: {enabledCounts.gemini} ·{" "}
-          {t("skills.apps.opencode")}: {enabledCounts.opencode}
-        </div>
-      </div>
+      <AppCountBar
+        totalLabel={t("skills.installed", { count: skills?.length || 0 })}
+        counts={enabledCounts}
+      />
 
-      {/* Content - Scrollable */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -210,20 +183,22 @@ const UnifiedSkillsPanel = React.forwardRef<
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {skills.map((skill) => (
-              <InstalledSkillListItem
-                key={skill.id}
-                skill={skill}
-                onToggleApp={handleToggleApp}
-                onUninstall={() => handleUninstall(skill)}
-              />
-            ))}
-          </div>
+          <TooltipProvider delayDuration={300}>
+            <div className="rounded-xl border border-border-default overflow-hidden">
+              {skills.map((skill, index) => (
+                <InstalledSkillListItem
+                  key={skill.id}
+                  skill={skill}
+                  onToggleApp={handleToggleApp}
+                  onUninstall={() => handleUninstall(skill)}
+                  isLast={index === skills.length - 1}
+                />
+              ))}
+            </div>
+          </TooltipProvider>
         )}
       </div>
 
-      {/* Confirm Dialog */}
       {confirmDialog && (
         <ConfirmDialog
           isOpen={confirmDialog.isOpen}
@@ -234,7 +209,6 @@ const UnifiedSkillsPanel = React.forwardRef<
         />
       )}
 
-      {/* Import Dialog */}
       {importDialogOpen && unmanagedSkills && (
         <ImportSkillsDialog
           skills={unmanagedSkills}
@@ -248,19 +222,18 @@ const UnifiedSkillsPanel = React.forwardRef<
 
 UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
-/**
- * 已安装 Skill 列表项组件
- */
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
-  onToggleApp: (id: string, app: AppType, enabled: boolean) => void;
+  onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
   onUninstall: () => void;
+  isLast?: boolean;
 }
 
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   skill,
   onToggleApp,
   onUninstall,
+  isLast,
 }) => {
   const { t } = useTranslation();
 
@@ -273,7 +246,6 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
     }
   };
 
-  // 生成来源标签
   const sourceLabel = useMemo(() => {
     if (skill.repoOwner && skill.repoName) {
       return `${skill.repoOwner}/${skill.repoName}`;
@@ -282,118 +254,49 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   }, [skill.repoOwner, skill.repoName, t]);
 
   return (
-    <div className="group relative flex items-center gap-4 p-4 rounded-xl border border-border-default bg-muted/50 hover:bg-muted hover:border-border-default/80 hover:shadow-sm transition-all duration-300">
-      {/* 左侧：Skill 信息 */}
+    <ListItemRow isLast={isLast}>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <h3 className="font-medium text-foreground">{skill.name}</h3>
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-sm text-foreground truncate">{skill.name}</span>
           {skill.readmeUrl && (
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
               onClick={openDocs}
-              className="h-6 px-2"
+              className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
             >
-              <ExternalLink size={14} />
-            </Button>
+              <ExternalLink size={12} />
+            </button>
           )}
+          <span className="text-xs text-muted-foreground/50 flex-shrink-0">{sourceLabel}</span>
         </div>
         {skill.description && (
-          <p className="text-sm text-muted-foreground line-clamp-2">
+          <p className="text-xs text-muted-foreground truncate" title={skill.description}>
             {skill.description}
           </p>
         )}
-        <p className="text-xs text-muted-foreground/70 mt-1">{sourceLabel}</p>
       </div>
 
-      {/* 中间：应用开关 */}
-      <div className="flex flex-col gap-2 flex-shrink-0 min-w-[120px]">
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${skill.id}-claude`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("skills.apps.claude")}
-          </label>
-          <Switch
-            id={`${skill.id}-claude`}
-            checked={skill.apps.claude}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(skill.id, "claude", checked)
-            }
-          />
-        </div>
+      <AppToggleGroup
+        apps={skill.apps}
+        onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
+      />
 
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${skill.id}-codex`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("skills.apps.codex")}
-          </label>
-          <Switch
-            id={`${skill.id}-codex`}
-            checked={skill.apps.codex}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(skill.id, "codex", checked)
-            }
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${skill.id}-gemini`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("skills.apps.gemini")}
-          </label>
-          <Switch
-            id={`${skill.id}-gemini`}
-            checked={skill.apps.gemini}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(skill.id, "gemini", checked)
-            }
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor={`${skill.id}-opencode`}
-            className="text-sm text-foreground/80 cursor-pointer"
-          >
-            {t("skills.apps.opencode")}
-          </label>
-          <Switch
-            id={`${skill.id}-opencode`}
-            checked={skill.apps.opencode}
-            onCheckedChange={(checked: boolean) =>
-              onToggleApp(skill.id, "opencode", checked)
-            }
-          />
-        </div>
-      </div>
-
-      {/* 右侧：删除按钮 */}
-      <div className="flex items-center gap-2 flex-shrink-0">
+      <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
         <Button
           type="button"
           variant="ghost"
           size="icon"
+          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
           onClick={onUninstall}
-          className="hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
           title={t("skills.uninstall")}
         >
-          <Trash2 size={16} />
+          <Trash2 size={14} />
         </Button>
       </div>
-    </div>
+    </ListItemRow>
   );
 };
 
-/**
- * 导入 Skills 对话框
- */
 interface ImportSkillsDialogProps {
   skills: Array<{
     directory: string;

@@ -17,7 +17,10 @@ export const formatTimestamp = (value?: number) => {
   return new Date(value).toLocaleString();
 };
 
-export const formatRelativeTime = (value?: number) => {
+export const formatRelativeTime = (
+  value: number | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string
+) => {
   if (!value) return "";
   const now = Date.now();
   const diff = now - value;
@@ -25,10 +28,10 @@ export const formatRelativeTime = (value?: number) => {
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
 
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
-  if (hours < 24) return `${hours} 小时前`;
-  if (days < 7) return `${days} 天前`;
+  if (minutes < 1) return t("sessionManager.justNow");
+  if (minutes < 60) return t("sessionManager.minutesAgo", { count: minutes });
+  if (hours < 24) return t("sessionManager.hoursAgo", { count: hours });
+  if (days < 7) return t("sessionManager.daysAgo", { count: days });
   return new Date(value).toLocaleDateString();
 };
 
@@ -57,12 +60,15 @@ export const getRoleTone = (role: string) => {
   return "text-muted-foreground";
 };
 
-export const getRoleLabel = (role: string) => {
+export const getRoleLabel = (
+  role: string,
+  t: (key: string) => string
+) => {
   const normalized = role.toLowerCase();
   if (normalized === "assistant") return "AI";
-  if (normalized === "user") return "用户";
-  if (normalized === "system") return "系统";
-  if (normalized === "tool") return "工具";
+  if (normalized === "user") return t("sessionManager.roleUser");
+  if (normalized === "system") return t("sessionManager.roleSystem");
+  if (normalized === "tool") return t("sessionManager.roleTool");
   return role;
 };
 

@@ -14,14 +14,12 @@ export const sessionsApi = {
   },
 
   async launchTerminal(options: {
-    target: string;
     command: string;
     cwd?: string | null;
     customConfig?: string | null;
   }): Promise<boolean> {
-    const { target, command, cwd, customConfig } = options;
+    const { command, cwd, customConfig } = options;
     return await invoke("launch_session_terminal", {
-      target,
       command,
       cwd,
       customConfig,
