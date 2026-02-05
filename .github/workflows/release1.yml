@@ -1,0 +1,102 @@
+name: 'Release'
+
+on:
+  push:
+    branches:
+      - release
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_name:
+        description: 'Release Name'
+        required: true
+        default: 'Release v'
+      release_notes:
+        description: 'Release Notes'
+        required: false
+        default: 'See the assets to download this version.'
+      release_type:
+        description: 'Release Type'
+        required: true
+        default: 'draft'
+        type: choice
+        options:
+          - draft
+          - public
+          - prerelease
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'windows-latest'
+            args: ''
+          - platform: 'ubuntu-22.04'
+            args: ''
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+    
+    runs-on: ${{ matrix.platform }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Windows 特定依赖（如果需要编译其他架构）
+      - name: Add Windows target (Windows only)
+        if: matrix.platform == 'windows-latest'
+        run: rustup target add x86_64-pc-windows-msvc
+
+      # Ubuntu 特定依赖
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          cache-on-failure: true
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 如果需要自动更新功能，取消下面注释并配置密钥
+          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # 自动版本标签格式
+          tagName: cc-switch-v__VERSION__
+          releaseName: 'CC Switch v__VERSION__'
+          releaseBody: ${{ github.event.inputs.release_notes || 'See the assets to download this version.' }}
+          releaseDraft: ${{ github.event.inputs.release_type == 'draft' || github.ref_type != 'tag' }}
+          prerelease: ${{ github.event.inputs.release_type == 'prerelease' }}
+          args: ${{ matrix.args }}
