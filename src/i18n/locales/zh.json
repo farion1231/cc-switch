@@ -633,6 +633,7 @@
     "modelId": "模型 ID",
     "modelName": "显示名称",
     "noModels": "暂无模型配置",
+    "modelsRequired": "请至少添加一个模型配置",
     "providerKey": "供应商标识",
     "providerKeyPlaceholder": "my-provider",
     "providerKeyHint": "配置文件中的唯一标识符，创建后无法修改，只能使用小写字母、数字和连字符",

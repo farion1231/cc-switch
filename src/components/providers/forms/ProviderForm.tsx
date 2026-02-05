@@ -746,7 +746,7 @@ export function ProviderForm({
       return;
     }
 
-    // OpenCode: validate provider key
+    // OpenCode: validate provider key and models
     if (appId === "opencode") {
       const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
       if (!opencodeProviderKey.trim()) {
@@ -759,6 +759,11 @@ export function ProviderForm({
       }
       if (!isEditMode && existingOpencodeKeys.includes(opencodeProviderKey)) {
         toast.error(t("opencode.providerKeyDuplicate"));
+        return;
+      }
+      // Validate that at least one model is configured
+      if (Object.keys(opencodeModels).length === 0) {
+        toast.error(t("opencode.modelsRequired"));
         return;
       }
     }
