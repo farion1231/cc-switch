@@ -158,7 +158,9 @@
     "settingsSaveFailed": "Failed to save settings: {{error}}",
     "openAIChatFormatHint": "This provider uses OpenAI Chat format and requires the proxy service to be enabled",
     "openAIChatFormatRequiresProxy": "This provider uses OpenAI Chat format and requires the proxy service for format conversion. Please enable the proxy and takeover the current app first.",
-    "fullUrlRequiresProxy": "This provider is configured with a full API path and requires the proxy service to work properly. Please enable the proxy and takeover the current app first."
+    "fullUrlRequiresProxy": "This provider is configured with a full API path. The client may append duplicate paths in direct connection mode. Please enable the proxy and takeover the current app first.",
+    "urlMismatchRequiresProxy": "This provider's request URL configuration does not match the API format. It cannot work properly in direct connection mode. Please enable the proxy and takeover the current app first.",
+    "fullUrlWarningOnDisable": "The current provider is configured with a full API path or special format. It may not work properly after disabling the proxy. Consider switching to a base URL configuration or keep the proxy enabled."
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -495,10 +497,10 @@
     "codexApiFormatResponses": "OpenAI Responses (Default)",
     "codexApiFormatChat": "OpenAI Chat Completions",
     "codexApiFormatHint": "Select the API format supported by the provider",
-    "directRequestUrl": "Direct request URL:",
-    "directRequestUrlDesc": "When proxy is disabled, the client requests this URL directly",
-    "proxyRequestUrl": "Proxy request URL:",
-    "proxyRequestUrlDesc": "When proxy is enabled, requests are forwarded to this URL (with format conversion)",
+    "directRequestUrl": "CLI Direct Request URL:",
+    "directRequestUrlDesc": "Actual request URL after CLI appends default suffix",
+    "proxyRequestUrl": "CCS Proxy Request URL:",
+    "proxyRequestUrlDesc": "URL forwarded to upstream after CCS smart path detection",
     "fullUrlWarningTitle": "Full API path detected",
     "fullUrlWarning": "The URL contains a full API path. This configuration only works in proxy mode. For direct connection mode, please enter only the base URL.",
     "fillSupplierName": "Please fill in provider name",

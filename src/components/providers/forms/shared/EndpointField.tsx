@@ -1,50 +1,11 @@
-import { useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Zap, AlertTriangle, Server, Unplug } from "lucide-react";
-import type { ClaudeApiFormat } from "@/types";
-
-// 检测 URL 是否以 API 路径结尾的模式（只检测结尾，不包含 /v1 因为它是正常的 base URL 后缀）
-const API_PATH_SUFFIX_PATTERNS = [
-  // Claude 完整路径
-  "/v1/messages",
-  "/messages",
-  // OpenAI Chat Completions 完整路径
-  "/v1/chat/completions",
-  "/chat/completions",
-  // Codex Responses 完整路径
-  "/v1/responses",
-  "/responses",
-  // Gemini 完整路径
-  "/v1beta/models",
-];
-
-// 从 URL 中提取路径部分（移除查询参数和尾部斜杠）
-function extractUrlPath(url: string): string {
-  try {
-    // 移除查询参数
-    const pathPart = url.split("?")[0];
-    // 移除尾部斜杠并转为小写
-    return pathPart.replace(/\/+$/, "").toLowerCase();
-  } catch {
-    return url.toLowerCase();
-  }
-}
-
-// 构建 URL 并去重 /v1/v1
-function buildUrl(base: string, suffix: string): string {
-  const trimmedBase = base.trim().replace(/\/+$/, "");
-  let url = `${trimmedBase}${suffix}`;
-  // 去重 /v1/v1 模式
-  while (url.includes("/v1/v1")) {
-    url = url.replace("/v1/v1", "/v1");
-  }
-  return url;
-}
+import { proxyApi, type UrlPreview } from "@/lib/api/proxy";
 
 type AppType = "claude" | "codex" | "gemini";
-type CodexApiFormat = "responses" | "chat";
 
 interface EndpointFieldProps {
   id: string;
@@ -56,9 +17,9 @@ interface EndpointFieldProps {
   showManageButton?: boolean;
   onManageClick?: () => void;
   manageButtonLabel?: string;
-  // 新增：应用类型和 API 格式
+  // 应用类型和 API 格式
   appType?: AppType;
-  apiFormat?: ClaudeApiFormat | CodexApiFormat;
+  apiFormat?: string;
   // 是否显示请求地址预览
   showUrlPreview?: boolean;
 }
@@ -78,65 +39,36 @@ export function EndpointField({
   showUrlPreview = true,
 }: EndpointFieldProps) {
   const { t } = useTranslation();
+  const [urlPreview, setUrlPreview] = useState<UrlPreview | null>(null);
 
   const defaultManageLabel = t("providerForm.manageAndTest", {
     defaultValue: "管理和测速",
   });
 
-  // 根据 appType 和 apiFormat 计算直连和代理后缀
-  const suffixes = useMemo(() => {
-    if (!appType) return null;
-
-    if (appType === "claude") {
-      // Claude: 直连固定 /v1/messages，代理根据 apiFormat 决定
-      return {
-        direct: "/v1/messages",
-        proxy:
-          apiFormat === "openai_chat" ? "/v1/chat/completions" : "/v1/messages",
-      };
+  // 调用后端 API 获取 URL 预览
+  useEffect(() => {
+    if (!value || !appType || !showUrlPreview) {
+      setUrlPreview(null);
+      return;
     }
 
-    if (appType === "codex") {
-      // Codex: 直连固定 /responses（base URL 已含 /v1），代理根据 apiFormat 决定
-      return {
-        direct: "/responses",
-        proxy: apiFormat === "chat" ? "/chat/completions" : "/responses",
-      };
-    }
+    // 防抖：延迟 300ms 后请求
+    const timer = setTimeout(async () => {
+      try {
+        const preview = await proxyApi.buildUrlPreview(
+          appType,
+          value,
+          apiFormat,
+        );
+        setUrlPreview(preview);
+      } catch (error) {
+        console.error("Failed to build URL preview:", error);
+        setUrlPreview(null);
+      }
+    }, 300);
 
-    if (appType === "gemini") {
-      // Gemini: 两种模式相同
-      return {
-        direct: "/v1beta/models",
-        proxy: "/v1beta/models",
-      };
-    }
-
-    return null;
-  }, [appType, apiFormat]);
-
-  // 检测 URL 是否已以 API 路径结尾（全链接）
-  const urlEndsWithApiPath = useMemo(() => {
-    if (!value) return false;
-    const urlPath = extractUrlPath(value);
-    return API_PATH_SUFFIX_PATTERNS.some((pattern) =>
-      urlPath.endsWith(pattern.toLowerCase()),
-    );
-  }, [value]);
-
-  // 构建直连模式请求 URL
-  const directUrlPreview = useMemo(() => {
-    if (!value || !suffixes) return null;
-    if (urlEndsWithApiPath) return value;
-    return buildUrl(value, suffixes.direct);
-  }, [value, suffixes, urlEndsWithApiPath]);
-
-  // 构建代理模式请求 URL
-  const proxyUrlPreview = useMemo(() => {
-    if (!value || !suffixes) return null;
-    if (urlEndsWithApiPath) return value;
-    return buildUrl(value, suffixes.proxy);
-  }, [value, suffixes, urlEndsWithApiPath]);
+    return () => clearTimeout(timer);
+  }, [value, appType, apiFormat, showUrlPreview]);
 
   return (
     <div className="space-y-2">
@@ -163,51 +95,48 @@ export function EndpointField({
       />
 
       {/* 请求地址预览 */}
-      {showUrlPreview && directUrlPreview && (
+      {showUrlPreview && urlPreview && (
         <div className="p-2 bg-muted/50 border border-border rounded-md space-y-2">
-          {/* 直连模式请求地址 */}
+          {/* CLI 直连请求地址 */}
           <div>
             <p className="text-xs text-muted-foreground mb-0.5 flex items-center gap-1">
               <Unplug className="h-3 w-3" />
               {t("providerForm.directRequestUrl", {
-                defaultValue: "直连请求地址：",
+                defaultValue: "CLI 直连请求地址：",
               })}
             </p>
             <p className="text-xs font-mono text-foreground break-all pl-4">
-              {directUrlPreview}
+              {urlPreview.direct_url}
             </p>
             <p className="text-xs text-muted-foreground/70 mt-0.5 pl-4">
               {t("providerForm.directRequestUrlDesc", {
-                defaultValue: "不开启代理时，客户端直接请求此地址",
+                defaultValue: "CLI 硬拼接默认后缀后的实际请求地址",
               })}
             </p>
           </div>
 
-          {/* 代理模式请求地址 */}
-          {proxyUrlPreview && (
-            <div className="pt-1.5 border-t border-border/50">
-              <p className="text-xs text-muted-foreground mb-0.5 flex items-center gap-1">
-                <Server className="h-3 w-3" />
-                {t("providerForm.proxyRequestUrl", {
-                  defaultValue: "代理请求地址：",
-                })}
-              </p>
-              <p className="text-xs font-mono text-foreground break-all pl-4">
-                {proxyUrlPreview}
-              </p>
-              <p className="text-xs text-muted-foreground/70 mt-0.5 pl-4">
-                {t("providerForm.proxyRequestUrlDesc", {
-                  defaultValue:
-                    "开启代理后，代理服务会将请求转发到此地址（支持格式转换）",
-                })}
-              </p>
-            </div>
-          )}
+          {/* CCS 代理请求地址 */}
+          <div className="pt-1.5 border-t border-border/50">
+            <p className="text-xs text-muted-foreground mb-0.5 flex items-center gap-1">
+              <Server className="h-3 w-3" />
+              {t("providerForm.proxyRequestUrl", {
+                defaultValue: "CCS 代理请求地址：",
+              })}
+            </p>
+            <p className="text-xs font-mono text-foreground break-all pl-4">
+              {urlPreview.proxy_url}
+            </p>
+            <p className="text-xs text-muted-foreground/70 mt-0.5 pl-4">
+              {t("providerForm.proxyRequestUrlDesc", {
+                defaultValue: "CCS 智能拼接后转发到上游的地址",
+              })}
+            </p>
+          </div>
         </div>
       )}
 
       {/* 全链接警告 */}
-      {urlEndsWithApiPath && (
+      {urlPreview?.is_full_url && (
         <div className="flex items-start gap-2 p-2 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded-md">
           <AlertTriangle className="h-4 w-4 text-orange-500 mt-0.5 flex-shrink-0" />
           <div className="flex-1">

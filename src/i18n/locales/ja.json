@@ -158,7 +158,9 @@
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
     "openAIChatFormatHint": "このプロバイダーは OpenAI Chat フォーマットを使用しており、プロキシサービスの有効化が必要です",
     "openAIChatFormatRequiresProxy": "このプロバイダーは OpenAI Chat フォーマットを使用しており、フォーマット変換のためにプロキシサービスが必要です。先にプロキシを有効にして、現在のアプリをテイクオーバーしてください。",
-    "fullUrlRequiresProxy": "このプロバイダーは完全な API パスで構成されており、プロキシサービスが必要です。先にプロキシを有効にして、現在のアプリをテイクオーバーしてください。"
+    "fullUrlRequiresProxy": "このプロバイダーは完全な API パスで構成されています。直接接続モードではクライアントがパスを重複追加する可能性があります。先にプロキシを有効にして、現在のアプリをテイクオーバーしてください。",
+    "urlMismatchRequiresProxy": "このプロバイダーのリクエスト URL 設定が API フォーマットと一致しません。直接接続モードでは正常に動作しません。先にプロキシを有効にして、現在のアプリをテイクオーバーしてください。",
+    "fullUrlWarningOnDisable": "現在のプロバイダーは完全な API パスまたは特殊なフォーマットで構成されています。プロキシを無効にすると正常に動作しない可能性があります。ベース URL 設定に変更するか、プロキシを有効のままにすることをお勧めします。"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -495,10 +497,10 @@
     "codexApiFormatResponses": "OpenAI Responses（デフォルト）",
     "codexApiFormatChat": "OpenAI Chat Completions",
     "codexApiFormatHint": "プロバイダーがサポートする API フォーマットを選択",
-    "directRequestUrl": "直接接続リクエスト URL：",
-    "directRequestUrlDesc": "プロキシ無効時、クライアントはこの URL に直接リクエストします",
-    "proxyRequestUrl": "プロキシリクエスト URL：",
-    "proxyRequestUrlDesc": "プロキシ有効時、リクエストはこの URL に転送されます（フォーマット変換対応）",
+    "directRequestUrl": "CLI 直接リクエスト URL：",
+    "directRequestUrlDesc": "CLI がデフォルトサフィックスを追加した後の実際のリクエスト URL",
+    "proxyRequestUrl": "CCS プロキシリクエスト URL：",
+    "proxyRequestUrlDesc": "CCS がスマートパス検出後にアップストリームへ転送する URL",
     "fullUrlWarningTitle": "完全な API パスを検出",
     "fullUrlWarning": "URL には完全な API パスが含まれています。この設定はプロキシモードでのみ有効です。直接接続モードではベース URL のみを入力してください。",
     "fillSupplierName": "プロバイダー名を入力してください",

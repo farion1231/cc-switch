@@ -911,6 +911,9 @@ pub fn run() {
             commands::get_circuit_breaker_config,
             commands::update_circuit_breaker_config,
             commands::get_circuit_breaker_stats,
+            // URL preview (for endpoint field)
+            commands::build_url_preview,
+            commands::check_proxy_requirement,
             // Failover queue management
             commands::get_failover_queue,
             commands::get_available_providers_for_failover,

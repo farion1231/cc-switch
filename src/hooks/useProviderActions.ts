@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
+import { proxyApi } from "@/lib/api/proxy";
 import type { Provider, UsageScript } from "@/types";
 import {
   useAddProviderMutation,
@@ -11,17 +12,6 @@ import {
   useSwitchProviderMutation,
 } from "@/lib/query";
 import { extractErrorMessage } from "@/utils/errorUtils";
-
-// API 路径后缀模式，用于检测是否是全链接
-const API_PATH_SUFFIX_PATTERNS = [
-  "/v1/messages",
-  "/messages",
-  "/v1/chat/completions",
-  "/chat/completions",
-  "/v1/responses",
-  "/responses",
-  "/v1beta/models",
-];
 
 /**
  * 从 Codex TOML 配置字符串中提取 base_url
@@ -70,20 +60,6 @@ function extractBaseUrl(provider: Provider, appId: AppId): string | null {
   } catch {
     return null;
   }
-}
-
-/**
- * 检测 URL 是否以 API 路径后缀结尾（全链接）
- */
-function isFullApiUrl(url: string | null): boolean {
-  if (!url) return false;
-
-  // 移除查询参数和尾部斜杠
-  const pathPart = url.split("?")[0].replace(/\/+$/, "").toLowerCase();
-
-  return API_PATH_SUFFIX_PATTERNS.some((pattern) =>
-    pathPart.endsWith(pattern.toLowerCase()),
-  );
 }
 
 interface UseProviderActionsOptions {
@@ -166,28 +142,63 @@ export function useProviderActions(
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
-      // 检测是否是全链接配置（URL 以 API 路径结尾）
-      const baseUrl = extractBaseUrl(provider, activeApp);
-      const hasFullApiUrl = isFullApiUrl(baseUrl);
+      // 官方供应商不需要检查
+      if (provider.category === "official") {
+        try {
+          await switchProviderMutation.mutateAsync(provider.id);
+          await syncClaudePlugin(provider);
+          toast.success(
+            t("notifications.switchSuccess", { defaultValue: "切换成功！" }),
+            {
+              closeButton: true,
+            },
+          );
+        } catch {
+          // 错误提示由 mutation 处理
+        }
+        return;
+      }
 
-      // 检测是否是 Claude OpenAI Chat 格式（需要代理进行格式转换）
-      const isClaudeOpenAIChatFormat =
-        activeApp === "claude" &&
-        provider.category !== "official" &&
-        provider.meta?.apiFormat === "openai_chat";
+      // 提取 base URL 和 API 格式
+      const baseUrl = extractBaseUrl(provider, activeApp);
+      const apiFormat = provider.meta?.apiFormat;
+
+      // 调用后端 API 检查是否需要代理（前后端使用相同逻辑）
+      let proxyRequirement: string | null = null;
+      if (baseUrl) {
+        try {
+          proxyRequirement = await proxyApi.checkProxyRequirement(
+            activeApp,
+            baseUrl,
+            apiFormat,
+          );
+        } catch (error) {
+          console.error("Failed to check proxy requirement:", error);
+        }
+      }
 
       // 如果需要代理但代理未激活，阻止切换并提示
-      const needsProxy = hasFullApiUrl || isClaudeOpenAIChatFormat;
-      if (needsProxy && !(isProxyRunning && isTakeoverActive)) {
-        const message = isClaudeOpenAIChatFormat
-          ? t("notifications.openAIChatFormatRequiresProxy", {
-              defaultValue:
-                "此供应商使用 OpenAI Chat 格式，需要开启代理服务进行格式转换才能正常使用。请先开启代理并接管当前应用。",
-            })
-          : t("notifications.fullUrlRequiresProxy", {
-              defaultValue:
-                "此供应商配置了完整 API 路径，需要开启代理服务才能正常使用。请先开启代理并接管当前应用。",
-            });
+      if (proxyRequirement && !(isProxyRunning && isTakeoverActive)) {
+        let message: string;
+
+        if (proxyRequirement === "openai_chat_format") {
+          message = t("notifications.openAIChatFormatRequiresProxy", {
+            defaultValue:
+              "此供应商使用 OpenAI Chat 格式，需要开启代理服务进行格式转换才能正常使用。请先开启代理并接管当前应用。",
+          });
+        } else if (proxyRequirement === "full_url") {
+          // 用户填了全链接（如 /v1/messages 结尾）
+          message = t("notifications.fullUrlRequiresProxy", {
+            defaultValue:
+              "此供应商配置了完整 API 路径，直连模式下客户端可能会重复追加路径。请先开启代理并接管当前应用。",
+          });
+        } else {
+          // url_mismatch: 直连地址和代理地址不匹配
+          message = t("notifications.urlMismatchRequiresProxy", {
+            defaultValue:
+              "此供应商的请求地址配置与 API 格式不匹配，直连模式下无法正常工作。请先开启代理并接管当前应用。",
+          });
+        }
 
         toast.warning(message, {
           duration: 6000,
