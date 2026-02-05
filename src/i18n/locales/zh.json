@@ -531,6 +531,20 @@
     "categoryAggregation": "聚合服务",
     "categoryThirdParty": "第三方"
   },
+  "copilot": {
+    "authSection": "GitHub Copilot 认证",
+    "authStatus": "认证状态",
+    "authenticated": "已认证: {{username}}",
+    "notAuthenticated": "未认证",
+    "loginWithGitHub": "使用 GitHub 登录",
+    "waitingForAuth": "等待授权中...",
+    "enterCode": "请在浏览器中输入验证码：",
+    "logout": "注销",
+    "authSuccess": "GitHub Copilot 认证成功",
+    "authFailed": "认证失败: {{error}}",
+    "authTimeout": "认证超时，请重试",
+    "tokenExpired": "令牌已过期，请重新认证"
+  },
   "endpointTest": {
     "title": "请求地址管理",
     "endpoints": "个端点",

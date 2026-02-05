@@ -143,6 +143,8 @@ export interface ProviderMeta {
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   apiFormat?: "anthropic" | "openai_chat";
+  // 供应商类型（用于识别 Copilot 等特殊供应商）
+  providerType?: string;
 }
 
 // Skill 同步方式

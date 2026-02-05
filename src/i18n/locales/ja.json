@@ -531,6 +531,20 @@
     "categoryAggregation": "アグリゲーター",
     "categoryThirdParty": "サードパーティ"
   },
+  "copilot": {
+    "authSection": "GitHub Copilot 認証",
+    "authStatus": "認証状態",
+    "authenticated": "認証済み: {{username}}",
+    "notAuthenticated": "未認証",
+    "loginWithGitHub": "GitHub でログイン",
+    "waitingForAuth": "認証を待っています...",
+    "enterCode": "ブラウザで以下のコードを入力してください：",
+    "logout": "ログアウト",
+    "authSuccess": "GitHub Copilot 認証に成功しました",
+    "authFailed": "認証に失敗しました: {{error}}",
+    "authTimeout": "認証がタイムアウトしました。もう一度お試しください",
+    "tokenExpired": "トークンの有効期限が切れました。再認証してください"
+  },
   "endpointTest": {
     "title": "API エンドポイント管理",
     "endpoints": "エンドポイント",

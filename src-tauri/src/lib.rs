@@ -686,6 +686,18 @@ pub fn run() {
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
+            // 初始化 CopilotAuthManager
+            {
+                use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+                use commands::CopilotAuthState;
+                use tokio::sync::RwLock;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                let copilot_auth_manager = CopilotAuthManager::new(app_config_dir);
+                app.manage(CopilotAuthState(Arc::new(RwLock::new(copilot_auth_manager))));
+                log::info!("✓ CopilotAuthManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -958,6 +970,13 @@ pub fn run() {
             commands::scan_local_proxies,
             // Window theme control
             commands::set_window_theme,
+            // Copilot OAuth commands
+            commands::copilot_start_device_flow,
+            commands::copilot_poll_for_auth,
+            commands::copilot_get_auth_status,
+            commands::copilot_logout,
+            commands::copilot_is_authenticated,
+            commands::copilot_get_token,
         ]);
 
     let app = builder

@@ -531,6 +531,20 @@
     "categoryAggregation": "Aggregation",
     "categoryThirdParty": "Third Party"
   },
+  "copilot": {
+    "authSection": "GitHub Copilot Authentication",
+    "authStatus": "Authentication Status",
+    "authenticated": "Authenticated as {{username}}",
+    "notAuthenticated": "Not authenticated",
+    "loginWithGitHub": "Login with GitHub",
+    "waitingForAuth": "Waiting for authorization...",
+    "enterCode": "Please enter the code in your browser:",
+    "logout": "Logout",
+    "authSuccess": "GitHub Copilot authentication successful",
+    "authFailed": "Authentication failed: {{error}}",
+    "authTimeout": "Authentication timed out, please try again",
+    "tokenExpired": "Token expired, please re-authenticate"
+  },
   "endpointTest": {
     "title": "API Endpoint Management",
     "endpoints": "endpoints",

@@ -9,5 +9,10 @@ export { vscodeApi } from "./vscode";
 export { proxyApi } from "./proxy";
 export { sessionsApi } from "./sessions";
 export * as configApi from "./config";
+export * as copilotApi from "./copilot";
 export type { ProviderSwitchEvent } from "./providers";
 export type { Prompt } from "./prompts";
+export type {
+  CopilotDeviceCodeResponse,
+  CopilotAuthStatus,
+} from "./copilot";

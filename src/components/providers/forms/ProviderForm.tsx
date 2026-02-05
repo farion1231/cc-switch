@@ -764,6 +764,11 @@ export function ProviderForm({
     }
 
     // 非官方供应商必填校验：端点和 API Key
+    // GitHub Copilot 使用 OAuth 认证，不需要 API Key
+    const isCopilotProvider =
+      templatePreset?.providerType === "github_copilot" ||
+      initialData?.meta?.providerType === "github_copilot" ||
+      baseUrl.includes("githubcopilot.com");
     if (category !== "official") {
       if (appId === "claude") {
         if (!baseUrl.trim()) {
@@ -774,7 +779,7 @@ export function ProviderForm({
           );
           return;
         }
-        if (!apiKey.trim()) {
+        if (!isCopilotProvider && !apiKey.trim()) {
           toast.error(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -925,9 +930,16 @@ export function ProviderForm({
 
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+
+    // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
+    const providerType =
+      templatePreset?.providerType || initialData?.meta?.providerType;
+
     payload.meta = {
       ...(baseMeta ?? {}),
       endpointAutoSelect,
+      // 保存 providerType（用于识别 Copilot 等特殊供应商）
+      providerType,
       // 添加高级配置
       testConfig: testConfig.enabled ? testConfig : undefined,
       proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
@@ -1262,6 +1274,7 @@ export function ProviderForm({
             websiteUrl={claudeWebsiteUrl}
             isPartner={isClaudePartner}
             partnerPromotionKey={claudePartnerPromotionKey}
+            isCopilotPreset={templatePreset?.providerType === "github_copilot"}
             templateValueEntries={templateValueEntries}
             templateValues={templateValues}
             templatePresetName={templatePreset?.name || ""}

@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/select";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField } from "./shared";
+import { CopilotAuthSection } from "./CopilotAuthSection";
 import type { ProviderCategory, ClaudeApiFormat } from "@/types";
 import type { TemplateValueConfig } from "@/config/claudeProviderPresets";
 
@@ -28,6 +29,9 @@ interface ClaudeFormFieldsProps {
   websiteUrl: string;
   isPartner?: boolean;
   partnerPromotionKey?: string;
+
+  // GitHub Copilot OAuth
+  isCopilotPreset?: boolean;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -80,6 +84,7 @@ export function ClaudeFormFields({
   websiteUrl,
   isPartner,
   partnerPromotionKey,
+  isCopilotPreset,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -107,8 +112,11 @@ export function ClaudeFormFields({
 
   return (
     <>
-      {/* API Key 输入框 */}
-      {shouldShowApiKey && (
+      {/* GitHub Copilot OAuth 认证 */}
+      {isCopilotPreset && <CopilotAuthSection />}
+
+      {/* API Key 输入框（非 Copilot 预设时显示） */}
+      {shouldShowApiKey && !isCopilotPreset && (
         <ApiKeySection
           value={apiKey}
           onChange={onApiKeyChange}
