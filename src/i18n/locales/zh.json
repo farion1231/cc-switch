@@ -308,7 +308,8 @@
           "iterm2": "iTerm2",
           "alacritty": "Alacritty",
           "kitty": "Kitty",
-          "ghostty": "Ghostty"
+          "ghostty": "Ghostty",
+          "wezterm": "WezTerm"
         },
         "windows": {
           "cmd": "命令提示符",
@@ -412,6 +413,7 @@
     "title": "会话管理",
     "subtitle": "管理 Codex 与 Claude Code 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",
+    "searchSessions": "搜索会话",
     "providerFilterAll": "全部",
     "sessionList": "会话列表",
     "loadingSessions": "加载会话中...",
@@ -435,7 +437,16 @@
     "copySourcePath": "复制原始文件",
     "sourcePathCopied": "原始文件已复制",
     "loadingMessages": "加载会话内容中...",
-    "emptySession": "该会话暂无可展示内容"
+    "emptySession": "该会话暂无可展示内容",
+    "clickToCopyPath": "点击复制路径",
+    "tocTitle": "对话目录",
+    "justNow": "刚刚",
+    "minutesAgo": "{{count}} 分钟前",
+    "hoursAgo": "{{count}} 小时前",
+    "daysAgo": "{{count}} 天前",
+    "roleUser": "用户",
+    "roleSystem": "系统",
+    "roleTool": "工具"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",

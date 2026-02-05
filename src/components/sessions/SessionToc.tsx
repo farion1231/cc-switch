@@ -1,4 +1,5 @@
 import { List, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -26,6 +27,7 @@ export function SessionTocSidebar({
   items,
   onItemClick,
 }: SessionTocSidebarProps) {
+  const { t } = useTranslation();
   if (items.length <= 2) return null;
 
   return (
@@ -33,7 +35,7 @@ export function SessionTocSidebar({
       <div className="p-3 border-b">
         <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
           <List className="size-3.5" />
-          <span>对话目录</span>
+          <span>{t("sessionManager.tocTitle")}</span>
         </div>
       </div>
       <ScrollArea className="h-[calc(100%-40px)]">
@@ -74,6 +76,7 @@ export function SessionTocDialog({
   open,
   onOpenChange,
 }: SessionTocDialogProps) {
+  const { t } = useTranslation();
   if (items.length <= 2) return null;
 
   return (
@@ -95,11 +98,11 @@ export function SessionTocDialog({
         <DialogHeader className="px-4 py-3 relative border-b">
           <DialogTitle className="flex items-center gap-2 text-base font-semibold">
             <List className="size-4 text-primary" />
-            对话目录
+            {t("sessionManager.tocTitle")}
           </DialogTitle>
           <DialogClose
             className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 hover:bg-muted transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-            aria-label="关闭"
+            aria-label={t("common.close")}
           >
             <X className="size-4 text-muted-foreground" />
           </DialogClose>

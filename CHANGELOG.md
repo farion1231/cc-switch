@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows Home Dir Regression**: Prevent providers/settings “disappearing” after upgrading from v3.10.2 → v3.10.3 when `HOME` differs from the real user profile directory; restore default path resolution and auto-detect the v3.10.3 legacy database location.
+
 ---
 
 ## [3.10.3] - 2026-01-30
