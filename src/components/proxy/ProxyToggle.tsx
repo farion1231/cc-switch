@@ -34,7 +34,7 @@ function extractBaseUrl(provider: Provider, appId: AppId): string | null {
       return typeof envUrl === "string" ? envUrl.trim() : null;
     }
 
-    if (appId === "codex") {
+    if (appId === "codex" || appId === "opencode") {
       const tomlConfig = config?.config;
       if (typeof tomlConfig === "string") {
         const match = tomlConfig.match(/base_url\s*=\s*(['"])([^'"]+)\1/);
@@ -85,16 +85,19 @@ export function ProxyToggle({
           );
 
           if (proxyRequirement) {
-            // 显示警告但仍允许关闭
+            const warningKey =
+              proxyRequirement === "openai_chat_format"
+                ? "notifications.openAIChatFormatWarningOnDisable"
+                : proxyRequirement === "url_mismatch"
+                  ? "notifications.urlMismatchWarningOnDisable"
+                  : "notifications.fullUrlWarningOnDisable";
+
             toast.warning(
-              t("notifications.fullUrlWarningOnDisable", {
+              t(warningKey, {
                 defaultValue:
-                  "当前供应商配置了完整 API 路径或特殊格式，关闭代理后可能无法正常工作。建议更换为基础地址配置或保持代理开启。",
+                  "当前供应商配置可能依赖代理模式，关闭代理后可能无法正常工作。建议更换为基础地址配置或保持代理开启。",
               }),
-              {
-                duration: 6000,
-                closeButton: true,
-              },
+              { duration: 6000, closeButton: true },
             );
           }
         } catch (error) {
@@ -107,6 +110,17 @@ export function ProxyToggle({
       await setTakeoverForApp({ appType: activeApp, enabled: checked });
     } catch (error) {
       console.error("[ProxyToggle] Toggle takeover failed:", error);
+      toast.error(
+        t("proxy.takeover.toggleFailed", {
+          defaultValue: "切换接管状态失败",
+        }),
+        {
+          description: t("proxy.takeover.toggleFailedDesc", {
+            defaultValue: "请检查代理服务状态与权限，然后重试。",
+          }),
+          closeButton: true,
+        },
+      );
     }
   };
 

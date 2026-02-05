@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -40,6 +40,7 @@ export function EndpointField({
 }: EndpointFieldProps) {
   const { t } = useTranslation();
   const [urlPreview, setUrlPreview] = useState<UrlPreview | null>(null);
+  const lastRequestIdRef = useRef(0);
 
   const defaultManageLabel = t("providerForm.manageAndTest", {
     defaultValue: "管理和测速",
@@ -54,15 +55,18 @@ export function EndpointField({
 
     // 防抖：延迟 300ms 后请求
     const timer = setTimeout(async () => {
+      const requestId = ++lastRequestIdRef.current;
       try {
         const preview = await proxyApi.buildUrlPreview(
           appType,
           value,
           apiFormat,
         );
+        if (requestId !== lastRequestIdRef.current) return;
         setUrlPreview(preview);
       } catch (error) {
         console.error("Failed to build URL preview:", error);
+        if (requestId !== lastRequestIdRef.current) return;
         setUrlPreview(null);
       }
     }, 300);

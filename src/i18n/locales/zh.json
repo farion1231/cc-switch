@@ -160,7 +160,11 @@
     "openAIChatFormatRequiresProxy": "此供应商使用 OpenAI Chat 格式，需要开启代理服务进行格式转换才能正常使用。请先开启代理并接管当前应用。",
     "fullUrlRequiresProxy": "此供应商配置了完整 API 路径，直连模式下客户端可能会重复追加路径。请先开启代理并接管当前应用。",
     "urlMismatchRequiresProxy": "此供应商的请求地址配置与 API 格式不匹配，直连模式下无法正常工作。请先开启代理并接管当前应用。",
-    "fullUrlWarningOnDisable": "当前供应商配置了完整 API 路径或特殊格式，关闭代理后可能无法正常工作。建议更换为基础地址配置或保持代理开启。"
+    "fullUrlWarningOnDisable": "当前供应商配置了完整 API 路径或特殊格式，关闭代理后可能无法正常工作。建议更换为基础地址配置或保持代理开启。",
+    "openAIChatFormatWarningOnDisable": "当前供应商使用 OpenAI Chat 格式，关闭代理后可能无法正常工作。建议保持代理开启。",
+    "urlMismatchWarningOnDisable": "当前供应商的请求地址配置可能依赖代理模式，关闭代理后可能无法正常工作。建议更换为基础地址配置或保持代理开启。",
+    "switchAppliedUnverified": "切换已应用（未验证直连兼容性）",
+    "switchAppliedUnverifiedDesc": "未能验证该端点是否需要代理。如果切换后无法正常使用，请开启代理并接管当前应用。"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -1291,6 +1295,10 @@
     }
   },
   "proxy": {
+    "takeover": {
+      "toggleFailed": "切换接管状态失败",
+      "toggleFailedDesc": "请检查代理服务状态与权限，然后重试。"
+    },
     "panel": {
       "serviceAddress": "服务地址",
       "addressCopied": "地址已复制",

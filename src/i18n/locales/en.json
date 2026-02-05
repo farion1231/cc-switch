@@ -160,7 +160,11 @@
     "openAIChatFormatRequiresProxy": "This provider uses OpenAI Chat format and requires the proxy service for format conversion. Please enable the proxy and takeover the current app first.",
     "fullUrlRequiresProxy": "This provider is configured with a full API path. The client may append duplicate paths in direct connection mode. Please enable the proxy and takeover the current app first.",
     "urlMismatchRequiresProxy": "This provider's request URL configuration does not match the API format. It cannot work properly in direct connection mode. Please enable the proxy and takeover the current app first.",
-    "fullUrlWarningOnDisable": "The current provider is configured with a full API path or special format. It may not work properly after disabling the proxy. Consider switching to a base URL configuration or keep the proxy enabled."
+    "fullUrlWarningOnDisable": "The current provider is configured with a full API path or special format. It may not work properly after disabling the proxy. Consider switching to a base URL configuration or keep the proxy enabled.",
+    "openAIChatFormatWarningOnDisable": "The current provider uses OpenAI Chat format. It may not work properly after disabling the proxy. Consider keeping the proxy enabled.",
+    "urlMismatchWarningOnDisable": "The current provider's request URL configuration may rely on the proxy. It may not work properly after disabling the proxy. Consider switching to a base URL configuration or keep the proxy enabled.",
+    "switchAppliedUnverified": "Switch applied (direct mode not verified)",
+    "switchAppliedUnverifiedDesc": "Unable to verify whether this endpoint requires the proxy. If it doesn't work after switching, enable the proxy and takeover the current app."
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -1291,6 +1295,10 @@
     }
   },
   "proxy": {
+    "takeover": {
+      "toggleFailed": "Failed to toggle takeover",
+      "toggleFailedDesc": "Check proxy service status and permissions, then try again."
+    },
     "panel": {
       "serviceAddress": "Service Address",
       "addressCopied": "Address copied",

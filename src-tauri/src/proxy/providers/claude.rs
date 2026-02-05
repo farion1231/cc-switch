@@ -14,6 +14,7 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use crate::proxy::url_utils::{dedup_v1_v1_boundary_safe, split_url_suffix};
 use reqwest::RequestBuilder;
 
 /// Claude 适配器
@@ -252,7 +253,8 @@ impl ProviderAdapter for ClaudeAdapter {
         // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
         // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
 
-        let base_trimmed = base_url.trim_end_matches('/');
+        let (base, suffix) = split_url_suffix(base_url);
+        let base_trimmed = base.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
 
         // 检测 base_url 是否已经以 API 路径结尾（用户填写了完整路径）
@@ -269,28 +271,27 @@ impl ProviderAdapter for ClaudeAdapter {
             .any(|pattern| base_trimmed.to_lowercase().ends_with(pattern));
 
         // 如果 base_url 已经以 API 路径结尾，直接使用 base_url，不再追加 endpoint
-        let mut base = if base_ends_with_api_path {
+        let base = if base_ends_with_api_path {
             base_trimmed.to_string()
         } else {
             format!("{base_trimmed}/{endpoint_trimmed}")
         };
 
         // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
-        while base.contains("/v1/v1") {
-            base = base.replace("/v1/v1", "/v1");
-        }
+        let base = dedup_v1_v1_boundary_safe(base);
 
         // 为 Claude 相关端点添加 ?beta=true 参数
         // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
         // 注：openai_chat 模式下会转发到 /v1/chat/completions，此处也需要保持一致
         // 检查最终 URL 是否包含需要 beta 参数的路径，且没有查询参数
         let needs_beta = (base.contains("/v1/messages") || base.contains("/v1/chat/completions"))
-            && !base.contains('?');
+            && !base.contains('?')
+            && !suffix.starts_with('?');
 
         if needs_beta {
-            format!("{base}?beta=true")
+            format!("{base}?beta=true{suffix}")
         } else {
-            base
+            format!("{base}{suffix}")
         }
     }
 

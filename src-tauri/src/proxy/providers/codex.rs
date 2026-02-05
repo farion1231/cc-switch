@@ -8,6 +8,7 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use crate::proxy::url_utils::{dedup_v1_v1_boundary_safe, split_url_suffix};
 use regex::Regex;
 use reqwest::RequestBuilder;
 use std::sync::LazyLock;
@@ -138,7 +139,8 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
-        let base_trimmed = base_url.trim_end_matches('/');
+        let (base, suffix) = split_url_suffix(base_url);
+        let base_trimmed = base.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
 
         // 检测 base_url 是否已经以 API 路径结尾（用户填写了完整路径）
@@ -156,7 +158,7 @@ impl ProviderAdapter for CodexAdapter {
 
         // 如果 base_url 已经以 API 路径结尾，直接使用 base_url，不再追加 endpoint
         if base_ends_with_api_path {
-            return base_trimmed.to_string();
+            return format!("{base_trimmed}{suffix}");
         }
 
         // OpenAI/Codex 的 base_url 可能是：
@@ -185,11 +187,8 @@ impl ProviderAdapter for CodexAdapter {
         };
 
         // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
-        while url.contains("/v1/v1") {
-            url = url.replace("/v1/v1", "/v1");
-        }
-
-        url
+        url = dedup_v1_v1_boundary_safe(url);
+        format!("{url}{suffix}")
     }
 
     fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {

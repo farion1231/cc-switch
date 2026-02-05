@@ -37,7 +37,7 @@ function extractBaseUrl(provider: Provider, appId: AppId): string | null {
       return typeof envUrl === "string" ? envUrl.trim() : null;
     }
 
-    if (appId === "codex") {
+    if (appId === "codex" || appId === "opencode") {
       // Codex: base_url 存储在 config 字段中（TOML 字符串）
       const tomlConfig = config?.config;
       if (typeof tomlConfig === "string") {
@@ -165,6 +165,7 @@ export function useProviderActions(
 
       // 调用后端 API 检查是否需要代理（前后端使用相同逻辑）
       let proxyRequirement: string | null = null;
+      let proxyRequirementCheckFailed = false;
       if (baseUrl) {
         try {
           proxyRequirement = await proxyApi.checkProxyRequirement(
@@ -174,6 +175,7 @@ export function useProviderActions(
           );
         } catch (error) {
           console.error("Failed to check proxy requirement:", error);
+          proxyRequirementCheckFailed = true;
         }
       }
 
@@ -220,9 +222,25 @@ export function useProviderActions(
         const defaultMessage =
           activeApp === "opencode" ? "已添加到配置" : "切换成功！";
 
-        toast.success(t(messageKey, { defaultValue: defaultMessage }), {
-          closeButton: true,
-        });
+        if (proxyRequirementCheckFailed && baseUrl) {
+          toast.success(
+            t("notifications.switchAppliedUnverified", {
+              defaultValue: "切换已应用（未验证直连兼容性）",
+            }),
+            {
+              description: t("notifications.switchAppliedUnverifiedDesc", {
+                defaultValue:
+                  "未能验证该端点是否需要代理。如果切换后无法正常使用，请开启代理并接管当前应用。",
+              }),
+              closeButton: true,
+              duration: 6000,
+            },
+          );
+        } else {
+          toast.success(t(messageKey, { defaultValue: defaultMessage }), {
+            closeButton: true,
+          });
+        }
       } catch {
         // 错误提示由 mutation 处理
       }

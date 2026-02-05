@@ -3,6 +3,7 @@
 //! 提供统一的 URL 构建逻辑，供前端预览和后端代理使用。
 
 use crate::app_config::AppType;
+use crate::proxy::url_utils::{dedup_v1_v1_boundary_safe, split_url_suffix};
 use serde::{Deserialize, Serialize};
 
 /// URL 预览结果
@@ -46,12 +47,33 @@ impl ApiPathPatterns {
         }
     }
 
-    fn for_codex(_api_format: Option<&str>) -> Self {
-        // Codex 只支持 /responses 端点
-        Self {
-            direct_endpoint: "/responses",
-            proxy_endpoint: "/responses",
-            full_url_patterns: &["/v1/responses", "/responses"],
+    fn for_codex(api_format: Option<&str>) -> Self {
+        // Codex:
+        // - Direct mode (Codex CLI) hard-codes Responses API: `/responses`
+        // - Proxy mode might target different upstream formats (e.g. Chat Completions)
+        let is_chat = matches!(api_format, Some("chat"));
+        if is_chat {
+            Self {
+                direct_endpoint: "/responses",
+                proxy_endpoint: "/v1/chat/completions",
+                full_url_patterns: &[
+                    "/v1/responses",
+                    "/responses",
+                    "/v1/chat/completions",
+                    "/chat/completions",
+                ],
+            }
+        } else {
+            Self {
+                direct_endpoint: "/responses",
+                proxy_endpoint: "/responses",
+                full_url_patterns: &[
+                    "/v1/responses",
+                    "/responses",
+                    "/v1/chat/completions",
+                    "/chat/completions",
+                ],
+            }
         }
     }
 
@@ -66,9 +88,8 @@ impl ApiPathPatterns {
 
 /// 检测 URL 是否以指定的 API 路径结尾
 fn url_ends_with_api_path(url: &str, patterns: &[&str]) -> bool {
-    let trimmed = url.trim_end_matches('/').to_lowercase();
-    // 移除查询参数
-    let path_part = trimmed.split('?').next().unwrap_or(&trimmed);
+    let (base, _) = split_url_suffix(url);
+    let path_part = base.trim_end_matches('/').to_lowercase();
     patterns
         .iter()
         .any(|pattern| path_part.ends_with(&pattern.to_lowercase()))
@@ -78,34 +99,31 @@ fn url_ends_with_api_path(url: &str, patterns: &[&str]) -> bool {
 ///
 /// 始终将 endpoint 拼接到 base_url 后面，不做任何智能检测或去重。
 fn build_direct_url(base_url: &str, endpoint: &str) -> String {
-    let base_trimmed = base_url.trim_end_matches('/');
+    let (base, suffix) = split_url_suffix(base_url);
+    let base_trimmed = base.trim_end_matches('/');
     let endpoint_trimmed = endpoint.trim_start_matches('/');
 
     // 直接拼接，不做任何去重
-    format!("{base_trimmed}/{endpoint_trimmed}")
+    format!("{base_trimmed}/{endpoint_trimmed}{suffix}")
 }
 
 /// 智能构建 URL（用于代理地址）
 ///
 /// 如果 base_url 已经以 API 路径结尾，直接返回；否则追加 endpoint。
 pub fn build_smart_url(base_url: &str, endpoint: &str, full_url_patterns: &[&str]) -> String {
-    let base_trimmed = base_url.trim_end_matches('/');
+    let (base, suffix) = split_url_suffix(base_url);
+    let base_trimmed = base.trim_end_matches('/');
     let endpoint_trimmed = endpoint.trim_start_matches('/');
 
     // 检测 base_url 是否已经以 API 路径结尾
     if url_ends_with_api_path(base_trimmed, full_url_patterns) {
-        return base_trimmed.to_string();
+        return format!("{base_trimmed}{suffix}");
     }
 
     // 拼接 URL
-    let mut url = format!("{base_trimmed}/{endpoint_trimmed}");
-
-    // 去重 /v1/v1
-    while url.contains("/v1/v1") {
-        url = url.replace("/v1/v1", "/v1");
-    }
-
-    url
+    let url = format!("{base_trimmed}/{endpoint_trimmed}");
+    let url = dedup_v1_v1_boundary_safe(url);
+    format!("{url}{suffix}")
 }
 
 /// 构建 URL 预览
@@ -240,6 +258,17 @@ mod tests {
     }
 
     #[test]
+    fn test_build_url_preview_codex_chat_proxy_endpoint() {
+        let preview = build_url_preview(&AppType::Codex, "https://api.openai.com", Some("chat"));
+        assert_eq!(preview.direct_url, "https://api.openai.com/responses");
+        assert_eq!(
+            preview.proxy_url,
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert!(!preview.is_full_url);
+    }
+
+    #[test]
     fn test_build_url_preview_codex_full_url() {
         // 全链接时：直连会硬拼接后缀，代理保持原地址
         let preview = build_url_preview(
@@ -313,6 +342,38 @@ mod tests {
         assert_eq!(preview.direct_url, "https://api.example.com/v1/v1/messages");
         // 代理地址智能拼接，会去重
         assert_eq!(preview.proxy_url, "https://api.example.com/v1/messages");
+    }
+
+    #[test]
+    fn test_query_suffix_preserved_in_preview() {
+        let preview = build_url_preview(
+            &AppType::Claude,
+            "https://api.example.com?beta=true",
+            Some("anthropic"),
+        );
+        assert_eq!(
+            preview.direct_url,
+            "https://api.example.com/v1/messages?beta=true"
+        );
+        assert_eq!(
+            preview.proxy_url,
+            "https://api.example.com/v1/messages?beta=true"
+        );
+        assert!(!preview.is_full_url);
+    }
+
+    #[test]
+    fn test_fragment_suffix_preserved_and_full_url_detected() {
+        let preview = build_url_preview(
+            &AppType::Claude,
+            "https://api.example.com/v1/messages#frag",
+            Some("anthropic"),
+        );
+        assert_eq!(
+            preview.proxy_url,
+            "https://api.example.com/v1/messages#frag"
+        );
+        assert!(preview.is_full_url);
     }
 
     #[test]
