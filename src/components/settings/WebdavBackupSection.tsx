@@ -197,7 +197,9 @@ export function WebdavBackupSection({
             </label>
             <Input
               value={form.remotePath}
-              onChange={(event) => updateField("remotePath", event.target.value)}
+              onChange={(event) =>
+                updateField("remotePath", event.target.value)
+              }
               placeholder={t("settings.webdavBackup.remotePathPlaceholder")}
               className="text-xs flex-1"
             />

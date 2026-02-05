@@ -210,10 +210,7 @@ impl WebDavBackupService {
 
         // Parse the PROPFIND response to find .sql files
         let files = parse_propfind_response(&body, &list_url)?;
-        let sql_files: Vec<_> = files
-            .into_iter()
-            .filter(|f| f.ends_with(".sql"))
-            .collect();
+        let sql_files: Vec<_> = files.into_iter().filter(|f| f.ends_with(".sql")).collect();
 
         if sql_files.is_empty() {
             return Err(AppError::Message(
@@ -326,8 +323,8 @@ fn parse_base_url(raw: &str) -> Result<Url, AppError> {
         return Err(AppError::InvalidInput("WebDAV 地址不能为空".to_string()));
     }
 
-    let url = Url::parse(trimmed)
-        .map_err(|e| AppError::InvalidInput(format!("WebDAV 地址无效: {e}")))?;
+    let url =
+        Url::parse(trimmed).map_err(|e| AppError::InvalidInput(format!("WebDAV 地址无效: {e}")))?;
 
     match url.scheme() {
         "http" | "https" => Ok(url),
@@ -398,10 +395,7 @@ fn build_probe_url(config: &WebDavBackupRequest) -> Result<Url, AppError> {
 }
 
 fn normalize_remote_path(raw: Option<&str>) -> String {
-    raw.unwrap_or("")
-        .trim()
-        .replace('\\', "/")
-        .to_string()
+    raw.unwrap_or("").trim().replace('\\', "/").to_string()
 }
 
 fn ensure_trailing_slash(url: &mut Url) {
@@ -495,7 +489,9 @@ async fn ensure_remote_directories(
 
         let body = response.text().await.unwrap_or_default();
         match status {
-            StatusCode::UNAUTHORIZED => return Err(AppError::Message("WebDAV 认证失败".to_string())),
+            StatusCode::UNAUTHORIZED => {
+                return Err(AppError::Message("WebDAV 认证失败".to_string()))
+            }
             StatusCode::FORBIDDEN => {
                 return Err(AppError::Message(format!(
                     "WebDAV 无权限创建目录 /{created_path}（403 Forbidden）。\
@@ -509,7 +505,10 @@ async fn ensure_remote_directories(
                     "WebDAV 无法创建目录 /{created_path}（409 Conflict）。\
 部分 WebDAV 服务（例如坚果云）不允许通过 WebDAV 创建顶层文件夹；\
 请先在服务端（网页/客户端）手动创建目录 /{} ，再重试。",
-                    dir_path.split('/').find(|s| !s.is_empty()).unwrap_or(&created_path),
+                    dir_path
+                        .split('/')
+                        .find(|s| !s.is_empty())
+                        .unwrap_or(&created_path),
                 )))
             }
             _ => {

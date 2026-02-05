@@ -55,17 +55,12 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string();
-        let content = message
-            .get("content")
-            .map(extract_text)
-            .unwrap_or_default();
+        let content = message.get("content").map(extract_text).unwrap_or_default();
         if content.trim().is_empty() {
             continue;
         }
 
-        let ts = value
-            .get("timestamp")
-            .and_then(parse_timestamp_to_ms);
+        let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
 
         messages.push(SessionMessage { role, content, ts });
     }
@@ -127,10 +122,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
             None => continue,
         };
 
-        let text = message
-            .get("content")
-            .map(extract_text)
-            .unwrap_or_default();
+        let text = message.get("content").map(extract_text).unwrap_or_default();
         if text.trim().is_empty() {
             continue;
         }
