@@ -1,102 +1,433 @@
-name: 'Release'
+name: Release
 
 on:
   push:
-    branches:
-      - release
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
-      release_name:
-        description: 'Release Name'
+      tag:
+        description: 'Tag to release (e.g., v3.5.0) - must already exist'
         required: true
-        default: 'Release v'
-      release_notes:
-        description: 'Release Notes'
-        required: false
-        default: 'See the assets to download this version.'
-      release_type:
-        description: 'Release Type'
-        required: true
-        default: 'draft'
-        type: choice
-        options:
-          - draft
-          - public
-          - prerelease
+        type: string
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
-  publish-tauri:
-    permissions:
-      contents: write
+  release:
+    runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
       matrix:
         include:
-          - platform: 'windows-latest'
-            args: ''
-          - platform: 'ubuntu-22.04'
-            args: ''
-          - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin'
-    
-    runs-on: ${{ matrix.platform }}
-    
+          - os: windows-2022
+          - os: ubuntu-22.04
+          - os: ubuntu-22.04-arm
+            arch: arm64
+          - os: macos-14
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      # Windows 特定依赖（如果需要编译其他架构）
-      - name: Add Windows target (Windows only)
-        if: matrix.platform == 'windows-latest'
-        run: rustup target add x86_64-pc-windows-msvc
-
-      # Ubuntu 特定依赖
-      - name: Install dependencies (Ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'pnpm'
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-          run_install: false
+          node-version: '20'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Add macOS targets
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          # Core build tools and pkg-config
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            curl \
+            wget \
+            file \
+            patchelf \
+            libssl-dev \
+            rpm \
+            flatpak \
+            flatpak-builder \
+            elfutils \
+            xdg-utils
+          # GTK/GLib stack for gdk-3.0, glib-2.0, gio-2.0
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev
+          # WebKit2GTK (version differs across Ubuntu images; try 4.1 then 4.0)
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
+            || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
+          # libsoup also changed major version; prefer 3.0 with fallback to 2.4
+          sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
+            || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+          version: 10.12.3
+          run_install: false
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+      - name: Get pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
         with:
-          workspaces: './src-tauri -> target'
-          cache-on-failure: true
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
 
-      - name: Install frontend dependencies
-        run: pnpm install
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
 
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+      - name: Prepare Tauri signing key
+        shell: bash
+        run: |
+          # 调试：检查 Secret 是否存在
+          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+            echo "❌ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在" >&2
+            echo "请检查 GitHub 仓库 Settings > Secrets and variables > Actions" >&2
+            exit 1
+          fi
+          
+          RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+          # 目标：提供正确的私钥“文件路径”给 Tauri CLI，避免内容解码歧义
+          KEY_PATH="$RUNNER_TEMP/tauri_signing.key"
+          # 情况 1：原始两行文本（第一行以 "untrusted comment:" 开头）
+          if echo "$RAW" | head -n1 | grep -q '^untrusted comment:'; then
+            printf '%s\n' "$RAW" > "$KEY_PATH"
+            echo "✅ 使用原始两行密钥文件格式"
+          else
+            # 情况 2：整体被 base64 包裹（解包后应当是两行）
+            if DECODED=$(printf '%s' "$RAW" | (base64 --decode 2>/dev/null || base64 -D 2>/dev/null)) \
+               && echo "$DECODED" | head -n1 | grep -q '^untrusted comment:'; then
+              printf '%s\n' "$DECODED" > "$KEY_PATH"
+              echo "✅ 成功解码 base64 包裹密钥，已还原为两行文件"
+            else
+              # 情况 3：已是第二行（纯 Base64 一行）→ 构造两行文件
+              if echo "$RAW" | grep -Eq '^[A-Za-z0-9+/=]+$'; then
+                ONE=$(printf '%s' "$RAW" | tr -d '\r\n')
+                printf '%s\n%s\n' "untrusted comment: tauri signing key" "$ONE" > "$KEY_PATH"
+                echo "✅ 使用一行 Base64 私钥，已构造两行文件"
+              else
+                echo "❌ TAURI_SIGNING_PRIVATE_KEY 格式无法识别：既不是两行原文，也不是其 base64，亦非一行 base64" >&2
+                echo "密钥前10个字符: $(echo "$RAW" | head -c 10)..." >&2
+                exit 1
+              fi
+            fi
+          fi
+          # 将“完整两行内容”作为环境变量注入（Tauri 支持传入完整私钥文本或文件路径）
+          # 使用多行写入语法，保持换行以便解析
+          # 将完整两行私钥内容进行 base64 编码，作为单行内容注入环境变量
+          if command -v base64 >/dev/null 2>&1; then
+            KEY_B64=$(base64 < "$KEY_PATH" | tr -d '\r\n')
+          elif command -v openssl >/dev/null 2>&1; then
+            KEY_B64=$(openssl base64 -A -in "$KEY_PATH")
+          else
+            KEY_B64=$(KEY_PATH="$KEY_PATH" node -e "process.stdout.write(require('fs').readFileSync(process.env.KEY_PATH).toString('base64'))")
+          fi
+          if [ -z "$KEY_B64" ]; then
+            echo "❌ 无法生成私钥 base64 内容" >&2
+            exit 1
+          fi
+          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
+          if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> $GITHUB_ENV
+          fi
+          echo "✅ Tauri signing key prepared"
+
+      - name: Build Tauri App (macOS)
+        if: runner.os == 'macOS'
+        run: pnpm tauri build --target universal-apple-darwin
+
+      - name: Build Tauri App (Windows)
+        if: runner.os == 'Windows'
+        run: pnpm tauri build
+
+      - name: Build Tauri App (Linux)
+        if: runner.os == 'Linux'
+        run: pnpm tauri build --bundles appimage,deb,rpm
+
+      - name: Prepare macOS Assets
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
+          echo "Looking for updater artifact (.tar.gz) and .app for zip..."
+          TAR_GZ=""; APP_PATH=""
+          for path in \
+            "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
+            "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" \
+            "src-tauri/target/x86_64-apple-darwin/release/bundle/macos" \
+            "src-tauri/target/release/bundle/macos"; do
+            if [ -d "$path" ]; then
+              [ -z "$TAR_GZ" ] && TAR_GZ=$(find "$path" -maxdepth 1 -name "*.tar.gz" -type f | head -1 || true)
+              [ -z "$APP_PATH" ] && APP_PATH=$(find "$path" -maxdepth 1 -name "*.app" -type d | head -1 || true)
+            fi
+          done
+          if [ -z "$TAR_GZ" ]; then
+            echo "No macOS .tar.gz updater artifact found" >&2
+            exit 1
+          fi
+          # 重命名 tar.gz 为统一格式
+          NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
+          cp "$TAR_GZ" "release-assets/$NEW_TAR_GZ"
+          [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig" || echo ".sig for macOS not found yet"
+          echo "macOS updater artifact copied: $NEW_TAR_GZ"
+          if [ -n "$APP_PATH" ]; then
+            APP_DIR=$(dirname "$APP_PATH"); APP_NAME=$(basename "$APP_PATH")
+            NEW_ZIP="CC-Switch-${VERSION}-macOS.zip"
+            cd "$APP_DIR"
+            ditto -c -k --sequesterRsrc --keepParent "$APP_NAME" "$NEW_ZIP"
+            mv "$NEW_ZIP" "$GITHUB_WORKSPACE/release-assets/"
+            echo "macOS zip ready: $NEW_ZIP"
+          else
+            echo "No .app found to zip (optional)" >&2
+          fi
+
+      - name: Prepare Windows Assets
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $VERSION = $env:GITHUB_REF_NAME  # e.g., v3.5.0
+          # 仅打包 MSI 安装器 + .sig（用于 Updater）
+          $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle/msi' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $msi) {
+            # 兜底：全局搜索 .msi
+            $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if ($null -ne $msi) {
+            $dest = "CC-Switch-$VERSION-Windows.msi"
+            Copy-Item $msi.FullName (Join-Path release-assets $dest)
+            Write-Host "Installer copied: $dest"
+            $sigPath = "$($msi.FullName).sig"
+            if (Test-Path $sigPath) {
+              Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
+              Write-Host "Signature copied: $dest.sig"
+            } else {
+              Write-Warning "Signature not found for $($msi.Name)"
+            }
+          } else {
+            Write-Warning 'No Windows MSI installer found'
+          }
+          # 绿色版（portable）：仅可执行文件打 zip（不参与 Updater）
+          $exeCandidates = @(
+            'src-tauri/target/release/cc-switch.exe',
+            'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
+          )
+          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($null -ne $exePath) {
+            $portableDir = 'release-assets/CC-Switch-Portable'
+            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+            Copy-Item $exePath $portableDir
+            $portableIniPath = Join-Path $portableDir 'portable.ini'
+            $portableContent = @(
+              '# CC Switch portable build marker',
+              'portable=true'
+            )
+            $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
+            $portableZip = "release-assets/CC-Switch-$VERSION-Windows-Portable.zip"
+            Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
+            Remove-Item -Recurse -Force $portableDir
+            Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows-Portable.zip"
+          } else {
+            Write-Warning 'Portable exe not found'
+          }
+
+      - name: Prepare Linux Assets
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
+          ARCH="${{ matrix.arch || 'x86_64' }}"
+          # Updater artifact: AppImage（含对应 .sig）
+          APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
+          if [ -n "$APPIMAGE" ]; then
+            NEW_APPIMAGE="CC-Switch-${VERSION}-Linux-${ARCH}.AppImage"
+            cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
+            [ -f "$APPIMAGE.sig" ] && cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig" || echo ".sig for AppImage not found"
+            echo "AppImage copied: $NEW_APPIMAGE"
+          else
+            echo "No AppImage found under target/release/bundle" >&2
+          fi
+          # 额外上传 .deb（用于手动安装，不参与 Updater）
+          DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
+          if [ -n "$DEB" ]; then
+            cp "$DEB" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+            echo "Deb package copied: CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+          else
+            echo "No .deb found (optional)"
+          fi
+          # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等，不参与 Updater）
+          RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
+          if [ -n "$RPM" ]; then
+            cp "$RPM" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+            echo "RPM package copied: CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+          else
+            echo "No .rpm found (optional)"
+          fi
+
+      - name: List prepared assets
+        shell: bash
+        run: |
+          ls -la release-assets || true
+
+      - name: Collect Signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Collected signatures (if any alongside artifacts):"
+          ls -la release-assets/*.sig || echo "No signatures found"
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: CC Switch ${{ github.ref_name }}
+          prerelease: true
+          body: |
+            ## CC Switch ${{ github.ref_name }}
+
+            Claude Code 供应商切换工具
+
+            ### 下载
+
+            - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）或 `CC-Switch-${{ github.ref_name }}-macOS.tar.gz`（Homebrew）
+            - **Windows**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
+            - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
+            - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
+
+            ---
+            提示：macOS 如遇"已损坏"提示，可在终端执行：`xattr -cr "/Applications/CC Switch.app"`
+          files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 如果需要自动更新功能，取消下面注释并配置密钥
-          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          # 自动版本标签格式
-          tagName: cc-switch-v__VERSION__
-          releaseName: 'CC Switch v__VERSION__'
-          releaseBody: ${{ github.event.inputs.release_notes || 'See the assets to download this version.' }}
-          releaseDraft: ${{ github.event.inputs.release_type == 'draft' || github.ref_type != 'tag' }}
-          prerelease: ${{ github.event.inputs.release_type == 'prerelease' }}
-          args: ${{ matrix.args }}
+
+      - name: List generated bundles (debug)
+        if: always()
+        shell: bash
+        run: |
+          echo "Listing bundles in src-tauri/target..."
+          find src-tauri/target -maxdepth 4 -type f -name "*.*" 2>/dev/null || true
+
+  assemble-latest-json:
+    name: Assemble latest.json
+    runs-on: ubuntu-22.04
+    needs: release
+    permissions:
+      contents: write
+    steps:
+      - name: Prepare GH
+        run: |
+          gh --version || (type -p curl >/dev/null && sudo apt-get update && sudo apt-get install -y gh || true)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p dl
+          gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY"
+          ls -la dl || true
+      - name: Generate latest.json
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          base_url="https://github.com/$REPO/releases/download/$TAG"
+          # 初始化空平台映射
+          mac_url=""; mac_sig=""
+          win_url=""; win_sig=""
+          linux_x64_url=""; linux_x64_sig=""
+          linux_arm64_url=""; linux_arm64_sig=""
+          shopt -s nullglob
+          for sig in dl/*.sig; do
+            base=${sig%.sig}
+            fname=$(basename "$base")
+            url="$base_url/$fname"
+            sig_content=$(cat "$sig")
+            case "$fname" in
+              *.tar.gz)
+                # 视为 macOS updater artifact
+                mac_url="$url"; mac_sig="$sig_content";;
+              *-Linux-arm64.AppImage|*-Linux-arm64.appimage)
+                linux_arm64_url="$url"; linux_arm64_sig="$sig_content";;
+              *-Linux-x86_64.AppImage|*-Linux-x86_64.appimage)
+                linux_x64_url="$url"; linux_x64_sig="$sig_content";;
+              *.msi|*.exe)
+                win_url="$url"; win_sig="$sig_content";;
+            esac
+          done
+          # 构造 JSON（仅包含存在的目标）
+          tmp_json=$(mktemp)
+          {
+            echo '{'
+            echo "  \"version\": \"$VERSION\",";
+            echo "  \"notes\": \"Release $TAG\",";
+            echo "  \"pub_date\": \"$PUB_DATE\",";
+            echo '  "platforms": {'
+            first=1
+            if [ -n "$mac_url" ] && [ -n "$mac_sig" ]; then
+              # 为兼容 arm64 / x64，重复写入两个键，指向同一 universal 包
+              for key in darwin-aarch64 darwin-x86_64; do
+                [ $first -eq 0 ] && echo ','
+                echo "    \"$key\": {\"signature\": \"$mac_sig\", \"url\": \"$mac_url\"}"
+                first=0
+              done
+            fi
+            if [ -n "$win_url" ] && [ -n "$win_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"windows-x86_64\": {\"signature\": \"$win_sig\", \"url\": \"$win_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_x64_url" ] && [ -n "$linux_x64_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-x86_64\": {\"signature\": \"$linux_x64_sig\", \"url\": \"$linux_x64_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_arm64_url" ] && [ -n "$linux_arm64_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-aarch64\": {\"signature\": \"$linux_arm64_sig\", \"url\": \"$linux_arm64_url\"}"
+              first=0
+            fi
+            echo '  }'
+            echo '}'
+          } > "$tmp_json"
+          echo "Generated latest.json:" && cat "$tmp_json"
+          mv "$tmp_json" latest.json
+      - name: Upload latest.json to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          gh release upload "$GITHUB_REF_NAME" latest.json --clobber --repo "$GITHUB_REPOSITORY"
