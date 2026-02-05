@@ -153,6 +153,8 @@ export interface ProviderMeta {
   apiKeyField?: ClaudeApiKeyField;
   // Prompt cache key for OpenAI-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
+  // 供应商类型（用于识别 Copilot 等特殊供应商）
+  providerType?: string;
 }
 
 // Skill 同步方式

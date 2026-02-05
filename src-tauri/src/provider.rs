@@ -250,6 +250,10 @@ pub struct ProviderMeta {
     /// If not set, provider ID is used automatically during format conversion.
     #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    /// 供应商类型标识（用于特殊供应商检测）
+    /// - "github_copilot": GitHub Copilot 供应商
+    #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
+    pub provider_type: Option<String>,
 }
 
 impl ProviderManager {
