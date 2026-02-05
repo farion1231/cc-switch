@@ -25,7 +25,7 @@ export function FailoverPriorityBadge({
       )}
       title={t("failover.priority.tooltip", {
         priority,
-        defaultValue: `故障转移优先级 ${priority}`,
+        defaultValue: `Failover Priority ${priority}`,
       })}
     >
       P{priority}

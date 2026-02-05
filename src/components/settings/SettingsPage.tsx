@@ -177,7 +177,7 @@ export function SettingsPage({
         console.error("[SettingsPage] Failed to autosave settings", error);
         toast.error(
           t("settings.saveFailedGeneric", {
-            defaultValue: "保存失败，请重试",
+            defaultValue: "Save failed, please try again",
           }),
         );
       }

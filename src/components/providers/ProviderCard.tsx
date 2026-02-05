@@ -115,7 +115,7 @@ export function ProviderCard({
   const { data: health } = useProviderHealth(provider.id, appId);
 
   const fallbackUrlText = t("provider.notConfigured", {
-    defaultValue: "未配置接口地址",
+    defaultValue: "No endpoint configured",
   });
 
   const displayUrl = useMemo(() => {
@@ -283,7 +283,7 @@ export function ProviderCard({
                   <span
                     className="text-yellow-500 dark:text-yellow-400"
                     title={t("provider.officialPartner", {
-                      defaultValue: "官方合作伙伴",
+                      defaultValue: "Official Partner",
                     })}
                   >
                     ⭐
@@ -327,7 +327,7 @@ export function ProviderCard({
                   <span className="font-medium">
                     {t("usage.multiplePlans", {
                       count: usage?.data?.length || 0,
-                      defaultValue: `${usage?.data?.length || 0} 个套餐`,
+                      defaultValue: `${usage?.data?.length || 0} plans`,
                     })}
                   </span>
                 </div>
@@ -352,8 +352,8 @@ export function ProviderCard({
                   className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
                   title={
                     isExpanded
-                      ? t("usage.collapse", { defaultValue: "收起" })
-                      : t("usage.expand", { defaultValue: "展开" })
+                      ? t("usage.collapse", { defaultValue: "Collapse" })
+                      : t("usage.expand", { defaultValue: "Expand" })
                   }
                 >
                   {isExpanded ? (

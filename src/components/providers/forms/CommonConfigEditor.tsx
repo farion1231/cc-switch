@@ -69,7 +69,7 @@ export function CommonConfigEditor({
               />
               <span>
                 {t("claudeConfig.writeCommonConfig", {
-                  defaultValue: "写入通用配置",
+                  defaultValue: "Write Common Config",
                 })}
               </span>
             </label>
@@ -82,7 +82,7 @@ export function CommonConfigEditor({
             className="text-xs text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
           >
             {t("claudeConfig.editCommonConfig", {
-              defaultValue: "编辑通用配置",
+              defaultValue: "Edit Common Config",
             })}
           </button>
         </div>
@@ -110,7 +110,7 @@ export function CommonConfigEditor({
       <FullScreenPanel
         isOpen={isModalOpen}
         title={t("claudeConfig.editCommonConfigTitle", {
-          defaultValue: "编辑通用配置片段",
+          defaultValue: "Edit Common Config Snippet",
         })}
         onClose={onModalClose}
         footer={
@@ -129,7 +129,7 @@ export function CommonConfigEditor({
                   <Download className="w-4 h-4" />
                 )}
                 {t("claudeConfig.extractFromCurrent", {
-                  defaultValue: "从编辑内容提取",
+                  defaultValue: "Extract from Editor",
                 })}
               </Button>
             )}
@@ -146,7 +146,8 @@ export function CommonConfigEditor({
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
             {t("claudeConfig.commonConfigHint", {
-              defaultValue: "通用配置片段将合并到所有启用它的供应商配置中",
+              defaultValue:
+                "Common config snippet will be merged into all provider configs that enable it",
             })}
           </p>
           <JsonEditor

@@ -152,7 +152,7 @@ export function AutoFailoverConfigPanel({
       toast.error(
         t("proxy.autoFailover.validationFailed", {
           fields: errors.join("; "),
-          defaultValue: `以下字段超出有效范围: ${errors.join("; ")}`,
+          defaultValue: `The following fields are out of valid range: \${errors.join("; ")}`,
         }),
       );
       return;

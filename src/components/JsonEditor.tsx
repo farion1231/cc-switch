@@ -234,15 +234,18 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     try {
       const formatted = formatJSON(currentValue);
       onChange(formatted);
-      toast.success(t("common.formatSuccess", { defaultValue: "格式化成功" }), {
-        closeButton: true,
-      });
+      toast.success(
+        t("common.formatSuccess", { defaultValue: "Format Successful" }),
+        {
+          closeButton: true,
+        },
+      );
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       toast.error(
         t("common.formatError", {
-          defaultValue: "格式化失败：{{error}}",
+          defaultValue: "Format Failed: {{error}}",
           error: errorMessage,
         }),
       );
@@ -268,7 +271,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
           className={`${isFullHeight ? "mt-2 flex-shrink-0" : "mt-2"} inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors`}
         >
           <Wand2 className="w-3.5 h-3.5" />
-          {t("common.format", { defaultValue: "格式化" })}
+          {t("common.format", { defaultValue: "Format" })}
         </button>
       )}
     </div>

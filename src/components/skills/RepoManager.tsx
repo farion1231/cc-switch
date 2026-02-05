@@ -174,7 +174,7 @@ export function RepoManager({
                           size="icon"
                           type="button"
                           onClick={() => handleOpenRepo(repo.owner, repo.name)}
-                          title={t("common.view", { defaultValue: "查看" })}
+                          title={t("common.view", { defaultValue: "View" })}
                         >
                           <ExternalLink className="h-4 w-4" />
                         </Button>

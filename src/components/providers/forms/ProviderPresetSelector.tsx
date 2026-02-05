@@ -45,27 +45,30 @@ export function ProviderPresetSelector({
     switch (category) {
       case "official":
         return t("providerForm.officialHint", {
-          defaultValue: "💡 官方供应商使用浏览器登录，无需配置 API Key",
+          defaultValue:
+            "💡 Official providers use browser login, no API Key needed",
         });
       case "cn_official":
         return t("providerForm.cnOfficialApiKeyHint", {
-          defaultValue: "💡 国产官方供应商只需填写 API Key，请求地址已预设",
+          defaultValue:
+            "💡 CN official providers only need API Key, endpoint is preset",
         });
       case "aggregator":
         return t("providerForm.aggregatorApiKeyHint", {
-          defaultValue: "💡 聚合服务供应商只需填写 API Key 即可使用",
+          defaultValue: "💡 Aggregator providers only need API Key to use",
         });
       case "third_party":
         return t("providerForm.thirdPartyApiKeyHint", {
-          defaultValue: "💡 第三方供应商需要填写 API Key 和请求地址",
+          defaultValue: "💡 Third-party providers need API Key and endpoint",
         });
       case "custom":
         return t("providerForm.customApiKeyHint", {
-          defaultValue: "💡 自定义配置需手动填写所有必要字段",
+          defaultValue:
+            "💡 Custom config requires manually filling all necessary fields",
         });
       default:
         return t("providerPreset.hint", {
-          defaultValue: "选择预设后可继续调整下方字段。",
+          defaultValue: "Select a preset to continue adjusting fields below.",
         });
     }
   };
@@ -203,12 +206,12 @@ export function ProviderPresetSelector({
                 onClick={onManageUniversalProviders}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80"
                 title={t("universalProvider.manage", {
-                  defaultValue: "管理统一供应商",
+                  defaultValue: "Manage Universal Providers",
                 })}
               >
                 <Settings2 className="h-4 w-4" />
                 {t("universalProvider.manage", {
-                  defaultValue: "管理",
+                  defaultValue: "Manage",
                 })}
               </button>
             )}

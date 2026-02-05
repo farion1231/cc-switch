@@ -101,7 +101,7 @@ export function ProviderActions({
           className:
             "bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-900/70",
           icon: <Minus className="h-4 w-4" />,
-          text: t("provider.removeFromConfig", { defaultValue: "移除" }),
+          text: t("provider.removeFromConfig", { defaultValue: "Remove" }),
         };
       }
       return {
@@ -110,7 +110,7 @@ export function ProviderActions({
         className:
           "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
         icon: <Plus className="h-4 w-4" />,
-        text: t("provider.addToConfig", { defaultValue: "添加" }),
+        text: t("provider.addToConfig", { defaultValue: "Add" }),
       };
     }
 
@@ -123,7 +123,7 @@ export function ProviderActions({
           className:
             "bg-blue-100 text-blue-600 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-400 dark:hover:bg-blue-900/70",
           icon: <Check className="h-4 w-4" />,
-          text: t("failover.inQueue", { defaultValue: "已加入" }),
+          text: t("failover.inQueue", { defaultValue: "Added" }),
         };
       }
       return {
@@ -132,7 +132,7 @@ export function ProviderActions({
         className:
           "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
         icon: <Plus className="h-4 w-4" />,
-        text: t("failover.addQueue", { defaultValue: "加入" }),
+        text: t("failover.addQueue", { defaultValue: "Add" }),
       };
     }
 

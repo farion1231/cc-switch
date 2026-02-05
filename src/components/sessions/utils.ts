@@ -37,7 +37,7 @@ export const formatRelativeTime = (
 
 export const getProviderLabel = (
   providerId: string,
-  t: (key: string) => string
+  t: (key: string) => string,
 ) => {
   const key = `apps.${providerId}`;
   const translated = t(key);

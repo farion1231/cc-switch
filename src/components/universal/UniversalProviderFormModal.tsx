@@ -319,7 +319,7 @@ requires_openai_auth = true`;
   const footer = (
     <>
       <Button variant="outline" onClick={onClose}>
-        {t("common.cancel", { defaultValue: "取消" })}
+        {t("common.cancel", { defaultValue: "Cancel" })}
       </Button>
       {isEditMode && onSaveAndSync ? (
         <Button
@@ -327,14 +327,16 @@ requires_openai_auth = true`;
           disabled={!name.trim() || !baseUrl.trim() || !apiKey.trim()}
         >
           <RefreshCw className="mr-1.5 h-4 w-4" />
-          {t("universalProvider.saveAndSync", { defaultValue: "保存并同步" })}
+          {t("universalProvider.saveAndSync", {
+            defaultValue: "Save and Sync",
+          })}
         </Button>
       ) : (
         <Button
           onClick={handleSubmit}
           disabled={!name.trim() || !baseUrl.trim() || !apiKey.trim()}
         >
-          {t("common.add", { defaultValue: "添加" })}
+          {t("common.add", { defaultValue: "Add" })}
         </Button>
       )}
     </>
@@ -345,8 +347,12 @@ requires_openai_auth = true`;
       isOpen={isOpen}
       title={
         isEditMode
-          ? t("universalProvider.edit", { defaultValue: "编辑统一供应商" })
-          : t("universalProvider.add", { defaultValue: "添加统一供应商" })
+          ? t("universalProvider.edit", {
+              defaultValue: "Edit Universal Provider",
+            })
+          : t("universalProvider.add", {
+              defaultValue: "Add Universal Provider",
+            })
       }
       onClose={onClose}
       footer={footer}
@@ -357,7 +363,7 @@ requires_openai_auth = true`;
           <div className="space-y-3">
             <Label>
               {t("universalProvider.selectPreset", {
-                defaultValue: "选择预设类型",
+                defaultValue: "Select Preset Type",
               })}
             </Label>
             <div className="flex flex-wrap gap-2">
@@ -393,21 +399,21 @@ requires_openai_auth = true`;
         <div className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="name">
-              {t("universalProvider.name", { defaultValue: "名称" })}
+              {t("universalProvider.name", { defaultValue: "Name" })}
             </Label>
             <Input
               id="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={t("universalProvider.namePlaceholder", {
-                defaultValue: "例如：我的 NewAPI",
+                defaultValue: "e.g., My NewAPI",
               })}
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="baseUrl">
-              {t("universalProvider.baseUrl", { defaultValue: "API 地址" })}
+              {t("universalProvider.baseUrl", { defaultValue: "API URL" })}
             </Label>
             <Input
               id="baseUrl"
@@ -448,28 +454,31 @@ requires_openai_auth = true`;
 
           <div className="space-y-2">
             <Label htmlFor="websiteUrl">
-              {t("universalProvider.websiteUrl", { defaultValue: "官网地址" })}
+              {t("universalProvider.websiteUrl", {
+                defaultValue: "Website URL",
+              })}
             </Label>
             <Input
               id="websiteUrl"
               value={websiteUrl}
               onChange={(e) => setWebsiteUrl(e.target.value)}
               placeholder={t("universalProvider.websiteUrlPlaceholder", {
-                defaultValue: "https://example.com（可选，用于在列表中显示）",
+                defaultValue:
+                  "https://example.com (optional, for display in list)",
               })}
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="notes">
-              {t("universalProvider.notes", { defaultValue: "备注" })}
+              {t("universalProvider.notes", { defaultValue: "Notes" })}
             </Label>
             <Input
               id="notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder={t("universalProvider.notesPlaceholder", {
-                defaultValue: "可选：添加备注信息",
+                defaultValue: "Optional: Add notes",
               })}
             />
           </div>
@@ -478,7 +487,9 @@ requires_openai_auth = true`;
         {/* 应用启用 */}
         <div className="space-y-3">
           <Label>
-            {t("universalProvider.enabledApps", { defaultValue: "启用的应用" })}
+            {t("universalProvider.enabledApps", {
+              defaultValue: "Enabled Apps",
+            })}
           </Label>
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between rounded-lg border p-3">
@@ -517,7 +528,9 @@ requires_openai_auth = true`;
         {/* 模型配置 */}
         <div className="space-y-4">
           <Label>
-            {t("universalProvider.modelConfig", { defaultValue: "模型配置" })}
+            {t("universalProvider.modelConfig", {
+              defaultValue: "Model Configuration",
+            })}
           </Label>
 
           {/* Claude 模型 */}
@@ -530,7 +543,9 @@ requires_openai_auth = true`;
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label className="text-xs">
-                    {t("universalProvider.model", { defaultValue: "主模型" })}
+                    {t("universalProvider.model", {
+                      defaultValue: "Main Model",
+                    })}
                   </Label>
                   <Input
                     value={models.claude?.model || ""}
@@ -584,7 +599,7 @@ requires_openai_auth = true`;
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label className="text-xs">
-                    {t("universalProvider.model", { defaultValue: "模型" })}
+                    {t("universalProvider.model", { defaultValue: "Model" })}
                   </Label>
                   <Input
                     value={models.codex?.model || ""}
@@ -617,7 +632,7 @@ requires_openai_auth = true`;
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">
-                  {t("universalProvider.model", { defaultValue: "模型" })}
+                  {t("universalProvider.model", { defaultValue: "Model" })}
                 </Label>
                 <Input
                   value={models.gemini?.model || ""}
@@ -636,7 +651,7 @@ requires_openai_auth = true`;
           <div className="space-y-4">
             <Label>
               {t("universalProvider.configJsonPreview", {
-                defaultValue: "配置 JSON 预览",
+                defaultValue: "Config JSON Preview",
               })}
             </Label>
             <p className="text-xs text-muted-foreground">
@@ -698,14 +713,14 @@ requires_openai_auth = true`;
       <ConfirmDialog
         isOpen={syncConfirmOpen}
         title={t("universalProvider.syncConfirmTitle", {
-          defaultValue: "同步统一供应商",
+          defaultValue: "Sync Universal Provider",
         })}
         message={t("universalProvider.syncConfirmDescription", {
-          defaultValue: `同步 "${name}" 将会覆盖 Claude、Codex 和 Gemini 中关联的供应商配置。确定要继续吗？`,
+          defaultValue: `Sync "\${name}" will overwrite provider configs in Claude, Codex, and Gemini. Continue?`,
           name: name,
         })}
         confirmText={t("universalProvider.saveAndSync", {
-          defaultValue: "保存并同步",
+          defaultValue: "Save and Sync",
         })}
         onConfirm={confirmSaveAndSync}
         onCancel={() => {

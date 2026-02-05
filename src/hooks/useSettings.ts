@@ -159,7 +159,7 @@ export function useSettings(): UseSettingsResult {
             console.error("Failed to update auto-launch:", error);
             toast.error(
               t("settings.autoLaunchFailed", {
-                defaultValue: "设置开机自启失败",
+                defaultValue: "Failed to set auto-launch",
               }),
             );
           }
@@ -186,10 +186,12 @@ export function useSettings(): UseSettingsResult {
             toast.error(
               nextSkipClaudeOnboarding
                 ? t("notifications.skipClaudeOnboardingFailed", {
-                    defaultValue: "跳过 Claude Code 初次安装确认失败",
+                    defaultValue:
+                      "Failed to skip Claude Code initial installation confirmation",
                   })
                 : t("notifications.clearClaudeOnboardingSkipFailed", {
-                    defaultValue: "恢复 Claude Code 初次安装确认失败",
+                    defaultValue:
+                      "Failed to restore Claude Code initial installation confirmation",
                   }),
             );
           }
@@ -219,7 +221,7 @@ export function useSettings(): UseSettingsResult {
         console.error("[useSettings] Failed to auto-save settings", error);
         toast.error(
           t("notifications.settingsSaveFailed", {
-            defaultValue: "保存设置失败: {{error}}",
+            defaultValue: "Failed to save settings: {{error}}",
             error: (error as Error)?.message ?? String(error),
           }),
         );
@@ -276,7 +278,7 @@ export function useSettings(): UseSettingsResult {
             console.error("Failed to update auto-launch:", error);
             toast.error(
               t("settings.autoLaunchFailed", {
-                defaultValue: "设置开机自启失败",
+                defaultValue: "Failed to set auto-launch",
               }),
             );
           }
@@ -300,10 +302,12 @@ export function useSettings(): UseSettingsResult {
             toast.error(
               nextSkipClaudeOnboarding
                 ? t("notifications.skipClaudeOnboardingFailed", {
-                    defaultValue: "跳过 Claude Code 初次安装确认失败",
+                    defaultValue:
+                      "Failed to skip Claude Code initial installation confirmation",
                   })
                 : t("notifications.clearClaudeOnboardingSkipFailed", {
-                    defaultValue: "恢复 Claude Code 初次安装确认失败",
+                    defaultValue:
+                      "Failed to restore Claude Code initial installation confirmation",
                   }),
             );
           }
@@ -328,7 +332,7 @@ export function useSettings(): UseSettingsResult {
             );
             toast.error(
               t("notifications.syncClaudePluginFailed", {
-                defaultValue: "同步 Claude 插件失败",
+                defaultValue: "Failed to sync Claude plugin",
               }),
             );
           }
@@ -380,7 +384,7 @@ export function useSettings(): UseSettingsResult {
         if (!options?.silent) {
           toast.success(
             t("notifications.settingsSaved", {
-              defaultValue: "设置已保存",
+              defaultValue: "Settings saved",
             }),
             { closeButton: true },
           );
@@ -391,7 +395,7 @@ export function useSettings(): UseSettingsResult {
         console.error("[useSettings] Failed to save settings", error);
         toast.error(
           t("notifications.settingsSaveFailed", {
-            defaultValue: "保存设置失败: {{error}}",
+            defaultValue: "Failed to save settings: {{error}}",
             error: (error as Error)?.message ?? String(error),
           }),
         );

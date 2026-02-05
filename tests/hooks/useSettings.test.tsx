@@ -342,7 +342,7 @@ describe("useSettings hook", () => {
 
     expect(toastErrorMock).toHaveBeenCalled();
     const message = toastErrorMock.mock.calls.at(-1)?.[0] as string;
-    expect(message).toContain("同步 Claude 插件失败");
+    expect(message).toContain("Failed to sync Claude plugin");
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(true);
   });
 

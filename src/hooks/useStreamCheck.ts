@@ -28,7 +28,7 @@ export function useStreamCheck(appId: AppId) {
             t("streamCheck.operational", {
               name: providerName,
               time: result.responseTimeMs,
-              defaultValue: `${providerName} 运行正常 (${result.responseTimeMs}ms)`,
+              defaultValue: `\${providerName} is operational (\${result.responseTimeMs}ms)`,
             }),
             { closeButton: true },
           );
@@ -40,7 +40,7 @@ export function useStreamCheck(appId: AppId) {
             t("streamCheck.degraded", {
               name: providerName,
               time: result.responseTimeMs,
-              defaultValue: `${providerName} 响应较慢 (${result.responseTimeMs}ms)`,
+              defaultValue: `\${providerName} slow response (\${result.responseTimeMs}ms)`,
             }),
           );
 
@@ -51,7 +51,7 @@ export function useStreamCheck(appId: AppId) {
             t("streamCheck.failed", {
               name: providerName,
               error: result.message,
-              defaultValue: `${providerName} 检查失败: ${result.message}`,
+              defaultValue: `\${providerName} check failed: \${result.message}`,
             }),
           );
         }
@@ -62,7 +62,7 @@ export function useStreamCheck(appId: AppId) {
           t("streamCheck.error", {
             name: providerName,
             error: String(e),
-            defaultValue: `${providerName} 检查出错: ${String(e)}`,
+            defaultValue: `\${providerName} check error: \${String(e)}`,
           }),
         );
         return null;

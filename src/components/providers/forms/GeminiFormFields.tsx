@@ -80,7 +80,7 @@ export function GeminiFormFields({
             <div className="space-y-1">
               <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
                 {t("provider.form.gemini.oauthTitle", {
-                  defaultValue: "OAuth 认证模式",
+                  defaultValue: "OAuth Authentication Mode",
                 })}
               </p>
               <p className="text-sm text-blue-700 dark:text-blue-300">
@@ -111,7 +111,9 @@ export function GeminiFormFields({
       {shouldShowSpeedTest && (
         <EndpointField
           id="baseUrl"
-          label={t("providerForm.apiEndpoint", { defaultValue: "API 端点" })}
+          label={t("providerForm.apiEndpoint", {
+            defaultValue: "API Endpoint",
+          })}
           value={baseUrl}
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.apiEndpointPlaceholder", {
@@ -125,7 +127,7 @@ export function GeminiFormFields({
       {shouldShowModelField && (
         <div>
           <FormLabel htmlFor="gemini-model">
-            {t("provider.form.gemini.model", { defaultValue: "模型" })}
+            {t("provider.form.gemini.model", { defaultValue: "Model" })}
           </FormLabel>
           <Input
             id="gemini-model"
