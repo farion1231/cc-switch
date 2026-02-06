@@ -115,6 +115,14 @@ pub const OPENAI_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
     app_type_str: "codex",
 };
 
+/// Qwen OpenAI-compatible API 解析配置
+pub const QWEN_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
+    stream_parser: TokenUsage::from_openai_stream_events,
+    response_parser: TokenUsage::from_openai_response,
+    model_extractor: openai_model_extractor,
+    app_type_str: "qwen",
+};
+
 /// Codex 智能解析配置（自动检测 OpenAI 或 Codex 格式）
 pub const CODEX_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
     stream_parser: TokenUsage::from_codex_stream_events_auto,
@@ -185,4 +193,13 @@ pub const GEMINI_HANDLER_CONFIG: HandlerConfig = HandlerConfig {
     tag: "Gemini",
     app_type_str: "gemini",
     parser_config: &GEMINI_PARSER_CONFIG,
+};
+
+/// Qwen Handler 配置
+#[allow(dead_code)]
+pub const QWEN_HANDLER_CONFIG: HandlerConfig = HandlerConfig {
+    app_type: AppType::Qwen,
+    tag: "Qwen",
+    app_type_str: "qwen",
+    parser_config: &QWEN_PARSER_CONFIG,
 };

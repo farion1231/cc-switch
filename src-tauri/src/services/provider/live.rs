@@ -379,9 +379,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let env_json = env_to_json(&env_map);
 
             // Return structure: { "env": {...} }
-            Ok(json!({
-                "env": env_json
-            }))
+            Ok(env_json)
         }
     }
 }
@@ -493,9 +491,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             let env_json = env_to_json(&env_map);
 
             // Return structure: { "env": {...} }
-            json!({
-                "env": env_json
-            })
+            env_json
         }
     };
 

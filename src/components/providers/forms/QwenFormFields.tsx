@@ -2,14 +2,26 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useTranslation } from "react-i18next";
 
+/** Qwen 环境变量配置 */
+interface QwenEnvConfig {
+  OPENAI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
+  OPENAI_MODEL?: string;
+}
+
+/** Qwen 配置结构 */
+interface QwenSettingsConfig {
+  env: QwenEnvConfig;
+}
+
 interface QwenFormFieldsProps {
-  settingsConfig: Record<string, any>;
-  onChange: (config: Record<string, any>) => void;
+  settingsConfig: QwenSettingsConfig;
+  onChange: (config: QwenSettingsConfig) => void;
 }
 
 export function QwenFormFields({ settingsConfig, onChange }: QwenFormFieldsProps) {
   const { t } = useTranslation();
-  const env = settingsConfig.env || {};
+  const env: QwenEnvConfig = settingsConfig.env || {};
 
   const handleEnvChange = (key: string, value: string) => {
     onChange({

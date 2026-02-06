@@ -235,10 +235,18 @@ impl ConfigService {
         use crate::qwen_config::{env_to_json, read_qwen_env, write_qwen_live};
 
         let settings = provider.settings_config.as_object().ok_or_else(|| {
-            AppError::Config(format!("供应商 {provider_id} 的 Qwen 配置必须是对象"))
+            AppError::localized(
+                "provider.qwen.settings.not_object",
+                format!("供应商 {} 的 Qwen 配置必须是对象", provider_id),
+                format!("Qwen configuration for provider {} must be an object", provider_id),
+            )
         })?;
         let env = settings.get("env").and_then(Value::as_object).ok_or_else(|| {
-            AppError::Config(format!("供应商 {provider_id} 的 Qwen 配置缺少 env 字段"))
+            AppError::localized(
+                "provider.qwen.env.missing",
+                format!("供应商 {} 的 Qwen 配置缺少 env 字段", provider_id),
+                format!("Qwen configuration for provider {} is missing env field", provider_id),
+            )
         })?;
 
         let api_key = env.get("OPENAI_API_KEY").and_then(Value::as_str).unwrap_or("");
@@ -250,11 +258,15 @@ impl ConfigService {
         // 读回实际写入的内容并更新到配置中
         let live_after_env = read_qwen_env()?;
         let live_after = env_to_json(&live_after_env);
+        let env_obj = live_after
+            .get("env")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
 
         if let Some(manager) = config.get_manager_mut(&AppType::Qwen) {
             if let Some(target) = manager.providers.get_mut(provider_id) {
                 if let Some(obj) = target.settings_config.as_object_mut() {
-                    obj.insert("env".to_string(), live_after);
+                    obj.insert("env".to_string(), env_obj);
                 }
             }
         }
