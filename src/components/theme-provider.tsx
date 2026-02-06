@@ -5,6 +5,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 type Theme = "light" | "dark" | "system";
 
@@ -92,6 +93,54 @@ export function ThemeProvider({
 
     mediaQuery.addEventListener("change", handleChange);
     return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [theme]);
+
+  // Sync native window theme (Windows/macOS title bar)
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    let isCancelled = false;
+
+    const updateNativeTheme = async (nativeTheme: string) => {
+      if (isCancelled) return;
+      try {
+        await invoke("set_window_theme", { theme: nativeTheme });
+      } catch (e) {
+        // Ignore errors (e.g., when not running in Tauri)
+        console.debug("Failed to set native window theme:", e);
+      }
+    };
+
+    // Determine current effective theme
+    if (theme === "system") {
+      const isDark =
+        window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches;
+      updateNativeTheme(isDark ? "dark" : "light");
+    } else {
+      updateNativeTheme(theme);
+    }
+
+    // Listen to system theme changes for native window when in "system" mode
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => {
+      if (theme === "system" && !isCancelled) {
+        updateNativeTheme(mediaQuery.matches ? "dark" : "light");
+      }
+    };
+
+    if (theme === "system") {
+      mediaQuery.addEventListener("change", handleChange);
+    }
+
+    return () => {
+      isCancelled = true;
+      if (theme === "system") {
+        mediaQuery.removeEventListener("change", handleChange);
+      }
+    };
   }, [theme]);
 
   const value = useMemo<ThemeContextValue>(

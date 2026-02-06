@@ -59,7 +59,7 @@ export function SessionMessageItem({
       </Tooltip>
       <div className="flex items-center justify-between text-xs mb-1.5 pr-6">
         <span className={cn("font-semibold", getRoleTone(message.role))}>
-          {getRoleLabel(message.role)}
+          {getRoleLabel(message.role, t)}
         </span>
         {message.ts && (
           <span className="text-muted-foreground">

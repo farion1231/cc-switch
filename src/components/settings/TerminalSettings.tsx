@@ -15,6 +15,7 @@ const MACOS_TERMINALS = [
   { value: "alacritty", labelKey: "settings.terminal.options.macos.alacritty" },
   { value: "kitty", labelKey: "settings.terminal.options.macos.kitty" },
   { value: "ghostty", labelKey: "settings.terminal.options.macos.ghostty" },
+  { value: "wezterm", labelKey: "settings.terminal.options.macos.wezterm" },
 ] as const;
 
 const WINDOWS_TERMINALS = [

@@ -6,6 +6,7 @@
         "label": "main",
         "title": "CC Switch",
         "titleBarStyle": "Visible",
+        "visible": false,
         "minWidth": 900,
         "minHeight": 600
       }

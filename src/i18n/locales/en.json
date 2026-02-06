@@ -308,7 +308,8 @@
           "iterm2": "iTerm2",
           "alacritty": "Alacritty",
           "kitty": "Kitty",
-          "ghostty": "Ghostty"
+          "ghostty": "Ghostty",
+          "wezterm": "WezTerm"
         },
         "windows": {
           "cmd": "Command Prompt",
@@ -412,6 +413,7 @@
     "title": "Session Manager",
     "subtitle": "Manage Codex and Claude Code sessions",
     "searchPlaceholder": "Search by content, directory, or ID",
+    "searchSessions": "Search sessions",
     "providerFilterAll": "All",
     "sessionList": "Sessions",
     "loadingSessions": "Loading sessions...",
@@ -435,7 +437,16 @@
     "copySourcePath": "Copy source file",
     "sourcePathCopied": "Source file copied",
     "loadingMessages": "Loading transcript...",
-    "emptySession": "No messages available"
+    "emptySession": "No messages available",
+    "clickToCopyPath": "Click to copy path",
+    "tocTitle": "Contents",
+    "justNow": "Just now",
+    "minutesAgo": "{{count}} min ago",
+    "hoursAgo": "{{count}} hr ago",
+    "daysAgo": "{{count}} days ago",
+    "roleUser": "User",
+    "roleSystem": "System",
+    "roleTool": "Tool"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
@@ -640,6 +651,7 @@
     "modelId": "Model ID",
     "modelName": "Display Name",
     "noModels": "No models configured",
+    "modelsRequired": "Please add at least one model",
     "providerKey": "Provider Key",
     "providerKeyPlaceholder": "my-provider",
     "providerKeyHint": "Unique identifier in config file. Cannot be changed after creation. Use lowercase letters, numbers, and hyphens only.",
