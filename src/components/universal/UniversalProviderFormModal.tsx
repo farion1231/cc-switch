@@ -50,6 +50,7 @@ export function UniversalProviderFormModal({
   const [claudeEnabled, setClaudeEnabled] = useState(true);
   const [codexEnabled, setCodexEnabled] = useState(true);
   const [geminiEnabled, setGeminiEnabled] = useState(true);
+  const [qwenEnabled, setQwenEnabled] = useState(true);
 
   // 模型配置
   const [models, setModels] = useState<UniversalProviderModels>({});
@@ -71,6 +72,7 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(editingProvider.apps.claude);
       setCodexEnabled(editingProvider.apps.codex);
       setGeminiEnabled(editingProvider.apps.gemini);
+      setQwenEnabled(editingProvider.apps.qwen);
       setModels(editingProvider.models || {});
 
       // 尝试匹配预设
@@ -90,6 +92,7 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
+      setQwenEnabled(defaultPreset.defaultApps.qwen);
       setModels(JSON.parse(JSON.stringify(defaultPreset.defaultModels)));
     }
   }, [editingProvider, initialPreset, isOpen]);
@@ -103,6 +106,7 @@ export function UniversalProviderFormModal({
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
+        setQwenEnabled(preset.defaultApps.qwen);
         setModels(JSON.parse(JSON.stringify(preset.defaultModels)));
       }
     },
@@ -200,6 +204,7 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            qwen: qwenEnabled,
           },
           models,
         }
@@ -217,6 +222,7 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        qwen: qwenEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -235,6 +241,7 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    qwenEnabled,
     models,
     selectedPreset,
     onSave,
@@ -259,6 +266,7 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            qwen: qwenEnabled,
           },
           models,
         }
@@ -276,6 +284,7 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        qwen: qwenEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;

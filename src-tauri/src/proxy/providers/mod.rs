@@ -136,6 +136,10 @@ impl ProviderType {
                 // OpenCode doesn't support proxy, but return a default type for completeness
                 ProviderType::Codex // Fallback to Codex-like type
             }
+            AppType::Qwen => {
+                // Qwen uses OpenAI-compatible API (similar to Codex)
+                ProviderType::Codex
+            }
         }
     }
 
@@ -182,6 +186,10 @@ pub fn get_adapter(app_type: &AppType) -> Box<dyn ProviderAdapter> {
         AppType::Gemini => Box::new(GeminiAdapter::new()),
         AppType::OpenCode => {
             // OpenCode doesn't support proxy, fallback to Codex adapter
+            Box::new(CodexAdapter::new())
+        }
+        AppType::Qwen => {
+            // Qwen uses OpenAI-compatible API, use Codex adapter
             Box::new(CodexAdapter::new())
         }
     }

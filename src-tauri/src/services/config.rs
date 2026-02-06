@@ -88,6 +88,7 @@ impl ConfigService {
         Self::sync_current_provider_for_app(config, &AppType::Claude)?;
         Self::sync_current_provider_for_app(config, &AppType::Codex)?;
         Self::sync_current_provider_for_app(config, &AppType::Gemini)?;
+        Self::sync_current_provider_for_app(config, &AppType::Qwen)?;
         Ok(())
     }
 
@@ -122,6 +123,7 @@ impl ConfigService {
             AppType::Codex => Self::sync_codex_live(config, &current_id, &provider)?,
             AppType::Claude => Self::sync_claude_live(config, &current_id, &provider)?,
             AppType::Gemini => Self::sync_gemini_live(config, &current_id, &provider)?,
+            AppType::Qwen => Self::sync_qwen_live(config, &current_id, &provider)?,
             AppType::OpenCode => {
                 // OpenCode uses additive mode, no live sync needed
                 // OpenCode providers are managed directly in the config file
@@ -219,6 +221,53 @@ impl ConfigService {
         if let Some(manager) = config.get_manager_mut(&AppType::Gemini) {
             if let Some(target) = manager.providers.get_mut(provider_id) {
                 target.settings_config = live_after;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn sync_qwen_live(
+        config: &mut MultiAppConfig,
+        provider_id: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        use crate::qwen_config::{env_to_json, read_qwen_env, write_qwen_live};
+
+        let settings = provider.settings_config.as_object().ok_or_else(|| {
+            AppError::localized(
+                "provider.qwen.settings.not_object",
+                format!("供应商 {} 的 Qwen 配置必须是对象", provider_id),
+                format!("Qwen configuration for provider {} must be an object", provider_id),
+            )
+        })?;
+        let env = settings.get("env").and_then(Value::as_object).ok_or_else(|| {
+            AppError::localized(
+                "provider.qwen.env.missing",
+                format!("供应商 {} 的 Qwen 配置缺少 env 字段", provider_id),
+                format!("Qwen configuration for provider {} is missing env field", provider_id),
+            )
+        })?;
+
+        let api_key = env.get("OPENAI_API_KEY").and_then(Value::as_str).unwrap_or("");
+        let base_url = env.get("OPENAI_BASE_URL").and_then(Value::as_str).unwrap_or("");
+        let model = env.get("OPENAI_MODEL").and_then(Value::as_str).unwrap_or("");
+
+        write_qwen_live(api_key, base_url, model)?;
+
+        // 读回实际写入的内容并更新到配置中
+        let live_after_env = read_qwen_env()?;
+        let live_after = env_to_json(&live_after_env);
+        let env_obj = live_after
+            .get("env")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+
+        if let Some(manager) = config.get_manager_mut(&AppType::Qwen) {
+            if let Some(target) = manager.providers.get_mut(provider_id) {
+                if let Some(obj) = target.settings_config.as_object_mut() {
+                    obj.insert("env".to_string(), env_obj);
+                }
             }
         }
 

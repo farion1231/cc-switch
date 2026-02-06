@@ -272,6 +272,9 @@ impl ProviderService {
             AppType::OpenCode => {
                 remove_opencode_provider_from_live(id)?;
             }
+            AppType::Qwen => {
+                crate::qwen_config::clear_qwen_live()?;
+            }
             // Future: add other additive mode apps here
             _ => {
                 return Err(AppError::Message(format!(
@@ -441,6 +444,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
+            AppType::Qwen => Ok(String::new()), // Qwen 暂不支持通用配置片段
         }
     }
 
@@ -454,6 +458,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
+            AppType::Qwen => Ok(String::new()), // Qwen 暂不支持通用配置片段
         }
     }
 
@@ -787,6 +792,17 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Qwen => {
+                // Qwen uses env format with OPENAI_API_KEY and OPENAI_BASE_URL
+                // Basic validation - must be an object
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.qwen.settings.not_object",
+                        "Qwen 配置必须是 JSON 对象",
+                        "Qwen configuration must be a JSON object",
+                    ));
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -952,6 +968,40 @@ impl ProviderService {
 
                 let base_url = options
                     .get("baseURL")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::Qwen => {
+                // Qwen uses env.OPENAI_API_KEY and env.OPENAI_BASE_URL
+                let env = provider
+                    .settings_config
+                    .get("env")
+                    .and_then(|v| v.as_object())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.qwen.env.missing",
+                            "配置格式错误: 缺少 env",
+                            "Invalid configuration: missing env section",
+                        )
+                    })?;
+
+                let api_key = env
+                    .get("OPENAI_API_KEY")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.qwen.api_key.missing",
+                            "缺少 OPENAI_API_KEY",
+                            "Missing OPENAI_API_KEY",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = env
+                    .get("OPENAI_BASE_URL")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

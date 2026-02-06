@@ -40,6 +40,9 @@ impl McpService {
         if prev_apps.opencode && !server.apps.opencode {
             Self::remove_server_from_app(state, &server.id, &AppType::OpenCode)?;
         }
+        if prev_apps.qwen && !server.apps.qwen {
+            Self::remove_server_from_app(state, &server.id, &AppType::Qwen)?;
+        }
 
         // 同步到各个启用的应用
         Self::sync_server_to_apps(state, &server)?;
@@ -123,6 +126,9 @@ impl McpService {
                     &server.server,
                 )?;
             }
+            AppType::Qwen => {
+                // Qwen doesn't support MCP servers
+            }
         }
         Ok(())
     }
@@ -147,6 +153,9 @@ impl McpService {
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
             AppType::OpenCode => {
                 mcp::remove_server_from_opencode(id)?;
+            }
+            AppType::Qwen => {
+                // Qwen doesn't support MCP servers
             }
         }
         Ok(())

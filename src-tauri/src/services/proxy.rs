@@ -210,11 +210,18 @@ impl ProxyService {
             .await
             .map(|c| c.enabled)
             .unwrap_or(false);
+        let qwen_enabled = self
+            .db
+            .get_proxy_config_for_app("qwen")
+            .await
+            .map(|c| c.enabled)
+            .unwrap_or(false);
 
         Ok(ProxyTakeoverStatus {
             claude: claude_enabled,
             codex: codex_enabled,
             gemini: gemini_enabled,
+            qwen: qwen_enabled,
         })
     }
 
@@ -368,6 +375,7 @@ impl ProxyService {
             AppType::Claude => self.read_claude_live()?,
             AppType::Codex => self.read_codex_live()?,
             AppType::Gemini => self.read_gemini_live()?,
+            AppType::Qwen => self.read_qwen_live()?,
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features
                 return Err("OpenCode 不支持代理功能".to_string());
@@ -585,6 +593,60 @@ impl ProxyService {
                     }
                 }
             }
+            AppType::Qwen => {
+                let provider_id =
+                    crate::settings::get_effective_current_provider(&self.db, &AppType::Qwen)
+                        .map_err(|e| format!("获取 Qwen 当前供应商失败: {e}"))?;
+
+                if let Some(provider_id) = provider_id {
+                    if let Ok(Some(mut provider)) =
+                        self.db.get_provider_by_id(&provider_id, "qwen")
+                    {
+                        if let Some(token) = live_config
+                            .get("env")
+                            .and_then(|v| v.get("OPENAI_API_KEY"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
+                        {
+                            if let Some(env_obj) = provider
+                                .settings_config
+                                .get_mut("env")
+                                .and_then(|v| v.as_object_mut())
+                            {
+                                env_obj.insert("OPENAI_API_KEY".to_string(), json!(token));
+                            } else {
+                                if provider.settings_config.is_null() {
+                                    provider.settings_config = json!({});
+                                }
+
+                                if let Some(root) = provider.settings_config.as_object_mut() {
+                                    root.insert(
+                                        "env".to_string(),
+                                        json!({ "OPENAI_API_KEY": token }),
+                                    );
+                                } else {
+                                    log::warn!(
+                                        "Qwen provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                    );
+                                }
+                            }
+
+                            if let Err(e) = self.db.update_provider_settings_config(
+                                "qwen",
+                                &provider_id,
+                                &provider.settings_config,
+                            ) {
+                                log::warn!("同步 Qwen Token 到数据库失败: {e}");
+                            } else {
+                                log::info!(
+                                    "已同步 Qwen Token 到数据库 (provider: {provider_id})"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features, skip silently
             }
@@ -606,6 +668,11 @@ impl ProxyService {
 
         if let Ok(live_config) = self.read_gemini_live() {
             self.sync_live_config_to_provider(&AppType::Gemini, &live_config)
+                .await?;
+        }
+
+        if let Ok(live_config) = self.read_qwen_live() {
+            self.sync_live_config_to_provider(&AppType::Qwen, &live_config)
                 .await?;
         }
 
@@ -661,7 +728,7 @@ impl ProxyService {
             .map_err(|e| format!("清除接管状态失败: {e}"))?;
 
         // 4. 清除所有应用的 enabled 状态（用户手动关闭，不需要下次自动恢复）
-        for app_type in ["claude", "codex", "gemini"] {
+        for app_type in ["claude", "codex", "gemini", "qwen"] {
             if let Ok(mut config) = self.db.get_proxy_config_for_app(app_type).await {
                 if config.enabled {
                     config.enabled = false;
@@ -766,6 +833,7 @@ impl ProxyService {
             AppType::Claude => ("claude", self.read_claude_live()?),
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
+            AppType::Qwen => ("qwen", self.read_qwen_live()?),
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features
                 return Err("OpenCode 不支持代理功能".to_string());
@@ -978,6 +1046,22 @@ impl ProxyService {
                 self.write_gemini_live(&live_config)?;
                 log::info!("Gemini Live 配置已接管，代理地址: {proxy_url}");
             }
+            AppType::Qwen => {
+                let mut live_config = self.read_qwen_live()?;
+
+                if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
+                    env.insert("OPENAI_BASE_URL".to_string(), json!(&proxy_url));
+                    env.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                } else {
+                    live_config["env"] = json!({
+                        "OPENAI_BASE_URL": &proxy_url,
+                        "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                    });
+                }
+
+                self.write_qwen_live(&live_config)?;
+                log::info!("Qwen Live 配置已接管，代理地址: {proxy_url}");
+            }
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features
                 return Err("OpenCode 不支持代理功能".to_string());
@@ -1065,6 +1149,21 @@ impl ProxyService {
                     let _ = self.write_gemini_live(&live_config);
                 }
             }
+            AppType::Qwen => {
+                if let Ok(mut live_config) = self.read_qwen_live() {
+                    if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
+                        env.insert("OPENAI_BASE_URL".to_string(), json!(&proxy_url));
+                        env.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                    } else {
+                        live_config["env"] = json!({
+                            "OPENAI_BASE_URL": &proxy_url,
+                            "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                        });
+                    }
+
+                    let _ = self.write_qwen_live(&live_config);
+                }
+            }
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features, skip silently
             }
@@ -1100,6 +1199,14 @@ impl ProxyService {
                     log::info!("Gemini Live 配置已恢复");
                 }
             }
+            AppType::Qwen => {
+                if let Ok(Some(backup)) = self.db.get_live_backup("qwen").await {
+                    let config: Value = serde_json::from_str(&backup.original_config)
+                        .map_err(|e| format!("解析 Qwen 备份失败: {e}"))?;
+                    self.write_qwen_live(&config)?;
+                    log::info!("Qwen Live 配置已恢复");
+                }
+            }
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features, skip silently
             }
@@ -1112,7 +1219,7 @@ impl ProxyService {
     async fn restore_live_configs(&self) -> Result<(), String> {
         let mut errors = Vec::new();
 
-        for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini, AppType::Qwen] {
             if let Err(e) = self
                 .restore_live_config_for_app_with_fallback(&app_type)
                 .await
@@ -1182,6 +1289,7 @@ impl ProxyService {
             AppType::Claude => self.write_claude_live(config),
             AppType::Codex => self.write_codex_live(config),
             AppType::Gemini => self.write_gemini_live(config),
+            AppType::Qwen => self.write_qwen_live(config),
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features
                 Err("OpenCode 不支持代理功能".to_string())
@@ -1201,6 +1309,10 @@ impl ProxyService {
             },
             AppType::Gemini => match self.read_gemini_live() {
                 Ok(config) => Self::is_gemini_live_taken_over(&config),
+                Err(_) => false,
+            },
+            AppType::Qwen => match self.read_qwen_live() {
+                Ok(config) => Self::is_qwen_live_taken_over(&config),
                 Err(_) => false,
             },
             AppType::OpenCode => {
@@ -1246,6 +1358,7 @@ impl ProxyService {
             AppType::Claude => self.cleanup_claude_takeover_placeholders_in_live(),
             AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
+            AppType::Qwen => self.cleanup_qwen_takeover_placeholders_in_live(),
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features
                 Ok(())
@@ -1389,10 +1502,34 @@ impl ProxyService {
         Ok(())
     }
 
+    fn cleanup_qwen_takeover_placeholders_in_live(&self) -> Result<(), String> {
+        let mut config = self.read_qwen_live()?;
+
+        let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) else {
+            return Ok(());
+        };
+
+        if env.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+            env.remove("OPENAI_API_KEY");
+        }
+
+        if env
+            .get("OPENAI_BASE_URL")
+            .and_then(|v| v.as_str())
+            .map(Self::is_local_proxy_url)
+            .unwrap_or(false)
+        {
+            env.remove("OPENAI_BASE_URL");
+        }
+
+        self.write_qwen_live(&config)?;
+        Ok(())
+    }
+
     /// 检查是否处于 Live 接管模式
     pub async fn is_takeover_active(&self) -> Result<bool, String> {
         let status = self.get_takeover_status().await?;
-        Ok(status.claude || status.codex || status.gemini)
+        Ok(status.claude || status.codex || status.gemini || status.qwen)
     }
 
     /// 从异常退出中恢复（启动时调用）
@@ -1442,6 +1579,12 @@ impl ProxyService {
             }
         }
 
+        if let Ok(config) = self.read_qwen_live() {
+            if Self::is_qwen_live_taken_over(&config) {
+                return true;
+            }
+        }
+
         false
     }
 
@@ -1481,6 +1624,14 @@ impl ProxyService {
         env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
     }
 
+    fn is_qwen_live_taken_over(config: &Value) -> bool {
+        let env = match config.get("env").and_then(|v| v.as_object()) {
+            Some(env) => env,
+            None => return false,
+        };
+        env.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
+    }
+
     /// 从供应商配置更新 Live 备份（用于代理模式下的热切换）
     ///
     /// 与 backup_live_configs() 不同，此方法从供应商的 settings_config 生成备份，
@@ -1511,6 +1662,17 @@ impl ProxyService {
                 };
                 serde_json::to_string(&env_backup)
                     .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?
+            }
+            "qwen" => {
+                // Qwen: 只提取 env 字段（与原始备份格式一致）
+                // proxy.rs 的 read_qwen_live() 返回 {"env": {...}}
+                let env_backup = if let Some(env) = provider.settings_config.get("env") {
+                    json!({ "env": env })
+                } else {
+                    json!({ "env": {} })
+                };
+                serde_json::to_string(&env_backup)
+                    .map_err(|e| format!("序列化 Qwen 配置失败: {e}"))?
             }
             _ => return Err(format!("未知的应用类型: {app_type}")),
         };
@@ -1722,6 +1884,26 @@ impl ProxyService {
         Ok(env_to_json(&env_map))
     }
 
+    fn read_qwen_live(&self) -> Result<Value, String> {
+        use crate::qwen_config::{env_to_json, get_qwen_env_path, read_qwen_env};
+
+        let env_path = get_qwen_env_path();
+        if !env_path.exists() {
+            return Err("Qwen .env 文件不存在".to_string());
+        }
+
+        let env_map = read_qwen_env().map_err(|e| format!("读取 Qwen env 失败: {e}"))?;
+        Ok(env_to_json(&env_map))
+    }
+
+    fn write_qwen_live(&self, config: &Value) -> Result<(), String> {
+        use crate::qwen_config::{json_to_env, write_qwen_env_atomic};
+
+        let env_map = json_to_env(config).map_err(|e| format!("转换 Qwen 配置失败: {e}"))?;
+        write_qwen_env_atomic(&env_map).map_err(|e| format!("写入 Qwen env 失败: {e}"))?;
+        Ok(())
+    }
+
     fn write_gemini_live(&self, config: &Value) -> Result<(), String> {
         use crate::gemini_config::{json_to_env, write_gemini_env_atomic};
 
@@ -1816,6 +1998,11 @@ impl ProxyService {
                 }
                 if takeover.gemini {
                     self.takeover_live_config_best_effort(&AppType::Gemini)
+                        .await?;
+                    updated_any = true;
+                }
+                if takeover.qwen {
+                    self.takeover_live_config_best_effort(&AppType::Qwen)
                         .await?;
                     updated_any = true;
                 }
