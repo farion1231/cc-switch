@@ -80,6 +80,8 @@ pub struct SkillApps {
     pub gemini: bool,
     #[serde(default)]
     pub opencode: bool,
+    #[serde(default)]
+    pub qwen: bool,
 }
 
 impl SkillApps {
@@ -90,6 +92,7 @@ impl SkillApps {
             AppType::Codex => self.codex,
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
+            AppType::Qwen => self.qwen,
         }
     }
 
@@ -100,6 +103,7 @@ impl SkillApps {
             AppType::Codex => self.codex = enabled,
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
+            AppType::Qwen => self.qwen = enabled,
         }
     }
 
@@ -118,12 +122,15 @@ impl SkillApps {
         if self.opencode {
             apps.push(AppType::OpenCode);
         }
+        if self.qwen {
+            apps.push(AppType::Qwen);
+        }
         apps
     }
 
     /// 检查是否所有应用都未启用
     pub fn is_empty(&self) -> bool {
-        !self.claude && !self.codex && !self.gemini && !self.opencode
+        !self.claude && !self.codex && !self.gemini && !self.opencode && !self.qwen
     }
 
     /// 仅启用指定应用（其他应用设为禁用）
@@ -263,6 +270,8 @@ pub struct PromptRoot {
     pub gemini: PromptConfig,
     #[serde(default)]
     pub opencode: PromptConfig,
+    #[serde(default)]
+    pub qwen: PromptConfig,
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
@@ -346,6 +355,9 @@ pub struct CommonConfigSnippets {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qwen: Option<String>,
 }
 
 impl CommonConfigSnippets {
@@ -356,6 +368,7 @@ impl CommonConfigSnippets {
             AppType::Codex => self.codex.as_ref(),
             AppType::Gemini => self.gemini.as_ref(),
             AppType::OpenCode => self.opencode.as_ref(),
+            AppType::Qwen => self.qwen.as_ref(),
         }
     }
 
@@ -366,6 +379,7 @@ impl CommonConfigSnippets {
             AppType::Codex => self.codex = snippet,
             AppType::Gemini => self.gemini = snippet,
             AppType::OpenCode => self.opencode = snippet,
+            AppType::Qwen => self.qwen = snippet,
         }
     }
 }
@@ -565,6 +579,7 @@ impl MultiAppConfig {
             AppType::Codex => &self.mcp.codex,
             AppType::Gemini => &self.mcp.gemini,
             AppType::OpenCode => &self.mcp.opencode,
+            AppType::Qwen => &self.mcp.qwen,
         }
     }
 
@@ -575,6 +590,7 @@ impl MultiAppConfig {
             AppType::Codex => &mut self.mcp.codex,
             AppType::Gemini => &mut self.mcp.gemini,
             AppType::OpenCode => &mut self.mcp.opencode,
+            AppType::Qwen => &mut self.mcp.qwen,
         }
     }
 
@@ -589,6 +605,7 @@ impl MultiAppConfig {
         Self::auto_import_prompt_if_exists(&mut config, AppType::Codex)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::Gemini)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::OpenCode)?;
+        Self::auto_import_prompt_if_exists(&mut config, AppType::Qwen)?;
 
         Ok(config)
     }
@@ -609,6 +626,7 @@ impl MultiAppConfig {
             || !self.prompts.codex.prompts.is_empty()
             || !self.prompts.gemini.prompts.is_empty()
             || !self.prompts.opencode.prompts.is_empty()
+            || !self.prompts.qwen.prompts.is_empty()
         {
             return Ok(false);
         }
@@ -621,6 +639,7 @@ impl MultiAppConfig {
             AppType::Codex,
             AppType::Gemini,
             AppType::OpenCode,
+            AppType::Qwen,
         ] {
             // 复用已有的单应用导入逻辑
             if Self::auto_import_prompt_if_exists(self, app)? {
