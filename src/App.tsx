@@ -125,6 +125,7 @@ function App() {
     codex: true,
     gemini: true,
     opencode: true,
+    qwen: true,
   };
 
   // Get first visible app for fallback
@@ -133,6 +134,7 @@ function App() {
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
     if (visibleApps.opencode) return "opencode";
+    if (visibleApps.qwen) return "qwen";
     return "claude"; // fallback
   };
 
