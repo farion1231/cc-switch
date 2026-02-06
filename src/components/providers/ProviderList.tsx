@@ -6,32 +6,33 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import {
-  useEffect,
   useMemo,
-  useRef,
-  useState,
+  useCallback,
   type CSSProperties,
 } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { useDragSort } from "@/hooks/useDragSort";
+import { useListControls } from "@/hooks/useListControls";
 // import { useStreamCheck } from "@/hooks/useStreamCheck"; // 测试功能已隐藏
 import { ProviderCard } from "@/components/providers/ProviderCard";
+import { ProviderCardCompact } from "@/components/providers/ProviderCardCompact";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+import { ListToolbar } from "@/components/common/ListToolbar";
+import {
+  SearchOverlay,
+  useSearchShortcut,
+} from "@/components/common/SearchOverlay";
 import {
   useAutoFailoverEnabled,
   useFailoverQueue,
   useAddToFailoverQueue,
   useRemoveFromFailoverQueue,
 } from "@/lib/query/failover";
-import { useCallback } from "react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+import { useSettingsQuery } from "@/lib/query";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -76,6 +77,37 @@ export function ProviderList({
     providers,
     appId,
   );
+
+  // 获取设置（搜索快捷键）
+  const { data: settings } = useSettingsQuery();
+  const searchShortcut = settings?.searchShortcut || "mod+k";
+
+  // 列表控制（视图模式、排序、搜索、匿名模式）
+  const {
+    viewMode,
+    setViewMode,
+    sortField,
+    setSortField,
+    sortOrder,
+    toggleSortOrder,
+    isSearchOpen,
+    openSearch,
+    closeSearch,
+    searchTerm,
+    setSearchTerm,
+    clearSearch,
+    searchHistory,
+    addToSearchHistory,
+    clearSearchHistory,
+    isAnonymousMode,
+    toggleAnonymousMode,
+  } = useListControls({ panelId: "providers" });
+
+  // 搜索快捷键
+  useSearchShortcut(openSearch, searchShortcut, {
+    isOpen: isSearchOpen,
+    onClose: closeSearch,
+  });
 
   // OpenCode: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
   const { data: opencodeLiveIds } = useQuery({
@@ -144,48 +176,71 @@ export function ProviderList({
   //   checkProvider(provider.id, provider.name);
   // };
 
-  const [searchTerm, setSearchTerm] = useState("");
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      if ((event.metaKey || event.ctrlKey) && key === "f") {
-        event.preventDefault();
-        setIsSearchOpen(true);
-        return;
-      }
-
-      if (key === "escape") {
-        setIsSearchOpen(false);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+  // 解析搜索语法前缀
+  const parseSearchTerm = useCallback((term: string) => {
+    const trimmed = term.trim().toLowerCase();
+    // 支持的前缀: name:, url:
+    const prefixMatch = trimmed.match(/^(name|url):(.*)$/);
+    if (prefixMatch) {
+      return {
+        prefix: prefixMatch[1] as "name" | "url",
+        keyword: prefixMatch[2].trim(),
+      };
+    }
+    return { prefix: null, keyword: trimmed };
   }, []);
 
-  useEffect(() => {
-    if (isSearchOpen) {
-      const frame = requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
-      return () => cancelAnimationFrame(frame);
-    }
-  }, [isSearchOpen]);
+  // 提取用于高亮的关键词和前缀
+  const { highlightKeyword, highlightField } = useMemo(() => {
+    const { prefix, keyword } = parseSearchTerm(searchTerm);
+    return {
+      highlightKeyword: keyword,
+      highlightField: prefix, // "name" | "tag" | "note" | "url" | null
+    };
+  }, [searchTerm, parseSearchTerm]);
 
-  const filteredProviders = useMemo(() => {
-    const keyword = searchTerm.trim().toLowerCase();
-    if (!keyword) return sortedProviders;
-    return sortedProviders.filter((provider) => {
-      const fields = [provider.name, provider.notes, provider.websiteUrl];
-      return fields.some((field) =>
-        field?.toString().toLowerCase().includes(keyword),
-      );
+  // 根据排序字段和顺序对供应商进行排序
+  const sortedAndFilteredProviders = useMemo(() => {
+    let result = [...sortedProviders];
+
+    // 搜索过滤
+    const { prefix, keyword } = parseSearchTerm(searchTerm);
+    if (keyword) {
+      result = result.filter((provider) => {
+        if (prefix === "name") {
+          return provider.name?.toLowerCase().includes(keyword);
+        }
+        if (prefix === "url") {
+          return provider.websiteUrl?.toLowerCase().includes(keyword);
+        }
+        // 无前缀时搜索名称和 URL
+        const fields = [provider.name, provider.websiteUrl];
+        return fields.some((field) =>
+          field?.toString().toLowerCase().includes(keyword),
+        );
+      });
+    }
+
+    // 排序
+    result.sort((a, b) => {
+      let comparison = 0;
+      if (sortField === "name") {
+        comparison = a.name.localeCompare(b.name);
+      } else if (sortField === "createdAt") {
+        const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        comparison = aTime - bTime;
+      } else {
+        // custom: 使用 sortIndex 排序
+        const aIndex = a.sortIndex ?? Number.MAX_SAFE_INTEGER;
+        const bIndex = b.sortIndex ?? Number.MAX_SAFE_INTEGER;
+        comparison = aIndex - bIndex;
+      }
+      return sortOrder === "asc" ? comparison : -comparison;
     });
-  }, [searchTerm, sortedProviders]);
+
+    return result;
+  }, [sortedProviders, searchTerm, sortField, sortOrder, parseSearchTerm]);
 
   if (isLoading) {
     return (
@@ -211,112 +266,121 @@ export function ProviderList({
       onDragEnd={handleDragEnd}
     >
       <SortableContext
-        items={filteredProviders.map((provider) => provider.id)}
+        items={sortedAndFilteredProviders.map((provider) => provider.id)}
         strategy={verticalListSortingStrategy}
       >
-        <div className="space-y-3">
-          {filteredProviders.map((provider) => (
-            <SortableProviderCard
-              key={provider.id}
-              provider={provider}
-              isCurrent={provider.id === currentProviderId}
-              appId={appId}
-              isInConfig={isProviderInConfig(provider.id)}
-              onSwitch={onSwitch}
-              onEdit={onEdit}
-              onDelete={onDelete}
-              onRemoveFromConfig={onRemoveFromConfig}
-              onDuplicate={onDuplicate}
-              onConfigureUsage={onConfigureUsage}
-              onOpenWebsite={onOpenWebsite}
-              onOpenTerminal={onOpenTerminal}
-              // onTest 功能已隐藏 - 供应商请求格式复杂难以统一测试
-              // onTest={appId !== "opencode" ? handleTest : undefined}
-              isTesting={false} // isChecking(provider.id) - 测试功能已隐藏
-              isProxyRunning={isProxyRunning}
-              isProxyTakeover={isProxyTakeover}
-              // 故障转移相关：联动状态
-              isAutoFailoverEnabled={isFailoverModeActive}
-              failoverPriority={getFailoverPriority(provider.id)}
-              isInFailoverQueue={isInFailoverQueue(provider.id)}
-              onToggleFailover={(enabled) =>
-                handleToggleFailover(provider.id, enabled)
-              }
-              activeProviderId={activeProviderId}
-            />
-          ))}
-        </div>
+        {viewMode === "list" ? (
+          <div className="space-y-3">
+            {sortedAndFilteredProviders.map((provider) => (
+              <SortableProviderCard
+                key={provider.id}
+                provider={provider}
+                isCurrent={provider.id === currentProviderId}
+                appId={appId}
+                isInConfig={isProviderInConfig(provider.id)}
+                onSwitch={onSwitch}
+                onEdit={onEdit}
+                onDelete={onDelete}
+                onRemoveFromConfig={onRemoveFromConfig}
+                onDuplicate={onDuplicate}
+                onConfigureUsage={onConfigureUsage}
+                onOpenWebsite={onOpenWebsite}
+                onOpenTerminal={onOpenTerminal}
+                // onTest 功能已隐藏 - 供应商请求格式复杂难以统一测试
+                // onTest={appId !== "opencode" ? handleTest : undefined}
+                isTesting={false} // isChecking(provider.id) - 测试功能已隐藏
+                isProxyRunning={isProxyRunning}
+                isProxyTakeover={isProxyTakeover}
+                // 故障转移相关：联动状态
+                isAutoFailoverEnabled={isFailoverModeActive}
+                failoverPriority={getFailoverPriority(provider.id)}
+                isInFailoverQueue={isInFailoverQueue(provider.id)}
+                onToggleFailover={(enabled) =>
+                  handleToggleFailover(provider.id, enabled)
+                }
+                activeProviderId={activeProviderId}
+                isAnonymousMode={isAnonymousMode}
+                highlightQuery={highlightKeyword}
+                highlightField={highlightField}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {sortedAndFilteredProviders.map((provider) => (
+              <ProviderCardCompact
+                key={provider.id}
+                provider={provider}
+                isCurrent={provider.id === currentProviderId}
+                appId={appId}
+                isInConfig={isProviderInConfig(provider.id)}
+                onSwitch={onSwitch}
+                onEdit={onEdit}
+                onDelete={onDelete}
+                onRemoveFromConfig={onRemoveFromConfig}
+                onDuplicate={onDuplicate}
+                onConfigureUsage={onConfigureUsage}
+                onOpenWebsite={onOpenWebsite}
+                onOpenTerminal={onOpenTerminal}
+                isProxyRunning={isProxyRunning}
+                isProxyTakeover={isProxyTakeover}
+                isAutoFailoverEnabled={isFailoverModeActive}
+                failoverPriority={getFailoverPriority(provider.id)}
+                isInFailoverQueue={isInFailoverQueue(provider.id)}
+                onToggleFailover={(enabled) =>
+                  handleToggleFailover(provider.id, enabled)
+                }
+                activeProviderId={activeProviderId}
+                isAnonymousMode={isAnonymousMode}
+                highlightQuery={highlightKeyword}
+                highlightField={highlightField}
+              />
+            ))}
+          </div>
+        )}
       </SortableContext>
     </DndContext>
   );
 
   return (
-    <div className="mt-4 space-y-4">
-      <AnimatePresence>
-        {isSearchOpen && (
-          <motion.div
-            key="provider-search"
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 sm:right-6 sm:left-auto sm:translate-x-0"
-          >
-            <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
-              <div className="relative flex items-center gap-2">
-                <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
-                <Input
-                  ref={searchInputRef}
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder={t("provider.searchPlaceholder", {
-                    defaultValue: "Search name, notes, or URL...",
-                  })}
-                  aria-label={t("provider.searchAriaLabel", {
-                    defaultValue: "Search providers",
-                  })}
-                  className="pr-16 pl-9"
-                />
-                {searchTerm && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute text-xs -translate-y-1/2 right-11 top-1/2"
-                    onClick={() => setSearchTerm("")}
-                  >
-                    {t("common.clear", { defaultValue: "Clear" })}
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ml-auto"
-                  onClick={() => setIsSearchOpen(false)}
-                  aria-label={t("provider.searchCloseAriaLabel", {
-                    defaultValue: "Close provider search",
-                  })}
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>
-                  {t("provider.searchScopeHint", {
-                    defaultValue: "Matches provider name, notes, and URL.",
-                  })}
-                </span>
-                <span>
-                  {t("provider.searchCloseHint", {
-                    defaultValue: "Press Esc to close",
-                  })}
-                </span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <div className="space-y-4">
+      {/* 工具栏 */}
+      <ListToolbar
+        viewMode={viewMode}
+        sortField={sortField}
+        sortOrder={sortOrder}
+        isSearchOpen={isSearchOpen}
+        isLoading={isLoading}
+        isAnonymousMode={isAnonymousMode}
+        onAnonymousModeToggle={toggleAnonymousMode}
+        onViewModeChange={setViewMode}
+        onSortFieldChange={setSortField}
+        onSortOrderToggle={toggleSortOrder}
+        onSearchOpen={openSearch}
+      />
 
-      {filteredProviders.length === 0 ? (
+      {/* 搜索覆盖层 */}
+      <SearchOverlay
+        isOpen={isSearchOpen}
+        searchTerm={searchTerm}
+        placeholder={t("provider.searchPlaceholder", {
+          defaultValue: "Search name, notes, or URL...",
+        })}
+        scopeHint={t("provider.searchScopeHint", {
+          defaultValue: "Matches provider name, notes, and URL.",
+        })}
+        resultCount={sortedAndFilteredProviders.length}
+        totalCount={sortedProviders.length}
+        searchHistory={searchHistory}
+        onSearchChange={setSearchTerm}
+        onClose={closeSearch}
+        onClear={clearSearch}
+        onSelectHistory={setSearchTerm}
+        onClearHistory={clearSearchHistory}
+        onSearchSubmit={addToSearchHistory}
+      />
+
+      {sortedAndFilteredProviders.length === 0 ? (
         <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
           {t("provider.noSearchResults", {
             defaultValue: "No providers match your search.",
@@ -353,6 +417,10 @@ interface SortableProviderCardProps {
   isInFailoverQueue: boolean;
   onToggleFailover: (enabled: boolean) => void;
   activeProviderId?: string;
+  // 匿名模式和搜索高亮
+  isAnonymousMode?: boolean;
+  highlightQuery?: string;
+  highlightField?: "name" | "url" | null;
 }
 
 function SortableProviderCard({
@@ -377,6 +445,9 @@ function SortableProviderCard({
   isInFailoverQueue,
   onToggleFailover,
   activeProviderId,
+  isAnonymousMode,
+  highlightQuery,
+  highlightField,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -424,6 +495,9 @@ function SortableProviderCard({
         isInFailoverQueue={isInFailoverQueue}
         onToggleFailover={onToggleFailover}
         activeProviderId={activeProviderId}
+        isAnonymousMode={isAnonymousMode}
+        highlightQuery={highlightQuery}
+        highlightField={highlightField}
       />
     </div>
   );

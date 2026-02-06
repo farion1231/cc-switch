@@ -45,8 +45,13 @@ export function FailoverQueueManager({
   const [selectedProviderId, setSelectedProviderId] = useState<string>("");
 
   // 故障转移开关状态（每个应用独立）
-  const { data: isFailoverEnabled = false } = useAutoFailoverEnabled(appType);
+  const {
+    data: isFailoverEnabled,
+    isLoading: isFailoverLoading,
+    isFetching: isFailoverFetching,
+  } = useAutoFailoverEnabled(appType);
   const setFailoverEnabled = useSetAutoFailoverEnabled();
+  const isFailoverSwitchLoading = isFailoverLoading || isFailoverFetching;
 
   // 查询数据
   const {
@@ -140,15 +145,16 @@ export function FailoverQueueManager({
           </div>
           <p className="text-xs text-muted-foreground">
             {t("proxy.failover.autoSwitchDescription", {
-              defaultValue:
-                "开启后将立即切换到队列 P1，并在请求失败时自动切换到队列中的下一个供应商",
+              defaultValue: "开启后，请求失败时自动切换到队列中的下一个供应商",
             })}
           </p>
         </div>
         <Switch
-          checked={isFailoverEnabled}
+          checked={!!isFailoverEnabled}
           onCheckedChange={handleToggleFailover}
-          disabled={disabled || setFailoverEnabled.isPending}
+          disabled={
+            disabled || setFailoverEnabled.isPending || isFailoverSwitchLoading
+          }
         />
       </div>
 

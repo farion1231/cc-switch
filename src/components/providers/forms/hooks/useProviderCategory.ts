@@ -4,7 +4,6 @@ import type { AppId } from "@/lib/api";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
-import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
 
 interface UseProviderCategoryProps {
   appId: AppId;
@@ -43,9 +42,7 @@ export function useProviderCategory({
     if (!selectedPresetId) return;
 
     // 从预设 ID 提取索引
-    const match = selectedPresetId.match(
-      /^(claude|codex|gemini|opencode)-(\d+)$/,
-    );
+    const match = selectedPresetId.match(/^(claude|codex|gemini)-(\d+)$/);
     if (!match) return;
 
     const [, type, indexStr] = match;
@@ -67,11 +64,6 @@ export function useProviderCategory({
       }
     } else if (type === "gemini" && appId === "gemini") {
       const preset = geminiProviderPresets[index];
-      if (preset) {
-        setCategory(preset.category || undefined);
-      }
-    } else if (type === "opencode" && appId === "opencode") {
-      const preset = opencodeProviderPresets[index];
       if (preset) {
         setCategory(preset.category || undefined);
       }

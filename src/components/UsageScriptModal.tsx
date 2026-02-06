@@ -60,11 +60,11 @@ const generatePresetTemplates = (
     }
   },
   extractor: function(response) {
-    return {
-      isValid: response.is_active || true,
-      remaining: response.balance,
-      unit: "USD"
-    };
+      return {
+        isValid: response.is_active ?? true,
+        remaining: response.balance,
+        unit: "USD"
+      };
   }
 })`,
 

@@ -11,11 +11,11 @@ import {
   // Bot, // TODO: Agents 功能开发中，暂时不需要
   Book,
   Wrench,
+  Server,
   RefreshCw,
   History,
   BarChart2,
   Download,
-  FolderArchive,
   Search,
 } from "lucide-react";
 import type { Provider, VisibleApps } from "@/types";
@@ -35,7 +35,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
 import { isWindows, isLinux } from "@/lib/platform";
-import { AppSwitcher } from "@/components/AppSwitcher";
+import { AppSwitcher, APP_LIST } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
@@ -53,7 +53,6 @@ import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
-import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 
@@ -375,6 +374,23 @@ function App() {
         return;
       }
 
+      // Cmd/Ctrl + 1~4 切换应用
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.shiftKey &&
+        !event.altKey
+      ) {
+        const keyNum = parseInt(event.key, 10);
+        if (keyNum >= 1 && keyNum <= APP_LIST.length) {
+          event.preventDefault();
+          const targetApp = APP_LIST[keyNum - 1];
+          if (targetApp) {
+            setActiveApp(targetApp);
+          }
+          return;
+        }
+      }
+
       // ESC 键返回
       if (event.key !== "Escape" || event.defaultPrevented) return;
 
@@ -678,7 +694,6 @@ function App() {
       <AnimatePresence mode="wait">
         <motion.div
           key={currentView}
-          className="flex-1 min-h-0"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -780,14 +795,14 @@ function App() {
                 </h1>
               </div>
             ) : (
-              <div className="flex items-center gap-2">
-                <div className="relative inline-flex items-center">
+              <>
+                <div className="flex items-center gap-1">
                   <a
                     href="https://github.com/farion1231/cc-switch"
                     target="_blank"
                     rel="noreferrer"
                     className={cn(
-                      "text-xl font-semibold transition-colors",
+                      "text-base font-semibold transition-colors",
                       isProxyRunning && isCurrentAppTakeoverActive
                         ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
                         : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
@@ -795,26 +810,18 @@ function App() {
                   >
                     CC Switch
                   </a>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => {
-                    setSettingsDefaultTab("general");
-                    setCurrentView("settings");
-                  }}
-                  title={t("common.settings")}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
-                >
-                  <Settings className="w-4 h-4" />
-                </Button>
-                <UpdateBadge
-                  onClick={() => {
-                    setSettingsDefaultTab("about");
-                    setCurrentView("settings");
-                  }}
-                />
-                {isCurrentAppTakeoverActive && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      setSettingsDefaultTab("general");
+                      setCurrentView("settings");
+                    }}
+                    title={t("common.settings")}
+                    className="hover:bg-accent hover:text-accent-foreground h-7 w-7"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -822,20 +829,24 @@ function App() {
                       setSettingsDefaultTab("usage");
                       setCurrentView("settings");
                     }}
-                    title={t("settings.usage.title", {
-                      defaultValue: "使用统计",
-                    })}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                    title={t("settings.usage", { defaultValue: "使用统计" })}
+                    className="hover:bg-accent hover:text-accent-foreground h-7 w-7"
                   >
-                    <BarChart2 className="w-4 h-4" />
+                    <BarChart2 className="w-3.5 h-3.5" />
                   </Button>
-                )}
-              </div>
+                </div>
+                <UpdateBadge
+                  onClick={() => {
+                    setSettingsDefaultTab("about");
+                    setCurrentView("settings");
+                  }}
+                />
+              </>
             )}
           </div>
 
           <div
-            className="flex items-center gap-1.5 h-[32px]"
+            className="flex items-center gap-2 h-[32px]"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
             {currentView === "prompts" && (
@@ -843,7 +854,7 @@ function App() {
                 variant="ghost"
                 size="sm"
                 onClick={() => promptPanelRef.current?.openAdd()}
-                className="hover:bg-black/5 dark:hover:bg-white/5"
+                className="hover:bg-accent hover:text-accent-foreground"
               >
                 <Plus className="w-4 h-4 mr-2" />
                 {t("prompts.add")}
@@ -855,7 +866,7 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => mcpPanelRef.current?.openImport()}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <Download className="w-4 h-4 mr-2" />
                   {t("mcp.importExisting")}
@@ -864,7 +875,7 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => mcpPanelRef.current?.openAdd()}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <Plus className="w-4 h-4 mr-2" />
                   {t("mcp.addMcp")}
@@ -876,19 +887,8 @@ function App() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() =>
-                    unifiedSkillsPanelRef.current?.openInstallFromZip()
-                  }
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
-                >
-                  <FolderArchive className="w-4 h-4 mr-2" />
-                  {t("skills.installFromZip.button")}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
                   onClick={() => unifiedSkillsPanelRef.current?.openImport()}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <Download className="w-4 h-4 mr-2" />
                   {t("skills.import")}
@@ -897,7 +897,7 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => setCurrentView("skillsDiscovery")}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <Search className="w-4 h-4 mr-2" />
                   {t("skills.discover")}
@@ -910,7 +910,7 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => skillsPageRef.current?.refresh()}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <RefreshCw className="w-4 h-4 mr-2" />
                   {t("skills.refresh")}
@@ -919,7 +919,7 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => skillsPageRef.current?.openRepoManager()}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent hover:text-accent-foreground"
                 >
                   <Settings className="w-4 h-4 mr-2" />
                   {t("skills.repoManager")}
@@ -944,23 +944,15 @@ function App() {
                   </>
                 )}
 
-                <AppSwitcher
-                  activeApp={activeApp}
-                  onSwitch={setActiveApp}
-                  visibleApps={visibleApps}
-                  compact={
-                    isCurrentAppTakeoverActive &&
-                    Object.values(visibleApps).filter(Boolean).length >= 4
-                  }
-                />
+                <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} visibleApps={visibleApps} />
 
-                <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
+                <div className="flex items-center gap-0.5 p-1 bg-muted rounded-xl">
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => setCurrentView("skills")}
                     className={cn(
-                      "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                      "text-muted-foreground hover:text-foreground hover:bg-accent hover:text-accent-foreground",
                       "transition-all duration-200 ease-in-out overflow-hidden",
                       hasSkillsSupport
                         ? "opacity-100 w-8 scale-100 px-2"
@@ -970,23 +962,11 @@ function App() {
                   >
                     <Wrench className="flex-shrink-0 w-4 h-4" />
                   </Button>
-                  {/* TODO: Agents 功能开发中，暂时隐藏入口 */}
-                  {/* {isClaudeApp && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setCurrentView("agents")}
-                        className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                        title="Agents"
-                      >
-                        <Bot className="w-4 h-4" />
-                      </Button>
-                    )} */}
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => setCurrentView("prompts")}
-                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                    className="text-muted-foreground hover:text-foreground hover:bg-accent hover:text-accent-foreground"
                     title={t("prompts.manage")}
                   >
                     <Book className="w-4 h-4" />
@@ -1004,17 +984,17 @@ function App() {
                     variant="ghost"
                     size="sm"
                     onClick={() => setCurrentView("mcp")}
-                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                    className="text-muted-foreground hover:text-foreground hover:bg-accent hover:text-accent-foreground"
                     title={t("mcp.title")}
                   >
-                    <McpIcon size={16} />
+                    <Server className="w-4 h-4" />
                   </Button>
                 </div>
 
                 <Button
                   onClick={() => setIsAddOpen(true)}
                   size="icon"
-                  className={`ml-2 ${addActionButtonClass}`}
+                  className={`ml-1 ${addActionButtonClass}`}
                 >
                   <Plus className="w-5 h-5" />
                 </Button>
@@ -1024,8 +1004,8 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 flex flex-col animate-fade-in">
-        {renderContent()}
+      <main className="flex-1 pb-12 animate-fade-in ">
+        <div className="pb-12">{renderContent()}</div>
       </main>
 
       <AddProviderDialog

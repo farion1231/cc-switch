@@ -26,8 +26,8 @@ export const settingsSchema = z.object({
   currentProviderCodex: z.string().optional(),
   currentProviderGemini: z.string().optional(),
 
-  // Skill 同步设置
-  skillSyncMethod: z.enum(["auto", "symlink", "copy"]).optional(),
+  // 键盘快捷键设置
+  searchShortcut: z.string().optional(), // 默认: "mod+k" (mod = Mac 上的 Cmd, Windows 上的 Ctrl)
 });
 
 export type SettingsFormData = z.infer<typeof settingsSchema>;

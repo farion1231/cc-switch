@@ -44,9 +44,9 @@ const computeDefaultConfigDir = async (
         ? ".claude"
         : app === "codex"
           ? ".codex"
-          : app === "gemini"
-            ? ".gemini"
-            : ".config/opencode";
+          : app === "opencode"
+            ? ".opencode"
+            : ".gemini";
     return await join(home, folder);
   } catch (error) {
     console.error(
@@ -199,9 +199,9 @@ export function useDirectorySettings({
             ? { claudeConfigDir: sanitized }
             : key === "codex"
               ? { codexConfigDir: sanitized }
-              : key === "gemini"
-                ? { geminiConfigDir: sanitized }
-                : { opencodeConfigDir: sanitized },
+              : key === "opencode"
+                ? { opencodeConfigDir: sanitized }
+                : { geminiConfigDir: sanitized },
         );
       }
 
@@ -227,9 +227,9 @@ export function useDirectorySettings({
           ? "claude"
           : app === "codex"
             ? "codex"
-            : app === "gemini"
-              ? "gemini"
-              : "opencode",
+            : app === "opencode"
+              ? "opencode"
+              : "gemini",
         value,
       );
     },
@@ -243,17 +243,17 @@ export function useDirectorySettings({
           ? "claude"
           : app === "codex"
             ? "codex"
-            : app === "gemini"
-              ? "gemini"
-              : "opencode";
+            : app === "opencode"
+              ? "opencode"
+              : "gemini";
       const currentValue =
         key === "claude"
           ? (settings?.claudeConfigDir ?? resolvedDirs.claude)
           : key === "codex"
             ? (settings?.codexConfigDir ?? resolvedDirs.codex)
-            : key === "gemini"
-              ? (settings?.geminiConfigDir ?? resolvedDirs.gemini)
-              : (settings?.opencodeConfigDir ?? resolvedDirs.opencode);
+            : key === "opencode"
+              ? (settings?.opencodeConfigDir ?? resolvedDirs.opencode)
+              : (settings?.geminiConfigDir ?? resolvedDirs.gemini);
 
       try {
         const picked = await settingsApi.selectConfigDirectory(currentValue);
@@ -299,9 +299,9 @@ export function useDirectorySettings({
           ? "claude"
           : app === "codex"
             ? "codex"
-            : app === "gemini"
-              ? "gemini"
-              : "opencode";
+            : app === "opencode"
+              ? "opencode"
+              : "gemini";
       if (!defaultsRef.current[key]) {
         const fallback = await computeDefaultConfigDir(app);
         if (fallback) {

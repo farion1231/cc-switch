@@ -468,6 +468,16 @@ export const setCodexBaseUrl = (
   return `${prefix}${replacementLine}\n`;
 };
 
+// 从 Codex 的 TOML 配置文本中移除 base_url 字段
+export const removeCodexBaseUrl = (
+  configText: string,
+): string => {
+  const normalizedText = normalizeQuotes(configText);
+  // 匹配整行 base_url = "xxx" 或 base_url = 'xxx'，包括行尾换行符
+  const pattern = /^base_url\s*=\s*["'][^"']*["']\s*\n?/gm;
+  return normalizedText.replace(pattern, "");
+};
+
 // ========== Codex model name utils ==========
 
 // 从 Codex 的 TOML 配置文本中提取 model 字段（支持单/双引号）
@@ -529,4 +539,15 @@ export const setCodexModelName = (
   // 在文件开头插入
   const lines = normalizedText.split("\n");
   return `${replacementLine}\n${lines.join("\n")}`;
+};
+
+// 从 Codex 的 TOML 配置文本中移除 model 字段
+export const removeCodexModelName = (
+  configText: string,
+): string => {
+  const normalizedText = normalizeQuotes(configText);
+  // 匹配整行 model = "xxx" 或 model = 'xxx'，包括行尾换行符
+  // 注意：只匹配独立的 model 字段，不匹配 model_provider
+  const pattern = /^model\s*=\s*["'][^"']*["']\s*\n?/gm;
+  return normalizedText.replace(pattern, "");
 };

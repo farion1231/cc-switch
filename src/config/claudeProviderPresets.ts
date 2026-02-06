@@ -43,11 +43,6 @@ export interface ProviderPreset {
   // 图标配置
   icon?: string; // 图标名称
   iconColor?: string; // 图标颜色
-
-  // Claude API 格式（仅 Claude 供应商使用）
-  // - "anthropic" (默认): Anthropic Messages API 格式，直接透传
-  // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
-  apiFormat?: "anthropic" | "openai_chat";
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -105,7 +100,7 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#0F62FE",
   },
   {
-    name: "Zhipu GLM en",
+    name: "Z.ai GLM",
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     settingsConfig: {
@@ -148,10 +143,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.moonshot.cn/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "kimi-k2.5",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k2.5",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k2.5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k2.5",
+        ANTHROPIC_MODEL: "kimi-k2-thinking",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k2-thinking",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k2-thinking",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k2-thinking",
       },
     },
     category: "cn_official",
@@ -165,6 +160,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
         ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "kimi-for-coding",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-for-coding",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-for-coding",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-for-coding",
       },
     },
     category: "cn_official",
@@ -212,7 +211,6 @@ export const providerPresets: ProviderPreset[] = [
         editorValue: "",
       },
     },
-    icon: "catcoder",
   },
   {
     name: "Longcat",
@@ -339,42 +337,6 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#006FFB",
   },
   {
-    name: "SiliconFlow",
-    websiteUrl: "https://siliconflow.cn",
-    apiKeyUrl: "https://cloud.siliconflow.cn/me/account/ak",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.siliconflow.cn",
-        ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "Pro/MiniMaxAI/MiniMax-M2.1",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Pro/MiniMaxAI/MiniMax-M2.1",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "Pro/MiniMaxAI/MiniMax-M2.1",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "Pro/MiniMaxAI/MiniMax-M2.1",
-      },
-    },
-    category: "aggregator",
-    icon: "siliconflow",
-    iconColor: "#6E29F6",
-  },
-  {
-    name: "SiliconFlow en",
-    websiteUrl: "https://siliconflow.com",
-    apiKeyUrl: "https://cloud.siliconflow.com/account/ak",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.siliconflow.com",
-        ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "MiniMaxAI/MiniMax-M2.1",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMaxAI/MiniMax-M2.1",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMaxAI/MiniMax-M2.1",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMaxAI/MiniMax-M2.1",
-      },
-    },
-    category: "aggregator",
-    icon: "siliconflow",
-    iconColor: "#000000",
-  },
-  {
     name: "DMXAPI",
     websiteUrl: "https://www.dmxapi.cn",
     apiKeyUrl: "https://www.dmxapi.cn",
@@ -451,42 +413,6 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#5B7FFF",
   },
   {
-    name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://www.right.codes/claude",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "rightcode",
-    icon: "rc",
-    iconColor: "#E96B2C",
-  },
-  {
-    name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.aicodemirror.com/api/claudecode",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    endpointCandidates: [
-      "https://api.aicodemirror.com/api/claudecode",
-      "https://api.claudecode.net.cn/api/claudecode",
-    ],
-    category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "aicodemirror", // 促销信息 i18n key
-    icon: "aicodemirror",
-    iconColor: "#000000",
-  },
-  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
@@ -503,25 +429,6 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "openrouter",
     iconColor: "#6566F1",
-  },
-  {
-    name: "Nvidia",
-    websiteUrl: "https://build.nvidia.com",
-    apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://integrate.api.nvidia.com",
-        ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "moonshotai/kimi-k2.5",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "moonshotai/kimi-k2.5",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "moonshotai/kimi-k2.5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "moonshotai/kimi-k2.5",
-      },
-    },
-    category: "aggregator",
-    apiFormat: "openai_chat",
-    icon: "nvidia",
-    iconColor: "#000000",
   },
   {
     name: "Xiaomi MiMo",

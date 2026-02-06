@@ -103,12 +103,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Zhipu GLM en",
+    name: "Z.ai GLM",
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Zhipu GLM en",
+      name: "Z.ai GLM",
       options: {
         baseURL: "https://api.z.ai/v1",
         apiKey: "",
@@ -169,18 +169,18 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Kimi k2.5",
+    name: "Kimi k2",
     websiteUrl: "https://platform.moonshot.cn/console",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Kimi k2.5",
+      name: "Kimi k2",
       options: {
         baseURL: "https://api.moonshot.cn/v1",
         apiKey: "",
       },
       models: {
-        "kimi-k2.5": { name: "Kimi K2.5" },
+        "kimi-k2-thinking": { name: "Kimi K2 Thinking" },
       },
     },
     category: "cn_official",
@@ -302,7 +302,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
-    icon: "catcoder",
   },
   {
     name: "Longcat",
@@ -558,32 +557,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
-  {
-    name: "Nvidia",
-    websiteUrl: "https://build.nvidia.com",
-    apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "Nvidia",
-      options: {
-        baseURL: "https://integrate.api.nvidia.com/v1",
-        apiKey: "",
-      },
-      models: {
-        "moonshotai/kimi-k2.5": { name: "Kimi K2.5" },
-      },
-    },
-    category: "aggregator",
-    icon: "nvidia",
-    iconColor: "#000000",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
 
   // ========== 第三方合作伙伴 ==========
   {
@@ -664,64 +637,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     partnerPromotionKey: "aigocode",
     icon: "aigocode",
     iconColor: "#5B7FFF",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
-    settingsConfig: {
-      npm: "@ai-sdk/openai",
-      name: "RightCode",
-      options: {
-        baseURL: "https://right.codes/codex/v1",
-        apiKey: "",
-      },
-      models: {
-        "gpt-5.2": { name: "GPT-5.2" },
-        "gpt-5.2-codex": { name: "GPT-5.2 Codex" },
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "rightcode",
-    icon: "rc",
-    iconColor: "#E96B2C",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
-    settingsConfig: {
-      npm: "@ai-sdk/anthropic",
-      name: "AICodeMirror",
-      options: {
-        baseURL: "https://api.aicodemirror.com/api/claudecode",
-        apiKey: "",
-      },
-      models: {
-        "claude-sonnet-4.5": { name: "Claude Sonnet 4.5" },
-        "claude-opus-4.5": { name: "Claude Opus 4.5" },
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "aicodemirror",
-    icon: "aicodemirror",
-    iconColor: "#000000",
     templateValues: {
       apiKey: {
         label: "API Key",

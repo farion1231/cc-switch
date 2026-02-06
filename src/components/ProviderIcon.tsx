@@ -1,6 +1,59 @@
 import React, { useMemo } from "react";
-import { getIcon, hasIcon, getIconMetadata } from "@/icons/extracted";
+import { getIcon, hasIcon } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
+
+// Pastel background colors for fallback avatars
+const PASTEL_COLORS = [
+  {
+    bg: "bg-blue-100 dark:bg-blue-900/60",
+    text: "text-blue-600 dark:text-blue-400",
+  },
+  {
+    bg: "bg-green-100 dark:bg-green-900/60",
+    text: "text-green-600 dark:text-green-400",
+  },
+  {
+    bg: "bg-purple-100 dark:bg-purple-900/60",
+    text: "text-purple-600 dark:text-purple-400",
+  },
+  {
+    bg: "bg-pink-100 dark:bg-pink-900/60",
+    text: "text-pink-600 dark:text-pink-400",
+  },
+  {
+    bg: "bg-amber-100 dark:bg-amber-900/60",
+    text: "text-amber-600 dark:text-amber-400",
+  },
+  {
+    bg: "bg-cyan-100 dark:bg-cyan-900/60",
+    text: "text-cyan-600 dark:text-cyan-400",
+  },
+  {
+    bg: "bg-indigo-100 dark:bg-indigo-900/60",
+    text: "text-indigo-600 dark:text-indigo-400",
+  },
+  {
+    bg: "bg-rose-100 dark:bg-rose-900/60",
+    text: "text-rose-600 dark:text-rose-400",
+  },
+  {
+    bg: "bg-teal-100 dark:bg-teal-900/60",
+    text: "text-teal-600 dark:text-teal-400",
+  },
+  {
+    bg: "bg-orange-100 dark:bg-orange-900/60",
+    text: "text-orange-600 dark:text-orange-400",
+  },
+];
+
+// Generate consistent color based on name
+const getColorForName = (name: string) => {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return PASTEL_COLORS[Math.abs(hash) % PASTEL_COLORS.length];
+};
 
 interface ProviderIconProps {
   icon?: string; // 图标名称
@@ -39,23 +92,6 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     };
   }, [size]);
 
-  // 获取有效颜色：优先使用传入的有效 color，否则从元数据获取 defaultColor
-  const effectiveColor = useMemo(() => {
-    // 只有当 color 是有效的非空字符串时才使用
-    if (color && typeof color === "string" && color.trim() !== "") {
-      return color;
-    }
-    // 否则从元数据获取 defaultColor
-    if (icon) {
-      const metadata = getIconMetadata(icon);
-      // 只有当 defaultColor 不是 currentColor 时才使用
-      if (metadata?.defaultColor && metadata.defaultColor !== "currentColor") {
-        return metadata.defaultColor;
-      }
-    }
-    return undefined;
-  }, [color, icon]);
-
   // 如果有图标，显示图标
   if (iconSvg) {
     return (
@@ -64,13 +100,13 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
           "inline-flex items-center justify-center flex-shrink-0",
           className,
         )}
-        style={{ ...sizeStyle, color: effectiveColor }}
+        style={{ ...sizeStyle, color }}
         dangerouslySetInnerHTML={{ __html: iconSvg }}
       />
     );
   }
 
-  // Fallback：显示首字母
+  // Fallback：显示首字母 with pastel background
   if (showFallback) {
     const initials = name
       .split(" ")
@@ -78,16 +114,20 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
       .join("")
       .toUpperCase()
       .slice(0, 2);
+    const colorScheme = getColorForName(name);
+
     const fallbackFontSize =
       typeof size === "number" ? `${Math.max(size * 0.5, 12)}px` : "0.5em";
+
     return (
       <span
         className={cn(
-          "inline-flex items-center justify-center flex-shrink-0 rounded-lg",
-          "bg-muted text-muted-foreground font-semibold",
+          "inline-flex items-center justify-center rounded-[inherit] w-full h-full",
+          colorScheme.bg,
+          colorScheme.text,
+          "font-semibold",
           className,
         )}
-        style={sizeStyle}
       >
         <span
           style={{

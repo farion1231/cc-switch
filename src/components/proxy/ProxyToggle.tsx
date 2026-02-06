@@ -5,7 +5,7 @@
  * 启用时自动接管 Live 配置，关闭时恢复原始配置
  */
 
-import { Radio, Loader2 } from "lucide-react";
+import { Radio } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { cn } from "@/lib/utils";
@@ -54,30 +54,32 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
       });
 
   return (
-    <div
-      className={cn(
-        "flex items-center gap-1 px-1.5 h-8 rounded-lg bg-muted/50 transition-all",
-        className,
-      )}
-      title={tooltipText}
-    >
-      {isPending ? (
-        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-      ) : (
+    <div className={cn("transition-all", className)} title={tooltipText}>
+      <div className="flex items-center gap-1.5 px-2 h-7 rounded-full bg-muted/60 cursor-default">
         <Radio
           className={cn(
-            "h-4 w-4 transition-colors",
-            takeoverEnabled
-              ? "text-emerald-500 animate-pulse"
-              : "text-muted-foreground",
+            "h-3.5 w-3.5 transition-colors",
+            takeoverEnabled ? "text-emerald-500" : "text-gray-400",
+            isPending && "opacity-50",
           )}
         />
-      )}
-      <Switch
-        checked={takeoverEnabled}
-        onCheckedChange={handleToggle}
-        disabled={isPending}
-      />
+        <span
+          className={cn(
+            "text-xs font-medium transition-colors select-none",
+            takeoverEnabled
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-gray-500 dark:text-gray-400",
+          )}
+        >
+          Proxy
+        </span>
+        <Switch
+          checked={takeoverEnabled}
+          onCheckedChange={handleToggle}
+          disabled={isPending}
+          className="ml-0.5 scale-90"
+        />
+      </div>
     </div>
   );
 }

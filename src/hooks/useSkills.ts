@@ -166,7 +166,6 @@ export function useInstallSkillsFromZip() {
     },
   });
 }
-
 // ========== 辅助类型 ==========
 
 export type { InstalledSkill, DiscoverableSkill, AppId };

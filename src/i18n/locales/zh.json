@@ -1519,5 +1519,26 @@
     "saveAndSyncError": "保存并同步失败",
     "configJsonPreview": "配置 JSON 预览",
     "configJsonPreviewHint": "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）"
+  },
+  "listToolbar": {
+    "listView": "列表视图",
+    "cardView": "卡片视图",
+    "sortCustom": "自定义",
+    "sortName": "名称",
+    "sortCreatedAt": "添加时间",
+    "sortAsc": "升序",
+    "sortDesc": "降序",
+    "anonymousModeOn": "隐私模式已开启，点击关闭",
+    "anonymousModeOff": "开启隐私模式，隐藏敏感信息"
+  },
+  "search": {
+    "placeholder": "搜索...",
+    "scopeHint": "匹配名称、描述和标签。",
+    "ariaLabel": "搜索项目",
+    "closeAriaLabel": "关闭搜索",
+    "closeHint": "按 Esc 关闭",
+    "recentSearches": "最近搜索",
+    "clearHistory": "清除",
+    "syntaxHint": "搜索语法："
   }
 }

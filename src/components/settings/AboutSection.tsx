@@ -9,6 +9,7 @@ import {
   Terminal,
   CheckCircle2,
   AlertCircle,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
@@ -19,7 +20,6 @@ import { useUpdate } from "@/contexts/UpdateContext";
 import { relaunchApp } from "@/lib/updater";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
-import appIcon from "@/assets/icons/app-icon.png";
 
 interface AboutSectionProps {
   isPortable: boolean;
@@ -32,14 +32,9 @@ interface ToolVersion {
   error: string | null;
 }
 
-const ONE_CLICK_INSTALL_COMMANDS = `# Claude Code (Native install - recommended)
-curl -fsSL https://claude.ai/install.sh | bash
-# Codex
+const ONE_CLICK_INSTALL_COMMANDS = `npm i -g @anthropic-ai/claude-code@latest
 npm i -g @openai/codex@latest
-# Gemini CLI
-npm i -g @google/gemini-cli@latest
-# OpenCode
-curl -fsSL https://opencode.ai/install | bash`;
+npm i -g @google/gemini-cli@latest`;
 
 export function AboutSection({ isPortable }: AboutSectionProps) {
   // ... (use hooks as before) ...
@@ -209,7 +204,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <img src={appIcon} alt="CC Switch" className="h-5 w-5" />
+              <Sparkles className="h-5 w-5 text-primary" />
               <h4 className="text-lg font-semibold text-foreground">
                 CC Switch
               </h4>
@@ -317,14 +312,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             {isLoadingTools ? t("common.refreshing") : t("common.refresh")}
           </Button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 px-1">
-          {["claude", "codex", "gemini", "opencode"].map((toolName, index) => {
+        <div className="grid gap-3 sm:grid-cols-3 px-1">
+          {["claude", "codex", "gemini"].map((toolName, index) => {
             const tool = toolVersions.find((item) => item.name === toolName);
-            // Special case for OpenCode (capital C), others use capitalize
-            const displayName =
-              toolName === "opencode"
-                ? "OpenCode"
-                : toolName.charAt(0).toUpperCase() + toolName.slice(1);
+            const displayName = tool?.name ?? toolName;
             const title = tool?.version || tool?.error || t("common.unknown");
 
             return (
@@ -339,7 +330,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Terminal className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">{displayName}</span>
+                    <span className="text-sm font-medium capitalize">
+                      {displayName}
+                    </span>
                   </div>
                   {isLoadingTools ? (
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />

@@ -1519,5 +1519,26 @@
     "saveAndSyncError": "Failed to save and sync",
     "configJsonPreview": "Config JSON Preview",
     "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)"
+  },
+  "listToolbar": {
+    "listView": "List View",
+    "cardView": "Card View",
+    "sortCustom": "Custom",
+    "sortName": "Name",
+    "sortCreatedAt": "Date Added",
+    "sortAsc": "Ascending",
+    "sortDesc": "Descending",
+    "anonymousModeOn": "Privacy mode is on, click to turn off",
+    "anonymousModeOff": "Turn on privacy mode to hide sensitive info"
+  },
+  "search": {
+    "placeholder": "Search...",
+    "scopeHint": "Matches name, description, and tags.",
+    "ariaLabel": "Search items",
+    "closeAriaLabel": "Close search",
+    "closeHint": "Press Esc to close",
+    "recentSearches": "Recent",
+    "clearHistory": "Clear",
+    "syntaxHint": "Search syntax:"
   }
 }
