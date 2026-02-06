@@ -240,6 +240,18 @@ impl StreamCheckService {
                     "OpenCode does not support health check yet",
                 ));
             }
+            AppType::Qwen => {
+                // Qwen uses OpenAI-compatible API, use Codex check method
+                Self::check_codex_stream(
+                    &client,
+                    &base_url,
+                    &auth,
+                    &model_to_test,
+                    test_prompt,
+                    request_timeout,
+                )
+                .await
+            }
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -566,6 +578,11 @@ impl StreamCheckService {
                 // OpenCode uses models map in settings_config
                 // Try to extract first model from the models object
                 Self::extract_opencode_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
+            }
+            AppType::Qwen => {
+                // Qwen uses OpenAI-compatible env format
+                Self::extract_env_model(provider, "OPENAI_MODEL")
+                    .unwrap_or_else(|| "qwen3-coder-plus".to_string())
             }
         }
     }

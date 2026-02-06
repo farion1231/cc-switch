@@ -191,6 +191,28 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 }
             }
         }
+        AppType::Qwen => {
+            // Qwen uses .env file format, similar to Gemini
+            use crate::qwen_config::write_qwen_env;
+
+            let env = provider
+                .settings_config
+                .get("env")
+                .and_then(|e| e.as_object())
+                .ok_or_else(|| {
+                    AppError::Config("Qwen provider config must have 'env' object".to_string())
+                })?;
+
+            let mut env_map = std::collections::HashMap::new();
+            for (key, value) in env {
+                if let Some(val_str) = value.as_str() {
+                    env_map.insert(key.clone(), val_str.to_string());
+                }
+            }
+
+            write_qwen_env(&env_map)?;
+            log::info!("Qwen provider '{}' written to live config", provider.id);
+        }
     }
     Ok(())
 }
@@ -340,6 +362,27 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_opencode_config()?;
             Ok(config)
         }
+        AppType::Qwen => {
+            use crate::qwen_config::{env_to_json, get_qwen_env_path, read_qwen_env};
+
+            // Read .env file (environment variables)
+            let env_path = get_qwen_env_path();
+            if !env_path.exists() {
+                return Err(AppError::localized(
+                    "qwen.env.missing",
+                    "Qwen .env 文件不存在",
+                    "Qwen .env file not found",
+                ));
+            }
+
+            let env_map = read_qwen_env()?;
+            let env_json = env_to_json(&env_map);
+
+            // Return structure: { "env": {...} }
+            Ok(json!({
+                "env": env_json
+            }))
+        }
     }
 }
 
@@ -432,6 +475,27 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             // For OpenCode, we return the full config - but note that OpenCode
             // uses additive mode, so importing defaults works differently
             read_opencode_config()?
+        }
+        AppType::Qwen => {
+            use crate::qwen_config::{env_to_json, get_qwen_env_path, read_qwen_env};
+
+            // Read .env file (environment variables)
+            let env_path = get_qwen_env_path();
+            if !env_path.exists() {
+                return Err(AppError::localized(
+                    "qwen.live.missing",
+                    "Qwen 配置文件不存在",
+                    "Qwen configuration file is missing",
+                ));
+            }
+
+            let env_map = read_qwen_env()?;
+            let env_json = env_to_json(&env_map);
+
+            // Return structure: { "env": {...} }
+            json!({
+                "env": env_json
+            })
         }
     };
 
