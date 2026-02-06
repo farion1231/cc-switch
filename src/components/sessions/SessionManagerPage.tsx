@@ -56,7 +56,7 @@ export function SessionManagerPage() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [activeMessageIndex, setActiveMessageIndex] = useState<number | null>(
-    null
+    null,
   );
   const [tocDialogOpen, setTocDialogOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -83,7 +83,7 @@ export function SessionManagerPage() {
     }
     const exists = selectedKey
       ? filteredSessions.some(
-          (session) => getSessionKey(session) === selectedKey
+          (session) => getSessionKey(session) === selectedKey,
         )
       : false;
     if (!exists) {
@@ -95,7 +95,7 @@ export function SessionManagerPage() {
     if (!selectedKey) return null;
     return (
       filteredSessions.find(
-        (session) => getSessionKey(session) === selectedKey
+        (session) => getSessionKey(session) === selectedKey,
       ) || null
     );
   }, [filteredSessions, selectedKey]);
@@ -103,7 +103,7 @@ export function SessionManagerPage() {
   const { data: messages = [], isLoading: isLoadingMessages } =
     useSessionMessagesQuery(
       selectedSession?.providerId,
-      selectedSession?.sourcePath
+      selectedSession?.sourcePath,
     );
 
   // 提取用户消息用于目录
@@ -147,7 +147,7 @@ export function SessionManagerPage() {
     } catch (error) {
       toast.error(
         extractErrorMessage(error) ||
-          t("common.error", { defaultValue: "Copy failed" })
+          t("common.error", { defaultValue: "Copy failed" }),
       );
     }
   };
@@ -158,7 +158,7 @@ export function SessionManagerPage() {
     if (!isMac()) {
       await handleCopy(
         selectedSession.resumeCommand,
-        t("sessionManager.resumeCommandCopied")
+        t("sessionManager.resumeCommandCopied"),
       );
       return;
     }
@@ -240,14 +240,16 @@ export function SessionManagerPage() {
                               setIsSearchOpen(true);
                               setTimeout(
                                 () => searchInputRef.current?.focus(),
-                                0
+                                0,
                               );
                             }}
                           >
                             <Search className="size-3.5" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>{t("sessionManager.searchSessions")}</TooltipContent>
+                        <TooltipContent>
+                          {t("sessionManager.searchSessions")}
+                        </TooltipContent>
                       </Tooltip>
 
                       <Select
@@ -387,7 +389,7 @@ export function SessionManagerPage() {
                               <span className="shrink-0">
                                 <ProviderIcon
                                   icon={getProviderIconName(
-                                    selectedSession.providerId
+                                    selectedSession.providerId,
                                   )}
                                   name={selectedSession.providerId}
                                   size={20}
@@ -410,7 +412,7 @@ export function SessionManagerPage() {
                             <span>
                               {formatTimestamp(
                                 selectedSession.lastActiveAt ??
-                                  selectedSession.createdAt
+                                  selectedSession.createdAt,
                               )}
                             </span>
                           </div>
@@ -422,7 +424,7 @@ export function SessionManagerPage() {
                                   onClick={() =>
                                     void handleCopy(
                                       selectedSession.projectDir!,
-                                      t("sessionManager.projectDirCopied")
+                                      t("sessionManager.projectDirCopied"),
                                     )
                                   }
                                   className="flex items-center gap-1 hover:text-foreground transition-colors"
@@ -497,7 +499,7 @@ export function SessionManagerPage() {
                               onClick={() =>
                                 void handleCopy(
                                   selectedSession.resumeCommand!,
-                                  t("sessionManager.resumeCommandCopied")
+                                  t("sessionManager.resumeCommandCopied"),
                                 )
                               }
                             >
@@ -559,7 +561,7 @@ export function SessionManagerPage() {
                                       content,
                                       t("sessionManager.messageCopied", {
                                         defaultValue: "已复制消息内容",
-                                      })
+                                      }),
                                     )
                                   }
                                 />

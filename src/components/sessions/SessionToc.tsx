@@ -48,7 +48,7 @@ export function SessionTocSidebar({
               className={cn(
                 "w-full text-left px-2 py-1.5 rounded text-xs transition-colors",
                 "hover:bg-muted/80 text-muted-foreground hover:text-foreground",
-                "flex items-start gap-2"
+                "flex items-start gap-2",
               )}
             >
               <span className="shrink-0 w-4 h-4 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center font-medium">
@@ -118,7 +118,7 @@ export function SessionTocDialog({
                   "w-full text-left px-3 py-2.5 rounded-lg text-sm transition-all",
                   "hover:bg-primary/10 text-foreground",
                   "flex items-start gap-3",
-                  "focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset"
+                  "focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset",
                 )}
               >
                 <span className="shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-semibold">

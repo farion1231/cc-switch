@@ -37,7 +37,7 @@ export function SessionMessageItem({
           : message.role.toLowerCase() === "assistant"
             ? "bg-blue-500/5 border-blue-500/20 mr-8"
             : "bg-muted/40 border-border/60",
-        isActive && "ring-2 ring-primary ring-offset-2"
+        isActive && "ring-2 ring-primary ring-offset-2",
       )}
     >
       <Tooltip>
