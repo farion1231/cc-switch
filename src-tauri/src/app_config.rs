@@ -271,6 +271,7 @@ pub enum AppType {
     Codex,
     Gemini,
     OpenCode,
+    Qwen,
 }
 
 impl AppType {
@@ -280,6 +281,7 @@ impl AppType {
             AppType::Codex => "codex",
             AppType::Gemini => "gemini",
             AppType::OpenCode => "opencode",
+            AppType::Qwen => "qwen",
         }
     }
 
@@ -298,6 +300,7 @@ impl AppType {
             AppType::Codex,
             AppType::Gemini,
             AppType::OpenCode,
+            AppType::Qwen,
         ]
         .into_iter()
     }
