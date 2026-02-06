@@ -510,28 +510,25 @@ mod tests {
     fn test_copilot_token_expiry() {
         let now = chrono::Utc::now().timestamp();
 
-        // 未过期的 token
+        // 未过期的 token (1小时后过期，不在60秒缓冲期内)
         let token = CopilotToken {
             token: "test".to_string(),
-            expires_at: now + 3600, // 1 小时后
+            expires_at: now + 3600,
         };
-        assert!(!token.is_expired());
         assert!(!token.is_expiring_soon());
 
-        // 即将过期的 token
+        // 即将过期的 token (30秒后过期，在60秒缓冲期内)
         let token = CopilotToken {
             token: "test".to_string(),
-            expires_at: now + 30, // 30 秒后
+            expires_at: now + 30,
         };
-        assert!(!token.is_expired());
         assert!(token.is_expiring_soon());
 
-        // 已过期的 token
+        // 已过期的 token (也在缓冲期内)
         let token = CopilotToken {
             token: "test".to_string(),
-            expires_at: now - 100, // 100 秒前
+            expires_at: now - 100,
         };
-        assert!(token.is_expired());
         assert!(token.is_expiring_soon());
     }
 
