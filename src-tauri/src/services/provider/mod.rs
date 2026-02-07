@@ -116,6 +116,7 @@ base_url = "http://localhost:8080"
             "should keep mcp_servers.* base_url"
         );
     }
+
 }
 
 impl ProviderService {
@@ -405,6 +406,9 @@ impl ProviderService {
 
         // Sync to live (write_gemini_live handles security flag internally for Gemini)
         write_live_snapshot(&app_type, provider)?;
+        if matches!(app_type, AppType::Codex) {
+            McpService::reconcile_codex_from_live(state)?;
+        }
 
         // Sync MCP
         McpService::sync_all_enabled(state)?;

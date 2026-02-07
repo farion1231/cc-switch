@@ -163,6 +163,84 @@ impl McpService {
         Ok(())
     }
 
+    /// 以 Codex live 配置为准，对齐数据库中的 Codex 启用状态
+    ///
+    /// 背景：Codex 的 provider 配置（settings_config.config）和 mcp_servers 表是两套来源。
+    /// 当用户在 provider 配置中编辑 [mcp_servers] 后，若数据库未同步，切换/同步时会被旧数据回灌。
+    ///
+    /// 策略：
+    /// - 仅当 live config 明确包含 MCP 段（[mcp_servers] 或 [mcp.servers]）时执行对齐
+    /// - 以 live config 解析出的服务器集合为准：
+    ///   - 出现在 live 中：enabled_codex = true，并更新 server 规范
+    ///   - 未出现在 live 中：enabled_codex = false
+    pub fn reconcile_codex_from_live(state: &AppState) -> Result<(), AppError> {
+        let codex_text = crate::codex_config::read_and_validate_codex_config_text()?;
+        if codex_text.trim().is_empty() {
+            return Ok(());
+        }
+
+        let root: toml::Table = toml::from_str(&codex_text)
+            .map_err(|e| AppError::McpValidation(format!("解析 ~/.codex/config.toml 失败: {e}")))?;
+
+        let has_mcp_servers = root
+            .get("mcp_servers")
+            .and_then(|v| v.as_table())
+            .is_some();
+        let has_legacy_mcp_servers = root
+            .get("mcp")
+            .and_then(|v| v.as_table())
+            .and_then(|tbl| tbl.get("servers"))
+            .and_then(|v| v.as_table())
+            .is_some();
+
+        // 未显式声明 MCP 段时，不改数据库，避免误清空
+        if !has_mcp_servers && !has_legacy_mcp_servers {
+            return Ok(());
+        }
+
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        crate::mcp::import_from_codex(&mut temp_config)?;
+        let imported_servers = temp_config.mcp.servers.unwrap_or_default();
+
+        let existing = state.db.get_all_mcp_servers()?;
+        let mut to_save = Vec::new();
+
+        for existing_server in existing.values() {
+            let mut updated = existing_server.clone();
+            let mut changed = false;
+
+            if let Some(imported) = imported_servers.get(&updated.id) {
+                if !updated.apps.codex {
+                    updated.apps.codex = true;
+                    changed = true;
+                }
+                if updated.server != imported.server {
+                    updated.server = imported.server.clone();
+                    changed = true;
+                }
+            } else if updated.apps.codex {
+                updated.apps.codex = false;
+                changed = true;
+            }
+
+            if changed {
+                to_save.push(updated);
+            }
+        }
+
+        for (id, imported) in imported_servers {
+            if !existing.contains_key(&id) {
+                to_save.push(imported);
+            }
+        }
+
+        for server in to_save {
+            state.db.save_mcp_server(&server)?;
+        }
+
+        Ok(())
+    }
+
     // ========================================================================
     // 兼容层：支持旧的 v3.6.x 命令（已废弃，将在 v4.0 移除）
     // ========================================================================

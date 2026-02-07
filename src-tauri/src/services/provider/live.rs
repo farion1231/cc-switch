@@ -230,6 +230,7 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
 /// For additive mode apps (OpenCode), all providers are synced instead of just the current one.
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     // Sync providers based on mode
+    let mut wrote_codex_live = false;
     for app_type in AppType::all() {
         if app_type.is_additive_mode() {
             // Additive mode: sync ALL providers
@@ -245,10 +246,17 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
             let providers = state.db.get_all_providers(app_type.as_str())?;
             if let Some(provider) = providers.get(&current_id) {
                 write_live_snapshot(&app_type, provider)?;
+                if matches!(app_type, AppType::Codex) {
+                    wrote_codex_live = true;
+                }
             }
             // Note: get_effective_current_provider already validates existence,
             // so providers.get() should always succeed here
         }
+    }
+
+    if wrote_codex_live {
+        McpService::reconcile_codex_from_live(state)?;
     }
 
     // MCP sync
