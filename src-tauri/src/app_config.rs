@@ -336,10 +336,11 @@ impl FromStr for AppType {
             "codex" => Ok(AppType::Codex),
             "gemini" => Ok(AppType::Gemini),
             "opencode" => Ok(AppType::OpenCode),
+            "qwen" => Ok(AppType::Qwen),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode, qwen。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode, qwen."),
             )),
         }
     }
