@@ -137,23 +137,21 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Qwen Coder",
+    name: "Bailian",
     websiteUrl: "https://bailian.console.aliyun.com",
     apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Qwen Coder",
+      name: "Bailian",
       options: {
         baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         apiKey: "",
       },
-      models: {
-        "qwen3-max": { name: "Qwen3 Max" },
-      },
+      models: {},
     },
     category: "cn_official",
-    icon: "qwen",
-    iconColor: "#FF6A00",
+    icon: "bailian",
+    iconColor: "#624AFF",
     templateValues: {
       baseURL: {
         label: "Base URL",
