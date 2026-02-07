@@ -110,7 +110,25 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Claude => {
             let path = get_claude_settings_path();
             let settings = sanitize_claude_settings_for_live(&provider.settings_config);
-            write_json_file(&path, &settings)?;
+
+            // Merge with existing settings to preserve fields not managed by cc-switch
+            // (e.g., enabledPlugins added by Claude Code itself)
+            // This is consistent with how Gemini settings are handled.
+            let merged = if path.exists() {
+                let mut existing = read_json_file::<Value>(&path).unwrap_or_else(|_| json!({}));
+                if let (Some(existing_obj), Some(new_obj)) =
+                    (existing.as_object_mut(), settings.as_object())
+                {
+                    for (k, v) in new_obj {
+                        existing_obj.insert(k.clone(), v.clone());
+                    }
+                }
+                existing
+            } else {
+                settings
+            };
+
+            write_json_file(&path, &merged)?;
         }
         AppType::Codex => {
             let obj = provider
@@ -608,4 +626,114 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     Ok(imported)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::Write;
+    #[test]
+    fn sanitize_claude_settings_removes_internal_fields() {
+        let settings = json!({
+            "env": { "ANTHROPIC_AUTH_TOKEN": "sk-xxx" },
+            "model": "opus",
+            "api_format": "anthropic",
+            "apiFormat": "openai_chat",
+            "openrouter_compat_mode": true,
+            "openrouterCompatMode": false,
+        });
+        let result = sanitize_claude_settings_for_live(&settings);
+        let obj = result.as_object().unwrap();
+        assert!(obj.contains_key("env"));
+        assert!(obj.contains_key("model"));
+        assert!(!obj.contains_key("api_format"));
+        assert!(!obj.contains_key("apiFormat"));
+        assert!(!obj.contains_key("openrouter_compat_mode"));
+        assert!(!obj.contains_key("openrouterCompatMode"));
+    }
+
+    #[test]
+    fn write_live_snapshot_claude_preserves_enabled_plugins() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let settings_path = tmp_dir.path().join("settings.json");
+
+        let existing = json!({
+            "env": { "ANTHROPIC_AUTH_TOKEN": "old-token", "ANTHROPIC_BASE_URL": "https://old.example" },
+            "model": "sonnet",
+            "enabledPlugins": {
+                "superpowers@claude-plugins-official": true,
+                "context7@claude-plugins-official": true
+            },
+            "language": "en"
+        });
+        let mut f = std::fs::File::create(&settings_path).unwrap();
+        f.write_all(serde_json::to_string_pretty(&existing).unwrap().as_bytes())
+            .unwrap();
+
+        let provider_settings = json!({
+            "env": { "ANTHROPIC_AUTH_TOKEN": "new-token", "ANTHROPIC_BASE_URL": "https://new.example" },
+            "model": "opus",
+            "includeCoAuthoredBy": false
+        });
+        let sanitized = sanitize_claude_settings_for_live(&provider_settings);
+
+        let mut existing_val =
+            read_json_file::<Value>(&settings_path).unwrap_or_else(|_| json!({}));
+        if let (Some(existing_obj), Some(new_obj)) =
+            (existing_val.as_object_mut(), sanitized.as_object())
+        {
+            for (k, v) in new_obj {
+                existing_obj.insert(k.clone(), v.clone());
+            }
+        }
+        write_json_file(&settings_path, &existing_val).unwrap();
+
+        let result: Value = read_json_file(&settings_path).unwrap();
+        let obj = result.as_object().unwrap();
+
+        assert_eq!(
+            obj.get("env").unwrap().get("ANTHROPIC_AUTH_TOKEN").unwrap(),
+            "new-token"
+        );
+        assert_eq!(
+            obj.get("env").unwrap().get("ANTHROPIC_BASE_URL").unwrap(),
+            "https://new.example"
+        );
+        assert_eq!(obj.get("model").unwrap(), "opus");
+        assert_eq!(obj.get("includeCoAuthoredBy").unwrap(), false);
+        assert_eq!(obj.get("language").unwrap(), "en");
+
+        let plugins = obj
+            .get("enabledPlugins")
+            .expect("enabledPlugins should be preserved");
+        assert_eq!(
+            plugins.get("superpowers@claude-plugins-official").unwrap(),
+            true
+        );
+        assert_eq!(
+            plugins.get("context7@claude-plugins-official").unwrap(),
+            true
+        );
+    }
+
+    #[test]
+    fn write_live_snapshot_claude_works_without_existing_file() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let settings_path = tmp_dir.path().join("settings.json");
+
+        assert!(!settings_path.exists());
+
+        let provider_settings = json!({
+            "env": { "ANTHROPIC_AUTH_TOKEN": "token" },
+            "model": "opus"
+        });
+        let sanitized = sanitize_claude_settings_for_live(&provider_settings);
+        write_json_file(&settings_path, &sanitized).unwrap();
+
+        let result: Value = read_json_file(&settings_path).unwrap();
+        let obj = result.as_object().unwrap();
+        assert_eq!(obj.get("model").unwrap(), "opus");
+        assert!(obj.get("enabledPlugins").is_none());
+    }
 }
