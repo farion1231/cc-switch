@@ -245,7 +245,9 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
     <ListItemRow isLast={isLast}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="font-medium text-sm text-foreground truncate">{name}</span>
+          <span className="font-medium text-sm text-foreground truncate">
+            {name}
+          </span>
           {docsUrl && (
             <button
               type="button"
@@ -258,7 +260,10 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
           )}
         </div>
         {description && (
-          <p className="text-xs text-muted-foreground truncate" title={description}>
+          <p
+            className="text-xs text-muted-foreground truncate"
+            title={description}
+          >
             {description}
           </p>
         )}

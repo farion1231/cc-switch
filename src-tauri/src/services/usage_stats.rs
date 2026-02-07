@@ -272,7 +272,7 @@ impl Database {
                 .single()
                 .unwrap_or_else(Local::now);
 
-            let date = bucket_start.format("%Y-%m-%dT%H:%M:%S").to_string();
+            let date = bucket_start.to_rfc3339();
 
             if let Some(mut stat) = map.remove(&i) {
                 stat.date = date;

@@ -755,7 +755,7 @@ fn launch_macos_open_app(
 
     let output = cmd
         .output()
-        .map_err(|e| format!("启动 {} 失败: {e}", app_name))?;
+        .map_err(|e| format!("启动 {app_name} 失败: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

@@ -63,11 +63,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     return counts;
   }, [skills]);
 
-  const handleToggleApp = async (
-    id: string,
-    app: AppId,
-    enabled: boolean,
-  ) => {
+  const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     try {
       await toggleAppMutation.mutateAsync({ id, app, enabled });
     } catch (error) {
@@ -257,7 +253,9 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
     <ListItemRow isLast={isLast}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="font-medium text-sm text-foreground truncate">{skill.name}</span>
+          <span className="font-medium text-sm text-foreground truncate">
+            {skill.name}
+          </span>
           {skill.readmeUrl && (
             <button
               type="button"
@@ -267,10 +265,15 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
               <ExternalLink size={12} />
             </button>
           )}
-          <span className="text-xs text-muted-foreground/50 flex-shrink-0">{sourceLabel}</span>
+          <span className="text-xs text-muted-foreground/50 flex-shrink-0">
+            {sourceLabel}
+          </span>
         </div>
         {skill.description && (
-          <p className="text-xs text-muted-foreground truncate" title={skill.description}>
+          <p
+            className="text-xs text-muted-foreground truncate"
+            title={skill.description}
+          >
             {skill.description}
           </p>
         )}

@@ -32,9 +32,8 @@ fn launch_macos_terminal(command: &str, cwd: Option<&str>) -> Result<(), String>
     let script = format!(
         r#"tell application "Terminal"
     activate
-    do script "{}"
-end tell"#,
-        escaped
+    do script "{escaped}"
+end tell"#
     );
 
     let status = Command::new("osascript")
@@ -59,10 +58,9 @@ fn launch_iterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
     activate
     create window with default profile
     tell current session of current window
-        write text "{}"
+        write text "{escaped}"
     end tell
-end tell"#,
-        escaped
+end tell"#
     );
 
     let status = Command::new("osascript")
@@ -88,7 +86,7 @@ fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // Note: The user's error output didn't show the working dir arg failure, so we assume flag is okay or we stick to compatible ones.
     // Documentation says --working-directory is supported in CLI.
     let work_dir_arg = if let Some(dir) = cwd {
-        format!("--working-directory={}", dir)
+        format!("--working-directory={dir}")
     } else {
         "".to_string()
     };
@@ -251,7 +249,7 @@ fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
 
 fn shell_escape(value: &str) -> String {
     let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{}\"", escaped)
+    format!("\"{escaped}\"")
 }
 
 fn escape_osascript(value: &str) -> String {
