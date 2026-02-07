@@ -215,3 +215,42 @@ input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear {
   display: none;
 }
+
+/* Theme transition animation using View Transitions API */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* Old snapshot stays behind, new snapshot animates on top */
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 9999;
+}
+
+/* Circular expand animation from click position */
+@keyframes theme-circle-expand {
+  from {
+    clip-path: circle(0% at var(--theme-transition-x, 50%) var(--theme-transition-y, 50%));
+  }
+
+  to {
+    clip-path: circle(150% at var(--theme-transition-x, 50%) var(--theme-transition-y, 50%));
+  }
+}
+
+/* Apply animation to new snapshot - works for both light and dark transitions */
+::view-transition-new(root) {
+  animation: theme-circle-expand 0.4s ease-out;
+}
+
+/* Respect user preference for reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}

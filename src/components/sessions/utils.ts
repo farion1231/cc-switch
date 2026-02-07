@@ -19,7 +19,7 @@ export const formatTimestamp = (value?: number) => {
 
 export const formatRelativeTime = (
   value: number | undefined,
-  t: (key: string, options?: Record<string, unknown>) => string
+  t: (key: string, options?: Record<string, unknown>) => string,
 ) => {
   if (!value) return "";
   const now = Date.now();
@@ -37,7 +37,7 @@ export const formatRelativeTime = (
 
 export const getProviderLabel = (
   providerId: string,
-  t: (key: string) => string
+  t: (key: string) => string,
 ) => {
   const key = `apps.${providerId}`;
   const translated = t(key);
@@ -60,10 +60,7 @@ export const getRoleTone = (role: string) => {
   return "text-muted-foreground";
 };
 
-export const getRoleLabel = (
-  role: string,
-  t: (key: string) => string
-) => {
+export const getRoleLabel = (role: string, t: (key: string) => string) => {
   const normalized = role.toLowerCase();
   if (normalized === "assistant") return "AI";
   if (normalized === "user") return t("sessionManager.roleUser");

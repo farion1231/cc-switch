@@ -32,11 +32,6 @@ import {
   type OpenCodeProviderPreset,
 } from "@/config/opencodeProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
-import {
-  qwenProviderPresets,
-  type QwenProviderPreset,
-} from "@/config/qwenProviderPresets";
-import { QwenFormFields } from "./QwenFormFields";
 import type { OpenCodeModel } from "@/types";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import { applyTemplateValues } from "@/utils/providerConfigUtils";
@@ -372,11 +367,6 @@ export function ProviderForm({
     } else if (appId === "opencode") {
       return opencodeProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `opencode-${index}`,
-        preset,
-      }));
-    } else if (appId === "qwen") {
-      return qwenProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `qwen-${index}`,
         preset,
       }));
     }
@@ -756,7 +746,7 @@ export function ProviderForm({
       return;
     }
 
-    // OpenCode: validate provider key
+    // OpenCode: validate provider key and models
     if (appId === "opencode") {
       const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
       if (!opencodeProviderKey.trim()) {
@@ -769,6 +759,11 @@ export function ProviderForm({
       }
       if (!isEditMode && existingOpencodeKeys.includes(opencodeProviderKey)) {
         toast.error(t("opencode.providerKeyDuplicate"));
+        return;
+      }
+      // Validate that at least one model is configured
+      if (Object.keys(opencodeModels).length === 0) {
+        toast.error(t("opencode.modelsRequired"));
         return;
       }
     }
@@ -1068,16 +1063,6 @@ export function ProviderForm({
         setOpencodeModels({});
         setOpencodeExtraOptions({});
       }
-      // Qwen 自定义模式：重置为空配置
-      if (appId === "qwen") {
-        form.setValue("settingsConfig", {
-          env: {
-            OPENAI_API_KEY: "",
-            OPENAI_BASE_URL: "",
-            OPENAI_MODEL: "",
-          },
-        });
-      }
       return;
     }
 
@@ -1161,22 +1146,6 @@ export function ProviderForm({
         name: preset.name,
         websiteUrl: preset.websiteUrl ?? "",
         settingsConfig: JSON.stringify(config, null, 2),
-        icon: preset.icon ?? "",
-        iconColor: preset.iconColor ?? "",
-      });
-      return;
-    }
-
-    // Qwen preset handling
-    if (appId === "qwen") {
-      const preset = entry.preset as QwenProviderPreset;
-      const config = preset.settingsConfig;
-
-      // Update form fields
-      form.reset({
-        name: preset.name,
-        websiteUrl: preset.websiteUrl ?? "",
-        settingsConfig: config,
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
       });
@@ -1401,14 +1370,6 @@ export function ProviderForm({
             onModelsChange={handleOpencodeModelsChange}
             extraOptions={opencodeExtraOptions}
             onExtraOptionsChange={handleOpencodeExtraOptionsChange}
-          />
-        )}
-
-        {/* Qwen 专属字段 */}
-        {appId === "qwen" && (
-          <QwenFormFields
-            settingsConfig={form.getValues("settingsConfig")}
-            onChange={(config) => form.setValue("settingsConfig", config)}
           />
         )}
 

@@ -633,6 +633,7 @@
     "modelId": "モデル ID",
     "modelName": "表示名",
     "noModels": "モデルが設定されていません",
+    "modelsRequired": "モデルを少なくとも1つ追加してください",
     "providerKey": "プロバイダーキー",
     "providerKeyPlaceholder": "my-provider",
     "providerKeyHint": "設定ファイルの一意の識別子。作成後は変更できません。小文字、数字、ハイフンのみ使用できます。",

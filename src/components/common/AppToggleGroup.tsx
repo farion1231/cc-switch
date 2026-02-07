@@ -12,7 +12,10 @@ interface AppToggleGroupProps {
   onToggle: (app: AppId, enabled: boolean) => void;
 }
 
-export const AppToggleGroup: React.FC<AppToggleGroupProps> = ({ apps, onToggle }) => {
+export const AppToggleGroup: React.FC<AppToggleGroupProps> = ({
+  apps,
+  onToggle,
+}) => {
   return (
     <div className="flex items-center gap-1.5 flex-shrink-0">
       {APP_IDS.map((app) => {
@@ -25,16 +28,17 @@ export const AppToggleGroup: React.FC<AppToggleGroupProps> = ({ apps, onToggle }
                 type="button"
                 onClick={() => onToggle(app, !enabled)}
                 className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
-                  enabled
-                    ? activeClass
-                    : "opacity-35 hover:opacity-70"
+                  enabled ? activeClass : "opacity-35 hover:opacity-70"
                 }`}
               >
                 {icon}
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              <p>{label}{enabled ? " ✓" : ""}</p>
+              <p>
+                {label}
+                {enabled ? " ✓" : ""}
+              </p>
             </TooltipContent>
           </Tooltip>
         );

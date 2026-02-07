@@ -651,7 +651,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/anthropic",
       name: "AIGoCode",
       options: {
-        baseURL: "https://api.aigocode.com/v1",
+        baseURL: "https://api.aigocode.com",
         apiKey: "",
       },
       models: {

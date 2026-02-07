@@ -438,7 +438,7 @@ export const providerPresets: ProviderPreset[] = [
     apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.aigocode.com/api",
+        ANTHROPIC_BASE_URL: "https://api.aigocode.com",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },

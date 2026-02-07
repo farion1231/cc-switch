@@ -633,6 +633,7 @@
     "modelId": "Model ID",
     "modelName": "Display Name",
     "noModels": "No models configured",
+    "modelsRequired": "Please add at least one model",
     "providerKey": "Provider Key",
     "providerKeyPlaceholder": "my-provider",
     "providerKeyHint": "Unique identifier in config file. Cannot be changed after creation. Use lowercase letters, numbers, and hyphens only.",
