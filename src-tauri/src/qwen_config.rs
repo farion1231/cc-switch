@@ -68,7 +68,10 @@ pub fn read_qwen_env() -> Result<HashMap<String, String>, AppError> {
     if !env_path.exists() {
         return Ok(HashMap::new());
     }
-    let content = fs::read_to_string(&env_path)?;
+    let content = fs::read_to_string(&env_path).map_err(|e| AppError::Io {
+        path: env_path.display().to_string(),
+        source: e,
+    })?;
     Ok(parse_env_file(&content))
 }
 

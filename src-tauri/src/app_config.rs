@@ -236,6 +236,9 @@ pub struct McpRoot {
     /// OpenCode MCP 配置（v4.0.0+，实际使用 opencode.json）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub opencode: McpConfig,
+    /// Qwen MCP 配置
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub qwen: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -248,6 +251,7 @@ impl Default for McpRoot {
             codex: McpConfig::default(),
             gemini: McpConfig::default(),
             opencode: McpConfig::default(),
+            qwen: McpConfig::default(),
         }
     }
 }
@@ -710,6 +714,7 @@ impl MultiAppConfig {
             AppType::Codex => &mut config.prompts.codex.prompts,
             AppType::Gemini => &mut config.prompts.gemini.prompts,
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
+            AppType::Qwen => &mut config.prompts.qwen.prompts,
         };
 
         prompts.insert(id, prompt);
@@ -744,6 +749,7 @@ impl MultiAppConfig {
                 AppType::Codex => &self.mcp.codex.servers,
                 AppType::Gemini => &self.mcp.gemini.servers,
                 AppType::OpenCode => &self.mcp.opencode.servers,
+                AppType::Qwen => &self.mcp.qwen.servers,
             };
 
             for (id, entry) in old_servers {

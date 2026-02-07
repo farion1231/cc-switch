@@ -43,8 +43,9 @@ impl Database {
                         codex: row.get(9)?,
                         gemini: row.get(10)?,
                         opencode: row.get(11)?,
+                        qwen: row.get(12)?,
                     },
-                    installed_at: row.get(12)?,
+                    installed_at: row.get(13)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -83,6 +84,7 @@ impl Database {
                     codex: row.get(9)?,
                     gemini: row.get(10)?,
                     opencode: row.get(11)?,
+                    qwen: row.get(12)?,
                 },
                 installed_at: row.get(12)?,
             })

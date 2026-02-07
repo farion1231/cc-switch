@@ -33,6 +33,8 @@ pub struct VisibleApps {
     pub gemini: bool,
     #[serde(default = "default_true")]
     pub opencode: bool,
+    #[serde(default = "default_true")]
+    pub qwen: bool,
 }
 
 impl Default for VisibleApps {
@@ -42,6 +44,7 @@ impl Default for VisibleApps {
             codex: true,
             gemini: true,
             opencode: true,
+            qwen: true,
         }
     }
 }

@@ -31,6 +31,7 @@ impl Database {
                 let enabled_codex: bool = row.get(8)?;
                 let enabled_gemini: bool = row.get(9)?;
                 let enabled_opencode: bool = row.get(10)?;
+                let enabled_qwen: bool = row.get(11)?;
 
                 let server = serde_json::from_str(&server_config_str).unwrap_or_default();
                 let tags = serde_json::from_str(&tags_str).unwrap_or_default();
@@ -46,6 +47,7 @@ impl Database {
                             codex: enabled_codex,
                             gemini: enabled_gemini,
                             opencode: enabled_opencode,
+                            qwen: enabled_qwen,
                         },
                         description,
                         homepage,
