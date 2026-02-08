@@ -32,6 +32,7 @@
     "back": "戻る",
     "refresh": "更新",
     "refreshing": "更新中...",
+    "import": "インポート",
     "all": "すべて",
     "search": "検索",
     "reset": "リセット",
@@ -106,6 +107,10 @@
     "duplicate": "複製",
     "sortUpdateFailed": "並び順の更新に失敗しました",
     "configureUsage": "利用状況を設定",
+    "officialPartner": "公式パートナー",
+    "openTerminal": "ターミナルを開く",
+    "terminalOpened": "ターミナルを開きました",
+    "terminalOpenFailed": "ターミナルを開けませんでした",
     "name": "プロバイダー名",
     "namePlaceholder": "例: Claude Official",
     "websiteUrl": "Web サイト URL",
@@ -156,7 +161,8 @@
     "deleteFailed": "プロバイダーの削除に失敗しました: {{error}}",
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
-    "openAIChatFormatHint": "このプロバイダーは OpenAI Chat フォーマットを使用しており、プロキシサービスの有効化が必要です"
+    "openAIChatFormatHint": "このプロバイダーは OpenAI Chat フォーマットを使用しており、プロキシサービスの有効化が必要です",
+    "openLinkFailed": "リンクを開けませんでした"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -478,6 +484,7 @@
     "aggregatorApiKeyHint": "💡 API Key のみ入力すれば OK。エンドポイントはプリセット済みです",
     "thirdPartyApiKeyHint": "💡 API Key のみ入力すれば OK。エンドポイントはプリセット済みです",
     "customApiKeyHint": "💡 カスタム設定では必要な項目をすべて手動で入力してください",
+    "omoHint": "💡 OMO 設定は Agent のモデル割り当てを管理し、oh-my-opencode.jsonc に書き込みます",
     "officialHint": "💡 公式プロバイダーはブラウザログインで、API Key は不要です",
     "getApiKey": "API Key を取得",
     "partnerPromotion": {
@@ -1161,6 +1168,13 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode"
+    },
+    "installFromZip": {
+      "button": "ZIP からインストール",
+      "installing": "インストール中...",
+      "successSingle": "スキル {{name}} をインストールしました",
+      "successMultiple": "{{count}} 件のスキルをインストールしました",
+      "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
     }
   },
   "deeplink": {
@@ -1257,6 +1271,9 @@
   },
   "agents": {
     "title": "エージェント"
+  },
+  "modelTest": {
+    "testProvider": "モデルテスト"
   },
   "health": {
     "operational": "正常",
@@ -1479,6 +1496,7 @@
     "deleted": "統合プロバイダーを削除しました",
     "addSuccess": "統合プロバイダーを追加しました",
     "addFailed": "統合プロバイダーの追加に失敗しました",
+    "hint": "クロスアプリ統合設定。Claude/Codex/Gemini に自動同期します",
     "manage": "管理",
     "loadError": "統合プロバイダーの読み込みに失敗しました",
     "saveError": "統合プロバイダーの保存に失敗しました",
@@ -1532,6 +1550,32 @@
     "commonConfigHint": "OMO 共通設定は有効にしたすべての OMO 設定に統合されます",
     "selectPlaceholder": "選択してください...",
     "clear": "クリア",
+    "clearWrapped": "(クリア)",
+    "defaultWrapped": "(デフォルト)",
+    "variantPlaceholder": "variant",
+    "selectEnabledModel": "有効なモデルを選択",
+    "selectModelFirst": "先にモデルを選択",
+    "noEnabledModels": "有効なモデルがありません",
+    "noVariantsForModel": "このモデルには思考レベルがありません",
+    "currentValueNotEnabled": "{{value}} (現在値・未有効)",
+    "currentValueUnavailable": "{{value}} (現在値・利用不可)",
+    "advancedLabel": "詳細",
+    "advancedJsonInvalid": "詳細 JSON が不正です",
+    "advancedJsonHint": "temperature, top_p, budgetTokens, prompt_append, permission など。空欄でデフォルトを使用します",
+    "noEnabledModelsWarning": "利用可能な有効モデルがありません。先に OpenCode モデルを有効化してください。",
+    "importLocalReplaceSuccess": "ローカルファイルから読み込み、Agents/Categories/Other Fields を置き換えました",
+    "importLocalFailed": "ローカルファイルの読み込みに失敗しました: {{error}}",
+    "agentKeyPlaceholder": "agent キー",
+    "categoryKeyPlaceholder": "カテゴリキー",
+    "modelNamePlaceholder": "model-name",
+    "custom": "カスタム",
+    "customCategories": "カスタムカテゴリ",
+    "modelConfiguration": "モデル設定",
+    "fillRecommended": "推奨を入力",
+    "configSummary": "{{agents}} 個の Agent、{{categories}} 個の Category を設定済み · ⚙ で詳細を展開",
+    "enabledModelsCount": "有効モデル {{count}} 件",
+    "source": "出典:",
+    "otherFieldsJson": "その他のフィールド (JSON)",
     "searchOrType": "検索またはカスタム値を入力...",
     "noMatches": "一致する項目がありません",
     "jsonMustBeObject": "{{field}} は JSON オブジェクトである必要があります",

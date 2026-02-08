@@ -119,7 +119,7 @@ export function OmoFormFields({
   otherFieldsStr,
   onOtherFieldsStrChange,
 }: OmoFormFieldsProps) {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const isZh = i18n.language?.startsWith("zh");
 
   const [mainAgentsOpen, setMainAgentsOpen] = useState(true);
@@ -183,14 +183,15 @@ export function OmoFormFields({
       return [
         {
           value: currentModel,
-          label: isZh
-            ? `${currentModel}（当前值，未启用）`
-            : `${currentModel} (current value, not enabled)`,
+          label: t("omo.currentValueNotEnabled", {
+            value: currentModel,
+            defaultValue: "{{value}} (current value, not enabled)",
+          }),
         },
         ...modelOptions,
       ];
     },
-    [isZh, modelOptions],
+    [modelOptions, t],
   );
 
   const resolveRecommendedModel = useCallback(
@@ -224,17 +225,20 @@ export function OmoFormFields({
         <SelectTrigger className="flex-1 h-8 text-sm">
           <SelectValue
             placeholder={
-              placeholder || (isZh ? "选择已启用模型" : "Select enabled model")
+              placeholder ||
+              t("omo.selectEnabledModel", {
+                defaultValue: "Select enabled model",
+              })
             }
           />
         </SelectTrigger>
         <SelectContent className="max-h-72">
           <SelectItem value={EMPTY_MODEL_VALUE}>
-            {isZh ? "（清空）" : "(Clear)"}
+            {t("omo.clearWrapped", { defaultValue: "(Clear)" })}
           </SelectItem>
           {options.length === 0 ? (
             <SelectItem value={UNAVAILABLE_MODEL_VALUE} disabled>
-              {isZh ? "暂无已启用模型" : "No enabled models"}
+              {t("omo.noEnabledModels", { defaultValue: "No enabled models" })}
             </SelectItem>
           ) : (
             options.map((option) => (
@@ -282,27 +286,36 @@ export function OmoFormFields({
         disabled={!hasModel}
       >
         <SelectTrigger className="w-32 h-8 text-xs shrink-0">
-          <SelectValue placeholder="variant" />
+          <SelectValue
+            placeholder={t("omo.variantPlaceholder", {
+              defaultValue: "variant",
+            })}
+          />
         </SelectTrigger>
         <SelectContent className="max-h-72">
           <SelectItem value={EMPTY_VARIANT_VALUE}>
-            {isZh ? "（默认）" : "(Default)"}
+            {t("omo.defaultWrapped", { defaultValue: "(Default)" })}
           </SelectItem>
           {!hasModel ? (
             <SelectItem value={UNAVAILABLE_VARIANT_VALUE} disabled>
-              {isZh ? "先选择模型" : "Select model first"}
+              {t("omo.selectModelFirst", {
+                defaultValue: "Select model first",
+              })}
             </SelectItem>
           ) : variantOptions.length === 0 ? (
             <SelectItem value={UNAVAILABLE_VARIANT_VALUE} disabled>
-              {isZh ? "该模型无思考等级" : "No variants for model"}
+              {t("omo.noVariantsForModel", {
+                defaultValue: "No variants for model",
+              })}
             </SelectItem>
           ) : (
             variantOptions.map((variant, index) => (
               <SelectItem key={`${variant}-${index}`} value={variant}>
                 {firstIsUnavailable && index === 0
-                  ? isZh
-                    ? `${variant}（当前值，未启用）`
-                    : `${variant} (current value, unavailable)`
+                  ? t("omo.currentValueUnavailable", {
+                      value: variant,
+                      defaultValue: "{{value}} (current value, unavailable)",
+                    })
                   : variant}
               </SelectItem>
             ))
@@ -498,7 +511,9 @@ export function OmoFormFields({
         onBlur={(e) => {
           if (!handleAdvancedChange(configKey, e.target.value, store, setter)) {
             toast.error(
-              isZh ? "高级参数 JSON 无效" : "Advanced JSON is invalid",
+              t("omo.advancedJsonInvalid", {
+                defaultValue: "Advanced JSON is invalid",
+              }),
             );
           }
         }}
@@ -507,9 +522,10 @@ export function OmoFormFields({
       />
       {showHint && (
         <p className="text-[10px] text-muted-foreground mt-1">
-          {isZh
-            ? "temperature, top_p, budgetTokens, prompt_append, permission 等，留空使用默认值"
-            : "temperature, top_p, budgetTokens, prompt_append, permission, etc. Leave empty for defaults"}
+          {t("omo.advancedJsonHint", {
+            defaultValue:
+              "temperature, top_p, budgetTokens, prompt_append, permission, etc. Leave empty for defaults",
+          })}
         </p>
       )}
     </div>
@@ -518,9 +534,10 @@ export function OmoFormFields({
   const handleFillAllRecommended = () => {
     if (modelOptions.length === 0) {
       toast.warning(
-        isZh
-          ? "当前没有可用的已启用模型，请先启用并配置 OpenCode 模型"
-          : "No enabled models available. Configure and enable OpenCode models first.",
+        t("omo.noEnabledModelsWarning", {
+          defaultValue:
+            "No enabled models available. Configure and enable OpenCode models first.",
+        }),
       );
       return;
     }
@@ -582,15 +599,17 @@ export function OmoFormFields({
       );
       setLocalFilePath(data.filePath);
       toast.success(
-        isZh
-          ? "已从本地文件导入并覆盖 Agent/Category/Other Fields"
-          : "Imported local file and replaced Agents/Categories/Other Fields",
+        t("omo.importLocalReplaceSuccess", {
+          defaultValue:
+            "Imported local file and replaced Agents/Categories/Other Fields",
+        }),
       );
     } catch (err) {
       toast.error(
-        isZh
-          ? `读取本地文件失败: ${String(err)}`
-          : `Failed to read local file: ${String(err)}`,
+        t("omo.importLocalFailed", {
+          error: String(err),
+          defaultValue: "Failed to read local file: {{error}}",
+        }),
       );
     }
   }, [
@@ -598,7 +617,7 @@ export function OmoFormFields({
     onAgentsChange,
     onCategoriesChange,
     onOtherFieldsStrChange,
-    isZh,
+    t,
   ]);
 
   const renderBuiltinModelRow = (
@@ -641,7 +660,7 @@ export function OmoFormFields({
             size="icon"
             className={cn("h-7 w-7 shrink-0", advStr && "text-primary")}
             onClick={() => toggleAdvancedEditor(scope, key, advStr, isExpanded)}
-            title={isZh ? "高级参数" : "Advanced"}
+            title={t("omo.advancedLabel", { defaultValue: "Advanced" })}
           >
             <Settings className="h-3.5 w-3.5" />
           </Button>
@@ -683,12 +702,8 @@ export function OmoFormFields({
     const rowPrefix = isAgent ? "custom-agent" : "custom-cat";
     const emptyKeyPrefix = isAgent ? "__custom_agent_" : "__custom_cat_";
     const keyPlaceholder = isAgent
-      ? isZh
-        ? "agent 键名"
-        : "agent key"
-      : isZh
-        ? "分类键名"
-        : "category key";
+      ? t("omo.agentKeyPlaceholder", { defaultValue: "agent key" })
+      : t("omo.categoryKeyPlaceholder", { defaultValue: "category key" });
 
     const key = item.key || `${emptyKeyPrefix}${index}`;
     const currentVariant =
@@ -721,7 +736,7 @@ export function OmoFormFields({
           {renderModelSelect(
             item.model,
             (value) => updateCustom({ model: value }),
-            "model-name",
+            t("omo.modelNamePlaceholder", { defaultValue: "model-name" }),
           )}
           {renderVariantSelect(item.model, currentVariant, (value) => {
             if (!item.key) return;
@@ -733,7 +748,7 @@ export function OmoFormFields({
             size="icon"
             className={cn("h-7 w-7 shrink-0", advStr && "text-primary")}
             onClick={() => toggleAdvancedEditor(scope, key, advStr, isExpanded)}
-            title={isZh ? "高级参数" : "Advanced"}
+            title={t("omo.advancedLabel", { defaultValue: "Advanced" })}
           >
             <Settings className="h-3.5 w-3.5" />
           </Button>
@@ -848,7 +863,7 @@ export function OmoFormFields({
       onClick={onClick}
     >
       <Plus className="h-3.5 w-3.5 mr-1" />
-      {isZh ? "自定义" : "Custom"}
+      {t("omo.custom", { defaultValue: "Custom" })}
     </Button>
   );
 
@@ -874,7 +889,7 @@ export function OmoFormFields({
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <Label className="text-sm font-semibold">
-          {isZh ? "模型配置" : "Model Configuration"}
+          {t("omo.modelConfiguration", { defaultValue: "Model Configuration" })}
         </Label>
         <div className="flex items-center gap-1.5">
           <Button
@@ -890,7 +905,7 @@ export function OmoFormFields({
             ) : (
               <FolderInput className="h-3.5 w-3.5 mr-1" />
             )}
-            {isZh ? "从本地导入" : "Import Local"}
+            {t("omo.importLocal", { defaultValue: "Import Local" })}
           </Button>
           <Button
             type="button"
@@ -900,24 +915,28 @@ export function OmoFormFields({
             onClick={handleFillAllRecommended}
           >
             <Wand2 className="h-3.5 w-3.5 mr-1" />
-            {isZh ? "填充推荐" : "Fill Recommended"}
+            {t("omo.fillRecommended", { defaultValue: "Fill Recommended" })}
           </Button>
         </div>
       </div>
 
       <div className="text-xs text-muted-foreground">
-        {isZh
-          ? `已配置 ${configuredAgentCount} 个 Agent，${configuredCategoryCount} 个 Category · 点击 ⚙ 展开高级参数`
-          : `${configuredAgentCount} agents, ${configuredCategoryCount} categories configured · Click ⚙ for advanced params`}
+        {t("omo.configSummary", {
+          agents: configuredAgentCount,
+          categories: configuredCategoryCount,
+          defaultValue:
+            "{{agents}} agents, {{categories}} categories configured · Click ⚙ for advanced params",
+        })}
         <span className="ml-1">
           ·{" "}
-          {isZh
-            ? `可选已启用模型 ${modelOptions.length} 个`
-            : `${modelOptions.length} enabled models available`}
+          {t("omo.enabledModelsCount", {
+            count: modelOptions.length,
+            defaultValue: "{{count}} enabled models available",
+          })}
         </span>
         {localFilePath && (
           <span className="ml-1 text-primary/70">
-            · {isZh ? "来源:" : "from:"}{" "}
+            · {t("omo.source", { defaultValue: "from:" })}{" "}
             <span className="font-mono text-[10px]">
               {localFilePath.replace(/^.*\//, "")}
             </span>
@@ -926,7 +945,7 @@ export function OmoFormFields({
       </div>
 
       {renderModelSection({
-        title: isZh ? "主 Agents" : "Main Agents",
+        title: t("omo.mainAgents", { defaultValue: "Main Agents" }),
         isOpen: mainAgentsOpen,
         onToggle: () => setMainAgentsOpen(!mainAgentsOpen),
         badge: `${mainAgents.length}`,
@@ -934,7 +953,7 @@ export function OmoFormFields({
       })}
 
       {renderModelSection({
-        title: isZh ? "子 Agents" : "Sub Agents",
+        title: t("omo.subAgents", { defaultValue: "Sub Agents" }),
         isOpen: subAgentsOpen,
         onToggle: () => setSubAgentsOpen(!subAgentsOpen),
         badge: `${subAgents.length + customAgents.length}`,
@@ -944,7 +963,9 @@ export function OmoFormFields({
             {subAgents.map(renderAgentRow)}
             {customAgents.length > 0 && (
               <>
-                {renderCustomDivider(isZh ? "自定义 Agents" : "Custom Agents")}
+                {renderCustomDivider(
+                  t("omo.customAgents", { defaultValue: "Custom Agents" }),
+                )}
                 {customAgents.map((a, i) =>
                   renderCustomModelRow("agent", a, i),
                 )}
@@ -955,7 +976,7 @@ export function OmoFormFields({
       })}
 
       {renderModelSection({
-        title: isZh ? "分类 (Categories)" : "Categories",
+        title: t("omo.categories", { defaultValue: "Categories" }),
         isOpen: categoriesOpen,
         onToggle: () => setCategoriesOpen(!categoriesOpen),
         badge: `${OMO_BUILTIN_CATEGORIES.length + customCategories.length}`,
@@ -965,7 +986,11 @@ export function OmoFormFields({
             {OMO_BUILTIN_CATEGORIES.map(renderCategoryRow)}
             {customCategories.length > 0 && (
               <>
-                {renderCustomDivider(isZh ? "自定义分类" : "Custom Categories")}
+                {renderCustomDivider(
+                  t("omo.customCategories", {
+                    defaultValue: "Custom Categories",
+                  }),
+                )}
                 {customCategories.map((c, i) =>
                   renderCustomModelRow("category", c, i),
                 )}
@@ -976,7 +1001,9 @@ export function OmoFormFields({
       })}
 
       {renderModelSection({
-        title: isZh ? "其他字段 (JSON)" : "Other Fields (JSON)",
+        title: t("omo.otherFieldsJson", {
+          defaultValue: "Other Fields (JSON)",
+        }),
         isOpen: otherFieldsOpen,
         onToggle: () => setOtherFieldsOpen(!otherFieldsOpen),
         badge:

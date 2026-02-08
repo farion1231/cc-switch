@@ -797,7 +797,7 @@ function App() {
                       setSettingsDefaultTab("usage");
                       setCurrentView("settings");
                     }}
-                    title={t("settings.usage.title", {
+                    title={t("usage.title", {
                       defaultValue: "使用统计",
                     })}
                     className="hover:bg-black/5 dark:hover:bg-white/5"
