@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
-import type { AppId } from "@/lib/api";
+import { providersApi, type AppId } from "@/lib/api";
 import type {
   ProviderCategory,
   ProviderMeta,
@@ -579,6 +579,130 @@ export function ProviderForm({
       (k) => k !== providerId,
     );
   }, [opencodeProvidersData?.providers, providerId]);
+  const [enabledOpencodeProviderIds, setEnabledOpencodeProviderIds] = useState<
+    string[]
+  >([]);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!isOmoCategory) {
+      setEnabledOpencodeProviderIds([]);
+      return () => {
+        active = false;
+      };
+    }
+
+    (async () => {
+      try {
+        const ids = await providersApi.getOpenCodeLiveProviderIds();
+        if (active) {
+          setEnabledOpencodeProviderIds(ids);
+        }
+      } catch (error) {
+        console.error("Failed to load OpenCode live provider ids:", error);
+        if (active) {
+          setEnabledOpencodeProviderIds([]);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [isOmoCategory]);
+
+  const omoModelOptions = useMemo(() => {
+    if (!isOmoCategory) return [];
+
+    const allProviders = opencodeProvidersData?.providers;
+    if (!allProviders) return [];
+
+    const enabledSet = new Set(enabledOpencodeProviderIds);
+    if (enabledSet.size === 0) return [];
+
+    const dedupedOptions = new Map<string, string>();
+
+    for (const [providerKey, provider] of Object.entries(allProviders)) {
+      if (provider.category === "omo" || !enabledSet.has(providerKey)) {
+        continue;
+      }
+
+      const parsedConfig = parseOpencodeConfig(provider.settingsConfig);
+      for (const [modelId, model] of Object.entries(
+        parsedConfig.models || {},
+      )) {
+        const modelName =
+          typeof model.name === "string" && model.name.trim()
+            ? model.name
+            : modelId;
+        const providerDisplayName =
+          typeof provider.name === "string" && provider.name.trim()
+            ? provider.name
+            : providerKey;
+        const value = `${providerKey}/${modelId}`;
+        const label = `${providerDisplayName} / ${modelName} (${modelId})`;
+        if (!dedupedOptions.has(value)) {
+          dedupedOptions.set(value, label);
+        }
+      }
+    }
+
+    return Array.from(dedupedOptions.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
+  }, [
+    isOmoCategory,
+    opencodeProvidersData?.providers,
+    enabledOpencodeProviderIds,
+  ]);
+  const omoModelVariantsMap = useMemo(() => {
+    const variantsMap: Record<string, string[]> = {};
+    if (!isOmoCategory) {
+      return variantsMap;
+    }
+
+    const allProviders = opencodeProvidersData?.providers;
+    if (!allProviders) {
+      return variantsMap;
+    }
+
+    const enabledSet = new Set(enabledOpencodeProviderIds);
+    if (enabledSet.size === 0) {
+      return variantsMap;
+    }
+
+    for (const [providerKey, provider] of Object.entries(allProviders)) {
+      if (provider.category === "omo" || !enabledSet.has(providerKey)) {
+        continue;
+      }
+
+      const parsedConfig = parseOpencodeConfig(provider.settingsConfig);
+      for (const [modelId, model] of Object.entries(
+        parsedConfig.models || {},
+      )) {
+        const rawVariants = model.variants;
+        if (
+          !rawVariants ||
+          typeof rawVariants !== "object" ||
+          Array.isArray(rawVariants)
+        ) {
+          continue;
+        }
+        const variantKeys = Object.keys(rawVariants).filter(Boolean);
+        if (variantKeys.length === 0) {
+          continue;
+        }
+        variantsMap[`${providerKey}/${modelId}`] = variantKeys;
+      }
+    }
+
+    return variantsMap;
+  }, [
+    isOmoCategory,
+    opencodeProvidersData?.providers,
+    enabledOpencodeProviderIds,
+  ]);
 
   const initialOmoSettings =
     appId === "opencode" && initialData?.category === "omo"
@@ -1477,6 +1601,8 @@ export function ProviderForm({
 
         {appId === "opencode" && category === "omo" && (
           <OmoFormFields
+            modelOptions={omoModelOptions}
+            modelVariantsMap={omoModelVariantsMap}
             agents={omoAgents}
             onAgentsChange={setOmoAgents}
             categories={omoCategories}

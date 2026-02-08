@@ -166,10 +166,8 @@ impl ProviderService {
         if matches!(app_type, AppType::OpenCode) {
             // OMO providers use exclusive mode and write to dedicated config file.
             if provider.category.as_deref() == Some("omo") {
-                state
-                    .db
-                    .set_omo_provider_current(app_type.as_str(), &provider.id)?;
-                crate::services::OmoService::write_config_to_file(state)?;
+                // Do not auto-enable newly added OMO providers.
+                // Users must explicitly switch/apply an OMO provider to activate it.
                 return Ok(true);
             }
             write_live_snapshot(&app_type, &provider)?;

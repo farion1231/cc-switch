@@ -6,6 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Plus,
   Trash2,
   ChevronDown,
@@ -34,6 +41,8 @@ const ADVANCED_PLACEHOLDER = `{
 }`;
 
 interface OmoFormFieldsProps {
+  modelOptions: Array<{ value: string; label: string }>;
+  modelVariantsMap?: Record<string, string[]>;
   agents: Record<string, Record<string, unknown>>;
   onAgentsChange: (agents: Record<string, Record<string, unknown>>) => void;
   categories: Record<string, Record<string, unknown>>;
@@ -49,15 +58,20 @@ type BuiltinModelDef = Pick<
   OmoAgentDef | OmoCategoryDef,
   "key" | "display" | "descZh" | "descEn" | "recommended"
 >;
+type ModelOption = { value: string; label: string };
 
 const BUILTIN_AGENT_KEYS = new Set(OMO_BUILTIN_AGENTS.map((a) => a.key));
 const BUILTIN_CATEGORY_KEYS = new Set(OMO_BUILTIN_CATEGORIES.map((c) => c.key));
+const EMPTY_MODEL_VALUE = "__cc_switch_omo_model_empty__";
+const UNAVAILABLE_MODEL_VALUE = "__cc_switch_omo_model_unavailable__";
+const EMPTY_VARIANT_VALUE = "__cc_switch_omo_variant_empty__";
+const UNAVAILABLE_VARIANT_VALUE = "__cc_switch_omo_variant_unavailable__";
 
 function getAdvancedStr(config: Record<string, unknown> | undefined): string {
   if (!config) return "";
   const adv: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(config)) {
-    if (k !== "model") adv[k] = v;
+    if (k !== "model" && k !== "variant") adv[k] = v;
   }
   return Object.keys(adv).length > 0 ? JSON.stringify(adv, null, 2) : "";
 }
@@ -96,6 +110,8 @@ function mergeCustomModelsIntoStore(
 }
 
 export function OmoFormFields({
+  modelOptions,
+  modelVariantsMap = {},
   agents,
   onAgentsChange,
   categories,
@@ -158,6 +174,144 @@ export function OmoFormFields({
     [categories, onCategoriesChange],
   );
 
+  const buildEffectiveModelOptions = useCallback(
+    (currentModel: string): ModelOption[] => {
+      if (!currentModel) return modelOptions;
+      if (modelOptions.some((item) => item.value === currentModel)) {
+        return modelOptions;
+      }
+      return [
+        {
+          value: currentModel,
+          label: isZh
+            ? `${currentModel}（当前值，未启用）`
+            : `${currentModel} (current value, not enabled)`,
+        },
+        ...modelOptions,
+      ];
+    },
+    [isZh, modelOptions],
+  );
+
+  const resolveRecommendedModel = useCallback(
+    (recommended?: string): string | undefined => {
+      if (!recommended || modelOptions.length === 0) return undefined;
+
+      const exact = modelOptions.find((item) => item.value === recommended);
+      if (exact) return exact.value;
+
+      const bySuffix = modelOptions.find((item) =>
+        item.value.endsWith(`/${recommended}`),
+      );
+      return bySuffix?.value;
+    },
+    [modelOptions],
+  );
+
+  const renderModelSelect = (
+    currentModel: string,
+    onChange: (value: string) => void,
+    placeholder?: string,
+  ) => {
+    const options = buildEffectiveModelOptions(currentModel);
+    return (
+      <Select
+        value={currentModel || EMPTY_MODEL_VALUE}
+        onValueChange={(value) =>
+          onChange(value === EMPTY_MODEL_VALUE ? "" : value)
+        }
+      >
+        <SelectTrigger className="flex-1 h-8 text-sm">
+          <SelectValue
+            placeholder={
+              placeholder || (isZh ? "选择已启用模型" : "Select enabled model")
+            }
+          />
+        </SelectTrigger>
+        <SelectContent className="max-h-72">
+          <SelectItem value={EMPTY_MODEL_VALUE}>
+            {isZh ? "（清空）" : "(Clear)"}
+          </SelectItem>
+          {options.length === 0 ? (
+            <SelectItem value={UNAVAILABLE_MODEL_VALUE} disabled>
+              {isZh ? "暂无已启用模型" : "No enabled models"}
+            </SelectItem>
+          ) : (
+            options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))
+          )}
+        </SelectContent>
+      </Select>
+    );
+  };
+
+  const buildEffectiveVariantOptions = useCallback(
+    (currentModel: string, currentVariant: string): string[] => {
+      const variantKeys = modelVariantsMap[currentModel] || [];
+      if (!currentVariant || variantKeys.includes(currentVariant)) {
+        return variantKeys;
+      }
+      return [currentVariant, ...variantKeys];
+    },
+    [modelVariantsMap],
+  );
+
+  const renderVariantSelect = (
+    currentModel: string,
+    currentVariant: string,
+    onChange: (value: string) => void,
+  ) => {
+    const variantOptions = buildEffectiveVariantOptions(
+      currentModel,
+      currentVariant,
+    );
+    const hasModel = Boolean(currentModel);
+    const firstIsUnavailable =
+      Boolean(currentVariant) &&
+      !(modelVariantsMap[currentModel] || []).includes(currentVariant);
+
+    return (
+      <Select
+        value={currentVariant || EMPTY_VARIANT_VALUE}
+        onValueChange={(value) =>
+          onChange(value === EMPTY_VARIANT_VALUE ? "" : value)
+        }
+        disabled={!hasModel}
+      >
+        <SelectTrigger className="w-32 h-8 text-xs shrink-0">
+          <SelectValue placeholder="variant" />
+        </SelectTrigger>
+        <SelectContent className="max-h-72">
+          <SelectItem value={EMPTY_VARIANT_VALUE}>
+            {isZh ? "（默认）" : "(Default)"}
+          </SelectItem>
+          {!hasModel ? (
+            <SelectItem value={UNAVAILABLE_VARIANT_VALUE} disabled>
+              {isZh ? "先选择模型" : "Select model first"}
+            </SelectItem>
+          ) : variantOptions.length === 0 ? (
+            <SelectItem value={UNAVAILABLE_VARIANT_VALUE} disabled>
+              {isZh ? "该模型无思考等级" : "No variants for model"}
+            </SelectItem>
+          ) : (
+            variantOptions.map((variant, index) => (
+              <SelectItem key={`${variant}-${index}`} value={variant}>
+                {firstIsUnavailable && index === 0
+                  ? isZh
+                    ? `${variant}（当前值，未启用）`
+                    : `${variant} (current value, unavailable)`
+                  : variant}
+              </SelectItem>
+            ))
+          )}
+        </SelectContent>
+      </Select>
+    );
+  };
+
   const handleModelChange = (
     key: string,
     model: string,
@@ -165,12 +319,25 @@ export function OmoFormFields({
     setter: (v: Record<string, Record<string, unknown>>) => void,
   ) => {
     if (model.trim()) {
-      setter({ ...store, [key]: { ...store[key], model } });
+      const nextEntry: Record<string, unknown> = {
+        ...(store[key] || {}),
+        model,
+      };
+      const currentVariant =
+        typeof nextEntry.variant === "string" ? nextEntry.variant : "";
+      if (currentVariant) {
+        const validVariants = modelVariantsMap[model] || [];
+        if (!validVariants.includes(currentVariant)) {
+          delete nextEntry.variant;
+        }
+      }
+      setter({ ...store, [key]: nextEntry });
     } else {
       const existing = store[key];
       if (existing) {
         const adv = { ...existing };
         delete adv.model;
+        delete adv.variant;
         if (Object.keys(adv).length > 0) {
           setter({ ...store, [key]: adv });
         } else {
@@ -182,6 +349,31 @@ export function OmoFormFields({
     }
   };
 
+  const handleVariantChange = (
+    key: string,
+    variant: string,
+    store: Record<string, Record<string, unknown>>,
+    setter: (v: Record<string, Record<string, unknown>>) => void,
+  ) => {
+    const existing = store[key];
+    if (variant.trim()) {
+      setter({ ...store, [key]: { ...existing, variant } });
+      return;
+    }
+
+    if (!existing) return;
+    const nextEntry = { ...existing };
+    delete nextEntry.variant;
+    if (Object.keys(nextEntry).length > 0) {
+      setter({ ...store, [key]: nextEntry });
+      return;
+    }
+
+    const next = { ...store };
+    delete next[key];
+    setter(next);
+  };
+
   const handleAdvancedChange = (
     key: string,
     rawJson: string,
@@ -189,9 +381,16 @@ export function OmoFormFields({
     setter: (v: Record<string, Record<string, unknown>>) => void,
   ): boolean => {
     const currentModel = (store[key]?.model as string) || "";
+    const currentVariant = (store[key]?.variant as string) || "";
     if (!rawJson.trim()) {
-      if (currentModel) {
-        setter({ ...store, [key]: { model: currentModel } });
+      if (currentModel || currentVariant) {
+        setter({
+          ...store,
+          [key]: {
+            ...(currentModel ? { model: currentModel } : {}),
+            ...(currentVariant ? { variant: currentVariant } : {}),
+          },
+        });
       } else {
         const next = { ...store };
         delete next[key];
@@ -206,11 +405,15 @@ export function OmoFormFields({
         parsed !== null &&
         !Array.isArray(parsed)
       ) {
+        const parsedAdvanced = { ...(parsed as Record<string, unknown>) };
+        delete parsedAdvanced.model;
+        delete parsedAdvanced.variant;
         setter({
           ...store,
           [key]: {
             ...(currentModel ? { model: currentModel } : {}),
-            ...parsed,
+            ...(currentVariant ? { variant: currentVariant } : {}),
+            ...parsedAdvanced,
           },
         });
         return true;
@@ -300,7 +503,7 @@ export function OmoFormFields({
           }
         }}
         placeholder={ADVANCED_PLACEHOLDER}
-        className="font-mono text-xs min-h-[80px]"
+        className="font-mono text-xs min-h-[130px] py-3"
       />
       {showHint && (
         <p className="text-[10px] text-muted-foreground mt-1">
@@ -313,12 +516,22 @@ export function OmoFormFields({
   );
 
   const handleFillAllRecommended = () => {
+    if (modelOptions.length === 0) {
+      toast.warning(
+        isZh
+          ? "当前没有可用的已启用模型，请先启用并配置 OpenCode 模型"
+          : "No enabled models available. Configure and enable OpenCode models first.",
+      );
+      return;
+    }
+
     const updatedAgents = { ...agents };
     for (const agentDef of OMO_BUILTIN_AGENTS) {
-      if (agentDef.recommended && !updatedAgents[agentDef.key]?.model) {
+      const recommendedValue = resolveRecommendedModel(agentDef.recommended);
+      if (recommendedValue && !updatedAgents[agentDef.key]?.model) {
         updatedAgents[agentDef.key] = {
           ...updatedAgents[agentDef.key],
-          model: agentDef.recommended,
+          model: recommendedValue,
         };
       }
     }
@@ -326,10 +539,11 @@ export function OmoFormFields({
 
     const updatedCategories = { ...categories };
     for (const catDef of OMO_BUILTIN_CATEGORIES) {
-      if (catDef.recommended && !updatedCategories[catDef.key]?.model) {
+      const recommendedValue = resolveRecommendedModel(catDef.recommended);
+      if (recommendedValue && !updatedCategories[catDef.key]?.model) {
         updatedCategories[catDef.key] = {
           ...updatedCategories[catDef.key],
-          model: catDef.recommended,
+          model: recommendedValue,
         };
       }
     }
@@ -399,6 +613,7 @@ export function OmoFormFields({
 
     const key = def.key;
     const currentModel = (store[key]?.model as string) || "";
+    const currentVariant = (store[key]?.variant as string) || "";
     const advStr = getAdvancedStr(store[key]);
     const draftValue = drafts[key] ?? advStr;
     const isExpanded = expanded[key] ?? false;
@@ -412,14 +627,14 @@ export function OmoFormFields({
               {isZh ? def.descZh : def.descEn}
             </div>
           </div>
-          <Input
-            value={currentModel}
-            onChange={(e) =>
-              handleModelChange(key, e.target.value, store, setter)
-            }
-            placeholder={def.recommended || "model-name"}
-            className="flex-1 h-8 text-sm"
-          />
+          {renderModelSelect(
+            currentModel,
+            (value) => handleModelChange(key, value, store, setter),
+            def.recommended,
+          )}
+          {renderVariantSelect(currentModel, currentVariant, (value) =>
+            handleVariantChange(key, value, store, setter),
+          )}
           <Button
             type="button"
             variant={isExpanded ? "secondary" : "ghost"}
@@ -476,6 +691,10 @@ export function OmoFormFields({
         : "category key";
 
     const key = item.key || `${emptyKeyPrefix}${index}`;
+    const currentVariant =
+      item.key && typeof store[item.key]?.variant === "string"
+        ? (store[item.key]?.variant as string) || ""
+        : "";
     const advStr = item.key ? getAdvancedStr(store[item.key]) : "";
     const draftValue = drafts[key] ?? advStr;
     const isExpanded = expanded[key] ?? false;
@@ -499,12 +718,15 @@ export function OmoFormFields({
             placeholder={keyPlaceholder}
             className="w-32 shrink-0 h-8 text-sm text-primary"
           />
-          <Input
-            value={item.model}
-            onChange={(e) => updateCustom({ model: e.target.value })}
-            placeholder="model-name"
-            className="flex-1 h-8 text-sm"
-          />
+          {renderModelSelect(
+            item.model,
+            (value) => updateCustom({ model: value }),
+            "model-name",
+          )}
+          {renderVariantSelect(item.model, currentVariant, (value) => {
+            if (!item.key) return;
+            handleVariantChange(item.key, value, store, setter);
+          })}
           <Button
             type="button"
             variant={isExpanded ? "secondary" : "ghost"}
@@ -687,6 +909,12 @@ export function OmoFormFields({
         {isZh
           ? `已配置 ${configuredAgentCount} 个 Agent，${configuredCategoryCount} 个 Category · 点击 ⚙ 展开高级参数`
           : `${configuredAgentCount} agents, ${configuredCategoryCount} categories configured · Click ⚙ for advanced params`}
+        <span className="ml-1">
+          ·{" "}
+          {isZh
+            ? `可选已启用模型 ${modelOptions.length} 个`
+            : `${modelOptions.length} enabled models available`}
+        </span>
         {localFilePath && (
           <span className="ml-1 text-primary/70">
             · {isZh ? "来源:" : "from:"}{" "}

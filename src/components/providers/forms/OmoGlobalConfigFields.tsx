@@ -173,7 +173,11 @@ function TagListEditor({
       {values.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {values.map((v, i) => (
-            <Badge key={`${v}-${i}`} variant="secondary" className="text-xs gap-1">
+            <Badge
+              key={`${v}-${i}`}
+              variant="secondary"
+              className="text-xs gap-1"
+            >
               {v}
               <button
                 type="button"
