@@ -650,7 +650,12 @@
     "noExtraOptions": "No extra options configured",
     "noModelOptions": "Model options, click + to add",
     "modelOptionKeyPlaceholder": "provider",
-    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}",
+    "newApiHint": "Enable to auto-fetch model list via /v1/models endpoint",
+    "fetchModels": "Fetch Models",
+    "noRemoteModels": "Remote API returned no models",
+    "modelsImported": "Imported {{count}} model(s) ({{total}} total, {{skipped}} skipped as existing)",
+    "fetchModelsFailed": "Failed to fetch models: {{error}}"
   },
   "providerPreset": {
     "label": "Provider Preset",

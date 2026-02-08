@@ -650,7 +650,12 @@
     "noExtraOptions": "暂无额外选项",
     "noModelOptions": "模型选项，点击 + 添加",
     "modelOptionKeyPlaceholder": "provider",
-    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}",
+    "newApiHint": "启用后可通过 /v1/models 接口自动获取模型列表",
+    "fetchModels": "获取模型",
+    "noRemoteModels": "远程 API 未返回任何模型",
+    "modelsImported": "已导入 {{count}} 个模型（共 {{total}} 个，跳过 {{skipped}} 个已存在）",
+    "fetchModelsFailed": "获取模型失败: {{error}}"
   },
   "providerPreset": {
     "label": "预设供应商",
