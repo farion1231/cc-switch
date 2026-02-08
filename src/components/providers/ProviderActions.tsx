@@ -5,7 +5,6 @@ import {
   Edit,
   Loader2,
   Minus,
-  Pause,
   Play,
   Plus,
   Terminal,
@@ -99,18 +98,17 @@ export function ProviderActions({
           disabled: false,
           variant: "secondary" as const,
           className:
-            "bg-blue-100 text-blue-600 hover:bg-orange-100 hover:text-orange-600 dark:bg-blue-900/50 dark:text-blue-400 dark:hover:bg-orange-900/50 dark:hover:text-orange-400",
-          icon: <Pause className="h-4 w-4" />,
-          text: t("omo.enabled", { defaultValue: "启用中" }),
+            "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+          icon: <Check className="h-4 w-4" />,
+          text: t("provider.inUse"),
         };
       }
       return {
         disabled: false,
         variant: "default" as const,
-        className:
-          "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+        className: "",
         icon: <Play className="h-4 w-4" />,
-        text: t("omo.enable", { defaultValue: "启用" }),
+        text: t("provider.enable"),
       };
     }
 
