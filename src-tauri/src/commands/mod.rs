@@ -15,6 +15,7 @@ mod proxy;
 mod session_manager;
 mod settings;
 pub mod skill;
+mod remote_models;
 mod stream_check;
 mod usage;
 
@@ -33,5 +34,6 @@ pub use proxy::*;
 pub use session_manager::*;
 pub use settings::*;
 pub use skill::*;
+pub use remote_models::*;
 pub use stream_check::*;
 pub use usage::*;

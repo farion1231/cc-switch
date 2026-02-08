@@ -958,6 +958,8 @@ pub fn run() {
             commands::scan_local_proxies,
             // Window theme control
             commands::set_window_theme,
+            // Remote models (NewAPI)
+            commands::fetch_remote_models,
         ]);
 
     let app = builder

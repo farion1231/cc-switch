@@ -143,6 +143,8 @@ export interface ProviderMeta {
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   apiFormat?: "anthropic" | "openai_chat";
+  // OpenCode: 是否为 NewAPI 兼容供应商（支持 /v1/models 获取模型列表）
+  isNewApi?: boolean;
 }
 
 // Skill 同步方式
