@@ -9,7 +9,6 @@ use crate::codex_config;
 use crate::config::{self, get_claude_settings_path, ConfigStatus};
 use crate::settings;
 
-/// 获取 Claude Code 配置状态
 #[tauri::command]
 pub async fn get_claude_config_status() -> Result<ConfigStatus, String> {
     Ok(config::get_claude_config_status())
@@ -63,13 +62,11 @@ pub async fn get_config_status(app: String) -> Result<ConfigStatus, String> {
     }
 }
 
-/// 获取 Claude Code 配置文件路径
 #[tauri::command]
 pub async fn get_claude_code_config_path() -> Result<String, String> {
     Ok(get_claude_settings_path().to_string_lossy().to_string())
 }
 
-/// 获取当前生效的配置目录
 #[tauri::command]
 pub async fn get_config_dir(app: String) -> Result<String, String> {
     let dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
@@ -82,7 +79,6 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
     Ok(dir.to_string_lossy().to_string())
 }
 
-/// 打开配置文件夹
 #[tauri::command]
 pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, String> {
     let config_dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
@@ -104,7 +100,6 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
     Ok(true)
 }
 
-/// 弹出系统目录选择器并返回用户选择的路径
 #[tauri::command]
 pub async fn pick_directory(
     app: AppHandle,
@@ -136,14 +131,12 @@ pub async fn pick_directory(
     }
 }
 
-/// 获取应用配置文件路径
 #[tauri::command]
 pub async fn get_app_config_path() -> Result<String, String> {
     let config_path = config::get_app_config_path();
     Ok(config_path.to_string_lossy().to_string())
 }
 
-/// 打开应用配置文件夹
 #[tauri::command]
 pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, String> {
     let config_dir = config::get_app_config_dir();
@@ -160,7 +153,6 @@ pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, String> {
     Ok(true)
 }
 
-/// 获取 Claude 通用配置片段（已废弃，使用 get_common_config_snippet）
 #[tauri::command]
 pub async fn get_claude_common_config_snippet(
     state: tauri::State<'_, crate::store::AppState>,
@@ -171,13 +163,11 @@ pub async fn get_claude_common_config_snippet(
         .map_err(|e| e.to_string())
 }
 
-/// 设置 Claude 通用配置片段（已废弃，使用 set_common_config_snippet）
 #[tauri::command]
 pub async fn set_claude_common_config_snippet(
     snippet: String,
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<(), String> {
-    // 验证是否为有效的 JSON（如果不为空）
     if !snippet.trim().is_empty() {
         serde_json::from_str::<serde_json::Value>(&snippet).map_err(invalid_json_format_error)?;
     }
@@ -195,7 +185,6 @@ pub async fn set_claude_common_config_snippet(
     Ok(())
 }
 
-/// 获取通用配置片段（统一接口）
 #[tauri::command]
 pub async fn get_common_config_snippet(
     app_type: String,
@@ -207,25 +196,19 @@ pub async fn get_common_config_snippet(
         .map_err(|e| e.to_string())
 }
 
-/// 设置通用配置片段（统一接口）
 #[tauri::command]
 pub async fn set_common_config_snippet(
     app_type: String,
     snippet: String,
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<(), String> {
-    // 验证格式（根据应用类型）
     if !snippet.trim().is_empty() {
         match app_type.as_str() {
-            "claude" | "gemini" => {
-                // 验证 JSON 格式
+            "claude" | "gemini" | "omo" => {
                 serde_json::from_str::<serde_json::Value>(&snippet)
                     .map_err(invalid_json_format_error)?;
             }
-            "codex" => {
-                // TOML 格式暂不验证（或可使用 toml crate）
-                // 注意：TOML 验证较为复杂，暂时跳过
-            }
+            "codex" => {}
             _ => {}
         }
     }
@@ -240,14 +223,20 @@ pub async fn set_common_config_snippet(
         .db
         .set_config_snippet(&app_type, value)
         .map_err(|e| e.to_string())?;
+
+    if app_type == "omo"
+        && state
+            .db
+            .get_current_omo_provider("opencode")
+            .map_err(|e| e.to_string())?
+            .is_some()
+    {
+        crate::services::OmoService::write_config_to_file(state.inner())
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
-/// 提取通用配置片段
-///
-/// 优先从 `settingsConfig`（编辑器当前内容）提取；若未提供，则从当前激活供应商提取。
-///
-/// 提取时会自动排除差异化字段（API Key、模型配置、端点等），返回可复用的通用配置片段。
 #[tauri::command]
 pub async fn extract_common_config_snippet(
     appType: String,

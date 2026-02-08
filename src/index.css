@@ -1,9 +1,7 @@
-/* Tailwind CSS v3 指令 */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* shadcn/ui 主题变量 - 蓝色主题 */
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -13,25 +11,20 @@
     --popover: 0 0% 100%;
     --popover-foreground: 240 10% 3.9%;
 
-    /* 主色调：macOS 风格系统蓝 */
     --primary: 210 100% 56%;
     --primary-foreground: 0 0% 100%;
 
-    /* 次要色：淡蓝灰 */
     --secondary: 240 4.8% 95.9%;
     --secondary-foreground: 240 5.9% 10%;
 
-    /* 强调色 */
     --muted: 240 4.8% 95.9%;
     --muted-foreground: 240 3.8% 46.1%;
     --accent: 240 4.8% 95.9%;
     --accent-foreground: 240 5.9% 10%;
 
-    /* 危险色：红色 */
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
 
-    /* 边框和输入框 */
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
     --ring: 210 100% 56%;
@@ -40,7 +33,6 @@
   }
 
   .dark {
-    /* 背景与卡片：接近 macOS 深色 systemBackground / windowBackground */
     --background: 240 5% 12%;
     --foreground: 0 0% 98%;
     --card: 240 5% 16%;
@@ -48,7 +40,6 @@
     --popover: 240 5% 16%;
     --popover-foreground: 0 0% 98%;
 
-    /* 暗色模式主色调：macOS 风格系统蓝（略微降低亮度） */
     --primary: 210 100% 54%;
     --primary-foreground: 0 0% 100%;
 
@@ -60,7 +51,6 @@
     --accent: 240 5% 18%;
     --accent-foreground: 0 0% 98%;
 
-    /* 暗色模式危险色 */
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
 
@@ -70,7 +60,6 @@
   }
 }
 
-/* Glassmorphism Utilities */
 .glass {
   background: rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(10px);
@@ -100,7 +89,6 @@
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
 }
 
-/* 供应商卡片选中状态 */
 .glass-card-active {
   background: rgba(59, 130, 246, 0.08);
   border: 1px solid rgba(59, 130, 246, 0.4);
@@ -125,7 +113,6 @@
   border-top: 2px solid hsl(var(--border));
 }
 
-/* Tauri 拖拽区域 */
 [data-tauri-drag-region] {
   -webkit-app-region: drag;
 }
@@ -135,19 +122,16 @@
   -webkit-app-region: no-drag;
 }
 
-/* 全局基础样式 */
 * {
   box-sizing: border-box;
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE 10+ */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 html {
   @apply font-sans antialiased;
   line-height: 1.5;
-  /* 让原生控件与滚动条随主题切换配色 */
   color-scheme: light;
-  /* 禁用 overscroll 回弹效果，防止下拉时顶部边框被拉下来 */
   overscroll-behavior: none;
 }
 
@@ -157,24 +141,19 @@ body {
   color: hsl(var(--foreground));
 }
 
-/* 暗色模式下启用暗色原生控件/滚动条配色 */
 html.dark {
   color-scheme: dark;
 }
 
-/* 滚动条样式 - 完全隐藏（支持所有浏览器） */
 ::-webkit-scrollbar {
   display: none;
 }
 
-/* 焦点样式 */
 *:focus-visible {
   @apply outline-2 outline-blue-500 outline-offset-2;
 }
 
-/* 统一边框设计系统 - 使用工具类定义 */
 @layer utilities {
-  /* 让滚动条悬浮于内容之上，避免出现/消失时挤压布局 */
   .scroll-overlay {
     scrollbar-gutter: stable both-edges;
     padding-right: 0.5rem;
@@ -182,13 +161,11 @@ html.dark {
     overflow-x: hidden;
   }
 
-  /* 默认边框：1px，使用主题边框颜色 */
   .border-default {
     border-width: 1px;
     border-color: hsl(var(--border));
   }
 
-  /* 激活边框：2px，使用主色 */
   .border-active {
     border-width: 2px;
   }
@@ -210,20 +187,17 @@ html.dark {
   }
 }
 
-/* 禁用 Edge / IE 的密码显示按钮 */
 input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear {
   display: none;
 }
 
-/* Theme transition animation using View Transitions API */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
 }
 
-/* Old snapshot stays behind, new snapshot animates on top */
 ::view-transition-old(root) {
   z-index: 1;
 }
@@ -232,23 +206,24 @@ input[type="password"]::-ms-clear {
   z-index: 9999;
 }
 
-/* Circular expand animation from click position */
 @keyframes theme-circle-expand {
   from {
-    clip-path: circle(0% at var(--theme-transition-x, 50%) var(--theme-transition-y, 50%));
+    clip-path: circle(
+      0% at var(--theme-transition-x, 50%) var(--theme-transition-y, 50%)
+    );
   }
 
   to {
-    clip-path: circle(150% at var(--theme-transition-x, 50%) var(--theme-transition-y, 50%));
+    clip-path: circle(
+      150% at var(--theme-transition-x, 50%) var(--theme-transition-y, 50%)
+    );
   }
 }
 
-/* Apply animation to new snapshot - works for both light and dark transitions */
 ::view-transition-new(root) {
   animation: theme-circle-expand 0.4s ease-out;
 }
 
-/* Respect user preference for reduced motion */
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-new(root) {
     animation: none;

@@ -503,6 +503,28 @@ pub fn run() {
                 Err(e) => log::debug!("○ Failed to import OpenCode providers: {e}"),
             }
 
+            // 2.2 OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
+            {
+                let has_omo = app_state
+                    .db
+                    .get_all_providers("opencode")
+                    .map(|providers| providers.values().any(|p| p.category.as_deref() == Some("omo")))
+                    .unwrap_or(false);
+                if !has_omo {
+                    match crate::services::OmoService::import_from_local(&app_state) {
+                        Ok(provider) => {
+                            log::info!("✓ Imported OMO config from local as provider '{}'", provider.name);
+                        }
+                        Err(AppError::OmoConfigNotFound) => {
+                            log::debug!("○ No OMO config to import");
+                        }
+                        Err(e) => {
+                            log::warn!("✗ Failed to import OMO config from local: {e}");
+                        }
+                    }
+                }
+            }
+
             // 3. 导入 MCP 服务器配置（表空时触发）
             if app_state.db.is_mcp_table_empty().unwrap_or(false) {
                 log::info!("MCP table empty, importing from live configurations...");
@@ -958,6 +980,10 @@ pub fn run() {
             commands::scan_local_proxies,
             // Window theme control
             commands::set_window_theme,
+            commands::read_omo_local_file,
+            commands::get_current_omo_provider_id,
+            commands::get_omo_provider_count,
+            commands::disable_current_omo,
         ]);
 
     let app = builder
