@@ -1,6 +1,6 @@
 # CC Switch 用户手册
 
-> Claude Code / Codex / Gemini CLI 全方位辅助工具
+> Claude Code / Codex / Gemini CLI / OpenCode 全方位辅助工具
 
 ## 目录结构
 
@@ -99,9 +99,9 @@
 
 ## 版本信息
 
-- 文档版本：v3.9.1
-- 最后更新：2025-12-30
-- 适用于 CC Switch v3.9.0+
+- 文档版本：v3.10.3
+- 最后更新：2026-02-09
+- 适用于 CC Switch v3.10.0+
 
 ## 贡献
 
