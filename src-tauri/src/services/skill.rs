@@ -174,6 +174,29 @@ impl SkillService {
         Self
     }
 
+    /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
+    fn build_skill_doc_url(owner: &str, repo: &str, branch: &str, doc_path: &str) -> String {
+        format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
+    }
+
+    /// 从旧 readme_url 中提取仓库内文档路径，兼容 `blob`/`tree` 两种格式
+    fn extract_doc_path_from_url(url: &str) -> Option<String> {
+        let marker = if url.contains("/blob/") {
+            "/blob/"
+        } else if url.contains("/tree/") {
+            "/tree/"
+        } else {
+            return None;
+        };
+
+        let (_, tail) = url.split_once(marker)?;
+        let (_, path) = tail.split_once('/')?;
+        if path.is_empty() {
+            return None;
+        }
+        Some(path.to_string())
+    }
+
     // ========== 路径管理 ==========
 
     /// 获取 SSOT 目录（~/.cc-switch/skills/）
@@ -298,6 +321,8 @@ impl SkillService {
 
         let dest = ssot_dir.join(&install_name);
 
+        let mut repo_branch = skill.repo_branch.clone();
+
         // 如果已存在则跳过下载
         if !dest.exists() {
             let repo = SkillRepo {
@@ -308,7 +333,7 @@ impl SkillService {
             };
 
             // 下载仓库
-            let temp_dir = timeout(
+            let (temp_dir, used_branch) = timeout(
                 std::time::Duration::from_secs(60),
                 self.download_repo(&repo),
             )
@@ -324,6 +349,7 @@ impl SkillService {
                     Some("checkNetwork"),
                 ))
             })??;
+            repo_branch = used_branch;
 
             // 复制到 SSOT
             let source = temp_dir.join(&skill.directory);
@@ -338,7 +364,38 @@ impl SkillService {
 
             Self::copy_dir_recursive(&source, &dest)?;
             let _ = fs::remove_dir_all(&temp_dir);
+
+            // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
+            if repo_branch != skill.repo_branch {
+                log::info!(
+                    "Skill {}/{} 分支自动回退: {} -> {}",
+                    skill.repo_owner,
+                    skill.repo_name,
+                    skill.repo_branch,
+                    repo_branch
+                );
+            }
         }
+
+        let doc_path = skill
+            .readme_url
+            .as_deref()
+            .and_then(Self::extract_doc_path_from_url)
+            .map(|path| {
+                if path.ends_with("/SKILL.md") || path == "SKILL.md" {
+                    path
+                } else {
+                    format!("{}/SKILL.md", path.trim_end_matches('/'))
+                }
+            })
+            .unwrap_or_else(|| format!("{}/SKILL.md", skill.directory.trim_end_matches('/')));
+
+        let readme_url = Some(Self::build_skill_doc_url(
+            &skill.repo_owner,
+            &skill.repo_name,
+            &repo_branch,
+            &doc_path,
+        ));
 
         // 创建 InstalledSkill 记录
         let installed_skill = InstalledSkill {
@@ -352,8 +409,8 @@ impl SkillService {
             directory: install_name.clone(),
             repo_owner: Some(skill.repo_owner.clone()),
             repo_name: Some(skill.repo_name.clone()),
-            repo_branch: Some(skill.repo_branch.clone()),
-            readme_url: skill.readme_url.clone(),
+            repo_branch: Some(repo_branch),
+            readme_url,
             apps: SkillApps::only(current_app),
             installed_at: chrono::Utc::now().timestamp(),
         };
@@ -862,24 +919,26 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let temp_dir = timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
-            .await
-            .map_err(|_| {
-                anyhow!(format_skill_error(
-                    "DOWNLOAD_TIMEOUT",
-                    &[
-                        ("owner", &repo.owner),
-                        ("name", &repo.name),
-                        ("timeout", "60")
-                    ],
-                    Some("checkNetwork"),
-                ))
-            })??;
+        let (temp_dir, resolved_branch) =
+            timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
+                .await
+                .map_err(|_| {
+                    anyhow!(format_skill_error(
+                        "DOWNLOAD_TIMEOUT",
+                        &[
+                            ("owner", &repo.owner),
+                            ("name", &repo.name),
+                            ("timeout", "60")
+                        ],
+                        Some("checkNetwork"),
+                    ))
+                })??;
 
         let mut skills = Vec::new();
         let scan_dir = temp_dir.clone();
-
-        self.scan_dir_recursive(&scan_dir, &scan_dir, repo, &mut skills)?;
+        let mut resolved_repo = repo.clone();
+        resolved_repo.branch = resolved_branch;
+        self.scan_dir_recursive(&scan_dir, &scan_dir, &resolved_repo, &mut skills)?;
 
         let _ = fs::remove_dir_all(&temp_dir);
 
@@ -907,7 +966,15 @@ impl SkillService {
                     .to_string()
             };
 
-            if let Ok(skill) = self.build_skill_from_metadata(&skill_md, &directory, repo) {
+            let doc_path = skill_md
+                .strip_prefix(base_dir)
+                .unwrap_or(skill_md.as_path())
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            if let Ok(skill) =
+                self.build_skill_from_metadata(&skill_md, &directory, &doc_path, repo)
+            {
                 skills.push(skill);
             }
 
@@ -931,6 +998,7 @@ impl SkillService {
         &self,
         skill_md: &Path,
         directory: &str,
+        doc_path: &str,
         repo: &SkillRepo,
     ) -> Result<DiscoverableSkill> {
         let meta = self.parse_skill_metadata(skill_md)?;
@@ -940,9 +1008,11 @@ impl SkillService {
             name: meta.name.unwrap_or_else(|| directory.to_string()),
             description: meta.description.unwrap_or_default(),
             directory: directory.to_string(),
-            readme_url: Some(format!(
-                "https://github.com/{}/{}/tree/{}/{}",
-                repo.owner, repo.name, repo.branch, directory
+            readme_url: Some(Self::build_skill_doc_url(
+                &repo.owner,
+                &repo.name,
+                &repo.branch,
+                doc_path,
             )),
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
@@ -994,16 +1064,21 @@ impl SkillService {
     }
 
     /// 下载仓库
-    async fn download_repo(&self, repo: &SkillRepo) -> Result<PathBuf> {
+    async fn download_repo(&self, repo: &SkillRepo) -> Result<(PathBuf, String)> {
         let temp_dir = tempfile::tempdir()?;
         let temp_path = temp_dir.path().to_path_buf();
         let _ = temp_dir.keep();
 
-        let branches = if repo.branch.is_empty() {
-            vec!["main", "master"]
-        } else {
-            vec![repo.branch.as_str(), "main", "master"]
-        };
+        let mut branches = Vec::new();
+        if !repo.branch.is_empty() {
+            branches.push(repo.branch.as_str());
+        }
+        if !branches.contains(&"main") {
+            branches.push("main");
+        }
+        if !branches.contains(&"master") {
+            branches.push("master");
+        }
 
         let mut last_error = None;
         for branch in branches {
@@ -1014,7 +1089,7 @@ impl SkillService {
 
             match self.download_and_extract(&url, &temp_path).await {
                 Ok(_) => {
-                    return Ok(temp_path);
+                    return Ok((temp_path, branch.to_string()));
                 }
                 Err(e) => {
                     last_error = Some(e);

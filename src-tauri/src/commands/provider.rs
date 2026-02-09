@@ -8,7 +8,6 @@ use crate::services::{EndpointLatency, ProviderService, ProviderSortUpdate, Spee
 use crate::store::AppState;
 use std::str::FromStr;
 
-/// 获取所有供应商
 #[tauri::command]
 pub fn get_providers(
     state: State<'_, AppState>,
@@ -18,14 +17,12 @@ pub fn get_providers(
     ProviderService::list(state.inner(), app_type).map_err(|e| e.to_string())
 }
 
-/// 获取当前供应商ID
 #[tauri::command]
 pub fn get_current_provider(state: State<'_, AppState>, app: String) -> Result<String, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::current(state.inner(), app_type).map_err(|e| e.to_string())
 }
 
-/// 添加供应商
 #[tauri::command]
 pub fn add_provider(
     state: State<'_, AppState>,
@@ -36,7 +33,6 @@ pub fn add_provider(
     ProviderService::add(state.inner(), app_type, provider).map_err(|e| e.to_string())
 }
 
-/// 更新供应商
 #[tauri::command]
 pub fn update_provider(
     state: State<'_, AppState>,
@@ -47,7 +43,6 @@ pub fn update_provider(
     ProviderService::update(state.inner(), app_type, provider).map_err(|e| e.to_string())
 }
 
-/// 删除供应商
 #[tauri::command]
 pub fn delete_provider(
     state: State<'_, AppState>,
@@ -60,17 +55,18 @@ pub fn delete_provider(
         .map_err(|e| e.to_string())
 }
 
-/// Remove provider from live config only (for additive mode apps like OpenCode)
-/// Does NOT delete from database - provider remains in the list
 #[tauri::command]
-pub fn remove_provider_from_live_config(app: String, id: String) -> Result<bool, String> {
+pub fn remove_provider_from_live_config(
+    state: tauri::State<'_, AppState>,
+    app: String,
+    id: String,
+) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::remove_from_live_config(app_type, &id)
+    ProviderService::remove_from_live_config(state.inner(), app_type, &id)
         .map(|_| true)
         .map_err(|e| e.to_string())
 }
 
-/// 切换供应商
 fn switch_provider_internal(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
     ProviderService::switch(state, app_type, id)
 }
@@ -108,14 +104,12 @@ pub fn import_default_config_test_hook(
     import_default_config_internal(state, app_type)
 }
 
-/// 导入当前配置为默认供应商
 #[tauri::command]
 pub fn import_default_config(state: State<'_, AppState>, app: String) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     import_default_config_internal(&state, app_type).map_err(Into::into)
 }
 
-/// 查询供应商用量
 #[allow(non_snake_case)]
 #[tauri::command]
 pub async fn queryProviderUsage(
@@ -129,7 +123,6 @@ pub async fn queryProviderUsage(
         .map_err(|e| e.to_string())
 }
 
-/// 测试用量脚本（使用当前编辑器中的脚本，不保存）
 #[allow(non_snake_case)]
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -162,14 +155,12 @@ pub async fn testUsageScript(
     .map_err(|e| e.to_string())
 }
 
-/// 读取当前生效的配置内容
 #[tauri::command]
 pub fn read_live_provider_settings(app: String) -> Result<serde_json::Value, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::read_live_settings(app_type).map_err(|e| e.to_string())
 }
 
-/// 测试第三方/自定义供应商端点的网络延迟
 #[tauri::command]
 pub async fn test_api_endpoints(
     urls: Vec<String>,
@@ -180,7 +171,6 @@ pub async fn test_api_endpoints(
         .map_err(|e| e.to_string())
 }
 
-/// 获取自定义端点列表
 #[tauri::command]
 pub fn get_custom_endpoints(
     state: State<'_, AppState>,
@@ -192,7 +182,6 @@ pub fn get_custom_endpoints(
         .map_err(|e| e.to_string())
 }
 
-/// 添加自定义端点
 #[tauri::command]
 pub fn add_custom_endpoint(
     state: State<'_, AppState>,
@@ -205,7 +194,6 @@ pub fn add_custom_endpoint(
         .map_err(|e| e.to_string())
 }
 
-/// 删除自定义端点
 #[tauri::command]
 pub fn remove_custom_endpoint(
     state: State<'_, AppState>,
@@ -218,7 +206,6 @@ pub fn remove_custom_endpoint(
         .map_err(|e| e.to_string())
 }
 
-/// 更新端点最后使用时间
 #[tauri::command]
 pub fn update_endpoint_last_used(
     state: State<'_, AppState>,
@@ -231,7 +218,6 @@ pub fn update_endpoint_last_used(
         .map_err(|e| e.to_string())
 }
 
-/// 更新多个供应商的排序
 #[tauri::command]
 pub fn update_providers_sort_order(
     state: State<'_, AppState>,
@@ -242,24 +228,16 @@ pub fn update_providers_sort_order(
     ProviderService::update_sort_order(state.inner(), app_type, updates).map_err(|e| e.to_string())
 }
 
-// ============================================================================
-// 统一供应商（Universal Provider）命令
-// ============================================================================
-
 use crate::provider::UniversalProvider;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter};
 
-/// 统一供应商同步完成事件的 payload
 #[derive(Clone, serde::Serialize)]
 pub struct UniversalProviderSyncedEvent {
-    /// 操作类型: "upsert" | "delete" | "sync"
     pub action: String,
-    /// 统一供应商 ID
     pub id: String,
 }
 
-/// 发送统一供应商同步事件，通知前端刷新供应商列表
 fn emit_universal_provider_synced(app: &AppHandle, action: &str, id: &str) {
     let _ = app.emit(
         "universal-provider-synced",
@@ -270,7 +248,6 @@ fn emit_universal_provider_synced(app: &AppHandle, action: &str, id: &str) {
     );
 }
 
-/// 获取所有统一供应商
 #[tauri::command]
 pub fn get_universal_providers(
     state: State<'_, AppState>,
@@ -278,7 +255,6 @@ pub fn get_universal_providers(
     ProviderService::list_universal(state.inner()).map_err(|e| e.to_string())
 }
 
-/// 获取单个统一供应商
 #[tauri::command]
 pub fn get_universal_provider(
     state: State<'_, AppState>,
@@ -287,7 +263,6 @@ pub fn get_universal_provider(
     ProviderService::get_universal(state.inner(), &id).map_err(|e| e.to_string())
 }
 
-/// 添加或更新统一供应商
 #[tauri::command]
 pub fn upsert_universal_provider(
     app: AppHandle,
@@ -298,13 +273,11 @@ pub fn upsert_universal_provider(
     let result =
         ProviderService::upsert_universal(state.inner(), provider).map_err(|e| e.to_string())?;
 
-    // 发送事件通知前端刷新
     emit_universal_provider_synced(&app, "upsert", &id);
 
     Ok(result)
 }
 
-/// 删除统一供应商
 #[tauri::command]
 pub fn delete_universal_provider(
     app: AppHandle,
@@ -314,13 +287,11 @@ pub fn delete_universal_provider(
     let result =
         ProviderService::delete_universal(state.inner(), &id).map_err(|e| e.to_string())?;
 
-    // 发送事件通知前端刷新
     emit_universal_provider_synced(&app, "delete", &id);
 
     Ok(result)
 }
 
-/// 同步统一供应商到各应用（手动触发）
 #[tauri::command]
 pub fn sync_universal_provider(
     app: AppHandle,
@@ -330,29 +301,17 @@ pub fn sync_universal_provider(
     let result =
         ProviderService::sync_universal_to_apps(state.inner(), &id).map_err(|e| e.to_string())?;
 
-    // 发送事件通知前端刷新
     emit_universal_provider_synced(&app, "sync", &id);
 
     Ok(result)
 }
 
-// ============================================================================
-// OpenCode 专属命令
-// ============================================================================
-
-/// 从 OpenCode live 配置导入供应商到数据库
-///
-/// 这是 OpenCode 特有的功能，因为 OpenCode 使用累加模式，
-/// 用户可能已经在 opencode.json 中配置了供应商。
 #[tauri::command]
 pub fn import_opencode_providers_from_live(state: State<'_, AppState>) -> Result<usize, String> {
     crate::services::provider::import_opencode_providers_from_live(state.inner())
         .map_err(|e| e.to_string())
 }
 
-/// 获取 OpenCode live 配置中的供应商 ID 列表
-///
-/// 用于前端判断供应商是否已添加到 opencode.json
 #[tauri::command]
 pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
     crate::opencode_config::get_providers()

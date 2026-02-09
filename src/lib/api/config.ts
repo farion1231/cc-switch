@@ -1,7 +1,7 @@
 // 配置相关 API
 import { invoke } from "@tauri-apps/api/core";
 
-export type AppType = "claude" | "codex" | "gemini";
+export type AppType = "claude" | "codex" | "gemini" | "omo";
 
 /**
  * 获取 Claude 通用配置片段（已废弃，使用 getCommonConfigSnippet）
@@ -63,7 +63,7 @@ export type ExtractCommonConfigSnippetOptions = {
 };
 
 export async function extractCommonConfigSnippet(
-  appType: AppType,
+  appType: Exclude<AppType, "omo">,
   options?: ExtractCommonConfigSnippetOptions,
 ): Promise<string> {
   const args: Record<string, unknown> = { appType };
