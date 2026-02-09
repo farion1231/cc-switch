@@ -143,6 +143,17 @@ export interface ProviderMeta {
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   apiFormat?: "anthropic" | "openai_chat";
+  // Codex 模型映射配置（仅 Codex 供应商使用）
+  codexModelMapping?: {
+    enabled: boolean;
+    modelMap: Record<string, string>;
+    effortMap: Record<string, string>;
+  };
+  // 请求体重写器配置（用于过滤或覆盖 JSON 字段）
+  requestBodyRewriter?: {
+    enabled: boolean;
+    rules: Record<string, any>; // null = 删除, 其他值 = 覆盖
+  };
 }
 
 // Skill 同步方式

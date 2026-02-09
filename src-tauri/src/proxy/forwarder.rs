@@ -71,6 +71,35 @@ const HEADER_BLACKLIST: &[&str] = &[
     "x-real-ip",
 ];
 
+/// 应用重写规则到 JSON 对象
+/// path 支持点分隔（如 "text.verbosity"），value 为 None 表示删除该字段，Some(v) 表示覆盖
+fn apply_rewrite_rule(obj: &mut serde_json::Map<String, Value>, path: &str, value: Option<Value>) {
+    let parts: Vec<&str> = path.split('.').collect();
+    if parts.is_empty() {
+        return;
+    }
+
+    if parts.len() == 1 {
+        // 单层路径：直接删除或覆盖
+        let key = parts[0];
+        match value {
+            None => {
+                obj.remove(key);
+            }
+            Some(v) => {
+                obj.insert(key.to_string(), v);
+            }
+        }
+    } else {
+        // 嵌套路径：递归处理
+        let key = parts[0];
+        if let Some(Value::Object(inner)) = obj.get_mut(key) {
+            let remaining_path = parts[1..].join(".");
+            apply_rewrite_rule(inner, &remaining_path, value);
+        }
+    }
+}
+
 pub struct ForwardResult {
     pub response: Response,
     pub provider: Provider,
@@ -571,9 +600,14 @@ impl RequestForwarder {
         // 使用适配器构建 URL
         let url = adapter.build_url(&base_url, effective_endpoint);
 
-        // 应用模型映射（独立于格式转换）
-        let (mapped_body, _original_model, _mapped_model) =
-            super::model_mapper::apply_model_mapping(body.clone(), provider);
+        // 应用模型映射（根据适配器类型选择不同的映射器）
+        let (mapped_body, _original_model, _mapped_model) = if adapter.name() == "Codex" {
+            // Codex 使用专用映射器，支持 effort 组合映射
+            super::codex_model_mapper::apply_codex_model_mapping(body.clone(), provider)
+        } else {
+            // Claude 和其他使用原有映射器
+            super::model_mapper::apply_model_mapping(body.clone(), provider)
+        };
 
         // 转换请求体（如果需要）
         let request_body = if needs_transform {
@@ -584,7 +618,18 @@ impl RequestForwarder {
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
-        let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+        let mut filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+
+        // 应用请求体重写器（用户自定义字段过滤/覆盖）
+        if let Some(rewriter) = provider.meta.as_ref().and_then(|m| m.request_body_rewriter.as_ref()) {
+            if rewriter.enabled {
+                if let Some(obj) = filtered_body.as_object_mut() {
+                    for (path, value) in &rewriter.rules {
+                        apply_rewrite_rule(obj, path, value.clone());
+                    }
+                }
+            }
+        }
 
         // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
         let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
