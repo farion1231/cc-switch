@@ -977,6 +977,7 @@ pub fn run() {
             commands::copilot_logout,
             commands::copilot_is_authenticated,
             commands::copilot_get_token,
+            commands::copilot_get_models,
         ]);
 
     let app = builder

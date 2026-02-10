@@ -33,6 +33,43 @@ const GITHUB_USER_URL: &str = "https://api.github.com/user";
 /// Token 刷新提前量（秒）
 const TOKEN_REFRESH_BUFFER_SECONDS: i64 = 60;
 
+/// Copilot API 端点
+const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
+
+/// Copilot API Header 常量
+const COPILOT_EDITOR_VERSION: &str = "vscode/1.96.0";
+const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.26.7";
+const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
+const COPILOT_API_VERSION: &str = "2025-04-01";
+
+/// Copilot 可用模型
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopilotModel {
+    /// 模型 ID（用于 API 调用）
+    pub id: String,
+    /// 模型显示名称
+    pub name: String,
+    /// 模型供应商
+    pub vendor: String,
+    /// 是否在模型选择器中显示
+    pub model_picker_enabled: bool,
+}
+
+/// Copilot Models API 响应
+#[derive(Debug, Deserialize)]
+struct CopilotModelsResponse {
+    data: Vec<CopilotModelsResponseItem>,
+}
+
+/// Copilot Models API 响应项
+#[derive(Debug, Deserialize)]
+struct CopilotModelsResponseItem {
+    id: String,
+    name: String,
+    vendor: String,
+    model_picker_enabled: bool,
+}
+
 /// Copilot 认证错误
 #[derive(Debug, thiserror::Error)]
 pub enum CopilotAuthError {
@@ -499,6 +536,59 @@ impl CopilotAuthManager {
     pub async fn is_authenticated(&self) -> bool {
         let github_token = self.github_token.read().await;
         github_token.is_some()
+    }
+
+    /// 获取 Copilot 可用模型列表
+    pub async fn fetch_models(&self) -> Result<Vec<CopilotModel>, CopilotAuthError> {
+        let copilot_token = self.get_valid_token().await?;
+
+        log::info!("[CopilotAuth] 获取 Copilot 可用模型");
+
+        let response = self
+            .http_client
+            .get(COPILOT_MODELS_URL)
+            .header("Authorization", format!("Bearer {}", copilot_token))
+            .header("Content-Type", "application/json")
+            .header("copilot-integration-id", "vscode-chat")
+            .header("editor-version", COPILOT_EDITOR_VERSION)
+            .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
+            .header("user-agent", COPILOT_USER_AGENT)
+            .header("x-github-api-version", COPILOT_API_VERSION)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(CopilotAuthError::CopilotTokenFetchFailed(format!(
+                "获取模型列表失败: {} - {}",
+                status, text
+            )));
+        }
+
+        let models_response: CopilotModelsResponse = response
+            .json()
+            .await
+            .map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
+
+        let models: Vec<CopilotModel> = models_response
+            .data
+            .into_iter()
+            .filter(|m| m.model_picker_enabled)
+            .map(|m| CopilotModel {
+                id: m.id,
+                name: m.name,
+                vendor: m.vendor,
+                model_picker_enabled: m.model_picker_enabled,
+            })
+            .collect();
+
+        log::info!(
+            "[CopilotAuth] 获取到 {} 个可用模型",
+            models.len()
+        );
+
+        Ok(models)
     }
 }
 
