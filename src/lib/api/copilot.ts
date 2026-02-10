@@ -43,9 +43,7 @@ export async function copilotStartDeviceFlow(): Promise<CopilotDeviceCodeRespons
  * @param deviceCode - 设备码
  * @returns true 表示认证成功，false 表示仍在等待用户授权
  */
-export async function copilotPollForAuth(
-  deviceCode: string
-): Promise<boolean> {
+export async function copilotPollForAuth(deviceCode: string): Promise<boolean> {
   return invoke<boolean>("copilot_poll_for_auth", {
     deviceCode,
   });
@@ -77,6 +75,16 @@ export async function copilotIsAuthenticated(): Promise<boolean> {
 }
 
 /**
+ * Copilot 可用模型
+ */
+export interface CopilotModel {
+  id: string;
+  name: string;
+  vendor: string;
+  model_picker_enabled: boolean;
+}
+
+/**
  * 获取有效的 Copilot Token
  *
  * 内部使用，用于代理请求。
@@ -85,4 +93,13 @@ export async function copilotIsAuthenticated(): Promise<boolean> {
  */
 export async function copilotGetToken(): Promise<string> {
   return invoke<string>("copilot_get_token");
+}
+
+/**
+ * 获取 Copilot 可用模型列表
+ *
+ * @returns 可用模型列表
+ */
+export async function copilotGetModels(): Promise<CopilotModel[]> {
+  return invoke<CopilotModel[]>("copilot_get_models");
 }

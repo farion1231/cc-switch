@@ -15,10 +15,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
+import { copilotGetModels } from "@/lib/api/copilot";
+import type { CopilotModel } from "@/lib/api/copilot";
 import type {
   ProviderCategory,
   ClaudeApiFormat,
@@ -145,6 +155,124 @@ export function ClaudeFormFields({
       setAdvancedExpanded(true);
     }
   }, [hasAnyAdvancedValue]);
+
+  // Copilot 可用模型列表
+  const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isCopilotPreset) return;
+
+    let cancelled = false;
+    setModelsLoading(true);
+    copilotGetModels()
+      .then((models) => {
+        if (!cancelled) setCopilotModels(models);
+      })
+      .catch((err) => {
+        console.warn("[Copilot] Failed to fetch models:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isCopilotPreset]);
+
+  // 模型输入框：支持手动输入 + 下拉选择
+  const renderModelInput = (
+    id: string,
+    value: string,
+    field: ClaudeFormFieldsProps["onModelChange"] extends (
+      f: infer F,
+      v: string,
+    ) => void
+      ? F
+      : never,
+    placeholder?: string,
+  ) => {
+    if (isCopilotPreset && copilotModels.length > 0) {
+      // 按 vendor 分组
+      const grouped: Record<string, CopilotModel[]> = {};
+      for (const model of copilotModels) {
+        const vendor = model.vendor || "Other";
+        if (!grouped[vendor]) grouped[vendor] = [];
+        grouped[vendor].push(model);
+      }
+      const vendors = Object.keys(grouped).sort();
+
+      return (
+        <div className="flex gap-1">
+          <Input
+            id={id}
+            type="text"
+            value={value}
+            onChange={(e) => onModelChange(field, e.target.value)}
+            placeholder={placeholder}
+            autoComplete="off"
+            className="flex-1"
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="shrink-0">
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="max-h-64 overflow-y-auto"
+            >
+              {vendors.map((vendor, vi) => (
+                <div key={vendor}>
+                  {vi > 0 && <DropdownMenuSeparator />}
+                  <DropdownMenuLabel>{vendor}</DropdownMenuLabel>
+                  {grouped[vendor].map((model) => (
+                    <DropdownMenuItem
+                      key={model.id}
+                      onSelect={() => onModelChange(field, model.id)}
+                    >
+                      {model.id}
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      );
+    }
+
+    if (isCopilotPreset && modelsLoading) {
+      return (
+        <div className="flex gap-1">
+          <Input
+            id={id}
+            type="text"
+            value={value}
+            onChange={(e) => onModelChange(field, e.target.value)}
+            placeholder={placeholder}
+            autoComplete="off"
+            className="flex-1"
+          />
+          <Button variant="outline" size="icon" className="shrink-0" disabled>
+            <Loader2 className="h-4 w-4 animate-spin" />
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <Input
+        id={id}
+        type="text"
+        value={value}
+        onChange={(e) => onModelChange(field, e.target.value)}
+        placeholder={placeholder}
+        autoComplete="off"
+      />
+    );
+  };
 
   return (
     <>
@@ -346,18 +474,12 @@ export function ClaudeFormFields({
                     defaultValue: "主模型",
                   })}
                 </FormLabel>
-                <Input
-                  id="claudeModel"
-                  type="text"
-                  value={claudeModel}
-                  onChange={(e) =>
-                    onModelChange("ANTHROPIC_MODEL", e.target.value)
-                  }
-                  placeholder={t("providerForm.modelPlaceholder", {
-                    defaultValue: "",
-                  })}
-                  autoComplete="off"
-                />
+                {renderModelInput(
+                  "claudeModel",
+                  claudeModel,
+                  "ANTHROPIC_MODEL",
+                  t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                )}
               </div>
 
               {/* 推理模型 */}
@@ -365,15 +487,11 @@ export function ClaudeFormFields({
                 <FormLabel htmlFor="reasoningModel">
                   {t("providerForm.anthropicReasoningModel")}
                 </FormLabel>
-                <Input
-                  id="reasoningModel"
-                  type="text"
-                  value={reasoningModel}
-                  onChange={(e) =>
-                    onModelChange("ANTHROPIC_REASONING_MODEL", e.target.value)
-                  }
-                  autoComplete="off"
-                />
+                {renderModelInput(
+                  "reasoningModel",
+                  reasoningModel,
+                  "ANTHROPIC_REASONING_MODEL",
+                )}
               </div>
 
               {/* 默认 Haiku */}
@@ -383,21 +501,12 @@ export function ClaudeFormFields({
                     defaultValue: "Haiku 默认模型",
                   })}
                 </FormLabel>
-                <Input
-                  id="claudeDefaultHaikuModel"
-                  type="text"
-                  value={defaultHaikuModel}
-                  onChange={(e) =>
-                    onModelChange(
-                      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                      e.target.value,
-                    )
-                  }
-                  placeholder={t("providerForm.haikuModelPlaceholder", {
-                    defaultValue: "",
-                  })}
-                  autoComplete="off"
-                />
+                {renderModelInput(
+                  "claudeDefaultHaikuModel",
+                  defaultHaikuModel,
+                  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                  t("providerForm.haikuModelPlaceholder", { defaultValue: "" }),
+                )}
               </div>
 
               {/* 默认 Sonnet */}
@@ -407,21 +516,12 @@ export function ClaudeFormFields({
                     defaultValue: "Sonnet 默认模型",
                   })}
                 </FormLabel>
-                <Input
-                  id="claudeDefaultSonnetModel"
-                  type="text"
-                  value={defaultSonnetModel}
-                  onChange={(e) =>
-                    onModelChange(
-                      "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                      e.target.value,
-                    )
-                  }
-                  placeholder={t("providerForm.modelPlaceholder", {
-                    defaultValue: "",
-                  })}
-                  autoComplete="off"
-                />
+                {renderModelInput(
+                  "claudeDefaultSonnetModel",
+                  defaultSonnetModel,
+                  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                  t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                )}
               </div>
 
               {/* 默认 Opus */}
@@ -431,21 +531,12 @@ export function ClaudeFormFields({
                     defaultValue: "Opus 默认模型",
                   })}
                 </FormLabel>
-                <Input
-                  id="claudeDefaultOpusModel"
-                  type="text"
-                  value={defaultOpusModel}
-                  onChange={(e) =>
-                    onModelChange(
-                      "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                      e.target.value,
-                    )
-                  }
-                  placeholder={t("providerForm.modelPlaceholder", {
-                    defaultValue: "",
-                  })}
-                  autoComplete="off"
-                />
+                {renderModelInput(
+                  "claudeDefaultOpusModel",
+                  defaultOpusModel,
+                  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                  t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                )}
               </div>
             </div>
           </CollapsibleContent>
