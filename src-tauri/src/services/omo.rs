@@ -400,7 +400,7 @@ mod tests {
             ..Default::default()
         };
         let agents = Some(serde_json::json!({
-            "Sisyphus": { "model": "claude-opus-4-5" }
+            "sisyphus": { "model": "claude-opus-4-5" }
         }));
         let categories = None;
         let other_fields = None;
@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(obj["$schema"], "https://example.com/schema.json");
         assert_eq!(obj["disabled_agents"], serde_json::json!(["explore"]));
         assert!(obj.contains_key("agents"));
-        assert_eq!(obj["agents"]["Sisyphus"]["model"], "claude-opus-4-5");
+        assert_eq!(obj["agents"]["sisyphus"]["model"], "claude-opus-4-5");
     }
 
     #[test]
@@ -422,7 +422,7 @@ mod tests {
             ..Default::default()
         };
         let agents = Some(serde_json::json!({
-            "Sisyphus": { "model": "claude-opus-4-5" }
+            "sisyphus": { "model": "claude-opus-4-5" }
         }));
         let categories = None;
         let other_fields = None;

@@ -43,7 +43,7 @@ export interface OmoCategoryDef {
 
 export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
   {
-    key: "Sisyphus",
+    key: "sisyphus",
     display: "Sisyphus",
     descZh: "主编排者",
     descEn: "Main orchestrator",
@@ -51,7 +51,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     group: "main",
   },
   {
-    key: "Hephaestus",
+    key: "hephaestus",
     display: "Hephaestus",
     descZh: "自主深度工作者",
     descEn: "Autonomous deep worker",
@@ -59,7 +59,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     group: "main",
   },
   {
-    key: "Prometheus",
+    key: "prometheus",
     display: "Prometheus",
     descZh: "战略规划者",
     descEn: "Strategic planner",
@@ -67,7 +67,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     group: "main",
   },
   {
-    key: "Atlas",
+    key: "atlas",
     display: "Atlas",
     descZh: "任务管理者",
     descEn: "Task manager",
@@ -107,7 +107,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     group: "sub",
   },
   {
-    key: "Metis",
+    key: "metis",
     display: "Metis",
     descZh: "规划前分析顾问",
     descEn: "Pre-plan analysis advisor",
@@ -115,7 +115,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     group: "sub",
   },
   {
-    key: "Momus",
+    key: "momus",
     display: "Momus",
     descZh: "计划审查者",
     descEn: "Plan reviewer",
@@ -123,7 +123,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     group: "sub",
   },
   {
-    key: "Sisyphus-Junior",
+    key: "sisyphus-junior",
     display: "Sisyphus-Junior",
     descZh: "委托任务执行器",
     descEn: "Delegated task executor",
