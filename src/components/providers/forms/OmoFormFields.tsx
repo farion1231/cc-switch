@@ -273,6 +273,8 @@ export function OmoFormFields({
       currentVariant,
     );
     const hasModel = Boolean(currentModel);
+    const hasVariants =
+      hasModel && (modelVariantsMap[currentModel] || []).length > 0;
     const firstIsUnavailable =
       Boolean(currentVariant) &&
       !(modelVariantsMap[currentModel] || []).includes(currentVariant);
@@ -283,7 +285,7 @@ export function OmoFormFields({
         onValueChange={(value) =>
           onChange(value === EMPTY_VARIANT_VALUE ? "" : value)
         }
-        disabled={!hasModel}
+        disabled={!hasModel || !hasVariants}
       >
         <SelectTrigger className="w-32 h-8 text-xs shrink-0">
           <SelectValue

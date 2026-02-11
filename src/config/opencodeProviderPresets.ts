@@ -24,6 +24,258 @@ export const opencodeNpmPackages = [
   { value: "@ai-sdk/google", label: "Google (Gemini)" },
 ] as const;
 
+export interface PresetModelVariant {
+  id: string;
+  variants?: Record<string, Record<string, unknown>>;
+}
+
+export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
+  string,
+  PresetModelVariant[]
+> = {
+  "@ai-sdk/google": [
+    {
+      id: "gemini-2.5-flash-lite",
+      variants: {
+        auto: { thinkingConfig: { includeThoughts: true, thinkingBudget: -1 } },
+        "no-thinking": { thinkingConfig: { thinkingBudget: 0 } },
+      },
+    },
+    {
+      id: "gemini-3-flash-preview",
+      variants: {
+        high: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "high" },
+        },
+        low: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "low" },
+        },
+        medium: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "medium" },
+        },
+      },
+    },
+    {
+      id: "gemini-3-pro-preview",
+      variants: {
+        high: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "high" },
+        },
+        low: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "low" },
+        },
+      },
+    },
+  ],
+  "@ai-sdk/openai": [
+    {
+      id: "gpt-5",
+      variants: {
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "high",
+        },
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "low",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+    {
+      id: "gpt-5.1",
+      variants: {
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "high",
+        },
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "low",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+    {
+      id: "gpt-5.1-codex",
+      variants: {
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+    {
+      id: "gpt-5.1-codex-max",
+      variants: {
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        xhigh: {
+          reasoningEffort: "xhigh",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+    {
+      id: "gpt-5.2",
+      variants: {
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        xhigh: {
+          reasoningEffort: "xhigh",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+    {
+      id: "gpt-5.2-codex",
+      variants: {
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        xhigh: {
+          reasoningEffort: "xhigh",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+    {
+      id: "gpt-5.3-codex",
+      variants: {
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        xhigh: {
+          reasoningEffort: "xhigh",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+  ],
+  "@ai-sdk/anthropic": [
+    {
+      id: "claude-sonnet-4-5-20250929",
+      variants: {
+        high: { effort: "high" },
+        low: { effort: "low" },
+        medium: { effort: "medium" },
+      },
+    },
+    {
+      id: "claude-opus-4-5-20251101",
+      variants: {
+        high: { thinking: { budgetTokens: 18000, type: "enabled" } },
+        low: { thinking: { budgetTokens: 5000, type: "enabled" } },
+        medium: { thinking: { budgetTokens: 13000, type: "enabled" } },
+      },
+    },
+    {
+      id: "claude-opus-4-6",
+      variants: {
+        high: { thinking: { budgetTokens: 18000, type: "enabled" } },
+        low: { thinking: { budgetTokens: 5000, type: "enabled" } },
+        medium: { thinking: { budgetTokens: 13000, type: "enabled" } },
+      },
+    },
+    {
+      id: "claude-haiku-4-5-20251001",
+    },
+    {
+      id: "gemini-claude-opus-4-5-thinking",
+      variants: {
+        high: { effort: "high" },
+        low: { effort: "low" },
+        medium: { effort: "medium" },
+      },
+    },
+    {
+      id: "gemini-claude-sonnet-4-5-thinking",
+      variants: {
+        high: { thinking: { budgetTokens: 18000, type: "enabled" } },
+        low: { thinking: { budgetTokens: 5000, type: "enabled" } },
+        medium: { thinking: { budgetTokens: 13000, type: "enabled" } },
+      },
+    },
+  ],
+};
+
 export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "DeepSeek",

@@ -31,6 +31,7 @@ import {
 } from "@/config/geminiProviderPresets";
 import {
   opencodeProviderPresets,
+  OPENCODE_PRESET_MODEL_VARIANTS,
   type OpenCodeProviderPreset,
 } from "@/config/opencodeProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
@@ -694,6 +695,25 @@ export function ProviderForm({
           continue;
         }
         variantsMap[`${providerKey}/${modelId}`] = variantKeys;
+      }
+
+      // Preset fallback: for models without config-defined variants,
+      // check if the npm package has preset variant definitions
+      const presetModels = OPENCODE_PRESET_MODEL_VARIANTS[parsedConfig.npm];
+      if (presetModels) {
+        for (const modelId of Object.keys(parsedConfig.models || {})) {
+          const fullKey = `${providerKey}/${modelId}`;
+          if (variantsMap[fullKey]) {
+            continue;
+          }
+          const preset = presetModels.find((p) => p.id === modelId);
+          if (preset?.variants) {
+            const presetKeys = Object.keys(preset.variants).filter(Boolean);
+            if (presetKeys.length > 0) {
+              variantsMap[fullKey] = presetKeys;
+            }
+          }
+        }
       }
     }
 
