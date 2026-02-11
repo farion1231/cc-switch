@@ -49,6 +49,8 @@ export function EndpointField({
   // 调用后端 API 获取 URL 预览
   useEffect(() => {
     if (!value || !appType || !showUrlPreview) {
+      // 标记当前所有已发出的请求为过期，避免旧请求回写
+      lastRequestIdRef.current += 1;
       setUrlPreview(null);
       return;
     }
@@ -114,7 +116,7 @@ export function EndpointField({
             </p>
             <p className="text-xs text-muted-foreground/70 mt-0.5 pl-4">
               {t("providerForm.directRequestUrlDesc", {
-                defaultValue: "CLI 硬拼接默认后缀后的实际请求地址",
+                defaultValue: "CLI 直连模式下的实际请求地址",
               })}
             </p>
           </div>

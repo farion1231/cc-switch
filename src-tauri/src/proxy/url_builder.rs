@@ -3,6 +3,7 @@
 //! 提供统一的 URL 构建逻辑，供前端预览和后端代理使用。
 
 use crate::app_config::AppType;
+use crate::proxy::providers::{ClaudeAdapter, CodexAdapter, ProviderAdapter};
 use crate::proxy::url_utils::{dedup_v1_v1_boundary_safe, split_url_suffix};
 use serde::{Deserialize, Serialize};
 
@@ -34,15 +35,25 @@ impl ApiPathPatterns {
             Self {
                 direct_endpoint: "/v1/messages",
                 proxy_endpoint: "/v1/chat/completions",
-                // Chat 格式只检测 /chat/completions
-                full_url_patterns: &["/v1/chat/completions", "/chat/completions"],
+                // 与运行时 ClaudeAdapter 保持一致：同时识别 messages/chat 两类完整路径
+                full_url_patterns: &[
+                    "/v1/messages",
+                    "/messages",
+                    "/v1/chat/completions",
+                    "/chat/completions",
+                ],
             }
         } else {
             Self {
                 direct_endpoint: "/v1/messages",
                 proxy_endpoint: "/v1/messages",
-                // 原生格式只检测 /messages
-                full_url_patterns: &["/v1/messages", "/messages"],
+                // 与运行时 ClaudeAdapter 保持一致：同时识别 messages/chat 两类完整路径
+                full_url_patterns: &[
+                    "/v1/messages",
+                    "/messages",
+                    "/v1/chat/completions",
+                    "/chat/completions",
+                ],
             }
         }
     }
@@ -126,6 +137,21 @@ pub fn build_smart_url(base_url: &str, endpoint: &str, full_url_patterns: &[&str
     format!("{url}{suffix}")
 }
 
+fn build_runtime_like_url(
+    app_type: &AppType,
+    base_url: &str,
+    endpoint: &str,
+    is_proxy: bool,
+) -> String {
+    match app_type {
+        // Claude 代理预览需要展示运行时附加参数（如 ?beta=true）
+        AppType::Claude if is_proxy => ClaudeAdapter::new().build_url(base_url, endpoint),
+        // Codex/OpenCode 预览复用运行时 /v1 归一化规则
+        AppType::Codex | AppType::OpenCode => CodexAdapter::new().build_url(base_url, endpoint),
+        _ => build_direct_url(base_url, endpoint),
+    }
+}
+
 /// 构建 URL 预览
 ///
 /// 根据 app_type、base_url 和 api_format 计算直连和代理模式的请求地址。
@@ -145,14 +171,19 @@ pub fn build_url_preview(
 
     let is_full_url = url_ends_with_api_path(base_url, patterns.full_url_patterns);
 
-    // 直连地址：始终硬拼接默认后缀
-    let direct_url = build_direct_url(base_url, patterns.direct_endpoint);
-    // 代理地址：智能检测
-    let proxy_url = build_smart_url(
-        base_url,
-        patterns.proxy_endpoint,
-        patterns.full_url_patterns,
-    );
+    // 直连地址：默认硬拼接；Codex/OpenCode 复用运行时规则（含 origin-only /v1 归一化）
+    let direct_url = build_runtime_like_url(app_type, base_url, patterns.direct_endpoint, false);
+    // 代理地址：Claude/Codex/OpenCode 复用运行时规则；Gemini 继续使用通用智能拼接
+    let proxy_url = match app_type {
+        AppType::Claude | AppType::Codex | AppType::OpenCode => {
+            build_runtime_like_url(app_type, base_url, patterns.proxy_endpoint, true)
+        }
+        _ => build_smart_url(
+            base_url,
+            patterns.proxy_endpoint,
+            patterns.full_url_patterns,
+        ),
+    };
 
     UrlPreview {
         direct_url,
@@ -180,7 +211,12 @@ pub fn check_proxy_requirement(
     if preview.is_full_url {
         // 检查是否以直连后缀结尾
         let direct_suffixes: &[&str] = match app_type {
-            AppType::Claude => &["/v1/messages", "/messages"],
+            AppType::Claude => &[
+                "/v1/messages",
+                "/messages",
+                "/v1/chat/completions",
+                "/chat/completions",
+            ],
             AppType::Codex => &["/v1/responses", "/responses"],
             _ => return None,
         };
@@ -190,8 +226,10 @@ pub fn check_proxy_requirement(
         }
     }
 
-    // 如果直连地址和代理地址不同，需要代理
-    if preview.direct_url != preview.proxy_url {
+    // 如果直连地址和代理地址路径不同，需要代理（忽略查询参数差异，如 Claude ?beta=true）
+    let (direct_base, _) = split_url_suffix(&preview.direct_url);
+    let (proxy_base, _) = split_url_suffix(&preview.proxy_url);
+    if direct_base != proxy_base {
         return Some("url_mismatch");
     }
 
@@ -210,7 +248,10 @@ mod tests {
             Some("anthropic"),
         );
         assert_eq!(preview.direct_url, "https://api.example.com/v1/messages");
-        assert_eq!(preview.proxy_url, "https://api.example.com/v1/messages");
+        assert_eq!(
+            preview.proxy_url,
+            "https://api.example.com/v1/messages?beta=true"
+        );
         assert!(!preview.is_full_url);
     }
 
@@ -224,7 +265,7 @@ mod tests {
         assert_eq!(preview.direct_url, "https://api.example.com/v1/messages");
         assert_eq!(
             preview.proxy_url,
-            "https://api.example.com/v1/chat/completions"
+            "https://api.example.com/v1/chat/completions?beta=true"
         );
         assert!(!preview.is_full_url);
     }
@@ -241,7 +282,10 @@ mod tests {
             preview.direct_url,
             "https://api.example.com/v1/messages/v1/messages"
         );
-        assert_eq!(preview.proxy_url, "https://api.example.com/v1/messages");
+        assert_eq!(
+            preview.proxy_url,
+            "https://api.example.com/v1/messages?beta=true"
+        );
         assert!(preview.is_full_url);
     }
 
@@ -258,9 +302,18 @@ mod tests {
     }
 
     #[test]
+    fn test_build_url_preview_codex_origin_normalizes_v1() {
+        let preview =
+            build_url_preview(&AppType::Codex, "https://api.openai.com", Some("responses"));
+        assert_eq!(preview.direct_url, "https://api.openai.com/v1/responses");
+        assert_eq!(preview.proxy_url, "https://api.openai.com/v1/responses");
+        assert!(!preview.is_full_url);
+    }
+
+    #[test]
     fn test_build_url_preview_codex_chat_proxy_endpoint() {
         let preview = build_url_preview(&AppType::Codex, "https://api.openai.com", Some("chat"));
-        assert_eq!(preview.direct_url, "https://api.openai.com/responses");
+        assert_eq!(preview.direct_url, "https://api.openai.com/v1/responses");
         assert_eq!(
             preview.proxy_url,
             "https://api.openai.com/v1/chat/completions"
@@ -270,16 +323,13 @@ mod tests {
 
     #[test]
     fn test_build_url_preview_codex_full_url() {
-        // 全链接时：直连会硬拼接后缀，代理保持原地址
+        // 全链接时：直连/代理均保持原地址（运行时适配器规则）
         let preview = build_url_preview(
             &AppType::Codex,
             "https://api.example.com/v1/responses",
             Some("responses"),
         );
-        assert_eq!(
-            preview.direct_url,
-            "https://api.example.com/v1/responses/responses"
-        );
+        assert_eq!(preview.direct_url, "https://api.example.com/v1/responses");
         assert_eq!(preview.proxy_url, "https://api.example.com/v1/responses");
         assert!(preview.is_full_url);
     }
@@ -315,6 +365,13 @@ mod tests {
     }
 
     #[test]
+    fn test_check_proxy_requirement_codex_origin_none() {
+        let result =
+            check_proxy_requirement(&AppType::Codex, "https://api.openai.com", Some("responses"));
+        assert_eq!(result, None);
+    }
+
+    #[test]
     fn test_check_proxy_requirement_none() {
         let result = check_proxy_requirement(
             &AppType::Claude,
@@ -340,8 +397,11 @@ mod tests {
             Some("anthropic"),
         );
         assert_eq!(preview.direct_url, "https://api.example.com/v1/v1/messages");
-        // 代理地址智能拼接，会去重
-        assert_eq!(preview.proxy_url, "https://api.example.com/v1/messages");
+        // 代理地址按运行时规则构建，会去重并附加 ?beta=true
+        assert_eq!(
+            preview.proxy_url,
+            "https://api.example.com/v1/messages?beta=true"
+        );
     }
 
     #[test]
@@ -371,14 +431,14 @@ mod tests {
         );
         assert_eq!(
             preview.proxy_url,
-            "https://api.example.com/v1/messages#frag"
+            "https://api.example.com/v1/messages?beta=true#frag"
         );
         assert!(preview.is_full_url);
     }
 
     #[test]
-    fn test_full_url_detection_by_api_format() {
-        // anthropic 格式：只有 /messages 结尾才是全链接
+    fn test_claude_full_url_detection_is_api_format_agnostic() {
+        // 与运行时 ClaudeAdapter 一致：/messages 与 /chat/completions 都视为全链接
         let preview = build_url_preview(
             &AppType::Claude,
             "https://api.example.com/v1/messages",
@@ -391,9 +451,8 @@ mod tests {
             "https://api.example.com/v1/chat/completions",
             Some("anthropic"),
         );
-        assert!(!preview.is_full_url); // /chat/completions 对于 anthropic 格式不是全链接
+        assert!(preview.is_full_url);
 
-        // openai_chat 格式：只有 /chat/completions 结尾才是全链接
         let preview = build_url_preview(
             &AppType::Claude,
             "https://api.example.com/v1/chat/completions",
@@ -406,6 +465,6 @@ mod tests {
             "https://api.example.com/v1/messages",
             Some("openai_chat"),
         );
-        assert!(!preview.is_full_url); // /messages 对于 openai_chat 格式不是全链接
+        assert!(preview.is_full_url);
     }
 }

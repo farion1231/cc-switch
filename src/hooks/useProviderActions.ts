@@ -12,55 +12,7 @@ import {
   useSwitchProviderMutation,
 } from "@/lib/query";
 import { extractErrorMessage } from "@/utils/errorUtils";
-
-/**
- * 从 Codex TOML 配置字符串中提取 base_url
- */
-function extractCodexBaseUrlFromToml(tomlConfig: string | null): string | null {
-  if (!tomlConfig || typeof tomlConfig !== "string") return null;
-  // 匹配 base_url = "xxx" 或 base_url = 'xxx'
-  const match = tomlConfig.match(/base_url\s*=\s*(['"])([^'"]+)\1/);
-  return match?.[2]?.trim() || null;
-}
-
-/**
- * 从 provider 配置中提取 base URL
- */
-function extractBaseUrl(provider: Provider, appId: AppId): string | null {
-  try {
-    const config = provider.settingsConfig;
-    if (!config) return null;
-
-    if (appId === "claude") {
-      // Claude: env.ANTHROPIC_BASE_URL
-      const envUrl = config?.env?.ANTHROPIC_BASE_URL;
-      return typeof envUrl === "string" ? envUrl.trim() : null;
-    }
-
-    if (appId === "codex" || appId === "opencode") {
-      // Codex: base_url 存储在 config 字段中（TOML 字符串）
-      const tomlConfig = config?.config;
-      if (typeof tomlConfig === "string") {
-        return extractCodexBaseUrlFromToml(tomlConfig);
-      }
-      // 回退：尝试直接获取 base_url 字段
-      const baseUrl = config?.base_url;
-      return typeof baseUrl === "string" ? baseUrl.trim() : null;
-    }
-
-    if (appId === "gemini") {
-      // Gemini: env.GOOGLE_GEMINI_BASE_URL 或 GEMINI_API_BASE
-      const envUrl = config?.env?.GOOGLE_GEMINI_BASE_URL;
-      if (typeof envUrl === "string") return envUrl.trim();
-      const baseUrl = config?.GEMINI_API_BASE || config?.base_url;
-      return typeof baseUrl === "string" ? baseUrl.trim() : null;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
+import { extractProviderBaseUrl } from "@/utils/providerBaseUrl";
 
 interface UseProviderActionsOptions {
   /** 代理服务是否正在运行 */
@@ -160,13 +112,18 @@ export function useProviderActions(
       }
 
       // 提取 base URL 和 API 格式
-      const baseUrl = extractBaseUrl(provider, activeApp);
+      const baseUrl = extractProviderBaseUrl(provider, activeApp);
       const apiFormat = provider.meta?.apiFormat;
 
       // 调用后端 API 检查是否需要代理（前后端使用相同逻辑）
       let proxyRequirement: string | null = null;
       let proxyRequirementCheckFailed = false;
-      if (baseUrl) {
+      // 先按 API 格式做硬性判断（baseUrl 缺失时仍需拦截）
+      if (activeApp === "claude" && apiFormat === "openai_chat") {
+        proxyRequirement = "openai_chat_format";
+      }
+
+      if (!proxyRequirement && baseUrl) {
         try {
           proxyRequirement = await proxyApi.checkProxyRequirement(
             activeApp,

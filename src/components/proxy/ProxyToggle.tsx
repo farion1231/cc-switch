@@ -6,6 +6,7 @@
  */
 
 import { Radio, Loader2 } from "lucide-react";
+import { useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { cn } from "@/lib/utils";
@@ -14,47 +15,12 @@ import { toast } from "sonner";
 import type { AppId } from "@/lib/api";
 import { proxyApi } from "@/lib/api/proxy";
 import type { Provider } from "@/types";
+import { extractProviderBaseUrl } from "@/utils/providerBaseUrl";
 
 interface ProxyToggleProps {
   className?: string;
   activeApp: AppId;
   currentProvider?: Provider | null;
-}
-
-/**
- * 从 provider 配置中提取 base URL
- */
-function extractBaseUrl(provider: Provider, appId: AppId): string | null {
-  try {
-    const config = provider.settingsConfig;
-    if (!config) return null;
-
-    if (appId === "claude") {
-      const envUrl = config?.env?.ANTHROPIC_BASE_URL;
-      return typeof envUrl === "string" ? envUrl.trim() : null;
-    }
-
-    if (appId === "codex" || appId === "opencode") {
-      const tomlConfig = config?.config;
-      if (typeof tomlConfig === "string") {
-        const match = tomlConfig.match(/base_url\s*=\s*(['"])([^'"]+)\1/);
-        return match?.[2]?.trim() || null;
-      }
-      const baseUrl = config?.base_url;
-      return typeof baseUrl === "string" ? baseUrl.trim() : null;
-    }
-
-    if (appId === "gemini") {
-      const envUrl = config?.env?.GOOGLE_GEMINI_BASE_URL;
-      if (typeof envUrl === "string") return envUrl.trim();
-      const baseUrl = config?.GEMINI_API_BASE || config?.base_url;
-      return typeof baseUrl === "string" ? baseUrl.trim() : null;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 export function ProxyToggle({
@@ -63,6 +29,7 @@ export function ProxyToggle({
   currentProvider,
 }: ProxyToggleProps) {
   const { t } = useTranslation();
+  const [isCheckingRequirement, setIsCheckingRequirement] = useState(false);
   const { isRunning, takeoverStatus, setTakeoverForApp, isPending, status } =
     useProxyStatus();
 
@@ -73,36 +40,45 @@ export function ProxyToggle({
       currentProvider &&
       currentProvider.category !== "official"
     ) {
-      const baseUrl = extractBaseUrl(currentProvider, activeApp);
+      const baseUrl = extractProviderBaseUrl(currentProvider, activeApp);
       const apiFormat = currentProvider.meta?.apiFormat;
+      setIsCheckingRequirement(true);
+      try {
+        let proxyRequirement: string | null = null;
 
-      if (baseUrl) {
-        try {
-          const proxyRequirement = await proxyApi.checkProxyRequirement(
+        // 先按 API 格式做硬性判断（baseUrl 缺失时仍需提示）
+        if (activeApp === "claude" && apiFormat === "openai_chat") {
+          proxyRequirement = "openai_chat_format";
+        }
+
+        if (!proxyRequirement && baseUrl) {
+          proxyRequirement = await proxyApi.checkProxyRequirement(
             activeApp,
             baseUrl,
             apiFormat,
           );
-
-          if (proxyRequirement) {
-            const warningKey =
-              proxyRequirement === "openai_chat_format"
-                ? "notifications.openAIChatFormatWarningOnDisable"
-                : proxyRequirement === "url_mismatch"
-                  ? "notifications.urlMismatchWarningOnDisable"
-                  : "notifications.fullUrlWarningOnDisable";
-
-            toast.warning(
-              t(warningKey, {
-                defaultValue:
-                  "当前供应商配置可能依赖代理模式，关闭代理后可能无法正常工作。建议更换为基础地址配置或保持代理开启。",
-              }),
-              { duration: 6000, closeButton: true },
-            );
-          }
-        } catch (error) {
-          console.error("Failed to check proxy requirement:", error);
         }
+
+        if (proxyRequirement) {
+          const warningKey =
+            proxyRequirement === "openai_chat_format"
+              ? "notifications.openAIChatFormatWarningOnDisable"
+              : proxyRequirement === "url_mismatch"
+                ? "notifications.urlMismatchWarningOnDisable"
+                : "notifications.fullUrlWarningOnDisable";
+
+          toast.warning(
+            t(warningKey, {
+              defaultValue:
+                "当前供应商配置可能依赖代理模式，关闭代理后可能无法正常工作。建议更换为基础地址配置或保持代理开启。",
+            }),
+            { duration: 6000, closeButton: true },
+          );
+        }
+      } catch (error) {
+        console.error("Failed to check proxy requirement:", error);
+      } finally {
+        setIsCheckingRequirement(false);
       }
     }
 
@@ -155,7 +131,7 @@ export function ProxyToggle({
       )}
       title={tooltipText}
     >
-      {isPending ? (
+      {isPending || isCheckingRequirement ? (
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
       ) : (
         <Radio
@@ -170,7 +146,7 @@ export function ProxyToggle({
       <Switch
         checked={takeoverEnabled}
         onCheckedChange={handleToggle}
-        disabled={isPending}
+        disabled={isPending || isCheckingRequirement}
       />
     </div>
   );

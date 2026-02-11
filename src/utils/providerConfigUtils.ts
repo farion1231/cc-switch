@@ -468,6 +468,58 @@ export const setCodexBaseUrl = (
   return `${prefix}${replacementLine}\n`;
 };
 
+// 从 Codex 的 TOML 配置文本中提取 wire_api 字段（responses/chat）
+export const extractCodexWireApi = (
+  configText: string | undefined | null,
+): "responses" | "chat" | undefined => {
+  try {
+    const raw = typeof configText === "string" ? configText : "";
+    const text = normalizeQuotes(raw);
+    if (!text) return undefined;
+
+    const m = text.match(/^wire_api\s*=\s*(['"])(responses|chat)\1/m);
+    if (!m || !m[2]) return undefined;
+    return m[2] === "chat" ? "chat" : "responses";
+  } catch {
+    return undefined;
+  }
+};
+
+// 在 Codex 的 TOML 配置文本中写入或更新 wire_api 字段
+export const setCodexWireApi = (
+  configText: string,
+  wireApi: "responses" | "chat",
+): string => {
+  const normalizedText = normalizeQuotes(configText);
+  const replacementLine = `wire_api = "${wireApi}"`;
+  const pattern = /^wire_api\s*=\s*(["'])(responses|chat)\1/m;
+
+  if (pattern.test(normalizedText)) {
+    return normalizedText.replace(pattern, replacementLine);
+  }
+
+  // 优先插入到 base_url 后，提升可读性
+  const baseUrlPattern = /^base_url\s*=\s*["'][^"']+["']/m;
+  const match = normalizedText.match(baseUrlPattern);
+  if (match && match.index !== undefined) {
+    const endOfLine = normalizedText.indexOf("\n", match.index);
+    if (endOfLine !== -1) {
+      return (
+        normalizedText.slice(0, endOfLine + 1) +
+        replacementLine +
+        "\n" +
+        normalizedText.slice(endOfLine + 1)
+      );
+    }
+  }
+
+  const prefix =
+    normalizedText && !normalizedText.endsWith("\n")
+      ? `${normalizedText}\n`
+      : normalizedText;
+  return `${prefix}${replacementLine}\n`;
+};
+
 // ========== Codex model name utils ==========
 
 // 从 Codex 的 TOML 配置文本中提取 model 字段（支持单/双引号）
