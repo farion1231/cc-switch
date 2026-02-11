@@ -10,6 +10,7 @@ const iconMappings = {
   zhipu: { icon: "zhipu", iconColor: "#0F62FE" },
   glm: { icon: "zhipu", iconColor: "#0F62FE" },
   qwen: { icon: "qwen", iconColor: "#FF6A00" },
+  bailian: { icon: "bailian", iconColor: "#624AFF" },
   alibaba: { icon: "alibaba", iconColor: "#FF6A00" },
   aliyun: { icon: "alibaba", iconColor: "#FF6A00" },
   kimi: { icon: "kimi", iconColor: "#6366F1" },

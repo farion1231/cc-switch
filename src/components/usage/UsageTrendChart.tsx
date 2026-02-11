@@ -11,14 +11,26 @@ import {
 } from "recharts";
 import { useUsageTrends } from "@/lib/query/usage";
 import { Loader2 } from "lucide-react";
+import {
+  fmtInt,
+  fmtUsd,
+  getLocaleFromLanguage,
+  parseFiniteNumber,
+} from "./format";
 
 interface UsageTrendChartProps {
   days: number;
+  refreshIntervalMs: number;
 }
 
-export function UsageTrendChart({ days }: UsageTrendChartProps) {
+export function UsageTrendChart({
+  days,
+  refreshIntervalMs,
+}: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
-  const { data: trends, isLoading } = useUsageTrends(days);
+  const { data: trends, isLoading } = useUsageTrends(days, {
+    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+  });
 
   if (isLoading) {
     return (
@@ -29,15 +41,12 @@ export function UsageTrendChart({ days }: UsageTrendChartProps) {
   }
 
   const isToday = days === 1;
-  const dateLocale =
-    i18n.language === "zh"
-      ? "zh-CN"
-      : i18n.language === "ja"
-        ? "ja-JP"
-        : "en-US";
+  const language = i18n.resolvedLanguage || i18n.language || "en";
+  const dateLocale = getLocaleFromLanguage(language);
   const chartData =
     trends?.map((stat) => {
       const pointDate = new Date(stat.date);
+      const cost = parseFiniteNumber(stat.totalCost);
       return {
         rawDate: stat.date,
         label: isToday
@@ -56,7 +65,7 @@ export function UsageTrendChart({ days }: UsageTrendChartProps) {
         outputTokens: stat.totalOutputTokens,
         cacheCreationTokens: stat.totalCacheCreationTokens,
         cacheReadTokens: stat.totalCacheReadTokens,
-        cost: parseFloat(stat.totalCost),
+        cost: cost ?? null,
       };
     }) || [];
 
@@ -79,9 +88,9 @@ export function UsageTrendChart({ days }: UsageTrendChartProps) {
               />
               <span className="font-medium">{entry.name}:</span>
               <span>
-                {entry.name.includes(t("usage.cost", "成本"))
-                  ? `$${typeof entry.value === "number" ? entry.value.toFixed(6) : entry.value}`
-                  : entry.value.toLocaleString()}
+                {entry.dataKey === "cost"
+                  ? fmtUsd(entry.value, 6)
+                  : fmtInt(entry.value, dateLocale)}
               </span>
             </div>
           ))}

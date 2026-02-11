@@ -33,6 +33,7 @@ mod tests;
 
 // DAO 类型导出供外部使用
 pub use dao::FailoverQueueItem;
+pub use dao::OmoGlobalConfig;
 
 use crate::config::get_app_config_dir;
 use crate::error::AppError;

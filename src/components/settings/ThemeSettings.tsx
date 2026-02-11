@@ -19,21 +19,21 @@ export function ThemeSettings() {
       <div className="inline-flex gap-1 rounded-md border border-border-default bg-background p-1">
         <ThemeButton
           active={theme === "light"}
-          onClick={() => setTheme("light")}
+          onClick={(e) => setTheme("light", e)}
           icon={Sun}
         >
           {t("settings.themeLight")}
         </ThemeButton>
         <ThemeButton
           active={theme === "dark"}
-          onClick={() => setTheme("dark")}
+          onClick={(e) => setTheme("dark", e)}
           icon={Moon}
         >
           {t("settings.themeDark")}
         </ThemeButton>
         <ThemeButton
           active={theme === "system"}
-          onClick={() => setTheme("system")}
+          onClick={(e) => setTheme("system", e)}
           icon={Monitor}
         >
           {t("settings.themeSystem")}
@@ -45,7 +45,7 @@ export function ThemeSettings() {
 
 interface ThemeButtonProps {
   active: boolean;
-  onClick: () => void;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   icon: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
 }

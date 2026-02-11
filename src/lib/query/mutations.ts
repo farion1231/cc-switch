@@ -17,13 +17,15 @@ export const useAddProviderMutation = (appId: AppId) => {
       let id: string;
 
       if (appId === "opencode") {
-        // OpenCode: use user-provided providerKey as ID
-        if (!providerInput.providerKey) {
-          throw new Error("Provider key is required for OpenCode");
+        if (providerInput.category === "omo") {
+          id = `omo-${generateUUID()}`;
+        } else {
+          if (!providerInput.providerKey) {
+            throw new Error("Provider key is required for OpenCode");
+          }
+          id = providerInput.providerKey;
         }
-        id = providerInput.providerKey;
       } else {
-        // Other apps: use random UUID
         id = generateUUID();
       }
 
@@ -32,7 +34,6 @@ export const useAddProviderMutation = (appId: AppId) => {
         id,
         createdAt: Date.now(),
       };
-      // Remove providerKey from the provider object before saving
       delete (newProvider as any).providerKey;
 
       await providersApi.add(newProvider, appId);
@@ -41,7 +42,15 @@ export const useAddProviderMutation = (appId: AppId) => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
-      // 更新托盘菜单（失败不影响主操作）
+      if (appId === "opencode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["omo", "current-provider-id"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo", "provider-count"],
+        });
+      }
+
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -115,7 +124,15 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
-      // 更新托盘菜单（失败不影响主操作）
+      if (appId === "opencode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["omo", "current-provider-id"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo", "provider-count"],
+        });
+      }
+
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -157,14 +174,15 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
-      // OpenCode: also invalidate live provider IDs cache to update button state
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
           queryKey: ["opencodeLiveProviderIds"],
         });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo", "current-provider-id"],
+        });
       }
 
-      // 更新托盘菜单（失败不影响主操作）
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -173,14 +191,10 @@ export const useSwitchProviderMutation = (appId: AppId) => {
           trayError,
         );
       }
-
-      // Note: Success toast is handled by useProviderActions.switchProvider
-      // to allow customization based on provider properties (e.g., apiFormat)
     },
     onError: (error: Error) => {
       const detail = extractErrorMessage(error) || t("common.unknown");
 
-      // 标题与详情分离，便于扫描 + 一键复制
       toast.error(
         t("notifications.switchFailedTitle", { defaultValue: "切换失败" }),
         {

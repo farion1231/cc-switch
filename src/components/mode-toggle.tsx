@@ -7,13 +7,13 @@ export function ModeToggle() {
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
 
-  const toggleTheme = () => {
+  const toggleTheme = (event: React.MouseEvent) => {
     // 如果当前是 dark 或 system（且系统是暗色），切换到 light
     // 否则切换到 dark
     if (theme === "dark") {
-      setTheme("light");
+      setTheme("light", event);
     } else {
-      setTheme("dark");
+      setTheme("dark", event);
     }
   };
 

@@ -13,7 +13,7 @@ pub fn extract_text(content: &Value) -> String {
         Value::String(text) => text.to_string(),
         Value::Array(items) => items
             .iter()
-            .filter_map(|item| extract_text_from_item(item))
+            .filter_map(extract_text_from_item)
             .filter(|text| !text.trim().is_empty())
             .collect::<Vec<_>>()
             .join("\n"),
@@ -68,10 +68,10 @@ pub fn path_basename(value: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    let normalized = trimmed.trim_end_matches(|c| c == '/' || c == '\\');
+    let normalized = trimmed.trim_end_matches(['/', '\\']);
     let last = normalized
         .split(['/', '\\'])
-        .last()
+        .next_back()
         .filter(|segment| !segment.is_empty())?;
     Some(last.to_string())
 }

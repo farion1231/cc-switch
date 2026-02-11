@@ -17,7 +17,7 @@ interface ThemeProviderProps {
 
 interface ThemeContextValue {
   theme: Theme;
-  setTheme: (theme: Theme) => void;
+  setTheme: (theme: Theme, event?: React.MouseEvent) => void;
 }
 
 const ThemeProviderContext = createContext<ThemeContextValue | undefined>(
@@ -146,8 +146,30 @@ export function ThemeProvider({
   const value = useMemo<ThemeContextValue>(
     () => ({
       theme,
-      setTheme: (nextTheme: Theme) => {
-        setThemeState(nextTheme);
+      setTheme: (nextTheme: Theme, event?: React.MouseEvent) => {
+        // Skip if same theme
+        if (nextTheme === theme) return;
+
+        // Set transition origin coordinates from click event
+        const x = event?.clientX ?? window.innerWidth / 2;
+        const y = event?.clientY ?? window.innerHeight / 2;
+        document.documentElement.style.setProperty(
+          "--theme-transition-x",
+          `${x}px`,
+        );
+        document.documentElement.style.setProperty(
+          "--theme-transition-y",
+          `${y}px`,
+        );
+
+        // Use View Transitions API if available, otherwise fall back to instant change
+        if (document.startViewTransition) {
+          document.startViewTransition(() => {
+            setThemeState(nextTheme);
+          });
+        } else {
+          setThemeState(nextTheme);
+        }
       },
     }),
     [theme],

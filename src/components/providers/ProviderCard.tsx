@@ -27,11 +27,13 @@ interface ProviderCardProps {
   isCurrent: boolean;
   appId: AppId;
   isInConfig?: boolean; // OpenCode: 是否已添加到 opencode.json
+  isOmo?: boolean;
+  isLastOmo?: boolean;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
-  /** OpenCode: remove from live config (not delete from database) */
   onRemoveFromConfig?: (provider: Provider) => void;
+  onDisableOmo?: () => void;
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
@@ -41,7 +43,6 @@ interface ProviderCardProps {
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
   dragHandleProps?: DragHandleProps;
-  // 故障转移相关
   isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
   failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
@@ -50,17 +51,14 @@ interface ProviderCardProps {
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
-  // 优先级 1: 备注
   if (provider.notes?.trim()) {
     return provider.notes.trim();
   }
 
-  // 优先级 2: 官网地址
   if (provider.websiteUrl) {
     return provider.websiteUrl;
   }
 
-  // 优先级 3: 从配置中提取请求地址
   const config = provider.settingsConfig;
 
   if (config && typeof config === "object") {
@@ -89,10 +87,13 @@ export function ProviderCard({
   isCurrent,
   appId,
   isInConfig = true,
+  isOmo = false,
+  isLastOmo = false,
   onSwitch,
   onEdit,
   onDelete,
   onRemoveFromConfig,
+  onDisableOmo,
   onConfigureUsage,
   onOpenWebsite,
   onDuplicate,
@@ -102,7 +103,6 @@ export function ProviderCard({
   isProxyRunning,
   isProxyTakeover = false,
   dragHandleProps,
-  // 故障转移相关
   isAutoFailoverEnabled = false,
   failoverPriority,
   isInFailoverQueue = false,
@@ -111,7 +111,6 @@ export function ProviderCard({
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
-  // 获取供应商健康状态
   const { data: health } = useProviderHealth(provider.id, appId);
 
   const fallbackUrlText = t("provider.notConfigured", {
@@ -122,24 +121,18 @@ export function ProviderCard({
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
 
-  // 判断是否为可点击的 URL（备注不可点击）
   const isClickableUrl = useMemo(() => {
-    // 如果有备注，则不可点击
     if (provider.notes?.trim()) {
       return false;
     }
-    // 如果显示的是回退文本，也不可点击
     if (displayUrl === fallbackUrlText) {
       return false;
     }
-    // 其他情况（官网地址或请求地址）可点击
     return true;
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
 
-  // 获取用量数据以判断是否有多套餐
-  // OpenCode（累加模式）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery = appId === "opencode" ? isInConfig : isCurrent;
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
@@ -153,21 +146,17 @@ export function ProviderCard({
   const hasMultiplePlans =
     usage?.success && usage.data && usage.data.length > 1;
 
-  // 多套餐默认展开
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // 操作按钮容器 ref，用于动态计算宽度
   const actionsRef = useRef<HTMLDivElement>(null);
   const [actionsWidth, setActionsWidth] = useState(0);
 
-  // 当检测到多套餐时自动展开
   useEffect(() => {
     if (hasMultiplePlans) {
       setIsExpanded(true);
     }
   }, [hasMultiplePlans]);
 
-  // 动态获取操作按钮宽度
   useEffect(() => {
     if (actionsRef.current) {
       const updateWidth = () => {
@@ -175,7 +164,6 @@ export function ProviderCard({
         setActionsWidth(width);
       };
       updateWidth();
-      // 监听窗口大小变化
       window.addEventListener("resize", updateWidth);
       return () => window.removeEventListener("resize", updateWidth);
     }
@@ -188,32 +176,27 @@ export function ProviderCard({
     onOpenWebsite(displayUrl);
   };
 
-  // 判断是否是"当前使用中"的供应商
-  // - OpenCode（累加模式）：不存在"当前"概念，始终返回 false
-  // - 故障转移模式：代理实际使用的供应商（activeProviderId）
-  // - 代理接管模式（非故障转移）：isCurrent
-  // - 普通模式：isCurrent
-  const isActiveProvider =
-    appId === "opencode"
+  const isActiveProvider = isOmo
+    ? isCurrent
+    : appId === "opencode"
       ? false
       : isAutoFailoverEnabled
         ? activeProviderId === provider.id
         : isCurrent;
 
-  // 判断是否使用绿色（代理接管模式）还是蓝色（普通模式）
-  const shouldUseGreen = isProxyTakeover && isActiveProvider;
-  const shouldUseBlue = !isProxyTakeover && isActiveProvider;
+  const shouldUseGreen = !isOmo && isProxyTakeover && isActiveProvider;
+  const shouldUseBlue =
+    (isOmo && isActiveProvider) ||
+    (!isOmo && !isProxyTakeover && isActiveProvider);
 
   return (
     <div
       className={cn(
         "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
         "bg-card text-card-foreground group",
-        // hover 时的边框效果
         isAutoFailoverEnabled || isProxyTakeover
           ? "hover:border-emerald-500/50"
           : "hover:border-border-active",
-        // 当前激活的供应商边框样式
         shouldUseGreen &&
           "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
         shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
@@ -225,7 +208,6 @@ export function ProviderCard({
       <div
         className={cn(
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
-          // 代理接管模式使用绿色渐变，普通模式使用蓝色渐变
           shouldUseGreen && "from-emerald-500/10",
           shouldUseBlue && "from-blue-500/10",
           !isActiveProvider && "from-primary/10",
@@ -248,7 +230,6 @@ export function ProviderCard({
             <GripVertical className="h-4 w-4" />
           </button>
 
-          {/* 供应商图标 */}
           <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
             <ProviderIcon
               icon={provider.icon}
@@ -264,14 +245,18 @@ export function ProviderCard({
                 {provider.name}
               </h3>
 
-              {/* 健康状态徽章 */}
+              {isOmo && (
+                <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+                  OMO
+                </span>
+              )}
+
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
                   consecutiveFailures={health.consecutive_failures}
                 />
               )}
 
-              {/* 故障转移优先级徽章 */}
               {isAutoFailoverEnabled &&
                 isInFailoverQueue &&
                 failoverPriority && (
@@ -318,10 +303,8 @@ export function ProviderCard({
             } as React.CSSProperties
           }
         >
-          {/* 用量信息区域 - hover 时向左移动，为操作按钮腾出空间 */}
           <div className="ml-auto">
             <div className="flex items-center gap-1 transition-transform duration-200 group-hover:-translate-x-[var(--actions-width)] group-focus-within:-translate-x-[var(--actions-width)]">
-              {/* 多套餐时显示套餐数量，单套餐时显示详细信息 */}
               {hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                   <span className="font-medium">
@@ -342,7 +325,6 @@ export function ProviderCard({
                   inline={true}
                 />
               )}
-              {/* 展开/折叠按钮 - 仅在有多套餐时显示 */}
               {hasMultiplePlans && (
                 <button
                   onClick={(e) => {
@@ -366,7 +348,6 @@ export function ProviderCard({
             </div>
           </div>
 
-          {/* 操作按钮区域 - 绝对定位在右侧，hover 时滑入，与用量信息保持间距 */}
           <div
             ref={actionsRef}
             className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pl-3 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0"
@@ -377,6 +358,8 @@ export function ProviderCard({
               isInConfig={isInConfig}
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
+              isOmo={isOmo}
+              isLastOmo={isLastOmo}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
@@ -388,10 +371,10 @@ export function ProviderCard({
                   ? () => onRemoveFromConfig(provider)
                   : undefined
               }
+              onDisableOmo={onDisableOmo}
               onOpenTerminal={
                 onOpenTerminal ? () => onOpenTerminal(provider) : undefined
               }
-              // 故障转移相关
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
               onToggleFailover={onToggleFailover}
@@ -400,7 +383,6 @@ export function ProviderCard({
         </div>
       </div>
 
-      {/* 展开的完整套餐列表 */}
       {isExpanded && hasMultiplePlans && (
         <div className="mt-4 pt-4 border-t border-border-default">
           <UsageFooter
