@@ -21,6 +21,7 @@ import {
   Settings,
   FolderInput,
   Loader2,
+  HelpCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -56,7 +57,7 @@ interface OmoFormFieldsProps {
 type CustomModelItem = { key: string; model: string };
 type BuiltinModelDef = Pick<
   OmoAgentDef | OmoCategoryDef,
-  "key" | "display" | "descZh" | "descEn" | "recommended"
+  "key" | "display" | "descKey" | "recommended" | "tooltipKey"
 >;
 type ModelOption = { value: string; label: string };
 
@@ -119,8 +120,7 @@ export function OmoFormFields({
   otherFieldsStr,
   onOtherFieldsStrChange,
 }: OmoFormFieldsProps) {
-  const { t, i18n } = useTranslation();
-  const isZh = i18n.language?.startsWith("zh");
+  const { t } = useTranslation();
 
   const [mainAgentsOpen, setMainAgentsOpen] = useState(true);
   const [subAgentsOpen, setSubAgentsOpen] = useState(true);
@@ -641,9 +641,17 @@ export function OmoFormFields({
       <div key={key} className="border-b border-border/30 last:border-b-0">
         <div className="flex items-center gap-2 py-1.5">
           <div className="w-32 shrink-0">
-            <div className="text-sm font-medium">{def.display}</div>
+            <div className="flex items-center gap-1 text-sm font-medium">
+              {def.display}
+              <span className="relative inline-flex group/tip">
+                <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/60 hover:text-muted-foreground cursor-help shrink-0" />
+                <span className="invisible opacity-0 group-hover/tip:visible group-hover/tip:opacity-100 transition-opacity duration-150 absolute left-0 top-full mt-1 z-50 w-[260px] rounded-md bg-popover text-popover-foreground border border-border shadow-md px-3 py-2 text-xs leading-relaxed font-normal pointer-events-none">
+                  {t(def.tooltipKey)}
+                </span>
+              </span>
+            </div>
             <div className="text-xs text-muted-foreground truncate">
-              {isZh ? def.descZh : def.descEn}
+              {t(def.descKey)}
             </div>
           </div>
           {renderModelSelect(

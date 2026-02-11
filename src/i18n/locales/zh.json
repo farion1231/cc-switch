@@ -1618,6 +1618,52 @@
     "advancedExperimental": "实验性功能",
     "advancedBackgroundTask": "后台任务",
     "advancedBrowserAutomation": "浏览器自动化",
-    "advancedClaudeCode": "Claude Code"
+    "advancedClaudeCode": "Claude Code",
+    "agentDesc": {
+      "sisyphus": "主编排者",
+      "hephaestus": "自主深度工作者",
+      "prometheus": "战略规划者",
+      "atlas": "任务管理者",
+      "oracle": "战略顾问",
+      "librarian": "多仓库研究员",
+      "explore": "快速代码搜索",
+      "multimodalLooker": "媒体分析器",
+      "metis": "规划前分析顾问",
+      "momus": "计划审查者",
+      "sisyphusJunior": "委托任务执行器"
+    },
+    "agentTooltip": {
+      "sisyphus": "主编排器，负责任务规划、委派与并行执行，使用扩展思考（32k 预算），通过 TODO 驱动工作流确保任务完成。",
+      "atlas": "主编排器（持有 TODO 列表），负责执行阶段的任务分发与协调，不直接完成所有工作而是委派给专业代理。",
+      "prometheus": "战略规划师，通过访谈模式收集需求并制定详细工作计划，仅能在 .sisyphus/ 目录读写 Markdown 文件，从不直接写代码。",
+      "hephaestus": "自主深度工作者（「合法工匠」），受 AmpCode 深度模式启发，目标导向执行，行动前会并行启动 2-5 个探索/图书管理员代理进行研究。",
+      "oracle": "架构决策与调试顾问，只读咨询代理，提供出色的逻辑推理和深度分析，不能写文件或委派任务。",
+      "librarian": "多仓库分析与文档检索专家，深度理解代码库并提供基于证据的答案，擅长查找官方文档和开源实现示例。",
+      "explore": "快速代码库探索与上下文 grep 专家，使用轻量级模型进行高速搜索，是理解代码结构的先锋。",
+      "multimodalLooker": "视觉内容专家，分析 PDF、图片、图表等非文本媒体，提取其中的信息与洞察。",
+      "metis": "计划顾问，在规划前进行预分析，识别隐藏意图、模糊点和 AI 失败点，防止过度工程化。",
+      "momus": "计划评审员，高精度验证计划的清晰度、可验证性和完整性，拒绝并要求修订直到计划完美。",
+      "sisyphusJunior": "类别生成的执行器，由 category 参数自动生成，专注于执行分配的任务且不能再委派，防止无限委派循环。"
+    },
+    "categoryDesc": {
+      "visualEngineering": "视觉/前端工程",
+      "ultrabrain": "超级思考",
+      "deep": "深度工作",
+      "artistry": "创意/文艺",
+      "quick": "快速响应",
+      "unspecifiedLow": "通用低配",
+      "unspecifiedHigh": "通用高配",
+      "writing": "写作"
+    },
+    "categoryTooltip": {
+      "visualEngineering": "前端与视觉工程类别，专注于 UI/UX 设计、样式、动画和界面实现，默认使用 Gemini 3 Pro 模型。",
+      "ultrabrain": "深度逻辑推理类别，用于需要广泛分析的复杂架构决策，默认使用 GPT-5.3 Codex 的超高推理变体。",
+      "deep": "深度自主问题解决类别，目标导向执行，行动前进行彻底研究，适用于需要深度理解的棘手问题。",
+      "artistry": "高度创意与艺术性任务类别，激发新颖想法和创造性解决方案，默认使用 Gemini 3 Pro 的最大变体。",
+      "quick": "轻量任务类别，用于单文件修改、错别字修复、简单调整等琐碎工作，默认使用 Claude Haiku 4.5 快速模型。",
+      "unspecifiedLow": "未归类低工作量任务类别，适用于不适合其他类别且工作量较小的任务，默认使用 Claude Sonnet 4.5。",
+      "unspecifiedHigh": "未归类高工作量任务类别，适用于不适合其他类别且工作量较大的任务，默认使用 Claude Opus 4.6 的最大变体。",
+      "writing": "写作类别，专注于文档、散文和技术写作，默认使用 Gemini 3 Flash 快速生成模型。"
+    }
   }
 }
