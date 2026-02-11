@@ -18,11 +18,14 @@ export function useCopilotAuth() {
 
   // 轮询状态
   const [pollingState, setPollingState] = useState<PollingState>("idle");
-  const [deviceCode, setDeviceCode] = useState<CopilotDeviceCodeResponse | null>(null);
+  const [deviceCode, setDeviceCode] =
+    useState<CopilotDeviceCodeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // 轮询计时器
-  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 获取认证状态
@@ -94,7 +97,7 @@ export function useCopilotAuth() {
 
         try {
           const success = await copilotApi.copilotPollForAuth(
-            response.device_code
+            response.device_code,
           );
           if (success) {
             stopPolling();
@@ -102,7 +105,9 @@ export function useCopilotAuth() {
             // 刷新认证状态
             await refetchStatus();
             // 使相关查询失效
-            queryClient.invalidateQueries({ queryKey: ["copilot-auth-status"] });
+            queryClient.invalidateQueries({
+              queryKey: ["copilot-auth-status"],
+            });
           }
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);

@@ -25,3 +25,6 @@ flatpak-build/
 flatpak-repo/
 .worktrees/
 .spec-workflow/
+copilot-api
+.history
+CODEBUDDY.md
