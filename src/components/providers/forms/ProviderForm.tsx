@@ -54,7 +54,7 @@ import { type OmoGlobalConfigFieldsRef } from "./OmoGlobalConfigFields";
 import { OmoCommonConfigEditor } from "./OmoCommonConfigEditor";
 import * as configApi from "@/lib/api/config";
 import type { OmoGlobalConfig } from "@/types/omo";
-import { mergeOmoConfigPreview } from "@/types/omo";
+import { mergeOmoConfigPreview, parseOmoOtherFieldsObject } from "@/types/omo";
 import {
   ProviderAdvancedConfig,
   type PricingModelSourceOption,
@@ -219,8 +219,10 @@ function buildOmoProfilePreview(
   }
   if (otherFieldsStr.trim()) {
     try {
-      const other = JSON.parse(otherFieldsStr);
-      Object.assign(profileOnly, other);
+      const other = parseOmoOtherFieldsObject(otherFieldsStr);
+      if (other) {
+        Object.assign(profileOnly, other);
+      }
     } catch {}
   }
   return profileOnly;
@@ -1203,7 +1205,19 @@ export function ProviderForm({
       }
       if (omoOtherFieldsStr.trim()) {
         try {
-          omoConfig.otherFields = JSON.parse(omoOtherFieldsStr);
+          const otherFields = parseOmoOtherFieldsObject(omoOtherFieldsStr);
+          if (!otherFields) {
+            toast.error(
+              t("omo.jsonMustBeObject", {
+                field: t("omo.otherFields", {
+                  defaultValue: "Other Config",
+                }),
+                defaultValue: "{{field}} must be a JSON object",
+              }),
+            );
+            return;
+          }
+          omoConfig.otherFields = otherFields;
         } catch {
           toast.error(
             t("omo.invalidJson", {

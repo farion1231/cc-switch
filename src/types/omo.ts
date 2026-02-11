@@ -316,6 +316,17 @@ export const OMO_CLAUDE_CODE_PLACEHOLDER = `{
   "plugins": true
 }`;
 
+export function parseOmoOtherFieldsObject(
+  raw: string,
+): Record<string, unknown> | undefined {
+  if (!raw.trim()) return undefined;
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  return parsed as Record<string, unknown>;
+}
+
 export function mergeOmoConfigPreview(
   global: OmoGlobalConfig,
   agents: Record<string, Record<string, unknown>>,
@@ -351,7 +362,8 @@ export function mergeOmoConfigPreview(
   if (Object.keys(agents).length > 0) result["agents"] = agents;
   if (Object.keys(categories).length > 0) result["categories"] = categories;
   try {
-    const other = JSON.parse(otherFieldsStr || "{}");
+    const other = parseOmoOtherFieldsObject(otherFieldsStr);
+    if (!other) return result;
     for (const [k, v] of Object.entries(other)) {
       result[k] = v;
     }

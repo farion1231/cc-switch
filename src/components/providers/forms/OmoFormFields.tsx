@@ -77,7 +77,11 @@ interface OmoFormFieldsProps {
   onOtherFieldsStrChange: (value: string) => void;
 }
 
-type CustomModelItem = { key: string; model: string };
+export type CustomModelItem = {
+  key: string;
+  model: string;
+  sourceKey?: string;
+};
 type BuiltinModelDef = Pick<
   OmoAgentDef | OmoCategoryDef,
   "key" | "display" | "descKey" | "recommended" | "tooltipKey"
@@ -236,45 +240,58 @@ function collectCustomModels(
       customs.push({
         key: k,
         model: ((v as Record<string, unknown>).model as string) || "",
+        sourceKey: k,
       });
     }
   }
   return customs;
 }
 
-function mergeCustomModelsIntoStore(
+export function mergeCustomModelsIntoStore(
   store: Record<string, Record<string, unknown>>,
   builtinKeys: Set<string>,
   customs: CustomModelItem[],
   modelVariantsMap: Record<string, string[]>,
 ): Record<string, Record<string, unknown>> {
-  const updated = { ...store };
-  for (const key of Object.keys(updated)) {
-    if (!builtinKeys.has(key)) delete updated[key];
+  const updated: Record<string, Record<string, unknown>> = {};
+
+  for (const [key, value] of Object.entries(store)) {
+    if (builtinKeys.has(key)) {
+      updated[key] = { ...value };
+    }
   }
+
   for (const custom of customs) {
-    if (custom.key.trim()) {
-      const nextEntry = { ...(updated[custom.key] || {}) };
-      if (custom.model.trim()) {
-        nextEntry.model = custom.model;
-        const currentVariant =
-          typeof nextEntry.variant === "string" ? nextEntry.variant : "";
-        if (currentVariant) {
-          const validVariants = modelVariantsMap[custom.model] || [];
-          if (!validVariants.includes(currentVariant)) {
-            delete nextEntry.variant;
-          }
-        }
-        updated[custom.key] = nextEntry;
-      } else {
-        delete nextEntry.model;
-        delete nextEntry.variant;
-        if (Object.keys(nextEntry).length > 0) {
-          updated[custom.key] = nextEntry;
-        } else {
-          delete updated[custom.key];
+    const targetKey = custom.key.trim();
+    if (!targetKey) continue;
+
+    const sourceKey = (custom.sourceKey || targetKey).trim();
+    const sourceEntry = store[sourceKey] ?? store[targetKey];
+    const nextEntry = {
+      ...(updated[targetKey] || {}),
+      ...(sourceEntry || {}),
+    };
+
+    if (custom.model.trim()) {
+      nextEntry.model = custom.model;
+      const currentVariant =
+        typeof nextEntry.variant === "string" ? nextEntry.variant : "";
+      if (currentVariant) {
+        const validVariants = modelVariantsMap[custom.model] || [];
+        if (!validVariants.includes(currentVariant)) {
+          delete nextEntry.variant;
         }
       }
+      updated[targetKey] = nextEntry;
+      continue;
+    }
+
+    delete nextEntry.model;
+    delete nextEntry.variant;
+    if (Object.keys(nextEntry).length > 0) {
+      updated[targetKey] = nextEntry;
+    } else {
+      delete updated[targetKey];
     }
   }
   return updated;
@@ -1032,11 +1049,17 @@ export function OmoFormFields({
 
   const addCustomModel = (scope: AdvancedScope) => {
     if (scope === "agent") {
-      setCustomAgents((prev) => [...prev, { key: "", model: "" }]);
+      setCustomAgents((prev) => [
+        ...prev,
+        { key: "", model: "", sourceKey: "" },
+      ]);
       setSubAgentsOpen(true);
       return;
     }
-    setCustomCategories((prev) => [...prev, { key: "", model: "" }]);
+    setCustomCategories((prev) => [
+      ...prev,
+      { key: "", model: "", sourceKey: "" },
+    ]);
     setCategoriesOpen(true);
   };
 
