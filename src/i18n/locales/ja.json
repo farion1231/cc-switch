@@ -214,7 +214,9 @@
         "requestGroup": "リクエスト整流",
         "responseGroup": "レスポンス整流",
         "thinkingSignature": "Thinking 署名整流",
-        "thinkingSignatureDescription": "Claude API の thinking 署名検証エラーを自動修正"
+        "thinkingSignatureDescription": "Anthropic タイプのプロバイダーが thinking 署名の非互換性や不正なリクエストエラーを返した場合、互換性のない thinking 関連ブロックを自動削除し、同じプロバイダーで 1 回リトライします",
+        "thinkingBudget": "Thinking Budget 整流",
+        "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上、max_tokens 未満）を返し、かつリクエストで thinking（type=enabled）が明示的に有効な場合、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に設定して 1 回リトライします"
       },
       "logConfig": {
         "title": "ログ管理",

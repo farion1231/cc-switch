@@ -198,14 +198,23 @@ pub struct AppProxyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RectifierConfig {
-    /// 总开关：是否启用整流器
-    #[serde(default)]
+    /// 总开关：是否启用整流器（默认关闭）
+    #[serde(default = "default_false")]
     pub enabled: bool,
-    /// 请求整流：启用 thinking 签名整流器
+    /// 请求整流：启用 thinking 签名整流器（默认关闭）
     ///
     /// 处理错误：Invalid 'signature' in 'thinking' block
-    #[serde(default)]
+    #[serde(default = "default_false")]
     pub request_thinking_signature: bool,
+    /// 请求整流：启用 thinking budget 整流器（默认关闭）
+    ///
+    /// 处理错误：budget_tokens + thinking 相关约束
+    #[serde(default = "default_false")]
+    pub request_thinking_budget: bool,
+}
+
+fn default_false() -> bool {
+    false
 }
 
 fn default_true() -> bool {
@@ -262,12 +271,16 @@ mod tests {
 
     #[test]
     fn test_rectifier_config_default_disabled() {
-        // 验证 RectifierConfig::default() 返回全禁用状态
+        // 验证 RectifierConfig::default() 返回全关闭状态
         let config = RectifierConfig::default();
         assert!(!config.enabled, "整流器总开关默认应为 false");
         assert!(
             !config.request_thinking_signature,
             "thinking 签名整流器默认应为 false"
+        );
+        assert!(
+            !config.request_thinking_budget,
+            "thinking budget 整流器默认应为 false"
         );
     }
 
@@ -278,15 +291,28 @@ mod tests {
         let config: RectifierConfig = serde_json::from_str(json).unwrap();
         assert!(!config.enabled);
         assert!(!config.request_thinking_signature);
+        assert!(!config.request_thinking_budget);
     }
 
     #[test]
     fn test_rectifier_config_serde_explicit_true() {
         // 验证显式设置 true 时正确反序列化
-        let json = r#"{"enabled": true, "requestThinkingSignature": true}"#;
+        let json =
+            r#"{"enabled": true, "requestThinkingSignature": true, "requestThinkingBudget": true}"#;
         let config: RectifierConfig = serde_json::from_str(json).unwrap();
         assert!(config.enabled);
         assert!(config.request_thinking_signature);
+        assert!(config.request_thinking_budget);
+    }
+
+    #[test]
+    fn test_rectifier_config_serde_partial_fields() {
+        // 验证只设置部分字段时，缺失字段使用默认值 false
+        let json = r#"{"enabled": true, "requestThinkingSignature": false}"#;
+        let config: RectifierConfig = serde_json::from_str(json).unwrap();
+        assert!(config.enabled);
+        assert!(!config.request_thinking_signature);
+        assert!(!config.request_thinking_budget);
     }
 
     #[test]

@@ -214,7 +214,9 @@
         "requestGroup": "请求整流",
         "responseGroup": "响应整流",
         "thinkingSignature": "Thinking 签名整流",
-        "thinkingSignatureDescription": "自动修复 Claude API 中因 thinking 签名校验失败导致的请求错误"
+        "thinkingSignatureDescription": "当 Anthropic 类型供应商返回 thinking 签名不兼容或非法请求等错误时，自动移除不兼容的 thinking 相关块并对同一供应商重试一次",
+        "thinkingBudget": "Thinking Budget 整流",
+        "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024、需小于 max_tokens）时，在请求显式开启 thinking（type=enabled）时自动将预算设为 32000，并在需要时将 max_tokens 设为 64000，然后重试一次"
       },
       "logConfig": {
         "title": "日志管理",

@@ -214,7 +214,9 @@
         "requestGroup": "Request Rectification",
         "responseGroup": "Response Rectification",
         "thinkingSignature": "Thinking Signature Rectification",
-        "thinkingSignatureDescription": "Automatically fix Claude API errors caused by thinking signature validation failures"
+        "thinkingSignatureDescription": "When an Anthropic-type provider returns thinking signature incompatibility or illegal request errors, automatically removes incompatible thinking-related blocks and retries once with the same provider",
+        "thinkingBudget": "Thinking Budget Rectification",
+        "thinkingBudgetDescription": "When an Anthropic-type provider returns budget_tokens constraint errors (such as at least 1024 or less than max_tokens), and the request explicitly enables thinking (type=enabled), automatically sets thinking budget to 32000 and max_tokens to 64000 if needed, then retries once"
       },
       "logConfig": {
         "title": "Log Management",
