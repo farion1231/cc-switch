@@ -13,6 +13,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   Plus,
   Trash2,
   ChevronDown,
@@ -22,6 +35,9 @@ import {
   FolderInput,
   Loader2,
   HelpCircle,
+  Check,
+  ChevronsUpDown,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -61,12 +77,138 @@ type BuiltinModelDef = Pick<
 >;
 type ModelOption = { value: string; label: string };
 
+function DeferredKeyInput({
+  value,
+  onCommit,
+  placeholder,
+  className,
+}: {
+  value: string;
+  onCommit: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  return (
+    <Input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== value) {
+          onCommit(draft);
+        }
+      }}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
+}
+
 const BUILTIN_AGENT_KEYS = new Set(OMO_BUILTIN_AGENTS.map((a) => a.key));
 const BUILTIN_CATEGORY_KEYS = new Set(OMO_BUILTIN_CATEGORIES.map((c) => c.key));
-const EMPTY_MODEL_VALUE = "__cc_switch_omo_model_empty__";
-const UNAVAILABLE_MODEL_VALUE = "__cc_switch_omo_model_unavailable__";
 const EMPTY_VARIANT_VALUE = "__cc_switch_omo_variant_empty__";
-const UNAVAILABLE_VARIANT_VALUE = "__cc_switch_omo_variant_unavailable__";
+
+function ModelCombobox({
+  value,
+  options,
+  recommended,
+  onChange,
+}: {
+  value: string;
+  options: ModelOption[];
+  recommended?: string;
+  onChange: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+
+  const selectedLabel = options.find((o) => o.value === value)?.label;
+
+  const selectModelText = t("omo.selectModel", {
+    defaultValue: "Select configured model",
+  });
+  const placeholderText = recommended
+    ? `${selectModelText} (${t("omo.recommendedHint", { model: recommended, defaultValue: "Recommended: {{model}}" })})`
+    : selectModelText;
+
+  return (
+    <Popover modal open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          role="combobox"
+          aria-expanded={open}
+          className="flex flex-1 h-8 items-center justify-between whitespace-nowrap rounded-md border border-border-default bg-background px-3 py-1 text-sm shadow-sm ring-offset-background focus:outline-none focus-visible:outline-none focus:border-border-default focus-visible:border-border-default focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span className={cn("truncate", !value && "text-muted-foreground")}>
+            {selectedLabel || placeholderText}
+          </span>
+          <span className="flex items-center shrink-0 ml-1 gap-0.5">
+            {value && (
+              <X
+                className="h-3.5 w-3.5 opacity-50 hover:opacity-100 cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChange("");
+                }}
+              />
+            )}
+            <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" />
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="bottom"
+        align="start"
+        sideOffset={6}
+        avoidCollisions={true}
+        collisionPadding={8}
+        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border-default"
+      >
+        <Command>
+          <CommandInput
+            placeholder={t("omo.searchModel", {
+              defaultValue: "Search model...",
+            })}
+          />
+          <CommandList>
+            <CommandEmpty>
+              {t("omo.noEnabledModels", {
+                defaultValue: "No configured models",
+              })}
+            </CommandEmpty>
+            <CommandGroup>
+              {options.map((option) => (
+                <CommandItem
+                  key={option.value}
+                  value={option.value}
+                  keywords={[option.label]}
+                  onSelect={() => {
+                    onChange(option.value);
+                    setOpen(false);
+                  }}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      value === option.value ? "opacity-100" : "opacity-0",
+                    )}
+                  />
+                  {option.label}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function getAdvancedStr(config: Record<string, unknown> | undefined): string {
   if (!config) return "";
@@ -97,6 +239,7 @@ function mergeCustomModelsIntoStore(
   store: Record<string, Record<string, unknown>>,
   builtinKeys: Set<string>,
   customs: CustomModelItem[],
+  modelVariantsMap: Record<string, string[]>,
 ): Record<string, Record<string, unknown>> {
   const updated = { ...store };
   for (const key of Object.keys(updated)) {
@@ -104,7 +247,27 @@ function mergeCustomModelsIntoStore(
   }
   for (const custom of customs) {
     if (custom.key.trim()) {
-      updated[custom.key] = { ...updated[custom.key], model: custom.model };
+      const nextEntry = { ...(updated[custom.key] || {}) };
+      if (custom.model.trim()) {
+        nextEntry.model = custom.model;
+        const currentVariant =
+          typeof nextEntry.variant === "string" ? nextEntry.variant : "";
+        if (currentVariant) {
+          const validVariants = modelVariantsMap[custom.model] || [];
+          if (!validVariants.includes(currentVariant)) {
+            delete nextEntry.variant;
+          }
+        }
+        updated[custom.key] = nextEntry;
+      } else {
+        delete nextEntry.model;
+        delete nextEntry.variant;
+        if (Object.keys(nextEntry).length > 0) {
+          updated[custom.key] = nextEntry;
+        } else {
+          delete updated[custom.key];
+        }
+      }
     }
   }
   return updated;
@@ -159,19 +322,29 @@ export function OmoFormFields({
   const syncCustomAgents = useCallback(
     (customs: CustomModelItem[]) => {
       onAgentsChange(
-        mergeCustomModelsIntoStore(agents, BUILTIN_AGENT_KEYS, customs),
+        mergeCustomModelsIntoStore(
+          agents,
+          BUILTIN_AGENT_KEYS,
+          customs,
+          modelVariantsMap,
+        ),
       );
     },
-    [agents, onAgentsChange],
+    [agents, onAgentsChange, modelVariantsMap],
   );
 
   const syncCustomCategories = useCallback(
     (customs: CustomModelItem[]) => {
       onCategoriesChange(
-        mergeCustomModelsIntoStore(categories, BUILTIN_CATEGORY_KEYS, customs),
+        mergeCustomModelsIntoStore(
+          categories,
+          BUILTIN_CATEGORY_KEYS,
+          customs,
+          modelVariantsMap,
+        ),
       );
     },
-    [categories, onCategoriesChange],
+    [categories, onCategoriesChange, modelVariantsMap],
   );
 
   const buildEffectiveModelOptions = useCallback(
@@ -212,43 +385,16 @@ export function OmoFormFields({
   const renderModelSelect = (
     currentModel: string,
     onChange: (value: string) => void,
-    placeholder?: string,
+    recommended?: string,
   ) => {
     const options = buildEffectiveModelOptions(currentModel);
     return (
-      <Select
-        value={currentModel || EMPTY_MODEL_VALUE}
-        onValueChange={(value) =>
-          onChange(value === EMPTY_MODEL_VALUE ? "" : value)
-        }
-      >
-        <SelectTrigger className="flex-1 h-8 text-sm">
-          <SelectValue
-            placeholder={
-              placeholder ||
-              t("omo.selectEnabledModel", {
-                defaultValue: "Select enabled model",
-              })
-            }
-          />
-        </SelectTrigger>
-        <SelectContent className="max-h-72">
-          <SelectItem value={EMPTY_MODEL_VALUE}>
-            {t("omo.clearWrapped", { defaultValue: "(Clear)" })}
-          </SelectItem>
-          {options.length === 0 ? (
-            <SelectItem value={UNAVAILABLE_MODEL_VALUE} disabled>
-              {t("omo.noEnabledModels", { defaultValue: "No enabled models" })}
-            </SelectItem>
-          ) : (
-            options.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))
-          )}
-        </SelectContent>
-      </Select>
+      <ModelCombobox
+        value={currentModel}
+        options={options}
+        recommended={recommended}
+        onChange={onChange}
+      />
     );
   };
 
@@ -268,13 +414,21 @@ export function OmoFormFields({
     currentVariant: string,
     onChange: (value: string) => void,
   ) => {
+    const hasModel = Boolean(currentModel);
+    const modelVariantKeys = hasModel
+      ? modelVariantsMap[currentModel] || []
+      : [];
+    const hasVariants = modelVariantKeys.length > 0;
+    const shouldShow = hasModel && (hasVariants || Boolean(currentVariant));
+
+    if (!shouldShow) {
+      return null;
+    }
+
     const variantOptions = buildEffectiveVariantOptions(
       currentModel,
       currentVariant,
     );
-    const hasModel = Boolean(currentModel);
-    const hasVariants =
-      hasModel && (modelVariantsMap[currentModel] || []).length > 0;
     const firstIsUnavailable =
       Boolean(currentVariant) &&
       !(modelVariantsMap[currentModel] || []).includes(currentVariant);
@@ -285,9 +439,8 @@ export function OmoFormFields({
         onValueChange={(value) =>
           onChange(value === EMPTY_VARIANT_VALUE ? "" : value)
         }
-        disabled={!hasModel || !hasVariants}
       >
-        <SelectTrigger className="w-32 h-8 text-xs shrink-0">
+        <SelectTrigger className="w-28 h-8 text-xs shrink-0">
           <SelectValue
             placeholder={t("omo.variantPlaceholder", {
               defaultValue: "variant",
@@ -298,30 +451,16 @@ export function OmoFormFields({
           <SelectItem value={EMPTY_VARIANT_VALUE}>
             {t("omo.defaultWrapped", { defaultValue: "(Default)" })}
           </SelectItem>
-          {!hasModel ? (
-            <SelectItem value={UNAVAILABLE_VARIANT_VALUE} disabled>
-              {t("omo.selectModelFirst", {
-                defaultValue: "Select model first",
-              })}
+          {variantOptions.map((variant, index) => (
+            <SelectItem key={`${variant}-${index}`} value={variant}>
+              {firstIsUnavailable && index === 0
+                ? t("omo.currentValueUnavailable", {
+                    value: variant,
+                    defaultValue: "{{value}} (current value, unavailable)",
+                  })
+                : variant}
             </SelectItem>
-          ) : variantOptions.length === 0 ? (
-            <SelectItem value={UNAVAILABLE_VARIANT_VALUE} disabled>
-              {t("omo.noVariantsForModel", {
-                defaultValue: "No variants for model",
-              })}
-            </SelectItem>
-          ) : (
-            variantOptions.map((variant, index) => (
-              <SelectItem key={`${variant}-${index}`} value={variant}>
-                {firstIsUnavailable && index === 0
-                  ? t("omo.currentValueUnavailable", {
-                      value: variant,
-                      defaultValue: "{{value}} (current value, unavailable)",
-                    })
-                  : variant}
-              </SelectItem>
-            ))
-          )}
+          ))}
         </SelectContent>
       </Select>
     );
@@ -538,7 +677,7 @@ export function OmoFormFields({
       toast.warning(
         t("omo.noEnabledModelsWarning", {
           defaultValue:
-            "No enabled models available. Configure and enable OpenCode models first.",
+            "No configured models available. Configure OpenCode models first.",
         }),
       );
       return;
@@ -737,16 +876,14 @@ export function OmoFormFields({
         className="border-b border-border/30 last:border-b-0"
       >
         <div className="flex items-center gap-2 py-1.5">
-          <Input
+          <DeferredKeyInput
             value={item.key}
-            onChange={(e) => updateCustom({ key: e.target.value })}
+            onCommit={(value) => updateCustom({ key: value })}
             placeholder={keyPlaceholder}
             className="w-32 shrink-0 h-8 text-sm text-primary"
           />
-          {renderModelSelect(
-            item.model,
-            (value) => updateCustom({ model: value }),
-            t("omo.modelNamePlaceholder", { defaultValue: "model-name" }),
+          {renderModelSelect(item.model, (value) =>
+            updateCustom({ model: value }),
           )}
           {renderVariantSelect(item.model, currentVariant, (value) => {
             if (!item.key) return;
@@ -941,7 +1078,7 @@ export function OmoFormFields({
           ·{" "}
           {t("omo.enabledModelsCount", {
             count: modelOptions.length,
-            defaultValue: "{{count}} enabled models available",
+            defaultValue: "{{count}} configured models available",
           })}
         </span>
         {localFilePath && (
