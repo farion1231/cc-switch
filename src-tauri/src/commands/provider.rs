@@ -2,11 +2,16 @@ use indexmap::IndexMap;
 use tauri::State;
 
 use crate::app_config::AppType;
+use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::{EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService};
 use crate::store::AppState;
 use std::str::FromStr;
+
+// 常量定义
+const TEMPLATE_TYPE_GITHUB_COPILOT: &str = "github_copilot";
+const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 #[tauri::command]
 pub fn get_providers(
@@ -114,10 +119,58 @@ pub fn import_default_config(state: State<'_, AppState>, app: String) -> Result<
 #[tauri::command]
 pub async fn queryProviderUsage(
     state: State<'_, AppState>,
+    copilot_state: State<'_, CopilotAuthState>,
     #[allow(non_snake_case)] providerId: String, // 使用 camelCase 匹配前端
     app: String,
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+
+    // 检查是否为 GitHub Copilot 模板类型
+    let is_copilot_template = {
+        let providers = state
+            .db
+            .get_all_providers(app_type.as_str())
+            .map_err(|e| format!("Failed to get providers: {}", e))?;
+        providers
+            .get(&providerId)
+            .and_then(|p| p.meta.as_ref())
+            .and_then(|m| m.usage_script.as_ref())
+            .and_then(|s| s.template_type.as_ref())
+            .map(|t| t == TEMPLATE_TYPE_GITHUB_COPILOT)
+            .unwrap_or(false)
+    };
+
+    if is_copilot_template {
+        // 使用 Copilot 专用 API
+        let auth_manager = copilot_state.0.read().await;
+        let usage = auth_manager
+            .fetch_usage()
+            .await
+            .map_err(|e| format!("Failed to fetch Copilot usage: {}", e))?;
+        let premium = &usage.quota_snapshots.premium_interactions;
+        let used = premium.entitlement - premium.remaining;
+
+        return Ok(crate::provider::UsageResult {
+            success: true,
+            data: Some(vec![crate::provider::UsageData {
+                plan_name: Some(usage.copilot_plan),
+                remaining: Some(premium.remaining as f64),
+                total: Some(premium.entitlement as f64),
+                used: Some(used as f64),
+                unit: Some(COPILOT_UNIT_PREMIUM.to_string()),
+                is_valid: Some(true),
+                invalid_message: None,
+                extra: Some(
+                    serde_json::json!({
+                        "reset_date": usage.quota_reset_date
+                    })
+                    .to_string(),
+                ),
+            }]),
+            error: None,
+        });
+    }
+
     ProviderService::query_usage(state.inner(), app_type, &providerId)
         .await
         .map_err(|e| e.to_string())

@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 mod config;
+mod copilot;
 mod deeplink;
 mod env;
 mod failover;
@@ -20,6 +21,7 @@ mod stream_check;
 mod usage;
 
 pub use config::*;
+pub use copilot::*;
 pub use deeplink::*;
 pub use env::*;
 pub use failover::*;
