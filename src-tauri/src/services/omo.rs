@@ -301,7 +301,7 @@ impl OmoService {
         let agents = obj.get("agents").cloned();
         let categories = obj.get("categories").cloned();
 
-        let other = Self::extract_other_fields(&obj);
+        let other = Self::extract_other_fields(obj);
         let other_fields = if other.is_empty() {
             None
         } else {
@@ -309,7 +309,7 @@ impl OmoService {
         };
 
         let mut global = OmoGlobalConfig::default();
-        Self::merge_global_from_obj(&obj, &mut global);
+        Self::merge_global_from_obj(obj, &mut global);
         global.other_fields = other_fields.clone();
 
         OmoLocalFileData {
@@ -471,7 +471,10 @@ mod tests {
             None,
         );
 
-        assert_eq!(data.global.schema_url.as_deref(), Some("https://example.com/schema.json"));
+        assert_eq!(
+            data.global.schema_url.as_deref(),
+            Some("https://example.com/schema.json")
+        );
         assert_eq!(data.global.disabled_agents, vec!["oracle".to_string()]);
 
         assert_eq!(
