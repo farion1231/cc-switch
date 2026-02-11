@@ -60,6 +60,13 @@ const ADVANCED_PLACEHOLDER = `{
 interface OmoFormFieldsProps {
   modelOptions: Array<{ value: string; label: string }>;
   modelVariantsMap?: Record<string, string[]>;
+  presetMetaMap?: Record<
+    string,
+    {
+      options?: Record<string, unknown>;
+      limit?: { context?: number; output?: number };
+    }
+  >;
   agents: Record<string, Record<string, unknown>>;
   onAgentsChange: (agents: Record<string, Record<string, unknown>>) => void;
   categories: Record<string, Record<string, unknown>>;
@@ -276,6 +283,7 @@ function mergeCustomModelsIntoStore(
 export function OmoFormFields({
   modelOptions,
   modelVariantsMap = {},
+  presetMetaMap: _presetMetaMap = {},
   agents,
   onAgentsChange,
   categories,

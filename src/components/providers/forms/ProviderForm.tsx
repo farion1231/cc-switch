@@ -649,6 +649,13 @@ export function ProviderForm({
     const empty = {
       options: [] as Array<{ value: string; label: string }>,
       variantsMap: {} as Record<string, string[]>,
+      presetMetaMap: {} as Record<
+        string,
+        {
+          options?: Record<string, unknown>;
+          limit?: { context?: number; output?: number };
+        }
+      >,
       parseFailedProviders: [] as string[],
       usedFallbackSource: false,
     };
@@ -672,6 +679,13 @@ export function ProviderForm({
 
     const dedupedOptions = new Map<string, string>();
     const variantsMap: Record<string, string[]> = {};
+    const presetMetaMap: Record<
+      string,
+      {
+        options?: Record<string, unknown>;
+        limit?: { context?: number; output?: number };
+      }
+    > = {};
     const parseFailedProviders: string[] = [];
 
     for (const [providerKey, provider] of Object.entries(allProviders)) {
@@ -727,20 +741,33 @@ export function ProviderForm({
       }
 
       // Preset fallback: for models without config-defined variants,
-      // check if the npm package has preset variant definitions
+      // check if the npm package has preset variant definitions.
+      // Also collect preset metadata (options, limit) for enrichment.
       const presetModels = OPENCODE_PRESET_MODEL_VARIANTS[parsedConfig.npm];
       if (presetModels) {
         for (const modelId of Object.keys(parsedConfig.models || {})) {
           const fullKey = `${providerKey}/${modelId}`;
-          if (variantsMap[fullKey]) {
-            continue;
-          }
           const preset = presetModels.find((p) => p.id === modelId);
-          if (preset?.variants) {
+          if (!preset) continue;
+
+          // Variant fallback
+          if (!variantsMap[fullKey] && preset.variants) {
             const presetKeys = Object.keys(preset.variants).filter(Boolean);
             if (presetKeys.length > 0) {
               variantsMap[fullKey] = presetKeys;
             }
+          }
+
+          // Collect preset metadata for model enrichment
+          const meta: (typeof presetMetaMap)[string] = {};
+          if (preset.options) meta.options = preset.options;
+          if (preset.contextLimit || preset.outputLimit) {
+            meta.limit = {};
+            if (preset.contextLimit) meta.limit.context = preset.contextLimit;
+            if (preset.outputLimit) meta.limit.output = preset.outputLimit;
+          }
+          if (Object.keys(meta).length > 0) {
+            presetMetaMap[fullKey] = meta;
           }
         }
       }
@@ -751,6 +778,7 @@ export function ProviderForm({
         .map(([value, label]) => ({ value, label }))
         .sort((a, b) => a.label.localeCompare(b.label, "zh-CN")),
       variantsMap,
+      presetMetaMap,
       parseFailedProviders,
       usedFallbackSource: omoLiveIdsLoadFailed,
     };
@@ -762,6 +790,7 @@ export function ProviderForm({
   ]);
   const omoModelOptions = omoModelBuild.options;
   const omoModelVariantsMap = omoModelBuild.variantsMap;
+  const omoPresetMetaMap = omoModelBuild.presetMetaMap;
 
   useEffect(() => {
     if (!isOmoCategory) return;
@@ -1699,6 +1728,7 @@ export function ProviderForm({
           <OmoFormFields
             modelOptions={omoModelOptions}
             modelVariantsMap={omoModelVariantsMap}
+            presetMetaMap={omoPresetMetaMap}
             agents={omoAgents}
             onAgentsChange={setOmoAgents}
             categories={omoCategories}
