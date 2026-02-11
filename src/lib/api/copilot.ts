@@ -103,3 +103,40 @@ export async function copilotGetToken(): Promise<string> {
 export async function copilotGetModels(): Promise<CopilotModel[]> {
   return invoke<CopilotModel[]>("copilot_get_models");
 }
+
+/**
+ * 配额详情
+ */
+export interface QuotaDetail {
+  entitlement: number;
+  remaining: number;
+  percent_remaining: number;
+  unlimited: boolean;
+}
+
+/**
+ * 配额快照
+ */
+export interface QuotaSnapshots {
+  chat: QuotaDetail;
+  completions: QuotaDetail;
+  premium_interactions: QuotaDetail;
+}
+
+/**
+ * Copilot 使用量响应
+ */
+export interface CopilotUsageResponse {
+  copilot_plan: string;
+  quota_reset_date: string;
+  quota_snapshots: QuotaSnapshots;
+}
+
+/**
+ * 获取 Copilot 使用量信息
+ *
+ * @returns 使用量信息，包含计划类型、重置日期和配额快照
+ */
+export async function copilotGetUsage(): Promise<CopilotUsageResponse> {
+  return invoke<CopilotUsageResponse>("copilot_get_usage");
+}

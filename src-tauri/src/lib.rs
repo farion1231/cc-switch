@@ -20,8 +20,8 @@ mod prompt_files;
 mod provider;
 mod provider_defaults;
 mod proxy;
-mod session_manager;
 mod services;
+mod session_manager;
 mod settings;
 mod store;
 mod tray;
@@ -978,6 +978,7 @@ pub fn run() {
             commands::copilot_is_authenticated,
             commands::copilot_get_token,
             commands::copilot_get_models,
+            commands::copilot_get_usage,
         ]);
 
     let app = builder

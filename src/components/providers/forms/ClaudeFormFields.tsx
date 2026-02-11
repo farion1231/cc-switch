@@ -132,8 +132,10 @@ export function ClaudeFormFields({
 
     let cancelled = false;
     setModelsLoading(true);
+    console.log("[Copilot] Fetching models, isCopilotPreset:", isCopilotPreset);
     copilotGetModels()
       .then((models) => {
+        console.log("[Copilot] Fetched models:", models.length, models);
         if (!cancelled) setCopilotModels(models);
       })
       .catch((err) => {
@@ -188,7 +190,7 @@ export function ClaudeFormFields({
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="max-h-64 overflow-y-auto"
+              className="max-h-64 overflow-y-auto z-[200]"
             >
               {vendors.map((vendor, vi) => (
                 <div key={vendor}>

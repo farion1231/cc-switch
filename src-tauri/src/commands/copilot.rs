@@ -3,7 +3,8 @@
 //! 提供 Copilot OAuth 认证相关的 Tauri 命令。
 
 use crate::proxy::providers::copilot_auth::{
-    CopilotAuthManager, CopilotAuthStatus, CopilotModel, GitHubDeviceCodeResponse,
+    CopilotAuthManager, CopilotAuthStatus, CopilotModel, CopilotUsageResponse,
+    GitHubDeviceCodeResponse,
 };
 use std::sync::Arc;
 use tauri::State;
@@ -91,8 +92,14 @@ pub async fn copilot_get_models(
     state: State<'_, CopilotAuthState>,
 ) -> Result<Vec<CopilotModel>, String> {
     let auth_manager = state.0.read().await;
-    auth_manager
-        .fetch_models()
-        .await
-        .map_err(|e| e.to_string())
+    auth_manager.fetch_models().await.map_err(|e| e.to_string())
+}
+
+/// 获取 Copilot 使用量信息
+#[tauri::command]
+pub async fn copilot_get_usage(
+    state: State<'_, CopilotAuthState>,
+) -> Result<CopilotUsageResponse, String> {
+    let auth_manager = state.0.read().await;
+    auth_manager.fetch_usage().await.map_err(|e| e.to_string())
 }

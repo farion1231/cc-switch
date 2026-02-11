@@ -2,8 +2,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
 use regex::Regex;
+use serde_json::Value;
 
 use crate::codex_config::get_codex_config_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
@@ -60,17 +60,12 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string();
-        let content = payload
-            .get("content")
-            .map(extract_text)
-            .unwrap_or_default();
+        let content = payload.get("content").map(extract_text).unwrap_or_default();
         if content.trim().is_empty() {
             continue;
         }
 
-        let ts = value
-            .get("timestamp")
-            .and_then(parse_timestamp_to_ms);
+        let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
 
         messages.push(SessionMessage { role, content, ts });
     }
@@ -139,10 +134,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
             continue;
         }
 
-        let text = payload
-            .get("content")
-            .map(extract_text)
-            .unwrap_or_default();
+        let text = payload.get("content").map(extract_text).unwrap_or_default();
         if text.trim().is_empty() {
             continue;
         }
@@ -174,10 +166,9 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
 
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {
     let file_name = path.file_name()?.to_string_lossy();
-    let re = Regex::new(
-        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-    )
-    .ok()?;
+    let re =
+        Regex::new(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+            .ok()?;
     re.find(&file_name).map(|mat| mat.as_str().to_string())
 }
 

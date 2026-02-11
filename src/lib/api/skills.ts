@@ -91,11 +91,7 @@ export const skillsApi = {
   },
 
   /** 切换 Skill 的应用启用状态 */
-  async toggleApp(
-    id: string,
-    app: AppId,
-    enabled: boolean,
-  ): Promise<boolean> {
+  async toggleApp(id: string, app: AppId, enabled: boolean): Promise<boolean> {
     return await invoke("toggle_skill_app", { id, app, enabled });
   },
 
@@ -133,10 +129,7 @@ export const skillsApi = {
   },
 
   /** 卸载技能（兼容旧 API） */
-  async uninstall(
-    directory: string,
-    app: AppId = "claude",
-  ): Promise<boolean> {
+  async uninstall(directory: string, app: AppId = "claude"): Promise<boolean> {
     if (app === "claude") {
       return await invoke("uninstall_skill", { directory });
     }

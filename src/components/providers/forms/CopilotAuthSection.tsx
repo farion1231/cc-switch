@@ -3,7 +3,14 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Loader2, Github, LogOut, Copy, Check, ExternalLink } from "lucide-react";
+import {
+  Loader2,
+  Github,
+  LogOut,
+  Copy,
+  Check,
+  ExternalLink,
+} from "lucide-react";
 import { useCopilotAuth } from "./hooks/useCopilotAuth";
 
 interface CopilotAuthSectionProps {
@@ -52,7 +59,10 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
           className={isAuthenticated ? "bg-green-500 hover:bg-green-600" : ""}
         >
           {isAuthenticated
-            ? t("copilot.authenticated", { username, defaultValue: `已认证: ${username}` })
+            ? t("copilot.authenticated", {
+                username,
+                defaultValue: `已认证: ${username}`,
+              })
             : t("copilot.notAuthenticated", "未认证")}
         </Badge>
       </div>
@@ -134,12 +144,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       {pollingState === "error" && error && (
         <div className="space-y-2">
           <p className="text-sm text-red-500">{error}</p>
-          <Button
-            type="button"
-            onClick={startAuth}
-            variant="outline"
-            size="sm"
-          >
+          <Button type="button" onClick={startAuth} variant="outline" size="sm">
             {t("copilot.retry", "重试")}
           </Button>
         </div>

@@ -42,6 +42,44 @@ const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.26.7";
 const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
 const COPILOT_API_VERSION: &str = "2025-04-01";
 
+/// Copilot 使用量 API URL
+const COPILOT_USAGE_URL: &str = "https://api.github.com/copilot_internal/user";
+
+/// Copilot 使用量响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopilotUsageResponse {
+    /// Copilot 计划类型
+    pub copilot_plan: String,
+    /// 配额重置日期
+    pub quota_reset_date: String,
+    /// 配额快照
+    pub quota_snapshots: QuotaSnapshots,
+}
+
+/// 配额快照
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuotaSnapshots {
+    /// Chat 配额
+    pub chat: QuotaDetail,
+    /// Completions 配额
+    pub completions: QuotaDetail,
+    /// Premium 交互配额
+    pub premium_interactions: QuotaDetail,
+}
+
+/// 配额详情
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuotaDetail {
+    /// 总配额
+    pub entitlement: i64,
+    /// 剩余配额
+    pub remaining: i64,
+    /// 剩余百分比
+    pub percent_remaining: f64,
+    /// 是否无限
+    pub unlimited: bool,
+}
+
 /// Copilot 可用模型
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CopilotModel {
@@ -263,10 +301,7 @@ impl CopilotAuthManager {
     }
 
     /// 轮询获取 OAuth Token
-    pub async fn poll_for_token(
-        &self,
-        device_code: &str,
-    ) -> Result<(), CopilotAuthError> {
+    pub async fn poll_for_token(&self, device_code: &str) -> Result<(), CopilotAuthError> {
         log::debug!("[CopilotAuth] 轮询 OAuth Token");
 
         let response = self
@@ -276,10 +311,7 @@ impl CopilotAuthManager {
             .form(&[
                 ("client_id", GITHUB_CLIENT_ID),
                 ("device_code", device_code),
-                (
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:device_code",
-                ),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ])
             .send()
             .await?;
@@ -494,8 +526,8 @@ impl CopilotAuthManager {
         }
 
         let content = std::fs::read_to_string(&self.storage_path)?;
-        let store: CopilotAuthStore =
-            serde_json::from_str(&content).map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
+        let store: CopilotAuthStore = serde_json::from_str(&content)
+            .map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
 
         if let Some(token) = store.github_token {
             // 使用 try_write 避免在同步上下文中阻塞
@@ -583,12 +615,57 @@ impl CopilotAuthManager {
             })
             .collect();
 
-        log::info!(
-            "[CopilotAuth] 获取到 {} 个可用模型",
-            models.len()
-        );
+        log::info!("[CopilotAuth] 获取到 {} 个可用模型", models.len());
 
         Ok(models)
+    }
+
+    /// 获取 Copilot 使用量信息
+    pub async fn fetch_usage(&self) -> Result<CopilotUsageResponse, CopilotAuthError> {
+        let github_token = {
+            let token = self.github_token.read().await;
+            token.clone().ok_or(CopilotAuthError::GitHubTokenInvalid)?
+        };
+
+        log::info!("[CopilotAuth] 获取 Copilot 使用量");
+
+        let response = self
+            .http_client
+            .get(COPILOT_USAGE_URL)
+            .header("Authorization", format!("token {}", github_token))
+            .header("Content-Type", "application/json")
+            .header("editor-version", COPILOT_EDITOR_VERSION)
+            .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
+            .header("user-agent", COPILOT_USER_AGENT)
+            .header("x-github-api-version", COPILOT_API_VERSION)
+            .send()
+            .await?;
+
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(CopilotAuthError::GitHubTokenInvalid);
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(CopilotAuthError::CopilotTokenFetchFailed(format!(
+                "获取使用量失败: {} - {}",
+                status, text
+            )));
+        }
+
+        let usage: CopilotUsageResponse = response
+            .json()
+            .await
+            .map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
+
+        log::info!(
+            "[CopilotAuth] 获取使用量成功，计划: {}, 重置日期: {}",
+            usage.copilot_plan,
+            usage.quota_reset_date
+        );
+
+        Ok(usage)
     }
 }
 
