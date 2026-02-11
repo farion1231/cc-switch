@@ -15,16 +15,18 @@
 
 ## ❤️赞助商
 
-[![智谱 GLM](assets/partners/banners/glm-zh.jpg)](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII)
+[![MiniMax](assets/partners/banners/minimax-zh.jpeg)](https://platform.minimaxi.com/subscribe/coding-plan?code=7kYF2VoaCn&source=link)
 
-感谢智谱AI的 GLM CODING PLAN 赞助了本项目！GLM CODING PLAN 是专为AI编码打造的订阅套餐,每月最低仅需20元，即可在十余款主流AI编码工具如 Claude Code、Cline 中畅享智谱旗舰模型 GLM-4.6，为开发者提供顶尖、高速、稳定的编码体验。CC Switch 已经预设了智谱GLM，只需要填写 key 即可一键导入编程工具。智谱AI为本软件的用户提供了特别优惠，使用[此链接](https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII)购买可以享受九折优惠。
+MiniMax M2.x 系列模型是面向实际开发与智能体工作流打造的编码模型，M2.1 基于 100 亿激活 / 2300 亿总参的混合专家架构打造，推理更快、部署更便捷且支持本地运行，在 SWE、VIBE、Multi-SWE 等主流代码评测基准中均表现顶尖，擅长代码开发、数字环境适配及规模化处理长链路多步骤任务。
+
+[点击](https://platform.minimaxi.com/subscribe/coding-plan?code=7kYF2VoaCn&source=link)即可领取 MiniMax Coding Plan 专属 88 折优惠！
 
 ---
 
 <table>
 <tr>
 <td width="180"><a href="https://www.packyapi.com/register?aff=cc-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
-<td>感谢 PackyCode 赞助了本项目！PackyCode 是一家稳定、高效的API中转服务商，提供 Claude Code、Codex、Gemini 等多种中转服务。PackyCode 为本软件的用户提供了特别优惠，使用<a href="https://www.packyapi.com/register?aff=cc-switch">此链接</a>注册并在充值时填写"cc-switch"优惠码，可以享受9折优惠！</td>
+<td>感谢 PackyCode 赞助了本项目！PackyCode 是一家稳定、高效的API中转服务商，提供 Claude Code、Codex、Gemini 等多种中转服务。PackyCode 为本软件的用户提供了特别优惠，使用<a href="https://www.packyapi.com/register?aff=cc-switch">此链接</a>注册并在充值时填写"cc-switch"优惠码，首次充值可以享受9折优惠！</td>
 </tr>
 
 <tr>
@@ -47,6 +49,11 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 <td width="180"><a href="https://www.dmxapi.cn/register?aff=bUHu"><img src="assets/partners/logos/dmx-zh.jpeg" alt="DMXAPI" width="150"></a></td>
 <td>感谢 DMXAPI（大模型API）赞助了本项目！ DMXAPI，一个Key用全球大模型。
 为200多家企业用户提供全球大模型API服务。· 充值即开票 ·当天开票 ·并发不限制  ·1元起充 ·  7x24 在线技术辅导，GPT/Claude/Gemini全部6.8折，国内模型5~8折，Claude Code 专属模型3.4折进行中！<a href="https://www.dmxapi.cn/register?aff=bUHu">点击这里注册</a></td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.right.codes/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
+<td>感谢 Right Code 赞助了本项目！Right Code 稳定提供 Claude Code、Codex、Gemini 等模型的中转服务。主打<strong>极高性价比</strong>的Codex包月套餐，<strong>提供额度转结，套餐当天用不完的额度，第二天还能接着用！</strong>充值即可开票，企业、团队用户一对一对接。同时为 CC Switch 的用户提供了特别优惠：通过<a href="https://www.right.codes/register?aff=CCSWITCH">此链接</a>注册，每次充值均可获得实付金额25%的按量额度！</td>
 </tr>
 
 <tr>

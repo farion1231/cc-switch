@@ -139,6 +139,13 @@ function App() {
     }
   }, [visibleApps, activeApp]);
 
+  // Fallback from sessions view when switching to an app without session support
+  useEffect(() => {
+    if (currentView === "sessions" && activeApp !== "claude" && activeApp !== "codex") {
+      setCurrentView("providers");
+    }
+  }, [activeApp, currentView]);
+
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
@@ -177,6 +184,7 @@ function App() {
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
   const hasSkillsSupport = true;
+  const hasSessionSupport = activeApp === "claude" || activeApp === "codex";
 
   const {
     addProvider,
@@ -958,10 +966,16 @@ function App() {
                     variant="ghost"
                     size="sm"
                     onClick={() => setCurrentView("sessions")}
-                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                    className={cn(
+                      "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                      "transition-all duration-200 ease-in-out overflow-hidden",
+                      hasSessionSupport
+                        ? "opacity-100 w-8 scale-100 px-2"
+                        : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                    )}
                     title={t("sessionManager.title")}
                   >
-                    <History className="w-4 h-4" />
+                    <History className="flex-shrink-0 w-4 h-4" />
                   </Button>
                   <Button
                     variant="ghost"

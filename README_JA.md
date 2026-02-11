@@ -15,9 +15,11 @@
 
 ## ❤️スポンサー
 
-[![Zhipu GLM](assets/partners/banners/glm-en.jpg)](https://z.ai/subscribe?ic=8JVLJQFSKB)
+[![MiniMax](assets/partners/banners/minimax-en.jpg)](https://bit.ly/3Nue8mA)
 
-本プロジェクトは Z.ai の GLM CODING PLAN による支援を受けています。GLM CODING PLAN は AI コーディング向けのサブスクリプションで、月額わずか 3 ドルから。Claude Code、Cline、Roo Code など 10 以上の人気 AI コーディングツールでフラッグシップモデル GLM-4.6 を利用でき、速く安定した開発体験を提供します。[このリンク](https://z.ai/subscribe?ic=8JVLJQFSKB) から申し込むと 10% オフになります！
+MiniMax M2.1 は、実務開発とエージェントワークフロー向けに構築されたオープンソースの最先端モデルです。100 億のアクティブパラメータ / 2,300 億の総パラメータを持つ MoE アーキテクチャにより、高速な推論、簡単なデプロイ、ローカル実行にも対応します。SWE、VIBE、Multi-SWE などの主要コーディングベンチマークでトップクラスの性能を発揮し、コーディング、デジタル環境のナビゲーション、大規模な多段階タスクの処理に優れています。
+
+[こちら](https://bit.ly/3Nue8mA)から MiniMax Coding Plan の限定 12% オフを入手！
 
 ---
 
@@ -46,6 +48,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <tr>
 <td width="180"><a href="https://www.dmxapi.cn/register?aff=bUHu"><img src="assets/partners/logos/dmx-en.jpg" alt="DMXAPI" width="150"></a></td>
 <td>DMXAPI のご支援に感謝します！DMXAPI は 200 社以上の企業ユーザーにグローバル大規模モデル API サービスを提供しています。1 つの API キーで全世界のモデルにアクセス可能。即時請求書発行、同時接続数無制限、最低 $0.15 から、24 時間年中無休のテクニカルサポート。GPT/Claude/Gemini が全て 32% オフ、国内モデルは 20〜50% オフ、Claude Code 専用モデルは 66% オフ実施中！<a href="https://www.dmxapi.cn/register?aff=bUHu">登録はこちら</a></td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.right.codes/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
+<td>本プロジェクトへのご支援として、Right Code にご協賛いただき誠にありがとうございます。Right Code は、Claude Code、Codex、Gemini などのモデルに対応した中継（プロキシ）サービスを安定して提供しています。特に高いコストパフォーマンスを誇る Codex の月額プランを主力としており、<strong>未使用分の利用枠を翌日に繰り越して利用できる（繰越対応）</strong>点が特長です。チャージ（入金）後に請求書の発行が可能で、企業・チーム向けには専任担当による個別対応も行っています。さらに CC Switch ユーザー向けの特別優待として、<a href="https://www.right.codes/register?aff=CCSWITCH">こちらのリンク</a>からご登録いただくと、チャージのたびに実支払額の 25% 相当の従量課金クレジットが付与されます。</td>
 </tr>
 
 <tr>
