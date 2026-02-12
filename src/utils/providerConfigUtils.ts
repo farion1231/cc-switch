@@ -468,27 +468,10 @@ export const setCodexBaseUrl = (
   return `${prefix}${replacementLine}\n`;
 };
 
-// 从 Codex 的 TOML 配置文本中提取 wire_api 字段（responses/chat）
-export const extractCodexWireApi = (
-  configText: string | undefined | null,
-): "responses" | "chat" | undefined => {
-  try {
-    const raw = typeof configText === "string" ? configText : "";
-    const text = normalizeQuotes(raw);
-    if (!text) return undefined;
-
-    const m = text.match(/^wire_api\s*=\s*(['"])(responses|chat)\1/m);
-    if (!m || !m[2]) return undefined;
-    return m[2] === "chat" ? "chat" : "responses";
-  } catch {
-    return undefined;
-  }
-};
-
-// 在 Codex 的 TOML 配置文本中写入或更新 wire_api 字段
+// 在 Codex 的 TOML 配置文本中写入或更新 wire_api 字段（仅保留 responses）
 export const setCodexWireApi = (
   configText: string,
-  wireApi: "responses" | "chat",
+  wireApi: "responses" = "responses",
 ): string => {
   const normalizedText = normalizeQuotes(configText);
   const replacementLine = `wire_api = "${wireApi}"`;

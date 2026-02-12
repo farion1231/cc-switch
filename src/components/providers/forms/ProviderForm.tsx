@@ -37,7 +37,6 @@ import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
-  extractCodexWireApi,
   setCodexWireApi,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
@@ -50,7 +49,7 @@ import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
-import { CodexFormFields, type CodexApiFormat } from "./CodexFormFields";
+import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { OmoFormFields } from "./OmoFormFields";
 import { type OmoGlobalConfigFieldsRef } from "./OmoGlobalConfigFields";
@@ -369,19 +368,6 @@ export function ProviderForm({
         : "anthropic";
     });
 
-  const [localCodexApiFormat, setLocalCodexApiFormat] =
-    useState<CodexApiFormat>(() => {
-      if (appId !== "codex") return "responses";
-      if (initialData?.meta?.apiFormat === "chat") return "chat";
-      if (initialData?.meta?.apiFormat === "responses") return "responses";
-
-      const initialConfig = initialData?.settingsConfig?.config;
-      if (typeof initialConfig === "string") {
-        return extractCodexWireApi(initialConfig) ?? "responses";
-      }
-      return "responses";
-    });
-
   const {
     codexAuth,
     codexConfig,
@@ -390,7 +376,6 @@ export function ProviderForm({
     codexModelName,
     codexAuthError,
     setCodexAuth,
-    setCodexConfig,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelNameChange,
@@ -412,14 +397,6 @@ export function ProviderForm({
   const handleClaudeApiFormatChange = useCallback((format: ClaudeApiFormat) => {
     setLocalClaudeApiFormat(format);
   }, []);
-
-  const handleCodexApiFormatChange = useCallback(
-    (format: CodexApiFormat) => {
-      setLocalCodexApiFormat(format);
-      setCodexConfig((prev) => setCodexWireApi(prev, format));
-    },
-    [setCodexConfig],
-  );
 
   useEffect(() => {
     if (appId === "codex" && !initialData && selectedPresetId === "custom") {
@@ -1078,7 +1055,7 @@ export function ProviderForm({
         const authJson = JSON.parse(codexAuth);
         const configObj = {
           auth: authJson,
-          config: codexConfig ?? "",
+          config: setCodexWireApi(codexConfig ?? "", "responses"),
         };
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
@@ -1198,9 +1175,7 @@ export function ProviderForm({
     const providerApiFormat =
       appId === "claude" && category !== "official"
         ? localClaudeApiFormat
-        : appId === "codex" && category !== "official"
-          ? localCodexApiFormat
-          : undefined;
+        : undefined;
 
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
@@ -1310,9 +1285,6 @@ export function ProviderForm({
 
       if (appId === "codex") {
         const template = getCodexCustomTemplate();
-        setLocalCodexApiFormat(
-          extractCodexWireApi(template.config) ?? "responses",
-        );
         resetCodexConfig(template.auth, template.config);
       }
       if (appId === "gemini") {
@@ -1347,7 +1319,6 @@ export function ProviderForm({
       const auth = preset.auth ?? {};
       const config = preset.config ?? "";
 
-      setLocalCodexApiFormat(extractCodexWireApi(config) ?? "responses");
       resetCodexConfig(auth, config);
 
       form.reset({
@@ -1584,9 +1555,6 @@ export function ProviderForm({
             modelName={codexModelName}
             onModelNameChange={handleCodexModelNameChange}
             speedTestEndpoints={speedTestEndpoints}
-            apiFormat={localCodexApiFormat}
-            onApiFormatChange={handleCodexApiFormatChange}
-            shouldShowApiFormatSelector={category !== "official"}
           />
         )}
 

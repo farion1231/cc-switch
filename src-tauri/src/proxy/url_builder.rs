@@ -59,32 +59,11 @@ impl ApiPathPatterns {
     }
 
     fn for_codex(api_format: Option<&str>) -> Self {
-        // Codex:
-        // - Direct mode (Codex CLI) hard-codes Responses API: `/responses`
-        // - Proxy mode might target different upstream formats (e.g. Chat Completions)
-        let is_chat = matches!(api_format, Some("chat"));
-        if is_chat {
-            Self {
-                direct_endpoint: "/responses",
-                proxy_endpoint: "/v1/chat/completions",
-                full_url_patterns: &[
-                    "/v1/responses",
-                    "/responses",
-                    "/v1/chat/completions",
-                    "/chat/completions",
-                ],
-            }
-        } else {
-            Self {
-                direct_endpoint: "/responses",
-                proxy_endpoint: "/responses",
-                full_url_patterns: &[
-                    "/v1/responses",
-                    "/responses",
-                    "/v1/chat/completions",
-                    "/chat/completions",
-                ],
-            }
+        let _ = api_format;
+        Self {
+            direct_endpoint: "/responses",
+            proxy_endpoint: "/responses",
+            full_url_patterns: &["/v1/responses", "/responses"],
         }
     }
 
@@ -301,17 +280,6 @@ mod tests {
             build_url_preview(&AppType::Codex, "https://api.openai.com", Some("responses"));
         assert_eq!(preview.direct_url, "https://api.openai.com/v1/responses");
         assert_eq!(preview.proxy_url, "https://api.openai.com/v1/responses");
-        assert!(!preview.is_full_url);
-    }
-
-    #[test]
-    fn test_build_url_preview_codex_chat_proxy_endpoint() {
-        let preview = build_url_preview(&AppType::Codex, "https://api.openai.com", Some("chat"));
-        assert_eq!(preview.direct_url, "https://api.openai.com/v1/responses");
-        assert_eq!(
-            preview.proxy_url,
-            "https://api.openai.com/v1/chat/completions"
-        );
         assert!(!preview.is_full_url);
     }
 

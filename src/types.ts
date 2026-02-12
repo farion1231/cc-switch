@@ -146,8 +146,7 @@ export interface ProviderMeta {
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // Codex:
   // - "responses": OpenAI Responses API
-  // - "chat": OpenAI Chat Completions API
-  apiFormat?: "anthropic" | "openai_chat" | "responses" | "chat";
+  apiFormat?: "anthropic" | "openai_chat" | "responses";
 }
 
 // Skill 同步方式

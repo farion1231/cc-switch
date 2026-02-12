@@ -9,9 +9,7 @@
 
 use super::{
     error_mapper::{get_error_message, map_proxy_error_to_status},
-    handler_config::{
-        CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
-    },
+    handler_config::{CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG},
     handler_context::RequestContext,
     providers::{get_adapter, streaming::create_anthropic_sse_stream, transform},
     response_processor::{create_logged_passthrough_stream, process_response, SseUsageCollector},
@@ -272,47 +270,6 @@ async fn handle_claude_transform(
 // ============================================================================
 // Codex API 处理器
 // ============================================================================
-
-/// 处理 /v1/chat/completions 请求（OpenAI Chat Completions API - Codex CLI）
-pub async fn handle_chat_completions(
-    State(state): State<ProxyState>,
-    headers: axum::http::HeaderMap,
-    Json(body): Json<Value>,
-) -> Result<axum::response::Response, ProxyError> {
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-
-    let is_stream = body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
-        .forward_with_retry(
-            &AppType::Codex,
-            "/chat/completions",
-            body,
-            headers,
-            ctx.get_providers(),
-        )
-        .await
-    {
-        Ok(result) => result,
-        Err(mut err) => {
-            if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
-            }
-            log_forward_error(&state, &ctx, is_stream, &err.error);
-            return Err(err.error);
-        }
-    };
-
-    ctx.provider = result.provider;
-    let response = result.response;
-
-    process_response(response, &ctx, &state, &OPENAI_PARSER_CONFIG).await
-}
 
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
 pub async fn handle_responses(
