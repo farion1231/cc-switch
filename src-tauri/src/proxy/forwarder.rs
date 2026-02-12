@@ -565,7 +565,7 @@ impl RequestForwarder {
             && adapter.name() == "Claude"
             && endpoint.starts_with("/v1/messages")
         {
-            endpoint.replacen("/v1/messages", "/v1/chat/completions", 1)
+            transform_claude_messages_endpoint(endpoint)
         } else {
             endpoint.to_string()
         };
@@ -736,5 +736,59 @@ fn extract_error_message(error: &ProxyError) -> Option<String> {
     match error {
         ProxyError::UpstreamError { body, .. } => body.clone(),
         _ => Some(error.to_string()),
+    }
+}
+
+fn transform_claude_messages_endpoint(endpoint: &str) -> String {
+    let transformed = endpoint.replacen("/v1/messages", "/v1/chat/completions", 1);
+
+    let Some((path, query)) = transformed.split_once('?') else {
+        return transformed;
+    };
+
+    // 转换到 chat/completions 时，显式移除 beta=true，避免把旧接口参数带到新接口。
+    let filtered_params: Vec<&str> = query
+        .split('&')
+        .filter(|segment| !segment.is_empty())
+        .filter(|segment| !is_beta_true_query_pair(segment))
+        .collect();
+
+    if filtered_params.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{}", filtered_params.join("&"))
+    }
+}
+
+fn is_beta_true_query_pair(segment: &str) -> bool {
+    let Some((key, value)) = segment.split_once('=') else {
+        return false;
+    };
+    key.eq_ignore_ascii_case("beta") && value.eq_ignore_ascii_case("true")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transform_claude_messages_endpoint;
+
+    #[test]
+    fn transform_claude_messages_endpoint_strips_beta_true_only() {
+        let endpoint = "/v1/messages?beta=true&foo=1";
+        let transformed = transform_claude_messages_endpoint(endpoint);
+        assert_eq!(transformed, "/v1/chat/completions?foo=1");
+    }
+
+    #[test]
+    fn transform_claude_messages_endpoint_drops_empty_query_after_strip() {
+        let endpoint = "/v1/messages?beta=true";
+        let transformed = transform_claude_messages_endpoint(endpoint);
+        assert_eq!(transformed, "/v1/chat/completions");
+    }
+
+    #[test]
+    fn transform_claude_messages_endpoint_keeps_other_query_values() {
+        let endpoint = "/v1/messages?beta=false&foo=1";
+        let transformed = transform_claude_messages_endpoint(endpoint);
+        assert_eq!(transformed, "/v1/chat/completions?beta=false&foo=1");
     }
 }
