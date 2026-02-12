@@ -19,20 +19,20 @@ import type { AppId } from "@/lib/api";
 interface ProviderActionsProps {
   appId?: AppId;
   isCurrent: boolean;
-  /** OpenCode: 是否已添加到配置 */
   isInConfig?: boolean;
   isTesting?: boolean;
   isProxyTakeover?: boolean;
+  isOmo?: boolean;
+  isLastOmo?: boolean;
   onSwitch: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
   onConfigureUsage: () => void;
   onDelete: () => void;
-  /** OpenCode: remove from live config (not delete from database) */
   onRemoveFromConfig?: () => void;
+  onDisableOmo?: () => void;
   onOpenTerminal?: () => void;
-  // 故障转移相关
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
@@ -44,6 +44,8 @@ export function ProviderActions({
   isInConfig = false,
   isTesting,
   isProxyTakeover = false,
+  isOmo = false,
+  isLastOmo = false,
   onSwitch,
   onEdit,
   onDuplicate,
@@ -51,8 +53,8 @@ export function ProviderActions({
   onConfigureUsage,
   onDelete,
   onRemoveFromConfig,
+  onDisableOmo,
   onOpenTerminal,
-  // 故障转移相关
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
@@ -60,19 +62,20 @@ export function ProviderActions({
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
 
-  // OpenCode 使用累加模式
-  const isOpenCodeMode = appId === "opencode";
+  const isOpenCodeMode = appId === "opencode" && !isOmo;
 
-  // 故障转移模式下的按钮逻辑（OpenCode 不支持故障转移）
   const isFailoverMode =
-    !isOpenCodeMode && isAutoFailoverEnabled && onToggleFailover;
+    !isOpenCodeMode && !isOmo && isAutoFailoverEnabled && onToggleFailover;
 
-  // 处理主按钮点击
   const handleMainButtonClick = () => {
-    if (isOpenCodeMode) {
-      // OpenCode 模式：切换配置状态（添加/移除）
+    if (isOmo) {
+      if (isCurrent) {
+        onDisableOmo?.();
+      } else {
+        onSwitch();
+      }
+    } else if (isOpenCodeMode) {
       if (isInConfig) {
-        // Use onRemoveFromConfig if available, otherwise fall back to onDelete
         if (onRemoveFromConfig) {
           onRemoveFromConfig();
         } else {
@@ -82,17 +85,33 @@ export function ProviderActions({
         onSwitch(); // 添加到配置
       }
     } else if (isFailoverMode) {
-      // 故障转移模式：切换队列状态
       onToggleFailover(!isInFailoverQueue);
     } else {
-      // 普通模式：切换供应商
       onSwitch();
     }
   };
 
-  // 主按钮的状态和样式
   const getMainButtonState = () => {
-    // OpenCode 累加模式
+    if (isOmo) {
+      if (isCurrent) {
+        return {
+          disabled: false,
+          variant: "secondary" as const,
+          className:
+            "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+          icon: <Check className="h-4 w-4" />,
+          text: t("provider.inUse"),
+        };
+      }
+      return {
+        disabled: false,
+        variant: "default" as const,
+        className: "",
+        icon: <Play className="h-4 w-4" />,
+        text: t("provider.enable"),
+      };
+    }
+
     if (isOpenCodeMode) {
       if (isInConfig) {
         return {
@@ -114,7 +133,6 @@ export function ProviderActions({
       };
     }
 
-    // 故障转移模式
     if (isFailoverMode) {
       if (isInFailoverQueue) {
         return {
@@ -136,7 +154,6 @@ export function ProviderActions({
       };
     }
 
-    // 普通模式
     if (isCurrent) {
       return {
         disabled: true,
@@ -161,8 +178,11 @@ export function ProviderActions({
 
   const buttonState = getMainButtonState();
 
-  // OpenCode 模式下删除按钮始终可用（主按钮"移除"是从 live 配置移除，删除是从数据库删除）
-  const canDelete = isOpenCodeMode ? true : !isCurrent;
+  const canDelete = isOmo
+    ? !(isLastOmo && isCurrent)
+    : isOpenCodeMode
+      ? true
+      : !isCurrent;
 
   return (
     <div className="flex items-center gap-1.5">

@@ -40,7 +40,6 @@ export function ProviderPresetSelector({
 }: ProviderPresetSelectorProps) {
   const { t } = useTranslation();
 
-  // 根据分类获取提示文字
   const getCategoryHint = (): React.ReactNode => {
     switch (category) {
       case "official":
@@ -63,6 +62,11 @@ export function ProviderPresetSelector({
         return t("providerForm.customApiKeyHint", {
           defaultValue: "💡 自定义配置需手动填写所有必要字段",
         });
+      case "omo":
+        return t("providerForm.omoHint", {
+          defaultValue:
+            "💡 OMO 配置管理 Agent 模型分配，写入 oh-my-opencode.jsonc",
+        });
       default:
         return t("providerPreset.hint", {
           defaultValue: "选择预设后可继续调整下方字段。",
@@ -70,7 +74,6 @@ export function ProviderPresetSelector({
     }
   };
 
-  // 渲染预设按钮的图标
   const renderPresetIcon = (
     preset: ProviderPreset | CodexProviderPreset | GeminiProviderPreset,
   ) => {
@@ -91,7 +94,6 @@ export function ProviderPresetSelector({
     }
   };
 
-  // 获取预设按钮的样式类名
   const getPresetButtonClass = (
     isSelected: boolean,
     preset: ProviderPreset | CodexProviderPreset | GeminiProviderPreset,
@@ -100,18 +102,15 @@ export function ProviderPresetSelector({
       "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors";
 
     if (isSelected) {
-      // 如果有自定义主题，使用自定义颜色
       if (preset.theme?.backgroundColor) {
         return `${baseClass} text-white`;
       }
-      // 默认使用主题蓝色
       return `${baseClass} bg-blue-500 text-white dark:bg-blue-600`;
     }
 
     return `${baseClass} bg-accent text-muted-foreground hover:bg-accent/80`;
   };
 
-  // 获取预设按钮的内联样式（用于自定义背景色）
   const getPresetButtonStyle = (
     isSelected: boolean,
     preset: ProviderPreset | CodexProviderPreset | GeminiProviderPreset,
@@ -130,7 +129,6 @@ export function ProviderPresetSelector({
     <div className="space-y-3">
       <FormLabel>{t("providerPreset.label")}</FormLabel>
       <div className="flex flex-wrap gap-2">
-        {/* 自定义按钮 */}
         <button
           type="button"
           onClick={() => onPresetChange("custom")}
@@ -143,7 +141,6 @@ export function ProviderPresetSelector({
           {t("providerPreset.custom")}
         </button>
 
-        {/* 预设按钮 */}
         {categoryKeys.map((category) => {
           const entries = groupedPresets[category];
           if (!entries || entries.length === 0) return null;
@@ -174,7 +171,6 @@ export function ProviderPresetSelector({
         })}
       </div>
 
-      {/* 统一供应商预设（新的一行） */}
       {onUniversalPresetSelect && universalProviderPresets.length > 0 && (
         <>
           <div className="flex flex-wrap items-center gap-2">
@@ -196,7 +192,6 @@ export function ProviderPresetSelector({
                 </span>
               </button>
             ))}
-            {/* 管理统一供应商按钮 */}
             {onManageUniversalProviders && (
               <button
                 type="button"

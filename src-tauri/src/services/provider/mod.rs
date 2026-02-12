@@ -164,6 +164,12 @@ impl ProviderService {
 
         // OpenCode uses additive mode - always write to live config
         if matches!(app_type, AppType::OpenCode) {
+            // OMO providers use exclusive mode and write to dedicated config file.
+            if provider.category.as_deref() == Some("omo") {
+                // Do not auto-enable newly added OMO providers.
+                // Users must explicitly switch/apply an OMO provider to activate it.
+                return Ok(true);
+            }
             write_live_snapshot(&app_type, &provider)?;
             return Ok(true);
         }
@@ -197,6 +203,15 @@ impl ProviderService {
 
         // OpenCode uses additive mode - always update in live config
         if matches!(app_type, AppType::OpenCode) {
+            if provider.category.as_deref() == Some("omo") {
+                let is_omo_current = state
+                    .db
+                    .is_omo_provider_current(app_type.as_str(), &provider.id)?;
+                if is_omo_current {
+                    crate::services::OmoService::write_config_to_file(state)?;
+                }
+                return Ok(true);
+            }
             write_live_snapshot(&app_type, &provider)?;
             return Ok(true);
         }
@@ -242,6 +257,35 @@ impl ProviderService {
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         // OpenCode uses additive mode - no current provider concept
         if matches!(app_type, AppType::OpenCode) {
+            let is_omo = state
+                .db
+                .get_provider_by_id(id, app_type.as_str())?
+                .and_then(|p| p.category)
+                .as_deref()
+                == Some("omo");
+
+            if is_omo {
+                let was_current = state.db.is_omo_provider_current(app_type.as_str(), id)?;
+                let omo_count = state
+                    .db
+                    .get_all_providers(app_type.as_str())?
+                    .values()
+                    .filter(|p| p.category.as_deref() == Some("omo"))
+                    .count();
+
+                if omo_count <= 1 && was_current {
+                    return Err(AppError::Message(
+                        "无法删除当前启用的最后一个 OMO 配置，请先停用".to_string(),
+                    ));
+                }
+
+                state.db.delete_provider(app_type.as_str(), id)?;
+                if was_current {
+                    crate::services::OmoService::delete_config_file()?;
+                }
+                return Ok(());
+            }
+
             // Remove from database
             state.db.delete_provider(app_type.as_str(), id)?;
             // Also remove from live config
@@ -267,10 +311,32 @@ impl ProviderService {
     /// Does NOT delete from database - provider remains in the list.
     /// This is used when user wants to "remove" a provider from active config
     /// but keep it available for future use.
-    pub fn remove_from_live_config(app_type: AppType, id: &str) -> Result<(), AppError> {
+    pub fn remove_from_live_config(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+    ) -> Result<(), AppError> {
         match app_type {
             AppType::OpenCode => {
-                remove_opencode_provider_from_live(id)?;
+                let is_omo = state
+                    .db
+                    .get_provider_by_id(id, app_type.as_str())?
+                    .and_then(|p| p.category)
+                    .as_deref()
+                    == Some("omo");
+
+                if is_omo {
+                    state.db.clear_omo_provider_current(app_type.as_str(), id)?;
+                    let still_has_current =
+                        state.db.get_current_omo_provider("opencode")?.is_some();
+                    if still_has_current {
+                        crate::services::OmoService::write_config_to_file(state)?;
+                    } else {
+                        crate::services::OmoService::delete_config_file()?;
+                    }
+                } else {
+                    remove_opencode_provider_from_live(id)?;
+                }
             }
             // Future: add other additive mode apps here
             _ => {
@@ -301,6 +367,11 @@ impl ProviderService {
         let _provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        // OMO providers are switched through their own exclusive path.
+        if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {
+            return Self::switch_normal(state, app_type, id, &providers);
+        }
 
         // Check if proxy takeover mode is active AND proxy server is actually running
         // Both conditions must be true to use hot-switch mode
@@ -373,25 +444,28 @@ impl ProviderService {
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
 
+        if matches!(app_type, AppType::OpenCode) && provider.category.as_deref() == Some("omo") {
+            state.db.set_omo_provider_current(app_type.as_str(), id)?;
+            crate::services::OmoService::write_config_to_file(state)?;
+            return Ok(());
+        }
+
         // Backfill: Backfill current live config to current provider
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
         let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
 
-        if let Some(current_id) = current_id {
-            if current_id != id {
-                // OpenCode uses additive mode - all providers coexist in the same file,
-                // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
-                if !matches!(app_type, AppType::OpenCode) {
-                    // Only backfill when switching to a different provider
-                    if let Ok(live_config) = read_live_settings(app_type.clone()) {
-                        if let Some(mut current_provider) = providers.get(&current_id).cloned() {
-                            current_provider.settings_config = live_config;
-                            // Ignore backfill failure, don't affect switch flow
-                            let _ = state.db.save_provider(app_type.as_str(), &current_provider);
-                        }
+        match (current_id, matches!(app_type, AppType::OpenCode)) {
+            (Some(current_id), false) if current_id != id => {
+                // Only backfill when switching to a different provider.
+                if let Ok(live_config) = read_live_settings(app_type.clone()) {
+                    if let Some(mut current_provider) = providers.get(&current_id).cloned() {
+                        current_provider.settings_config = live_config;
+                        // Ignore backfill failure, don't affect switch flow.
+                        let _ = state.db.save_provider(app_type.as_str(), &current_provider);
                     }
                 }
             }
+            _ => {}
         }
 
         // OpenCode uses additive mode - skip setting is_current (no such concept)

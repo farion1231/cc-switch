@@ -323,7 +323,8 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     let mut search_paths: Vec<std::path::PathBuf> = vec![
         home.join(".local/bin"), // Native install (official recommended)
         home.join(".npm-global/bin"),
-        home.join("n/bin"), // n version manager
+        home.join("n/bin"),      // n version manager
+        home.join(".volta/bin"), // Volta package manager
     ];
 
     #[cfg(target_os = "macos")]
@@ -755,7 +756,7 @@ fn launch_macos_open_app(
 
     let output = cmd
         .output()
-        .map_err(|e| format!("启动 {} 失败: {e}", app_name))?;
+        .map_err(|e| format!("启动 {app_name} 失败: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

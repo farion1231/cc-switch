@@ -3,7 +3,8 @@ export type ProviderCategory =
   | "cn_official" // 开源官方（原"国产官方"）
   | "aggregator" // 聚合网站
   | "third_party" // 第三方供应商
-  | "custom"; // 自定义
+  | "custom" // 自定义
+  | "omo"; // Oh My OpenCode
 
 export interface Provider {
   id: string;

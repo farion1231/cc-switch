@@ -8,10 +8,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useModelStats } from "@/lib/query/usage";
+import { fmtUsd } from "./format";
 
-export function ModelStatsTable() {
+interface ModelStatsTableProps {
+  refreshIntervalMs: number;
+}
+
+export function ModelStatsTable({ refreshIntervalMs }: ModelStatsTableProps) {
   const { t } = useTranslation();
-  const { data: stats, isLoading } = useModelStats();
+  const { data: stats, isLoading } = useModelStats({
+    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+  });
 
   if (isLoading) {
     return <div className="h-[400px] animate-pulse rounded bg-gray-100" />;
@@ -60,10 +67,10 @@ export function ModelStatsTable() {
                   {stat.totalTokens.toLocaleString()}
                 </TableCell>
                 <TableCell className="text-right">
-                  ${parseFloat(stat.totalCost).toFixed(4)}
+                  {fmtUsd(stat.totalCost, 4)}
                 </TableCell>
                 <TableCell className="text-right">
-                  ${parseFloat(stat.avgCostPerRequest).toFixed(6)}
+                  {fmtUsd(stat.avgCostPerRequest, 6)}
                 </TableCell>
               </TableRow>
             ))

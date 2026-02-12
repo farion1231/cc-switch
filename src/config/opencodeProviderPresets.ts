@@ -1,7 +1,3 @@
-/**
- * OpenCode 预设供应商配置模板
- * OpenCode 使用 AI SDK npm 包，配置结构与其他应用不同
- */
 import type { ProviderCategory, OpenCodeProviderConfig } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 
@@ -9,27 +5,18 @@ export interface OpenCodeProviderPreset {
   name: string;
   websiteUrl: string;
   apiKeyUrl?: string;
-  /** OpenCode settings_config 结构 */
   settingsConfig: OpenCodeProviderConfig;
   isOfficial?: boolean;
   isPartner?: boolean;
   partnerPromotionKey?: string;
   category?: ProviderCategory;
-  /** 模板变量定义 */
   templateValues?: Record<string, TemplateValueConfig>;
-  /** 视觉主题配置 */
   theme?: PresetTheme;
-  /** 图标名称 */
   icon?: string;
-  /** 图标颜色 */
   iconColor?: string;
-  /** 标记为自定义模板（用于 UI 区分） */
   isCustomTemplate?: boolean;
 }
 
-/**
- * OpenCode npm 包选项（AI SDK 生态）
- */
 export const opencodeNpmPackages = [
   { value: "@ai-sdk/openai", label: "OpenAI" },
   { value: "@ai-sdk/openai-compatible", label: "OpenAI Compatible" },
@@ -37,11 +24,385 @@ export const opencodeNpmPackages = [
   { value: "@ai-sdk/google", label: "Google (Gemini)" },
 ] as const;
 
+export interface PresetModelVariant {
+  id: string;
+  name?: string;
+  contextLimit?: number;
+  outputLimit?: number;
+  modalities?: { input: string[]; output: string[] };
+  options?: Record<string, unknown>;
+  variants?: Record<string, Record<string, unknown>>;
+}
+
+export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
+  string,
+  PresetModelVariant[]
+> = {
+  "@ai-sdk/openai-compatible": [
+    {
+      id: "MiniMax-M2.1",
+      name: "MiniMax M2.1",
+      contextLimit: 204800,
+      outputLimit: 131072,
+      modalities: { input: ["text"], output: ["text"] },
+    },
+    {
+      id: "glm-4.7",
+      name: "GLM 4.7",
+      contextLimit: 204800,
+      outputLimit: 131072,
+      modalities: { input: ["text"], output: ["text"] },
+    },
+    {
+      id: "kimi-k2.5",
+      name: "Kimi K2.5",
+      contextLimit: 262144,
+      outputLimit: 262144,
+      modalities: { input: ["text", "image", "video"], output: ["text"] },
+    },
+  ],
+  "@ai-sdk/google": [
+    {
+      id: "gemini-2.5-flash-lite",
+      name: "Gemini 2.5 Flash Lite",
+      contextLimit: 1048576,
+      outputLimit: 65536,
+      modalities: {
+        input: ["text", "image", "pdf", "video", "audio"],
+        output: ["text"],
+      },
+      variants: {
+        auto: {
+          thinkingConfig: { includeThoughts: true, thinkingBudget: -1 },
+        },
+        "no-thinking": { thinkingConfig: { thinkingBudget: 0 } },
+      },
+    },
+    {
+      id: "gemini-3-flash-preview",
+      name: "Gemini 3 Flash Preview",
+      contextLimit: 1048576,
+      outputLimit: 65536,
+      modalities: {
+        input: ["text", "image", "pdf", "video", "audio"],
+        output: ["text"],
+      },
+      variants: {
+        minimal: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "minimal" },
+        },
+        low: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "low" },
+        },
+        medium: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "medium" },
+        },
+        high: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "high" },
+        },
+      },
+    },
+    {
+      id: "gemini-3-pro-preview",
+      name: "Gemini 3 Pro Preview",
+      contextLimit: 1048576,
+      outputLimit: 65536,
+      modalities: {
+        input: ["text", "image", "pdf", "video", "audio"],
+        output: ["text"],
+      },
+      variants: {
+        low: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "low" },
+        },
+        high: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "high" },
+        },
+      },
+    },
+  ],
+  "@ai-sdk/openai": [
+    {
+      id: "gpt-5",
+      name: "GPT-5",
+      contextLimit: 400000,
+      outputLimit: 128000,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      variants: {
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "low",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "high",
+        },
+      },
+    },
+    {
+      id: "gpt-5.1",
+      name: "GPT-5.1",
+      contextLimit: 400000,
+      outputLimit: 272000,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      variants: {
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "low",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "high",
+        },
+      },
+    },
+    {
+      id: "gpt-5.1-codex",
+      name: "GPT-5.1 Codex",
+      contextLimit: 400000,
+      outputLimit: 128000,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      options: { include: ["reasoning.encrypted_content"], store: false },
+      variants: {
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+    {
+      id: "gpt-5.1-codex-max",
+      name: "GPT-5.1 Codex Max",
+      contextLimit: 400000,
+      outputLimit: 128000,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      options: { include: ["reasoning.encrypted_content"], store: false },
+      variants: {
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        xhigh: {
+          reasoningEffort: "xhigh",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+    {
+      id: "gpt-5.2",
+      name: "GPT-5.2",
+      contextLimit: 400000,
+      outputLimit: 128000,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      variants: {
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        xhigh: {
+          reasoningEffort: "xhigh",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+    {
+      id: "gpt-5.2-codex",
+      name: "GPT-5.2 Codex",
+      contextLimit: 400000,
+      outputLimit: 128000,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      options: { include: ["reasoning.encrypted_content"], store: false },
+      variants: {
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        xhigh: {
+          reasoningEffort: "xhigh",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+    {
+      id: "gpt-5.3-codex",
+      name: "GPT-5.3 Codex",
+      contextLimit: 400000,
+      outputLimit: 128000,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      options: { include: ["reasoning.encrypted_content"], store: false },
+      variants: {
+        low: {
+          reasoningEffort: "low",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        medium: {
+          reasoningEffort: "medium",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        high: {
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+        xhigh: {
+          reasoningEffort: "xhigh",
+          reasoningSummary: "auto",
+          textVerbosity: "medium",
+        },
+      },
+    },
+  ],
+  "@ai-sdk/anthropic": [
+    {
+      id: "claude-sonnet-4-5-20250929",
+      name: "Claude Sonnet 4.5",
+      contextLimit: 200000,
+      outputLimit: 64000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+      variants: {
+        low: { effort: "low" },
+        medium: { effort: "medium" },
+        high: { effort: "high" },
+      },
+    },
+    {
+      id: "claude-opus-4-5-20251101",
+      name: "Claude Opus 4.5",
+      contextLimit: 200000,
+      outputLimit: 64000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+      variants: {
+        low: { thinking: { budgetTokens: 5000, type: "enabled" } },
+        medium: { thinking: { budgetTokens: 13000, type: "enabled" } },
+        high: { thinking: { budgetTokens: 18000, type: "enabled" } },
+      },
+    },
+    {
+      id: "claude-opus-4-6",
+      name: "Claude Opus 4.6",
+      contextLimit: 1000000,
+      outputLimit: 128000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+      variants: {
+        low: { effort: "low" },
+        medium: { effort: "medium" },
+        high: { effort: "high" },
+        max: { effort: "max" },
+      },
+    },
+    {
+      id: "claude-haiku-4-5-20251001",
+      name: "Claude Haiku 4.5",
+      contextLimit: 200000,
+      outputLimit: 64000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+    },
+    {
+      id: "gemini-claude-opus-4-5-thinking",
+      name: "Antigravity - Claude Opus 4.5",
+      contextLimit: 200000,
+      outputLimit: 64000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+      variants: {
+        low: { effort: "low" },
+        medium: { effort: "medium" },
+        high: { effort: "high" },
+      },
+    },
+    {
+      id: "gemini-claude-sonnet-4-5-thinking",
+      name: "Antigravity - Claude Sonnet 4.5",
+      contextLimit: 200000,
+      outputLimit: 64000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+      variants: {
+        low: { thinking: { budgetTokens: 5000, type: "enabled" } },
+        medium: { thinking: { budgetTokens: 13000, type: "enabled" } },
+        high: { thinking: { budgetTokens: 18000, type: "enabled" } },
+      },
+    },
+  ],
+};
+
 /**
- * OpenCode 供应商预设列表
+ * Look up preset metadata for a model by npm package and model ID.
+ * Returns enrichment fields (options, limit, modalities) that can be
+ * merged into a model definition when the user's config doesn't already
+ * provide them.
  */
+export function getPresetModelDefaults(
+  npm: string,
+  modelId: string,
+): PresetModelVariant | undefined {
+  const models = OPENCODE_PRESET_MODEL_VARIANTS[npm];
+  if (!models) return undefined;
+  return models.find((m) => m.id === modelId);
+}
+
 export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
-  // ========== 国产官方 ==========
   {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
@@ -137,23 +498,21 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Qwen Coder",
+    name: "Bailian",
     websiteUrl: "https://bailian.console.aliyun.com",
     apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Qwen Coder",
+      name: "Bailian",
       options: {
         baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         apiKey: "",
       },
-      models: {
-        "qwen3-max": { name: "Qwen3 Max" },
-      },
+      models: {},
     },
     category: "cn_official",
-    icon: "qwen",
-    iconColor: "#FF6A00",
+    icon: "bailian",
+    iconColor: "#624AFF",
     templateValues: {
       baseURL: {
         label: "Base URL",
@@ -476,7 +835,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
 
-  // ========== 聚合网站 ==========
   {
     name: "AiHubMix",
     websiteUrl: "https://aihubmix.com",
@@ -585,7 +943,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
 
-  // ========== 第三方合作伙伴 ==========
   {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
@@ -651,7 +1008,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/anthropic",
       name: "AIGoCode",
       options: {
-        baseURL: "https://api.aigocode.com/v1",
+        baseURL: "https://api.aigocode.com",
         apiKey: "",
       },
       models: {
@@ -685,7 +1042,10 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.2": { name: "GPT-5.2" },
-        "gpt-5.2-codex": { name: "GPT-5.2 Codex" },
+        "gpt-5.2-codex": {
+          name: "GPT-5.2 Codex",
+          options: { include: ["reasoning.encrypted_content"], store: false },
+        },
       },
     },
     category: "third_party",
@@ -731,7 +1091,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
 
-  // ========== 自定义模板 ==========
   {
     name: "OpenAI Compatible",
     websiteUrl: "",
@@ -759,5 +1118,19 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
+  },
+
+  {
+    name: "Oh My OpenCode",
+    websiteUrl: "https://github.com/code-yeongyu/oh-my-opencode",
+    settingsConfig: {
+      npm: "",
+      options: {},
+      models: {},
+    },
+    category: "omo" as ProviderCategory,
+    icon: "opencode",
+    iconColor: "#8B5CF6",
+    isCustomTemplate: true,
   },
 ];
