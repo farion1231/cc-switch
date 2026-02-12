@@ -2,9 +2,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Provider } from "@/types";
 import { providersApi } from "./providers";
-import { detectContent } from "@/utils/commonConfigDetection";
+import {
+  detectContent,
+  type CommonConfigAppType,
+} from "@/utils/commonConfigDetection";
 
-export type AppType = "claude" | "codex" | "gemini";
+export type AppType = CommonConfigAppType | "omo";
+type SyncAppType = CommonConfigAppType;
 
 // ============================================================================
 // 同步防抖管理
@@ -25,7 +29,7 @@ export type SyncResultCallback = (result: SyncResult) => void;
 
 // 每个 appType 的 debounce 定时器
 const syncDebounceTimers: Record<
-  AppType,
+  SyncAppType,
   ReturnType<typeof setTimeout> | null
 > = {
   claude: null,
@@ -34,7 +38,7 @@ const syncDebounceTimers: Record<
 };
 
 // 每个 appType 的同步锁（防止并发）
-const syncInFlight: Record<AppType, boolean> = {
+const syncInFlight: Record<SyncAppType, boolean> = {
   claude: false,
   codex: false,
   gemini: false,
@@ -42,7 +46,7 @@ const syncInFlight: Record<AppType, boolean> = {
 
 // 每个 appType 的最新同步参数（用于 single-flight）
 const pendingSyncParams: Record<
-  AppType,
+  SyncAppType,
   {
     oldSnippet: string;
     newSnippet: string;
@@ -104,7 +108,7 @@ export type ExtractCommonConfigSnippetOptions = {
 };
 
 export async function extractCommonConfigSnippet(
-  appType: AppType,
+  appType: CommonConfigAppType,
   options?: ExtractCommonConfigSnippetOptions,
 ): Promise<string> {
   const args: Record<string, unknown> = { appType };
@@ -135,7 +139,7 @@ export async function extractCommonConfigSnippet(
  * @param onComplete - 同步完成后的回调，用于通知 UI 层
  */
 export function syncCommonConfigToProviders(
-  appType: AppType,
+  appType: SyncAppType,
   oldSnippet: string,
   newSnippet: string,
   updateFn: (
@@ -169,7 +173,7 @@ export function syncCommonConfigToProviders(
 /**
  * 带锁执行同步（防止并发）
  */
-async function executeSyncWithLock(appType: AppType): Promise<void> {
+async function executeSyncWithLock(appType: SyncAppType): Promise<void> {
   // 如果正在同步中，等待下一次调度
   if (syncInFlight[appType]) {
     // 已有同步在执行，参数已保存，等同步完成后会检查是否需要再次执行
@@ -223,7 +227,7 @@ async function executeSyncWithLock(appType: AppType): Promise<void> {
  * @returns 同步结果，包含更新数量和可能的错误信息
  */
 async function doSyncCommonConfigToProviders(
-  appType: AppType,
+  appType: SyncAppType,
   oldSnippet: string,
   newSnippet: string,
   updateFn: (
@@ -344,7 +348,7 @@ async function doSyncCommonConfigToProviders(
 }
 
 function detectCommonConfigEnabledByContent(
-  appType: AppType,
+  appType: SyncAppType,
   settingsConfigStr: string,
   oldSnippet: string,
   newSnippet: string,
@@ -382,7 +386,7 @@ interface UpdateProviderResult {
  */
 function getSettingsConfigString(
   provider: Provider,
-  appType: AppType,
+  appType: SyncAppType,
 ): string | null {
   // Runtime type may be string (JSON-serialized) despite Record<string, any> declaration
   const config = provider.settingsConfig as Record<string, unknown> | string;
@@ -441,7 +445,7 @@ function getSettingsConfigString(
 function updateProviderSettingsConfig(
   provider: Provider,
   updatedConfig: string,
-  appType: AppType,
+  appType: SyncAppType,
 ): UpdateProviderResult {
   switch (appType) {
     case "claude":

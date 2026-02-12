@@ -324,6 +324,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         home.join(".local/bin"), // Native install (official recommended)
         home.join(".npm-global/bin"),
         home.join("n/bin"), // n version manager
+        home.join(".volta/bin"), // Volta package manager
     ];
 
     #[cfg(target_os = "macos")]

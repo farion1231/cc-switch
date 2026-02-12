@@ -44,6 +44,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["ernie", "wenxin"],
     defaultColor: "#2932E1",
   },
+  bailian: {
+    name: "bailian",
+    displayName: "Bailian",
+    category: "ai-provider",
+    keywords: ["bailian", "dashscope", "aliyun", "alibaba"],
+    defaultColor: "#624AFF",
+  },
   bytedance: {
     name: "bytedance",
     displayName: "bytedance",
