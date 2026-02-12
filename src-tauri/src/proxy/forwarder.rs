@@ -561,15 +561,17 @@ impl RequestForwarder {
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
 
-        let effective_endpoint =
-            if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
-                "/v1/chat/completions"
-            } else {
-                endpoint
-            };
+        let effective_endpoint = if needs_transform
+            && adapter.name() == "Claude"
+            && endpoint.starts_with("/v1/messages")
+        {
+            endpoint.replacen("/v1/messages", "/v1/chat/completions", 1)
+        } else {
+            endpoint.to_string()
+        };
 
         // 使用适配器构建 URL
-        let url = adapter.build_url(&base_url, effective_endpoint);
+        let url = adapter.build_url(&base_url, &effective_endpoint);
 
         // 应用模型映射（独立于格式转换）
         let (mapped_body, _original_model, _mapped_model) =

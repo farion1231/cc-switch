@@ -144,7 +144,7 @@ fn build_runtime_like_url(
     is_proxy: bool,
 ) -> String {
     match app_type {
-        // Claude 代理预览需要展示运行时附加参数（如 ?beta=true）
+        // Claude 代理预览需要展示与运行时一致的 URL 归一化结果
         AppType::Claude if is_proxy => ClaudeAdapter::new().build_url(base_url, endpoint),
         // Codex/OpenCode 预览复用运行时 /v1 归一化规则
         AppType::Codex | AppType::OpenCode => CodexAdapter::new().build_url(base_url, endpoint),
@@ -226,7 +226,7 @@ pub fn check_proxy_requirement(
         }
     }
 
-    // 如果直连地址和代理地址路径不同，需要代理（忽略查询参数差异，如 Claude ?beta=true）
+    // 如果直连地址和代理地址路径不同，需要代理（忽略查询参数差异）
     let (direct_base, _) = split_url_suffix(&preview.direct_url);
     let (proxy_base, _) = split_url_suffix(&preview.proxy_url);
     if direct_base != proxy_base {
@@ -248,10 +248,7 @@ mod tests {
             Some("anthropic"),
         );
         assert_eq!(preview.direct_url, "https://api.example.com/v1/messages");
-        assert_eq!(
-            preview.proxy_url,
-            "https://api.example.com/v1/messages?beta=true"
-        );
+        assert_eq!(preview.proxy_url, "https://api.example.com/v1/messages");
         assert!(!preview.is_full_url);
     }
 
@@ -282,10 +279,7 @@ mod tests {
             preview.direct_url,
             "https://api.example.com/v1/messages/v1/messages"
         );
-        assert_eq!(
-            preview.proxy_url,
-            "https://api.example.com/v1/messages?beta=true"
-        );
+        assert_eq!(preview.proxy_url, "https://api.example.com/v1/messages");
         assert!(preview.is_full_url);
     }
 
@@ -397,11 +391,8 @@ mod tests {
             Some("anthropic"),
         );
         assert_eq!(preview.direct_url, "https://api.example.com/v1/v1/messages");
-        // 代理地址按运行时规则构建，会去重并附加 ?beta=true
-        assert_eq!(
-            preview.proxy_url,
-            "https://api.example.com/v1/messages?beta=true"
-        );
+        // 代理地址按运行时规则构建，会进行路径去重
+        assert_eq!(preview.proxy_url, "https://api.example.com/v1/messages");
     }
 
     #[test]
@@ -431,7 +422,7 @@ mod tests {
         );
         assert_eq!(
             preview.proxy_url,
-            "https://api.example.com/v1/messages?beta=true#frag"
+            "https://api.example.com/v1/messages#frag"
         );
         assert!(preview.is_full_url);
     }
