@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -53,6 +53,52 @@ export function CommonConfigEditor({
     return () => observer.disconnect();
   }, []);
 
+  // Use local state to mirror value prop, so checkbox and JsonEditor stay in sync
+  const [localValue, setLocalValue] = useState(value);
+
+  // Sync from parent when value prop changes
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  const teammatesEnabled = (() => {
+    try {
+      const config = JSON.parse(localValue);
+      const val = config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS;
+      return val === "1" || val === 1;
+    } catch {
+      return false;
+    }
+  })();
+
+  const handleLocalChange = useCallback(
+    (newValue: string) => {
+      setLocalValue(newValue);
+      onChange(newValue);
+    },
+    [onChange],
+  );
+
+  const handleTeammatesToggle = useCallback(
+    (checked: boolean) => {
+      try {
+        const config = JSON.parse(localValue || '{"env": {}}');
+        if (!config.env || typeof config.env !== "object") {
+          config.env = {};
+        }
+        if (checked) {
+          config.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
+        } else {
+          delete config.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS;
+        }
+        handleLocalChange(JSON.stringify(config, null, 2));
+      } catch {
+        // Don't modify if JSON is invalid
+      }
+    },
+    [localValue, handleLocalChange],
+  );
+
   return (
     <>
       <div className="space-y-2">
@@ -91,9 +137,22 @@ export function CommonConfigEditor({
             {commonConfigError}
           </p>
         )}
+        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+          <input
+            type="checkbox"
+            checked={teammatesEnabled}
+            onChange={(e) => handleTeammatesToggle(e.target.checked)}
+            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+          />
+          <span>
+            {t("claudeConfig.enableTeammates", {
+              defaultValue: "开启 Teammates 模式",
+            })}
+          </span>
+        </label>
         <JsonEditor
-          value={value}
-          onChange={onChange}
+          value={localValue}
+          onChange={handleLocalChange}
           placeholder={`{
   "env": {
     "ANTHROPIC_BASE_URL": "https://your-api-endpoint.com",

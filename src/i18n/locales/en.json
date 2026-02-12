@@ -58,7 +58,8 @@
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}"
+    "saveFailed": "Save failed: {{error}}",
+    "enableTeammates": "Enable Teammates Mode"
   },
   "header": {
     "viewOnGithub": "View on GitHub",

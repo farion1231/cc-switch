@@ -58,7 +58,8 @@
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
-    "saveFailed": "保存失败: {{error}}"
+    "saveFailed": "保存失败: {{error}}",
+    "enableTeammates": "开启 Teammates 模式"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
