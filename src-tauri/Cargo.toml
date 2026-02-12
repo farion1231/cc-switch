@@ -65,6 +65,9 @@ uuid = { version = "1.11", features = ["v4"] }
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2.0.1", features = ["v2_16"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
 

@@ -155,6 +155,7 @@ export const settingsApi = {
 export interface RectifierConfig {
   enabled: boolean;
   requestThinkingSignature: boolean;
+  requestThinkingBudget: boolean;
 }
 
 export interface LogConfig {

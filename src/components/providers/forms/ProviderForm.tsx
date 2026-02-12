@@ -32,6 +32,7 @@ import {
 } from "@/config/geminiProviderPresets";
 import {
   opencodeProviderPresets,
+  OPENCODE_PRESET_MODEL_VARIANTS,
   type OpenCodeProviderPreset,
 } from "@/config/opencodeProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
@@ -59,7 +60,7 @@ import { OmoFormFields } from "./OmoFormFields";
 import { type OmoGlobalConfigFieldsRef } from "./OmoGlobalConfigFields";
 import { OmoCommonConfigEditor } from "./OmoCommonConfigEditor";
 import type { OmoGlobalConfig } from "@/types/omo";
-import { mergeOmoConfigPreview } from "@/types/omo";
+import { mergeOmoConfigPreview, parseOmoOtherFieldsObject } from "@/types/omo";
 import {
   ProviderAdvancedConfig,
   type PricingModelSourceOption,
@@ -151,21 +152,25 @@ const isKnownOpencodeOptionKey = (key: string) =>
 function parseOpencodeConfig(
   settingsConfig?: Record<string, unknown>,
 ): OpenCodeProviderConfig {
+  const normalize = (
+    parsed: Partial<OpenCodeProviderConfig>,
+  ): OpenCodeProviderConfig => ({
+    npm: parsed.npm || OPENCODE_DEFAULT_NPM,
+    options:
+      parsed.options && typeof parsed.options === "object"
+        ? (parsed.options as OpenCodeProviderConfig["options"])
+        : {},
+    models:
+      parsed.models && typeof parsed.models === "object"
+        ? (parsed.models as Record<string, OpenCodeModel>)
+        : {},
+  });
+
   try {
     const parsed = JSON.parse(
       settingsConfig ? JSON.stringify(settingsConfig) : OPENCODE_DEFAULT_CONFIG,
     ) as Partial<OpenCodeProviderConfig>;
-    return {
-      npm: parsed.npm || OPENCODE_DEFAULT_NPM,
-      options:
-        parsed.options && typeof parsed.options === "object"
-          ? (parsed.options as OpenCodeProviderConfig["options"])
-          : {},
-      models:
-        parsed.models && typeof parsed.models === "object"
-          ? (parsed.models as Record<string, OpenCodeModel>)
-          : {},
-    };
+    return normalize(parsed);
   } catch {
     return {
       npm: OPENCODE_DEFAULT_NPM,
@@ -173,6 +178,25 @@ function parseOpencodeConfig(
       models: {},
     };
   }
+}
+
+function parseOpencodeConfigStrict(
+  settingsConfig?: Record<string, unknown>,
+): OpenCodeProviderConfig {
+  const parsed = JSON.parse(
+    settingsConfig ? JSON.stringify(settingsConfig) : OPENCODE_DEFAULT_CONFIG,
+  ) as Partial<OpenCodeProviderConfig>;
+  return {
+    npm: parsed.npm || OPENCODE_DEFAULT_NPM,
+    options:
+      parsed.options && typeof parsed.options === "object"
+        ? (parsed.options as OpenCodeProviderConfig["options"])
+        : {},
+    models:
+      parsed.models && typeof parsed.models === "object"
+        ? (parsed.models as Record<string, OpenCodeModel>)
+        : {},
+  };
 }
 
 function toOpencodeExtraOptions(
@@ -234,8 +258,10 @@ function buildOmoProfilePreview(
   }
   if (otherFieldsStr.trim()) {
     try {
-      const other = JSON.parse(otherFieldsStr);
-      Object.assign(profileOnly, other);
+      const other = parseOmoOtherFieldsObject(otherFieldsStr);
+      if (other) {
+        Object.assign(profileOnly, other);
+      }
     } catch {}
   }
   return profileOnly;
@@ -659,18 +685,23 @@ export function ProviderForm({
     );
   }, [opencodeProvidersData?.providers, providerId]);
   const [enabledOpencodeProviderIds, setEnabledOpencodeProviderIds] = useState<
-    string[]
-  >([]);
+    string[] | null
+  >(null);
+  const [omoLiveIdsLoadFailed, setOmoLiveIdsLoadFailed] = useState(false);
+  const lastOmoModelSourceWarningRef = useRef<string>("");
 
   useEffect(() => {
     let active = true;
-
     if (!isOmoCategory) {
-      setEnabledOpencodeProviderIds([]);
+      setEnabledOpencodeProviderIds(null);
+      setOmoLiveIdsLoadFailed(false);
       return () => {
         active = false;
       };
     }
+
+    setEnabledOpencodeProviderIds(null);
+    setOmoLiveIdsLoadFailed(false);
 
     (async () => {
       try {
@@ -679,9 +710,13 @@ export function ProviderForm({
           setEnabledOpencodeProviderIds(ids);
         }
       } catch (error) {
-        console.error("Failed to load OpenCode live provider ids:", error);
+        console.warn(
+          "[OMO_MODEL_SOURCE_LIVE_IDS_FAILED] failed to load live provider ids",
+          error,
+        );
         if (active) {
-          setEnabledOpencodeProviderIds([]);
+          setOmoLiveIdsLoadFailed(true);
+          setEnabledOpencodeProviderIds(null);
         }
       }
     })();
@@ -691,23 +726,71 @@ export function ProviderForm({
     };
   }, [isOmoCategory]);
 
-  const omoModelOptions = useMemo(() => {
-    if (!isOmoCategory) return [];
+  const omoModelBuild = useMemo(() => {
+    const empty = {
+      options: [] as Array<{ value: string; label: string }>,
+      variantsMap: {} as Record<string, string[]>,
+      presetMetaMap: {} as Record<
+        string,
+        {
+          options?: Record<string, unknown>;
+          limit?: { context?: number; output?: number };
+        }
+      >,
+      parseFailedProviders: [] as string[],
+      usedFallbackSource: false,
+    };
+    if (!isOmoCategory) {
+      return empty;
+    }
 
     const allProviders = opencodeProvidersData?.providers;
-    if (!allProviders) return [];
+    if (!allProviders) {
+      return empty;
+    }
 
-    const enabledSet = new Set(enabledOpencodeProviderIds);
-    if (enabledSet.size === 0) return [];
+    const shouldFilterByLive = !omoLiveIdsLoadFailed;
+    if (shouldFilterByLive && enabledOpencodeProviderIds === null) {
+      return empty;
+    }
+    const liveSet =
+      shouldFilterByLive && enabledOpencodeProviderIds
+        ? new Set(enabledOpencodeProviderIds)
+        : null;
 
     const dedupedOptions = new Map<string, string>();
+    const variantsMap: Record<string, string[]> = {};
+    const presetMetaMap: Record<
+      string,
+      {
+        options?: Record<string, unknown>;
+        limit?: { context?: number; output?: number };
+      }
+    > = {};
+    const parseFailedProviders: string[] = [];
 
     for (const [providerKey, provider] of Object.entries(allProviders)) {
-      if (provider.category === "omo" || !enabledSet.has(providerKey)) {
+      if (provider.category === "omo") {
+        continue;
+      }
+      if (liveSet && !liveSet.has(providerKey)) {
         continue;
       }
 
-      const parsedConfig = parseOpencodeConfig(provider.settingsConfig);
+      let parsedConfig: OpenCodeProviderConfig;
+      try {
+        parsedConfig = parseOpencodeConfigStrict(provider.settingsConfig);
+      } catch (error) {
+        parseFailedProviders.push(providerKey);
+        console.warn(
+          "[OMO_MODEL_SOURCE_PARSE_FAILED] failed to parse provider settings",
+          {
+            providerKey,
+            error,
+          },
+        );
+        continue;
+      }
       for (const [modelId, model] of Object.entries(
         parsedConfig.models || {},
       )) {
@@ -724,63 +807,107 @@ export function ProviderForm({
         if (!dedupedOptions.has(value)) {
           dedupedOptions.set(value, label);
         }
-      }
-    }
 
-    return Array.from(dedupedOptions.entries())
-      .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
-  }, [
-    isOmoCategory,
-    opencodeProvidersData?.providers,
-    enabledOpencodeProviderIds,
-  ]);
-  const omoModelVariantsMap = useMemo(() => {
-    const variantsMap: Record<string, string[]> = {};
-    if (!isOmoCategory) {
-      return variantsMap;
-    }
-
-    const allProviders = opencodeProvidersData?.providers;
-    if (!allProviders) {
-      return variantsMap;
-    }
-
-    const enabledSet = new Set(enabledOpencodeProviderIds);
-    if (enabledSet.size === 0) {
-      return variantsMap;
-    }
-
-    for (const [providerKey, provider] of Object.entries(allProviders)) {
-      if (provider.category === "omo" || !enabledSet.has(providerKey)) {
-        continue;
-      }
-
-      const parsedConfig = parseOpencodeConfig(provider.settingsConfig);
-      for (const [modelId, model] of Object.entries(
-        parsedConfig.models || {},
-      )) {
         const rawVariants = model.variants;
         if (
-          !rawVariants ||
-          typeof rawVariants !== "object" ||
-          Array.isArray(rawVariants)
+          rawVariants &&
+          typeof rawVariants === "object" &&
+          !Array.isArray(rawVariants)
         ) {
-          continue;
+          const variantKeys = Object.keys(rawVariants).filter(Boolean);
+          if (variantKeys.length > 0) {
+            variantsMap[value] = variantKeys;
+          }
         }
-        const variantKeys = Object.keys(rawVariants).filter(Boolean);
-        if (variantKeys.length === 0) {
-          continue;
+      }
+
+      // Preset fallback: for models without config-defined variants,
+      // check if the npm package has preset variant definitions.
+      // Also collect preset metadata (options, limit) for enrichment.
+      const presetModels = OPENCODE_PRESET_MODEL_VARIANTS[parsedConfig.npm];
+      if (presetModels) {
+        for (const modelId of Object.keys(parsedConfig.models || {})) {
+          const fullKey = `${providerKey}/${modelId}`;
+          const preset = presetModels.find((p) => p.id === modelId);
+          if (!preset) continue;
+
+          // Variant fallback
+          if (!variantsMap[fullKey] && preset.variants) {
+            const presetKeys = Object.keys(preset.variants).filter(Boolean);
+            if (presetKeys.length > 0) {
+              variantsMap[fullKey] = presetKeys;
+            }
+          }
+
+          // Collect preset metadata for model enrichment
+          const meta: (typeof presetMetaMap)[string] = {};
+          if (preset.options) meta.options = preset.options;
+          if (preset.contextLimit || preset.outputLimit) {
+            meta.limit = {};
+            if (preset.contextLimit) meta.limit.context = preset.contextLimit;
+            if (preset.outputLimit) meta.limit.output = preset.outputLimit;
+          }
+          if (Object.keys(meta).length > 0) {
+            presetMetaMap[fullKey] = meta;
+          }
         }
-        variantsMap[`${providerKey}/${modelId}`] = variantKeys;
       }
     }
 
-    return variantsMap;
+    return {
+      options: Array.from(dedupedOptions.entries())
+        .map(([value, label]) => ({ value, label }))
+        .sort((a, b) => a.label.localeCompare(b.label, "zh-CN")),
+      variantsMap,
+      presetMetaMap,
+      parseFailedProviders,
+      usedFallbackSource: omoLiveIdsLoadFailed,
+    };
   }, [
     isOmoCategory,
     opencodeProvidersData?.providers,
     enabledOpencodeProviderIds,
+    omoLiveIdsLoadFailed,
+  ]);
+  const omoModelOptions = omoModelBuild.options;
+  const omoModelVariantsMap = omoModelBuild.variantsMap;
+  const omoPresetMetaMap = omoModelBuild.presetMetaMap;
+
+  useEffect(() => {
+    if (!isOmoCategory) return;
+    const failed = omoModelBuild.parseFailedProviders;
+    const fallback = omoModelBuild.usedFallbackSource;
+    if (failed.length === 0 && !fallback) return;
+
+    const signature = `${fallback ? "fallback:" : ""}${failed
+      .slice()
+      .sort()
+      .join(",")}`;
+    if (lastOmoModelSourceWarningRef.current === signature) return;
+    lastOmoModelSourceWarningRef.current = signature;
+
+    if (failed.length > 0) {
+      toast.warning(
+        t("omo.modelSourcePartialWarning", {
+          count: failed.length,
+          defaultValue:
+            "Some provider model configs are invalid and were skipped.",
+        }),
+      );
+    }
+    if (fallback) {
+      toast.warning(
+        t("omo.modelSourceFallbackWarning", {
+          defaultValue:
+            "Failed to load live provider state. Falling back to configured providers.",
+        }),
+      );
+    }
+  }, [
+    isOmoCategory,
+    omoModelBuild.parseFailedProviders,
+    omoModelBuild.usedFallbackSource,
+    t,
   ]);
 
   const initialOmoSettings =
@@ -1297,7 +1424,19 @@ export function ProviderForm({
       }
       if (omoOtherFieldsStr.trim()) {
         try {
-          omoConfig.otherFields = JSON.parse(omoOtherFieldsStr);
+          const otherFields = parseOmoOtherFieldsObject(omoOtherFieldsStr);
+          if (!otherFields) {
+            toast.error(
+              t("omo.jsonMustBeObject", {
+                field: t("omo.otherFields", {
+                  defaultValue: "Other Config",
+                }),
+                defaultValue: "{{field}} must be a JSON object",
+              }),
+            );
+            return;
+          }
+          omoConfig.otherFields = otherFields;
         } catch {
           toast.error(
             t("omo.invalidJson", {
@@ -1857,6 +1996,7 @@ export function ProviderForm({
           <OmoFormFields
             modelOptions={omoModelOptions}
             modelVariantsMap={omoModelVariantsMap}
+            presetMetaMap={omoPresetMetaMap}
             agents={omoAgents}
             onAgentsChange={setOmoAgents}
             categories={omoCategories}

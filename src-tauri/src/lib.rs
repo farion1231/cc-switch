@@ -769,6 +769,21 @@ pub fn run() {
                 restore_proxy_state_on_startup(&state).await;
             });
 
+            // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.with_webview(|webview| {
+                        use webkit2gtk::{WebViewExt, SettingsExt, HardwareAccelerationPolicy};
+                        let wk_webview = webview.inner();
+                        if let Some(settings) = WebViewExt::settings(&wk_webview) {
+                            SettingsExt::set_hardware_acceleration_policy(&settings, HardwareAccelerationPolicy::Never);
+                            log::info!("已禁用 WebKitGTK 硬件加速");
+                        }
+                    });
+                }
+            }
+
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();
             if let Some(window) = app.get_webview_window("main") {
