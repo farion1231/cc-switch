@@ -262,6 +262,7 @@ impl RequestForwarder {
                         provider_type,
                         ProviderType::Claude | ProviderType::ClaudeAuth
                     );
+                    let mut signature_rectifier_non_retryable_client_error = false;
 
                     if is_anthropic_provider {
                         let error_message = extract_error_message(&e);
@@ -300,8 +301,9 @@ impl RequestForwarder {
                             // 整流未生效：继续尝试 budget 整流路径，避免误判后短路
                             if !rectified.applied {
                                 log::warn!(
-                                    "[{app_type_str}] [RECT-006] thinking 签名整流器触发但无可整流内容，继续检查 budget 整流路径"
+                                    "[{app_type_str}] [RECT-006] thinking 签名整流器触发但无可整流内容，继续检查 budget；若 budget 也未命中则按客户端错误返回"
                                 );
+                                signature_rectifier_non_retryable_client_error = true;
                             } else {
                                 log::info!(
                                     "[{}] [RECT-001] thinking 签名整流器触发, 移除 {} thinking blocks, {} redacted_thinking blocks, {} signature fields",
@@ -497,11 +499,10 @@ impl RequestForwarder {
                             }
 
                             log::info!(
-                                "[{}] [RECT-010] thinking budget 整流器触发, type_changed={}, budget_changed={}, max_tokens_changed={}",
+                                "[{}] [RECT-010] thinking budget 整流器触发, before={:?}, after={:?}",
                                 app_type_str,
-                                budget_rectified.type_changed,
-                                budget_rectified.budget_changed,
-                                budget_rectified.max_tokens_changed
+                                budget_rectified.before,
+                                budget_rectified.after
                             );
 
                             let _ = std::mem::replace(&mut budget_rectifier_retried, true);
@@ -614,6 +615,28 @@ impl RequestForwarder {
                                 }
                             }
                         }
+                    }
+
+                    if signature_rectifier_non_retryable_client_error {
+                        self.router
+                            .release_permit_neutral(
+                                &provider.id,
+                                app_type_str,
+                                used_half_open_permit,
+                            )
+                            .await;
+                        let mut status = self.status.write().await;
+                        status.failed_requests += 1;
+                        status.last_error = Some(e.to_string());
+                        if status.total_requests > 0 {
+                            status.success_rate = (status.success_requests as f32
+                                / status.total_requests as f32)
+                                * 100.0;
+                        }
+                        return Err(ForwardError {
+                            error: e,
+                            provider: Some(provider.clone()),
+                        });
                     }
 
                     // 失败：记录失败并更新熔断器

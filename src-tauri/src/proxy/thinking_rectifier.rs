@@ -89,15 +89,11 @@ pub fn should_rectify_thinking_signature(
         return true;
     }
 
-    // 场景7: 非法请求（需携带签名/思考结构线索，避免过宽命中）
-    let invalid_request_like = lower.contains("非法请求")
+    // 场景7: 非法请求（与 CCH 对齐，按 invalid request 统一兜底）
+    if lower.contains("非法请求")
         || lower.contains("illegal request")
-        || lower.contains("invalid request");
-    let has_signature_or_thinking_clue = lower.contains("signature")
-        || lower.contains("thinking")
-        || lower.contains("redacted_thinking")
-        || lower.contains("tool_use");
-    if invalid_request_like && has_signature_or_thinking_clue {
+        || lower.contains("invalid request")
+    {
         return true;
     }
 
@@ -113,15 +109,6 @@ pub fn should_rectify_thinking_signature(
 /// 注意：该函数会原地修改 body 对象
 pub fn rectify_anthropic_request(body: &mut Value) -> RectifyResult {
     let mut result = RectifyResult::default();
-
-    // 与 CCH 对齐：adaptive 模式下整流器直接跳过，不改写请求。
-    let thinking_type = body
-        .get("thinking")
-        .and_then(|t| t.get("type"))
-        .and_then(|t| t.as_str());
-    if thinking_type == Some("adaptive") {
-        return result;
-    }
 
     let messages = match body.get_mut("messages").and_then(|m| m.as_array_mut()) {
         Some(m) => m,
@@ -496,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_detect_invalid_request() {
-        // 场景7: 非法请求（包含签名/思考结构线索才触发）
+        // 场景7: 非法请求（与 CCH 对齐，统一触发）
         assert!(should_rectify_thinking_signature(
             Some("非法请求：thinking signature 不合法"),
             &enabled_config()
@@ -505,7 +492,7 @@ mod tests {
             Some("illegal request: tool_use block mismatch"),
             &enabled_config()
         ));
-        assert!(!should_rectify_thinking_signature(
+        assert!(should_rectify_thinking_signature(
             Some("invalid request: malformed JSON"),
             &enabled_config()
         ));
@@ -523,7 +510,7 @@ mod tests {
     // ==================== adaptive thinking type 测试 ====================
 
     #[test]
-    fn test_rectify_skips_when_adaptive_thinking_type() {
+    fn test_rectify_keeps_adaptive_when_no_legacy_blocks() {
         let mut body = json!({
             "model": "claude-test",
             "thinking": { "type": "adaptive" },
@@ -577,7 +564,7 @@ mod tests {
 
     #[test]
     fn test_rectify_removes_top_level_thinking_adaptive() {
-        // 与 CCH 对齐：adaptive 模式下整流器直接跳过，不删除顶层 thinking
+        // 顶层 thinking 仅在 type=enabled 且 tool_use 场景才会删除，adaptive 不删除
         let mut body = json!({
             "model": "claude-test",
             "thinking": { "type": "adaptive" },
@@ -595,6 +582,31 @@ mod tests {
         let result = rectify_anthropic_request(&mut body);
 
         assert!(!result.applied);
+        assert_eq!(body["thinking"]["type"], "adaptive");
+    }
+
+    #[test]
+    fn test_rectify_adaptive_still_cleans_legacy_signature_blocks() {
+        let mut body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "adaptive" },
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    { "type": "thinking", "thinking": "t", "signature": "sig_thinking" },
+                    { "type": "text", "text": "hello", "signature": "sig_text" }
+                ]
+            }]
+        });
+
+        let result = rectify_anthropic_request(&mut body);
+
+        assert!(result.applied);
+        assert_eq!(result.removed_thinking_blocks, 1);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+        assert!(content[0].get("signature").is_none());
         assert_eq!(body["thinking"]["type"], "adaptive");
     }
 

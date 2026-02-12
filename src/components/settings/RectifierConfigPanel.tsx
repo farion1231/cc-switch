@@ -8,9 +8,9 @@ import { settingsApi, type RectifierConfig } from "@/lib/api/settings";
 export function RectifierConfigPanel() {
   const { t } = useTranslation();
   const [config, setConfig] = useState<RectifierConfig>({
-    enabled: false,
-    requestThinkingSignature: false,
-    requestThinkingBudget: false,
+    enabled: true,
+    requestThinkingSignature: true,
+    requestThinkingBudget: true,
   });
   const [isLoading, setIsLoading] = useState(true);
 
