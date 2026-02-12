@@ -39,7 +39,7 @@ import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSe
 import { TerminalSettings } from "@/components/settings/TerminalSettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
-import { WebdavBackupSection } from "@/components/settings/WebdavBackupSection";
+import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ProxyPanel } from "@/components/proxy";
@@ -57,7 +57,6 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
-import type { WebDavBackupSettings } from "@/types";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -185,17 +184,6 @@ export function SettingsPage({
       }
     },
     [autoSaveSettings, settings, t, updateSettings],
-  );
-
-  const handleWebdavUpdate = useCallback(
-    (updates: Partial<WebDavBackupSettings>) => {
-      if (!settings) return;
-      const current = settings.webdavBackup ?? {};
-      const merged = { ...current, ...updates };
-      // WebDAV 配置自动保存，无需手动点击保存按钮
-      handleAutoSave({ webdavBackup: merged });
-    },
-    [settings, handleAutoSave],
   );
 
   const isBusy = useMemo(() => isLoading && !settings, [isLoading, settings]);
@@ -609,9 +597,8 @@ export function SettingsPage({
                             onClear={clearSelection}
                           />
                           <div className="pt-6">
-                            <WebdavBackupSection
-                              config={settings?.webdavBackup}
-                              onChange={handleWebdavUpdate}
+                            <WebdavSyncSection
+                              config={settings?.webdavSync}
                             />
                           </div>
                         </AccordionContent>

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
-import type { Settings, WebDavBackupSettings } from "@/types";
+import type { Settings } from "@/types";
 import { useSettingsForm, type SettingsFormState } from "./useSettingsForm";
 import {
   useDirectorySettings,
@@ -50,37 +50,6 @@ const sanitizeDir = (value?: string | null): string | undefined => {
   if (!value) return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-};
-
-const sanitizeText = (value?: string | null): string | undefined => {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-};
-
-const sanitizeWebdav = (
-  value?: WebDavBackupSettings,
-): WebDavBackupSettings | undefined => {
-  if (!value) return undefined;
-  const sanitized: WebDavBackupSettings = {
-    url: sanitizeText(value.url),
-    username: sanitizeText(value.username),
-    password: sanitizeText(value.password),
-    remotePath: sanitizeText(value.remotePath),
-    fileName: sanitizeText(value.fileName),
-  };
-
-  if (
-    !sanitized.url &&
-    !sanitized.username &&
-    !sanitized.password &&
-    !sanitized.remotePath &&
-    !sanitized.fileName
-  ) {
-    return undefined;
-  }
-
-  return sanitized;
 };
 
 /**
@@ -166,14 +135,14 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpencodeDir = sanitizeDir(
           mergedSettings.opencodeConfigDir,
         );
+        const { webdavSync: _ignoredWebdavSync, ...restSettings } = mergedSettings;
 
         const payload: Settings = {
-          ...mergedSettings,
+          ...restSettings,
           claudeConfigDir: sanitizedClaudeDir,
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
-          webdavBackup: sanitizeWebdav(mergedSettings.webdavBackup),
           language: mergedSettings.language,
         };
 
@@ -283,14 +252,14 @@ export function useSettings(): UseSettingsResult {
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
         const previousGeminiDir = sanitizeDir(data?.geminiConfigDir);
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
+        const { webdavSync: _ignoredWebdavSync, ...restSettings } = mergedSettings;
 
         const payload: Settings = {
-          ...mergedSettings,
+          ...restSettings,
           claudeConfigDir: sanitizedClaudeDir,
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
-          webdavBackup: sanitizeWebdav(mergedSettings.webdavBackup),
           language: mergedSettings.language,
         };
 

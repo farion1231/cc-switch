@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Settings, WebDavBackupSettings } from "@/types";
+import type { Settings, WebDavSyncSettings, RemoteSnapshotInfo } from "@/types";
 import type { AppId } from "./types";
 
 export interface ConfigTransferResult {
@@ -14,18 +14,8 @@ export interface WebDavTestResult {
   message?: string;
 }
 
-export interface WebDavBackupResult {
-  success: boolean;
-  message?: string;
-  remoteUrl?: string;
-  fileName?: string;
-  sizeBytes?: number;
-}
-
-export interface WebDavRestoreResult {
-  success: boolean;
-  message?: string;
-  fileName?: string;
+export interface WebDavSyncResult {
+  status: string;
 }
 
 export const settingsApi = {
@@ -112,22 +102,32 @@ export const settingsApi = {
     return await invoke("import_config_from_file", { filePath });
   },
 
+  // ─── WebDAV v2 sync ───────────────────────────────────────
+
   async webdavTestConnection(
-    config: WebDavBackupSettings & { url: string },
+    settings: WebDavSyncSettings,
   ): Promise<WebDavTestResult> {
-    return await invoke("webdav_test_connection", { config });
+    return await invoke("webdav_test_connection", { settings });
   },
 
-  async webdavBackupNow(
-    config: WebDavBackupSettings & { url: string },
-  ): Promise<WebDavBackupResult> {
-    return await invoke("webdav_backup_now", { config });
+  async webdavSyncUpload(): Promise<WebDavSyncResult> {
+    return await invoke("webdav_sync_upload");
   },
 
-  async webdavRestoreLatest(
-    config: WebDavBackupSettings & { url: string },
-  ): Promise<WebDavRestoreResult> {
-    return await invoke("webdav_restore_latest", { config });
+  async webdavSyncDownload(): Promise<WebDavSyncResult> {
+    return await invoke("webdav_sync_download");
+  },
+
+  async webdavSyncSaveSettings(
+    settings: WebDavSyncSettings,
+  ): Promise<{ success: boolean }> {
+    return await invoke("webdav_sync_save_settings", { settings });
+  },
+
+  async webdavSyncFetchRemoteInfo(): Promise<
+    RemoteSnapshotInfo | { empty: true }
+  > {
+    return await invoke("webdav_sync_fetch_remote_info");
   },
 
   async syncCurrentProvidersLive(): Promise<void> {

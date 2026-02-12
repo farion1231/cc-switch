@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
@@ -58,37 +59,112 @@ impl VisibleApps {
     }
 }
 
-/// WebDAV 备份设置
+/// WebDAV 同步状态（持久化同步进度信息）
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct WebDavBackupSettings {
+pub struct WebDavSyncStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
+    pub last_sync_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
+    pub last_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub password: Option<String>,
+    pub last_remote_etag: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remote_path: Option<String>,
+    pub last_local_manifest_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub file_name: Option<String>,
+    pub last_remote_manifest_hash: Option<String>,
 }
 
-impl WebDavBackupSettings {
-    fn normalize(&mut self) {
-        self.url = normalize_optional_string(&self.url);
-        self.username = normalize_optional_string(&self.username);
-        self.password = normalize_optional_string(&self.password);
-        self.remote_path = normalize_optional_string(&self.remote_path);
-        self.file_name = normalize_optional_string(&self.file_name);
+fn default_remote_root() -> String {
+    "cc-switch-sync".to_string()
+}
+fn default_profile() -> String {
+    "default".to_string()
+}
+fn default_device_id() -> String {
+    use std::time::SystemTime;
+    let ts = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("device-{ts}")
+}
+
+/// WebDAV v2 同步设置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavSyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default = "default_remote_root")]
+    pub remote_root: String,
+    #[serde(default = "default_profile")]
+    pub profile: String,
+    #[serde(default = "default_device_id")]
+    pub device_id: String,
+    #[serde(default)]
+    pub status: WebDavSyncStatus,
+}
+
+impl Default for WebDavSyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: String::new(),
+            username: String::new(),
+            password: String::new(),
+            remote_root: default_remote_root(),
+            profile: default_profile(),
+            device_id: default_device_id(),
+            status: WebDavSyncStatus::default(),
+        }
+    }
+}
+
+impl WebDavSyncSettings {
+    pub fn validate(&self) -> Result<(), crate::error::AppError> {
+        if self.base_url.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "webdav.base_url.required",
+                "WebDAV 地址不能为空",
+                "WebDAV URL is required.",
+            ));
+        }
+        if self.username.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "webdav.username.required",
+                "WebDAV 用户名不能为空",
+                "WebDAV username is required.",
+            ));
+        }
+        Ok(())
     }
 
+    pub fn normalize(&mut self) {
+        self.base_url = self.base_url.trim().to_string();
+        self.username = self.username.trim().to_string();
+        self.remote_root = self.remote_root.trim().to_string();
+        self.profile = self.profile.trim().to_string();
+        if self.remote_root.is_empty() {
+            self.remote_root = default_remote_root();
+        }
+        if self.profile.is_empty() {
+            self.profile = default_profile();
+        }
+        if self.device_id.is_empty() {
+            self.device_id = default_device_id();
+        }
+    }
+
+    /// Returns true if all credential fields are blank (no config to persist).
     fn is_empty(&self) -> bool {
-        self.url.is_none()
-            && self.username.is_none()
-            && self.password.is_none()
-            && self.remote_path.is_none()
-            && self.file_name.is_none()
+        self.base_url.is_empty() && self.username.is_empty() && self.password.is_empty()
     }
 }
 
@@ -152,9 +228,13 @@ pub struct AppSettings {
     #[serde(default)]
     pub skill_sync_method: SyncMethod,
 
-    // ===== WebDAV 备份设置 =====
+    // ===== WebDAV 同步设置 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub webdav_backup: Option<WebDavBackupSettings>,
+    pub webdav_sync: Option<WebDavSyncSettings>,
+
+    // ===== WebDAV 备份设置（旧版，保留向后兼容）=====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webdav_backup: Option<serde_json::Value>,
 
     // ===== 终端设置 =====
     /// 首选终端应用（可选，默认使用系统默认终端）
@@ -171,14 +251,6 @@ fn default_show_in_tray() -> bool {
 
 fn default_minimize_to_tray_on_close() -> bool {
     true
-}
-
-fn normalize_optional_string(value: &Option<String>) -> Option<String> {
-    value
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
 }
 
 impl Default for AppSettings {
@@ -201,6 +273,7 @@ impl Default for AppSettings {
             current_provider_gemini: None,
             current_provider_opencode: None,
             skill_sync_method: SyncMethod::default(),
+            webdav_sync: None,
             webdav_backup: None,
             preferred_terminal: None,
         }
@@ -253,10 +326,10 @@ impl AppSettings {
             .filter(|s| matches!(*s, "en" | "zh" | "ja"))
             .map(|s| s.to_string());
 
-        if let Some(webdav) = &mut self.webdav_backup {
-            webdav.normalize();
-            if webdav.is_empty() {
-                self.webdav_backup = None;
+        if let Some(sync) = &mut self.webdav_sync {
+            sync.normalize();
+            if sync.is_empty() {
+                self.webdav_sync = None;
             }
         }
     }
@@ -299,7 +372,27 @@ fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
 
     let json = serde_json::to_string_pretty(&normalized)
         .map_err(|e| AppError::JsonSerialize { source: e })?;
-    fs::write(&path, json).map_err(|e| AppError::io(&path, e))?;
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| AppError::io(&path, e))?;
+        file.write_all(json.as_bytes())
+            .map_err(|e| AppError::io(&path, e))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        fs::write(&path, json).map_err(|e| AppError::io(&path, e))?;
+    }
+
     Ok(())
 }
 
@@ -335,6 +428,15 @@ pub fn get_settings() -> AppSettings {
             e.into_inner()
         })
         .clone()
+}
+
+pub fn get_settings_for_frontend() -> AppSettings {
+    let mut settings = get_settings();
+    if let Some(sync) = &mut settings.webdav_sync {
+        sync.password.clear();
+    }
+    settings.webdav_backup = None;
+    settings
 }
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
@@ -486,4 +588,22 @@ pub fn get_preferred_terminal() -> Option<String> {
         })
         .preferred_terminal
         .clone()
+}
+
+// ===== WebDAV 同步设置管理函数 =====
+
+/// 获取 WebDAV 同步设置
+pub fn get_webdav_sync_settings() -> Option<WebDavSyncSettings> {
+    settings_store()
+        .read()
+        .ok()?
+        .webdav_sync
+        .clone()
+}
+
+/// 保存 WebDAV 同步设置
+pub fn set_webdav_sync_settings(settings: Option<WebDavSyncSettings>) -> Result<(), AppError> {
+    let mut current = get_settings();
+    current.webdav_sync = settings;
+    update_settings(current)
 }

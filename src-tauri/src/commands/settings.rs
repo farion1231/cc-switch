@@ -5,7 +5,7 @@ use tauri::AppHandle;
 /// 获取设置
 #[tauri::command]
 pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
-    Ok(crate::settings::get_settings())
+    Ok(crate::settings::get_settings_for_frontend())
 }
 
 /// 保存设置

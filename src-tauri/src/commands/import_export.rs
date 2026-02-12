@@ -2,13 +2,30 @@
 
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
+use crate::database::Database;
 use crate::error::AppError;
 use crate::services::provider::ProviderService;
-use crate::services::webdav::{WebDavBackupRequest, WebDavBackupService};
+use crate::services::webdav_sync;
+use crate::settings::{self, WebDavSyncSettings};
 use crate::store::AppState;
+
+// ─── Post-import sync helper (fixes review P1 duplication) ───
+
+fn run_post_import_sync(db: Arc<Database>) {
+    let app_state = AppState::new(db);
+    if let Err(err) = ProviderService::sync_current_to_live(&app_state) {
+        log::warn!("导入后同步 live 配置失败: {err}");
+    }
+    if let Err(err) = settings::reload_settings() {
+        log::warn!("导入后重载设置失败: {err}");
+    }
+}
+
+// ─── File import/export ──────────────────────────────────────
 
 /// 导出数据库为 SQL 备份
 #[tauri::command]
@@ -38,22 +55,11 @@ pub async fn import_config_from_file(
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
     let db = state.db.clone();
-    let db_for_state = db.clone();
+    let db_for_sync = db.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let path_buf = PathBuf::from(&filePath);
         let backup_id = db.import_sql(&path_buf)?;
-
-        // 导入后同步当前供应商到各自的 live 配置
-        let app_state = AppState::new(db_for_state);
-        if let Err(err) = ProviderService::sync_current_to_live(&app_state) {
-            log::warn!("导入后同步 live 配置失败: {err}");
-        }
-
-        // 重新加载设置到内存缓存，确保导入的设置生效
-        if let Err(err) = crate::settings::reload_settings() {
-            log::warn!("导入后重载设置失败: {err}");
-        }
-
+        run_post_import_sync(db_for_sync);
         Ok::<_, AppError>(json!({
             "success": true,
             "message": "SQL imported successfully",
@@ -81,10 +87,27 @@ pub async fn sync_current_providers_live(state: State<'_, AppState>) -> Result<V
     .map_err(|e: AppError| e.to_string())
 }
 
+// ─── WebDAV sync commands ────────────────────────────────────
+
+/// Shared error persistence for sync operations.
+fn persist_sync_error(settings: &mut WebDavSyncSettings, error: &AppError) {
+    settings.status.last_error = Some(error.to_string());
+    let _ = settings::set_webdav_sync_settings(Some(settings.clone()));
+}
+
+fn webdav_not_configured_error() -> String {
+    AppError::localized(
+        "webdav.sync.not_configured",
+        "未配置 WebDAV 同步",
+        "WebDAV sync is not configured.",
+    )
+    .to_string()
+}
+
 /// 测试 WebDAV 连接
 #[tauri::command]
-pub async fn webdav_test_connection(config: WebDavBackupRequest) -> Result<Value, String> {
-    WebDavBackupService::test_connection(&config)
+pub async fn webdav_test_connection(settings: WebDavSyncSettings) -> Result<Value, String> {
+    webdav_sync::check_connection(&settings)
         .await
         .map_err(|e| e.to_string())?;
     Ok(json!({
@@ -93,74 +116,85 @@ pub async fn webdav_test_connection(config: WebDavBackupRequest) -> Result<Value
     }))
 }
 
-/// 立即执行 WebDAV 备份
+/// 上传同步（替代原 webdav_backup_now）
 #[tauri::command]
-pub async fn webdav_backup_now(
-    config: WebDavBackupRequest,
-    state: State<'_, AppState>,
-) -> Result<Value, String> {
+pub async fn webdav_sync_upload(state: State<'_, AppState>) -> Result<Value, String> {
     let db = state.db.clone();
-    let sql_content = tauri::async_runtime::spawn_blocking(move || db.export_sql_string())
-        .await
-        .map_err(|e| format!("生成 SQL 备份失败: {e}"))?
-        .map_err(|e: AppError| e.to_string())?;
+    let mut settings = settings::get_webdav_sync_settings()
+        .ok_or_else(webdav_not_configured_error)?;
 
-    let result = WebDavBackupService::upload_backup(&config, sql_content)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(json!({
-        "success": true,
-        "message": "WebDAV backup uploaded",
-        "remoteUrl": result.remote_url,
-        "fileName": result.file_name,
-        "sizeBytes": result.size_bytes
-    }))
+    webdav_sync::upload(&db, &mut settings).await.map_err(|e| {
+        persist_sync_error(&mut settings, &e);
+        e.to_string()
+    })
 }
 
-/// 从 WebDAV 恢复最新备份
+/// 下载同步（替代原 webdav_restore_latest）
 #[tauri::command]
-pub async fn webdav_restore_latest(
-    config: WebDavBackupRequest,
-    state: State<'_, AppState>,
-) -> Result<Value, String> {
-    // 1. 下载最新备份
-    let result = WebDavBackupService::download_latest(&config)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // 2. 导入 SQL 到数据库
+pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, String> {
     let db = state.db.clone();
-    let db_for_state = db.clone();
-    let sql_content = result.content;
-    let file_name = result.file_name.clone();
+    let db_for_sync = db.clone();
+    let mut settings = settings::get_webdav_sync_settings()
+        .ok_or_else(webdav_not_configured_error)?;
 
+    let result = webdav_sync::download(&db, &mut settings)
+        .await
+        .map_err(|e| {
+            persist_sync_error(&mut settings, &e);
+            e.to_string()
+        })?;
+
+    // Post-download: sync providers to live config (DB changed)
     tauri::async_runtime::spawn_blocking(move || {
-        db.import_sql_string(&sql_content)?;
-
-        // 导入后同步当前供应商到各自的 live 配置
-        let app_state = AppState::new(db_for_state);
-        if let Err(err) = ProviderService::sync_current_to_live(&app_state) {
-            log::warn!("导入后同步 live 配置失败: {err}");
-        }
-
-        // 重新加载设置到内存缓存
-        if let Err(err) = crate::settings::reload_settings() {
-            log::warn!("导入后重载设置失败: {err}");
-        }
-
-        Ok::<_, AppError>(())
+        run_post_import_sync(db_for_sync);
     })
     .await
-    .map_err(|e| format!("恢复备份失败: {e}"))?
-    .map_err(|e: AppError| e.to_string())?;
+    .ok();
 
-    Ok(json!({
-        "success": true,
-        "message": "WebDAV restore completed",
-        "fileName": file_name
-    }))
+    Ok(result)
 }
+
+/// 显式保存 WebDAV 同步设置（修复 P0: 不再自动保存密码）
+///
+/// Only persists user-editable fields (credentials, remote root, profile).
+/// Server-owned fields (status, deviceId) are preserved from existing config.
+#[tauri::command]
+pub async fn webdav_sync_save_settings(
+    settings: WebDavSyncSettings,
+) -> Result<Value, String> {
+    let mut s = settings;
+
+    // Preserve server-owned fields that the frontend does not manage
+    if let Some(existing) = settings::get_webdav_sync_settings() {
+        s.status = existing.status;
+        if s.device_id.is_empty() {
+            s.device_id = existing.device_id;
+        }
+        if s.password.is_empty() {
+            s.password = existing.password;
+        }
+    }
+
+    s.normalize();
+    s.validate().map_err(|e| e.to_string())?;
+    settings::set_webdav_sync_settings(Some(s)).map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true }))
+}
+
+/// 获取远端同步信息（下载前预览）
+#[tauri::command]
+pub async fn webdav_sync_fetch_remote_info() -> Result<Value, String> {
+    let settings = settings::get_webdav_sync_settings()
+        .ok_or_else(webdav_not_configured_error)?;
+
+    let info = webdav_sync::fetch_remote_info(&settings)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(info.unwrap_or(json!({ "empty": true })))
+}
+
+// ─── File dialogs ────────────────────────────────────────────
 
 /// 保存文件对话框
 #[tauri::command]

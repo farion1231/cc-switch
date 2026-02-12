@@ -1,688 +1,507 @@
-use chrono::Utc;
-use reqwest::{Method, StatusCode, Url};
-use serde::{Deserialize, Serialize};
+//! WebDAV HTTP transport layer.
+//!
+//! Low-level HTTP primitives for WebDAV operations (PUT, GET, HEAD, MKCOL, PROPFIND).
+//! The sync protocol logic lives in [`super::webdav_sync`].
+
+use reqwest::{Method, RequestBuilder, StatusCode, Url};
 use std::time::Duration;
 
 use crate::error::AppError;
 use crate::proxy::http_client;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
+/// Timeout for large file transfers (PUT/GET of db.sql, skills.zip).
+const TRANSFER_TIMEOUT_SECS: u64 = 300;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WebDavBackupRequest {
-    pub url: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub password: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remote_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub file_name: Option<String>,
+/// Auth pair: `(username, Some(password))`.
+pub type WebDavAuth = Option<(String, Option<String>)>;
+
+// ─── WebDAV extension methods ────────────────────────────────
+
+fn method_propfind() -> Method {
+    Method::from_bytes(b"PROPFIND").expect("PROPFIND is a valid HTTP method")
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WebDavBackupResult {
-    pub remote_url: String,
-    pub file_name: String,
-    pub size_bytes: usize,
+fn method_mkcol() -> Method {
+    Method::from_bytes(b"MKCOL").expect("MKCOL is a valid HTTP method")
 }
 
-#[derive(Debug, Clone)]
-pub struct WebDavDownloadResult {
-    pub file_name: String,
-    pub content: String,
-}
+// ─── URL utilities ───────────────────────────────────────────
 
-pub struct WebDavBackupService;
-
-impl WebDavBackupService {
-    pub async fn test_connection(config: &WebDavBackupRequest) -> Result<(), AppError> {
-        let url = build_probe_url(config)?;
-        let client = http_client::get();
-        let method = Method::from_bytes(b"PROPFIND")
-            .map_err(|e| AppError::InvalidInput(format!("WebDAV 方法无效: {e}")))?;
-
-        let mut request = client
-            .request(method, url)
-            .header("Depth", "0")
-            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
-
-        if let Some((user, pass)) = auth_parts(config) {
-            request = request.basic_auth(user, pass);
-        }
-
-        let response = request
-            .send()
-            .await
-            .map_err(|e| AppError::Message(format!("WebDAV 连接失败: {e}")))?;
-
-        if response.status().is_success() {
-            return Ok(());
-        }
-
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-
-        match status {
-            StatusCode::UNAUTHORIZED => Err(AppError::Message("WebDAV 认证失败".to_string())),
-            StatusCode::FORBIDDEN => Err(AppError::Message("WebDAV 权限不足".to_string())),
-            StatusCode::NOT_FOUND => Err(AppError::Message(
-                "WebDAV 路径不存在，请检查远程路径".to_string(),
-            )),
-            _ => Err(AppError::Message(format!(
-                "WebDAV 连接失败: HTTP {} {}",
-                status.as_u16(),
-                body
-            ))),
-        }
-    }
-
-    pub async fn upload_backup(
-        config: &WebDavBackupRequest,
-        sql_content: String,
-    ) -> Result<WebDavBackupResult, AppError> {
-        let base_url = parse_base_url(&config.url)?;
-        let remote_path = normalize_remote_path(config.remote_path.as_deref());
-        let has_file_name = has_explicit_file_name(config);
-        let treat_as_dir = infer_treat_as_dir(&remote_path, has_file_name);
-        let file_name = effective_file_name(config, &remote_path, treat_as_dir)?;
-        let dir_path = if remote_path.is_empty() {
-            ""
-        } else if treat_as_dir {
-            remote_path.trim_end_matches('/')
-        } else {
-            remote_path
-                .rsplit_once('/')
-                .map(|(dir, _)| dir)
-                .unwrap_or("")
-        };
-
-        let size_bytes = sql_content.len();
-        let client = http_client::get();
-        let auth = auth_parts(config);
-        ensure_remote_directories(&client, &base_url, dir_path, &auth).await?;
-        let target_url = build_target_url(config, &file_name)?;
-        let mut request = client
-            .put(target_url.clone())
-            .header("Content-Type", "application/sql")
-            .body(sql_content)
-            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
-
-        if let Some((ref user, ref pass)) = auth {
-            request = request.basic_auth(user, pass.as_deref());
-        }
-
-        let response = request
-            .send()
-            .await
-            .map_err(|e| AppError::Message(format!("上传失败: {e}")))?;
-
-        if response.status().is_success() {
-            log::info!("[WebDAV] Backup uploaded successfully to: {}", target_url);
-            return Ok(WebDavBackupResult {
-                remote_url: target_url.to_string(),
-                file_name,
-                size_bytes,
-            });
-        }
-
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        log::error!(
-            "[WebDAV] PUT failed: status={}, url={}, body={}",
-            status.as_u16(),
-            target_url,
-            body
-        );
-
-        match status {
-            StatusCode::UNAUTHORIZED => Err(AppError::Message("WebDAV 认证失败".to_string())),
-            StatusCode::FORBIDDEN => Err(AppError::Message(format!(
-                "WebDAV 无权限上传到 {}。\
-坚果云不允许直接上传到根目录 /dav/；请确保远程路径指向一个已存在的同步文件夹。",
-                target_url
-            ))),
-            StatusCode::NOT_FOUND => Err(AppError::Message(format!(
-                "WebDAV 目标路径不存在: {}。请确保远程路径指向一个已存在的文件夹。",
-                target_url
-            ))),
-            StatusCode::CONFLICT => Err(AppError::Message(format!(
-                "WebDAV 上传失败（409 Conflict），目标目录可能不存在: {}。\
-若使用坚果云，请先在坚果云网页/客户端创建对应的文件夹，再重试。",
-                target_url
-            ))),
-            _ => Err(AppError::Message(format!(
-                "上传失败: HTTP {} {}",
-                status.as_u16(),
-                body
-            ))),
-        }
-    }
-
-    /// Download the latest backup from WebDAV
-    pub async fn download_latest(
-        config: &WebDavBackupRequest,
-    ) -> Result<WebDavDownloadResult, AppError> {
-        let base_url = parse_base_url(&config.url)?;
-        let remote_path = normalize_remote_path(config.remote_path.as_deref());
-        let client = http_client::get();
-        let auth = auth_parts(config);
-
-        // Build the directory URL to list files
-        let mut list_url = base_url.clone();
-        if !remote_path.is_empty() {
-            push_segments(&mut list_url, &remote_path)?;
-        }
-        ensure_trailing_slash(&mut list_url);
-
-        // Use PROPFIND with Depth 1 to list directory contents
-        let propfind_method = Method::from_bytes(b"PROPFIND")
-            .map_err(|e| AppError::InvalidInput(format!("WebDAV 方法无效: {e}")))?;
-
-        let mut request = client
-            .request(propfind_method, list_url.clone())
-            .header("Depth", "1")
-            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
-
-        if let Some((ref user, ref pass)) = auth {
-            request = request.basic_auth(user, pass.as_deref());
-        }
-
-        let response = request
-            .send()
-            .await
-            .map_err(|e| AppError::Message(format!("WebDAV 列出文件失败: {e}")))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(AppError::Message(format!(
-                "WebDAV 列出文件失败: HTTP {} {}",
-                status.as_u16(),
-                body
-            )));
-        }
-
-        let body = response.text().await.unwrap_or_default();
-
-        // Parse the PROPFIND response to find .sql files
-        let files = parse_propfind_response(&body, &list_url)?;
-        let sql_files: Vec<_> = files.into_iter().filter(|f| f.ends_with(".sql")).collect();
-
-        if sql_files.is_empty() {
-            return Err(AppError::Message(
-                "WebDAV 远程目录中没有找到 .sql 备份文件".to_string(),
-            ));
-        }
-
-        // Sort by name (which includes timestamp) and get the latest
-        let mut sorted_files = sql_files;
-        sorted_files.sort();
-        let latest_file = sorted_files.last().unwrap();
-
-        // Build download URL
-        let mut download_url = base_url;
-        if !remote_path.is_empty() {
-            push_segments(&mut download_url, &remote_path)?;
-        }
-        push_segments(&mut download_url, latest_file)?;
-
-        log::info!("[WebDAV] Downloading latest backup: {}", download_url);
-
-        // Download the file
-        let mut get_request = client
-            .get(download_url.clone())
-            .timeout(Duration::from_secs(300)); // 5 minutes for large files
-
-        if let Some((ref user, ref pass)) = auth {
-            get_request = get_request.basic_auth(user, pass.as_deref());
-        }
-
-        let get_response = get_request
-            .send()
-            .await
-            .map_err(|e| AppError::Message(format!("WebDAV 下载文件失败: {e}")))?;
-
-        if !get_response.status().is_success() {
-            let status = get_response.status();
-            let body = get_response.text().await.unwrap_or_default();
-            return Err(AppError::Message(format!(
-                "WebDAV 下载文件失败: HTTP {} {}",
-                status.as_u16(),
-                body
-            )));
-        }
-
-        let content = get_response
-            .text()
-            .await
-            .map_err(|e| AppError::Message(format!("读取文件内容失败: {e}")))?;
-
-        log::info!(
-            "[WebDAV] Downloaded {} ({} bytes)",
-            latest_file,
-            content.len()
-        );
-
-        Ok(WebDavDownloadResult {
-            file_name: latest_file.clone(),
-            content,
-        })
-    }
-}
-
-fn auth_parts(config: &WebDavBackupRequest) -> Option<(String, Option<String>)> {
-    let user = config.username.as_ref()?.trim();
-    if user.is_empty() {
-        return None;
-    }
-    let pass = config.password.as_ref().map(|s| s.to_string());
-    Some((user.to_string(), pass))
-}
-
-fn has_explicit_file_name(config: &WebDavBackupRequest) -> bool {
-    config
-        .file_name
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .is_some()
-}
-
-fn infer_treat_as_dir(remote_path: &str, has_explicit_file_name: bool) -> bool {
-    if remote_path.is_empty() || remote_path.ends_with('/') || has_explicit_file_name {
-        return true;
-    }
-    !remote_path.ends_with(".sql")
-}
-
-fn effective_file_name(
-    config: &WebDavBackupRequest,
-    remote_path: &str,
-    treat_as_dir: bool,
-) -> Result<String, AppError> {
-    if treat_as_dir {
-        return build_file_name(config);
-    }
-
-    let name = remote_path.rsplit('/').next().unwrap_or("").trim();
-    if name.is_empty() {
-        return Err(AppError::InvalidInput(
-            "远程路径无效：缺少文件名".to_string(),
-        ));
-    }
-    Ok(name.to_string())
-}
-
-fn parse_base_url(raw: &str) -> Result<Url, AppError> {
+/// Parse and validate a WebDAV base URL (must be http or https).
+pub fn parse_base_url(raw: &str) -> Result<Url, AppError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err(AppError::InvalidInput("WebDAV 地址不能为空".to_string()));
+        return Err(AppError::localized(
+            "webdav.base_url.required",
+            "WebDAV 地址不能为空",
+            "WebDAV URL is required.",
+        ));
     }
-
-    let url =
-        Url::parse(trimmed).map_err(|e| AppError::InvalidInput(format!("WebDAV 地址无效: {e}")))?;
-
+    let url = Url::parse(trimmed).map_err(|e| {
+        AppError::localized(
+            "webdav.base_url.invalid",
+            format!("WebDAV 地址无效: {e}"),
+            format!("Invalid WebDAV URL: {e}"),
+        )
+    })?;
     match url.scheme() {
         "http" | "https" => Ok(url),
-        _ => Err(AppError::InvalidInput(
-            "WebDAV 仅支持 http/https 地址".to_string(),
+        _ => Err(AppError::localized(
+            "webdav.base_url.scheme_invalid",
+            "WebDAV 仅支持 http/https 地址",
+            "WebDAV URL must use http or https.",
         )),
     }
 }
 
-fn build_file_name(config: &WebDavBackupRequest) -> Result<String, AppError> {
-    if let Some(name) = config.file_name.as_ref() {
-        let trimmed = name.trim();
-        if trimmed.is_empty() {
-            return Ok(default_file_name());
+/// Build a full URL from a base URL string and path segments.
+///
+/// Each segment is individually percent-encoded by the `url` crate.
+pub fn build_remote_url(base_url: &str, segments: &[String]) -> Result<String, AppError> {
+    let mut url = parse_base_url(base_url)?;
+    {
+        let mut path = url.path_segments_mut().map_err(|_| {
+            AppError::localized(
+                "webdav.base_url.unusable",
+                "WebDAV 地址格式不支持追加路径",
+                "WebDAV URL format does not support appending path segments.",
+            )
+        })?;
+        path.pop_if_empty();
+        for seg in segments {
+            path.push(seg);
         }
-        if trimmed.contains('/') || trimmed.contains('\\') {
-            return Err(AppError::InvalidInput(
-                "文件名不能包含路径分隔符".to_string(),
-            ));
-        }
-        return Ok(trimmed.to_string());
     }
-    Ok(default_file_name())
+    Ok(url.to_string())
 }
 
-fn default_file_name() -> String {
-    let stamp = Utc::now().format("%Y%m%d_%H%M%S");
-    format!("cc-switch-export-{stamp}.sql")
+/// Split a slash-delimited path into non-empty segments.
+pub fn path_segments(raw: &str) -> impl Iterator<Item = &str> {
+    raw.trim_matches('/').split('/').filter(|s| !s.is_empty())
 }
 
-fn build_target_url(config: &WebDavBackupRequest, file_name: &str) -> Result<Url, AppError> {
-    let mut url = parse_base_url(&config.url)?;
-    let remote_path = normalize_remote_path(config.remote_path.as_deref());
-    let has_file_name = has_explicit_file_name(config);
+// ─── Auth ────────────────────────────────────────────────────
 
-    let treat_as_dir = infer_treat_as_dir(&remote_path, has_file_name);
-    if treat_as_dir {
-        let dir_path = remote_path.trim_end_matches('/');
-        push_segments(&mut url, dir_path)?;
-        push_segments(&mut url, file_name)?;
+/// Build auth from username/password. Returns `None` if username is blank.
+pub fn auth_from_credentials(username: &str, password: &str) -> WebDavAuth {
+    let user = username.trim();
+    if user.is_empty() {
+        return None;
+    }
+    Some((user.to_string(), Some(password.to_string())))
+}
+
+/// Apply Basic-Auth to a request builder if auth is present.
+fn apply_auth(builder: RequestBuilder, auth: &WebDavAuth) -> RequestBuilder {
+    match auth {
+        Some((user, pass)) => builder.basic_auth(user, pass.as_deref()),
+        None => builder,
+    }
+}
+
+fn webdav_transport_error(
+    key: &'static str,
+    op_zh: &str,
+    op_en: &str,
+    target_url: &str,
+    err: &reqwest::Error,
+) -> AppError {
+    let (zh_reason, en_reason) = if err.is_timeout() {
+        ("请求超时", "request timed out")
+    } else if err.is_connect() {
+        ("连接失败", "connection failed")
+    } else if err.is_request() {
+        ("请求构造失败", "request build failed")
     } else {
-        push_segments(&mut url, remote_path.as_str())?;
-    }
+        ("网络请求失败", "network request failed")
+    };
 
-    Ok(url)
+    let safe_url = redact_url(target_url);
+    AppError::localized(
+        key,
+        format!("WebDAV {op_zh}失败（{zh_reason}）: {safe_url}"),
+        format!("WebDAV {op_en} failed ({en_reason}): {safe_url}"),
+    )
 }
 
-fn build_probe_url(config: &WebDavBackupRequest) -> Result<Url, AppError> {
-    let mut url = parse_base_url(&config.url)?;
-    let remote_path = normalize_remote_path(config.remote_path.as_deref());
-    if remote_path.is_empty() {
-        return Ok(url);
-    }
+// ─── HTTP operations ─────────────────────────────────────────
 
-    let has_file_name = has_explicit_file_name(config);
-    let treat_as_dir = infer_treat_as_dir(&remote_path, has_file_name);
-    if treat_as_dir {
-        let dir_path = remote_path.trim_end_matches('/');
-        push_segments(&mut url, dir_path)?;
-        return Ok(url);
-    }
+/// Test WebDAV connectivity via PROPFIND Depth=0 on the base URL.
+pub async fn test_connection(base_url: &str, auth: &WebDavAuth) -> Result<(), AppError> {
+    let url = parse_base_url(base_url)?;
+    let client = http_client::get();
 
-    if let Some((dir, _)) = remote_path.rsplit_once('/') {
-        push_segments(&mut url, dir)?;
-    }
-
-    Ok(url)
-}
-
-fn normalize_remote_path(raw: Option<&str>) -> String {
-    raw.unwrap_or("").trim().replace('\\', "/").to_string()
-}
-
-fn ensure_trailing_slash(url: &mut Url) {
-    let path = url.path();
-    if path.ends_with('/') {
-        return;
-    }
-    url.set_path(&format!("{path}/"));
-}
-
-async fn ensure_remote_directories(
-    client: &reqwest::Client,
-    base_url: &Url,
-    dir_path: &str,
-    auth: &Option<(String, Option<String>)>,
-) -> Result<(), AppError> {
-    if dir_path.is_empty() {
-        return Ok(());
-    }
-
-    let mkcol_method = Method::from_bytes(b"MKCOL")
-        .map_err(|e| AppError::InvalidInput(format!("WebDAV 方法无效: {e}")))?;
-    let propfind_method = Method::from_bytes(b"PROPFIND")
-        .map_err(|e| AppError::InvalidInput(format!("WebDAV 方法无效: {e}")))?;
-
-    let mut current_url = base_url.clone();
-    let mut created_path = String::new();
-    for segment in dir_path.split('/').filter(|s| !s.is_empty()) {
-        push_segments(&mut current_url, segment)?;
-        let mut check_url = current_url.clone();
-        ensure_trailing_slash(&mut check_url);
-
-        if created_path.is_empty() {
-            created_path.push_str(segment);
-        } else {
-            created_path.push('/');
-            created_path.push_str(segment);
-        }
-
-        // First check if directory exists using PROPFIND
-        let mut propfind_request = client
-            .request(propfind_method.clone(), check_url.clone())
+    let resp = apply_auth(
+        client
+            .request(method_propfind(), url)
             .header("Depth", "0")
-            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
-        if let Some((ref user, ref pass)) = auth {
-            propfind_request = propfind_request.basic_auth(user, pass.as_deref());
-        }
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+        auth,
+    )
+    .send()
+    .await
+    .map_err(|e| {
+        webdav_transport_error(
+            "webdav.connection_failed",
+            "连接",
+            "connection",
+            base_url,
+            &e,
+        )
+    })?;
 
-        let propfind_response = propfind_request.send().await;
-        if let Ok(resp) = propfind_response {
-            if resp.status().is_success() {
-                // Directory already exists, skip MKCOL
-                continue;
-            }
-        }
-
-        // Directory doesn't exist, try to create it with MKCOL
-        let check_url_str = check_url.to_string();
-        let mut mkcol_request = client
-            .request(mkcol_method.clone(), check_url)
-            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
-        if let Some((ref user, ref pass)) = auth {
-            mkcol_request = mkcol_request.basic_auth(user, pass.as_deref());
-        }
-
-        let response = mkcol_request
-            .send()
-            .await
-            .map_err(|e| AppError::Message(format!("创建 WebDAV 目录失败: {e}")))?;
-
-        let status = response.status();
-        // Success: 201 Created
-        if status.is_success() {
-            log::info!("[WebDAV] MKCOL created directory: {}", check_url_str);
-            continue;
-        }
-
-        // 405 Method Not Allowed might mean:
-        // 1. Directory already exists (some servers)
-        // 2. Server doesn't support MKCOL at all
-        // Since we already checked with PROPFIND and it said dir doesn't exist,
-        // 405 here likely means server doesn't support creating directories
-        if status == StatusCode::METHOD_NOT_ALLOWED {
-            log::warn!(
-                "[WebDAV] MKCOL returned 405 for {}, server may not support directory creation. Path: /{created_path}",
-                check_url_str
-            );
-            // We'll continue and let the PUT fail with a clearer error if the dir really doesn't exist
-            continue;
-        }
-
-        let body = response.text().await.unwrap_or_default();
-        match status {
-            StatusCode::UNAUTHORIZED => {
-                return Err(AppError::Message("WebDAV 认证失败".to_string()))
-            }
-            StatusCode::FORBIDDEN => {
-                return Err(AppError::Message(format!(
-                    "WebDAV 无权限创建目录 /{created_path}（403 Forbidden）。\
-坚果云不允许在根目录 /dav/ 下直接创建文件夹；\
-请先在坚果云网页端或客户端创建同步文件夹（如 cc-switch-backup），\
-然后在「远程路径」填写该文件夹名。"
-                )))
-            }
-            StatusCode::CONFLICT => {
-                return Err(AppError::Message(format!(
-                    "WebDAV 无法创建目录 /{created_path}（409 Conflict）。\
-部分 WebDAV 服务（例如坚果云）不允许通过 WebDAV 创建顶层文件夹；\
-请先在服务端（网页/客户端）手动创建目录 /{} ，再重试。",
-                    dir_path
-                        .split('/')
-                        .find(|s| !s.is_empty())
-                        .unwrap_or(&created_path),
-                )))
-            }
-            _ => {
-                return Err(AppError::Message(format!(
-                    "创建 WebDAV 目录失败: HTTP {} {}",
-                    status.as_u16(),
-                    body
-                )))
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn push_segments(url: &mut Url, path: &str) -> Result<(), AppError> {
-    if path.is_empty() {
+    if resp.status().is_success() || resp.status() == StatusCode::MULTI_STATUS {
         return Ok(());
     }
-
-    let mut segments = url
-        .path_segments_mut()
-        .map_err(|_| AppError::InvalidInput("WebDAV 地址格式不支持追加路径".to_string()))?;
-
-    // Remove trailing empty segment caused by trailing slash (e.g., /dav/ -> /dav)
-    // This prevents double slashes like /dav//file.sql
-    segments.pop_if_empty();
-
-    for segment in path.split('/').filter(|s| !s.is_empty()) {
-        segments.push(segment);
-    }
-    Ok(())
+    Err(webdav_status_error("PROPFIND", resp.status(), base_url))
 }
 
-/// Parse WebDAV PROPFIND response to extract file names
-fn parse_propfind_response(xml: &str, base_url: &Url) -> Result<Vec<String>, AppError> {
-    let mut files = Vec::new();
-    let base_path = base_url.path();
+/// Ensure a chain of remote directories exists.
+///
+/// Uses optimistic MKCOL: try creating first, fall back to PROPFIND verification
+/// on ambiguous responses. This halves the round-trips vs PROPFIND-first approach.
+pub async fn ensure_remote_directories(
+    base_url: &str,
+    segments: &[String],
+    auth: &WebDavAuth,
+) -> Result<(), AppError> {
+    if segments.is_empty() {
+        return Ok(());
+    }
+    let client = http_client::get();
 
-    // Extract all href values from XML (handles single-line compressed XML)
-    let hrefs = extract_all_hrefs(xml);
-
-    for href in hrefs {
-        // Skip the directory itself (ends with /)
-        if href.ends_with('/') {
-            continue;
-        }
-
-        // Extract just the filename from the path
-        let path = if href.starts_with("http://") || href.starts_with("https://") {
-            if let Ok(url) = Url::parse(&href) {
-                url.path().to_string()
-            } else {
-                href.to_string()
-            }
+    for depth in 1..=segments.len() {
+        let prefix = &segments[..depth];
+        let url = build_remote_url(base_url, prefix)?;
+        let dir_url = if url.ends_with('/') {
+            url
         } else {
-            href.to_string()
+            format!("{url}/")
         };
 
-        // Get the filename (last segment)
-        if let Some(name) = path.rsplit('/').next() {
-            let name = name.trim();
-            if !name.is_empty()
-                && name
-                    != base_path
-                        .trim_end_matches('/')
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or("")
-            {
-                let decoded = simple_url_decode(name);
-                files.push(decoded);
+        let resp = apply_auth(
+            client
+                .request(method_mkcol(), &dir_url)
+                .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+            auth,
+        )
+        .send()
+        .await
+        .map_err(|e| {
+            webdav_transport_error(
+                "webdav.mkcol_failed",
+                "MKCOL 请求",
+                "MKCOL request",
+                &dir_url,
+                &e,
+            )
+        })?;
+
+        let status = resp.status();
+        match status {
+            s if s == StatusCode::CREATED || s.is_success() => {
+                log::info!("[WebDAV] MKCOL ok: {}", redact_url(&dir_url));
+            }
+            // 405 commonly means "already exists" on many WebDAV servers
+            StatusCode::METHOD_NOT_ALLOWED => {}
+            // Ambiguous — verify directory actually exists via PROPFIND
+            s if s == StatusCode::CONFLICT || s.is_redirection() => {
+                if !propfind_exists(&client, &dir_url, auth).await? {
+                    return Err(webdav_status_error("MKCOL", status, &dir_url));
+                }
+            }
+            _ => {
+                return Err(webdav_status_error("MKCOL", status, &dir_url));
             }
         }
     }
-
-    log::debug!(
-        "[WebDAV] Parsed PROPFIND: found {} file(s) from response",
-        files.len()
-    );
-
-    Ok(files)
+    Ok(())
 }
 
-/// Extract all href values from XML string
-/// Handles compressed single-line XML by scanning for all href tag occurrences
-fn extract_all_hrefs(xml: &str) -> Vec<String> {
-    let mut hrefs = Vec::new();
-    let patterns: &[(&str, &str)] = &[
-        ("<D:href>", "</D:href>"),
-        ("<d:href>", "</d:href>"),
-        ("<href>", "</href>"),
-        ("<lp1:href>", "</lp1:href>"),
-    ];
+/// PUT bytes to a remote WebDAV URL.
+pub async fn put_bytes(
+    url: &str,
+    auth: &WebDavAuth,
+    bytes: Vec<u8>,
+    content_type: &str,
+) -> Result<(), AppError> {
+    let client = http_client::get();
+    let resp = apply_auth(
+        client
+            .put(url)
+            .header("Content-Type", content_type)
+            .body(bytes)
+            .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
+        auth,
+    )
+    .send()
+    .await
+    .map_err(|e| {
+        webdav_transport_error(
+            "webdav.put_failed",
+            "PUT 请求",
+            "PUT request",
+            url,
+            &e,
+        )
+    })?;
 
-    for &(start_tag, end_tag) in patterns {
-        let mut search_from = 0;
-        while let Some(start) = xml[search_from..].find(start_tag) {
-            let abs_start = search_from + start + start_tag.len();
-            if let Some(end) = xml[abs_start..].find(end_tag) {
-                let href = &xml[abs_start..abs_start + end];
-                hrefs.push(href.to_string());
-                search_from = abs_start + end + end_tag.len();
-            } else {
-                break;
-            }
-        }
-        // If we found hrefs with this pattern, no need to try others
-        if !hrefs.is_empty() {
-            break;
-        }
+    if resp.status().is_success() {
+        return Ok(());
     }
-
-    hrefs
+    Err(webdav_status_error("PUT", resp.status(), url))
 }
 
-/// Percent-decode a URL path segment (UTF-8)
+/// GET bytes from a remote WebDAV URL. Returns `None` on 404.
 ///
-/// WebDAV PROPFIND `href` values commonly percent-encode UTF-8 bytes for non-ASCII filenames.
-/// This function decodes `%XX` into raw bytes and then interprets the result as UTF-8.
-fn simple_url_decode(s: &str) -> String {
-    fn hex_val(b: u8) -> Option<u8> {
-        match b {
-            b'0'..=b'9' => Some(b - b'0'),
-            b'a'..=b'f' => Some(b - b'a' + 10),
-            b'A'..=b'F' => Some(b - b'A' + 10),
-            _ => None,
+/// On success returns `(body_bytes, optional_etag)`.
+pub async fn get_bytes(
+    url: &str,
+    auth: &WebDavAuth,
+) -> Result<Option<(Vec<u8>, Option<String>)>, AppError> {
+    let client = http_client::get();
+    let resp = apply_auth(
+        client
+            .get(url)
+            .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
+        auth,
+    )
+    .send()
+    .await
+    .map_err(|e| {
+        webdav_transport_error(
+            "webdav.get_failed",
+            "GET 请求",
+            "GET request",
+            url,
+            &e,
+        )
+    })?;
+
+    if resp.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        return Err(webdav_status_error("GET", resp.status(), url));
+    }
+    let etag = resp
+        .headers()
+        .get("etag")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| {
+            AppError::localized(
+                "webdav.response_read_failed",
+                format!("读取 WebDAV 响应失败: {e}"),
+                format!("Failed to read WebDAV response: {e}"),
+            )
+        })?;
+    Ok(Some((bytes.to_vec(), etag)))
+}
+
+/// HEAD request to retrieve the ETag. Returns `None` on 404.
+pub async fn head_etag(url: &str, auth: &WebDavAuth) -> Result<Option<String>, AppError> {
+    let client = http_client::get();
+    let resp = apply_auth(
+        client
+            .head(url)
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+        auth,
+    )
+    .send()
+    .await
+    .map_err(|e| {
+        webdav_transport_error(
+            "webdav.head_failed",
+            "HEAD 请求",
+            "HEAD request",
+            url,
+            &e,
+        )
+    })?;
+
+    if resp.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        return Err(webdav_status_error("HEAD", resp.status(), url));
+    }
+    Ok(resp
+        .headers()
+        .get("etag")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string()))
+}
+
+// ─── Internal helpers ────────────────────────────────────────
+
+/// PROPFIND Depth=0 to check if a remote resource exists.
+async fn propfind_exists(
+    client: &reqwest::Client,
+    url: &str,
+    auth: &WebDavAuth,
+) -> Result<bool, AppError> {
+    let resp = apply_auth(
+        client
+            .request(method_propfind(), url)
+            .header("Depth", "0")
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+        auth,
+    )
+    .send()
+    .await;
+    match resp {
+        Ok(r) => Ok(r.status().is_success() || r.status() == StatusCode::MULTI_STATUS),
+        Err(e) => {
+            log::warn!(
+                "[WebDAV] PROPFIND check failed for {}: {e}",
+                redact_url(url)
+            );
+            Ok(false)
+        }
+    }
+}
+
+// ─── Service detection & error helpers ───────────────────────
+
+/// Check if a URL points to Jianguoyun (坚果云).
+pub fn is_jianguoyun(url: &str) -> bool {
+    Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+        .map(|host| host.contains("jianguoyun.com") || host.contains("nutstore"))
+        .unwrap_or(false)
+}
+
+/// Build an `AppError` with service-specific hints for WebDAV failures.
+pub fn webdav_status_error(op: &str, status: StatusCode, url: &str) -> AppError {
+    let safe_url = redact_url(url);
+    let mut zh = format!("WebDAV {op} 失败: {status} ({safe_url})");
+    let mut en = format!("WebDAV {op} failed: {status} ({safe_url})");
+    let jgy = is_jianguoyun(url);
+
+    if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+        if jgy {
+            zh.push_str(
+                "。坚果云请使用「第三方应用密码」，并确认地址指向 /dav/ 下的目录。",
+            );
+            en.push_str(
+                ". For Jianguoyun, use an app-specific password and ensure the URL points under /dav/.",
+            );
+        } else {
+            zh.push_str("。请检查 WebDAV 用户名、密码及目录读写权限。");
+            en.push_str(". Please check WebDAV username/password and directory permissions.");
+        }
+    } else if jgy && (status == StatusCode::NOT_FOUND || status.is_redirection()) {
+        zh.push_str("。坚果云常见原因：地址不在 /dav/ 可写目录下。");
+        en.push_str(". Common Jianguoyun cause: URL is outside a writable /dav/ directory.");
+    } else if op == "MKCOL" && status == StatusCode::CONFLICT {
+        if jgy {
+            zh.push_str(
+                "。坚果云不允许自动创建顶层文件夹，请先在网页端手动创建后重试。",
+            );
+            en.push_str(
+                ". Jianguoyun does not allow creating top-level folders automatically; create it manually first.",
+            );
+        } else {
+            zh.push_str("。请确认上级目录存在。");
+            en.push_str(". Please ensure the parent directory exists.");
         }
     }
 
-    let bytes = s.as_bytes();
-    let mut out = Vec::<u8>::with_capacity(bytes.len());
-    let mut i = 0;
+    AppError::localized("webdav.http.status", zh, en)
+}
 
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(h1), Some(h2)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                out.push((h1 << 4) | h2);
-                i += 3;
-                continue;
+fn redact_url(raw: &str) -> String {
+    match Url::parse(raw) {
+        Ok(mut parsed) => {
+            let _ = parsed.set_username("");
+            let _ = parsed.set_password(None);
+
+            let mut out = format!("{}://", parsed.scheme());
+            if let Some(host) = parsed.host_str() {
+                out.push_str(host);
             }
+            if let Some(port) = parsed.port() {
+                out.push(':');
+                out.push_str(&port.to_string());
+            }
+            out.push_str(parsed.path());
+
+            let mut keys: Vec<String> = parsed.query_pairs().map(|(k, _)| k.into_owned()).collect();
+            keys.sort();
+            keys.dedup();
+            if !keys.is_empty() {
+                out.push_str("?[keys:");
+                out.push_str(&keys.join(","));
+                out.push(']');
+            }
+            out
         }
-
-        out.push(bytes[i]);
-        i += 1;
-    }
-
-    match String::from_utf8(out) {
-        Ok(s) => s,
-        Err(err) => String::from_utf8_lossy(&err.into_bytes()).into_owned(),
+        Err(_) => raw.split('?').next().unwrap_or(raw).to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::simple_url_decode;
+    use super::*;
 
     #[test]
-    fn simple_url_decode_decodes_ascii() {
-        assert_eq!(simple_url_decode("hello%20world.sql"), "hello world.sql");
-    }
-
-    #[test]
-    fn simple_url_decode_decodes_utf8_percent_sequences() {
-        assert_eq!(simple_url_decode("%E6%B5%8B%E8%AF%95.sql"), "测试.sql");
+    fn build_remote_url_encodes_path_segments() {
+        let url = build_remote_url(
+            "https://dav.example.com/remote.php/dav/files/demo/",
+            &[
+                "cc switch-sync".to_string(),
+                "v2".to_string(),
+                "default profile".to_string(),
+                "manifest.json".to_string(),
+            ],
+        )
+        .unwrap();
         assert_eq!(
-            simple_url_decode("%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF.sql"),
-            "こんにちは.sql"
+            url,
+            "https://dav.example.com/remote.php/dav/files/demo/cc%20switch-sync/v2/default%20profile/manifest.json"
         );
+        assert!(!url.contains("//cc"), "should not have double-slash");
     }
 
     #[test]
-    fn simple_url_decode_keeps_invalid_sequences() {
-        assert_eq!(simple_url_decode("%ZZ.sql"), "%ZZ.sql");
-        assert_eq!(simple_url_decode("a%2.sql"), "a%2.sql");
+    fn is_jianguoyun_detects_correctly() {
+        assert!(is_jianguoyun("https://dav.jianguoyun.com/dav"));
+        assert!(is_jianguoyun("https://dav.jianguoyun.com/dav/folder"));
+        assert!(!is_jianguoyun("https://nextcloud.example.com/dav"));
+    }
+
+    #[test]
+    fn path_segments_splits_correctly() {
+        let segs: Vec<_> = path_segments("/a/b/c/").collect();
+        assert_eq!(segs, vec!["a", "b", "c"]);
+
+        let segs: Vec<_> = path_segments("single").collect();
+        assert_eq!(segs, vec!["single"]);
+
+        let segs: Vec<_> = path_segments("").collect();
+        assert!(segs.is_empty());
+    }
+
+    #[test]
+    fn auth_from_credentials_trims_and_rejects_blank() {
+        assert!(auth_from_credentials("  ", "pass").is_none());
+        let auth = auth_from_credentials(" user ", "pass");
+        assert_eq!(auth, Some(("user".to_string(), Some("pass".to_string()))));
+    }
+
+    #[test]
+    fn redact_url_hides_credentials_and_query_values() {
+        let redacted = redact_url("https://alice:secret@example.com:8443/dav?token=abc&foo=1");
+        assert_eq!(
+            redacted,
+            "https://example.com:8443/dav?[keys:foo,token]"
+        );
+        assert!(!redacted.contains("secret"));
     }
 }
