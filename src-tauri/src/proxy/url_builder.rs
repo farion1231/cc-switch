@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(preview.direct_url, "https://api.example.com/v1/messages");
         assert_eq!(
             preview.proxy_url,
-            "https://api.example.com/v1/chat/completions?beta=true"
+            "https://api.example.com/v1/chat/completions"
         );
         assert!(!preview.is_full_url);
     }

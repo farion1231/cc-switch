@@ -280,13 +280,11 @@ impl ProviderAdapter for ClaudeAdapter {
         // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
         let base = dedup_v1_v1_boundary_safe(base);
 
-        // 为 Claude 相关端点添加 ?beta=true 参数
+        // 为 Claude Messages 端点添加 ?beta=true 参数
         // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
-        // 注：openai_chat 模式下会转发到 /v1/chat/completions，此处也需要保持一致
-        // 检查最终 URL 是否包含需要 beta 参数的路径，且没有查询参数
-        let needs_beta = (base.contains("/v1/messages") || base.contains("/v1/chat/completions"))
-            && !base.contains('?')
-            && !suffix.starts_with('?');
+        // 仅对 /v1/messages 生效，不对 /v1/chat/completions 生效
+        let needs_beta =
+            base.contains("/v1/messages") && !base.contains('?') && !suffix.starts_with('?');
 
         if needs_beta {
             format!("{base}?beta=true{suffix}")
@@ -549,7 +547,7 @@ mod tests {
             "https://opencode.ai/zen/v1/chat/completions",
             "/v1/chat/completions",
         );
-        assert_eq!(url, "https://opencode.ai/zen/v1/chat/completions?beta=true");
+        assert_eq!(url, "https://opencode.ai/zen/v1/chat/completions");
     }
 
     #[test]
@@ -578,7 +576,7 @@ mod tests {
         );
         assert_eq!(
             url,
-            "https://integrate.api.nvidia.com/v1/chat/completions?beta=true"
+            "https://integrate.api.nvidia.com/v1/chat/completions"
         );
 
         // 另一个场景：/v1 + /v1/messages
