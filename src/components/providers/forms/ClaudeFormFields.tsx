@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { Info } from "lucide-react";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
@@ -222,6 +223,38 @@ export function ClaudeFormFields({
       {/* 模型选择器 */}
       {shouldShowModelSelector && (
         <div className="space-y-3">
+          <div className="flex items-center gap-1.5">
+            <FormLabel>
+              {t("providerForm.modelConfigLabel", { defaultValue: "模型配置" })}
+            </FormLabel>
+            <div className="group relative inline-flex cursor-help">
+              <Info className="size-3.5 text-muted-foreground" />
+              <div className="invisible group-hover:visible absolute left-0 bottom-full z-50 w-max max-w-xs pb-2">
+                <div className="rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md">
+                  <p className="font-medium">
+                    {t("providerForm.modelConfigTooltip")}
+                    <a
+                      href="https://code.claude.com/docs/en/model-config#setting-your-model"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-black-500 underline hover:text-black-600"
+                    >
+                      {t("providerForm.modelConfigTooltipLink")}
+                    </a>
+                    {t("providerForm.modelConfigTooltipAfter")}
+                    <a
+                      href="https://code.claude.com/docs/en/model-config#environment-variables"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-black-500 underline hover:text-black-600"
+                    >
+                      {t("providerForm.modelConfigTooltipDocsLink")}
+                    </a>
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* 主模型 */}
             <div className="space-y-2">
