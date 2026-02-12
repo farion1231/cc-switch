@@ -141,7 +141,11 @@ function App() {
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
-    if (currentView === "sessions" && activeApp !== "claude" && activeApp !== "codex") {
+    if (
+      currentView === "sessions" &&
+      activeApp !== "claude" &&
+      activeApp !== "codex"
+    ) {
       setCurrentView("providers");
     }
   }, [activeApp, currentView]);

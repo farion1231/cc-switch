@@ -465,7 +465,7 @@ pub fn is_common_config_enabled(meta: Option<&ProviderMeta>, app_type: &AppType)
                 AppType::Claude => by_app.claude,
                 AppType::Codex => by_app.codex,
                 AppType::Gemini => by_app.gemini,
-                AppType::OpenCode => None, // OpenCode doesn't support common config
+                AppType::OpenCode => by_app.opencode,
             })
             .or(m.common_config_enabled)
     })

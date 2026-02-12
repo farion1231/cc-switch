@@ -200,6 +200,8 @@ pub struct CommonConfigEnabledByApp {
     pub codex: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gemini: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opencode: Option<bool>,
 }
 
 /// 供应商元数据

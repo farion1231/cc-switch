@@ -651,16 +651,6 @@ export function ProviderForm({
     markCommonConfigSaved: markGeminiCommonConfigSaved,
   } = geminiCommonConfig;
 
-  const supportsCommonConfig =
-    appId === "claude" || appId === "codex" || appId === "gemini";
-  const commonConfigEnabled = supportsCommonConfig
-    ? appId === "claude"
-      ? useCommonConfig
-      : appId === "codex"
-        ? useCodexCommonConfigFlag
-        : useGeminiCommonConfigFlag
-    : undefined;
-
   const { data: opencodeProvidersData } = useProvidersQuery("opencode");
   const existingOpencodeKeys = useMemo(() => {
     if (!opencodeProvidersData?.providers) return [];
@@ -866,6 +856,13 @@ export function ProviderForm({
 
   const [isOmoConfigModalOpen, setIsOmoConfigModalOpen] = useState(false);
   const [useOmoCommonConfig, setUseOmoCommonConfig] = useState(() => {
+    const metaByApp = initialData?.meta?.commonConfigEnabledByApp;
+    const fromMeta =
+      metaByApp?.opencode ?? initialData?.meta?.commonConfigEnabled;
+    if (typeof fromMeta === "boolean") {
+      return fromMeta;
+    }
+    // Backward compatibility for old OMO data.
     const raw = initialOmoSettings?.useCommonConfig;
     return typeof raw === "boolean" ? raw : true;
   });
@@ -948,6 +945,21 @@ export function ProviderForm({
     setOmoOtherFieldsStr("");
     setUseOmoCommonConfig(useCommonConfig);
   }, []);
+
+  const supportsCommonConfig =
+    appId === "claude" ||
+    appId === "codex" ||
+    appId === "gemini" ||
+    isOmoCategory;
+  const commonConfigEnabled = supportsCommonConfig
+    ? appId === "claude"
+      ? useCommonConfig
+      : appId === "codex"
+        ? useCodexCommonConfigFlag
+        : appId === "gemini"
+          ? useGeminiCommonConfigFlag
+          : useOmoCommonConfig
+    : undefined;
 
   const updateOpencodeSettings = useCallback(
     (updater: (config: Record<string, any>) => void) => {
@@ -1277,7 +1289,6 @@ export function ProviderForm({
       }
     } else if (appId === "opencode" && category === "omo") {
       const omoConfig: Record<string, unknown> = {};
-      omoConfig.useCommonConfig = useOmoCommonConfig;
       if (Object.keys(omoAgents).length > 0) {
         omoConfig.agents = omoAgents;
       }

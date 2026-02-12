@@ -91,7 +91,7 @@ export function EditProviderDialog({
               // 检查是否启用了通用配置
               const metaByApp = provider.meta?.commonConfigEnabledByApp;
               const commonConfigEnabled =
-                metaByApp?.[appId as "claude" | "codex" | "gemini"] ??
+                metaByApp?.[appId] ??
                 provider.meta?.commonConfigEnabled ??
                 false;
 

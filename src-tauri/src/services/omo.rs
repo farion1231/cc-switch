@@ -2,6 +2,7 @@ use crate::config::write_json_file;
 use crate::database::OmoGlobalConfig;
 use crate::error::AppError;
 use crate::opencode_config::get_opencode_dir;
+use crate::provider::{CommonConfigEnabledByApp, ProviderMeta};
 use crate::store::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -142,6 +143,29 @@ impl OmoService {
         }
     }
 
+    fn resolve_common_config_enabled(provider: &crate::provider::Provider) -> bool {
+        // Unified path: use provider meta (same mechanism as other apps).
+        if let Some(meta) = provider.meta.as_ref() {
+            if let Some(enabled) = meta
+                .common_config_enabled_by_app
+                .as_ref()
+                .and_then(|by_app| by_app.opencode)
+            {
+                return enabled;
+            }
+            if let Some(enabled) = meta.common_config_enabled {
+                return enabled;
+            }
+        }
+
+        // Backward compatibility: legacy OMO providers stored this flag in settings_config.
+        provider
+            .settings_config
+            .get("useCommonConfig")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }
+
     pub fn delete_config_file() -> Result<(), AppError> {
         let config_path = Self::config_path();
         if config_path.exists() {
@@ -160,11 +184,7 @@ impl OmoService {
             let agents = p.settings_config.get("agents").cloned();
             let categories = p.settings_config.get("categories").cloned();
             let other_fields = p.settings_config.get("otherFields").cloned();
-            let use_common_config = p
-                .settings_config
-                .get("useCommonConfig")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
+            let use_common_config = Self::resolve_common_config_enabled(p);
             (agents, categories, other_fields, use_common_config)
         });
 
@@ -237,7 +257,6 @@ impl OmoService {
         if let Some(categories) = obj.get("categories") {
             settings.insert("categories".to_string(), categories.clone());
         }
-        settings.insert("useCommonConfig".to_string(), Value::Bool(true));
 
         let other = Self::extract_other_fields(&obj);
         if !other.is_empty() {
@@ -263,7 +282,13 @@ impl OmoService {
             created_at: Some(chrono::Utc::now().timestamp_millis()),
             sort_index: None,
             notes: None,
-            meta: None,
+            meta: Some(ProviderMeta {
+                common_config_enabled_by_app: Some(CommonConfigEnabledByApp {
+                    opencode: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
             icon: None,
             icon_color: None,
             in_failover_queue: false,

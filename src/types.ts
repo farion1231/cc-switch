@@ -124,6 +124,7 @@ export type CommonConfigEnabledByApp = Partial<{
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  opencode: boolean;
 }>;
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
