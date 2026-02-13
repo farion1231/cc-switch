@@ -230,6 +230,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::Qwen => {
+                if let Some(custom) = crate::settings::get_qwen_override_dir() {
+                    return Ok(custom.join("skills"));
+                }
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置
@@ -244,6 +249,7 @@ impl SkillService {
             AppType::Codex => home.join(".codex").join("skills"),
             AppType::Gemini => home.join(".gemini").join("skills"),
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
+            AppType::Qwen => home.join(".qwen").join("skills"),
         })
     }
 
@@ -448,6 +454,7 @@ impl SkillService {
             AppType::Codex,
             AppType::Gemini,
             AppType::OpenCode,
+            AppType::Qwen,
         ] {
             let _ = Self::remove_from_app(&skill.directory, &app);
         }
@@ -512,6 +519,7 @@ impl SkillService {
             AppType::Codex,
             AppType::Gemini,
             AppType::OpenCode,
+            AppType::Qwen,
         ] {
             let app_dir = match Self::get_app_skills_dir(&app) {
                 Ok(d) => d,
@@ -562,6 +570,7 @@ impl SkillService {
                     AppType::Codex => "codex",
                     AppType::Gemini => "gemini",
                     AppType::OpenCode => "opencode",
+                    AppType::Qwen => "qwen",
                 };
 
                 unmanaged
@@ -599,6 +608,7 @@ impl SkillService {
                 AppType::Codex,
                 AppType::Gemini,
                 AppType::OpenCode,
+                AppType::Qwen,
             ] {
                 if let Ok(app_dir) = Self::get_app_skills_dir(&app) {
                     let skill_path = app_dir.join(&dir_name);
@@ -611,6 +621,7 @@ impl SkillService {
                             AppType::Codex => "codex",
                             AppType::Gemini => "gemini",
                             AppType::OpenCode => "opencode",
+                            AppType::Qwen => "qwen",
                         };
                         found_in.push(app_str.to_string());
                     }
@@ -650,6 +661,7 @@ impl SkillService {
                     "codex" => apps.codex = true,
                     "gemini" => apps.gemini = true,
                     "opencode" => apps.opencode = true,
+                    "qwen" => apps.qwen = true,
                     _ => {}
                 }
             }
@@ -1417,6 +1429,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
         AppType::Codex,
         AppType::Gemini,
         AppType::OpenCode,
+        AppType::Qwen,
     ] {
         let app_dir = match SkillService::get_app_skills_dir(&app) {
             Ok(d) => d,

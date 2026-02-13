@@ -10,6 +10,7 @@ export interface SkillApps {
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
+  qwen: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */

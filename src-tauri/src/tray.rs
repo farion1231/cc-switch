@@ -57,7 +57,7 @@ pub struct TrayAppSection {
 /// Auto 菜单项后缀
 pub const AUTO_SUFFIX: &str = "auto";
 
-pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
+pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
     TrayAppSection {
         app_type: AppType::Claude,
         prefix: "claude_",
@@ -81,6 +81,14 @@ pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
         empty_id: "gemini_empty",
         header_label: "Gemini",
         log_name: "Gemini",
+    },
+    TrayAppSection {
+        app_type: AppType::Qwen,
+        prefix: "qwen_",
+        header_id: "qwen_header",
+        empty_id: "qwen_empty",
+        header_label: "Qwen",
+        log_name: "Qwen",
     },
 ];
 

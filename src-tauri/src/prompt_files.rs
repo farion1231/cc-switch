@@ -6,6 +6,7 @@ use crate::config::get_claude_settings_path;
 use crate::error::AppError;
 use crate::gemini_config::get_gemini_dir;
 use crate::opencode_config::get_opencode_dir;
+use crate::qwen_config::get_qwen_dir;
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
@@ -14,6 +15,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
         AppType::Gemini => get_gemini_dir(),
         AppType::OpenCode => get_opencode_dir(),
+        AppType::Qwen => get_qwen_dir(),
     };
 
     let filename = match app {
@@ -21,6 +23,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
         AppType::OpenCode => "AGENTS.md",
+        AppType::Qwen => "QWEN.md",
     };
 
     Ok(base_dir.join(filename))

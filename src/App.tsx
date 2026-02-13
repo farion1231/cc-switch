@@ -123,6 +123,7 @@ function App() {
     codex: true,
     gemini: true,
     opencode: true,
+    qwen: true,
   };
 
   const getFirstVisibleApp = (): AppId => {

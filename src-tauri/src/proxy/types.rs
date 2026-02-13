@@ -113,6 +113,7 @@ pub struct ProxyTakeoverStatus {
     pub claude: bool,
     pub codex: bool,
     pub gemini: bool,
+    pub qwen: bool,
 }
 
 /// API 格式类型（预留，当前不需要格式转换）

@@ -146,6 +146,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Codex => build_codex_settings(request),
         AppType::Gemini => build_gemini_settings(request),
         AppType::OpenCode => build_opencode_settings(request),
+        AppType::Qwen => build_qwen_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -389,6 +390,26 @@ fn build_opencode_settings(request: &DeepLinkImportRequest) -> serde_json::Value
         "options": options,
         "models": models
     })
+}
+
+/// Build Qwen settings configuration
+fn build_qwen_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let mut env = serde_json::Map::new();
+    env.insert(
+        "OPENAI_API_KEY".to_string(),
+        json!(request.api_key.clone().unwrap_or_default()),
+    );
+    env.insert(
+        "OPENAI_BASE_URL".to_string(),
+        json!(get_primary_endpoint(request)),
+    );
+
+    // Add model if provided
+    if let Some(model) = &request.model {
+        env.insert("OPENAI_MODEL".to_string(), json!(model));
+    }
+
+    json!({ "env": env })
 }
 
 // =============================================================================

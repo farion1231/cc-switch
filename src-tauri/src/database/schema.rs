@@ -58,7 +58,8 @@ impl Database {
             id TEXT PRIMARY KEY, name TEXT NOT NULL, server_config TEXT NOT NULL,
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
-            enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qwen BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -86,6 +87,7 @@ impl Database {
             enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qwen BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0
         )",
             [],
@@ -359,6 +361,11 @@ impl Database {
                         log::info!("迁移数据库从 v4 到 v5（计费模式支持）");
                         Self::migrate_v4_to_v5(conn)?;
                         Self::set_user_version(conn, 5)?;
+                    }
+                    5 => {
+                        log::info!("迁移数据库从 v5 到 v6（添加 Qwen 支持）");
+                        Self::migrate_v5_to_v6(conn)?;
+                        Self::set_user_version(conn, 6)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -911,6 +918,30 @@ impl Database {
         }
 
         log::info!("v4 -> v5 迁移完成：已添加计费模式与请求模型字段");
+        Ok(())
+    }
+
+    /// v5 -> v6 迁移：添加 Qwen 支持
+    ///
+    /// 为 mcp_servers 和 skills 表添加 enabled_qwen 列。
+    fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
+        // 为 mcp_servers 表添加 enabled_qwen 列
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_qwen",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        // 为 skills 表添加 enabled_qwen 列
+        Self::add_column_if_missing(
+            conn,
+            "skills",
+            "enabled_qwen",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        log::info!("v5 -> v6 迁移完成：已添加 Qwen 支持");
         Ok(())
     }
 
