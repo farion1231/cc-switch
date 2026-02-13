@@ -318,7 +318,7 @@
       "fetchRemoteFailed": "获取远端信息失败，请检查配置和网络后重试。",
       "confirmDownload": {
         "title": "从云端恢复",
-        "deviceId": "上传设备",
+        "deviceName": "上传设备",
         "createdAt": "上传时间",
         "artifacts": "包含内容",
         "warning": "恢复将覆盖本地所有数据和技能配置",
@@ -331,7 +331,7 @@
         "skillsItem": "技能包（所有自定义技能）",
         "targetPath": "目标路径",
         "existingData": "云端已有数据",
-        "deviceId": "上传设备",
+        "deviceName": "上传设备",
         "createdAt": "上传时间",
         "warning": "将覆盖云端已有的同步数据",
         "confirm": "确认上传"

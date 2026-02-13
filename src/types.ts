@@ -179,13 +179,12 @@ export interface WebDavSyncSettings {
   password?: string;
   remoteRoot?: string;
   profile?: string;
-  deviceId?: string;
   status?: WebDavSyncStatus;
 }
 
 // 远端快照信息（下载前预览）
 export interface RemoteSnapshotInfo {
-  deviceId: string;
+  deviceName: string;
   createdAt: string;
   snapshotId: string;
   version: number;

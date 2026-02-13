@@ -50,9 +50,6 @@ fn resolve_password_for_request(
     preserve_empty_password: bool,
 ) -> WebDavSyncSettings {
     if let Some(existing_settings) = existing {
-        if incoming.device_id.is_empty() {
-            incoming.device_id = existing_settings.device_id;
-        }
         if preserve_empty_password && incoming.password.is_empty() {
             incoming.password = existing_settings.password;
         }
@@ -282,7 +279,6 @@ mod tests {
             password: "secret".to_string(),
             remote_root: "cc-switch-sync".to_string(),
             profile: "default".to_string(),
-            device_id: "device-42".to_string(),
             ..WebDavSyncSettings::default()
         };
         crate::settings::set_webdav_sync_settings(Some(current.clone()))
@@ -299,7 +295,6 @@ mod tests {
         assert_eq!(after.password, "secret");
         assert_eq!(after.remote_root, "cc-switch-sync");
         assert_eq!(after.profile, "default");
-        assert_eq!(after.device_id, "device-42");
         assert!(
             after
                 .status

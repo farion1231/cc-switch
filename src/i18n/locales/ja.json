@@ -318,7 +318,7 @@
       "fetchRemoteFailed": "リモート情報の取得に失敗しました。設定とネットワークを確認してください。",
       "confirmDownload": {
         "title": "クラウドから復元",
-        "deviceId": "アップロード元",
+        "deviceName": "アップロード元",
         "createdAt": "アップロード日時",
         "artifacts": "内容",
         "warning": "ローカルのすべてのデータとスキル設定が上書きされます",
@@ -331,7 +331,7 @@
         "skillsItem": "スキル（すべてのカスタムスキル）",
         "targetPath": "保存先パス",
         "existingData": "クラウドの既存データ",
-        "deviceId": "アップロード元",
+        "deviceName": "アップロード元",
         "createdAt": "アップロード日時",
         "warning": "リモートの既存同期データが上書きされます",
         "confirm": "アップロードを実行"

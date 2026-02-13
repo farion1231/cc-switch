@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::process::Command;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,7 @@ const PROTOCOL_VERSION: u32 = 2;
 const REMOTE_DB_SQL: &str = "db.sql";
 const REMOTE_SKILLS_ZIP: &str = "skills.zip";
 const REMOTE_MANIFEST: &str = "manifest.json";
+const MAX_DEVICE_NAME_LEN: usize = 64;
 
 fn localized(key: &'static str, zh: impl Into<String>, en: impl Into<String>) -> AppError {
     AppError::localized(key, zh, en)
@@ -57,7 +59,7 @@ fn io_context_localized(
 struct SyncManifest {
     format: String,
     version: u32,
-    device_id: String,
+    device_name: String,
     created_at: String,
     artifacts: BTreeMap<String, ArtifactMeta>,
     snapshot_id: String,
@@ -190,14 +192,16 @@ pub async fn fetch_remote_info(settings: &WebDavSyncSettings) -> Result<Option<V
 
     let compatible = validate_manifest_compat(&manifest).is_ok();
 
-    Ok(Some(serde_json::json!({
-        "deviceId": manifest.device_id,
+    let payload = serde_json::json!({
+        "deviceName": manifest.device_name,
         "createdAt": manifest.created_at,
         "snapshotId": manifest.snapshot_id,
         "version": manifest.version,
         "compatible": compatible,
         "artifacts": manifest.artifacts.keys().collect::<Vec<_>>(),
-    })))
+    });
+
+    Ok(Some(payload))
 }
 
 // ─── Sync status persistence (I3: deduplicated) ─────────────
@@ -240,7 +244,7 @@ where
 
 fn build_local_snapshot(
     db: &crate::database::Database,
-    settings: &WebDavSyncSettings,
+    _settings: &WebDavSyncSettings,
 ) -> Result<LocalSnapshot, AppError> {
     // Export database to SQL string
     let sql_string = db.export_sql_string()?;
@@ -280,7 +284,7 @@ fn build_local_snapshot(
     let manifest = SyncManifest {
         format: PROTOCOL_FORMAT.to_string(),
         version: PROTOCOL_VERSION,
-        device_id: settings.device_id.clone(),
+        device_name: detect_system_device_name().unwrap_or_else(|| "Unknown Device".to_string()),
         created_at: Utc::now().to_rfc3339(),
         artifacts,
         snapshot_id,
@@ -312,6 +316,51 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+fn detect_system_device_name() -> Option<String> {
+    let env_name = [
+        "CC_SWITCH_DEVICE_NAME",
+        "COMPUTERNAME",
+        "HOSTNAME",
+    ]
+    .iter()
+    .filter_map(|key| std::env::var(key).ok())
+    .find_map(|value| normalize_device_name(&value));
+
+    if env_name.is_some() {
+        return env_name;
+    }
+
+    let output = Command::new("hostname").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let hostname = String::from_utf8(output.stdout).ok()?;
+    normalize_device_name(&hostname)
+}
+
+fn normalize_device_name(raw: &str) -> Option<String> {
+    let compact = raw.chars().fold(String::with_capacity(raw.len()), |mut acc, ch| {
+        if ch.is_whitespace() {
+            acc.push(' ');
+        } else if !ch.is_control() {
+            acc.push(ch);
+        }
+        acc
+    });
+    let normalized = compact.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = normalized.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let limited = trimmed.chars().take(MAX_DEVICE_NAME_LEN).collect::<String>();
+    if limited.is_empty() {
+        None
+    } else {
+        Some(limited)
+    }
 }
 
 fn validate_manifest_compat(manifest: &SyncManifest) -> Result<(), AppError> {
@@ -540,7 +589,7 @@ mod tests {
         SyncManifest {
             format: format.to_string(),
             version,
-            device_id: "device-1".to_string(),
+            device_name: "My MacBook".to_string(),
             created_at: "2026-02-12T00:00:00Z".to_string(),
             artifacts,
             snapshot_id: "snap-1".to_string(),
@@ -563,5 +612,38 @@ mod tests {
     fn validate_manifest_compat_rejects_wrong_version() {
         let manifest = manifest_with(PROTOCOL_FORMAT, PROTOCOL_VERSION + 1);
         assert!(validate_manifest_compat(&manifest).is_err());
+    }
+
+    #[test]
+    fn normalize_device_name_returns_none_for_blank_input() {
+        assert_eq!(normalize_device_name("   \n\t  "), None);
+    }
+
+    #[test]
+    fn normalize_device_name_collapses_whitespace_and_drops_control_chars() {
+        assert_eq!(
+            normalize_device_name("  Mac\tBook \n Pro\u{0007} "),
+            Some("Mac Book Pro".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_device_name_truncates_to_max_len() {
+        let long = "a".repeat(80);
+        assert_eq!(normalize_device_name(&long).map(|s| s.len()), Some(64));
+    }
+
+    #[test]
+    fn manifest_serialization_uses_device_name_only() {
+        let manifest = manifest_with(PROTOCOL_FORMAT, PROTOCOL_VERSION);
+        let value = serde_json::to_value(&manifest).expect("serialize manifest");
+        assert!(
+            value.get("deviceName").is_some(),
+            "manifest should contain deviceName"
+        );
+        assert!(
+            value.get("deviceId").is_none(),
+            "manifest should not contain deviceId"
+        );
     }
 }

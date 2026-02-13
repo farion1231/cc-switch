@@ -81,14 +81,6 @@ fn default_remote_root() -> String {
 fn default_profile() -> String {
     "default".to_string()
 }
-fn default_device_id() -> String {
-    use std::time::SystemTime;
-    let ts = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    format!("device-{ts}")
-}
 
 /// WebDAV v2 同步设置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,8 +98,6 @@ pub struct WebDavSyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
-    #[serde(default = "default_device_id")]
-    pub device_id: String,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -121,7 +111,6 @@ impl Default for WebDavSyncSettings {
             password: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
-            device_id: default_device_id(),
             status: WebDavSyncStatus::default(),
         }
     }
@@ -156,9 +145,6 @@ impl WebDavSyncSettings {
         }
         if self.profile.is_empty() {
             self.profile = default_profile();
-        }
-        if self.device_id.is_empty() {
-            self.device_id = default_device_id();
         }
     }
 

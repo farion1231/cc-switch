@@ -82,7 +82,6 @@ const baseConfig: WebDavSyncSettings = {
   password: "secret",
   remoteRoot: "cc-switch-sync",
   profile: "default",
-  deviceId: "device-42",
   status: {},
 };
 
@@ -118,7 +117,7 @@ describe("WebdavSyncSection", () => {
       message: "ok",
     });
     settingsApiMock.webdavSyncFetchRemoteInfo.mockResolvedValue({
-      deviceId: "remote-device",
+      deviceName: "My MacBook",
       createdAt: "2026-02-01T10:00:00Z",
       snapshotId: "snapshot-1",
       version: 2,
@@ -319,7 +318,7 @@ describe("WebdavSyncSection", () => {
 
   it("blocks download when remote snapshot is incompatible", async () => {
     settingsApiMock.webdavSyncFetchRemoteInfo.mockResolvedValueOnce({
-      deviceId: "legacy-device",
+      deviceName: "Legacy Machine",
       createdAt: "2025-01-01T00:00:00Z",
       snapshotId: "legacy-snapshot",
       version: 1,

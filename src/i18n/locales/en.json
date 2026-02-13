@@ -318,7 +318,7 @@
       "fetchRemoteFailed": "Failed to fetch remote info. Please check configuration and network.",
       "confirmDownload": {
         "title": "Restore from Cloud",
-        "deviceId": "Uploaded by",
+        "deviceName": "Uploaded by",
         "createdAt": "Uploaded at",
         "artifacts": "Contents",
         "warning": "This will overwrite all local data and skill configurations",
@@ -331,7 +331,7 @@
         "skillsItem": "Skills (all custom skills)",
         "targetPath": "Target path",
         "existingData": "Existing cloud data",
-        "deviceId": "Uploaded by",
+        "deviceName": "Uploaded by",
         "createdAt": "Uploaded at",
         "warning": "This will overwrite existing sync data on the remote server",
         "confirm": "Confirm Upload"

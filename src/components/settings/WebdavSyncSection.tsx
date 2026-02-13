@@ -247,9 +247,8 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
       password: form.password,
       remoteRoot: form.remoteRoot.trim() || "cc-switch-sync",
       profile: form.profile.trim() || "default",
-      deviceId: config?.deviceId,
     };
-  }, [form, config?.deviceId]);
+  }, [form]);
 
   // ─── Handlers ───────────────────────────────────────────
 
@@ -687,11 +686,11 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
                     </p>
                     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
                       <dt className="font-medium text-foreground">
-                        {t("settings.webdavSync.confirmUpload.deviceId")}
+                        {t("settings.webdavSync.confirmUpload.deviceName")}
                       </dt>
                       <dd>
                         <code className="bg-muted px-1.5 py-0.5 rounded">
-                          {remoteInfo.deviceId.slice(0, 8)}
+                          {remoteInfo.deviceName}
                         </code>
                       </dd>
                       <dt className="font-medium text-foreground">
@@ -738,11 +737,11 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
                 {remoteInfo && (
                   <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-muted-foreground">
                     <dt className="font-medium text-foreground">
-                      {t("settings.webdavSync.confirmDownload.deviceId")}
+                      {t("settings.webdavSync.confirmDownload.deviceName")}
                     </dt>
                     <dd>
                       <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
-                        {remoteInfo.deviceId.slice(0, 8)}
+                        {remoteInfo.deviceName}
                       </code>
                     </dd>
                     <dt className="font-medium text-foreground">
