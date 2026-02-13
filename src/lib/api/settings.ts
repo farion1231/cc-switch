@@ -106,8 +106,12 @@ export const settingsApi = {
 
   async webdavTestConnection(
     settings: WebDavSyncSettings,
+    preserveEmptyPassword = true,
   ): Promise<WebDavTestResult> {
-    return await invoke("webdav_test_connection", { settings });
+    return await invoke("webdav_test_connection", {
+      settings,
+      preserveEmptyPassword,
+    });
   },
 
   async webdavSyncUpload(): Promise<WebDavSyncResult> {
@@ -120,8 +124,12 @@ export const settingsApi = {
 
   async webdavSyncSaveSettings(
     settings: WebDavSyncSettings,
+    passwordTouched = false,
   ): Promise<{ success: boolean }> {
-    return await invoke("webdav_sync_save_settings", { settings });
+    return await invoke("webdav_sync_save_settings", {
+      settings,
+      passwordTouched,
+    });
   },
 
   async webdavSyncFetchRemoteInfo(): Promise<

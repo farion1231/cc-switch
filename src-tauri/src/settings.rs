@@ -451,6 +451,22 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     Ok(())
 }
 
+fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
+where
+    F: FnOnce(&mut AppSettings),
+{
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+    let mut next = guard.clone();
+    mutator(&mut next);
+    next.normalize_paths();
+    save_settings_file(&next)?;
+    *guard = next;
+    Ok(())
+}
+
 /// 从文件重新加载设置到内存缓存
 /// 用于导入配置等场景，确保内存缓存与文件同步
 pub fn reload_settings() -> Result<(), AppError> {
@@ -594,16 +610,21 @@ pub fn get_preferred_terminal() -> Option<String> {
 
 /// 获取 WebDAV 同步设置
 pub fn get_webdav_sync_settings() -> Option<WebDavSyncSettings> {
-    settings_store()
-        .read()
-        .ok()?
-        .webdav_sync
-        .clone()
+    settings_store().read().ok()?.webdav_sync.clone()
 }
 
 /// 保存 WebDAV 同步设置
 pub fn set_webdav_sync_settings(settings: Option<WebDavSyncSettings>) -> Result<(), AppError> {
-    let mut current = get_settings();
-    current.webdav_sync = settings;
-    update_settings(current)
+    mutate_settings(|current| {
+        current.webdav_sync = settings;
+    })
+}
+
+/// 仅更新 WebDAV 同步状态，避免覆写 credentials/root/profile 等字段
+pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        if let Some(sync) = current.webdav_sync.as_mut() {
+            sync.status = status;
+        }
+    })
 }

@@ -117,6 +117,7 @@ function ActionButton({
   icon: Icon,
   activeLabel,
   idleLabel,
+  disabled,
   ...props
 }: {
   actionState: ActionState;
@@ -125,15 +126,12 @@ function ActionButton({
   icon: LucideIcon;
   activeLabel: ReactNode;
   idleLabel: ReactNode;
-} & Omit<
-  React.ComponentPropsWithoutRef<typeof Button>,
-  "children" | "disabled"
->) {
+} & Omit<React.ComponentPropsWithoutRef<typeof Button>, "children">) {
   const isActive =
     actionState === targetState ||
     (alsoActiveFor?.includes(actionState) ?? false);
   return (
-    <Button {...props} disabled={actionState !== "idle"}>
+    <Button {...props} disabled={actionState !== "idle" || disabled}>
       <span className="inline-flex items-center gap-2">
         {isActive ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -153,10 +151,11 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
   const queryClient = useQueryClient();
   const [actionState, setActionState] = useState<ActionState>("idle");
   const [dirty, setDirty] = useState(false);
+  const [passwordTouched, setPasswordTouched] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const justSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Local form state — not auto-saved (P0 fix: credentials only saved on explicit "Save")
+  // Local form state — credentials are only persisted on explicit "Save".
   const [form, setForm] = useState(() => ({
     baseUrl: config?.baseUrl ?? "",
     username: config?.username ?? "",
@@ -198,21 +197,22 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
       remoteRoot: config.remoteRoot ?? "cc-switch-sync",
       profile: config.profile ?? "default",
     });
+    setPasswordTouched(false);
     setPresetId(detectPreset(config.baseUrl ?? ""));
   }, [config, dirty]);
 
-  const updateField = useCallback(
-    (field: keyof typeof form, value: string) => {
-      setForm((prev) => ({ ...prev, [field]: value }));
-      setDirty(true);
-      setJustSaved(false);
-      if (justSavedTimerRef.current) {
-        clearTimeout(justSavedTimerRef.current);
-        justSavedTimerRef.current = null;
-      }
-    },
-    [],
-  );
+  const updateField = useCallback((field: keyof typeof form, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    if (field === "password") {
+      setPasswordTouched(true);
+    }
+    setDirty(true);
+    setJustSaved(false);
+    if (justSavedTimerRef.current) {
+      clearTimeout(justSavedTimerRef.current);
+      justSavedTimerRef.current = null;
+    }
+  }, []);
 
   const handlePresetChange = useCallback((id: string) => {
     setPresetId(id);
@@ -261,7 +261,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     }
     setActionState("testing");
     try {
-      await settingsApi.webdavTestConnection(settings);
+      await settingsApi.webdavTestConnection(settings, !passwordTouched);
       toast.success(t("settings.webdavSync.testSuccess"));
     } catch (error) {
       toast.error(
@@ -272,7 +272,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     } finally {
       setActionState("idle");
     }
-  }, [buildSettings, t]);
+  }, [buildSettings, passwordTouched, t]);
 
   const handleSave = useCallback(async () => {
     const settings = buildSettings();
@@ -282,8 +282,9 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     }
     setActionState("saving");
     try {
-      await settingsApi.webdavSyncSaveSettings(settings);
+      await settingsApi.webdavSyncSaveSettings(settings, passwordTouched);
       setDirty(false);
+      setPasswordTouched(false);
       // Show "saved" indicator for 2 seconds
       setJustSaved(true);
       if (justSavedTimerRef.current) clearTimeout(justSavedTimerRef.current);
@@ -305,7 +306,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     // Auto-test connection after save
     setActionState("testing");
     try {
-      await settingsApi.webdavTestConnection(settings);
+      await settingsApi.webdavTestConnection(settings, true);
       toast.success(t("settings.webdavSync.saveAndTestSuccess"));
     } catch (error) {
       toast.warning(
@@ -316,7 +317,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     } finally {
       setActionState("idle");
     }
-  }, [buildSettings, queryClient, t]);
+  }, [buildSettings, passwordTouched, queryClient, t]);
 
   /** Fetch remote info, then open upload confirmation dialog. */
   const handleUploadClick = useCallback(async () => {
@@ -344,6 +345,10 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
 
   /** Actually perform the upload after user confirms. */
   const handleUploadConfirm = useCallback(async () => {
+    if (dirty) {
+      toast.error(t("settings.webdavSync.unsavedChanges"));
+      return;
+    }
     closeDialog();
     setActionState("uploading");
     try {
@@ -359,7 +364,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     } finally {
       setActionState("idle");
     }
-  }, [closeDialog, queryClient, t]);
+  }, [closeDialog, dirty, queryClient, t]);
 
   /** Fetch remote info, then open download confirmation dialog. */
   const handleDownloadClick = useCallback(async () => {
@@ -397,6 +402,10 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
 
   /** Actually perform the download after user confirms. */
   const handleDownloadConfirm = useCallback(async () => {
+    if (dirty) {
+      toast.error(t("settings.webdavSync.unsavedChanges"));
+      return;
+    }
     closeDialog();
     setActionState("downloading");
     try {
@@ -412,11 +421,14 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     } finally {
       setActionState("idle");
     }
-  }, [closeDialog, queryClient, t]);
+  }, [closeDialog, dirty, queryClient, t]);
 
   // ─── Derived state ──────────────────────────────────────
 
   const isLoading = actionState !== "idle";
+  const hasSavedConfig = Boolean(
+    config?.baseUrl?.trim() && config?.username?.trim(),
+  );
 
   const lastSyncAt = config?.status?.lastSyncAt;
   const lastSyncDisplay = lastSyncAt
@@ -603,6 +615,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
             type="button"
             size="sm"
             onClick={handleUploadClick}
+            disabled={!hasSavedConfig}
             actionState={actionState}
             targetState="uploading"
             alsoActiveFor={["fetching_remote"]}
@@ -619,6 +632,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
             variant="secondary"
             size="sm"
             onClick={handleDownloadClick}
+            disabled={!hasSavedConfig}
             actionState={actionState}
             targetState="downloading"
             alsoActiveFor={["fetching_remote"]}
@@ -631,6 +645,11 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
             idleLabel={t("settings.webdavSync.download")}
           />
         </div>
+        {!hasSavedConfig && (
+          <p className="text-xs text-muted-foreground">
+            {t("settings.webdavSync.saveBeforeSync")}
+          </p>
+        )}
       </div>
 
       {/* ─── Upload confirmation dialog ──────────────────── */}

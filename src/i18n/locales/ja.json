@@ -18,7 +18,6 @@
     "version": "バージョン",
     "loading": "読み込み中...",
     "notInstalled": "未インストール",
-    "notSet": "未設定",
     "success": "成功",
     "error": "エラー",
     "unknown": "不明",
@@ -284,7 +283,6 @@
       "testFailed": "接続失敗：{{error}}",
       "save": "設定を保存",
       "saving": "保存中...",
-      "saveSuccess": "WebDAV 設定を保存しました",
       "saveFailed": "設定の保存に失敗しました：{{error}}",
       "upload": "クラウドにアップロード",
       "uploading": "アップロード中...",
@@ -315,6 +313,7 @@
       "unsaved": "未保存",
       "saved": "保存済み",
       "unsavedChanges": "先に設定を保存してください",
+      "saveBeforeSync": "アップロード/ダウンロードを有効にするには、先に設定を保存してください。",
       "fetchingRemote": "リモート情報を取得中...",
       "fetchRemoteFailed": "リモート情報の取得に失敗しました。設定とネットワークを確認してください。",
       "confirmDownload": {
@@ -621,8 +620,6 @@
     "addEndpointPlaceholder": "https://api.example.com",
     "done": "完了",
     "noEndpoints": "エンドポイントがありません",
-    "empty": "エンドポイントがありません",
-    "notTested": "未テスト",
     "failed": "失敗",
     "enterValidUrl": "有効な URL を入力してください",
     "invalidUrlFormat": "URL 形式が正しくありません",
@@ -1183,7 +1180,6 @@
       "http429": "リクエストが多すぎます。時間をおいて再試行してください",
       "parseMetadataFailed": "スキルメタデータの解析に失敗しました",
       "getHomeDirFailed": "ユーザーのホームディレクトリを取得できません",
-      "noSkillsInZip": "ZIP ファイルにスキルが見つかりませんでした（SKILL.md が必要です）",
       "networkError": "ネットワークエラー",
       "fsError": "ファイルシステムエラー",
       "unknownError": "不明なエラー",
@@ -1194,8 +1190,7 @@
         "checkRepoUrl": "リポジトリ URL とブランチ名を確認してください",
         "checkDiskSpace": "ディスク容量を確認してください",
         "checkPermission": "ディレクトリの権限を確認してください",
-        "uninstallFirst": "同名のスキルを先にアンインストールしてください",
-        "checkZipContent": "ZIP ファイルに有効なスキルディレクトリ（SKILL.md を含む）があることを確認してください"
+        "uninstallFirst": "同名のスキルを先にアンインストールしてください"
       }
     },
     "repo": {
@@ -1252,7 +1247,7 @@
       "installing": "インストール中...",
       "successSingle": "スキル {{name}} をインストールしました",
       "successMultiple": "{{count}} 件のスキルをインストールしました",
-      "noSkillsFound": "ZIP ファイルにスキルが見つかりませんでした（SKILL.md が必要です）"
+      "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
     }
   },
   "deeplink": {
@@ -1464,12 +1459,7 @@
       "toast": {
         "saved": "プロキシ設定を保存しました",
         "saveFailed": "保存に失敗しました: {{error}}"
-      },
-      "invalidPort": "ポートが無効です。1024〜65535 の数値を入力してください",
-      "invalidAddress": "アドレスが無効です。有効な IP アドレス（例: 127.0.0.1）または localhost を入力してください",
-      "configSaved": "プロキシ設定を保存しました",
-      "configSaveFailed": "設定の保存に失敗しました",
-      "restartRequired": "アドレスまたはポート変更を反映するにはプロキシサービスを再起動してください"
+      }
     },
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "failover": {
@@ -1499,7 +1489,6 @@
       "info": "フェイルオーバーキューに複数のプロバイダーが設定されている場合、リクエストが失敗すると優先度順に試行します。プロバイダーが連続失敗のしきい値に達すると、サーキットブレーカーが開き、一時的にスキップされます。",
       "configSaved": "自動フェイルオーバー設定を保存しました",
       "configSaveFailed": "保存に失敗しました",
-      "validationFailed": "次のフィールドが有効範囲外です: {{fields}}",
       "retrySettings": "リトライとタイムアウト設定",
       "failureThreshold": "失敗しきい値",
       "failureThresholdHint": "この回数連続で失敗するとサーキットブレーカーが開きます（推奨: 3-10）",
@@ -1552,16 +1541,6 @@
     "streamingIdle": "ストリーミングアイドルタイムアウト",
     "nonStreaming": "非ストリーミングタイムアウト"
   },
-  "circuitBreaker": {
-    "failureThreshold": "失敗しきい値",
-    "successThreshold": "成功しきい値",
-    "timeoutSeconds": "タイムアウト（秒）",
-    "errorRateThreshold": "エラー率しきい値",
-    "minRequests": "最小リクエスト数",
-    "validationFailed": "次のフィールドが有効範囲外です: {{fields}}",
-    "configSaved": "サーキットブレーカー設定を保存しました",
-    "saveFailed": "保存に失敗しました"
-  },
   "universalProvider": {
     "title": "統合プロバイダー",
     "description": "統合プロバイダーは Claude、Codex、Gemini の設定を同時に管理します。変更は有効なすべてのアプリに自動的に同期されます。",
@@ -1586,7 +1565,6 @@
     "syncError": "同期に失敗しました",
     "noAppsEnabled": "有効なアプリがありません",
     "added": "統合プロバイダーを追加しました",
-    "addedAndSynced": "統合プロバイダーを追加し同期しました",
     "updated": "統合プロバイダーを更新しました",
     "deleted": "統合プロバイダーを削除しました",
     "addSuccess": "統合プロバイダーを追加しました",

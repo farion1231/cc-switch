@@ -5,24 +5,24 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tempfile::{tempdir, TempDir};
-use zip::write::SimpleFileOptions;
-use zip::DateTime;
+use tempfile::tempdir;
 
 use crate::error::AppError;
-use crate::services::skill::SkillService;
 use crate::services::webdav::{
     auth_from_credentials, build_remote_url, ensure_remote_directories, get_bytes, head_etag,
     path_segments, put_bytes, test_connection, WebDavAuth,
 };
-use crate::settings::{set_webdav_sync_settings, WebDavSyncSettings};
+use crate::settings::{update_webdav_sync_status, WebDavSyncSettings, WebDavSyncStatus};
+
+mod archive;
+use archive::{
+    backup_current_skills, restore_skills_from_backup, restore_skills_zip, zip_skills_ssot,
+};
 
 // ─── Protocol constants ──────────────────────────────────────
 
@@ -125,7 +125,12 @@ pub async fn upload(
         }
     };
 
-    persist_sync_success(settings, snapshot.manifest_hash, etag)?;
+    let _persisted = persist_sync_success_best_effort(
+        settings,
+        snapshot.manifest_hash,
+        etag,
+        persist_sync_success,
+    );
     Ok(serde_json::json!({ "status": "uploaded" }))
 }
 
@@ -138,15 +143,13 @@ pub async fn download(
     let auth = auth_for(settings);
 
     let manifest_url = remote_file_url(settings, REMOTE_MANIFEST)?;
-    let (manifest_bytes, etag) = get_bytes(&manifest_url, &auth)
-        .await?
-        .ok_or_else(|| {
-            localized(
-                "webdav.sync.remote_empty",
-                "远端没有可下载的同步数据",
-                "No downloadable sync data found on the remote.",
-            )
-        })?;
+    let (manifest_bytes, etag) = get_bytes(&manifest_url, &auth).await?.ok_or_else(|| {
+        localized(
+            "webdav.sync.remote_empty",
+            "远端没有可下载的同步数据",
+            "No downloadable sync data found on the remote.",
+        )
+    })?;
 
     let manifest: SyncManifest =
         serde_json::from_slice(&manifest_bytes).map_err(|e| AppError::Json {
@@ -154,26 +157,7 @@ pub async fn download(
             source: e,
         })?;
 
-    if manifest.format != PROTOCOL_FORMAT {
-        return Err(localized(
-            "webdav.sync.manifest_format_incompatible",
-            format!("远端 manifest 格式不兼容: {}", manifest.format),
-            format!("Remote manifest format is incompatible: {}", manifest.format),
-        ));
-    }
-    if manifest.version != PROTOCOL_VERSION {
-        return Err(localized(
-            "webdav.sync.manifest_version_incompatible",
-            format!(
-                "远端 manifest 协议版本不兼容: v{} (本地 v{PROTOCOL_VERSION})",
-                manifest.version
-            ),
-            format!(
-                "Remote manifest protocol version is incompatible: v{} (local v{PROTOCOL_VERSION})",
-                manifest.version
-            ),
-        ));
-    }
+    validate_manifest_compat(&manifest)?;
 
     // Download and verify artifacts
     let db_sql = download_and_verify(settings, &auth, REMOTE_DB_SQL, &manifest.artifacts).await?;
@@ -184,14 +168,13 @@ pub async fn download(
     apply_snapshot(db, &db_sql, &skills_zip)?;
 
     let manifest_hash = sha256_hex(&manifest_bytes);
-    persist_sync_success(settings, manifest_hash, etag)?;
+    let _persisted =
+        persist_sync_success_best_effort(settings, manifest_hash, etag, persist_sync_success);
     Ok(serde_json::json!({ "status": "downloaded" }))
 }
 
 /// Fetch remote manifest info without downloading artifacts.
-pub async fn fetch_remote_info(
-    settings: &WebDavSyncSettings,
-) -> Result<Option<Value>, AppError> {
+pub async fn fetch_remote_info(settings: &WebDavSyncSettings) -> Result<Option<Value>, AppError> {
     settings.validate()?;
     let auth = auth_for(settings);
     let manifest_url = remote_file_url(settings, REMOTE_MANIFEST)?;
@@ -200,14 +183,12 @@ pub async fn fetch_remote_info(
         return Ok(None);
     };
 
-    let manifest: SyncManifest =
-        serde_json::from_slice(&bytes).map_err(|e| AppError::Json {
-            path: REMOTE_MANIFEST.to_string(),
-            source: e,
-        })?;
+    let manifest: SyncManifest = serde_json::from_slice(&bytes).map_err(|e| AppError::Json {
+        path: REMOTE_MANIFEST.to_string(),
+        source: e,
+    })?;
 
-    let compatible =
-        manifest.format == PROTOCOL_FORMAT && manifest.version == PROTOCOL_VERSION;
+    let compatible = validate_manifest_compat(&manifest).is_ok();
 
     Ok(Some(serde_json::json!({
         "deviceId": manifest.device_id,
@@ -226,12 +207,33 @@ fn persist_sync_success(
     manifest_hash: String,
     etag: Option<String>,
 ) -> Result<(), AppError> {
-    settings.status.last_sync_at = Some(Utc::now().timestamp());
-    settings.status.last_error = None;
-    settings.status.last_local_manifest_hash = Some(manifest_hash.clone());
-    settings.status.last_remote_manifest_hash = Some(manifest_hash);
-    settings.status.last_remote_etag = etag;
-    set_webdav_sync_settings(Some(settings.clone()))
+    let status = WebDavSyncStatus {
+        last_sync_at: Some(Utc::now().timestamp()),
+        last_error: None,
+        last_local_manifest_hash: Some(manifest_hash.clone()),
+        last_remote_manifest_hash: Some(manifest_hash),
+        last_remote_etag: etag,
+    };
+    settings.status = status.clone();
+    update_webdav_sync_status(status)
+}
+
+fn persist_sync_success_best_effort<F>(
+    settings: &mut WebDavSyncSettings,
+    manifest_hash: String,
+    etag: Option<String>,
+    persist_fn: F,
+) -> bool
+where
+    F: FnOnce(&mut WebDavSyncSettings, String, Option<String>) -> Result<(), AppError>,
+{
+    match persist_fn(settings, manifest_hash, etag) {
+        Ok(()) => true,
+        Err(err) => {
+            log::warn!("[WebDAV] Persist sync status failed, keep operation success: {err}");
+            false
+        }
+    }
 }
 
 // ─── Snapshot building ───────────────────────────────────────
@@ -312,263 +314,30 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-// ─── Skills ZIP ──────────────────────────────────────────────
-
-fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
-    let source = SkillService::get_ssot_dir()
-        .map_err(|e| {
-            localized(
-                "webdav.sync.skills_ssot_dir_failed",
-                format!("获取 Skills SSOT 目录失败: {e}"),
-                format!("Failed to resolve Skills SSOT directory: {e}"),
-            )
-        })?;
-    if let Some(parent) = dest_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+fn validate_manifest_compat(manifest: &SyncManifest) -> Result<(), AppError> {
+    if manifest.format != PROTOCOL_FORMAT {
+        return Err(localized(
+            "webdav.sync.manifest_format_incompatible",
+            format!("远端 manifest 格式不兼容: {}", manifest.format),
+            format!(
+                "Remote manifest format is incompatible: {}",
+                manifest.format
+            ),
+        ));
     }
-
-    let file = fs::File::create(dest_path).map_err(|e| AppError::io(dest_path, e))?;
-    let mut writer = zip::ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .last_modified_time(DateTime::default());
-
-    if source.exists() {
-        // Canonicalize root once so symlink targets can be bounds-checked
-        let canonical_root = fs::canonicalize(&source).unwrap_or_else(|_| source.clone());
-        zip_dir_recursive(&canonical_root, &canonical_root, &mut writer, options)?;
+    if manifest.version != PROTOCOL_VERSION {
+        return Err(localized(
+            "webdav.sync.manifest_version_incompatible",
+            format!(
+                "远端 manifest 协议版本不兼容: v{} (本地 v{PROTOCOL_VERSION})",
+                manifest.version
+            ),
+            format!(
+                "Remote manifest protocol version is incompatible: v{} (local v{PROTOCOL_VERSION})",
+                manifest.version
+            ),
+        ));
     }
-
-    writer
-        .finish()
-        .map_err(|e| {
-            localized(
-                "webdav.sync.skills_zip_write_failed",
-                format!("写入 skills.zip 失败: {e}"),
-                format!("Failed to write skills.zip: {e}"),
-            )
-        })?;
-    Ok(())
-}
-
-fn zip_dir_recursive(
-    root: &Path,
-    current: &Path,
-    writer: &mut zip::ZipWriter<fs::File>,
-    options: SimpleFileOptions,
-) -> Result<(), AppError> {
-    let mut entries: Vec<_> = fs::read_dir(current)
-        .map_err(|e| AppError::io(current, e))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| AppError::io(current, e))?;
-    entries.sort_by_key(|e| e.file_name());
-
-    for entry in entries {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-
-        // Skip .DS_Store, .git, and hidden files
-        if name_str.starts_with('.') {
-            continue;
-        }
-
-        // Dereference symlinks, but skip targets that escape the root directory
-        let real_path = match fs::canonicalize(&path) {
-            Ok(p) if p.starts_with(root) => p,
-            Ok(_) => {
-                log::warn!(
-                    "[WebDAV] Skipping symlink outside skills root: {}",
-                    path.display()
-                );
-                continue;
-            }
-            Err(_) => path.clone(),
-        };
-
-        let rel = real_path
-            .strip_prefix(root)
-            .or_else(|_| path.strip_prefix(root))
-            .map_err(|e| {
-                localized(
-                    "webdav.sync.zip_relative_path_failed",
-                    format!("生成 ZIP 相对路径失败: {e}"),
-                    format!("Failed to build relative ZIP path: {e}"),
-                )
-            })?;
-        let rel_str = rel.to_string_lossy().replace('\\', "/");
-
-        if real_path.is_dir() {
-            writer
-                .add_directory(format!("{rel_str}/"), options)
-                .map_err(|e| {
-                    localized(
-                        "webdav.sync.zip_add_directory_failed",
-                        format!("写入 ZIP 目录失败: {e}"),
-                        format!("Failed to write ZIP directory entry: {e}"),
-                    )
-                })?;
-            zip_dir_recursive(root, &real_path, writer, options)?;
-        } else {
-            writer
-                .start_file(&rel_str, options)
-                .map_err(|e| {
-                    localized(
-                        "webdav.sync.zip_start_file_failed",
-                        format!("写入 ZIP 文件头失败: {e}"),
-                        format!("Failed to start ZIP file entry: {e}"),
-                    )
-                })?;
-            let mut file = fs::File::open(&real_path).map_err(|e| AppError::io(&real_path, e))?;
-            let mut buf = Vec::new();
-            file.read_to_end(&mut buf)
-                .map_err(|e| AppError::io(&real_path, e))?;
-            writer
-                .write_all(&buf)
-                .map_err(|e| {
-                    localized(
-                        "webdav.sync.zip_write_file_failed",
-                        format!("写入 ZIP 文件内容失败: {e}"),
-                        format!("Failed to write ZIP file content: {e}"),
-                    )
-                })?;
-        }
-    }
-    Ok(())
-}
-
-fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
-    let tmp = tempdir().map_err(|e| {
-        io_context_localized(
-            "webdav.sync.skills_extract_tmpdir_failed",
-            "创建 skills 解压临时目录失败",
-            "Failed to create temporary directory for skills extraction",
-            e,
-        )
-    })?;
-    let zip_path = tmp.path().join(REMOTE_SKILLS_ZIP);
-    fs::write(&zip_path, raw).map_err(|e| AppError::io(&zip_path, e))?;
-
-    let file = fs::File::open(&zip_path).map_err(|e| AppError::io(&zip_path, e))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| {
-            localized(
-                "webdav.sync.skills_zip_parse_failed",
-                format!("解析 skills.zip 失败: {e}"),
-                format!("Failed to parse skills.zip: {e}"),
-            )
-        })?;
-
-    let extracted = tmp.path().join("skills-extracted");
-    fs::create_dir_all(&extracted).map_err(|e| AppError::io(&extracted, e))?;
-
-    for idx in 0..archive.len() {
-        let mut entry = archive
-            .by_index(idx)
-            .map_err(|e| {
-                localized(
-                    "webdav.sync.skills_zip_entry_read_failed",
-                    format!("读取 ZIP 项失败: {e}"),
-                    format!("Failed to read ZIP entry: {e}"),
-                )
-            })?;
-        // Zip-slip protection
-        let Some(safe_name) = entry.enclosed_name() else {
-            continue;
-        };
-        let out_path = extracted.join(safe_name);
-        if entry.is_dir() {
-            fs::create_dir_all(&out_path).map_err(|e| AppError::io(&out_path, e))?;
-            continue;
-        }
-        if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-        }
-        let mut out = fs::File::create(&out_path).map_err(|e| AppError::io(&out_path, e))?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| AppError::io(&out_path, e))?;
-    }
-
-    // Rename-based swap: old → .bak, extracted → SSOT, then delete .bak.
-    // Ensures at least one valid copy exists at all times.
-    let ssot = SkillService::get_ssot_dir()
-        .map_err(|e| {
-            localized(
-                "webdav.sync.skills_ssot_dir_failed",
-                format!("获取 Skills SSOT 目录失败: {e}"),
-                format!("Failed to resolve Skills SSOT directory: {e}"),
-            )
-        })?;
-    let bak = ssot.with_extension("bak");
-
-    if ssot.exists() {
-        if bak.exists() {
-            let _ = fs::remove_dir_all(&bak);
-        }
-        fs::rename(&ssot, &bak).map_err(|e| AppError::io(&ssot, e))?;
-    }
-
-    if let Err(e) = copy_dir_recursive(&extracted, &ssot) {
-        // Rollback: restore backup
-        if bak.exists() {
-            let _ = fs::remove_dir_all(&ssot);
-            let _ = fs::rename(&bak, &ssot);
-        }
-        return Err(e);
-    }
-
-    // Cleanup backup
-    let _ = fs::remove_dir_all(&bak);
-    Ok(())
-}
-
-struct SkillsBackup {
-    _tmp: TempDir,
-    backup_dir: PathBuf,
-    ssot_path: PathBuf,
-    existed: bool,
-}
-
-fn backup_current_skills() -> Result<SkillsBackup, AppError> {
-    let ssot = SkillService::get_ssot_dir()
-        .map_err(|e| {
-            localized(
-                "webdav.sync.skills_ssot_dir_failed",
-                format!("获取 Skills SSOT 目录失败: {e}"),
-                format!("Failed to resolve Skills SSOT directory: {e}"),
-            )
-        })?;
-    let tmp = tempdir().map_err(|e| {
-        io_context_localized(
-            "webdav.sync.skills_backup_tmpdir_failed",
-            "创建 skills 备份临时目录失败",
-            "Failed to create temporary directory for skills backup",
-            e,
-        )
-    })?;
-    let backup_dir = tmp.path().join("skills-backup");
-
-    let existed = ssot.exists();
-    if existed {
-        copy_dir_recursive(&ssot, &backup_dir)?;
-    }
-
-    Ok(SkillsBackup {
-        _tmp: tmp,
-        backup_dir,
-        ssot_path: ssot,
-        existed,
-    })
-}
-
-fn restore_skills_from_backup(backup: &SkillsBackup) -> Result<(), AppError> {
-    if backup.ssot_path.exists() {
-        fs::remove_dir_all(&backup.ssot_path).map_err(|e| AppError::io(&backup.ssot_path, e))?;
-    }
-
-    if backup.existed {
-        copy_dir_recursive(&backup.backup_dir, &backup.ssot_path)?;
-    }
-
     Ok(())
 }
 
@@ -588,15 +357,13 @@ async fn download_and_verify(
         )
     })?;
     let url = remote_file_url(settings, artifact_name)?;
-    let (bytes, _) = get_bytes(&url, auth)
-        .await?
-        .ok_or_else(|| {
-            localized(
-                "webdav.sync.remote_missing_artifact",
-                format!("远端缺少 artifact 文件: {artifact_name}"),
-                format!("Remote artifact file missing: {artifact_name}"),
-            )
-        })?;
+    let (bytes, _) = get_bytes(&url, auth).await?.ok_or_else(|| {
+        localized(
+            "webdav.sync.remote_missing_artifact",
+            format!("远端缺少 artifact 文件: {artifact_name}"),
+            format!("Remote artifact file missing: {artifact_name}"),
+        )
+    })?;
 
     // Quick size check before expensive hash
     if bytes.len() as u64 != meta.size {
@@ -687,26 +454,6 @@ fn auth_for(settings: &WebDavSyncSettings) -> WebDavAuth {
     auth_from_credentials(&settings.username, &settings.password)
 }
 
-// ─── Internal helpers ────────────────────────────────────────
-
-fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), AppError> {
-    if !src.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(dest).map_err(|e| AppError::io(dest, e))?;
-    for entry in fs::read_dir(src).map_err(|e| AppError::io(src, e))? {
-        let entry = entry.map_err(|e| AppError::io(src, e))?;
-        let path = entry.path();
-        let dest_path = dest.join(entry.file_name());
-        if path.is_dir() {
-            copy_dir_recursive(&path, &dest_path)?;
-        } else {
-            fs::copy(&path, &dest_path).map_err(|e| AppError::io(&dest_path, e))?;
-        }
-    }
-    Ok(())
-}
-
 // ─── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -714,7 +461,10 @@ mod tests {
     use super::*;
 
     fn artifact(sha256: &str, size: u64) -> ArtifactMeta {
-        ArtifactMeta { sha256: sha256.to_string(), size }
+        ArtifactMeta {
+            sha256: sha256.to_string(),
+            size,
+        }
     }
 
     #[test]
@@ -757,5 +507,61 @@ mod tests {
             hash,
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
+    }
+
+    #[test]
+    fn persist_best_effort_returns_true_on_success() {
+        let mut settings = WebDavSyncSettings::default();
+        let ok = persist_sync_success_best_effort(
+            &mut settings,
+            "hash".to_string(),
+            Some("etag".to_string()),
+            |_settings, _hash, _etag| Ok(()),
+        );
+        assert!(ok);
+    }
+
+    #[test]
+    fn persist_best_effort_returns_false_on_error() {
+        let mut settings = WebDavSyncSettings::default();
+        let ok = persist_sync_success_best_effort(
+            &mut settings,
+            "hash".to_string(),
+            None,
+            |_settings, _hash, _etag| Err(AppError::Config("boom".to_string())),
+        );
+        assert!(!ok);
+    }
+
+    fn manifest_with(format: &str, version: u32) -> SyncManifest {
+        let mut artifacts = BTreeMap::new();
+        artifacts.insert("db.sql".to_string(), artifact("abc", 1));
+        artifacts.insert("skills.zip".to_string(), artifact("def", 2));
+        SyncManifest {
+            format: format.to_string(),
+            version,
+            device_id: "device-1".to_string(),
+            created_at: "2026-02-12T00:00:00Z".to_string(),
+            artifacts,
+            snapshot_id: "snap-1".to_string(),
+        }
+    }
+
+    #[test]
+    fn validate_manifest_compat_accepts_supported_manifest() {
+        let manifest = manifest_with(PROTOCOL_FORMAT, PROTOCOL_VERSION);
+        assert!(validate_manifest_compat(&manifest).is_ok());
+    }
+
+    #[test]
+    fn validate_manifest_compat_rejects_wrong_format() {
+        let manifest = manifest_with("other-format", PROTOCOL_VERSION);
+        assert!(validate_manifest_compat(&manifest).is_err());
+    }
+
+    #[test]
+    fn validate_manifest_compat_rejects_wrong_version() {
+        let manifest = manifest_with(PROTOCOL_FORMAT, PROTOCOL_VERSION + 1);
+        assert!(validate_manifest_compat(&manifest).is_err());
     }
 }

@@ -833,7 +833,6 @@ mod tests {
     struct TempHome {
         #[allow(dead_code)] // 字段通过 Drop trait 管理临时目录生命周期
         dir: TempDir,
-        original_test_home: Option<String>,
         original_home: Option<String>,
         original_userprofile: Option<String>,
     }
@@ -841,19 +840,14 @@ mod tests {
     impl TempHome {
         fn new() -> Self {
             let dir = TempDir::new().expect("failed to create temp home");
-            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
             let original_home = env::var("HOME").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
 
-            // Windows 上 `dirs::home_dir()` 不受 HOME/USERPROFILE 影响（走 Known Folder API）。
-            // 项目使用 `CC_SWITCH_TEST_HOME` 显式覆盖，以确保测试隔离真实用户数据。
-            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
             env::set_var("HOME", dir.path());
             env::set_var("USERPROFILE", dir.path());
 
             Self {
                 dir,
-                original_test_home,
                 original_home,
                 original_userprofile,
             }
@@ -862,11 +856,6 @@ mod tests {
 
     impl Drop for TempHome {
         fn drop(&mut self) {
-            match &self.original_test_home {
-                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-
             match &self.original_home {
                 Some(value) => env::set_var("HOME", value),
                 None => env::remove_var("HOME"),
