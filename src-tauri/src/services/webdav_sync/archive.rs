@@ -12,6 +12,11 @@ use crate::services::skill::SkillService;
 
 use super::{io_context_localized, localized, REMOTE_SKILLS_ZIP};
 
+/// Maximum total bytes allowed during zip extraction (512 MB).
+const MAX_EXTRACT_BYTES: u64 = 512 * 1024 * 1024;
+/// Maximum number of entries allowed in a zip archive.
+const MAX_EXTRACT_ENTRIES: usize = 10_000;
+
 pub(super) struct SkillsBackup {
     _tmp: TempDir,
     backup_dir: PathBuf,
@@ -84,6 +89,15 @@ pub(super) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
     let extracted = tmp.path().join("skills-extracted");
     fs::create_dir_all(&extracted).map_err(|e| AppError::io(&extracted, e))?;
 
+    if archive.len() > MAX_EXTRACT_ENTRIES {
+        return Err(localized(
+            "webdav.sync.skills_zip_too_many_entries",
+            format!("skills.zip 条目数过多（{}），上限 {MAX_EXTRACT_ENTRIES}", archive.len()),
+            format!("skills.zip has too many entries ({}), limit is {MAX_EXTRACT_ENTRIES}", archive.len()),
+        ));
+    }
+
+    let mut total_bytes: u64 = 0;
     for idx in 0..archive.len() {
         let mut entry = archive.by_index(idx).map_err(|e| {
             localized(
@@ -104,7 +118,15 @@ pub(super) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
         let mut out = fs::File::create(&out_path).map_err(|e| AppError::io(&out_path, e))?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| AppError::io(&out_path, e))?;
+        let written = std::io::copy(&mut entry, &mut out).map_err(|e| AppError::io(&out_path, e))?;
+        total_bytes += written;
+        if total_bytes > MAX_EXTRACT_BYTES {
+            return Err(localized(
+                "webdav.sync.skills_zip_too_large",
+                format!("skills.zip 解压后体积超过上限（{} MB）", MAX_EXTRACT_BYTES / 1024 / 1024),
+                format!("skills.zip extracted size exceeds limit ({} MB)", MAX_EXTRACT_BYTES / 1024 / 1024),
+            ));
+        }
     }
 
     let ssot = SkillService::get_ssot_dir().map_err(|e| {
