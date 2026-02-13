@@ -561,6 +561,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     {t("mcp.unifiedPanel.apps.gemini")}
                   </label>
                 </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-opencode"
+                    checked={enabledApps.opencode}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, opencode: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-opencode"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.opencode")}
+                  </label>
+                </div>
               </div>
             </div>
 
