@@ -1135,9 +1135,12 @@ impl SkillService {
             )));
         };
 
+        // 第一遍：解压普通文件和目录，收集 symlink 条目
+        let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
+
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
-            let file_path = file.name();
+            let file_path = file.name().to_string();
 
             let relative_path =
                 if let Some(stripped) = file_path.strip_prefix(&format!("{root_name}/")) {
@@ -1152,7 +1155,12 @@ impl SkillService {
 
             let outpath = dest.join(relative_path);
 
-            if file.is_dir() {
+            if file.is_symlink() {
+                // 读取 symlink 目标路径
+                let mut target = String::new();
+                std::io::Read::read_to_string(&mut file, &mut target)?;
+                symlinks.push((outpath, target.trim().to_string()));
+            } else if file.is_dir() {
                 fs::create_dir_all(&outpath)?;
             } else {
                 if let Some(parent) = outpath.parent() {
@@ -1162,6 +1170,9 @@ impl SkillService {
                 std::io::copy(&mut file, &mut outfile)?;
             }
         }
+
+        // 第二遍：解析 symlink，将目标内容复制到 symlink 位置
+        Self::resolve_symlinks_in_dir(dest, &symlinks)?;
 
         Ok(())
     }
@@ -1182,6 +1193,58 @@ impl SkillService {
             }
         }
 
+        Ok(())
+    }
+
+    /// 解析 ZIP 中的符号链接：将目标内容复制到 symlink 位置
+    ///
+    /// GitHub ZIP 归档保留了 symlink 元数据，解压时可通过 `is_symlink()` 检测。
+    /// 此方法将 symlink 解析为实际文件/目录内容（而非创建真实 symlink），
+    /// 以确保跨平台兼容且 skill 内容自包含。
+    fn resolve_symlinks_in_dir(base_dir: &Path, symlinks: &[(PathBuf, String)]) -> Result<()> {
+        // 规范化 base_dir（macOS 上 /tmp → /private/tmp，需保持一致）
+        let canonical_base = base_dir
+            .canonicalize()
+            .unwrap_or_else(|_| base_dir.to_path_buf());
+
+        for (link_path, target) in symlinks {
+            // 计算 symlink 的父目录，然后拼接目标的相对路径
+            let parent = link_path.parent().unwrap_or(base_dir);
+            let resolved = parent.join(target);
+
+            // 规范化路径（解析 .. 等）
+            let resolved = match resolved.canonicalize() {
+                Ok(p) => p,
+                Err(_) => {
+                    log::warn!(
+                        "Symlink 目标不存在，跳过: {} -> {}",
+                        link_path.display(),
+                        target
+                    );
+                    continue;
+                }
+            };
+
+            // 安全检查：确保目标在 base_dir 内（防止路径穿越）
+            if !resolved.starts_with(&canonical_base) {
+                log::warn!(
+                    "Symlink 目标超出仓库范围，跳过: {} -> {}",
+                    link_path.display(),
+                    resolved.display()
+                );
+                continue;
+            }
+
+            // 复制目标内容到 symlink 位置
+            if resolved.is_dir() {
+                Self::copy_dir_recursive(&resolved, link_path)?;
+            } else if resolved.is_file() {
+                if let Some(parent) = link_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(&resolved, link_path)?;
+            }
+        }
         Ok(())
     }
 
@@ -1314,6 +1377,8 @@ impl SkillService {
         let temp_path = temp_dir.path().to_path_buf();
         let _ = temp_dir.keep(); // Keep the directory, we'll clean up later
 
+        let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
+
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
             let file_path = match file.enclosed_name() {
@@ -1323,7 +1388,11 @@ impl SkillService {
 
             let outpath = temp_path.join(&file_path);
 
-            if file.is_dir() {
+            if file.is_symlink() {
+                let mut target = String::new();
+                std::io::Read::read_to_string(&mut file, &mut target)?;
+                symlinks.push((outpath, target.trim().to_string()));
+            } else if file.is_dir() {
                 fs::create_dir_all(&outpath)?;
             } else {
                 if let Some(parent) = outpath.parent() {
@@ -1333,6 +1402,9 @@ impl SkillService {
                 std::io::copy(&mut file, &mut outfile)?;
             }
         }
+
+        // 解析 symlink
+        Self::resolve_symlinks_in_dir(&temp_path, &symlinks)?;
 
         Ok(temp_path)
     }
