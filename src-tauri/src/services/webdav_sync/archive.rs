@@ -10,10 +10,8 @@ use zip::DateTime;
 use crate::error::AppError;
 use crate::services::skill::SkillService;
 
-use super::{io_context_localized, localized, REMOTE_SKILLS_ZIP};
+use super::{io_context_localized, localized, MAX_SYNC_ARTIFACT_BYTES, REMOTE_SKILLS_ZIP};
 
-/// Maximum total bytes allowed during zip extraction (512 MB).
-const MAX_EXTRACT_BYTES: u64 = 512 * 1024 * 1024;
 /// Maximum number of entries allowed in a zip archive.
 const MAX_EXTRACT_ENTRIES: usize = 10_000;
 
@@ -92,8 +90,14 @@ pub(super) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
     if archive.len() > MAX_EXTRACT_ENTRIES {
         return Err(localized(
             "webdav.sync.skills_zip_too_many_entries",
-            format!("skills.zip 条目数过多（{}），上限 {MAX_EXTRACT_ENTRIES}", archive.len()),
-            format!("skills.zip has too many entries ({}), limit is {MAX_EXTRACT_ENTRIES}", archive.len()),
+            format!(
+                "skills.zip 条目数过多（{}），上限 {MAX_EXTRACT_ENTRIES}",
+                archive.len()
+            ),
+            format!(
+                "skills.zip has too many entries ({}), limit is {MAX_EXTRACT_ENTRIES}",
+                archive.len()
+            ),
         ));
     }
 
@@ -118,15 +122,13 @@ pub(super) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
         let mut out = fs::File::create(&out_path).map_err(|e| AppError::io(&out_path, e))?;
-        let written = std::io::copy(&mut entry, &mut out).map_err(|e| AppError::io(&out_path, e))?;
-        total_bytes += written;
-        if total_bytes > MAX_EXTRACT_BYTES {
-            return Err(localized(
-                "webdav.sync.skills_zip_too_large",
-                format!("skills.zip 解压后体积超过上限（{} MB）", MAX_EXTRACT_BYTES / 1024 / 1024),
-                format!("skills.zip extracted size exceeds limit ({} MB)", MAX_EXTRACT_BYTES / 1024 / 1024),
-            ));
-        }
+        let _written = copy_entry_with_total_limit(
+            &mut entry,
+            &mut out,
+            &mut total_bytes,
+            MAX_SYNC_ARTIFACT_BYTES,
+            &out_path,
+        )?;
     }
 
     let ssot = SkillService::get_ssot_dir().map_err(|e| {
@@ -327,10 +329,47 @@ fn mark_visited_dir(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<bool,
     Ok(visited.insert(canonical))
 }
 
+fn copy_entry_with_total_limit<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    total_bytes: &mut u64,
+    max_total_bytes: u64,
+    out_path: &Path,
+) -> Result<u64, AppError> {
+    let mut buffer = [0u8; 16 * 1024];
+    let mut written = 0u64;
+    loop {
+        let n = reader
+            .read(&mut buffer)
+            .map_err(|e| AppError::io(out_path, e))?;
+        if n == 0 {
+            break;
+        }
+
+        if total_bytes.saturating_add(n as u64) > max_total_bytes {
+            let max_mb = max_total_bytes / 1024 / 1024;
+            return Err(localized(
+                "webdav.sync.skills_zip_too_large",
+                format!("skills.zip 解压后体积超过上限（{} MB）", max_mb),
+                format!("skills.zip extracted size exceeds limit ({} MB)", max_mb),
+            ));
+        }
+
+        writer
+            .write_all(&buffer[..n])
+            .map_err(|e| AppError::io(out_path, e))?;
+        *total_bytes += n as u64;
+        written += n as u64;
+    }
+    Ok(written)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::mark_visited_dir;
+    use super::{copy_entry_with_total_limit, mark_visited_dir};
     use std::collections::HashSet;
+    use std::io::Cursor;
+    use std::path::Path;
     use tempfile::tempdir;
 
     #[test]
@@ -342,5 +381,30 @@ mod tests {
         let mut visited = HashSet::new();
         assert!(mark_visited_dir(&dir, &mut visited).expect("first visit"));
         assert!(!mark_visited_dir(&dir, &mut visited).expect("second visit"));
+    }
+
+    #[test]
+    fn copy_entry_with_total_limit_rejects_oversized_stream_before_write() {
+        let mut reader = Cursor::new(vec![1u8; 16]);
+        let mut writer = Vec::new();
+        let mut total_bytes = 0u64;
+
+        let err = copy_entry_with_total_limit(
+            &mut reader,
+            &mut writer,
+            &mut total_bytes,
+            8,
+            Path::new("skills-extracted/file.bin"),
+        )
+        .expect_err("stream larger than limit should be rejected");
+        assert!(
+            err.to_string().contains("too large") || err.to_string().contains("超过"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(
+            writer.len(),
+            0,
+            "should not write when the first chunk exceeds limit"
+        );
     }
 }
