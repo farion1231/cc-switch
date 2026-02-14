@@ -159,6 +159,56 @@ pub struct SkillMetadata {
     pub description: Option<String>,
 }
 
+// ========== ~/.agents/ lock 文件解析 ==========
+
+/// `~/.agents/.skill-lock.json` 文件结构
+#[derive(Deserialize)]
+struct AgentsLockFile {
+    skills: HashMap<String, AgentsLockSkill>,
+}
+
+/// lock 文件中单个 skill 的信息
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentsLockSkill {
+    source: Option<String>,
+    source_type: Option<String>,
+}
+
+/// 获取 `~/.agents/skills/` 目录（存在时返回）
+fn get_agents_skills_dir() -> Option<PathBuf> {
+    dirs::home_dir()
+        .map(|h| h.join(".agents").join("skills"))
+        .filter(|p| p.exists())
+}
+
+/// 解析 `~/.agents/.skill-lock.json`，返回 skill_name -> (owner, repo_name)
+fn parse_agents_lock() -> HashMap<String, (String, String)> {
+    let path = match dirs::home_dir() {
+        Some(h) => h.join(".agents").join(".skill-lock.json"),
+        None => return HashMap::new(),
+    };
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return HashMap::new(),
+    };
+    let lock: AgentsLockFile = match serde_json::from_str(&content) {
+        Ok(l) => l,
+        Err(_) => return HashMap::new(),
+    };
+    lock.skills
+        .into_iter()
+        .filter_map(|(name, skill)| {
+            let source = skill.source?;
+            if skill.source_type.as_deref() != Some("github") {
+                return None;
+            }
+            let (owner, repo) = source.split_once('/')?;
+            Some((name, (owner.to_string(), repo.to_string())))
+        })
+        .collect()
+}
+
 // ========== SkillService ==========
 
 pub struct SkillService;
@@ -572,7 +622,52 @@ impl SkillService {
                         name,
                         description,
                         found_in: vec![app_str.to_string()],
+                        path: path.display().to_string(),
                     });
+            }
+        }
+
+        // 扫描 ~/.agents/skills/
+        if let Some(agents_dir) = get_agents_skills_dir() {
+            if let Ok(entries) = fs::read_dir(&agents_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+
+                    let dir_name = entry.file_name().to_string_lossy().to_string();
+                    if dir_name.starts_with('.') {
+                        continue;
+                    }
+                    if managed_dirs.contains(&dir_name) {
+                        continue;
+                    }
+
+                    let skill_md = path.join("SKILL.md");
+                    let (name, description) = if skill_md.exists() {
+                        match Self::parse_skill_metadata_static(&skill_md) {
+                            Ok(meta) => (
+                                meta.name.unwrap_or_else(|| dir_name.clone()),
+                                meta.description,
+                            ),
+                            Err(_) => (dir_name.clone(), None),
+                        }
+                    } else {
+                        (dir_name.clone(), None)
+                    };
+
+                    unmanaged
+                        .entry(dir_name.clone())
+                        .and_modify(|s| s.found_in.push("agents".to_string()))
+                        .or_insert(UnmanagedSkill {
+                            directory: dir_name,
+                            name,
+                            description,
+                            found_in: vec!["agents".to_string()],
+                            path: path.display().to_string(),
+                        });
+                }
             }
         }
 
@@ -587,7 +682,17 @@ impl SkillService {
         directories: Vec<String>,
     ) -> Result<Vec<InstalledSkill>> {
         let ssot_dir = Self::get_ssot_dir()?;
+        let agents_lock = parse_agents_lock();
         let mut imported = Vec::new();
+
+        // 一次性获取已有仓库集合，避免循环内重复查询
+        let existing_repos: HashSet<(String, String)> = db
+            .get_skill_repos()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| (r.owner, r.name))
+            .collect();
+        let mut added_repos = HashSet::new();
 
         for dir_name in directories {
             // 找到源目录（从任一应用目录复制）
@@ -614,6 +719,17 @@ impl SkillService {
                         };
                         found_in.push(app_str.to_string());
                     }
+                }
+            }
+
+            // 搜索 ~/.agents/skills/
+            if let Some(agents_dir) = get_agents_skills_dir() {
+                let skill_path = agents_dir.join(&dir_name);
+                if skill_path.exists() {
+                    if source_path.is_none() {
+                        source_path = Some(skill_path);
+                    }
+                    found_in.push("agents".to_string());
                 }
             }
 
@@ -654,14 +770,41 @@ impl SkillService {
                 }
             }
 
+            // 从 lock 文件提取仓库信息
+            let (id, repo_owner, repo_name) = match agents_lock.get(&dir_name) {
+                Some((owner, repo)) => {
+                    // 将仓库加入 skill_repos 管理（去重）
+                    let repo_key = (owner.clone(), repo.clone());
+                    if !existing_repos.contains(&repo_key) && added_repos.insert(repo_key) {
+                        let skill_repo = SkillRepo {
+                            owner: owner.clone(),
+                            name: repo.clone(),
+                            branch: "main".to_string(),
+                            enabled: true,
+                        };
+                        if let Err(e) = db.save_skill_repo(&skill_repo) {
+                            log::warn!("保存 skill 仓库 {owner}/{repo} 失败: {e}");
+                        } else {
+                            log::info!("从 agents lock 文件发现并添加仓库: {owner}/{repo}");
+                        }
+                    }
+                    (
+                        format!("{owner}/{repo}:{dir_name}"),
+                        Some(owner.clone()),
+                        Some(repo.clone()),
+                    )
+                }
+                None => (format!("local:{dir_name}"), None, None),
+            };
+
             // 创建记录
             let skill = InstalledSkill {
-                id: format!("local:{dir_name}"),
+                id,
                 name,
                 description,
                 directory: dir_name,
-                repo_owner: None,
-                repo_name: None,
+                repo_owner,
+                repo_name,
                 repo_branch: None,
                 readme_url: None,
                 apps,

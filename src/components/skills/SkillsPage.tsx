@@ -213,9 +213,10 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       const query = searchQuery.toLowerCase();
       return byStatus.filter((skill) => {
         const name = skill.name?.toLowerCase() || "";
-        const repo = skill.repoOwner && skill.repoName
-          ? `${skill.repoOwner}/${skill.repoName}`.toLowerCase()
-          : "";
+        const repo =
+          skill.repoOwner && skill.repoName
+            ? `${skill.repoOwner}/${skill.repoName}`.toLowerCase()
+            : "";
 
         return name.includes(query) || repo.includes(query);
       });

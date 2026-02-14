@@ -171,6 +171,8 @@ pub struct UnmanagedSkill {
     pub description: Option<String>,
     /// 在哪些应用目录中发现（如 ["claude", "codex"]）
     pub found_in: Vec<String>,
+    /// 发现路径（首个匹配的完整路径）
+    pub path: String,
 }
 
 /// MCP 服务器定义（v3.7.0 统一结构）
