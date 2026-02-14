@@ -94,6 +94,8 @@ export function CodexFormFields({
           placeholder={t("providerForm.codexApiEndpointPlaceholder")}
           hint={t("providerForm.codexApiHint")}
           onManageClick={() => onEndpointModalToggle(true)}
+          appType="codex"
+          apiFormat="responses"
         />
       )}
 

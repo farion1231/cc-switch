@@ -285,11 +285,11 @@ impl StreamCheckService {
         timeout: std::time::Duration,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
-        // URL 必须包含 ?beta=true 参数（某些中转服务依赖此参数验证请求来源）
+        // 健康检查不强制附加查询参数，保持与默认 Claude 路径一致
         let url = if base.ends_with("/v1") {
-            format!("{base}/messages?beta=true")
+            format!("{base}/messages")
         } else {
-            format!("{base}/v1/messages?beta=true")
+            format!("{base}/v1/messages")
         };
 
         let body = json!({

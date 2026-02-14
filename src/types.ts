@@ -140,10 +140,13 @@ export interface ProviderMeta {
   costMultiplier?: string;
   // 供应商计费模式来源
   pricingModelSource?: string;
-  // Claude API 格式（仅 Claude 供应商使用）
+  // 供应商 API 格式
+  // Claude:
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
-  apiFormat?: "anthropic" | "openai_chat";
+  // Codex:
+  // - "responses": OpenAI Responses API
+  apiFormat?: "anthropic" | "openai_chat" | "responses";
 }
 
 // Skill 同步方式

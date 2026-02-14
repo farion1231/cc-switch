@@ -196,7 +196,10 @@ function App() {
     switchProvider,
     deleteProvider,
     saveUsageScript,
-  } = useProviderActions(activeApp);
+  } = useProviderActions(activeApp, {
+    isProxyRunning,
+    isTakeoverActive: isCurrentAppTakeoverActive,
+  });
 
   const disableOmoMutation = useDisableCurrentOmo();
   const handleDisableOmo = () => {
@@ -917,7 +920,10 @@ function App() {
               <>
                 {activeApp !== "opencode" && (
                   <>
-                    <ProxyToggle activeApp={activeApp} />
+                    <ProxyToggle
+                      activeApp={activeApp}
+                      currentProvider={providers[currentProviderId] || null}
+                    />
                     <div
                       className={cn(
                         "transition-all duration-300 ease-in-out overflow-hidden",

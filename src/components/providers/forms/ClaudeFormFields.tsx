@@ -169,6 +169,8 @@ export function ClaudeFormFields({
               : t("providerForm.apiHint")
           }
           onManageClick={() => onEndpointModalToggle(true)}
+          appType="claude"
+          apiFormat={apiFormat}
         />
       )}
 

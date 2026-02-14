@@ -117,4 +117,40 @@ export const proxyApi = {
   async setPricingModelSource(appType: string, value: string): Promise<void> {
     return invoke("set_pricing_model_source", { appType, value });
   },
+
+  // ========== URL 预览 API ==========
+
+  /**
+   * 构建 URL 预览
+   * 根据 app_type、base_url 和 api_format 计算直连和代理模式的请求地址
+   */
+  async buildUrlPreview(
+    appType: string,
+    baseUrl: string,
+    apiFormat?: string,
+  ): Promise<UrlPreview> {
+    return invoke("build_url_preview", { appType, baseUrl, apiFormat });
+  },
+
+  /**
+   * 检查是否需要代理
+   * 返回需要代理的原因，null 表示不需要代理
+   */
+  async checkProxyRequirement(
+    appType: string,
+    baseUrl: string,
+    apiFormat?: string,
+  ): Promise<string | null> {
+    return invoke("check_proxy_requirement", { appType, baseUrl, apiFormat });
+  },
 };
+
+/** URL 预览结果 */
+export interface UrlPreview {
+  /** 直连模式请求地址 */
+  direct_url: string;
+  /** 代理模式请求地址 */
+  proxy_url: string;
+  /** 是否为全链接（base_url 已包含 API 路径） */
+  is_full_url: boolean;
+}

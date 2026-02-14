@@ -9,6 +9,7 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use crate::proxy::url_utils::split_url_suffix;
 use reqwest::RequestBuilder;
 
 /// Gemini 适配器
@@ -200,7 +201,8 @@ impl ProviderAdapter for GeminiAdapter {
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
-        let base_trimmed = base_url.trim_end_matches('/');
+        let (base, suffix) = split_url_suffix(base_url);
+        let base_trimmed = base.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
 
         let mut url = format!("{base_trimmed}/{endpoint_trimmed}");
@@ -214,7 +216,7 @@ impl ProviderAdapter for GeminiAdapter {
             }
         }
 
-        url
+        format!("{url}{suffix}")
     }
 
     fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
