@@ -4,6 +4,7 @@
 
 use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
+use crate::config_merge::merge_config_for_live;
 use crate::database::Database;
 use crate::provider::Provider;
 use crate::proxy::server::ProxyServer;
@@ -1232,7 +1233,27 @@ impl ProxyService {
             return Ok(false);
         };
 
-        write_live_snapshot(app_type, provider)
+        // Use shared merge function (single source of truth)
+        let common_config_snippet = self.db.get_config_snippet(app_type.as_str()).ok().flatten();
+        let merge_result =
+            merge_config_for_live(app_type, provider, common_config_snippet.as_deref());
+
+        // Log warning if any
+        if let Some(warning) = &merge_result.warning {
+            log::warn!(
+                "Common config merge warning for {:?} provider '{}': {}",
+                app_type,
+                provider.id,
+                warning
+            );
+        }
+
+        // Write merged config to live file
+        let merged_provider = Provider {
+            settings_config: merge_result.config,
+            ..provider.clone()
+        };
+        write_live_snapshot(app_type, &merged_provider)
             .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
 
         Ok(true)
@@ -1485,26 +1506,50 @@ impl ProxyService {
     ///
     /// 与 backup_live_configs() 不同，此方法从供应商的 settings_config 生成备份，
     /// 而不是从 Live 文件读取（因为 Live 文件已被代理接管）。
+    ///
+    /// **重要**: 新架构下 settings_config 存储的是自定义配置（custom diff），
+    /// 备份时需要先与 common config 合并，生成完整的 finalConfig。
     pub async fn update_live_backup_from_provider(
         &self,
         app_type: &str,
         provider: &Provider,
     ) -> Result<(), String> {
+        let app_type_enum =
+            AppType::from_str(app_type).map_err(|_| format!("无效的应用类型: {app_type}"))?;
+
+        // Get common config snippet for merge
+        let common_snippet = self.db.get_config_snippet(app_type).ok().flatten();
+
+        // Merge custom config with common config to get final config
+        let merge_result =
+            merge_config_for_live(&app_type_enum, provider, common_snippet.as_deref());
+
+        // Log warning if any
+        if let Some(warning) = &merge_result.warning {
+            log::warn!(
+                "Common config merge warning for {} provider '{}': {}",
+                app_type,
+                provider.id,
+                warning
+            );
+        }
+
+        let final_config = merge_result.config;
+
         let backup_json = match app_type {
             "claude" => {
-                // Claude: settings_config 直接作为备份
-                serde_json::to_string(&provider.settings_config)
+                // Claude: 使用合并后的 final config 作为备份
+                serde_json::to_string(&final_config)
                     .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?
             }
             "codex" => {
-                // Codex: settings_config 包含 {"auth": ..., "config": ...}，直接使用
-                serde_json::to_string(&provider.settings_config)
+                // Codex: 使用合并后的 final config
+                serde_json::to_string(&final_config)
                     .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?
             }
             "gemini" => {
                 // Gemini: 只提取 env 字段（与原始备份格式一致）
-                // proxy.rs 的 read_gemini_live() 返回 {"env": {...}}
-                let env_backup = if let Some(env) = provider.settings_config.get("env") {
+                let env_backup = if let Some(env) = final_config.get("env") {
                     json!({ "env": env })
                 } else {
                     json!({ "env": {} })
@@ -1520,7 +1565,7 @@ impl ProxyService {
             .await
             .map_err(|e| format!("更新 {app_type} 备份失败: {e}"))?;
 
-        log::info!("已更新 {app_type} Live 备份（热切换）");
+        log::info!("已更新 {app_type} Live 备份（热切换，含 common config 合并）");
         Ok(())
     }
 

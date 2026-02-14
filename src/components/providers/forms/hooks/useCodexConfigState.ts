@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import {
   extractCodexBaseUrl,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
@@ -18,6 +19,7 @@ interface UseCodexConfigStateProps {
  * Codex 配置包含两部分：auth.json (JSON) 和 config.toml (TOML 字符串)
  */
 export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
+  const { t } = useTranslation();
   const [codexAuth, setCodexAuthState] = useState("");
   const [codexConfig, setCodexConfigState] = useState("");
   const [codexApiKey, setCodexApiKey] = useState("");
@@ -109,18 +111,21 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   }, [codexAuth, codexApiKey]);
 
   // 验证 Codex Auth JSON
-  const validateCodexAuth = useCallback((value: string): string => {
-    if (!value.trim()) return "";
-    try {
-      const parsed = JSON.parse(value);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return "Auth JSON must be an object";
+  const validateCodexAuth = useCallback(
+    (value: string): string => {
+      if (!value.trim()) return "";
+      try {
+        const parsed = JSON.parse(value);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          return t("providerForm.authJsonRequired");
+        }
+        return "";
+      } catch {
+        return t("providerForm.authJsonError");
       }
-      return "";
-    } catch {
-      return "Invalid JSON format";
-    }
-  }, []);
+    },
+    [t],
+  );
 
   // 设置 auth 并验证
   const setCodexAuth = useCallback(

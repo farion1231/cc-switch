@@ -37,7 +37,8 @@
     "search": "查询",
     "reset": "重置",
     "actions": "操作",
-    "deleting": "删除中..."
+    "deleting": "删除中...",
+    "readonly": "只读"
   },
   "apiKeyInput": {
     "placeholder": "请输入API Key",
@@ -54,11 +55,18 @@
     "editCommonConfig": "编辑通用配置",
     "editCommonConfigTitle": "编辑通用配置片段",
     "commonConfigHint": "该片段会在勾选\"写入通用配置\"时合并到 settings.json 中",
+    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
     "fullSettingsHint": "完整的 Claude Code settings.json 配置内容",
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
-    "saveFailed": "保存失败: {{error}}"
+    "extractSuccessNeedSave": "已提取通用配置，点击保存按钮完成保存",
+    "saveFailed": "保存失败: {{error}}",
+    "hidePreview": "隐藏合并预览",
+    "showPreview": "显示合并预览",
+    "customConfig": "自定义配置（覆盖通用配置）",
+    "mergedPreview": "合并预览（只读）",
+    "mergedPreviewHint": "通用配置 + 自定义配置 = 最终配置"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
@@ -537,7 +545,10 @@
     "categoryOfficial": "官方",
     "categoryCnOfficial": "开源官方",
     "categoryAggregation": "聚合服务",
-    "categoryThirdParty": "第三方"
+    "categoryThirdParty": "第三方",
+    "commonConfigLoading": "通用配置正在加载中，请稍候再保存",
+    "commonConfigSyncFailed": "通用配置同步部分失败，请重试",
+    "saveCommonConfigFailed": "保存通用配置失败"
   },
   "endpointTest": {
     "title": "请求地址管理",
@@ -602,10 +613,12 @@
     "editCommonConfig": "编辑通用配置",
     "editCommonConfigTitle": "编辑 Codex 通用配置片段",
     "commonConfigHint": "该片段会在勾选'写入通用配置'时追加到 config.toml 末尾",
+    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
     "apiUrlLabel": "API 请求地址",
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
+    "extractSuccessNeedSave": "已提取通用配置，点击保存按钮完成保存",
     "saveFailed": "保存失败: {{error}}"
   },
   "geminiConfig": {
@@ -620,14 +633,17 @@
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
+    "extractSuccessNeedSave": "已提取通用配置，点击保存按钮完成保存",
     "saveFailed": "保存失败: {{error}}",
     "extractedConfigInvalid": "提取的配置格式错误",
     "invalidJsonFormat": "通用配置片段格式错误（必须是有效的 JSON）",
+    "invalidEnvFormat": "配置格式错误（请使用 KEY=VALUE 格式，每行一个）",
     "commonConfigInvalidKeys": "通用配置片段不能包含 GOOGLE_GEMINI_BASE_URL 或 GEMINI_API_KEY（发现：{{keys}}）",
     "commonConfigInvalidValues": "通用配置片段的值必须是字符串",
     "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
     "configMergeFailed": "配置合并失败: {{error}}",
-    "configReplaceFailed": "配置替换失败: {{error}}"
+    "configReplaceFailed": "配置替换失败: {{error}}",
+    "forbiddenKeysWarning": "以下密钥已被自动过滤（禁止在通用配置中设置）：{{keys}}"
   },
   "opencode": {
     "npmPackage": "接口格式",

@@ -37,7 +37,8 @@
     "search": "Search",
     "reset": "Reset",
     "actions": "Actions",
-    "deleting": "Deleting..."
+    "deleting": "Deleting...",
+    "readonly": "Read-only"
   },
   "apiKeyInput": {
     "placeholder": "Enter API Key",
@@ -54,11 +55,18 @@
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Common Config Snippet",
     "commonConfigHint": "This snippet will be merged into settings.json when 'Write Common Config' is checked",
+    "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
     "fullSettingsHint": "Full Claude Code settings.json content",
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}"
+    "extractSuccessNeedSave": "Common config extracted, click Save to complete",
+    "saveFailed": "Save failed: {{error}}",
+    "hidePreview": "Hide merged preview",
+    "showPreview": "Show merged preview",
+    "customConfig": "Custom config (overrides common)",
+    "mergedPreview": "Merged preview (read-only)",
+    "mergedPreviewHint": "Common config + Custom config = Final config"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
@@ -537,7 +545,10 @@
     "categoryOfficial": "Official",
     "categoryCnOfficial": "Opensource Official",
     "categoryAggregation": "Aggregation",
-    "categoryThirdParty": "Third Party"
+    "categoryThirdParty": "Third Party",
+    "commonConfigLoading": "Common config is still loading, please wait before saving",
+    "commonConfigSyncFailed": "Common config sync failed for some providers. Please retry.",
+    "saveCommonConfigFailed": "Failed to save common config"
   },
   "endpointTest": {
     "title": "API Endpoint Management",
@@ -602,10 +613,12 @@
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Codex Common Config Snippet",
     "commonConfigHint": "This snippet will be appended to the end of config.toml when 'Write Common Config' is checked",
+    "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
     "apiUrlLabel": "API Request URL",
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
+    "extractSuccessNeedSave": "Common config extracted, click Save to complete",
     "saveFailed": "Save failed: {{error}}"
   },
   "geminiConfig": {
@@ -620,14 +633,17 @@
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
+    "extractSuccessNeedSave": "Common config extracted, click Save to complete",
     "saveFailed": "Save failed: {{error}}",
     "extractedConfigInvalid": "Extracted config format is invalid",
     "invalidJsonFormat": "Common config snippet format error (must be valid JSON)",
+    "invalidEnvFormat": "Config format error (use KEY=VALUE format, one per line)",
     "commonConfigInvalidKeys": "Common config snippet must not include GOOGLE_GEMINI_BASE_URL or GEMINI_API_KEY (found: {{keys}})",
     "commonConfigInvalidValues": "Common config snippet values must be strings",
     "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
     "configMergeFailed": "Config merge failed: {{error}}",
-    "configReplaceFailed": "Config replace failed: {{error}}"
+    "configReplaceFailed": "Config replace failed: {{error}}",
+    "forbiddenKeysWarning": "The following keys were filtered (not allowed in common config): {{keys}}"
   },
   "opencode": {
     "npmPackage": "API Format",

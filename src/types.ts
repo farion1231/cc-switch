@@ -120,6 +120,13 @@ export interface ProviderProxyConfig {
   proxyPassword?: string;
 }
 
+export type CommonConfigEnabledByApp = Partial<{
+  claude: boolean;
+  codex: boolean;
+  gemini: boolean;
+  opencode: boolean;
+}>;
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -140,6 +147,10 @@ export interface ProviderMeta {
   costMultiplier?: string;
   // 供应商计费模式来源
   pricingModelSource?: string;
+  // 是否启用通用配置片段（用于跨供应商保持勾选状态）
+  commonConfigEnabled?: boolean;
+  // 按应用记录通用配置启用状态（优先于 commonConfigEnabled）
+  commonConfigEnabledByApp?: CommonConfigEnabledByApp;
   // Claude API 格式（仅 Claude 供应商使用）
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换

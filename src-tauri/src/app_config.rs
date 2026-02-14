@@ -339,6 +339,20 @@ pub struct CommonConfigSnippets {
 }
 
 impl CommonConfigSnippets {
+    /// 检查是否所有字段都为空
+    pub fn is_empty(&self) -> bool {
+        let is_blank = |value: &Option<String>| {
+            value
+                .as_ref()
+                .map(|snippet| snippet.trim().is_empty())
+                .unwrap_or(true)
+        };
+        is_blank(&self.claude)
+            && is_blank(&self.codex)
+            && is_blank(&self.gemini)
+            && is_blank(&self.opencode)
+    }
+
     /// 获取指定应用的通用配置片段
     pub fn get(&self, app: &AppType) -> Option<&String> {
         match app {
@@ -378,7 +392,9 @@ pub struct MultiAppConfig {
     #[serde(default)]
     pub skills: SkillStore,
     /// 通用配置片段（按应用分治）
-    #[serde(default)]
+    /// 注意：此字段主要用于从旧版 config.json 迁移数据到数据库
+    /// 迁移成功后会被清空，空时不写入 config.json
+    #[serde(default, skip_serializing_if = "CommonConfigSnippets::is_empty")]
     pub common_config_snippets: CommonConfigSnippets,
     /// Claude 通用配置片段（旧字段，用于向后兼容迁移）
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -13,6 +13,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
+use crate::config_merge::{
+    extract_json_difference, extract_toml_difference_str, is_common_config_enabled,
+};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
 use crate::services::mcp::McpService;
@@ -27,7 +30,7 @@ pub use live::{
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::sanitize_claude_settings_for_live;
-pub(crate) use live::write_live_snapshot;
+pub(crate) use live::{write_live_snapshot, write_live_snapshot_with_merge};
 
 // Internal re-exports
 use live::{remove_opencode_provider_from_live, write_gemini_live};
@@ -181,7 +184,8 @@ impl ProviderService {
             state
                 .db
                 .set_current_provider(app_type.as_str(), &provider.id)?;
-            write_live_snapshot(&app_type, &provider)?;
+            // Use write_live_snapshot_with_merge to support common config runtime merge
+            write_live_snapshot_with_merge(state, &app_type, &provider)?;
         }
 
         Ok(true)
@@ -241,7 +245,8 @@ impl ProviderService {
                 )
                 .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
             } else {
-                write_live_snapshot(&app_type, &provider)?;
+                // Use write_live_snapshot_with_merge to support common config runtime merge
+                write_live_snapshot_with_merge(state, &app_type, &provider)?;
                 // Sync MCP
                 McpService::sync_all_enabled(state)?;
             }
@@ -454,18 +459,33 @@ impl ProviderService {
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
         let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
 
-        match (current_id, matches!(app_type, AppType::OpenCode)) {
-            (Some(current_id), false) if current_id != id => {
-                // Only backfill when switching to a different provider.
-                if let Ok(live_config) = read_live_settings(app_type.clone()) {
-                    if let Some(mut current_provider) = providers.get(&current_id).cloned() {
-                        current_provider.settings_config = live_config;
-                        // Ignore backfill failure, don't affect switch flow.
-                        let _ = state.db.save_provider(app_type.as_str(), &current_provider);
+        if let Some(current_id) = current_id {
+            if current_id != id {
+                // OpenCode uses additive mode - all providers coexist in the same file,
+                // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
+                if !matches!(app_type, AppType::OpenCode) {
+                    // Only backfill when switching to a different provider
+                    if let Ok(live_config) = read_live_settings(app_type.clone()) {
+                        if let Some(mut current_provider) = providers.get(&current_id).cloned() {
+                            // Check if common config is enabled for this provider
+                            let common_enabled =
+                                is_common_config_enabled(current_provider.meta.as_ref(), &app_type);
+
+                            let config_to_save = if common_enabled {
+                                // Extract custom config from live (remove common config parts)
+                                Self::extract_custom_from_live(state, &app_type, &live_config)?
+                            } else {
+                                // Common config not enabled, use live config directly
+                                live_config
+                            };
+
+                            current_provider.settings_config = config_to_save;
+                            // Ignore backfill failure, don't affect switch flow
+                            let _ = state.db.save_provider(app_type.as_str(), &current_provider);
+                        }
                     }
                 }
             }
-            _ => {}
         }
 
         // OpenCode uses additive mode - skip setting is_current (no such concept)
@@ -477,8 +497,9 @@ impl ProviderService {
             state.db.set_current_provider(app_type.as_str(), id)?;
         }
 
-        // Sync to live (write_gemini_live handles security flag internally for Gemini)
-        write_live_snapshot(&app_type, provider)?;
+        // Sync to live (use write_live_snapshot_with_merge for common config runtime merge)
+        // Note: write_gemini_live handles security flag internally for Gemini
+        write_live_snapshot_with_merge(state, &app_type, provider)?;
 
         // Sync MCP
         McpService::sync_all_enabled(state)?;
@@ -528,6 +549,88 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
+        }
+    }
+
+    /// Extract custom config from live config (remove common config parts).
+    ///
+    /// This is used during backfill to avoid polluting the provider's settings_config
+    /// with common config values that should remain in the common config snippet.
+    fn extract_custom_from_live(
+        state: &AppState,
+        app_type: &AppType,
+        live_config: &Value,
+    ) -> Result<Value, AppError> {
+        // Get common config snippet from database
+        let common_snippet = state
+            .db
+            .get_config_snippet(app_type.as_str())?
+            .unwrap_or_default();
+
+        if common_snippet.trim().is_empty() {
+            // No common config, return live config as-is
+            return Ok(live_config.clone());
+        }
+
+        match app_type {
+            AppType::Claude => {
+                // Parse common config as JSON
+                let common_config: Value = serde_json::from_str(&common_snippet).map_err(|e| {
+                    AppError::Config(format!("Failed to parse common config snippet: {e}"))
+                })?;
+
+                // Extract difference (custom = live - common)
+                let (custom_config, _) = extract_json_difference(live_config, &common_config);
+                Ok(custom_config)
+            }
+            AppType::Codex => {
+                // Codex: Extract TOML config field difference
+                let mut result = live_config.clone();
+
+                if let Some(config_str) = live_config.get("config").and_then(|v| v.as_str()) {
+                    // Extract TOML difference for config field
+                    // Returns (custom_toml, has_common_keys, error)
+                    let (custom_toml, _, _) =
+                        extract_toml_difference_str(config_str, &common_snippet);
+                    if let Some(obj) = result.as_object_mut() {
+                        obj.insert("config".to_string(), Value::String(custom_toml));
+                    }
+                }
+
+                Ok(result)
+            }
+            AppType::Gemini => {
+                // Gemini: Extract env field difference
+                // Parse common config (supports ENV format and JSON format)
+                let common_env = crate::config_merge::parse_gemini_common_snippet(&common_snippet);
+
+                if common_env.is_empty() {
+                    return Ok(live_config.clone());
+                }
+
+                let mut result = live_config.clone();
+
+                if let Some(live_env) = live_config.get("env").and_then(|v| v.as_object()) {
+                    // Extract difference: custom = live_env - common_env
+                    let mut custom_env = serde_json::Map::new();
+                    for (key, value) in live_env {
+                        if common_env.get(key) != Some(value) {
+                            // Key doesn't exist in common or value is different
+                            custom_env.insert(key.clone(), value.clone());
+                        }
+                    }
+
+                    if let Some(obj) = result.as_object_mut() {
+                        obj.insert("env".to_string(), Value::Object(custom_env));
+                    }
+                }
+
+                Ok(result)
+            }
+            AppType::OpenCode => {
+                // OpenCode doesn't support common config
+                Ok(live_config.clone())
+            }
         }
     }
 
@@ -629,15 +732,19 @@ impl ProviderService {
         Ok(cleaned.trim().to_string())
     }
 
-    /// Extract common config for Gemini (JSON format)
+    /// Extract common config for Gemini (ENV format)
     ///
     /// Extracts `.env` values while excluding provider-specific credentials:
     /// - GOOGLE_GEMINI_BASE_URL
     /// - GEMINI_API_KEY
+    ///
+    /// Returns ENV format (KEY=VALUE per line) instead of JSON.
+    /// Values containing newlines/carriage returns are skipped to prevent
+    /// ENV format injection/truncation.
     fn extract_gemini_common_config(settings: &Value) -> Result<String, AppError> {
         let env = settings.get("env").and_then(|v| v.as_object());
 
-        let mut snippet = serde_json::Map::new();
+        let mut lines: Vec<String> = Vec::new();
         if let Some(env) = env {
             for (key, value) in env {
                 if key == "GOOGLE_GEMINI_BASE_URL" || key == "GEMINI_API_KEY" {
@@ -648,17 +755,22 @@ impl ProviderService {
                 };
                 let trimmed = v.trim();
                 if !trimmed.is_empty() {
-                    snippet.insert(key.to_string(), Value::String(trimmed.to_string()));
+                    // Skip values containing newlines to prevent ENV format injection
+                    if trimmed.contains('\n') || trimmed.contains('\r') {
+                        continue;
+                    }
+                    lines.push(format!("{key}={trimmed}"));
                 }
             }
         }
 
-        if snippet.is_empty() {
-            return Ok("{}".to_string());
+        if lines.is_empty() {
+            return Ok(String::new());
         }
 
-        serde_json::to_string_pretty(&Value::Object(snippet))
-            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+        // Sort for consistent output
+        lines.sort();
+        Ok(lines.join("\n"))
     }
 
     /// Extract common config for OpenCode (JSON format)

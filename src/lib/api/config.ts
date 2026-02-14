@@ -1,28 +1,70 @@
 // 配置相关 API
 import { invoke } from "@tauri-apps/api/core";
+import type { Provider } from "@/types";
+import { providersApi } from "./providers";
+import {
+  detectContent,
+  type CommonConfigAppType,
+} from "@/utils/commonConfigDetection";
 
-export type AppType = "claude" | "codex" | "gemini" | "omo";
+export type AppType = CommonConfigAppType | "omo";
+type SyncAppType = CommonConfigAppType;
 
-/**
- * 获取 Claude 通用配置片段（已废弃，使用 getCommonConfigSnippet）
- * @returns 通用配置片段（JSON 字符串），如果不存在则返回 null
- * @deprecated 使用 getCommonConfigSnippet('claude') 替代
- */
-export async function getClaudeCommonConfigSnippet(): Promise<string | null> {
-  return invoke<string | null>("get_claude_common_config_snippet");
+// ============================================================================
+// 同步防抖管理
+// ============================================================================
+
+/** 同步结果类型 */
+export interface SyncResult {
+  /** 成功更新的供应商数量 */
+  count: number;
+  /** 错误信息（如果有） */
+  error?: string;
+  /** 是否已排队等待执行（debounce 中） */
+  queued?: boolean;
 }
 
-/**
- * 设置 Claude 通用配置片段（已废弃，使用 setCommonConfigSnippet）
- * @param snippet - 通用配置片段（JSON 字符串）
- * @throws 如果 JSON 格式无效
- * @deprecated 使用 setCommonConfigSnippet('claude', snippet) 替代
- */
-export async function setClaudeCommonConfigSnippet(
-  snippet: string,
-): Promise<void> {
-  return invoke("set_claude_common_config_snippet", { snippet });
-}
+/** 同步结果回调类型 */
+export type SyncResultCallback = (result: SyncResult) => void;
+
+// 每个 appType 的 debounce 定时器
+const syncDebounceTimers: Record<
+  SyncAppType,
+  ReturnType<typeof setTimeout> | null
+> = {
+  claude: null,
+  codex: null,
+  gemini: null,
+};
+
+// 每个 appType 的同步锁（防止并发）
+const syncInFlight: Record<SyncAppType, boolean> = {
+  claude: false,
+  codex: false,
+  gemini: false,
+};
+
+// 每个 appType 的最新同步参数（用于 single-flight）
+const pendingSyncParams: Record<
+  SyncAppType,
+  {
+    oldSnippet: string;
+    newSnippet: string;
+    updateFn: (
+      settingsConfig: string,
+      oldSnippet: string,
+      newSnippet: string,
+    ) => { updatedConfig: string; error?: string };
+    currentProviderId?: string;
+    onComplete?: SyncResultCallback;
+  } | null
+> = {
+  claude: null,
+  codex: null,
+  gemini: null,
+};
+
+const SYNC_DEBOUNCE_MS = 500;
 
 /**
  * 获取通用配置片段（统一接口）
@@ -39,7 +81,10 @@ export async function getCommonConfigSnippet(
  * 设置通用配置片段（统一接口）
  * @param appType - 应用类型（claude/codex/gemini）
  * @param snippet - 通用配置片段（原始字符串）
- * @throws 如果格式无效（Claude/Gemini 验证 JSON，Codex 暂不验证）
+ * @throws 如果格式无效
+ *         - Claude: 验证 JSON 格式
+ *         - Gemini: 验证 ENV/JSON 格式，拒绝包含禁用键（GEMINI_API_KEY/GOOGLE_GEMINI_BASE_URL）
+ *         - Codex: TOML 格式，暂不验证
  */
 export async function setCommonConfigSnippet(
   appType: AppType,
@@ -56,14 +101,14 @@ export async function setCommonConfigSnippet(
  *
  * @param appType - 应用类型（claude/codex/gemini）
  * @param options - 可选：提取来源
- * @returns 提取的通用配置片段（JSON/TOML 字符串）
+ * @returns 提取的通用配置片段（Claude: JSON, Codex: TOML, Gemini: ENV）
  */
 export type ExtractCommonConfigSnippetOptions = {
   settingsConfig?: string;
 };
 
 export async function extractCommonConfigSnippet(
-  appType: Exclude<AppType, "omo">,
+  appType: CommonConfigAppType,
   options?: ExtractCommonConfigSnippetOptions,
 ): Promise<string> {
   const args: Record<string, unknown> = { appType };
@@ -74,4 +119,414 @@ export async function extractCommonConfigSnippet(
   }
 
   return invoke<string>("extract_common_config_snippet", args);
+}
+
+// ============================================================================
+// 通用配置同步功能
+// ============================================================================
+
+/**
+ * 同步通用配置到所有启用了该配置的供应商（带 debounce + 同步锁）
+ *
+ * 当通用配置片段被修改时，需要更新所有启用了通用配置的供应商的 settingsConfig
+ * 使用 debounce + single-flight + in-flight lock 模式，避免快速编辑时的并发问题
+ *
+ * @param appType - 应用类型
+ * @param oldSnippet - 旧的通用配置片段
+ * @param newSnippet - 新的通用配置片段（空字符串表示清空/移除）
+ * @param updateFn - 更新函数，用于替换配置中的通用配置片段
+ * @param currentProviderId - 当前正在编辑的供应商 ID（跳过，因为已在编辑器中更新）
+ * @param onComplete - 同步完成后的回调，用于通知 UI 层
+ */
+export function syncCommonConfigToProviders(
+  appType: SyncAppType,
+  oldSnippet: string,
+  newSnippet: string,
+  updateFn: (
+    settingsConfig: string,
+    oldSnippet: string,
+    newSnippet: string,
+  ) => { updatedConfig: string; error?: string },
+  currentProviderId?: string,
+  onComplete?: SyncResultCallback,
+): void {
+  // 保存最新的同步参数（覆盖之前的，实现 single-flight）
+  pendingSyncParams[appType] = {
+    oldSnippet,
+    newSnippet,
+    updateFn,
+    currentProviderId,
+    onComplete,
+  };
+
+  // 清除之前的定时器
+  if (syncDebounceTimers[appType]) {
+    clearTimeout(syncDebounceTimers[appType]!);
+  }
+
+  // 设置新的定时器，在 debounce 后执行实际同步
+  syncDebounceTimers[appType] = setTimeout(() => {
+    executeSyncWithLock(appType);
+  }, SYNC_DEBOUNCE_MS);
+}
+
+/**
+ * 带锁执行同步（防止并发）
+ */
+async function executeSyncWithLock(appType: SyncAppType): Promise<void> {
+  // 如果正在同步中，等待下一次调度
+  if (syncInFlight[appType]) {
+    // 已有同步在执行，参数已保存，等同步完成后会检查是否需要再次执行
+    return;
+  }
+
+  // 获取最新的参数
+  const params = pendingSyncParams[appType];
+  if (!params) {
+    return;
+  }
+
+  // 清除参数并设置锁
+  pendingSyncParams[appType] = null;
+  syncDebounceTimers[appType] = null;
+  syncInFlight[appType] = true;
+
+  try {
+    // 执行实际同步
+    const result = await doSyncCommonConfigToProviders(
+      appType,
+      params.oldSnippet,
+      params.newSnippet,
+      params.updateFn,
+      params.currentProviderId,
+    );
+
+    // 输出结果
+    if (result.error) {
+      console.warn(`[syncCommonConfig] ${appType} 同步失败: ${result.error}`);
+    }
+
+    // 通知回调
+    if (params.onComplete) {
+      params.onComplete(result);
+    }
+  } finally {
+    // 释放锁
+    syncInFlight[appType] = false;
+
+    // 检查是否有新的待执行参数（在同步期间又有新的请求）
+    if (pendingSyncParams[appType]) {
+      // 递归执行，处理新的请求
+      executeSyncWithLock(appType);
+    }
+  }
+}
+
+/**
+ * 实际执行同步的内部函数
+ * @returns 同步结果，包含更新数量和可能的错误信息
+ */
+async function doSyncCommonConfigToProviders(
+  appType: SyncAppType,
+  oldSnippet: string,
+  newSnippet: string,
+  updateFn: (
+    settingsConfig: string,
+    oldSnippet: string,
+    newSnippet: string,
+  ) => { updatedConfig: string; error?: string },
+  currentProviderId?: string,
+): Promise<SyncResult> {
+  try {
+    const providers = await providersApi.getAll(appType);
+    let updatedCount = 0;
+    const errors: string[] = [];
+
+    for (const [id, provider] of Object.entries(providers)) {
+      // 跳过当前正在编辑的供应商
+      if (id === currentProviderId) {
+        continue;
+      }
+
+      // 获取当前配置字符串（提前获取，用于内容检测）
+      const settingsConfigStr = getSettingsConfigString(provider, appType);
+      if (!settingsConfigStr) {
+        continue;
+      }
+
+      // 检查是否启用了通用配置
+      const metaByApp = provider.meta?.commonConfigEnabledByApp;
+      const resolvedMetaEnabled =
+        metaByApp?.[appType] ?? provider.meta?.commonConfigEnabled;
+
+      let isEnabled: boolean;
+      let needsMetaBackfill = false;
+
+      if (resolvedMetaEnabled !== undefined) {
+        // meta 有明确值，直接使用
+        isEnabled = resolvedMetaEnabled;
+      } else {
+        // meta 缺失，回退到内容检测（旧/新片段均可触发）
+        isEnabled = detectCommonConfigEnabledByContent(
+          appType,
+          settingsConfigStr,
+          oldSnippet,
+          newSnippet,
+        );
+        // 如果检测到启用，标记需要补写 meta
+        if (isEnabled) {
+          needsMetaBackfill = true;
+        }
+      }
+
+      if (!isEnabled) {
+        continue;
+      }
+
+      // 使用更新函数替换配置
+      const { updatedConfig, error } = updateFn(
+        settingsConfigStr,
+        oldSnippet,
+        newSnippet,
+      );
+
+      if (error) {
+        errors.push(`供应商 ${id}: ${error}`);
+        continue;
+      }
+
+      // 更新供应商配置
+      const updateResult = updateProviderSettingsConfig(
+        provider,
+        updatedConfig,
+        appType,
+      );
+
+      if (updateResult.error) {
+        errors.push(`供应商 ${id}: ${updateResult.error}`);
+        continue;
+      }
+
+      // 如果需要补写 meta，添加 commonConfigEnabledByApp
+      let providerToSave = updateResult.provider;
+      if (needsMetaBackfill) {
+        providerToSave = {
+          ...providerToSave,
+          meta: {
+            ...providerToSave.meta,
+            commonConfigEnabledByApp: {
+              ...providerToSave.meta?.commonConfigEnabledByApp,
+              [appType]: true,
+            },
+          },
+        };
+      }
+
+      try {
+        await providersApi.update(providerToSave, appType);
+        updatedCount++;
+      } catch (updateError) {
+        errors.push(`供应商 ${id}: 保存失败 - ${String(updateError)}`);
+      }
+    }
+
+    if (errors.length > 0) {
+      return {
+        count: updatedCount,
+        error: `部分供应商更新失败: ${errors.join("; ")}`,
+      };
+    }
+
+    return { count: updatedCount };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      count: 0,
+      error: `同步失败: ${errorMessage}`,
+    };
+  }
+}
+
+function detectCommonConfigEnabledByContent(
+  appType: SyncAppType,
+  settingsConfigStr: string,
+  oldSnippet: string,
+  newSnippet: string,
+): boolean {
+  const candidates = [oldSnippet, newSnippet].filter(
+    (snippet) => typeof snippet === "string" && snippet.trim(),
+  );
+  if (candidates.length === 0) return false;
+
+  // 使用 detectContent 获取完整结果（包含解析错误信息）
+  for (const snippet of candidates) {
+    const result = detectContent(appType, settingsConfigStr, snippet);
+    if (result.hasContent) {
+      return true;
+    }
+    // 如果解析失败，记录错误（便于排障）
+    if (result.parseError) {
+      console.warn(
+        `[detectCommonConfigEnabledByContent] Parse error for ${appType}: ${result.parseError}`,
+      );
+    }
+  }
+
+  return false;
+}
+
+/** 更新供应商配置的结果 */
+interface UpdateProviderResult {
+  provider: Provider;
+  error?: string;
+}
+
+/**
+ * 从供应商获取配置字符串
+ */
+function getSettingsConfigString(
+  provider: Provider,
+  appType: SyncAppType,
+): string | null {
+  // Runtime type may be string (JSON-serialized) despite Record<string, any> declaration
+  const config = provider.settingsConfig as Record<string, unknown> | string;
+  if (!config) return null;
+
+  switch (appType) {
+    case "claude":
+      // Claude: settingsConfig 直接是 JSON 对象
+      return typeof config === "string" ? config : JSON.stringify(config);
+
+    case "codex":
+      // Codex: settingsConfig.config 是 TOML 字符串
+      // 先校验 settingsConfig 是对象类型
+      if (typeof config === "string") {
+        // settingsConfig 是字符串，尝试解析为 JSON
+        try {
+          const parsed = JSON.parse(config);
+          if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            typeof parsed.config === "string"
+          ) {
+            return parsed.config;
+          }
+          // JSON 对象但没有 string config 字段
+          // 可能是历史数据或异常保存的情况
+          return null;
+        } catch {
+          // JSON 解析失败，可能是纯 TOML 字符串
+          // 返回原字符串当 TOML 处理，而不是静默跳过
+          if (config.trim()) {
+            return config;
+          }
+        }
+        return null;
+      }
+      if (typeof config === "object" && config !== null) {
+        const codexConfig = (config as Record<string, unknown>).config;
+        return typeof codexConfig === "string" ? codexConfig : null;
+      }
+      return null;
+
+    case "gemini":
+      // Gemini: settingsConfig 是包含 env 字段的 JSON 对象
+      return typeof config === "string" ? config : JSON.stringify(config);
+
+    default:
+      return null;
+  }
+}
+
+/**
+ * 更新供应商的 settingsConfig
+ * @returns 更新结果，包含更新后的 provider 和可能的错误信息
+ */
+function updateProviderSettingsConfig(
+  provider: Provider,
+  updatedConfig: string,
+  appType: SyncAppType,
+): UpdateProviderResult {
+  switch (appType) {
+    case "claude":
+      // Claude: 直接替换 settingsConfig
+      try {
+        const parsed = JSON.parse(updatedConfig);
+        if (typeof parsed !== "object" || parsed === null) {
+          return {
+            provider,
+            error: "解析后的配置不是有效的 JSON 对象",
+          };
+        }
+        return {
+          provider: {
+            ...provider,
+            settingsConfig: parsed,
+          },
+        };
+      } catch (e) {
+        return {
+          provider,
+          error: `JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+
+    case "codex": {
+      // Codex: 更新 settingsConfig.config
+      // 先确保 settingsConfig 是对象类型
+      let baseConfig: Record<string, unknown>;
+      const currentConfig = provider.settingsConfig;
+
+      if (typeof currentConfig === "string") {
+        // 尝试解析字符串
+        try {
+          const parsed = JSON.parse(currentConfig);
+          baseConfig =
+            typeof parsed === "object" && parsed !== null ? parsed : {};
+        } catch {
+          baseConfig = {};
+        }
+      } else if (typeof currentConfig === "object" && currentConfig !== null) {
+        baseConfig = currentConfig as Record<string, unknown>;
+      } else {
+        baseConfig = {};
+      }
+
+      return {
+        provider: {
+          ...provider,
+          settingsConfig: {
+            ...baseConfig,
+            config: updatedConfig,
+          },
+        },
+      };
+    }
+
+    case "gemini":
+      // Gemini: 直接替换 settingsConfig
+      try {
+        const parsed = JSON.parse(updatedConfig);
+        if (typeof parsed !== "object" || parsed === null) {
+          return {
+            provider,
+            error: "解析后的配置不是有效的 JSON 对象",
+          };
+        }
+        return {
+          provider: {
+            ...provider,
+            settingsConfig: parsed,
+          },
+        };
+      } catch (e) {
+        return {
+          provider,
+          error: `JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+
+    default:
+      return { provider };
+  }
 }

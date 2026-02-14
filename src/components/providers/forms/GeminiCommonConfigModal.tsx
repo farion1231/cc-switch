@@ -18,6 +18,7 @@ interface GeminiCommonConfigModalProps {
 /**
  * GeminiCommonConfigModal - Common Gemini configuration editor modal
  * Allows editing of common env snippet shared across Gemini providers
+ * Uses ENV format (KEY=VALUE) instead of JSON
  */
 export const GeminiCommonConfigModal: React.FC<
   GeminiCommonConfigModalProps
@@ -88,13 +89,14 @@ export const GeminiCommonConfigModal: React.FC<
         <JsonEditor
           value={value}
           onChange={onChange}
-          placeholder={`{
-  "GEMINI_MODEL": "gemini-3-pro-preview"
-}`}
+          placeholder={`# Gemini 通用配置
+# 格式: KEY=VALUE
+
+GEMINI_MODEL=gemini-2.5-pro`}
           darkMode={isDarkMode}
           rows={16}
-          showValidation={true}
-          language="json"
+          showValidation={false}
+          language="javascript"
         />
 
         {error && (

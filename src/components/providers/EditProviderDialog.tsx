@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
@@ -8,7 +9,13 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
-import { providersApi, vscodeApi, type AppId } from "@/lib/api";
+import { providersApi, vscodeApi, configApi, type AppId } from "@/lib/api";
+import { extractDifference, isPlainObject } from "@/utils/configMerge";
+import { extractTomlDifference } from "@/utils/tomlConfigMerge";
+import {
+  parseGeminiCommonConfigSnippet,
+  mapGeminiWarningToI18n,
+} from "@/utils/providerConfigUtils";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -81,7 +88,103 @@ export function EditProviderDialog({
               appId,
             )) as Record<string, unknown>;
             if (!cancelled && live && typeof live === "object") {
-              setLiveSettings(live);
+              // 检查是否启用了通用配置
+              const metaByApp = provider.meta?.commonConfigEnabledByApp;
+              const commonConfigEnabled =
+                metaByApp?.[appId] ??
+                provider.meta?.commonConfigEnabled ??
+                false;
+
+              if (commonConfigEnabled) {
+                // 从 live 配置中提取自定义部分（去除通用配置）
+                try {
+                  const commonSnippet =
+                    await configApi.getCommonConfigSnippet(appId);
+                  if (commonSnippet && commonSnippet.trim()) {
+                    if (appId === "codex") {
+                      // Codex: 处理 TOML 格式的 config 字段
+                      const liveConfig =
+                        (live as { auth?: unknown; config?: string }).config ??
+                        "";
+                      const { customToml, error } = extractTomlDifference(
+                        liveConfig,
+                        commonSnippet.trim(),
+                      );
+                      if (!error) {
+                        setLiveSettings({
+                          ...live,
+                          config: customToml,
+                        });
+                      } else {
+                        setLiveSettings(live);
+                      }
+                    } else if (appId === "gemini") {
+                      // Gemini: common config supports three formats:
+                      // - ENV format: KEY=VALUE lines
+                      // - Flat JSON: {"KEY": "VALUE", ...}
+                      // - Wrapped JSON: {"env": {"KEY": "VALUE", ...}}
+                      const liveEnv =
+                        (live as { env?: Record<string, string> }).env ?? {};
+
+                      // Use shared parser with validation
+                      const parseResult = parseGeminiCommonConfigSnippet(
+                        commonSnippet,
+                        { strictForbiddenKeys: false },
+                      );
+
+                      if (parseResult.error) {
+                        console.warn(
+                          "[EditProviderDialog] Gemini common config parse error:",
+                          parseResult.error,
+                        );
+                        setLiveSettings(live);
+                      } else {
+                        // Show warning toast if keys were filtered
+                        if (parseResult.warning) {
+                          toast.warning(
+                            mapGeminiWarningToI18n(parseResult.warning, t),
+                          );
+                        }
+
+                        if (
+                          isPlainObject(liveEnv) &&
+                          Object.keys(parseResult.env).length > 0
+                        ) {
+                          const { customConfig } = extractDifference(
+                            liveEnv,
+                            parseResult.env,
+                          );
+                          setLiveSettings({
+                            ...live,
+                            env: customConfig,
+                          });
+                        } else {
+                          setLiveSettings(live);
+                        }
+                      }
+                    } else {
+                      // Claude: 处理 JSON 格式
+                      const commonConfig = JSON.parse(commonSnippet.trim());
+                      if (isPlainObject(live) && isPlainObject(commonConfig)) {
+                        const { customConfig } = extractDifference(
+                          live,
+                          commonConfig,
+                        );
+                        setLiveSettings(customConfig);
+                      } else {
+                        setLiveSettings(live);
+                      }
+                    }
+                  } else {
+                    setLiveSettings(live);
+                  }
+                } catch {
+                  // 提取失败时使用原始 live 配置
+                  setLiveSettings(live);
+                }
+              } else {
+                setLiveSettings(live);
+              }
               setHasLoadedLive(true);
             }
           } catch {
@@ -105,7 +208,14 @@ export function EditProviderDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
+  }, [
+    open,
+    provider?.id,
+    provider?.meta,
+    appId,
+    hasLoadedLive,
+    isProxyTakeover,
+  ]); // 添加 provider?.meta 依赖
 
   const initialSettingsConfig = useMemo(() => {
     return (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
