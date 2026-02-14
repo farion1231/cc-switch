@@ -449,9 +449,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     : null;
   const lastError = config?.status?.lastError?.trim();
   const showAutoSyncError =
-    !!lastError &&
-    (config?.status?.lastErrorSource === "auto" ||
-      (!config?.status?.lastErrorSource && !!config?.autoSync));
+    !!lastError && config?.status?.lastErrorSource === "auto";
 
   // ─── Render ─────────────────────────────────────────────
 

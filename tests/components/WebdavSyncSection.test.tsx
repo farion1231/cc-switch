@@ -155,6 +155,34 @@ describe("WebdavSyncSection", () => {
     expect(screen.getByText("network timeout")).toBeInTheDocument();
   });
 
+  it("does not show auto sync error callout for manual sync errors", () => {
+    renderSection({
+      ...baseConfig,
+      status: {
+        lastError: "manual upload failed",
+        lastErrorSource: "manual",
+      },
+    });
+
+    expect(
+      screen.queryByText("settings.webdavSync.autoSyncLastErrorTitle"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show auto sync error callout when source is missing", () => {
+    renderSection({
+      ...baseConfig,
+      autoSync: true,
+      status: {
+        lastError: "legacy error without source",
+      },
+    });
+
+    expect(
+      screen.queryByText("settings.webdavSync.autoSyncLastErrorTitle"),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows validation error when saving without base url", async () => {
     renderSection({ ...baseConfig, baseUrl: "" });
 
