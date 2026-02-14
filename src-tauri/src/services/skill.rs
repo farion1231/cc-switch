@@ -284,6 +284,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::OpenClaw => {
+                if let Some(custom) = crate::settings::get_openclaw_override_dir() {
+                    return Ok(custom.join("skills"));
+                }
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置
@@ -298,6 +303,7 @@ impl SkillService {
             AppType::Codex => home.join(".codex").join("skills"),
             AppType::Gemini => home.join(".gemini").join("skills"),
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
+            AppType::OpenClaw => home.join(".openclaw").join("skills"),
         })
     }
 

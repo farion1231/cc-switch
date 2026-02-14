@@ -88,6 +88,8 @@
     "addOpenCodeProvider": "OpenCode プロバイダーを追加",
     "addToConfig": "追加",
     "removeFromConfig": "削除",
+    "setAsDefault": "有効化",
+    "isDefault": "デフォルト",
     "inConfig": "追加済み",
     "addProviderHint": "一覧にすばやく切り替えられるよう、ここに情報を入力してください。",
     "editClaudeProvider": "Claude Code プロバイダーを編集",
@@ -162,7 +164,11 @@
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
     "openAIChatFormatHint": "このプロバイダーは OpenAI Chat フォーマットを使用しており、プロキシサービスの有効化が必要です",
-    "openLinkFailed": "リンクを開けませんでした"
+    "openLinkFailed": "リンクを開けませんでした",
+    "openclawModelsRegistered": "モデルが /model リストに登録されました",
+    "openclawDefaultModelSet": "デフォルトモデルに設定しました",
+    "openclawDefaultModelSetFailed": "デフォルトモデルの設定に失敗しました",
+    "openclawNoModels": "モデルが設定されていません"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -266,6 +272,77 @@
     "selectFileFailed": "有効な SQL バックアップファイルを選択してください",
     "configCorrupted": "SQL ファイルが壊れているか形式が無効な可能性があります",
     "backupId": "バックアップ ID",
+    "webdavSync": {
+      "title": "WebDAV クラウド同期",
+      "description": "WebDAV を使ってデバイス間でデータベースとスキル設定を同期します。",
+      "baseUrl": "WebDAV サーバー URL",
+      "baseUrlPlaceholder": "https://example.com/remote.php/dav/files/user",
+      "username": "ユーザー名",
+      "usernamePlaceholder": "メールアドレスまたはユーザー名",
+      "password": "パスワード",
+      "passwordPlaceholder": "アプリパスワード",
+      "remoteRoot": "リモートルートディレクトリ",
+      "profile": "同期プロファイル名",
+      "test": "接続テスト",
+      "testing": "テスト中...",
+      "testSuccess": "接続成功",
+      "testFailed": "接続失敗：{{error}}",
+      "save": "設定を保存",
+      "saving": "保存中...",
+      "saveFailed": "設定の保存に失敗しました：{{error}}",
+      "upload": "クラウドにアップロード",
+      "uploading": "アップロード中...",
+      "uploadSuccess": "WebDAV にアップロードしました",
+      "uploadFailed": "アップロードに失敗しました：{{error}}",
+      "download": "クラウドからダウンロード",
+      "downloading": "ダウンロード中...",
+      "downloadSuccess": "WebDAV からダウンロード・復元しました",
+      "downloadFailed": "ダウンロードに失敗しました：{{error}}",
+      "lastSync": "前回の同期：{{time}}",
+      "missingUrl": "WebDAV サーバー URL を入力してください",
+      "presets": {
+        "label": "サービス",
+        "jianguoyun": "坚果云",
+        "jianguoyunHint": "坚果云の「セキュリティ設定」で「サードパーティアプリパスワード」を生成してください。ログインパスワードは使用しないでください。",
+        "nextcloud": "Nextcloud",
+        "nextcloudHint": "your-server を Nextcloud サーバーのアドレスに、USERNAME をユーザー名に置き換えてください。",
+        "synology": "Synology NAS",
+        "synologyHint": "Synology の「パッケージセンター」で WebDAV Server パッケージをインストール・有効化してください。",
+        "custom": "カスタム"
+      },
+      "remoteRootDefault": "デフォルト: cc-switch-sync",
+      "profileDefault": "デフォルト: default",
+      "saveAndTestSuccess": "設定を保存しました。接続正常です",
+      "saveAndTestFailed": "設定を保存しましたが、接続テストに失敗しました：{{error}}",
+      "noRemoteData": "クラウドに同期データが見つかりません",
+      "incompatibleVersion": "リモートデータのバージョンに互換性がありません（v{{version}}）。現在 v2 をサポートしています",
+      "unsaved": "未保存",
+      "saved": "保存済み",
+      "unsavedChanges": "先に設定を保存してください",
+      "saveBeforeSync": "アップロード/ダウンロードを有効にするには、先に設定を保存してください。",
+      "fetchingRemote": "リモート情報を取得中...",
+      "fetchRemoteFailed": "リモート情報の取得に失敗しました。設定とネットワークを確認してください。",
+      "confirmDownload": {
+        "title": "クラウドから復元",
+        "deviceName": "アップロード元",
+        "createdAt": "アップロード日時",
+        "artifacts": "内容",
+        "warning": "ローカルのすべてのデータとスキル設定が上書きされます",
+        "confirm": "復元を実行"
+      },
+      "confirmUpload": {
+        "title": "クラウドにアップロード",
+        "content": "以下の内容を WebDAV サーバーに同期します：",
+        "dbItem": "データベース（すべてのプロバイダー設定とデータ）",
+        "skillsItem": "スキル（すべてのカスタムスキル）",
+        "targetPath": "保存先パス",
+        "existingData": "クラウドの既存データ",
+        "deviceName": "アップロード元",
+        "createdAt": "アップロード日時",
+        "warning": "リモートの既存同期データが上書きされます",
+        "confirm": "アップロードを実行"
+      }
+    },
     "autoReload": "データを更新しました",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
@@ -407,7 +484,8 @@
     "claude": "Claude",
     "codex": "Codex",
     "gemini": "Gemini",
-    "opencode": "OpenCode"
+    "opencode": "OpenCode",
+    "openclaw": "OpenClaw"
   },
   "sessionManager": {
     "title": "セッション管理",
@@ -660,6 +738,38 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "openclaw": {
+    "providerKey": "プロバイダーキー",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "設定ファイル内のユニーク識別子。作成後は変更できません。小文字、数字、ハイフンのみ使用可能。",
+    "providerKeyRequired": "プロバイダーキーを入力してください",
+    "providerKeyDuplicate": "このキーは既に使用されています",
+    "providerKeyInvalid": "無効な形式です。小文字、数字、ハイフンのみ使用可能。",
+    "apiProtocol": "API プロトコル",
+    "selectProtocol": "API プロトコルを選択",
+    "apiProtocolHint": "プロバイダーの API と互換性のあるプロトコルタイプを選択してください。ほとんどのプロバイダーは OpenAI Completions 形式を使用します。",
+    "baseUrl": "API エンドポイント",
+    "baseUrlHint": "プロバイダーの API エンドポイントアドレス。",
+    "models": "モデル一覧",
+    "addModel": "モデルを追加",
+    "noModels": "モデルが設定されていません。「モデルを追加」をクリックして利用可能なモデルを設定してください。",
+    "modelId": "モデル ID",
+    "modelIdPlaceholder": "claude-3-sonnet",
+    "modelName": "表示名",
+    "modelNamePlaceholder": "Claude 3 Sonnet",
+    "contextWindow": "コンテキストウィンドウ",
+    "maxTokens": "最大出力トークン数",
+    "reasoning": "推論モード",
+    "reasoningOn": "有効",
+    "reasoningOff": "無効",
+    "inputCost": "入力コスト ($/M トークン)",
+    "outputCost": "出力コスト ($/M トークン)",
+    "advancedOptions": "詳細オプション",
+    "cacheReadCost": "キャッシュ読取コスト ($/M トークン)",
+    "cacheWriteCost": "キャッシュ書込コスト ($/M トークン)",
+    "cacheCostHint": "キャッシュコストは Prompt Caching のコスト計算に使用されます。キャッシュを使用しない場合は空欄のままにしてください。",
+    "modelsHint": "このプロバイダーがサポートするモデルを設定します。モデル ID は API 呼び出しに、表示名はインターフェースに使用されます。"
+  },
   "providerPreset": {
     "label": "プロバイダータイプ",
     "custom": "カスタム設定",
@@ -855,7 +965,8 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
-        "opencode": "OpenCode"
+        "opencode": "OpenCode",
+        "openclaw": "OpenClaw"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -1028,6 +1139,74 @@
       "deleteMessage": "プロンプト「{{name}}」を削除してもよろしいですか？"
     }
   },
+  "workspace": {
+    "title": "ワークスペースファイル",
+    "manage": "ワークスペース",
+    "files": {
+      "agents": "エージェントの操作指示とルール",
+      "soul": "エージェントの人格とコミュニケーションスタイル",
+      "user": "ユーザープロファイルと設定",
+      "identity": "エージェントの名前とアバター",
+      "tools": "ローカルツールドキュメント",
+      "memory": "長期記憶と意思決定記録",
+      "heartbeat": "ハートビート実行チェックリスト",
+      "bootstrap": "初回実行ブートストラップ",
+      "boot": "ゲートウェイ再起動チェックリスト"
+    },
+    "editing": "{{filename}} を編集",
+    "saveSuccess": "保存しました",
+    "saveFailed": "保存に失敗しました",
+    "loadFailed": "読み込みに失敗しました"
+  },
+  "openclaw": {
+    "env": {
+      "title": "環境変数",
+      "description": "openclaw.json の環境変数設定を管理（APIキー、カスタム変数など）",
+      "keyPlaceholder": "変数名",
+      "valuePlaceholder": "値",
+      "add": "変数を追加",
+      "saveSuccess": "環境変数を保存しました",
+      "saveFailed": "環境変数の保存に失敗しました",
+      "loadFailed": "環境変数の読み込みに失敗しました",
+      "duplicateKey": "重複する変数名が検出されました: {{key}}"
+    },
+    "tools": {
+      "title": "ツール権限",
+      "description": "openclaw.json のツール権限設定を管理（許可/拒否リスト）",
+      "profile": "権限プロファイル",
+      "profiles": {
+        "default": "デフォルト",
+        "strict": "厳格",
+        "permissive": "寛容",
+        "custom": "カスタム"
+      },
+      "allowList": "許可リスト",
+      "denyList": "拒否リスト",
+      "patternPlaceholder": "ツール名またはパターン",
+      "addAllow": "許可を追加",
+      "addDeny": "拒否を追加",
+      "saveSuccess": "ツール権限を保存しました",
+      "saveFailed": "ツール権限の保存に失敗しました",
+      "loadFailed": "ツール権限の読み込みに失敗しました"
+    },
+    "agents": {
+      "title": "Agents 設定",
+      "description": "openclaw.json の agents.defaults 設定を管理（デフォルトモデル、ランタイムパラメータなど）",
+      "modelSection": "モデル設定",
+      "primaryModel": "プライマリモデル",
+      "primaryModelHint": "形式: provider/model-id",
+      "fallbackModels": "フォールバックモデル",
+      "fallbackModelsHint": "カンマ区切り、優先度順",
+      "runtimeSection": "ランタイムパラメータ",
+      "workspace": "ワークスペースパス",
+      "timeout": "タイムアウト（秒）",
+      "contextTokens": "コンテキストトークン数",
+      "maxConcurrent": "最大同時実行数",
+      "saveSuccess": "Agents 設定を保存しました",
+      "saveFailed": "Agents 設定の保存に失敗しました",
+      "loadFailed": "Agents 設定の読み込みに失敗しました"
+    }
+  },
   "env": {
     "warning": {
       "title": "競合する環境変数を検出しました",
@@ -1168,7 +1347,8 @@
       "claude": "Claude",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "openclaw": "OpenClaw"
     },
     "installFromZip": {
       "button": "ZIP からインストール",
@@ -1652,5 +1832,34 @@
       "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 4.6 の max バリアントを使用。",
       "writing": "ライティングカテゴリ。ドキュメント、散文、技術文書に特化。デフォルトで Gemini 3 Flash 高速生成モデルを使用。"
     }
+  },
+  "openclawConfig": {
+    "defaultModel": {
+      "title": "デフォルトモデル",
+      "description": "OpenClaw のデフォルトのプライマリモデルとフォールバックモデルを設定します",
+      "primary": "プライマリモデル",
+      "primaryPlaceholder": "例: deepseek/deepseek-chat",
+      "fallbacks": "フォールバックモデル",
+      "fallbacksPlaceholder": "例: openrouter/anthropic/claude-sonnet-4.5",
+      "addFallback": "フォールバックモデルを追加",
+      "saved": "デフォルトモデル設定を保存しました",
+      "saveFailed": "デフォルトモデルの保存に失敗しました"
+    },
+    "modelCatalog": {
+      "title": "モデルカタログ",
+      "description": "モデルのエイリアスと許可リストを設定します",
+      "modelId": "モデル ID",
+      "modelIdPlaceholder": "例: deepseek/deepseek-chat",
+      "alias": "エイリアス",
+      "aliasPlaceholder": "例: DeepSeek",
+      "addEntry": "モデルを追加",
+      "removeEntry": "削除",
+      "saved": "モデルカタログを保存しました",
+      "saveFailed": "モデルカタログの保存に失敗しました",
+      "empty": "モデルカタログエントリがありません",
+      "emptyHint": "エイリアスを設定するにはカタログにモデルを追加してください"
+    },
+    "suggestedDefaults": "推奨デフォルト設定を適用",
+    "suggestedDefaultsHint": "このプリセットの推奨デフォルトモデル設定を使用します"
   }
 }

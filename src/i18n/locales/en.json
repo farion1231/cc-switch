@@ -88,6 +88,8 @@
     "addOpenCodeProvider": "Add OpenCode Provider",
     "addToConfig": "Add",
     "removeFromConfig": "Remove",
+    "setAsDefault": "Enable",
+    "isDefault": "Default",
     "inConfig": "Added",
     "addProviderHint": "Fill in the information to quickly switch providers in the list.",
     "editClaudeProvider": "Edit Claude Code Provider",
@@ -162,7 +164,11 @@
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings: {{error}}",
     "openAIChatFormatHint": "This provider uses OpenAI Chat format and requires the proxy service to be enabled",
-    "openLinkFailed": "Failed to open link"
+    "openLinkFailed": "Failed to open link",
+    "openclawModelsRegistered": "Models have been registered to /model list",
+    "openclawDefaultModelSet": "Set as default model",
+    "openclawDefaultModelSetFailed": "Failed to set default model",
+    "openclawNoModels": "No models configured"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -266,6 +272,77 @@
     "selectFileFailed": "Please choose a valid SQL backup file",
     "configCorrupted": "SQL file may be corrupted or invalid",
     "backupId": "Backup ID",
+    "webdavSync": {
+      "title": "WebDAV Cloud Sync",
+      "description": "Sync database and skill configurations across devices via WebDAV.",
+      "baseUrl": "WebDAV Server URL",
+      "baseUrlPlaceholder": "https://dav.example.com/dav/",
+      "username": "WebDAV Account",
+      "usernamePlaceholder": "Email or username",
+      "password": "WebDAV Password",
+      "passwordPlaceholder": "App password",
+      "remoteRoot": "Remote Root Directory",
+      "profile": "Sync Profile Name",
+      "test": "Test Connection",
+      "testing": "Testing...",
+      "testSuccess": "Connection successful",
+      "testFailed": "Connection failed: {{error}}",
+      "save": "Save Config",
+      "saving": "Saving...",
+      "saveFailed": "Failed to save config: {{error}}",
+      "upload": "Upload to Cloud",
+      "uploading": "Uploading...",
+      "uploadSuccess": "Uploaded to WebDAV",
+      "uploadFailed": "Upload failed: {{error}}",
+      "download": "Download from Cloud",
+      "downloading": "Downloading...",
+      "downloadSuccess": "Downloaded and restored from WebDAV",
+      "downloadFailed": "Download failed: {{error}}",
+      "lastSync": "Last sync: {{time}}",
+      "missingUrl": "Please enter the WebDAV server URL",
+      "presets": {
+        "label": "Provider",
+        "jianguoyun": "Jianguoyun",
+        "jianguoyunHint": "Generate an \"App Password\" in Jianguoyun security settings. Do not use your login password.",
+        "nextcloud": "Nextcloud",
+        "nextcloudHint": "Replace your-server with your Nextcloud domain and USERNAME with your username.",
+        "synology": "Synology NAS",
+        "synologyHint": "Install and enable the WebDAV Server package in Synology Package Center first.",
+        "custom": "Custom"
+      },
+      "remoteRootDefault": "Default: cc-switch-sync",
+      "profileDefault": "Default: default",
+      "saveAndTestSuccess": "Config saved, connection OK",
+      "saveAndTestFailed": "Config saved, but connection test failed: {{error}}",
+      "noRemoteData": "No sync data found on the remote server",
+      "incompatibleVersion": "Remote data version incompatible (v{{version}}), current supports v2",
+      "unsaved": "Unsaved",
+      "saved": "Saved",
+      "unsavedChanges": "Please save config first",
+      "saveBeforeSync": "Save configuration first to enable upload/download.",
+      "fetchingRemote": "Fetching remote info...",
+      "fetchRemoteFailed": "Failed to fetch remote info. Please check configuration and network.",
+      "confirmDownload": {
+        "title": "Restore from Cloud",
+        "deviceName": "Uploaded by",
+        "createdAt": "Uploaded at",
+        "artifacts": "Contents",
+        "warning": "This will overwrite all local data and skill configurations",
+        "confirm": "Confirm Restore"
+      },
+      "confirmUpload": {
+        "title": "Upload to Cloud",
+        "content": "The following will be synced to the WebDAV server:",
+        "dbItem": "Database (all provider configs and data)",
+        "skillsItem": "Skills (all custom skills)",
+        "targetPath": "Target path",
+        "existingData": "Existing cloud data",
+        "deviceName": "Uploaded by",
+        "createdAt": "Uploaded at",
+        "warning": "This will overwrite existing sync data on the remote server",
+        "confirm": "Confirm Upload"
+      }
+    },
     "autoReload": "Data refreshed",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
@@ -407,7 +484,8 @@
     "claude": "Claude",
     "codex": "Codex",
     "gemini": "Gemini",
-    "opencode": "OpenCode"
+    "opencode": "OpenCode",
+    "openclaw": "OpenClaw"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -660,6 +738,38 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "openclaw": {
+    "providerKey": "Provider Key",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "Unique identifier in config file. Cannot be changed after creation. Use lowercase letters, numbers, and hyphens only.",
+    "providerKeyRequired": "Provider key is required",
+    "providerKeyDuplicate": "This key is already in use",
+    "providerKeyInvalid": "Invalid format. Use lowercase letters, numbers, and hyphens only.",
+    "apiProtocol": "API Protocol",
+    "selectProtocol": "Select API Protocol",
+    "apiProtocolHint": "Select the protocol type compatible with the provider's API. Most providers use OpenAI Completions format.",
+    "baseUrl": "API Endpoint",
+    "baseUrlHint": "The provider's API endpoint address.",
+    "models": "Models",
+    "addModel": "Add Model",
+    "noModels": "No models configured. Click Add Model to configure available models.",
+    "modelId": "Model ID",
+    "modelIdPlaceholder": "claude-3-sonnet",
+    "modelName": "Display Name",
+    "modelNamePlaceholder": "Claude 3 Sonnet",
+    "contextWindow": "Context Window",
+    "maxTokens": "Max Output Tokens",
+    "reasoning": "Reasoning Mode",
+    "reasoningOn": "Enabled",
+    "reasoningOff": "Disabled",
+    "inputCost": "Input Cost ($/M tokens)",
+    "outputCost": "Output Cost ($/M tokens)",
+    "advancedOptions": "Advanced Options",
+    "cacheReadCost": "Cache Read Cost ($/M tokens)",
+    "cacheWriteCost": "Cache Write Cost ($/M tokens)",
+    "cacheCostHint": "Cache costs are used to calculate Prompt Caching costs. Leave empty if not using caching.",
+    "modelsHint": "Configure the models supported by this provider. Model ID is used for API calls, Display Name for the interface."
+  },
   "providerPreset": {
     "label": "Provider Preset",
     "custom": "Custom Configuration",
@@ -855,7 +965,8 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
-        "opencode": "OpenCode"
+        "opencode": "OpenCode",
+        "openclaw": "OpenClaw"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -1028,6 +1139,74 @@
       "deleteMessage": "Are you sure you want to delete prompt \"{{name}}\"?"
     }
   },
+  "workspace": {
+    "title": "Workspace Files",
+    "manage": "Workspace",
+    "files": {
+      "agents": "Agent instructions and rules",
+      "soul": "Agent personality and communication style",
+      "user": "User profile and preferences",
+      "identity": "Agent name and avatar",
+      "tools": "Local tool documentation",
+      "memory": "Long-term memory and decisions",
+      "heartbeat": "Heartbeat run checklist",
+      "bootstrap": "First-run bootstrap ritual",
+      "boot": "Gateway reboot checklist"
+    },
+    "editing": "Edit {{filename}}",
+    "saveSuccess": "Saved successfully",
+    "saveFailed": "Failed to save",
+    "loadFailed": "Failed to load"
+  },
+  "openclaw": {
+    "env": {
+      "title": "Environment Variables",
+      "description": "Manage environment variables in openclaw.json (API keys, custom variables, etc.)",
+      "keyPlaceholder": "Variable name",
+      "valuePlaceholder": "Value",
+      "add": "Add Variable",
+      "saveSuccess": "Environment variables saved",
+      "saveFailed": "Failed to save environment variables",
+      "loadFailed": "Failed to load environment variables",
+      "duplicateKey": "Duplicate variable name detected: {{key}}"
+    },
+    "tools": {
+      "title": "Tool Permissions",
+      "description": "Manage tool permissions in openclaw.json (allow/deny lists)",
+      "profile": "Permission Profile",
+      "profiles": {
+        "default": "Default",
+        "strict": "Strict",
+        "permissive": "Permissive",
+        "custom": "Custom"
+      },
+      "allowList": "Allow List",
+      "denyList": "Deny List",
+      "patternPlaceholder": "Tool name or pattern",
+      "addAllow": "Add Allow",
+      "addDeny": "Add Deny",
+      "saveSuccess": "Tool permissions saved",
+      "saveFailed": "Failed to save tool permissions",
+      "loadFailed": "Failed to load tool permissions"
+    },
+    "agents": {
+      "title": "Agents Config",
+      "description": "Manage agents.defaults in openclaw.json (default model, runtime parameters, etc.)",
+      "modelSection": "Model Configuration",
+      "primaryModel": "Primary Model",
+      "primaryModelHint": "Format: provider/model-id",
+      "fallbackModels": "Fallback Models",
+      "fallbackModelsHint": "Comma-separated, ordered by priority",
+      "runtimeSection": "Runtime Parameters",
+      "workspace": "Workspace Path",
+      "timeout": "Timeout (seconds)",
+      "contextTokens": "Context Tokens",
+      "maxConcurrent": "Max Concurrent",
+      "saveSuccess": "Agents config saved",
+      "saveFailed": "Failed to save agents config",
+      "loadFailed": "Failed to load agents config"
+    }
+  },
   "env": {
     "warning": {
       "title": "Environment Variable Conflicts Detected",
@@ -1170,7 +1349,8 @@
       "claude": "Claude",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "openclaw": "OpenClaw"
     },
     "installFromZip": {
       "button": "Install from ZIP",
@@ -1671,5 +1851,34 @@
       "unspecifiedHigh": "Uncategorized high-effort task category for tasks that don't fit other categories with large workload. Defaults to Claude Opus 4.6 max variant.",
       "writing": "Writing category for documentation, prose and technical writing. Defaults to Gemini 3 Flash fast generation model."
     }
+  },
+  "openclawConfig": {
+    "defaultModel": {
+      "title": "Default Model",
+      "description": "Configure the default primary model and fallback models for OpenClaw",
+      "primary": "Primary Model",
+      "primaryPlaceholder": "e.g., deepseek/deepseek-chat",
+      "fallbacks": "Fallback Models",
+      "fallbacksPlaceholder": "e.g., openrouter/anthropic/claude-sonnet-4.5",
+      "addFallback": "Add Fallback Model",
+      "saved": "Default model configuration saved",
+      "saveFailed": "Failed to save default model"
+    },
+    "modelCatalog": {
+      "title": "Model Catalog",
+      "description": "Configure model aliases and allowlist",
+      "modelId": "Model ID",
+      "modelIdPlaceholder": "e.g., deepseek/deepseek-chat",
+      "alias": "Alias",
+      "aliasPlaceholder": "e.g., DeepSeek",
+      "addEntry": "Add Model",
+      "removeEntry": "Remove",
+      "saved": "Model catalog saved",
+      "saveFailed": "Failed to save model catalog",
+      "empty": "No model catalog entries",
+      "emptyHint": "Add models to the catalog to configure aliases"
+    },
+    "suggestedDefaults": "Apply Suggested Defaults",
+    "suggestedDefaultsHint": "Use this preset's recommended default model configuration"
   }
 }

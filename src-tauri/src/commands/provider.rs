@@ -318,3 +318,7 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
         .map(|providers| providers.keys().cloned().collect())
         .map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
+// ============================================================================

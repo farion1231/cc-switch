@@ -9,7 +9,7 @@ interface AppSwitcherProps {
   compact?: boolean;
 }
 
-const ALL_APPS: AppId[] = ["claude", "codex", "gemini", "opencode"];
+const ALL_APPS: AppId[] = ["claude", "codex", "gemini", "opencode", "openclaw"];
 const STORAGE_KEY = "cc-switch-last-app";
 
 export function AppSwitcher({
@@ -29,12 +29,14 @@ export function AppSwitcher({
     codex: "openai",
     gemini: "gemini",
     opencode: "opencode",
+    openclaw: "openclaw",
   };
   const appDisplayName: Record<AppId, string> = {
     claude: "Claude",
     codex: "Codex",
     gemini: "Gemini",
     opencode: "OpenCode",
+    openclaw: "OpenClaw",
   };
 
   // Filter apps based on visibility settings (default all visible)

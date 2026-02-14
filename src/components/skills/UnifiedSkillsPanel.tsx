@@ -53,7 +53,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   const installFromZipMutation = useInstallSkillsFromZip();
 
   const enabledCounts = useMemo(() => {
-    const counts = { claude: 0, codex: 0, gemini: 0, opencode: 0 };
+    const counts = { claude: 0, codex: 0, gemini: 0, opencode: 0, openclaw: 0 };
     if (!skills) return counts;
     skills.forEach((skill) => {
       for (const app of APP_IDS) {

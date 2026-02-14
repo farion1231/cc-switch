@@ -844,7 +844,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
-        "claude-opus-4-5-20251101": { name: "Claude Opus 4.5" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
     category: "aggregator",
@@ -871,7 +871,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
-        "claude-opus-4-5-20251101": { name: "Claude Opus 4.5" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
     category: "aggregator",
@@ -898,7 +898,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "anthropic/claude-sonnet-4.5": { name: "Claude Sonnet 4.5" },
-        "anthropic/claude-opus-4.5": { name: "Claude Opus 4.5" },
+        "anthropic/claude-opus-4.6": { name: "Claude Opus 4.6" },
       },
     },
     category: "aggregator",
@@ -952,7 +952,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
-        "claude-opus-4-5-20251101": { name: "Claude Opus 4.5" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
     category: "third_party",
@@ -980,7 +980,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
-        "claude-opus-4-5-20251101": { name: "Claude Opus 4.5" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
     category: "third_party",
@@ -1009,7 +1009,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
-        "claude-opus-4-5-20251101": { name: "Claude Opus 4.5" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
     category: "third_party",
@@ -1070,7 +1070,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "claude-sonnet-4.5": { name: "Claude Sonnet 4.5" },
-        "claude-opus-4.5": { name: "Claude Opus 4.5" },
+        "claude-opus-4.6": { name: "Claude Opus 4.6" },
       },
     },
     category: "third_party",

@@ -16,6 +16,7 @@ import type {
   ClaudeApiFormat,
   OpenCodeModel,
   OpenCodeProviderConfig,
+  OpenClawModel,
 } from "@/types";
 import {
   providerPresets,
@@ -34,7 +35,13 @@ import {
   OPENCODE_PRESET_MODEL_VARIANTS,
   type OpenCodeProviderPreset,
 } from "@/config/opencodeProviderPresets";
+import {
+  openclawProviderPresets,
+  type OpenClawProviderPreset,
+  type OpenClawSuggestedDefaults,
+} from "@/config/openclawProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
+import { OpenClawFormFields } from "./OpenClawFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import { applyTemplateValues } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
@@ -172,13 +179,25 @@ function toOpencodeExtraOptions(
   return extra;
 }
 
+const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
+  {
+    baseUrl: "",
+    apiKey: "",
+    api: "openai-completions",
+    models: [],
+  },
+  null,
+  2,
+);
+
 type PresetEntry = {
   id: string;
   preset:
     | ProviderPreset
     | CodexProviderPreset
     | GeminiProviderPreset
-    | OpenCodeProviderPreset;
+    | OpenCodeProviderPreset
+    | OpenClawProviderPreset;
 };
 
 interface ProviderFormProps {
@@ -259,6 +278,7 @@ export function ProviderForm({
     category?: ProviderCategory;
     isPartner?: boolean;
     partnerPromotionKey?: string;
+    suggestedDefaults?: OpenClawSuggestedDefaults;
   } | null>(null);
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
   const [isCodexEndpointModalOpen, setIsCodexEndpointModalOpen] =
@@ -337,7 +357,9 @@ export function ProviderForm({
             ? GEMINI_DEFAULT_CONFIG
             : appId === "opencode"
               ? OPENCODE_DEFAULT_CONFIG
-              : CLAUDE_DEFAULT_CONFIG,
+              : appId === "openclaw"
+                ? OPENCLAW_DEFAULT_CONFIG
+                : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -462,6 +484,11 @@ export function ProviderForm({
     } else if (appId === "opencode") {
       return opencodeProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `opencode-${index}`,
+        preset,
+      }));
+    } else if (appId === "openclaw") {
+      return openclawProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `openclaw-${index}`,
         preset,
       }));
     }
@@ -846,6 +873,24 @@ export function ProviderForm({
     return providerId || "";
   });
 
+  // OpenClaw: query existing providers for duplicate key checking
+  const { data: openclawProvidersData } = useProvidersQuery("openclaw");
+  const existingOpenclawKeys = useMemo(() => {
+    if (!openclawProvidersData?.providers) return [];
+    // Exclude current provider ID when in edit mode
+    return Object.keys(openclawProvidersData.providers).filter(
+      (k) => k !== providerId,
+    );
+  }, [openclawProvidersData?.providers, providerId]);
+
+  // OpenClaw Provider Key state
+  const [openclawProviderKey, setOpenclawProviderKey] = useState<string>(() => {
+    if (appId !== "openclaw") return "";
+    // In edit mode, use the existing provider ID as the key
+    return providerId || "";
+  });
+
+  // OpenCode 配置状态
   const [opencodeNpm, setOpencodeNpm] = useState<string>(() => {
     if (appId !== "opencode") return OPENCODE_DEFAULT_NPM;
     return initialOpencodeConfig?.npm || OPENCODE_DEFAULT_NPM;
@@ -987,6 +1032,128 @@ export function ProviderForm({
     setUseOmoCommonConfig(useCommonConfig);
   }, []);
 
+  // OpenClaw 配置状态
+  const [openclawBaseUrl, setOpenclawBaseUrl] = useState<string>(() => {
+    if (appId !== "openclaw") return "";
+    try {
+      const config = JSON.parse(
+        initialData?.settingsConfig
+          ? JSON.stringify(initialData.settingsConfig)
+          : OPENCLAW_DEFAULT_CONFIG,
+      );
+      return config.baseUrl || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const [openclawApiKey, setOpenclawApiKey] = useState<string>(() => {
+    if (appId !== "openclaw") return "";
+    try {
+      const config = JSON.parse(
+        initialData?.settingsConfig
+          ? JSON.stringify(initialData.settingsConfig)
+          : OPENCLAW_DEFAULT_CONFIG,
+      );
+      return config.apiKey || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const [openclawApi, setOpenclawApi] = useState<string>(() => {
+    if (appId !== "openclaw") return "openai-completions";
+    try {
+      const config = JSON.parse(
+        initialData?.settingsConfig
+          ? JSON.stringify(initialData.settingsConfig)
+          : OPENCLAW_DEFAULT_CONFIG,
+      );
+      return config.api || "openai-completions";
+    } catch {
+      return "openai-completions";
+    }
+  });
+
+  const [openclawModels, setOpenclawModels] = useState<OpenClawModel[]>(() => {
+    if (appId !== "openclaw") return [];
+    try {
+      const config = JSON.parse(
+        initialData?.settingsConfig
+          ? JSON.stringify(initialData.settingsConfig)
+          : OPENCLAW_DEFAULT_CONFIG,
+      );
+      return config.models || [];
+    } catch {
+      return [];
+    }
+  });
+
+  // OpenClaw handlers - sync state to form
+  const handleOpenclawBaseUrlChange = useCallback(
+    (baseUrl: string) => {
+      setOpenclawBaseUrl(baseUrl);
+      try {
+        const config = JSON.parse(
+          form.getValues("settingsConfig") || OPENCLAW_DEFAULT_CONFIG,
+        );
+        config.baseUrl = baseUrl.trim().replace(/\/+$/, "");
+        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+      } catch {
+        // ignore
+      }
+    },
+    [form],
+  );
+
+  const handleOpenclawApiKeyChange = useCallback(
+    (apiKey: string) => {
+      setOpenclawApiKey(apiKey);
+      try {
+        const config = JSON.parse(
+          form.getValues("settingsConfig") || OPENCLAW_DEFAULT_CONFIG,
+        );
+        config.apiKey = apiKey;
+        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+      } catch {
+        // ignore
+      }
+    },
+    [form],
+  );
+
+  const handleOpenclawApiChange = useCallback(
+    (api: string) => {
+      setOpenclawApi(api);
+      try {
+        const config = JSON.parse(
+          form.getValues("settingsConfig") || OPENCLAW_DEFAULT_CONFIG,
+        );
+        config.api = api;
+        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+      } catch {
+        // ignore
+      }
+    },
+    [form],
+  );
+
+  const handleOpenclawModelsChange = useCallback(
+    (models: OpenClawModel[]) => {
+      setOpenclawModels(models);
+      try {
+        const config = JSON.parse(
+          form.getValues("settingsConfig") || OPENCLAW_DEFAULT_CONFIG,
+        );
+        config.models = models;
+        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+      } catch {
+        // ignore
+      }
+    },
+    [form],
+  );
+
   const updateOpencodeSettings = useCallback(
     (updater: (config: Record<string, any>) => void) => {
       try {
@@ -1114,6 +1281,24 @@ export function ProviderForm({
       }
     }
 
+    // OpenClaw: validate provider key
+    if (appId === "openclaw") {
+      const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+      if (!openclawProviderKey.trim()) {
+        toast.error(t("openclaw.providerKeyRequired"));
+        return;
+      }
+      if (!keyPattern.test(openclawProviderKey)) {
+        toast.error(t("openclaw.providerKeyInvalid"));
+        return;
+      }
+      if (!isEditMode && existingOpenclawKeys.includes(openclawProviderKey)) {
+        toast.error(t("openclaw.providerKeyDuplicate"));
+        return;
+      }
+    }
+
+    // 非官方供应商必填校验：端点和 API Key
     if (category !== "official") {
       if (appId === "claude") {
         if (!baseUrl.trim()) {
@@ -1247,6 +1432,8 @@ export function ProviderForm({
       } else {
         payload.providerKey = opencodeProviderKey;
       }
+    } else if (appId === "openclaw") {
+      payload.providerKey = openclawProviderKey;
     }
 
     if (category === "omo" && !payload.presetCategory) {
@@ -1260,6 +1447,10 @@ export function ProviderForm({
       }
       if (activePreset.isPartner) {
         payload.isPartner = activePreset.isPartner;
+      }
+      // OpenClaw: 传递预设的 suggestedDefaults 到提交数据
+      if (activePreset.suggestedDefaults) {
+        payload.suggestedDefaults = activePreset.suggestedDefaults;
       }
     }
 
@@ -1399,6 +1590,21 @@ export function ProviderForm({
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
+  // 使用 API Key 链接 hook (OpenClaw)
+  const {
+    shouldShowApiKeyLink: shouldShowOpenclawApiKeyLink,
+    websiteUrl: openclawWebsiteUrl,
+    isPartner: isOpenclawPartner,
+    partnerPromotionKey: openclawPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "openclaw",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
+  // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
     selectedPresetId,
@@ -1429,6 +1635,14 @@ export function ProviderForm({
         setOpencodeModels({});
         setOpencodeExtraOptions({});
         resetOmoDraftState();
+      }
+      // OpenClaw 自定义模式：重置为空配置
+      if (appId === "openclaw") {
+        setOpenclawProviderKey("");
+        setOpenclawBaseUrl("");
+        setOpenclawApiKey("");
+        setOpenclawApi("openai-completions");
+        setOpenclawModels([]);
       }
       return;
     }
@@ -1503,6 +1717,40 @@ export function ProviderForm({
       setOpencodeModels(config.models || {});
       setOpencodeExtraOptions(toOpencodeExtraOptions(config.options || {}));
 
+      form.reset({
+        name: preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    // OpenClaw preset handling
+    if (appId === "openclaw") {
+      const preset = entry.preset as OpenClawProviderPreset;
+      const config = preset.settingsConfig;
+
+      // Update activePreset with suggestedDefaults for OpenClaw
+      setActivePreset({
+        id: value,
+        category: preset.category,
+        isPartner: preset.isPartner,
+        partnerPromotionKey: preset.partnerPromotionKey,
+        suggestedDefaults: preset.suggestedDefaults,
+      });
+
+      // Clear provider key (user must enter their own unique key)
+      setOpenclawProviderKey("");
+
+      // Update OpenClaw-specific states
+      setOpenclawBaseUrl(config.baseUrl || "");
+      setOpenclawApiKey(config.apiKey || "");
+      setOpenclawApi(config.api || "openai-completions");
+      setOpenclawModels(config.models || []);
+
+      // Update form fields
       form.reset({
         name: preset.name,
         websiteUrl: preset.websiteUrl ?? "",
@@ -1614,6 +1862,54 @@ export function ProviderForm({
                     /^[a-z0-9]+(-[a-z0-9]+)*$/.test(opencodeProviderKey)) && (
                     <p className="text-xs text-muted-foreground">
                       {t("opencode.providerKeyHint")}
+                    </p>
+                  )}
+              </div>
+            ) : appId === "openclaw" ? (
+              <div className="space-y-2">
+                <Label htmlFor="openclaw-key">
+                  {t("openclaw.providerKey")}
+                  <span className="text-destructive ml-1">*</span>
+                </Label>
+                <Input
+                  id="openclaw-key"
+                  value={openclawProviderKey}
+                  onChange={(e) =>
+                    setOpenclawProviderKey(
+                      e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+                    )
+                  }
+                  placeholder={t("openclaw.providerKeyPlaceholder")}
+                  disabled={isEditMode}
+                  className={
+                    (existingOpenclawKeys.includes(openclawProviderKey) &&
+                      !isEditMode) ||
+                    (openclawProviderKey.trim() !== "" &&
+                      !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(openclawProviderKey))
+                      ? "border-destructive"
+                      : ""
+                  }
+                />
+                {existingOpenclawKeys.includes(openclawProviderKey) &&
+                  !isEditMode && (
+                    <p className="text-xs text-destructive">
+                      {t("openclaw.providerKeyDuplicate")}
+                    </p>
+                  )}
+                {openclawProviderKey.trim() !== "" &&
+                  !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(openclawProviderKey) && (
+                    <p className="text-xs text-destructive">
+                      {t("openclaw.providerKeyInvalid")}
+                    </p>
+                  )}
+                {!(
+                  existingOpenclawKeys.includes(openclawProviderKey) &&
+                  !isEditMode
+                ) &&
+                  (openclawProviderKey.trim() === "" ||
+                    /^[a-z0-9]+(-[a-z0-9]+)*$/.test(openclawProviderKey)) && (
+                    <p className="text-xs text-muted-foreground">
+                      {t("openclaw.providerKeyHint")}
                     </p>
                   )}
               </div>
@@ -1752,6 +2048,26 @@ export function ProviderForm({
           />
         )}
 
+        {/* OpenClaw 专属字段 */}
+        {appId === "openclaw" && (
+          <OpenClawFormFields
+            baseUrl={openclawBaseUrl}
+            onBaseUrlChange={handleOpenclawBaseUrlChange}
+            apiKey={openclawApiKey}
+            onApiKeyChange={handleOpenclawApiKeyChange}
+            category={category}
+            shouldShowApiKeyLink={shouldShowOpenclawApiKeyLink}
+            websiteUrl={openclawWebsiteUrl}
+            isPartner={isOpenclawPartner}
+            partnerPromotionKey={openclawPartnerPromotionKey}
+            api={openclawApi}
+            onApiChange={handleOpenclawApiChange}
+            models={openclawModels}
+            onModelsChange={handleOpenclawModelsChange}
+          />
+        )}
+
+        {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
         {appId === "codex" ? (
           <>
             <CodexConfigEditor
@@ -1828,6 +2144,34 @@ export function ProviderForm({
             </div>
             {settingsConfigErrorField}
           </>
+        ) : appId === "openclaw" ? (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="settingsConfig">{t("provider.configJson")}</Label>
+              <JsonEditor
+                value={form.getValues("settingsConfig")}
+                onChange={(config) => form.setValue("settingsConfig", config)}
+                placeholder={`{
+  "baseUrl": "https://api.example.com/v1",
+  "apiKey": "your-api-key-here",
+  "api": "openai-completions",
+  "models": []
+}`}
+                rows={14}
+                showValidation={true}
+                language="json"
+              />
+            </div>
+            <FormField
+              control={form.control}
+              name="settingsConfig"
+              render={() => (
+                <FormItem className="space-y-0">
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </>
         ) : (
           <>
             <CommonConfigEditor
@@ -1877,5 +2221,6 @@ export type ProviderFormValues = ProviderFormData & {
   presetCategory?: ProviderCategory;
   isPartner?: boolean;
   meta?: ProviderMeta;
-  providerKey?: string;
+  providerKey?: string; // OpenCode/OpenClaw: user-defined provider key
+  suggestedDefaults?: OpenClawSuggestedDefaults; // OpenClaw: suggested default model configuration
 };

@@ -10,6 +10,7 @@ import {
   Terminal,
   TestTube2,
   Trash2,
+  Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,9 @@ interface ProviderActionsProps {
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
+  // OpenClaw: default model
+  isDefaultModel?: boolean;
+  onSetAsDefault?: () => void;
 }
 
 export function ProviderActions({
@@ -58,14 +62,20 @@ export function ProviderActions({
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
+  // OpenClaw: default model
+  isDefaultModel = false,
+  onSetAsDefault,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
 
-  const isOpenCodeMode = appId === "opencode" && !isOmo;
+  // 累加模式应用（OpenCode 非 OMO 和 OpenClaw）
+  const isAdditiveMode =
+    (appId === "opencode" && !isOmo) || appId === "openclaw";
 
+  // 故障转移模式下的按钮逻辑（累加模式和 OMO 应用不支持故障转移）
   const isFailoverMode =
-    !isOpenCodeMode && !isOmo && isAutoFailoverEnabled && onToggleFailover;
+    !isAdditiveMode && !isOmo && isAutoFailoverEnabled && onToggleFailover;
 
   const handleMainButtonClick = () => {
     if (isOmo) {
@@ -74,7 +84,8 @@ export function ProviderActions({
       } else {
         onSwitch();
       }
-    } else if (isOpenCodeMode) {
+    } else if (isAdditiveMode) {
+      // 累加模式：切换配置状态（添加/移除）
       if (isInConfig) {
         if (onRemoveFromConfig) {
           onRemoveFromConfig();
@@ -112,13 +123,16 @@ export function ProviderActions({
       };
     }
 
-    if (isOpenCodeMode) {
+    // 累加模式（OpenCode 非 OMO / OpenClaw）
+    if (isAdditiveMode) {
       if (isInConfig) {
         return {
-          disabled: false,
+          disabled: isDefaultModel === true,
           variant: "secondary" as const,
-          className:
+          className: cn(
             "bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-900/70",
+            isDefaultModel && "opacity-40 cursor-not-allowed",
+          ),
           icon: <Minus className="h-4 w-4" />,
           text: t("provider.removeFromConfig", { defaultValue: "移除" }),
         };
@@ -180,12 +194,32 @@ export function ProviderActions({
 
   const canDelete = isOmo
     ? !(isLastOmo && isCurrent)
-    : isOpenCodeMode
+    : isAdditiveMode
       ? true
       : !isCurrent;
 
   return (
     <div className="flex items-center gap-1.5">
+      {appId === "openclaw" && isInConfig && onSetAsDefault && (
+        <Button
+          size="sm"
+          variant={isDefaultModel ? "secondary" : "default"}
+          onClick={isDefaultModel ? undefined : onSetAsDefault}
+          disabled={isDefaultModel}
+          className={cn(
+            "w-[4.5rem] px-2.5",
+            isDefaultModel
+              ? "bg-gray-200 text-muted-foreground dark:bg-gray-700 opacity-60 cursor-not-allowed"
+              : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+          )}
+        >
+          <Zap className="h-4 w-4" />
+          {isDefaultModel
+            ? t("provider.isDefault", { defaultValue: "默认" })
+            : t("provider.setAsDefault", { defaultValue: "启用" })}
+        </Button>
+      )}
+
       <Button
         size="sm"
         variant={buttonState.variant}

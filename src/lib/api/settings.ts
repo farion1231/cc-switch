@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Settings } from "@/types";
+import type { Settings, WebDavSyncSettings, RemoteSnapshotInfo } from "@/types";
 import type { AppId } from "./types";
 
 export interface ConfigTransferResult {
@@ -7,6 +7,15 @@ export interface ConfigTransferResult {
   message: string;
   filePath?: string;
   backupId?: string;
+}
+
+export interface WebDavTestResult {
+  success: boolean;
+  message?: string;
+}
+
+export interface WebDavSyncResult {
+  status: string;
 }
 
 export const settingsApi = {
@@ -91,6 +100,42 @@ export const settingsApi = {
 
   async importConfigFromFile(filePath: string): Promise<ConfigTransferResult> {
     return await invoke("import_config_from_file", { filePath });
+  },
+
+  // ─── WebDAV v2 sync ───────────────────────────────────────
+
+  async webdavTestConnection(
+    settings: WebDavSyncSettings,
+    preserveEmptyPassword = true,
+  ): Promise<WebDavTestResult> {
+    return await invoke("webdav_test_connection", {
+      settings,
+      preserveEmptyPassword,
+    });
+  },
+
+  async webdavSyncUpload(): Promise<WebDavSyncResult> {
+    return await invoke("webdav_sync_upload");
+  },
+
+  async webdavSyncDownload(): Promise<WebDavSyncResult> {
+    return await invoke("webdav_sync_download");
+  },
+
+  async webdavSyncSaveSettings(
+    settings: WebDavSyncSettings,
+    passwordTouched = false,
+  ): Promise<{ success: boolean }> {
+    return await invoke("webdav_sync_save_settings", {
+      settings,
+      passwordTouched,
+    });
+  },
+
+  async webdavSyncFetchRemoteInfo(): Promise<
+    RemoteSnapshotInfo | { empty: true }
+  > {
+    return await invoke("webdav_sync_fetch_remote_info");
   },
 
   async syncCurrentProvidersLive(): Promise<void> {

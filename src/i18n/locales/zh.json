@@ -88,6 +88,8 @@
     "addOpenCodeProvider": "添加 OpenCode 供应商",
     "addToConfig": "添加",
     "removeFromConfig": "移除",
+    "setAsDefault": "启用",
+    "isDefault": "默认",
     "inConfig": "已添加",
     "addProviderHint": "填写信息后即可在列表中快速切换供应商。",
     "editClaudeProvider": "编辑 Claude Code 供应商",
@@ -162,7 +164,11 @@
     "settingsSaved": "设置已保存",
     "settingsSaveFailed": "保存设置失败：{{error}}",
     "openAIChatFormatHint": "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用",
-    "openLinkFailed": "链接打开失败"
+    "openLinkFailed": "链接打开失败",
+    "openclawModelsRegistered": "模型已注册到 /model 列表",
+    "openclawDefaultModelSet": "已设为默认模型",
+    "openclawDefaultModelSetFailed": "设置默认模型失败",
+    "openclawNoModels": "该供应商没有配置模型"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -266,6 +272,77 @@
     "selectFileFailed": "请选择有效的 SQL 备份文件",
     "configCorrupted": "SQL 文件可能已损坏或格式不正确",
     "backupId": "备份ID",
+    "webdavSync": {
+      "title": "WebDAV 云同步",
+      "description": "通过 WebDAV 在多设备间同步数据库和技能配置。",
+      "baseUrl": "WebDAV 服务器地址",
+      "baseUrlPlaceholder": "https://dav.jianguoyun.com/dav/",
+      "username": "WebDAV 账户",
+      "usernamePlaceholder": "邮箱账号",
+      "password": "WebDAV 密码",
+      "passwordPlaceholder": "应用密码（坚果云请使用「第三方应用密码」）",
+      "remoteRoot": "远程根目录",
+      "profile": "同步配置名",
+      "test": "测试连接",
+      "testing": "测试中...",
+      "testSuccess": "连接成功",
+      "testFailed": "连接失败：{{error}}",
+      "save": "保存配置",
+      "saving": "保存中...",
+      "saveFailed": "保存配置失败：{{error}}",
+      "upload": "上传到云端",
+      "uploading": "上传中...",
+      "uploadSuccess": "已上传到 WebDAV",
+      "uploadFailed": "上传失败：{{error}}",
+      "download": "从云端下载",
+      "downloading": "下载中...",
+      "downloadSuccess": "已从 WebDAV 下载并恢复",
+      "downloadFailed": "下载失败：{{error}}",
+      "lastSync": "上次同步：{{time}}",
+      "missingUrl": "请填写 WebDAV 服务器地址",
+      "presets": {
+        "label": "服务商",
+        "jianguoyun": "坚果云",
+        "jianguoyunHint": "请在坚果云「安全选项」中生成「第三方应用密码」，不要使用登录密码。",
+        "nextcloud": "Nextcloud",
+        "nextcloudHint": "请将 your-server 替换为你的 Nextcloud 服务器地址，USERNAME 替换为你的用户名。",
+        "synology": "群晖 NAS",
+        "synologyHint": "请先在群晖「套件中心」安装并启用 WebDAV Server 套件。",
+        "custom": "自定义"
+      },
+      "remoteRootDefault": "默认: cc-switch-sync",
+      "profileDefault": "默认: default",
+      "saveAndTestSuccess": "配置已保存，连接正常",
+      "saveAndTestFailed": "配置已保存，但连接测试失败：{{error}}",
+      "noRemoteData": "云端没有找到同步数据",
+      "incompatibleVersion": "远端数据版本不兼容（v{{version}}），当前支持 v2",
+      "unsaved": "未保存",
+      "saved": "已保存",
+      "unsavedChanges": "请先保存配置",
+      "saveBeforeSync": "请先保存配置，再使用上传/下载。",
+      "fetchingRemote": "获取远端信息...",
+      "fetchRemoteFailed": "获取远端信息失败，请检查配置和网络后重试。",
+      "confirmDownload": {
+        "title": "从云端恢复",
+        "deviceName": "上传设备",
+        "createdAt": "上传时间",
+        "artifacts": "包含内容",
+        "warning": "恢复将覆盖本地所有数据和技能配置",
+        "confirm": "确认恢复"
+      },
+      "confirmUpload": {
+        "title": "上传到云端",
+        "content": "将同步以下内容到 WebDAV 服务器：",
+        "dbItem": "数据库（所有 Provider 配置和数据）",
+        "skillsItem": "技能包（所有自定义技能）",
+        "targetPath": "目标路径",
+        "existingData": "云端已有数据",
+        "deviceName": "上传设备",
+        "createdAt": "上传时间",
+        "warning": "将覆盖云端已有的同步数据",
+        "confirm": "确认上传"
+      }
+    },
     "autoReload": "数据已刷新",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
@@ -407,7 +484,8 @@
     "claude": "Claude",
     "codex": "Codex",
     "gemini": "Gemini",
-    "opencode": "OpenCode"
+    "opencode": "OpenCode",
+    "openclaw": "OpenClaw"
   },
   "sessionManager": {
     "title": "会话管理",
@@ -660,6 +738,38 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "openclaw": {
+    "providerKey": "供应商标识",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "配置文件中的唯一标识符，创建后无法修改，只能使用小写字母、数字和连字符",
+    "providerKeyRequired": "请填写供应商标识",
+    "providerKeyDuplicate": "此标识已被使用，请更换",
+    "providerKeyInvalid": "标识格式无效，只能使用小写字母、数字和连字符",
+    "apiProtocol": "API 协议",
+    "selectProtocol": "选择 API 协议",
+    "apiProtocolHint": "选择与供应商 API 兼容的协议类型。大多数供应商使用 OpenAI Completions 格式。",
+    "baseUrl": "API 端点",
+    "baseUrlHint": "供应商的 API 端点地址。",
+    "models": "模型列表",
+    "addModel": "添加模型",
+    "noModels": "暂无模型配置。点击添加模型来配置可用模型。",
+    "modelId": "模型 ID",
+    "modelIdPlaceholder": "claude-3-sonnet",
+    "modelName": "显示名称",
+    "modelNamePlaceholder": "Claude 3 Sonnet",
+    "contextWindow": "上下文窗口",
+    "maxTokens": "最大输出 Tokens",
+    "reasoning": "推理模式",
+    "reasoningOn": "启用",
+    "reasoningOff": "关闭",
+    "inputCost": "输入价格 ($/M tokens)",
+    "outputCost": "输出价格 ($/M tokens)",
+    "advancedOptions": "高级选项",
+    "cacheReadCost": "缓存读取价格 ($/M tokens)",
+    "cacheWriteCost": "缓存写入价格 ($/M tokens)",
+    "cacheCostHint": "缓存价格用于计算 Prompt Caching 的成本。如不使用缓存可留空。",
+    "modelsHint": "配置该供应商支持的模型。模型 ID 用于 API 调用，显示名称用于界面展示。"
+  },
   "providerPreset": {
     "label": "预设供应商",
     "custom": "自定义配置",
@@ -855,7 +965,8 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
-        "opencode": "OpenCode"
+        "opencode": "OpenCode",
+        "openclaw": "OpenClaw"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -1028,6 +1139,74 @@
       "deleteMessage": "确定要删除提示词 \"{{name}}\" 吗？"
     }
   },
+  "workspace": {
+    "title": "Workspace 文件管理",
+    "manage": "Workspace",
+    "files": {
+      "agents": "Agent 操作指令和规则",
+      "soul": "Agent 人格和沟通风格",
+      "user": "用户档案和偏好",
+      "identity": "Agent 名称和头像",
+      "tools": "本地工具文档",
+      "memory": "长期记忆和决策记录",
+      "heartbeat": "心跳运行清单",
+      "bootstrap": "首次运行仪式",
+      "boot": "网关重启清单"
+    },
+    "editing": "编辑 {{filename}}",
+    "saveSuccess": "保存成功",
+    "saveFailed": "保存失败",
+    "loadFailed": "读取失败"
+  },
+  "openclaw": {
+    "env": {
+      "title": "环境变量",
+      "description": "管理 openclaw.json 中的环境变量配置（API Key、自定义变量等）",
+      "keyPlaceholder": "变量名",
+      "valuePlaceholder": "值",
+      "add": "添加变量",
+      "saveSuccess": "环境变量已保存",
+      "saveFailed": "保存环境变量失败",
+      "loadFailed": "读取环境变量失败",
+      "duplicateKey": "检测到重复的变量名: {{key}}"
+    },
+    "tools": {
+      "title": "工具权限",
+      "description": "管理 openclaw.json 中的工具权限配置（允许/拒绝列表）",
+      "profile": "权限模式",
+      "profiles": {
+        "default": "默认",
+        "strict": "严格",
+        "permissive": "宽松",
+        "custom": "自定义"
+      },
+      "allowList": "允许列表",
+      "denyList": "拒绝列表",
+      "patternPlaceholder": "工具名称或模式",
+      "addAllow": "添加允许",
+      "addDeny": "添加拒绝",
+      "saveSuccess": "工具权限已保存",
+      "saveFailed": "保存工具权限失败",
+      "loadFailed": "读取工具权限失败"
+    },
+    "agents": {
+      "title": "Agents 配置",
+      "description": "管理 openclaw.json 中的 agents.defaults 配置（默认模型、运行参数等）",
+      "modelSection": "模型配置",
+      "primaryModel": "主模型",
+      "primaryModelHint": "格式：provider/model-id",
+      "fallbackModels": "回退模型",
+      "fallbackModelsHint": "逗号分隔，按优先级排列",
+      "runtimeSection": "运行参数",
+      "workspace": "工作区路径",
+      "timeout": "超时时间（秒）",
+      "contextTokens": "上下文 Token 数",
+      "maxConcurrent": "最大并发数",
+      "saveSuccess": "Agents 配置已保存",
+      "saveFailed": "保存 Agents 配置失败",
+      "loadFailed": "读取 Agents 配置失败"
+    }
+  },
   "env": {
     "warning": {
       "title": "检测到系统环境变量冲突",
@@ -1170,7 +1349,8 @@
       "claude": "Claude",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "openclaw": "OpenClaw"
     },
     "installFromZip": {
       "button": "从 ZIP 安装",
@@ -1671,5 +1851,34 @@
       "unspecifiedHigh": "未归类高工作量任务类别，适用于不适合其他类别且工作量较大的任务，默认使用 Claude Opus 4.6 的最大变体。",
       "writing": "写作类别，专注于文档、散文和技术写作，默认使用 Gemini 3 Flash 快速生成模型。"
     }
+  },
+  "openclawConfig": {
+    "defaultModel": {
+      "title": "默认模型",
+      "description": "配置 OpenClaw 的默认主模型和回退模型",
+      "primary": "主模型",
+      "primaryPlaceholder": "例如: deepseek/deepseek-chat",
+      "fallbacks": "回退模型",
+      "fallbacksPlaceholder": "例如: openrouter/anthropic/claude-sonnet-4.5",
+      "addFallback": "添加回退模型",
+      "saved": "默认模型配置已保存",
+      "saveFailed": "保存默认模型失败"
+    },
+    "modelCatalog": {
+      "title": "模型目录",
+      "description": "配置可用模型的别名和允许列表",
+      "modelId": "模型 ID",
+      "modelIdPlaceholder": "例如: deepseek/deepseek-chat",
+      "alias": "别名",
+      "aliasPlaceholder": "例如: DeepSeek",
+      "addEntry": "添加模型",
+      "removeEntry": "移除",
+      "saved": "模型目录已保存",
+      "saveFailed": "保存模型目录失败",
+      "empty": "暂无模型目录配置",
+      "emptyHint": "添加模型到目录以配置别名"
+    },
+    "suggestedDefaults": "应用建议默认配置",
+    "suggestedDefaultsHint": "使用此预设推荐的默认模型配置"
   }
 }
