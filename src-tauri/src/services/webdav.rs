@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::error::AppError;
 use crate::proxy::http_client;
+use futures::StreamExt;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// Timeout for large file transfers (PUT/GET of db.sql, skills.zip).
@@ -237,15 +238,7 @@ pub async fn put_bytes(
     )
     .send()
     .await
-    .map_err(|e| {
-        webdav_transport_error(
-            "webdav.put_failed",
-            "PUT 请求",
-            "PUT request",
-            url,
-            &e,
-        )
-    })?;
+    .map_err(|e| webdav_transport_error("webdav.put_failed", "PUT 请求", "PUT request", url, &e))?;
 
     if resp.status().is_success() {
         return Ok(());
@@ -259,6 +252,7 @@ pub async fn put_bytes(
 pub async fn get_bytes(
     url: &str,
     auth: &WebDavAuth,
+    max_bytes: usize,
 ) -> Result<Option<(Vec<u8>, Option<String>)>, AppError> {
     let client = http_client::get();
     let resp = apply_auth(
@@ -269,15 +263,7 @@ pub async fn get_bytes(
     )
     .send()
     .await
-    .map_err(|e| {
-        webdav_transport_error(
-            "webdav.get_failed",
-            "GET 请求",
-            "GET request",
-            url,
-            &e,
-        )
-    })?;
+    .map_err(|e| webdav_transport_error("webdav.get_failed", "GET 请求", "GET request", url, &e))?;
 
     if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
@@ -285,22 +271,29 @@ pub async fn get_bytes(
     if !resp.status().is_success() {
         return Err(webdav_status_error("GET", resp.status(), url));
     }
+    ensure_content_length_within_limit(resp.headers(), max_bytes, url)?;
+
     let etag = resp
         .headers()
         .get("etag")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| {
+    let mut bytes = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| {
             AppError::localized(
                 "webdav.response_read_failed",
                 format!("读取 WebDAV 响应失败: {e}"),
                 format!("Failed to read WebDAV response: {e}"),
             )
         })?;
-    Ok(Some((bytes.to_vec(), etag)))
+        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(response_too_large_error(url, max_bytes));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(Some((bytes, etag)))
 }
 
 /// HEAD request to retrieve the ETag. Returns `None` on 404.
@@ -315,13 +308,7 @@ pub async fn head_etag(url: &str, auth: &WebDavAuth) -> Result<Option<String>, A
     .send()
     .await
     .map_err(|e| {
-        webdav_transport_error(
-            "webdav.head_failed",
-            "HEAD 请求",
-            "HEAD request",
-            url,
-            &e,
-        )
+        webdav_transport_error("webdav.head_failed", "HEAD 请求", "HEAD request", url, &e)
     })?;
 
     if resp.status() == StatusCode::NOT_FOUND {
@@ -386,9 +373,7 @@ pub fn webdav_status_error(op: &str, status: StatusCode, url: &str) -> AppError 
 
     if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
         if jgy {
-            zh.push_str(
-                "。坚果云请使用「第三方应用密码」，并确认地址指向 /dav/ 下的目录。",
-            );
+            zh.push_str("。坚果云请使用「第三方应用密码」，并确认地址指向 /dav/ 下的目录。");
             en.push_str(
                 ". For Jianguoyun, use an app-specific password and ensure the URL points under /dav/.",
             );
@@ -401,9 +386,7 @@ pub fn webdav_status_error(op: &str, status: StatusCode, url: &str) -> AppError 
         en.push_str(". Common Jianguoyun cause: URL is outside a writable /dav/ directory.");
     } else if op == "MKCOL" && status == StatusCode::CONFLICT {
         if jgy {
-            zh.push_str(
-                "。坚果云不允许自动创建顶层文件夹，请先在网页端手动创建后重试。",
-            );
+            zh.push_str("。坚果云不允许自动创建顶层文件夹，请先在网页端手动创建后重试。");
             en.push_str(
                 ". Jianguoyun does not allow creating top-level folders automatically; create it manually first.",
             );
@@ -446,9 +429,47 @@ fn redact_url(raw: &str) -> String {
     }
 }
 
+fn response_too_large_error(url: &str, max_bytes: usize) -> AppError {
+    let max_mb = max_bytes / 1024 / 1024;
+    AppError::localized(
+        "webdav.response_too_large",
+        format!(
+            "WebDAV 响应体超过上限（{} MB）: {}",
+            max_mb,
+            redact_url(url)
+        ),
+        format!(
+            "WebDAV response body exceeds limit ({} MB): {}",
+            max_mb,
+            redact_url(url)
+        ),
+    )
+}
+
+fn ensure_content_length_within_limit(
+    headers: &reqwest::header::HeaderMap,
+    max_bytes: usize,
+    url: &str,
+) -> Result<(), AppError> {
+    let Some(content_length) = headers.get(reqwest::header::CONTENT_LENGTH) else {
+        return Ok(());
+    };
+    let Ok(raw) = content_length.to_str() else {
+        return Ok(());
+    };
+    let Ok(value) = raw.parse::<u64>() else {
+        return Ok(());
+    };
+    if value > max_bytes as u64 {
+        return Err(response_too_large_error(url, max_bytes));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::header::{HeaderMap, HeaderValue, CONTENT_LENGTH};
 
     #[test]
     fn build_remote_url_encodes_path_segments() {
@@ -498,10 +519,34 @@ mod tests {
     #[test]
     fn redact_url_hides_credentials_and_query_values() {
         let redacted = redact_url("https://alice:secret@example.com:8443/dav?token=abc&foo=1");
-        assert_eq!(
-            redacted,
-            "https://example.com:8443/dav?[keys:foo,token]"
-        );
+        assert_eq!(redacted, "https://example.com:8443/dav?[keys:foo,token]");
         assert!(!redacted.contains("secret"));
+    }
+
+    #[test]
+    fn ensure_content_length_within_limit_accepts_missing_or_small_values() {
+        let empty = HeaderMap::new();
+        assert!(
+            ensure_content_length_within_limit(&empty, 1024, "https://dav.example.com").is_ok()
+        );
+
+        let mut small = HeaderMap::new();
+        small.insert(CONTENT_LENGTH, HeaderValue::from_static("1024"));
+        assert!(
+            ensure_content_length_within_limit(&small, 1024, "https://dav.example.com").is_ok()
+        );
+    }
+
+    #[test]
+    fn ensure_content_length_within_limit_rejects_oversized_values() {
+        let mut large = HeaderMap::new();
+        large.insert(CONTENT_LENGTH, HeaderValue::from_static("2048"));
+
+        let err = ensure_content_length_within_limit(&large, 1024, "https://dav.example.com")
+            .expect_err("oversized response should be rejected");
+        assert!(
+            err.to_string().contains("too large") || err.to_string().contains("超过"),
+            "unexpected error: {err}"
+        );
     }
 }

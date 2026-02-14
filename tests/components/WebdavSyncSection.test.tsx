@@ -34,6 +34,17 @@ vi.mock("@/components/ui/input", () => ({
   Input: (props: any) => <input {...props} />,
 }));
 
+vi.mock("@/components/ui/switch", () => ({
+  Switch: ({ checked, onCheckedChange, ...props }: any) => (
+    <button
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onCheckedChange?.(!checked)}
+      {...props}
+    />
+  ),
+}));
+
 vi.mock("@/components/ui/select", () => ({
   Select: ({ value, onValueChange, children }: any) => (
     <select
@@ -82,6 +93,7 @@ const baseConfig: WebDavSyncSettings = {
   password: "secret",
   remoteRoot: "cc-switch-sync",
   profile: "default",
+  autoSync: false,
   status: {},
 };
 
@@ -128,6 +140,49 @@ describe("WebdavSyncSection", () => {
     settingsApiMock.webdavSyncDownload.mockResolvedValue({ status: "downloaded" });
   });
 
+  it("shows auto sync error callout when last auto sync failed", () => {
+    renderSection({
+      ...baseConfig,
+      status: {
+        lastError: "network timeout",
+        lastErrorSource: "auto",
+      },
+    });
+
+    expect(
+      screen.getByText("settings.webdavSync.autoSyncLastErrorTitle"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("network timeout")).toBeInTheDocument();
+  });
+
+  it("does not show auto sync error callout for manual sync errors", () => {
+    renderSection({
+      ...baseConfig,
+      status: {
+        lastError: "manual upload failed",
+        lastErrorSource: "manual",
+      },
+    });
+
+    expect(
+      screen.queryByText("settings.webdavSync.autoSyncLastErrorTitle"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show auto sync error callout when source is missing", () => {
+    renderSection({
+      ...baseConfig,
+      autoSync: true,
+      status: {
+        lastError: "legacy error without source",
+      },
+    });
+
+    expect(
+      screen.queryByText("settings.webdavSync.autoSyncLastErrorTitle"),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows validation error when saving without base url", async () => {
     renderSection({ ...baseConfig, baseUrl: "" });
 
@@ -150,6 +205,7 @@ describe("WebdavSyncSection", () => {
         baseUrl: "https://dav.example.com/dav/",
         username: "alice",
         password: "secret",
+        autoSync: false,
       }),
       false,
     );
@@ -164,6 +220,24 @@ describe("WebdavSyncSection", () => {
     expect(toastSuccessMock).toHaveBeenCalledWith(
       "settings.webdavSync.saveAndTestSuccess",
     );
+  });
+
+  it("saves auto sync as true after toggle", async () => {
+    renderSection(baseConfig);
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "settings.webdavSync.autoSync" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "settings.webdavSync.save" }));
+
+    await waitFor(() => {
+      expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          autoSync: true,
+        }),
+        false,
+      );
+    });
   });
 
   it("blocks upload when there are unsaved changes", async () => {

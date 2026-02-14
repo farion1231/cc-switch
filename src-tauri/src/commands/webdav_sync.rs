@@ -1,9 +1,7 @@
 #![allow(non_snake_case)]
 
-use serde_json::{Value, json};
-use std::future::Future;
-use std::sync::OnceLock;
-use tauri::State;
+use serde_json::{json, Value};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::sync_support::{
     attach_warning, post_sync_warning_from_result, run_post_import_sync,
@@ -13,8 +11,9 @@ use crate::services::webdav_sync as webdav_sync_service;
 use crate::settings::{self, WebDavSyncSettings};
 use crate::store::AppState;
 
-fn persist_sync_error(settings: &mut WebDavSyncSettings, error: &AppError) {
+fn persist_sync_error(settings: &mut WebDavSyncSettings, error: &AppError, source: &str) {
     settings.status.last_error = Some(error.to_string());
+    settings.status.last_error_source = Some(source.to_string());
     let _ = settings::update_webdav_sync_status(settings.status.clone());
 }
 
@@ -57,20 +56,16 @@ fn resolve_password_for_request(
     incoming
 }
 
+#[cfg(test)]
 fn webdav_sync_mutex() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    webdav_sync_service::sync_mutex()
 }
 
 async fn run_with_webdav_lock<T, Fut>(operation: Fut) -> Result<T, AppError>
 where
-    Fut: Future<Output = Result<T, AppError>>,
+    Fut: std::future::Future<Output = Result<T, AppError>>,
 {
-    let result = {
-        let _guard = webdav_sync_mutex().lock().await;
-        operation.await
-    };
-    result
+    webdav_sync_service::run_with_sync_lock(operation).await
 }
 
 fn map_sync_result<T, F>(result: Result<T, AppError>, on_error: F) -> Result<T, String>
@@ -82,6 +77,64 @@ where
         Err(err) => {
             on_error(&err);
             Err(err.to_string())
+        }
+    }
+}
+
+fn should_run_auto_sync(settings: Option<&WebDavSyncSettings>) -> bool {
+    let Some(sync) = settings else {
+        return false;
+    };
+    sync.enabled && sync.auto_sync
+}
+
+fn emit_webdav_sync_status_updated(
+    app: &AppHandle,
+    source: &str,
+    status: &str,
+    error: Option<&str>,
+) {
+    let payload = match error {
+        Some(message) => json!({
+            "source": source,
+            "status": status,
+            "error": message,
+        }),
+        None => json!({
+            "source": source,
+            "status": status,
+        }),
+    };
+
+    if let Err(err) = app.emit("webdav-sync-status-updated", payload) {
+        log::debug!("[WebDAV] failed to emit sync status update event: {err}");
+    }
+}
+
+pub(crate) async fn run_auto_sync_upload(
+    db: &crate::database::Database,
+    app: &AppHandle,
+) -> Result<(), AppError> {
+    let mut settings = settings::get_webdav_sync_settings();
+    if !should_run_auto_sync(settings.as_ref()) {
+        return Ok(());
+    }
+
+    let mut sync_settings = match settings.take() {
+        Some(value) => value,
+        None => return Ok(()),
+    };
+
+    let result = run_with_webdav_lock(webdav_sync_service::upload(db, &mut sync_settings)).await;
+    match result {
+        Ok(_) => {
+            emit_webdav_sync_status_updated(app, "auto", "success", None);
+            Ok(())
+        }
+        Err(err) => {
+            persist_sync_error(&mut sync_settings, &err, "auto");
+            emit_webdav_sync_status_updated(app, "auto", "error", Some(&err.to_string()));
+            Err(err)
         }
     }
 }
@@ -112,7 +165,9 @@ pub async fn webdav_sync_upload(state: State<'_, AppState>) -> Result<Value, Str
     let mut settings = require_enabled_webdav_settings()?;
 
     let result = run_with_webdav_lock(webdav_sync_service::upload(&db, &mut settings)).await;
-    map_sync_result(result, |error| persist_sync_error(&mut settings, error))
+    map_sync_result(result, |error| {
+        persist_sync_error(&mut settings, error, "manual")
+    })
 }
 
 #[tauri::command]
@@ -120,10 +175,11 @@ pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, S
     let db = state.db.clone();
     let db_for_sync = db.clone();
     let mut settings = require_enabled_webdav_settings()?;
+    let _auto_sync_suppression = crate::services::webdav_auto_sync::AutoSyncSuppressionGuard::new();
 
     let sync_result = run_with_webdav_lock(webdav_sync_service::download(&db, &mut settings)).await;
     let mut result = map_sync_result(sync_result, |error| {
-        persist_sync_error(&mut settings, error)
+        persist_sync_error(&mut settings, error, "manual")
     })?;
 
     // Post-download sync is best-effort: snapshot restore has already succeeded.
@@ -179,8 +235,8 @@ mod tests {
     use crate::error::AppError;
     use crate::settings::{AppSettings, WebDavSyncSettings};
     use serial_test::serial;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
 
     #[tokio::test]
@@ -287,6 +343,7 @@ mod tests {
         persist_sync_error(
             &mut current,
             &crate::error::AppError::Config("boom".to_string()),
+            "manual",
         );
 
         let after = crate::settings::get_webdav_sync_settings().expect("read webdav settings");
@@ -304,6 +361,7 @@ mod tests {
                 .contains("boom"),
             "status error should be updated"
         );
+        assert_eq!(after.status.last_error_source.as_deref(), Some("manual"));
     }
 
     #[test]
@@ -353,5 +411,31 @@ mod tests {
             require_enabled_webdav_settings().expect("enabled settings should be accepted");
         assert!(settings.enabled);
         assert_eq!(settings.base_url, "https://dav.example.com/dav/");
+    }
+
+    #[test]
+    fn should_run_auto_sync_requires_enabled_and_auto_sync_flag() {
+        assert!(!super::should_run_auto_sync(None));
+
+        let disabled = WebDavSyncSettings {
+            enabled: false,
+            auto_sync: true,
+            ..WebDavSyncSettings::default()
+        };
+        assert!(!super::should_run_auto_sync(Some(&disabled)));
+
+        let auto_sync_off = WebDavSyncSettings {
+            enabled: true,
+            auto_sync: false,
+            ..WebDavSyncSettings::default()
+        };
+        assert!(!super::should_run_auto_sync(Some(&auto_sync_off)));
+
+        let enabled = WebDavSyncSettings {
+            enabled: true,
+            auto_sync: true,
+            ..WebDavSyncSettings::default()
+        };
+        assert!(super::should_run_auto_sync(Some(&enabled)));
     }
 }

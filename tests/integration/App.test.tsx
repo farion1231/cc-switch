@@ -209,4 +209,25 @@ describe("App integration with MSW", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
   });
+
+  it("shows toast when auto sync fails in background", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+
+    emitTauriEvent("webdav-sync-status-updated", {
+      source: "auto",
+      status: "error",
+      error: "network timeout",
+    });
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalled();
+    });
+  });
 });
