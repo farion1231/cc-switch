@@ -5,7 +5,9 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::future::Future;
 use std::process::Command;
+use std::sync::OnceLock;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -33,6 +35,19 @@ const REMOTE_DB_SQL: &str = "db.sql";
 const REMOTE_SKILLS_ZIP: &str = "skills.zip";
 const REMOTE_MANIFEST: &str = "manifest.json";
 const MAX_DEVICE_NAME_LEN: usize = 64;
+
+pub fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+pub async fn run_with_sync_lock<T, Fut>(operation: Fut) -> Result<T, AppError>
+where
+    Fut: Future<Output = Result<T, AppError>>,
+{
+    let _guard = sync_mutex().lock().await;
+    operation.await
+}
 
 fn localized(key: &'static str, zh: impl Into<String>, en: impl Into<String>) -> AppError {
     AppError::localized(key, zh, en)
@@ -214,6 +229,7 @@ fn persist_sync_success(
     let status = WebDavSyncStatus {
         last_sync_at: Some(Utc::now().timestamp()),
         last_error: None,
+        last_error_source: None,
         last_local_manifest_hash: Some(manifest_hash.clone()),
         last_remote_manifest_hash: Some(manifest_hash),
         last_remote_etag: etag,
