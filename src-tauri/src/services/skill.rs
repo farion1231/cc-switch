@@ -627,9 +627,17 @@ impl SkillService {
             }
         }
 
-        // 扫描 ~/.agents/skills/
+        // 扫描额外目录：~/.agents/skills/ 和 ~/.cc-switch/skills/
+        let mut extra_dirs: Vec<(PathBuf, &str)> = Vec::new();
         if let Some(agents_dir) = get_agents_skills_dir() {
-            if let Ok(entries) = fs::read_dir(&agents_dir) {
+            extra_dirs.push((agents_dir, "agents"));
+        }
+        if let Ok(ssot_dir) = Self::get_ssot_dir() {
+            extra_dirs.push((ssot_dir, "cc-switch"));
+        }
+
+        for (extra_dir, source_label) in &extra_dirs {
+            if let Ok(entries) = fs::read_dir(extra_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if !path.is_dir() {
@@ -659,12 +667,12 @@ impl SkillService {
 
                     unmanaged
                         .entry(dir_name.clone())
-                        .and_modify(|s| s.found_in.push("agents".to_string()))
+                        .and_modify(|s| s.found_in.push(source_label.to_string()))
                         .or_insert(UnmanagedSkill {
                             directory: dir_name,
                             name,
                             description,
-                            found_in: vec!["agents".to_string()],
+                            found_in: vec![source_label.to_string()],
                             path: path.display().to_string(),
                         });
                 }
@@ -730,6 +738,17 @@ impl SkillService {
                         source_path = Some(skill_path);
                     }
                     found_in.push("agents".to_string());
+                }
+            }
+
+            // 搜索 ~/.cc-switch/skills/ (SSOT 目录)
+            {
+                let skill_path = ssot_dir.join(&dir_name);
+                if skill_path.exists() {
+                    if source_path.is_none() {
+                        source_path = Some(skill_path);
+                    }
+                    found_in.push("cc-switch".to_string());
                 }
             }
 
