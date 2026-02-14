@@ -1425,11 +1425,37 @@ impl SkillService {
         let existing_skills = db.get_all_installed_skills()?;
 
         for skill_dir in skill_dirs {
+            // 解析元数据（提前解析，用于确定安装名）
+            let skill_md = skill_dir.join("SKILL.md");
+            let meta = if skill_md.exists() {
+                Self::parse_skill_metadata_static(&skill_md).ok()
+            } else {
+                None
+            };
+
             // 获取目录名称作为安装名
-            let install_name = skill_dir
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
+            // 当 SKILL.md 在 ZIP 根目录时，skill_dir == temp_dir，
+            // file_name() 会返回临时目录名（如 .tmpDZKGpF），需要回退到其他来源
+            let install_name = {
+                let dir_name = skill_dir
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                if skill_dir == temp_dir || dir_name.is_empty() || dir_name.starts_with('.') {
+                    // SKILL.md 在根目录：优先用元数据 name，否则用 ZIP 文件名
+                    meta.as_ref()
+                        .and_then(|m| m.name.clone())
+                        .unwrap_or_else(|| {
+                            zip_path
+                                .file_stem()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "unknown".to_string())
+                        })
+                } else {
+                    dir_name
+                }
+            };
 
             // 检查是否已有同名 directory 的 skill
             let conflict = existing_skills
@@ -1445,18 +1471,12 @@ impl SkillService {
                 continue;
             }
 
-            // 解析元数据
-            let skill_md = skill_dir.join("SKILL.md");
-            let (name, description) = if skill_md.exists() {
-                match Self::parse_skill_metadata_static(&skill_md) {
-                    Ok(meta) => (
-                        meta.name.unwrap_or_else(|| install_name.clone()),
-                        meta.description,
-                    ),
-                    Err(_) => (install_name.clone(), None),
-                }
-            } else {
-                (install_name.clone(), None)
+            let (name, description) = match meta {
+                Some(m) => (
+                    m.name.unwrap_or_else(|| install_name.clone()),
+                    m.description,
+                ),
+                None => (install_name.clone(), None),
             };
 
             // 复制到 SSOT
