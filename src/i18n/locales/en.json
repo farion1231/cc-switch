@@ -1143,7 +1143,7 @@
       "skillCount": "{{count}} skills detected"
     },
     "search": "Search Skills",
-    "searchPlaceholder": "Search skill name or description...",
+    "searchPlaceholder": "Search skill name or repo...",
     "filter": {
       "placeholder": "Filter by status",
       "all": "All",

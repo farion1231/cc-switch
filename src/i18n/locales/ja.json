@@ -1141,7 +1141,7 @@
       "skillCount": "{{count}} 件のスキルを検出"
     },
     "search": "スキルを検索",
-    "searchPlaceholder": "スキル名または説明で検索...",
+    "searchPlaceholder": "スキル名またはリポジトリで検索...",
     "filter": {
       "placeholder": "状態で絞り込み",
       "all": "すべて",

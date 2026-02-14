@@ -1143,7 +1143,7 @@
       "skillCount": "识别到 {{count}} 个技能"
     },
     "search": "搜索技能",
-    "searchPlaceholder": "搜索技能名称或描述...",
+    "searchPlaceholder": "搜索技能名称或仓库名称...",
     "filter": {
       "placeholder": "状态筛选",
       "all": "全部",
