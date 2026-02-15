@@ -58,7 +58,10 @@
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
     "extractFailed": "抽出に失敗しました: {{error}}",
-    "saveFailed": "保存に失敗しました: {{error}}"
+    "saveFailed": "保存に失敗しました: {{error}}",
+    "hideAttribution": "AI署名を非表示",
+    "alwaysThinking": "拡張思考",
+    "enableTeammates": "Teammates モード"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",

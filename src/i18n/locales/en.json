@@ -58,7 +58,10 @@
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}"
+    "saveFailed": "Save failed: {{error}}",
+    "hideAttribution": "Hide AI Attribution",
+    "alwaysThinking": "Extended Thinking",
+    "enableTeammates": "Teammates Mode"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
