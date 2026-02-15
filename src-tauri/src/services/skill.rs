@@ -423,14 +423,25 @@ impl SkillService {
     ) -> Result<InstalledSkill> {
         let ssot_dir = Self::get_ssot_dir()?;
 
-        // 使用目录最后一段作为安装名
-        let install_name = Self::sanitize_install_name(&skill.directory).ok_or_else(|| {
+        // 允许多级目录（如 a/b/c），但必须是安全的相对路径。
+        let source_rel = Self::sanitize_skill_source_path(&skill.directory).ok_or_else(|| {
             anyhow!(format_skill_error(
                 "INVALID_SKILL_DIRECTORY",
                 &[("directory", &skill.directory)],
                 Some("checkZipContent"),
             ))
         })?;
+        // 安装目录名始终使用最后一段，避免在 SSOT 中创建多级目录。
+        let install_name = source_rel
+            .file_name()
+            .and_then(|name| Self::sanitize_install_name(&name.to_string_lossy()))
+            .ok_or_else(|| {
+                anyhow!(format_skill_error(
+                    "INVALID_SKILL_DIRECTORY",
+                    &[("directory", &skill.directory)],
+                    Some("checkZipContent"),
+                ))
+            })?;
 
         // 检查数据库中是否已有同名 directory 的 skill（来自其他仓库）
         let existing_skills = db.get_all_installed_skills()?;
@@ -509,7 +520,7 @@ impl SkillService {
             repo_branch = used_branch;
 
             // 复制到 SSOT
-            let source = temp_dir.join(&skill.directory);
+            let source = temp_dir.join(&source_rel);
             if !source.exists() {
                 let _ = fs::remove_dir_all(&temp_dir);
                 return Err(anyhow!(format_skill_error(
@@ -519,7 +530,24 @@ impl SkillService {
                 )));
             }
 
-            Self::copy_dir_recursive(&source, &dest)?;
+            let canonical_temp = temp_dir.canonicalize().unwrap_or_else(|_| temp_dir.clone());
+            let canonical_source = source.canonicalize().map_err(|_| {
+                anyhow!(format_skill_error(
+                    "SKILL_DIR_NOT_FOUND",
+                    &[("path", &source.display().to_string())],
+                    Some("checkRepoUrl"),
+                ))
+            })?;
+            if !canonical_source.starts_with(&canonical_temp) || !canonical_source.is_dir() {
+                let _ = fs::remove_dir_all(&temp_dir);
+                return Err(anyhow!(format_skill_error(
+                    "INVALID_SKILL_DIRECTORY",
+                    &[("directory", &skill.directory)],
+                    Some("checkZipContent"),
+                )));
+            }
+
+            Self::copy_dir_recursive(&canonical_source, &dest)?;
             let _ = fs::remove_dir_all(&temp_dir);
 
             // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
@@ -1178,7 +1206,39 @@ impl SkillService {
         }
     }
 
-    /// 校验并规范化安装目录名，拒绝路径穿越和多级路径
+    /// 校验并规范化技能源路径（允许多级目录），拒绝路径穿越和绝对路径
+    fn sanitize_skill_source_path(raw: &str) -> Option<PathBuf> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let mut normalized = PathBuf::new();
+        let mut has_component = false;
+
+        for component in Path::new(trimmed).components() {
+            match component {
+                Component::Normal(name) => {
+                    let segment = name.to_string_lossy().trim().to_string();
+                    if segment.is_empty() || segment == "." || segment == ".." {
+                        return None;
+                    }
+                    normalized.push(segment);
+                    has_component = true;
+                }
+                Component::CurDir
+                | Component::ParentDir
+                | Component::RootDir
+                | Component::Prefix(_) => {
+                    return None;
+                }
+            }
+        }
+
+        has_component.then_some(normalized)
+    }
+
+    /// 校验并规范化安装目录名（最终落盘目录名，仅单段）
     fn sanitize_install_name(raw: &str) -> Option<String> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
