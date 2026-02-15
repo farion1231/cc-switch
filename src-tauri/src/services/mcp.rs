@@ -123,6 +123,11 @@ impl McpService {
                     &server.server,
                 )?;
             }
+            AppType::OpenClaw => {
+                // OpenClaw MCP support is still in development (Issue #4834)
+                // Skip for now
+                log::debug!("OpenClaw MCP support is still in development, skipping sync");
+            }
         }
         Ok(())
     }
@@ -147,6 +152,10 @@ impl McpService {
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
             AppType::OpenCode => {
                 mcp::remove_server_from_opencode(id)?;
+            }
+            AppType::OpenClaw => {
+                // OpenClaw MCP support is still in development
+                log::debug!("OpenClaw MCP support is still in development, skipping remove");
             }
         }
         Ok(())

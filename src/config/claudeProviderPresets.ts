@@ -99,8 +99,6 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "zhipu", // 促销信息 i18n key
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
@@ -119,8 +117,6 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "zhipu", // 促销信息 i18n key
     icon: "zhipu",
     iconColor: "#0F62FE",
   },

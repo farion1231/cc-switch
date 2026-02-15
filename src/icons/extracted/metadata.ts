@@ -247,6 +247,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["gpt", "chatgpt"],
     defaultColor: "currentColor",
   },
+  openclaw: {
+    name: "openclaw",
+    displayName: "OpenClaw",
+    category: "ai-provider",
+    keywords: ["openclaw", "lobster", "claw"],
+    defaultColor: "#ff4f40",
+  },
   packycode: {
     name: "packycode",
     displayName: "PackyCode",

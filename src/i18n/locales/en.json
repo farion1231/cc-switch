@@ -88,6 +88,8 @@
     "addOpenCodeProvider": "Add OpenCode Provider",
     "addToConfig": "Add",
     "removeFromConfig": "Remove",
+    "setAsDefault": "Enable",
+    "isDefault": "Default",
     "inConfig": "Added",
     "addProviderHint": "Fill in the information to quickly switch providers in the list.",
     "editClaudeProvider": "Edit Claude Code Provider",
@@ -170,7 +172,11 @@
     "urlMismatchWarningOnDisable": "The current provider's request URL configuration may rely on the proxy. It may not work properly after disabling the proxy. Consider switching to a base URL configuration or keep the proxy enabled.",
     "switchAppliedUnverified": "Switch applied (direct mode not verified)",
     "switchAppliedUnverifiedDesc": "Unable to verify whether this endpoint requires the proxy. If it doesn't work after switching, enable the proxy and takeover the current app.",
-    "openLinkFailed": "Failed to open link"
+    "openLinkFailed": "Failed to open link",
+    "openclawModelsRegistered": "Models have been registered to /model list",
+    "openclawDefaultModelSet": "Set as default model",
+    "openclawDefaultModelSetFailed": "Failed to set default model",
+    "openclawNoModels": "No models configured"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -222,7 +228,9 @@
         "requestGroup": "Request Rectification",
         "responseGroup": "Response Rectification",
         "thinkingSignature": "Thinking Signature Rectification",
-        "thinkingSignatureDescription": "Automatically fix Claude API errors caused by thinking signature validation failures"
+        "thinkingSignatureDescription": "When an Anthropic-type provider returns thinking signature incompatibility or illegal request errors, automatically removes incompatible thinking-related blocks and retries once with the same provider",
+        "thinkingBudget": "Thinking Budget Rectification",
+        "thinkingBudgetDescription": "When an Anthropic-type provider returns budget_tokens constraint errors (such as at least 1024), automatically normalizes thinking to enabled, sets thinking budget to 32000, and raises max_tokens to 64000 if needed, then retries once"
       },
       "logConfig": {
         "title": "Log Management",
@@ -272,6 +280,77 @@
     "selectFileFailed": "Please choose a valid SQL backup file",
     "configCorrupted": "SQL file may be corrupted or invalid",
     "backupId": "Backup ID",
+    "webdavSync": {
+      "title": "WebDAV Cloud Sync",
+      "description": "Sync database and skill configurations across devices via WebDAV.",
+      "baseUrl": "WebDAV Server URL",
+      "baseUrlPlaceholder": "https://dav.example.com/dav/",
+      "username": "WebDAV Account",
+      "usernamePlaceholder": "Email or username",
+      "password": "WebDAV Password",
+      "passwordPlaceholder": "App password",
+      "remoteRoot": "Remote Root Directory",
+      "profile": "Sync Profile Name",
+      "test": "Test Connection",
+      "testing": "Testing...",
+      "testSuccess": "Connection successful",
+      "testFailed": "Connection failed: {{error}}",
+      "save": "Save Config",
+      "saving": "Saving...",
+      "saveFailed": "Failed to save config: {{error}}",
+      "upload": "Upload to Cloud",
+      "uploading": "Uploading...",
+      "uploadSuccess": "Uploaded to WebDAV",
+      "uploadFailed": "Upload failed: {{error}}",
+      "download": "Download from Cloud",
+      "downloading": "Downloading...",
+      "downloadSuccess": "Downloaded and restored from WebDAV",
+      "downloadFailed": "Download failed: {{error}}",
+      "lastSync": "Last sync: {{time}}",
+      "missingUrl": "Please enter the WebDAV server URL",
+      "presets": {
+        "label": "Provider",
+        "jianguoyun": "Jianguoyun",
+        "jianguoyunHint": "Generate an \"App Password\" in Jianguoyun security settings. Do not use your login password.",
+        "nextcloud": "Nextcloud",
+        "nextcloudHint": "Replace your-server with your Nextcloud domain and USERNAME with your username.",
+        "synology": "Synology NAS",
+        "synologyHint": "Install and enable the WebDAV Server package in Synology Package Center first.",
+        "custom": "Custom"
+      },
+      "remoteRootDefault": "Default: cc-switch-sync",
+      "profileDefault": "Default: default",
+      "saveAndTestSuccess": "Config saved, connection OK",
+      "saveAndTestFailed": "Config saved, but connection test failed: {{error}}",
+      "noRemoteData": "No sync data found on the remote server",
+      "incompatibleVersion": "Remote data version incompatible (v{{version}}), current supports v2",
+      "unsaved": "Unsaved",
+      "saved": "Saved",
+      "unsavedChanges": "Please save config first",
+      "saveBeforeSync": "Save configuration first to enable upload/download.",
+      "fetchingRemote": "Fetching remote info...",
+      "fetchRemoteFailed": "Failed to fetch remote info. Please check configuration and network.",
+      "confirmDownload": {
+        "title": "Restore from Cloud",
+        "deviceName": "Uploaded by",
+        "createdAt": "Uploaded at",
+        "artifacts": "Contents",
+        "warning": "This will overwrite all local data and skill configurations",
+        "confirm": "Confirm Restore"
+      },
+      "confirmUpload": {
+        "title": "Upload to Cloud",
+        "content": "The following will be synced to the WebDAV server:",
+        "dbItem": "Database (all provider configs and data)",
+        "skillsItem": "Skills (all custom skills)",
+        "targetPath": "Target path",
+        "existingData": "Existing cloud data",
+        "deviceName": "Uploaded by",
+        "createdAt": "Uploaded at",
+        "warning": "This will overwrite existing sync data on the remote server",
+        "confirm": "Confirm Upload"
+      }
+    },
     "autoReload": "Data refreshed",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
@@ -413,7 +492,8 @@
     "claude": "Claude",
     "codex": "Codex",
     "gemini": "Gemini",
-    "opencode": "OpenCode"
+    "opencode": "OpenCode",
+    "openclaw": "OpenClaw"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -496,7 +576,6 @@
     "officialHint": "💡 Official provider uses browser login, no API Key needed",
     "getApiKey": "Get API Key",
     "partnerPromotion": {
-      "zhipu": "Zhipu GLM is an official partner of CC Switch. Use this link to top up and get a 10% discount",
       "packycode": "PackyCode is an official partner of CC Switch. Register using this link and enter \"cc-switch\" promo code during recharge to get 10% off",
       "minimax_cn": "MiniMax Coding Plan Special Offer, Starter from ¥9.9",
       "minimax_en": "MiniMax Coding Plan Black Friday, Starter is now $2/mo (80% OFF!)",
@@ -672,6 +751,38 @@
     "noModelOptions": "Model options, click + to add",
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+  },
+  "openclaw": {
+    "providerKey": "Provider Key",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "Unique identifier in config file. Cannot be changed after creation. Use lowercase letters, numbers, and hyphens only.",
+    "providerKeyRequired": "Provider key is required",
+    "providerKeyDuplicate": "This key is already in use",
+    "providerKeyInvalid": "Invalid format. Use lowercase letters, numbers, and hyphens only.",
+    "apiProtocol": "API Protocol",
+    "selectProtocol": "Select API Protocol",
+    "apiProtocolHint": "Select the protocol type compatible with the provider's API. Most providers use OpenAI Completions format.",
+    "baseUrl": "API Endpoint",
+    "baseUrlHint": "The provider's API endpoint address.",
+    "models": "Models",
+    "addModel": "Add Model",
+    "noModels": "No models configured. Click Add Model to configure available models.",
+    "modelId": "Model ID",
+    "modelIdPlaceholder": "claude-3-sonnet",
+    "modelName": "Display Name",
+    "modelNamePlaceholder": "Claude 3 Sonnet",
+    "contextWindow": "Context Window",
+    "maxTokens": "Max Output Tokens",
+    "reasoning": "Reasoning Mode",
+    "reasoningOn": "Enabled",
+    "reasoningOff": "Disabled",
+    "inputCost": "Input Cost ($/M tokens)",
+    "outputCost": "Output Cost ($/M tokens)",
+    "advancedOptions": "Advanced Options",
+    "cacheReadCost": "Cache Read Cost ($/M tokens)",
+    "cacheWriteCost": "Cache Write Cost ($/M tokens)",
+    "cacheCostHint": "Cache costs are used to calculate Prompt Caching costs. Leave empty if not using caching.",
+    "modelsHint": "Configure the models supported by this provider. Model ID is used for API calls, Display Name for the interface."
   },
   "providerPreset": {
     "label": "Provider Preset",
@@ -868,7 +979,8 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
-        "opencode": "OpenCode"
+        "opencode": "OpenCode",
+        "openclaw": "OpenClaw"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -1041,6 +1153,74 @@
       "deleteMessage": "Are you sure you want to delete prompt \"{{name}}\"?"
     }
   },
+  "workspace": {
+    "title": "Workspace Files",
+    "manage": "Workspace",
+    "files": {
+      "agents": "Agent instructions and rules",
+      "soul": "Agent personality and communication style",
+      "user": "User profile and preferences",
+      "identity": "Agent name and avatar",
+      "tools": "Local tool documentation",
+      "memory": "Long-term memory and decisions",
+      "heartbeat": "Heartbeat run checklist",
+      "bootstrap": "First-run bootstrap ritual",
+      "boot": "Gateway reboot checklist"
+    },
+    "editing": "Edit {{filename}}",
+    "saveSuccess": "Saved successfully",
+    "saveFailed": "Failed to save",
+    "loadFailed": "Failed to load"
+  },
+  "openclaw": {
+    "env": {
+      "title": "Environment Variables",
+      "description": "Manage environment variables in openclaw.json (API keys, custom variables, etc.)",
+      "keyPlaceholder": "Variable name",
+      "valuePlaceholder": "Value",
+      "add": "Add Variable",
+      "saveSuccess": "Environment variables saved",
+      "saveFailed": "Failed to save environment variables",
+      "loadFailed": "Failed to load environment variables",
+      "duplicateKey": "Duplicate variable name detected: {{key}}"
+    },
+    "tools": {
+      "title": "Tool Permissions",
+      "description": "Manage tool permissions in openclaw.json (allow/deny lists)",
+      "profile": "Permission Profile",
+      "profiles": {
+        "default": "Default",
+        "strict": "Strict",
+        "permissive": "Permissive",
+        "custom": "Custom"
+      },
+      "allowList": "Allow List",
+      "denyList": "Deny List",
+      "patternPlaceholder": "Tool name or pattern",
+      "addAllow": "Add Allow",
+      "addDeny": "Add Deny",
+      "saveSuccess": "Tool permissions saved",
+      "saveFailed": "Failed to save tool permissions",
+      "loadFailed": "Failed to load tool permissions"
+    },
+    "agents": {
+      "title": "Agents Config",
+      "description": "Manage agents.defaults in openclaw.json (default model, runtime parameters, etc.)",
+      "modelSection": "Model Configuration",
+      "primaryModel": "Primary Model",
+      "primaryModelHint": "Format: provider/model-id",
+      "fallbackModels": "Fallback Models",
+      "fallbackModelsHint": "Comma-separated, ordered by priority",
+      "runtimeSection": "Runtime Parameters",
+      "workspace": "Workspace Path",
+      "timeout": "Timeout (seconds)",
+      "contextTokens": "Context Tokens",
+      "maxConcurrent": "Max Concurrent",
+      "saveSuccess": "Agents config saved",
+      "saveFailed": "Failed to save agents config",
+      "loadFailed": "Failed to load agents config"
+    }
+  },
   "env": {
     "warning": {
       "title": "Environment Variable Conflicts Detected",
@@ -1183,7 +1363,8 @@
       "claude": "Claude",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "openclaw": "OpenClaw"
     },
     "installFromZip": {
       "button": "Install from ZIP",
@@ -1590,16 +1771,21 @@
     "clearWrapped": "(Clear)",
     "defaultWrapped": "(Default)",
     "variantPlaceholder": "variant",
-    "selectEnabledModel": "Select enabled model",
+    "selectEnabledModel": "Select configured model",
+    "selectModel": "Select configured model",
+    "recommendedHint": "Recommended: {{model}}",
+    "searchModel": "Search model...",
     "selectModelFirst": "Select model first",
-    "noEnabledModels": "No enabled models",
+    "noEnabledModels": "No configured models",
     "noVariantsForModel": "No variants for model",
-    "currentValueNotEnabled": "{{value}} (current value, not enabled)",
+    "currentValueNotEnabled": "{{value}} (current value, not configured)",
     "currentValueUnavailable": "{{value}} (current value, unavailable)",
     "advancedLabel": "Advanced",
     "advancedJsonInvalid": "Advanced JSON is invalid",
     "advancedJsonHint": "temperature, top_p, budgetTokens, prompt_append, permission, etc. Leave empty for defaults",
-    "noEnabledModelsWarning": "No enabled models available. Configure and enable OpenCode models first.",
+    "noEnabledModelsWarning": "No configured models available. Configure OpenCode models first.",
+    "modelSourcePartialWarning": "Some provider model configs are invalid and were skipped.",
+    "modelSourceFallbackWarning": "Failed to load live provider state. Falling back to configured providers.",
     "importLocalReplaceSuccess": "Imported local file and replaced Agents/Categories/Other Fields",
     "importLocalFailed": "Failed to read local file: {{error}}",
     "agentKeyPlaceholder": "agent key",
@@ -1610,7 +1796,7 @@
     "modelConfiguration": "Model Configuration",
     "fillRecommended": "Fill Recommended",
     "configSummary": "{{agents}} agents, {{categories}} categories configured · Click ⚙ for advanced params",
-    "enabledModelsCount": "{{count}} enabled models available",
+    "enabledModelsCount": "{{count}} configured models available",
     "source": "from:",
     "otherFieldsJson": "Other Fields (JSON)",
     "searchOrType": "Search or type custom value...",
@@ -1636,6 +1822,81 @@
     "advancedExperimental": "Experimental Features",
     "advancedBackgroundTask": "Background Tasks",
     "advancedBrowserAutomation": "Browser Automation",
-    "advancedClaudeCode": "Claude Code"
+    "advancedClaudeCode": "Claude Code",
+    "agentDesc": {
+      "sisyphus": "Main orchestrator",
+      "hephaestus": "Autonomous deep worker",
+      "prometheus": "Strategic planner",
+      "atlas": "Task manager",
+      "oracle": "Strategic advisor",
+      "librarian": "Multi-repo researcher",
+      "explore": "Fast code search",
+      "multimodalLooker": "Media analyzer",
+      "metis": "Pre-plan analysis advisor",
+      "momus": "Plan reviewer",
+      "sisyphusJunior": "Delegated task executor"
+    },
+    "agentTooltip": {
+      "sisyphus": "Main orchestrator responsible for task planning, delegation and parallel execution. Uses extended thinking (32k budget) and drives workflows through TODO lists to ensure task completion.",
+      "atlas": "Main orchestrator (holds TODO list) responsible for task distribution and coordination during execution phase. Delegates to specialized agents rather than completing all work directly.",
+      "prometheus": "Strategic planner that collects requirements through interview mode and creates detailed work plans. Can only read/write Markdown files in .sisyphus/ directory, never writes code directly.",
+      "hephaestus": "Autonomous deep worker (\"legitimate craftsman\") inspired by AmpCode deep mode. Goal-oriented execution that launches 2-5 explore/librarian agents in parallel for research before taking action.",
+      "oracle": "Architecture decision and debugging advisor. Read-only consulting agent providing excellent logical reasoning and deep analysis. Cannot write files or delegate tasks.",
+      "librarian": "Multi-repository analysis and documentation retrieval expert. Deeply understands codebases and provides evidence-based answers. Excels at finding official documentation and open-source implementation examples.",
+      "explore": "Fast codebase exploration and context grep expert. Uses lightweight models for high-speed search. The scout for understanding code structure.",
+      "multimodalLooker": "Visual content expert that analyzes PDFs, images, charts and other non-text media, extracting information and insights from them.",
+      "metis": "Plan consultant that performs pre-analysis before planning. Identifies hidden intents, ambiguities and AI failure points to prevent over-engineering.",
+      "momus": "Plan reviewer that validates plan clarity, verifiability and completeness with high precision. Rejects and requests revisions until plans are perfect.",
+      "sisyphusJunior": "Category-generated executor, automatically created via category parameters. Focuses on executing assigned tasks and cannot re-delegate, preventing infinite delegation loops."
+    },
+    "categoryDesc": {
+      "visualEngineering": "Visual/frontend engineering",
+      "ultrabrain": "Ultra thinking",
+      "deep": "Deep work",
+      "artistry": "Creative/artistic",
+      "quick": "Quick response",
+      "unspecifiedLow": "General low tier",
+      "unspecifiedHigh": "General high tier",
+      "writing": "Writing"
+    },
+    "categoryTooltip": {
+      "visualEngineering": "Frontend and visual engineering category for UI/UX design, styling, animation and interface implementation. Defaults to Gemini 3 Pro model.",
+      "ultrabrain": "Deep logical reasoning category for complex architectural decisions requiring extensive analysis. Defaults to GPT-5.3 Codex ultra-high reasoning variant.",
+      "deep": "Deep autonomous problem-solving category with goal-oriented execution. Conducts thorough research before action, suitable for difficult problems requiring deep understanding.",
+      "artistry": "Highly creative and artistic task category that inspires novel ideas and creative solutions. Defaults to Gemini 3 Pro max variant.",
+      "quick": "Lightweight task category for single-file modifications, typo fixes, and simple adjustments. Defaults to Claude Haiku 4.5 fast model.",
+      "unspecifiedLow": "Uncategorized low-effort task category for tasks that don't fit other categories with small workload. Defaults to Claude Sonnet 4.5.",
+      "unspecifiedHigh": "Uncategorized high-effort task category for tasks that don't fit other categories with large workload. Defaults to Claude Opus 4.6 max variant.",
+      "writing": "Writing category for documentation, prose and technical writing. Defaults to Gemini 3 Flash fast generation model."
+    }
+  },
+  "openclawConfig": {
+    "defaultModel": {
+      "title": "Default Model",
+      "description": "Configure the default primary model and fallback models for OpenClaw",
+      "primary": "Primary Model",
+      "primaryPlaceholder": "e.g., deepseek/deepseek-chat",
+      "fallbacks": "Fallback Models",
+      "fallbacksPlaceholder": "e.g., openrouter/anthropic/claude-sonnet-4.5",
+      "addFallback": "Add Fallback Model",
+      "saved": "Default model configuration saved",
+      "saveFailed": "Failed to save default model"
+    },
+    "modelCatalog": {
+      "title": "Model Catalog",
+      "description": "Configure model aliases and allowlist",
+      "modelId": "Model ID",
+      "modelIdPlaceholder": "e.g., deepseek/deepseek-chat",
+      "alias": "Alias",
+      "aliasPlaceholder": "e.g., DeepSeek",
+      "addEntry": "Add Model",
+      "removeEntry": "Remove",
+      "saved": "Model catalog saved",
+      "saveFailed": "Failed to save model catalog",
+      "empty": "No model catalog entries",
+      "emptyHint": "Add models to the catalog to configure aliases"
+    },
+    "suggestedDefaults": "Apply Suggested Defaults",
+    "suggestedDefaultsHint": "Use this preset's recommended default model configuration"
   }
 }

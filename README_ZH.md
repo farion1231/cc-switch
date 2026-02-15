@@ -17,7 +17,7 @@
 
 [![MiniMax](assets/partners/banners/minimax-zh.jpeg)](https://platform.minimaxi.com/subscribe/coding-plan?code=7kYF2VoaCn&source=link)
 
-MiniMax M2.x 系列模型是面向实际开发与智能体工作流打造的编码模型，M2.1 基于 100 亿激活 / 2300 亿总参的混合专家架构打造，推理更快、部署更便捷且支持本地运行，在 SWE、VIBE、Multi-SWE 等主流代码评测基准中均表现顶尖，擅长代码开发、数字环境适配及规模化处理长链路多步骤任务。
+MiniMax M2.5 在编程、工具调用与搜索、办公等核心生产力场景均达到或刷新行业 SOTA，拥有架构师级代码能力与高效任务拆解能力，推理速度较上一代提升 37%、token 消耗更优；100 token/s 连续工作一小时仅需 1 美金，让复杂 Agent 规模化部署经济可行，已在企业多职能场景深度落地，加速全民 Agent 时代到来。
 
 [点击](https://platform.minimaxi.com/subscribe/coding-plan?code=7kYF2VoaCn&source=link)即可领取 MiniMax Coding Plan 专属 88 折优惠！
 
@@ -59,6 +59,11 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 <tr>
 <td width="180"><a href="https://aicoding.sh/i/CCSWITCH"><img src="assets/partners/logos/aicoding.jpg" alt="AICoding" width="150"></a></td>
 <td>感谢 AICoding.sh 赞助了本项目！AICoding.sh —— 全球大模型 API 超值中转服务！Claude Code 1.9 折，GPT 0.1 折，已为数百家企业提供高性价比 AI 服务。支持 Claude Code、GPT、Gemini 及国内主流模型，企业级高并发、极速开票、7×24 专属技术支持，通过<a href="https://aicoding.sh/i/CCSWITCH">此链接</a> 注册的 CC Switch 用户，首充可享受九折优惠！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://crazyrouter.com/register?ref=cc-switch"><img src="assets/partners/logos/crazyrouter.jpg" alt="AICoding" width="150"></a></td>
+<td>感谢 Crazyrouter 赞助了本项目！Crazyrouter 是一个高性能 AI API 聚合平台——一个 API Key 即可访问 300+ 模型，包括 Claude Code、Codex、Gemini CLI、GPT 等。通过单一 OpenAI 兼容端点实现零代码改动接入。支持自动故障转移、智能路由、无限并发和全球低延迟访问。<a href="https://crazyrouter.com/register?ref=cc-switch">点击这里注册</a>即可开始使用！</td>
 </tr>
 
 </table>

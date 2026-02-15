@@ -13,6 +13,7 @@ mod gemini_config;
 mod gemini_mcp;
 mod init_status;
 mod mcp;
+mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
 mod prompt;
@@ -500,7 +501,7 @@ pub fn run() {
                     log::info!("✓ Imported {count} OpenCode provider(s) from live config");
                 }
                 Ok(_) => log::debug!("○ No OpenCode providers found to import"),
-                Err(e) => log::debug!("○ Failed to import OpenCode providers: {e}"),
+                Err(e) => log::warn!("○ Failed to import OpenCode providers: {e}"),
             }
 
             // 2.2 OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
@@ -523,6 +524,17 @@ pub fn run() {
                         }
                     }
                 }
+            }
+
+            // 2.3 OpenClaw 供应商导入（累加式模式，需特殊处理）
+            // OpenClaw 与 OpenCode 类似：配置文件中可同时存在多个供应商
+            // 需要遍历 models.providers 字段下的每个供应商并导入
+            match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} OpenClaw provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No OpenClaw providers found to import"),
+                Err(e) => log::warn!("○ Failed to import OpenClaw providers: {e}"),
             }
 
             // 3. 导入 MCP 服务器配置（表空时触发）
@@ -570,6 +582,8 @@ pub fn run() {
                     crate::app_config::AppType::Claude,
                     crate::app_config::AppType::Codex,
                     crate::app_config::AppType::Gemini,
+                    crate::app_config::AppType::OpenCode,
+                    crate::app_config::AppType::OpenClaw,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -768,6 +782,21 @@ pub fn run() {
                 restore_proxy_state_on_startup(&state).await;
             });
 
+            // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.with_webview(|webview| {
+                        use webkit2gtk::{WebViewExt, SettingsExt, HardwareAccelerationPolicy};
+                        let wk_webview = webview.inner();
+                        if let Some(settings) = WebViewExt::settings(&wk_webview) {
+                            SettingsExt::set_hardware_acceleration_policy(&settings, HardwareAccelerationPolicy::Never);
+                            log::info!("已禁用 WebKitGTK 硬件加速");
+                        }
+                    });
+                }
+            }
+
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();
             if let Some(window) = app.get_webview_window("main") {
@@ -871,6 +900,11 @@ pub fn run() {
             // theirs: config import/export and dialogs
             commands::export_config_to_file,
             commands::import_config_from_file,
+            commands::webdav_test_connection,
+            commands::webdav_sync_upload,
+            commands::webdav_sync_download,
+            commands::webdav_sync_save_settings,
+            commands::webdav_sync_fetch_remote_info,
             commands::save_file_dialog,
             commands::open_file_dialog,
             commands::open_zip_file_dialog,
@@ -975,6 +1009,19 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            // OpenClaw specific
+            commands::import_openclaw_providers_from_live,
+            commands::get_openclaw_live_provider_ids,
+            commands::get_openclaw_default_model,
+            commands::set_openclaw_default_model,
+            commands::get_openclaw_model_catalog,
+            commands::set_openclaw_model_catalog,
+            commands::get_openclaw_agents_defaults,
+            commands::set_openclaw_agents_defaults,
+            commands::get_openclaw_env,
+            commands::set_openclaw_env,
+            commands::get_openclaw_tools,
+            commands::set_openclaw_tools,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
@@ -987,6 +1034,9 @@ pub fn run() {
             commands::get_current_omo_provider_id,
             commands::get_omo_provider_count,
             commands::disable_current_omo,
+            // Workspace files (OpenClaw)
+            commands::read_workspace_file,
+            commands::write_workspace_file,
         ]);
 
     let app = builder

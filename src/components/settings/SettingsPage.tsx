@@ -39,6 +39,7 @@ import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSe
 import { TerminalSettings } from "@/components/settings/TerminalSettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
+import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ProxyPanel } from "@/components/proxy";
@@ -595,6 +596,11 @@ export function SettingsPage({
                             onExport={exportConfig}
                             onClear={clearSelection}
                           />
+                          <div className="pt-6">
+                            <WebdavSyncSection
+                              config={settings?.webdavSync}
+                            />
+                          </div>
                         </AccordionContent>
                       </AccordionItem>
 

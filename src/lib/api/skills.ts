@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { AppId } from "@/lib/api/types";
 
-// ========== 类型定义 ==========
+export type AppType = "claude" | "codex" | "gemini" | "opencode" | "openclaw";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -10,6 +10,7 @@ export interface SkillApps {
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
+  openclaw: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
