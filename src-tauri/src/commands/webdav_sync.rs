@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, State};
+use tauri::State;
 
 use crate::commands::sync_support::{
     attach_warning, post_sync_warning_from_result, run_post_import_sync,
@@ -77,64 +77,6 @@ where
         Err(err) => {
             on_error(&err);
             Err(err.to_string())
-        }
-    }
-}
-
-fn should_run_auto_sync(settings: Option<&WebDavSyncSettings>) -> bool {
-    let Some(sync) = settings else {
-        return false;
-    };
-    sync.enabled && sync.auto_sync
-}
-
-fn emit_webdav_sync_status_updated(
-    app: &AppHandle,
-    source: &str,
-    status: &str,
-    error: Option<&str>,
-) {
-    let payload = match error {
-        Some(message) => json!({
-            "source": source,
-            "status": status,
-            "error": message,
-        }),
-        None => json!({
-            "source": source,
-            "status": status,
-        }),
-    };
-
-    if let Err(err) = app.emit("webdav-sync-status-updated", payload) {
-        log::debug!("[WebDAV] failed to emit sync status update event: {err}");
-    }
-}
-
-pub(crate) async fn run_auto_sync_upload(
-    db: &crate::database::Database,
-    app: &AppHandle,
-) -> Result<(), AppError> {
-    let mut settings = settings::get_webdav_sync_settings();
-    if !should_run_auto_sync(settings.as_ref()) {
-        return Ok(());
-    }
-
-    let mut sync_settings = match settings.take() {
-        Some(value) => value,
-        None => return Ok(()),
-    };
-
-    let result = run_with_webdav_lock(webdav_sync_service::upload(db, &mut sync_settings)).await;
-    match result {
-        Ok(_) => {
-            emit_webdav_sync_status_updated(app, "auto", "success", None);
-            Ok(())
-        }
-        Err(err) => {
-            persist_sync_error(&mut sync_settings, &err, "auto");
-            emit_webdav_sync_status_updated(app, "auto", "error", Some(&err.to_string()));
-            Err(err)
         }
     }
 }
@@ -411,31 +353,5 @@ mod tests {
             require_enabled_webdav_settings().expect("enabled settings should be accepted");
         assert!(settings.enabled);
         assert_eq!(settings.base_url, "https://dav.example.com/dav/");
-    }
-
-    #[test]
-    fn should_run_auto_sync_requires_enabled_and_auto_sync_flag() {
-        assert!(!super::should_run_auto_sync(None));
-
-        let disabled = WebDavSyncSettings {
-            enabled: false,
-            auto_sync: true,
-            ..WebDavSyncSettings::default()
-        };
-        assert!(!super::should_run_auto_sync(Some(&disabled)));
-
-        let auto_sync_off = WebDavSyncSettings {
-            enabled: true,
-            auto_sync: false,
-            ..WebDavSyncSettings::default()
-        };
-        assert!(!super::should_run_auto_sync(Some(&auto_sync_off)));
-
-        let enabled = WebDavSyncSettings {
-            enabled: true,
-            auto_sync: true,
-            ..WebDavSyncSettings::default()
-        };
-        assert!(super::should_run_auto_sync(Some(&enabled)));
     }
 }

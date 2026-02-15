@@ -1,10 +1,16 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use serde_json::json;
+use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::mpsc::{Receiver, Sender, channel};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+
+use crate::error::AppError;
+use crate::services::webdav_sync as webdav_sync_service;
+use crate::settings::{self, WebDavSyncSettings};
 
 const AUTO_SYNC_DEBOUNCE_MS: u64 = 1000;
 pub(crate) const MAX_AUTO_SYNC_WAIT_MS: u64 = 10_000;
@@ -23,11 +29,10 @@ impl AutoSyncSuppressionGuard {
 
 impl Drop for AutoSyncSuppressionGuard {
     fn drop(&mut self) {
-        let _ = AUTO_SYNC_SUPPRESS_DEPTH.fetch_update(
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-            |value| Some(value.saturating_sub(1)),
-        );
+        let _ =
+            AUTO_SYNC_SUPPRESS_DEPTH.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+                Some(value.saturating_sub(1))
+            });
     }
 }
 
@@ -65,6 +70,69 @@ pub(crate) fn auto_sync_wait_duration(started_at: Instant, now: Instant) -> Opti
         return None;
     }
     Some(debounce.min(max_wait - elapsed))
+}
+
+fn should_run_auto_sync(settings: Option<&WebDavSyncSettings>) -> bool {
+    let Some(sync) = settings else {
+        return false;
+    };
+    sync.enabled && sync.auto_sync
+}
+
+fn persist_auto_sync_error(settings: &mut WebDavSyncSettings, error: &AppError) {
+    settings.status.last_error = Some(error.to_string());
+    settings.status.last_error_source = Some("auto".to_string());
+    let _ = settings::update_webdav_sync_status(settings.status.clone());
+}
+
+fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&str>) {
+    let payload = match error {
+        Some(message) => json!({
+            "source": "auto",
+            "status": status,
+            "error": message,
+        }),
+        None => json!({
+            "source": "auto",
+            "status": status,
+        }),
+    };
+
+    if let Err(err) = app.emit("webdav-sync-status-updated", payload) {
+        log::debug!("[WebDAV] failed to emit sync status update event: {err}");
+    }
+}
+
+async fn run_auto_sync_upload(
+    db: &crate::database::Database,
+    app: &AppHandle,
+) -> Result<(), AppError> {
+    let mut settings = settings::get_webdav_sync_settings();
+    if !should_run_auto_sync(settings.as_ref()) {
+        return Ok(());
+    }
+
+    let mut sync_settings = match settings.take() {
+        Some(value) => value,
+        None => return Ok(()),
+    };
+
+    let result = webdav_sync_service::run_with_sync_lock(webdav_sync_service::upload(
+        db,
+        &mut sync_settings,
+    ))
+    .await;
+    match result {
+        Ok(_) => {
+            emit_auto_sync_status_updated(app, "success", None);
+            Ok(())
+        }
+        Err(err) => {
+            persist_auto_sync_error(&mut sync_settings, &err);
+            emit_auto_sync_status_updated(app, "error", Some(&err.to_string()));
+            Err(err)
+        }
+    }
 }
 
 pub fn notify_db_changed(table: &str) {
@@ -122,7 +190,7 @@ async fn run_worker_loop(
             "[WebDAV][AutoSync] Triggered by table={first_table}, merged_changes={merged_count}"
         );
 
-        if let Err(err) = crate::commands::run_auto_sync_upload(&db, &app).await {
+        if let Err(err) = run_auto_sync_upload(&db, &app).await {
             log::warn!("[WebDAV][AutoSync] Upload failed: {err}");
         }
     }
@@ -131,9 +199,11 @@ async fn run_worker_loop(
 #[cfg(test)]
 mod tests {
     use super::{
-        AutoSyncSuppressionGuard, MAX_AUTO_SYNC_WAIT_MS, auto_sync_wait_duration,
-        enqueue_change_signal, is_auto_sync_suppressed, should_trigger_for_table,
+        auto_sync_wait_duration, enqueue_change_signal, is_auto_sync_suppressed,
+        should_run_auto_sync, should_trigger_for_table, AutoSyncSuppressionGuard,
+        MAX_AUTO_SYNC_WAIT_MS,
     };
+    use crate::settings::WebDavSyncSettings;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc::channel;
 
@@ -167,5 +237,41 @@ mod tests {
         let (tx, _rx) = channel::<String>(1);
         assert!(enqueue_change_signal(&tx, "providers"));
         assert!(!enqueue_change_signal(&tx, "providers"));
+    }
+
+    #[test]
+    fn should_run_auto_sync_requires_enabled_and_auto_sync_flag() {
+        assert!(!should_run_auto_sync(None));
+
+        let disabled = WebDavSyncSettings {
+            enabled: false,
+            auto_sync: true,
+            ..WebDavSyncSettings::default()
+        };
+        assert!(!should_run_auto_sync(Some(&disabled)));
+
+        let auto_sync_off = WebDavSyncSettings {
+            enabled: true,
+            auto_sync: false,
+            ..WebDavSyncSettings::default()
+        };
+        assert!(!should_run_auto_sync(Some(&auto_sync_off)));
+
+        let enabled = WebDavSyncSettings {
+            enabled: true,
+            auto_sync: true,
+            ..WebDavSyncSettings::default()
+        };
+        assert!(should_run_auto_sync(Some(&enabled)));
+    }
+
+    #[test]
+    fn service_layer_does_not_depend_on_commands_layer() {
+        let source = include_str!("webdav_auto_sync.rs");
+        let needle = ["crate", "commands", ""].join("::");
+        assert!(
+            !source.contains(&needle),
+            "services layer should not depend on commands layer"
+        );
     }
 }
