@@ -45,16 +45,10 @@ export function ProxyToggle({
       setIsCheckingRequirement(true);
       try {
         let proxyRequirement: string | null = null;
-
-        // 先按 API 格式做硬性判断（baseUrl 缺失时仍需提示）
-        if (activeApp === "claude" && apiFormat === "openai_chat") {
-          proxyRequirement = "openai_chat_format";
-        }
-
-        if (!proxyRequirement && baseUrl) {
+        if (baseUrl || apiFormat) {
           proxyRequirement = await proxyApi.checkProxyRequirement(
             activeApp,
-            baseUrl,
+            baseUrl || "",
             apiFormat,
           );
         }

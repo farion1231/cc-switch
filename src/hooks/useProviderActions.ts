@@ -175,19 +175,14 @@ export function useProviderActions(
       const baseUrl = extractProviderBaseUrl(provider, activeApp);
       const apiFormat = provider.meta?.apiFormat;
 
-      // 调用后端 API 检查是否需要代理（前后端使用相同逻辑）
+      // 调用后端 API 检查是否需要代理（统一由后端控制）
       let proxyRequirement: string | null = null;
       let proxyRequirementCheckFailed = false;
-      // 先按 API 格式做硬性判断（baseUrl 缺失时仍需拦截）
-      if (activeApp === "claude" && apiFormat === "openai_chat") {
-        proxyRequirement = "openai_chat_format";
-      }
-
-      if (!proxyRequirement && baseUrl) {
+      if (baseUrl || apiFormat) {
         try {
           proxyRequirement = await proxyApi.checkProxyRequirement(
             activeApp,
-            baseUrl,
+            baseUrl || "",
             apiFormat,
           );
         } catch (error) {

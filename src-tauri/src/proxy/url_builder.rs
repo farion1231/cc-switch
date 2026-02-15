@@ -126,7 +126,9 @@ fn build_runtime_like_url(
         // Claude 代理预览需要展示与运行时一致的 URL 归一化结果
         AppType::Claude if is_proxy => ClaudeAdapter::new().build_url(base_url, endpoint),
         // Codex/OpenCode 预览复用运行时 /v1 归一化规则
-        AppType::Codex | AppType::OpenCode => CodexAdapter::new().build_url(base_url, endpoint),
+        AppType::Codex | AppType::OpenCode | AppType::OpenClaw => {
+            CodexAdapter::new().build_url(base_url, endpoint)
+        }
         _ => build_direct_url(base_url, endpoint),
     }
 }
@@ -146,6 +148,7 @@ pub fn build_url_preview(
         AppType::Codex => ApiPathPatterns::for_codex(api_format),
         AppType::Gemini => ApiPathPatterns::for_gemini(),
         AppType::OpenCode => ApiPathPatterns::for_codex(api_format), // OpenCode 使用 Codex 逻辑
+        AppType::OpenClaw => ApiPathPatterns::for_codex(api_format), // OpenClaw 使用 Codex 逻辑
     };
 
     let is_full_url = url_ends_with_api_path(base_url, patterns.full_url_patterns);
@@ -154,7 +157,7 @@ pub fn build_url_preview(
     let direct_url = build_runtime_like_url(app_type, base_url, patterns.direct_endpoint, false);
     // 代理地址：Claude/Codex/OpenCode 复用运行时规则；Gemini 继续使用通用智能拼接
     let proxy_url = match app_type {
-        AppType::Claude | AppType::Codex | AppType::OpenCode => {
+        AppType::Claude | AppType::Codex | AppType::OpenCode | AppType::OpenClaw => {
             build_runtime_like_url(app_type, base_url, patterns.proxy_endpoint, true)
         }
         _ => build_smart_url(
@@ -184,6 +187,11 @@ pub fn check_proxy_requirement(
         return Some("openai_chat_format");
     }
 
+    // base_url 缺失时无法做 full_url / url_mismatch 判断，避免误判
+    if base_url.trim().is_empty() {
+        return None;
+    }
+
     let preview = build_url_preview(app_type, base_url, api_format);
 
     // 如果是全链接且以直连后缀结尾，需要代理
@@ -196,7 +204,7 @@ pub fn check_proxy_requirement(
                 "/v1/chat/completions",
                 "/chat/completions",
             ],
-            AppType::Codex => &["/v1/responses", "/responses"],
+            AppType::Codex | AppType::OpenCode | AppType::OpenClaw => &["/v1/responses", "/responses"],
             _ => return None,
         };
 
