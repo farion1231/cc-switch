@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tokio::time::timeout;
 
@@ -173,7 +173,74 @@ struct AgentsLockFile {
 struct AgentsLockSkill {
     source: Option<String>,
     source_type: Option<String>,
+    source_url: Option<String>,
     skill_path: Option<String>,
+    branch: Option<String>,
+    source_branch: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct LockRepoInfo {
+    owner: String,
+    repo: String,
+    skill_path: Option<String>,
+    branch: Option<String>,
+}
+
+fn normalize_optional_branch(branch: Option<String>) -> Option<String> {
+    branch.and_then(|b| {
+        let trimmed = b.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn parse_branch_from_source_url(source_url: Option<&str>) -> Option<String> {
+    let source_url = source_url?;
+    let source_url = source_url.trim();
+    if source_url.is_empty() {
+        return None;
+    }
+
+    // 支持 https://github.com/owner/repo/tree/<branch>/...
+    if let Some((_, after_tree)) = source_url.split_once("/tree/") {
+        let branch = after_tree
+            .split('/')
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        return Some(branch.to_string());
+    }
+
+    // 支持 URL fragment: ...git#branch
+    if let Some((_, fragment)) = source_url.split_once('#') {
+        let branch = fragment
+            .split('&')
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        return Some(branch.to_string());
+    }
+
+    // 支持 query: ...?branch=xxx / ?ref=xxx
+    if let Some((_, query)) = source_url.split_once('?') {
+        for pair in query.split('&') {
+            let Some((key, value)) = pair.split_once('=') else {
+                continue;
+            };
+            if matches!(key, "branch" | "ref") {
+                let branch = value.trim();
+                if !branch.is_empty() {
+                    return Some(branch.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// 获取 `~/.agents/skills/` 目录（存在时返回）
@@ -183,21 +250,35 @@ fn get_agents_skills_dir() -> Option<PathBuf> {
         .filter(|p| p.exists())
 }
 
-/// 解析 `~/.agents/.skill-lock.json`，返回 skill_name -> (owner, repo_name, skill_path)
-fn parse_agents_lock() -> HashMap<String, (String, String, Option<String>)> {
+/// 解析 `~/.agents/.skill-lock.json`，返回 skill_name -> 仓库信息
+fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
     let path = match dirs::home_dir() {
         Some(h) => h.join(".agents").join(".skill-lock.json"),
-        None => return HashMap::new(),
+        None => {
+            log::warn!("无法获取 HOME 目录，跳过解析 agents lock 文件");
+            return HashMap::new();
+        }
     };
     let content = match fs::read_to_string(&path) {
         Ok(c) => c,
-        Err(_) => return HashMap::new(),
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                log::debug!("未找到 agents lock 文件: {}", path.display());
+            } else {
+                log::warn!("读取 agents lock 文件失败 ({}): {}", path.display(), e);
+            }
+            return HashMap::new();
+        }
     };
     let lock: AgentsLockFile = match serde_json::from_str(&content) {
         Ok(l) => l,
-        Err(_) => return HashMap::new(),
+        Err(e) => {
+            log::warn!("解析 agents lock 文件失败 ({}): {}", path.display(), e);
+            return HashMap::new();
+        }
     };
-    lock.skills
+    let parsed: HashMap<String, LockRepoInfo> = lock
+        .skills
         .into_iter()
         .filter_map(|(name, skill)| {
             let source = skill.source?;
@@ -205,12 +286,25 @@ fn parse_agents_lock() -> HashMap<String, (String, String, Option<String>)> {
                 return None;
             }
             let (owner, repo) = source.split_once('/')?;
+            let branch = normalize_optional_branch(skill.branch)
+                .or_else(|| normalize_optional_branch(skill.source_branch))
+                .or_else(|| parse_branch_from_source_url(skill.source_url.as_deref()));
             Some((
                 name,
-                (owner.to_string(), repo.to_string(), skill.skill_path),
+                LockRepoInfo {
+                    owner: owner.to_string(),
+                    repo: repo.to_string(),
+                    skill_path: skill.skill_path,
+                    branch,
+                },
             ))
         })
-        .collect()
+        .collect();
+    log::info!(
+        "agents lock 文件解析完成，共识别 {} 个 github skill",
+        parsed.len()
+    );
+    parsed
 }
 
 // ========== SkillService ==========
@@ -330,10 +424,13 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir()?;
 
         // 使用目录最后一段作为安装名
-        let install_name = Path::new(&skill.directory)
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| skill.directory.clone());
+        let install_name = Self::sanitize_install_name(&skill.directory).ok_or_else(|| {
+            anyhow!(format_skill_error(
+                "INVALID_SKILL_DIRECTORY",
+                &[("directory", &skill.directory)],
+                Some("checkZipContent"),
+            ))
+        })?;
 
         // 检查数据库中是否已有同名 directory 的 skill（来自其他仓库）
         let existing_skills = db.get_all_installed_skills()?;
@@ -1081,6 +1178,32 @@ impl SkillService {
         }
     }
 
+    /// 校验并规范化安装目录名，拒绝路径穿越和多级路径
+    fn sanitize_install_name(raw: &str) -> Option<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let path = Path::new(trimmed);
+        let mut components = path.components();
+        match (components.next(), components.next()) {
+            (Some(Component::Normal(name)), None) => {
+                let normalized = name.to_string_lossy().trim().to_string();
+                if normalized.is_empty()
+                    || normalized == "."
+                    || normalized == ".."
+                    || normalized.starts_with('.')
+                {
+                    None
+                } else {
+                    Some(normalized)
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
     fn deduplicate_discoverable_skills(skills: &mut Vec<DiscoverableSkill>) {
         let mut seen = HashMap::new();
@@ -1104,7 +1227,7 @@ impl SkillService {
         let _ = temp_dir.keep();
 
         let mut branches = Vec::new();
-        if !repo.branch.is_empty() {
+        if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
             branches.push(repo.branch.as_str());
         }
         if !branches.contains(&"main") {
@@ -1314,6 +1437,10 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir()?;
         let mut installed = Vec::new();
         let existing_skills = db.get_all_installed_skills()?;
+        let zip_stem = zip_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string());
 
         for skill_dir in skill_dirs {
             // 解析元数据（提前解析，用于确定安装名）
@@ -1336,15 +1463,28 @@ impl SkillService {
                 if skill_dir == temp_dir || dir_name.is_empty() || dir_name.starts_with('.') {
                     // SKILL.md 在根目录：优先用元数据 name，否则用 ZIP 文件名
                     meta.as_ref()
-                        .and_then(|m| m.name.clone())
-                        .unwrap_or_else(|| {
-                            zip_path
-                                .file_stem()
-                                .map(|s| s.to_string_lossy().to_string())
-                                .unwrap_or_else(|| "unknown".to_string())
-                        })
+                        .and_then(|m| m.name.as_deref())
+                        .and_then(Self::sanitize_install_name)
+                        .or_else(|| zip_stem.as_deref().and_then(Self::sanitize_install_name))
                 } else {
-                    dir_name
+                    Self::sanitize_install_name(&dir_name)
+                        .or_else(|| {
+                            meta.as_ref()
+                                .and_then(|m| m.name.as_deref())
+                                .and_then(Self::sanitize_install_name)
+                        })
+                        .or_else(|| zip_stem.as_deref().and_then(Self::sanitize_install_name))
+                }
+            };
+            let install_name = match install_name {
+                Some(name) => name,
+                None => {
+                    let _ = fs::remove_dir_all(&temp_dir);
+                    return Err(anyhow!(format_skill_error(
+                        "INVALID_SKILL_DIRECTORY",
+                        &[("zip", &zip_path.display().to_string())],
+                        Some("checkZipContent"),
+                    )));
                 }
             };
 
@@ -1536,7 +1676,7 @@ impl SkillService {
 ///
 /// 返回 (id, repo_owner, repo_name, repo_branch, readme_url)
 fn build_repo_info_from_lock(
-    lock: &HashMap<String, (String, String, Option<String>)>,
+    lock: &HashMap<String, LockRepoInfo>,
     dir_name: &str,
 ) -> (
     String,
@@ -1546,19 +1686,23 @@ fn build_repo_info_from_lock(
     Option<String>,
 ) {
     match lock.get(dir_name) {
-        Some((owner, repo, skill_path)) => {
-            let branch = "main".to_string();
+        Some(info) => {
+            let branch = info.branch.clone();
+            let url_branch = branch.clone().unwrap_or_else(|| "HEAD".to_string());
             // 优先使用 lock 文件中的 skillPath，否则回退到 dir_name/SKILL.md
             let fallback = format!("{dir_name}/SKILL.md");
-            let doc_path = skill_path.as_deref().unwrap_or(&fallback);
+            let doc_path = info.skill_path.as_deref().unwrap_or(&fallback);
             let url = Some(SkillService::build_skill_doc_url(
-                owner, repo, &branch, doc_path,
+                &info.owner,
+                &info.repo,
+                &url_branch,
+                doc_path,
             ));
             (
-                format!("{owner}/{repo}:{dir_name}"),
-                Some(owner.clone()),
-                Some(repo.clone()),
-                Some(branch),
+                format!("{}/{}:{dir_name}", info.owner, info.repo),
+                Some(info.owner.clone()),
+                Some(info.repo.clone()),
+                branch,
                 url,
             )
         }
@@ -1569,7 +1713,7 @@ fn build_repo_info_from_lock(
 /// 将 lock 文件中发现的仓库保存到 skill_repos（去重）
 fn save_repos_from_lock(
     db: &Arc<Database>,
-    lock: &HashMap<String, (String, String, Option<String>)>,
+    lock: &HashMap<String, LockRepoInfo>,
     directories: impl Iterator<Item = impl AsRef<str>>,
 ) {
     let existing_repos: HashSet<(String, String)> = db
@@ -1581,19 +1725,25 @@ fn save_repos_from_lock(
     let mut added = HashSet::new();
 
     for dir_name in directories {
-        if let Some((owner, repo, _)) = lock.get(dir_name.as_ref()) {
-            let key = (owner.clone(), repo.clone());
+        if let Some(info) = lock.get(dir_name.as_ref()) {
+            let key = (info.owner.clone(), info.repo.clone());
             if !existing_repos.contains(&key) && added.insert(key) {
                 let skill_repo = SkillRepo {
-                    owner: owner.clone(),
-                    name: repo.clone(),
-                    branch: "main".to_string(),
+                    owner: info.owner.clone(),
+                    name: info.repo.clone(),
+                    // 未知分支时使用 HEAD 语义，后续下载会回退到 main/master。
+                    branch: info.branch.clone().unwrap_or_else(|| "HEAD".to_string()),
                     enabled: true,
                 };
                 if let Err(e) = db.save_skill_repo(&skill_repo) {
-                    log::warn!("保存 skill 仓库 {owner}/{repo} 失败: {e}");
+                    log::warn!("保存 skill 仓库 {}/{} 失败: {}", info.owner, info.repo, e);
                 } else {
-                    log::info!("从 agents lock 文件发现并添加仓库: {owner}/{repo}");
+                    log::info!(
+                        "从 agents lock 文件发现并添加仓库: {}/{} ({})",
+                        info.owner,
+                        info.repo,
+                        skill_repo.branch
+                    );
                 }
             }
         }
