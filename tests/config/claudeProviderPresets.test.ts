@@ -42,4 +42,38 @@ describe("AWS Bedrock Provider Presets", () => {
     const env = (bedrockAksk!.settingsConfig as any).env;
     expect(env.ANTHROPIC_MODEL).toContain("anthropic.claude");
   });
+
+  const bedrockApiKey = providerPresets.find(
+    (p) => p.name === "AWS Bedrock (API Key)",
+  );
+
+  it("should include AWS Bedrock (API Key) preset", () => {
+    expect(bedrockApiKey).toBeDefined();
+  });
+
+  it("API Key preset should have apiKey template and AWS env variables", () => {
+    const config = bedrockApiKey!.settingsConfig as any;
+    expect(config).toHaveProperty("apiKey", "${BEDROCK_API_KEY}");
+    expect(config.env).toHaveProperty("AWS_REGION");
+    expect(config.env).toHaveProperty("CLAUDE_CODE_USE_BEDROCK", "1");
+  });
+
+  it("API Key preset should NOT have AKSK env variables", () => {
+    const env = (bedrockApiKey!.settingsConfig as any).env;
+    expect(env).not.toHaveProperty("AWS_ACCESS_KEY_ID");
+    expect(env).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
+  });
+
+  it("API Key preset should have template values for API key and region", () => {
+    expect(bedrockApiKey!.templateValues).toBeDefined();
+    expect(bedrockApiKey!.templateValues!.BEDROCK_API_KEY).toBeDefined();
+    expect(bedrockApiKey!.templateValues!.AWS_REGION).toBeDefined();
+    expect(bedrockApiKey!.templateValues!.AWS_REGION.editorValue).toBe(
+      "us-west-2",
+    );
+  });
+
+  it("API Key preset should have cloud_provider category", () => {
+    expect(bedrockApiKey!.category).toBe("cloud_provider");
+  });
 });
