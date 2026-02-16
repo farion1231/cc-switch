@@ -20,6 +20,10 @@ use reqwest::RequestBuilder;
 /// Claude 适配器
 pub struct ClaudeAdapter;
 
+/// Harmony models that require /v1/responses endpoint
+/// These models use the Harmony response format (gpt-oss series)
+const HARMONY_MODEL_PATTERNS: &[&str] = &["gpt-oss-", "openai/gpt-oss-"];
+
 impl ClaudeAdapter {
     pub fn new() -> Self {
         Self
@@ -108,7 +112,20 @@ impl ClaudeAdapter {
             };
         }
 
-        // 3) Backward compatibility: legacy openrouter_compat_mode (bool/number/string)
+        // 3) Backward compatibility: settings_config.apiFormat (camelCase)
+        if let Some(api_format) = provider
+            .settings_config
+            .get("apiFormat")
+            .and_then(|v| v.as_str())
+        {
+            return if api_format == "openai_chat" {
+                "openai_chat"
+            } else {
+                "anthropic"
+            };
+        }
+
+        // 4) Backward compatibility: legacy openrouter_compat_mode (bool/number/string)
         let raw = provider.settings_config.get("openrouter_compat_mode");
         let enabled = match raw {
             Some(serde_json::Value::Bool(v)) => *v,
@@ -125,6 +142,33 @@ impl ClaudeAdapter {
         } else {
             "anthropic"
         }
+    }
+
+    /// 检查 Harmony API 支持
+    ///
+    /// 返回值：
+    /// - Some(true): 强制启用 Harmony
+    /// - Some(false): 强制禁用 Harmony
+    /// - None: 自动检测（根据模型名判断）
+    /// 检查模型是否为 Harmony 格式模型
+    fn is_harmony_model(model: &str) -> bool {
+        let model_lower = model.to_lowercase();
+        HARMONY_MODEL_PATTERNS
+            .iter()
+            .any(|prefix| model_lower.starts_with(prefix))
+    }
+
+    fn get_harmony_support(&self, provider: &Provider) -> Option<bool> {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.harmony_support.as_deref())
+            .and_then(|s| match s {
+                "enabled" | "true" | "1" => Some(true),
+                "disabled" | "false" | "0" => Some(false),
+                "auto" => None,
+                _ => None,
+            })
     }
 
     /// 检测是否为仅 Bearer 认证模式
@@ -305,10 +349,13 @@ impl ProviderAdapter for ClaudeAdapter {
             return base;
         }
 
-        // 为 Claude 相关端点添加 ?beta=true 参数
+        // 为 Claude 原生 /v1/messages 端点添加 ?beta=true 参数
         // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
-        // 注：openai_chat 模式下会转发到 /v1/chat/completions，此处也需要保持一致
-        if (endpoint.contains("/v1/messages") || endpoint.contains("/v1/chat/completions"))
+        // 注意：不要为 OpenAI Chat Completions (/v1/chat/completions) 添加此参数
+        //       当 apiFormat="openai_chat" 时，请求会转发到 /v1/chat/completions，
+        //       但该端点是 OpenAI 标准，不支持 ?beta=true 参数
+        if endpoint.contains("/v1/messages")
+            && !endpoint.contains("/v1/chat/completions")
             && !endpoint.contains('?')
         {
             format!("{base}?beta=true")
@@ -358,13 +405,38 @@ impl ProviderAdapter for ClaudeAdapter {
     fn transform_request(
         &self,
         body: serde_json::Value,
-        _provider: &Provider,
+        provider: &Provider,
     ) -> Result<serde_json::Value, ProxyError> {
-        super::transform::anthropic_to_openai(body)
+        // Check if this is a Harmony model and provider supports it
+        let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
+
+        // If apiFormat is explicitly "openai_chat", never use Harmony
+        let api_format = self.get_api_format(provider);
+        if api_format == "openai_chat" {
+            return super::transform::anthropic_to_openai(body);
+        }
+
+        let harmony_override = self.get_harmony_support(provider);
+        let is_harmony = harmony_override.unwrap_or_else(|| Self::is_harmony_model(model));
+
+        if is_harmony {
+            // Direct Anthropic -> Harmony transformation
+            super::transform::anthropic_to_harmony(body)
+        } else {
+            // Standard Anthropic -> OpenAI Chat Completions
+            super::transform::anthropic_to_openai(body)
+        }
     }
 
     fn transform_response(&self, body: serde_json::Value) -> Result<serde_json::Value, ProxyError> {
-        super::transform::openai_to_anthropic(body)
+        // Detect response format: Harmony has "output", OpenAI has "choices"
+        let is_harmony_response = body.get("output").is_some();
+
+        if is_harmony_response {
+            super::transform::harmony_to_anthropic(body)
+        } else {
+            super::transform::openai_to_anthropic(body)
+        }
     }
 }
 
@@ -567,6 +639,15 @@ mod tests {
     }
 
     #[test]
+    fn test_build_url_no_beta_for_openai_chat_completions() {
+        let adapter = ClaudeAdapter::new();
+        // OpenAI Chat Completions 端点不添加 ?beta=true
+        // 这是 Nvidia 等 apiFormat="openai_chat" 供应商使用的端点
+        let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/chat/completions");
+        assert_eq!(url, "https://integrate.api.nvidia.com/v1/chat/completions");
+    }
+
+    #[test]
     fn test_needs_transform() {
         let adapter = ClaudeAdapter::new();
 
@@ -600,6 +681,15 @@ mod tests {
             "api_format": "openai_chat"
         }));
         assert!(adapter.needs_transform(&legacy_settings_api_format));
+
+        // Backward compatibility: settings_config.apiFormat (camelCase)
+        let settings_api_format_camel_case = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.example.com"
+            },
+            "apiFormat": "openai_chat"
+        }));
+        assert!(adapter.needs_transform(&settings_api_format_camel_case));
 
         // Legacy openrouter_compat_mode: bool/number/string should enable transform
         let legacy_openrouter_bool = create_provider(json!({

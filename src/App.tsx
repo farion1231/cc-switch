@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
@@ -16,6 +17,10 @@ import {
   Download,
   FolderArchive,
   Search,
+  FolderOpen,
+  KeyRound,
+  Shield,
+  Cpu,
 } from "lucide-react";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -28,6 +33,7 @@ import {
 } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
+import { openclawKeys } from "@/hooks/useOpenClaw";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -56,6 +62,10 @@ import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import { useDisableCurrentOmo } from "@/lib/query/omo";
+import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
+import EnvPanel from "@/components/openclaw/EnvPanel";
+import ToolsPanel from "@/components/openclaw/ToolsPanel";
+import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 
 type View =
   | "providers"
@@ -66,14 +76,30 @@ type View =
   | "mcp"
   | "agents"
   | "universal"
-  | "sessions";
+  | "sessions"
+  | "workspace"
+  | "openclawEnv"
+  | "openclawTools"
+  | "openclawAgents";
+
+interface WebDavSyncStatusUpdatedPayload {
+  source?: string;
+  status?: string;
+  error?: string;
+}
 
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
 const CONTENT_TOP_OFFSET = DRAG_BAR_HEIGHT + HEADER_HEIGHT;
 
 const STORAGE_KEY = "cc-switch-last-app";
-const VALID_APPS: AppId[] = ["claude", "codex", "gemini", "opencode"];
+const VALID_APPS: AppId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+  "openclaw",
+];
 
 const getInitialApp = (): AppId => {
   const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
@@ -94,6 +120,10 @@ const VALID_VIEWS: View[] = [
   "agents",
   "universal",
   "sessions",
+  "workspace",
+  "openclawEnv",
+  "openclawTools",
+  "openclawAgents",
 ];
 
 const getInitialView = (): View => {
@@ -123,6 +153,7 @@ function App() {
     codex: true,
     gemini: true,
     opencode: true,
+    openclaw: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -130,6 +161,7 @@ function App() {
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
     if (visibleApps.opencode) return "opencode";
+    if (visibleApps.openclaw) return "openclaw";
     return "claude"; // fallback
   };
 
@@ -141,7 +173,11 @@ function App() {
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
-    if (currentView === "sessions" && activeApp !== "claude" && activeApp !== "codex") {
+    if (
+      currentView === "sessions" &&
+      activeApp !== "claude" &&
+      activeApp !== "codex"
+    ) {
       setCurrentView("providers");
     }
   }, [activeApp, currentView]);
@@ -192,6 +228,7 @@ function App() {
     switchProvider,
     deleteProvider,
     saveUsageScript,
+    setAsDefaultModel,
   } = useProviderActions(activeApp);
 
   const disableOmoMutation = useDisableCurrentOmo();
@@ -261,6 +298,49 @@ function App() {
       unsubscribe?.();
     };
   }, [queryClient]);
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    let active = true;
+
+    const setupListener = async () => {
+      try {
+        const off = await listen(
+          "webdav-sync-status-updated",
+          async (event) => {
+            const payload = (event.payload ?? {}) as WebDavSyncStatusUpdatedPayload;
+            await queryClient.invalidateQueries({ queryKey: ["settings"] });
+
+            if (payload.source !== "auto" || payload.status !== "error") {
+              return;
+            }
+
+            toast.error(
+              t("settings.webdavSync.autoSyncFailedToast", {
+                error: payload.error || t("common.unknown"),
+              }),
+            );
+          },
+        );
+        if (!active) {
+          off();
+          return;
+        }
+        unsubscribe = off;
+      } catch (error) {
+        console.error(
+          "[App] Failed to subscribe webdav-sync-status-updated event",
+          error,
+        );
+      }
+    };
+
+    void setupListener();
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [queryClient, t]);
 
   useEffect(() => {
     const checkEnvOnStartup = async () => {
@@ -419,10 +499,19 @@ function App() {
     const { provider, action } = confirmAction;
 
     if (action === "remove") {
+      // Remove from live config only (for additive mode apps like OpenCode/OpenClaw)
+      // Does NOT delete from database - provider remains in the list
       await providersApi.removeFromLiveConfig(provider.id, activeApp);
-      await queryClient.invalidateQueries({
-        queryKey: ["opencodeLiveProviderIds"],
-      });
+      // Invalidate queries to refresh the isInConfig state
+      if (activeApp === "opencode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["opencodeLiveProviderIds"],
+        });
+      } else if (activeApp === "openclaw") {
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.liveProviderIds,
+        });
+      }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
           defaultValue: "已从配置移除",
@@ -582,7 +671,11 @@ function App() {
           return (
             <SkillsPage
               ref={skillsPageRef}
-              initialApp={activeApp === "opencode" ? "claude" : activeApp}
+              initialApp={
+                activeApp === "opencode" || activeApp === "openclaw"
+                  ? "claude"
+                  : activeApp
+              }
             />
           );
         case "mcp":
@@ -605,6 +698,14 @@ function App() {
 
         case "sessions":
           return <SessionManagerPage />;
+        case "workspace":
+          return <WorkspaceFilesPanel />;
+        case "openclawEnv":
+          return <EnvPanel />;
+        case "openclawTools":
+          return <ToolsPanel />;
+        case "openclawAgents":
+          return <AgentsDefaultsPanel />;
         default:
           return (
             <div className="px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
@@ -636,7 +737,7 @@ function App() {
                         setConfirmAction({ provider, action: "delete" })
                       }
                       onRemoveFromConfig={
-                        activeApp === "opencode"
+                        activeApp === "opencode" || activeApp === "openclaw"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
@@ -651,6 +752,9 @@ function App() {
                         activeApp === "claude" ? handleOpenTerminal : undefined
                       }
                       onCreate={() => setIsAddOpen(true)}
+                      onSetAsDefault={
+                        activeApp === "openclaw" ? setAsDefaultModel : undefined
+                      }
                     />
                   </motion.div>
                 </AnimatePresence>
@@ -760,6 +864,11 @@ function App() {
                       defaultValue: "统一供应商",
                     })}
                   {currentView === "sessions" && t("sessionManager.title")}
+                  {currentView === "workspace" && t("workspace.title")}
+                  {currentView === "openclawEnv" && t("openclaw.env.title")}
+                  {currentView === "openclawTools" && t("openclaw.tools.title")}
+                  {currentView === "openclawAgents" &&
+                    t("openclaw.agents.title")}
                 </h1>
               </div>
             ) : (
@@ -911,7 +1020,7 @@ function App() {
             )}
             {currentView === "providers" && (
               <>
-                {activeApp !== "opencode" && (
+                {activeApp !== "opencode" && activeApp !== "openclaw" && (
                   <>
                     <ProxyToggle activeApp={activeApp} />
                     <div
@@ -938,54 +1047,97 @@ function App() {
                 />
 
                 <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setCurrentView("skills")}
-                    className={cn(
-                      "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
-                      "transition-all duration-200 ease-in-out overflow-hidden",
-                      hasSkillsSupport
-                        ? "opacity-100 w-8 scale-100 px-2"
-                        : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
-                    )}
-                    title={t("skills.manage")}
-                  >
-                    <Wrench className="flex-shrink-0 w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setCurrentView("prompts")}
-                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                    title={t("prompts.manage")}
-                  >
-                    <Book className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setCurrentView("sessions")}
-                    className={cn(
-                      "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
-                      "transition-all duration-200 ease-in-out overflow-hidden",
-                      hasSessionSupport
-                        ? "opacity-100 w-8 scale-100 px-2"
-                        : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
-                    )}
-                    title={t("sessionManager.title")}
-                  >
-                    <History className="flex-shrink-0 w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setCurrentView("mcp")}
-                    className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                    title={t("mcp.title")}
-                  >
-                    <McpIcon size={16} />
-                  </Button>
+                  {activeApp === "openclaw" ? (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentView("workspace")}
+                        className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                        title={t("workspace.manage")}
+                      >
+                        <FolderOpen className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentView("openclawEnv")}
+                        className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                        title={t("openclaw.env.title")}
+                      >
+                        <KeyRound className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentView("openclawTools")}
+                        className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                        title={t("openclaw.tools.title")}
+                      >
+                        <Shield className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentView("openclawAgents")}
+                        className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                        title={t("openclaw.agents.title")}
+                      >
+                        <Cpu className="w-4 h-4" />
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentView("skills")}
+                        className={cn(
+                          "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                          "transition-all duration-200 ease-in-out overflow-hidden",
+                          hasSkillsSupport
+                            ? "opacity-100 w-8 scale-100 px-2"
+                            : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                        )}
+                        title={t("skills.manage")}
+                      >
+                        <Wrench className="flex-shrink-0 w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentView("prompts")}
+                        className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                        title={t("prompts.manage")}
+                      >
+                        <Book className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentView("sessions")}
+                        className={cn(
+                          "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                          "transition-all duration-200 ease-in-out overflow-hidden",
+                          hasSessionSupport
+                            ? "opacity-100 w-8 scale-100 px-2"
+                            : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                        )}
+                        title={t("sessionManager.title")}
+                      >
+                        <History className="flex-shrink-0 w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentView("mcp")}
+                        className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                        title={t("mcp.title")}
+                      >
+                        <McpIcon size={16} />
+                      </Button>
+                    </>
+                  )}
                 </div>
 
                 <Button
@@ -1001,7 +1153,7 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 flex flex-col animate-fade-in">
+      <main className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in">
         {renderContent()}
       </main>
 

@@ -286,10 +286,22 @@ impl OmoService {
 
         let obj = Self::read_jsonc_object(&actual_path)?;
 
+        Ok(Self::build_local_file_data_from_obj(
+            &obj,
+            actual_path.to_string_lossy().to_string(),
+            last_modified,
+        ))
+    }
+
+    fn build_local_file_data_from_obj(
+        obj: &Map<String, Value>,
+        file_path: String,
+        last_modified: Option<String>,
+    ) -> OmoLocalFileData {
         let agents = obj.get("agents").cloned();
         let categories = obj.get("categories").cloned();
 
-        let other = Self::extract_other_fields(&obj);
+        let other = Self::extract_other_fields(obj);
         let other_fields = if other.is_empty() {
             None
         } else {
@@ -297,16 +309,17 @@ impl OmoService {
         };
 
         let mut global = OmoGlobalConfig::default();
-        Self::merge_global_from_obj(&obj, &mut global);
+        Self::merge_global_from_obj(obj, &mut global);
+        global.other_fields = other_fields.clone();
 
-        Ok(OmoLocalFileData {
+        OmoLocalFileData {
             agents,
             categories,
             other_fields,
             global,
-            file_path: actual_path.to_string_lossy().to_string(),
+            file_path,
             last_modified,
-        })
+        }
     }
 
     fn strip_jsonc_comments(input: &str) -> String {
@@ -400,7 +413,7 @@ mod tests {
             ..Default::default()
         };
         let agents = Some(serde_json::json!({
-            "Sisyphus": { "model": "claude-opus-4-5" }
+            "sisyphus": { "model": "claude-opus-4-5" }
         }));
         let categories = None;
         let other_fields = None;
@@ -411,7 +424,7 @@ mod tests {
         assert_eq!(obj["$schema"], "https://example.com/schema.json");
         assert_eq!(obj["disabled_agents"], serde_json::json!(["explore"]));
         assert!(obj.contains_key("agents"));
-        assert_eq!(obj["agents"]["Sisyphus"]["model"], "claude-opus-4-5");
+        assert_eq!(obj["agents"]["sisyphus"]["model"], "claude-opus-4-5");
     }
 
     #[test]
@@ -422,7 +435,7 @@ mod tests {
             ..Default::default()
         };
         let agents = Some(serde_json::json!({
-            "Sisyphus": { "model": "claude-opus-4-5" }
+            "sisyphus": { "model": "claude-opus-4-5" }
         }));
         let categories = None;
         let other_fields = None;
@@ -433,5 +446,62 @@ mod tests {
         assert!(!obj.contains_key("$schema"));
         assert!(!obj.contains_key("disabled_agents"));
         assert!(obj.contains_key("agents"));
+    }
+
+    #[test]
+    fn test_build_local_file_data_keeps_unknown_top_level_fields_in_global() {
+        let obj = serde_json::json!({
+            "$schema": "https://example.com/schema.json",
+            "disabled_agents": ["oracle"],
+            "agents": {
+                "sisyphus": { "model": "claude-opus-4-6" }
+            },
+            "categories": {
+                "code": { "model": "gpt-5.3" }
+            },
+            "custom_top_level": {
+                "enabled": true
+            }
+        });
+        let obj_map = obj.as_object().unwrap().clone();
+
+        let data = OmoService::build_local_file_data_from_obj(
+            &obj_map,
+            "/tmp/oh-my-opencode.jsonc".to_string(),
+            None,
+        );
+
+        assert_eq!(
+            data.global.schema_url.as_deref(),
+            Some("https://example.com/schema.json")
+        );
+        assert_eq!(data.global.disabled_agents, vec!["oracle".to_string()]);
+
+        assert_eq!(
+            data.other_fields,
+            Some(serde_json::json!({
+                "custom_top_level": { "enabled": true }
+            }))
+        );
+        assert_eq!(data.global.other_fields, data.other_fields);
+    }
+
+    #[test]
+    fn test_merge_config_ignores_non_object_other_fields() {
+        let global = OmoGlobalConfig {
+            other_fields: Some(serde_json::json!(["global_non_object"])),
+            ..Default::default()
+        };
+        let agents = None;
+        let categories = None;
+        let other_fields = Some(serde_json::json!("profile_non_object"));
+        let profile_data = (agents, categories, other_fields, true);
+
+        let merged = OmoService::merge_config(&global, Some(&profile_data));
+        let obj = merged.as_object().unwrap();
+
+        assert!(!obj.contains_key("0"));
+        assert!(!obj.contains_key("global_non_object"));
+        assert!(!obj.contains_key("profile_non_object"));
     }
 }

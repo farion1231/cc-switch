@@ -59,10 +59,12 @@ pub fn should_rectify_thinking_signature(
     }
 
     // 场景3: expected thinking or redacted_thinking, found tool_use
+    // 与 CCH 对齐：要求明确包含 tool_use，避免过宽匹配。
     // 错误示例: "Expected `thinking` or `redacted_thinking`, but found `tool_use`"
     if lower.contains("expected")
         && (lower.contains("thinking") || lower.contains("redacted_thinking"))
         && lower.contains("found")
+        && lower.contains("tool_use")
     {
         return true;
     }
@@ -70,6 +72,28 @@ pub fn should_rectify_thinking_signature(
     // 场景4: signature 字段必需但缺失
     // 错误示例: "signature: Field required"
     if lower.contains("signature") && lower.contains("field required") {
+        return true;
+    }
+
+    // 场景5: signature 字段不被接受（第三方渠道）
+    // 错误示例: "xxx.signature: Extra inputs are not permitted"
+    if lower.contains("signature") && lower.contains("extra inputs are not permitted") {
+        return true;
+    }
+
+    // 场景6: thinking/redacted_thinking 块被修改
+    // 错误示例: "thinking or redacted_thinking blocks ... cannot be modified"
+    if (lower.contains("thinking") || lower.contains("redacted_thinking"))
+        && lower.contains("cannot be modified")
+    {
+        return true;
+    }
+
+    // 场景7: 非法请求（与 CCH 对齐，按 invalid request 统一兜底）
+    if lower.contains("非法请求")
+        || lower.contains("illegal request")
+        || lower.contains("invalid request")
+    {
         return true;
     }
 
@@ -159,11 +183,13 @@ pub fn rectify_anthropic_request(body: &mut Value) -> RectifyResult {
 /// 判断是否需要删除顶层 thinking 字段
 fn should_remove_top_level_thinking(body: &Value, messages: &[Value]) -> bool {
     // 检查 thinking 是否启用
-    let thinking_enabled = body
+    let thinking_type = body
         .get("thinking")
         .and_then(|t| t.get("type"))
-        .and_then(|t| t.as_str())
-        == Some("enabled");
+        .and_then(|t| t.as_str());
+
+    // 与 CCH 对齐：仅 type=enabled 视为开启
+    let thinking_enabled = thinking_type == Some("enabled");
 
     if !thinking_enabled {
         return false;
@@ -202,6 +228,11 @@ fn should_remove_top_level_thinking(body: &Value, messages: &[Value]) -> bool {
         .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
 }
 
+/// 与 CCH 对齐：请求前不做 thinking type 主动改写。
+pub fn normalize_thinking_type(body: Value) -> Value {
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +242,7 @@ mod tests {
         RectifierConfig {
             enabled: true,
             request_thinking_signature: true,
+            request_thinking_budget: true,
         }
     }
 
@@ -218,6 +250,7 @@ mod tests {
         RectifierConfig {
             enabled: true,
             request_thinking_signature: false,
+            request_thinking_budget: false,
         }
     }
 
@@ -225,6 +258,7 @@ mod tests {
         RectifierConfig {
             enabled: false,
             request_thinking_signature: true,
+            request_thinking_budget: true,
         }
     }
 
@@ -260,6 +294,14 @@ mod tests {
     fn test_detect_thinking_expected() {
         assert!(should_rectify_thinking_signature(
             Some("messages.69.content.0.type: Expected `thinking` or `redacted_thinking`, but found `tool_use`."),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_no_detect_thinking_expected_without_tool_use() {
+        assert!(!should_rectify_thinking_signature(
+            Some("messages.69.content.0.type: Expected `thinking` or `redacted_thinking`, but found `text`."),
             &enabled_config()
         ));
     }
@@ -417,5 +459,231 @@ mod tests {
         // 注意：由于 thinking block 被移除后，首块变成了 tool_use，
         // 此时会触发删除顶层 thinking 的逻辑
         // 这是预期行为：整流后如果仍然不符合要求，就删除顶层 thinking
+    }
+
+    // ==================== 新增错误场景检测测试 ====================
+
+    #[test]
+    fn test_detect_signature_extra_inputs() {
+        // 场景5: signature 字段不被接受
+        assert!(should_rectify_thinking_signature(
+            Some("xxx.signature: Extra inputs are not permitted"),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_detect_thinking_cannot_be_modified() {
+        // 场景6: thinking blocks cannot be modified
+        assert!(should_rectify_thinking_signature(
+            Some("thinking or redacted_thinking blocks in the response cannot be modified"),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_detect_invalid_request() {
+        // 场景7: 非法请求（与 CCH 对齐，统一触发）
+        assert!(should_rectify_thinking_signature(
+            Some("非法请求：thinking signature 不合法"),
+            &enabled_config()
+        ));
+        assert!(should_rectify_thinking_signature(
+            Some("illegal request: tool_use block mismatch"),
+            &enabled_config()
+        ));
+        assert!(should_rectify_thinking_signature(
+            Some("invalid request: malformed JSON"),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_do_not_detect_thinking_type_tag_mismatch() {
+        // 与 CCH 对齐：adaptive tag mismatch 不触发签名整流器
+        assert!(!should_rectify_thinking_signature(
+            Some("Input tag 'adaptive' found using 'type' does not match expected tags"),
+            &enabled_config()
+        ));
+    }
+
+    // ==================== adaptive thinking type 测试 ====================
+
+    #[test]
+    fn test_rectify_keeps_adaptive_when_no_legacy_blocks() {
+        let mut body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "adaptive" },
+            "messages": [{
+                "role": "user",
+                "content": [{ "type": "text", "text": "hello" }]
+            }]
+        });
+
+        let result = rectify_anthropic_request(&mut body);
+
+        assert!(!result.applied);
+        assert_eq!(body["thinking"]["type"], "adaptive");
+        assert!(body["thinking"].get("budget_tokens").is_none());
+    }
+
+    #[test]
+    fn test_rectify_adaptive_preserves_existing_budget_tokens() {
+        let mut body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "adaptive", "budget_tokens": 5000 },
+            "messages": [{
+                "role": "user",
+                "content": [{ "type": "text", "text": "hello" }]
+            }]
+        });
+
+        let result = rectify_anthropic_request(&mut body);
+
+        assert!(!result.applied);
+        assert_eq!(body["thinking"]["type"], "adaptive");
+        assert_eq!(body["thinking"]["budget_tokens"], 5000);
+    }
+
+    #[test]
+    fn test_rectify_does_not_change_enabled_type() {
+        let mut body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "enabled", "budget_tokens": 1024 },
+            "messages": [{
+                "role": "user",
+                "content": [{ "type": "text", "text": "hello" }]
+            }]
+        });
+
+        let result = rectify_anthropic_request(&mut body);
+
+        assert!(!result.applied);
+        assert_eq!(body["thinking"]["type"], "enabled");
+    }
+
+    #[test]
+    fn test_rectify_removes_top_level_thinking_adaptive() {
+        // 顶层 thinking 仅在 type=enabled 且 tool_use 场景才会删除，adaptive 不删除
+        let mut body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "adaptive" },
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    { "type": "tool_use", "id": "toolu_1", "name": "WebSearch", "input": {} }
+                ]
+            }, {
+                "role": "user",
+                "content": [{ "type": "tool_result", "tool_use_id": "toolu_1", "content": "ok" }]
+            }]
+        });
+
+        let result = rectify_anthropic_request(&mut body);
+
+        assert!(!result.applied);
+        assert_eq!(body["thinking"]["type"], "adaptive");
+    }
+
+    #[test]
+    fn test_rectify_adaptive_still_cleans_legacy_signature_blocks() {
+        let mut body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "adaptive" },
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    { "type": "thinking", "thinking": "t", "signature": "sig_thinking" },
+                    { "type": "text", "text": "hello", "signature": "sig_text" }
+                ]
+            }]
+        });
+
+        let result = rectify_anthropic_request(&mut body);
+
+        assert!(result.applied);
+        assert_eq!(result.removed_thinking_blocks, 1);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+        assert!(content[0].get("signature").is_none());
+        assert_eq!(body["thinking"]["type"], "adaptive");
+    }
+
+    // ==================== normalize_thinking_type 测试 ====================
+
+    #[test]
+    fn test_normalize_thinking_type_adaptive_unchanged() {
+        let body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "adaptive" }
+        });
+
+        let result = normalize_thinking_type(body);
+
+        assert_eq!(result["thinking"]["type"], "adaptive");
+        assert!(result["thinking"].get("budget_tokens").is_none());
+    }
+
+    #[test]
+    fn test_normalize_thinking_type_enabled_unchanged() {
+        let body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "enabled", "budget_tokens": 2048 }
+        });
+
+        let result = normalize_thinking_type(body);
+
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 2048);
+    }
+
+    #[test]
+    fn test_normalize_thinking_type_disabled_unchanged() {
+        let body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "disabled" }
+        });
+
+        let result = normalize_thinking_type(body);
+
+        assert_eq!(result["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn test_normalize_thinking_type_preserves_budget() {
+        let body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "adaptive", "budget_tokens": 5000 }
+        });
+
+        let result = normalize_thinking_type(body);
+
+        assert_eq!(result["thinking"]["type"], "adaptive");
+        assert_eq!(result["thinking"]["budget_tokens"], 5000);
+    }
+
+    #[test]
+    fn test_normalize_thinking_type_no_thinking() {
+        let body = json!({
+            "model": "claude-test"
+        });
+
+        let result = normalize_thinking_type(body);
+
+        assert!(result.get("thinking").is_none());
+    }
+
+    #[test]
+    fn test_normalize_thinking_type_unknown_unchanged() {
+        let body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "unexpected", "budget_tokens": 100 }
+        });
+
+        let result = normalize_thinking_type(body);
+
+        assert_eq!(result["thinking"]["type"], "unexpected");
+        assert_eq!(result["thinking"]["budget_tokens"], 100);
     }
 }

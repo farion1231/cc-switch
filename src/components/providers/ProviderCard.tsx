@@ -48,6 +48,9 @@ interface ProviderCardProps {
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
   onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
+  // OpenClaw: default model
+  isDefaultModel?: boolean;
+  onSetAsDefault?: () => void;
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -108,6 +111,9 @@ export function ProviderCard({
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
+  // OpenClaw: default model
+  isDefaultModel,
+  onSetAsDefault,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -133,7 +139,10 @@ export function ProviderCard({
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
 
-  const shouldAutoQuery = appId === "opencode" ? isInConfig : isCurrent;
+  // 获取用量数据以判断是否有多套餐
+  // 累加模式应用（OpenCode/OpenClaw）：使用 isInConfig 代替 isCurrent
+  const shouldAutoQuery =
+    appId === "opencode" || appId === "openclaw" ? isInConfig : isCurrent;
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
@@ -176,9 +185,14 @@ export function ProviderCard({
     onOpenWebsite(displayUrl);
   };
 
+  // 判断是否是"当前使用中"的供应商
+  // - OMO 供应商：使用 isCurrent
+  // - 累加模式应用（OpenCode 非 OMO / OpenClaw）：不存在"当前"概念，始终返回 false
+  // - 故障转移模式：代理实际使用的供应商（activeProviderId）
+  // - 普通模式：isCurrent
   const isActiveProvider = isOmo
     ? isCurrent
-    : appId === "opencode"
+    : appId === "opencode" || appId === "openclaw"
       ? false
       : isAutoFailoverEnabled
         ? activeProviderId === provider.id
@@ -378,6 +392,9 @@ export function ProviderCard({
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
               onToggleFailover={onToggleFailover}
+              // OpenClaw: default model
+              isDefaultModel={isDefaultModel}
+              onSetAsDefault={onSetAsDefault}
             />
           </div>
         </div>

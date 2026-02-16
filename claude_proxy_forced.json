@@ -1,0 +1,12 @@
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "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",
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:9527",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "openai/gpt-oss-20b",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "z-ai/glm5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "openai/gpt-oss-20b",
+    "ANTHROPIC_MODEL": "openai/gpt-oss-20b",
+    "ANTHROPIC_REASONING_MODEL": "z-ai/glm5",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
+}

@@ -1,7 +1,8 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom";
-import { createContext, useContext } from "react";
+import { createContext, useContext, type ComponentProps } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 
 const toastSuccessMock = vi.fn();
@@ -156,6 +157,7 @@ vi.mock("@/components/ui/dialog", () => ({
   DialogHeader: ({ children }: any) => <div>{children}</div>,
   DialogFooter: ({ children }: any) => <div>{children}</div>,
   DialogTitle: ({ children }: any) => <h2>{children}</h2>,
+  DialogDescription: ({ children }: any) => <div>{children}</div>,
 }));
 
 vi.mock("@/components/ui/tabs", () => {
@@ -235,7 +237,28 @@ vi.mock("@/components/settings/AboutSection", () => ({
   AboutSection: ({ isPortable }: any) => <div>about:{String(isPortable)}</div>,
 }));
 
+vi.mock("@/components/settings/WebdavSyncSection", () => ({
+  WebdavSyncSection: ({ config }: any) => (
+    <div>webdav-sync-section:{config?.baseUrl ?? "none"}</div>
+  ),
+}));
+
 let settingsApi: any;
+
+const renderSettingsPage = (
+  props?: Partial<ComponentProps<typeof SettingsPage>>,
+) => {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <SettingsPage open={true} onOpenChange={vi.fn()} {...props} />
+    </QueryClientProvider>,
+  );
+};
 
 describe("SettingsPage Component", () => {
   beforeEach(async () => {
@@ -263,7 +286,7 @@ describe("SettingsPage Component", () => {
   it("should not render form content when loading", () => {
     settingsMock = createSettingsMock({ settings: null, isLoading: true });
 
-    render(<SettingsPage open={true} onOpenChange={vi.fn()} />);
+    renderSettingsPage();
 
     expect(screen.queryByText("language:zh")).not.toBeInTheDocument();
     // 加载状态下显示 spinner 而不是表单内容
@@ -271,13 +294,24 @@ describe("SettingsPage Component", () => {
   });
 
   it("should reset import/export status when dialog transitions to open", () => {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
     const { rerender } = render(
-      <SettingsPage open={false} onOpenChange={vi.fn()} />,
+      <QueryClientProvider client={client}>
+        <SettingsPage open={false} onOpenChange={vi.fn()} />
+      </QueryClientProvider>,
     );
 
     importExportMock.resetStatus.mockClear();
 
-    rerender(<SettingsPage open={true} onOpenChange={vi.fn()} />);
+    rerender(
+      <QueryClientProvider client={client}>
+        <SettingsPage open={true} onOpenChange={vi.fn()} />
+      </QueryClientProvider>,
+    );
 
     expect(importExportMock.resetStatus).toHaveBeenCalledTimes(1);
   });
@@ -289,7 +323,7 @@ describe("SettingsPage Component", () => {
       selectedFile: "/tmp/config.json",
     });
 
-    render(<SettingsPage open={true} onOpenChange={onOpenChange} />);
+    renderSettingsPage({ onOpenChange });
 
     expect(screen.getByText("language:zh")).toBeInTheDocument();
     expect(screen.getByText("theme-settings")).toBeInTheDocument();
@@ -306,6 +340,7 @@ describe("SettingsPage Component", () => {
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
     fireEvent.click(screen.getByText("settings.advanced.data.title"));
+    expect(screen.getByText("webdav-sync-section:none")).toBeInTheDocument();
 
     // 有文件时，点击导入按钮执行 importConfig
     fireEvent.click(
@@ -326,13 +361,7 @@ describe("SettingsPage Component", () => {
   it("should pass onImportSuccess callback to useImportExport hook", async () => {
     const onImportSuccess = vi.fn();
 
-    render(
-      <SettingsPage
-        open={true}
-        onOpenChange={vi.fn()}
-        onImportSuccess={onImportSuccess}
-      />,
-    );
+    renderSettingsPage({ onImportSuccess });
 
     expect(useImportExportSpy).toHaveBeenCalledWith(
       expect.objectContaining({ onImportSuccess }),
@@ -349,7 +378,7 @@ describe("SettingsPage Component", () => {
     const onOpenChange = vi.fn();
     importExportMock = createImportExportMock();
 
-    render(<SettingsPage open={true} onOpenChange={onOpenChange} />);
+    renderSettingsPage({ onOpenChange });
 
     // 保存按钮在 advanced tab 中
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
@@ -370,7 +399,7 @@ describe("SettingsPage Component", () => {
       saveSettings: vi.fn().mockResolvedValue({ requiresRestart: true }),
     });
 
-    render(<SettingsPage open={true} onOpenChange={vi.fn()} />);
+    renderSettingsPage();
 
     expect(
       await screen.findByText("settings.restartRequired"),
@@ -390,7 +419,7 @@ describe("SettingsPage Component", () => {
     const onOpenChange = vi.fn();
     settingsMock = createSettingsMock({ requiresRestart: true });
 
-    render(<SettingsPage open={true} onOpenChange={onOpenChange} />);
+    renderSettingsPage({ onOpenChange });
 
     expect(
       await screen.findByText("settings.restartRequired"),
@@ -409,7 +438,7 @@ describe("SettingsPage Component", () => {
   });
 
   it("should trigger directory management callbacks inside advanced tab", () => {
-    render(<SettingsPage open={true} onOpenChange={vi.fn()} />);
+    renderSettingsPage();
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
     fireEvent.click(screen.getByText("settings.advanced.configDir.title"));

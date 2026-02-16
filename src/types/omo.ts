@@ -27,8 +27,8 @@ export interface OmoLocalFileData {
 export interface OmoAgentDef {
   key: string;
   display: string;
-  descZh: string;
-  descEn: string;
+  descKey: string;
+  tooltipKey: string;
   recommended?: string;
   group: "main" | "sub";
 }
@@ -36,97 +36,97 @@ export interface OmoAgentDef {
 export interface OmoCategoryDef {
   key: string;
   display: string;
-  descZh: string;
-  descEn: string;
+  descKey: string;
+  tooltipKey: string;
   recommended?: string;
 }
 
 export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
   {
-    key: "Sisyphus",
+    key: "sisyphus",
     display: "Sisyphus",
-    descZh: "主编排者",
-    descEn: "Main orchestrator",
+    descKey: "omo.agentDesc.sisyphus",
+    tooltipKey: "omo.agentTooltip.sisyphus",
     recommended: "claude-opus-4-6",
     group: "main",
   },
   {
-    key: "Hephaestus",
+    key: "hephaestus",
     display: "Hephaestus",
-    descZh: "自主深度工作者",
-    descEn: "Autonomous deep worker",
+    descKey: "omo.agentDesc.hephaestus",
+    tooltipKey: "omo.agentTooltip.hephaestus",
     recommended: "gpt-5.3-codex",
     group: "main",
   },
   {
-    key: "Prometheus",
+    key: "prometheus",
     display: "Prometheus",
-    descZh: "战略规划者",
-    descEn: "Strategic planner",
+    descKey: "omo.agentDesc.prometheus",
+    tooltipKey: "omo.agentTooltip.prometheus",
     recommended: "claude-opus-4-6",
     group: "main",
   },
   {
-    key: "Atlas",
+    key: "atlas",
     display: "Atlas",
-    descZh: "任务管理者",
-    descEn: "Task manager",
+    descKey: "omo.agentDesc.atlas",
+    tooltipKey: "omo.agentTooltip.atlas",
     recommended: "kimi-k2.5",
     group: "main",
   },
   {
     key: "oracle",
     display: "Oracle",
-    descZh: "战略顾问",
-    descEn: "Strategic advisor",
+    descKey: "omo.agentDesc.oracle",
+    tooltipKey: "omo.agentTooltip.oracle",
     recommended: "gpt-5.3",
     group: "sub",
   },
   {
     key: "librarian",
     display: "Librarian",
-    descZh: "多仓库研究员",
-    descEn: "Multi-repo researcher",
+    descKey: "omo.agentDesc.librarian",
+    tooltipKey: "omo.agentTooltip.librarian",
     recommended: "glm-4.7",
     group: "sub",
   },
   {
     key: "explore",
     display: "Explore",
-    descZh: "快速代码搜索",
-    descEn: "Fast code search",
+    descKey: "omo.agentDesc.explore",
+    tooltipKey: "omo.agentTooltip.explore",
     recommended: "grok-code-fast-1",
     group: "sub",
   },
   {
     key: "multimodal-looker",
     display: "Multimodal-Looker",
-    descZh: "媒体分析器",
-    descEn: "Media analyzer",
+    descKey: "omo.agentDesc.multimodalLooker",
+    tooltipKey: "omo.agentTooltip.multimodalLooker",
     recommended: "gemini-3-flash",
     group: "sub",
   },
   {
-    key: "Metis",
+    key: "metis",
     display: "Metis",
-    descZh: "规划前分析顾问",
-    descEn: "Pre-plan analysis advisor",
+    descKey: "omo.agentDesc.metis",
+    tooltipKey: "omo.agentTooltip.metis",
     recommended: "claude-opus-4-6",
     group: "sub",
   },
   {
-    key: "Momus",
+    key: "momus",
     display: "Momus",
-    descZh: "计划审查者",
-    descEn: "Plan reviewer",
+    descKey: "omo.agentDesc.momus",
+    tooltipKey: "omo.agentTooltip.momus",
     recommended: "gpt-5.3",
     group: "sub",
   },
   {
-    key: "Sisyphus-Junior",
+    key: "sisyphus-junior",
     display: "Sisyphus-Junior",
-    descZh: "委托任务执行器",
-    descEn: "Delegated task executor",
+    descKey: "omo.agentDesc.sisyphusJunior",
+    tooltipKey: "omo.agentTooltip.sisyphusJunior",
     group: "sub",
   },
 ];
@@ -135,57 +135,57 @@ export const OMO_BUILTIN_CATEGORIES: OmoCategoryDef[] = [
   {
     key: "visual-engineering",
     display: "Visual Engineering",
-    descZh: "视觉/前端工程",
-    descEn: "Visual/frontend engineering",
+    descKey: "omo.categoryDesc.visualEngineering",
+    tooltipKey: "omo.categoryTooltip.visualEngineering",
     recommended: "gemini-3-pro",
   },
   {
     key: "ultrabrain",
     display: "Ultrabrain",
-    descZh: "超级思考",
-    descEn: "Ultra thinking",
+    descKey: "omo.categoryDesc.ultrabrain",
+    tooltipKey: "omo.categoryTooltip.ultrabrain",
     recommended: "claude-opus-4-6",
   },
   {
     key: "deep",
     display: "Deep",
-    descZh: "深度工作",
-    descEn: "Deep work",
+    descKey: "omo.categoryDesc.deep",
+    tooltipKey: "omo.categoryTooltip.deep",
     recommended: "gpt-5.3-codex",
   },
   {
     key: "artistry",
     display: "Artistry",
-    descZh: "创意/文艺",
-    descEn: "Creative/artistic",
+    descKey: "omo.categoryDesc.artistry",
+    tooltipKey: "omo.categoryTooltip.artistry",
     recommended: "claude-opus-4-6",
   },
   {
     key: "quick",
     display: "Quick",
-    descZh: "快速响应",
-    descEn: "Quick response",
+    descKey: "omo.categoryDesc.quick",
+    tooltipKey: "omo.categoryTooltip.quick",
     recommended: "gemini-3-flash",
   },
   {
     key: "unspecified-low",
     display: "Unspecified Low",
-    descZh: "通用低配",
-    descEn: "General low tier",
+    descKey: "omo.categoryDesc.unspecifiedLow",
+    tooltipKey: "omo.categoryTooltip.unspecifiedLow",
     recommended: "gemini-3-flash",
   },
   {
     key: "unspecified-high",
     display: "Unspecified High",
-    descZh: "通用高配",
-    descEn: "General high tier",
+    descKey: "omo.categoryDesc.unspecifiedHigh",
+    tooltipKey: "omo.categoryTooltip.unspecifiedHigh",
     recommended: "gpt-5.3-codex",
   },
   {
     key: "writing",
     display: "Writing",
-    descZh: "写作",
-    descEn: "Writing",
+    descKey: "omo.categoryDesc.writing",
+    tooltipKey: "omo.categoryTooltip.writing",
     recommended: "claude-opus-4-6",
   },
 ];
@@ -316,6 +316,17 @@ export const OMO_CLAUDE_CODE_PLACEHOLDER = `{
   "plugins": true
 }`;
 
+export function parseOmoOtherFieldsObject(
+  raw: string,
+): Record<string, unknown> | undefined {
+  if (!raw.trim()) return undefined;
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  return parsed as Record<string, unknown>;
+}
+
 export function mergeOmoConfigPreview(
   global: OmoGlobalConfig,
   agents: Record<string, Record<string, unknown>>,
@@ -351,7 +362,8 @@ export function mergeOmoConfigPreview(
   if (Object.keys(agents).length > 0) result["agents"] = agents;
   if (Object.keys(categories).length > 0) result["categories"] = categories;
   try {
-    const other = JSON.parse(otherFieldsStr || "{}");
+    const other = parseOmoOtherFieldsObject(otherFieldsStr);
+    if (!other) return result;
     for (const [k, v] of Object.entries(other)) {
       result[k] = v;
     }

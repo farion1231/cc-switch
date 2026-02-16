@@ -240,6 +240,14 @@ impl StreamCheckService {
                     "OpenCode does not support health check yet",
                 ));
             }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support stream check yet
+                return Err(AppError::localized(
+                    "openclaw_no_stream_check",
+                    "OpenClaw 暂不支持健康检查",
+                    "OpenClaw does not support health check yet",
+                ));
+            }
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -567,6 +575,11 @@ impl StreamCheckService {
                 // Try to extract first model from the models object
                 Self::extract_opencode_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }
+            AppType::OpenClaw => {
+                // OpenClaw uses models array in settings_config
+                // Try to extract first model from the models array
+                Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
+            }
         }
     }
 
@@ -578,6 +591,21 @@ impl StreamCheckService {
 
         // Return the first model ID from the models map
         models.keys().next().map(|s| s.to_string())
+    }
+
+    fn extract_openclaw_model(provider: &Provider) -> Option<String> {
+        // OpenClaw uses models array: [{ "id": "model-id", "name": "Model Name" }]
+        let models = provider
+            .settings_config
+            .get("models")
+            .and_then(|m| m.as_array())?;
+
+        // Return the first model ID from the models array
+        models
+            .first()
+            .and_then(|m| m.get("id"))
+            .and_then(|id| id.as_str())
+            .map(|s| s.to_string())
     }
 
     fn extract_env_model(provider: &Provider, key: &str) -> Option<String> {

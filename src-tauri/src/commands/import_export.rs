@@ -5,9 +5,14 @@ use std::path::PathBuf;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
+use crate::commands::sync_support::{
+    post_sync_warning_from_result, run_post_import_sync, success_payload_with_warning,
+};
 use crate::error::AppError;
 use crate::services::provider::ProviderService;
 use crate::store::AppState;
+
+// ─── File import/export ──────────────────────────────────────
 
 /// 导出数据库为 SQL 备份
 #[tauri::command]
@@ -37,27 +42,15 @@ pub async fn import_config_from_file(
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
     let db = state.db.clone();
-    let db_for_state = db.clone();
+    let db_for_sync = db.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let path_buf = PathBuf::from(&filePath);
         let backup_id = db.import_sql(&path_buf)?;
-
-        // 导入后同步当前供应商到各自的 live 配置
-        let app_state = AppState::new(db_for_state);
-        if let Err(err) = ProviderService::sync_current_to_live(&app_state) {
-            log::warn!("导入后同步 live 配置失败: {err}");
+        let warning = post_sync_warning_from_result(Ok(run_post_import_sync(db_for_sync)));
+        if let Some(msg) = warning.as_ref() {
+            log::warn!("[Import] post-import sync warning: {msg}");
         }
-
-        // 重新加载设置到内存缓存，确保导入的设置生效
-        if let Err(err) = crate::settings::reload_settings() {
-            log::warn!("导入后重载设置失败: {err}");
-        }
-
-        Ok::<_, AppError>(json!({
-            "success": true,
-            "message": "SQL imported successfully",
-            "backupId": backup_id
-        }))
+        Ok::<_, AppError>(success_payload_with_warning(backup_id, warning))
     })
     .await
     .map_err(|e| format!("导入配置失败: {e}"))?
@@ -79,6 +72,8 @@ pub async fn sync_current_providers_live(state: State<'_, AppState>) -> Result<V
     .map_err(|e| format!("同步当前供应商失败: {e}"))?
     .map_err(|e: AppError| e.to_string())
 }
+
+// ─── File dialogs ────────────────────────────────────────────
 
 /// 保存文件对话框
 #[tauri::command]

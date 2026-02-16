@@ -15,11 +15,11 @@
 
 ## ❤️スポンサー
 
-[![MiniMax](assets/partners/banners/minimax-en.jpg)](https://bit.ly/3Nue8mA)
+[![MiniMax](assets/partners/banners/minimax-en.jpeg)](https://platform.minimax.io/subscribe/coding-plan?code=ClLhgxr2je&source=link)
 
-MiniMax M2.1 は、実務開発とエージェントワークフロー向けに構築されたオープンソースの最先端モデルです。100 億のアクティブパラメータ / 2,300 億の総パラメータを持つ MoE アーキテクチャにより、高速な推論、簡単なデプロイ、ローカル実行にも対応します。SWE、VIBE、Multi-SWE などの主要コーディングベンチマークでトップクラスの性能を発揮し、コーディング、デジタル環境のナビゲーション、大規模な多段階タスクの処理に優れています。
+MiniMax-M2.5 は、実際の生産性向上のために設計された最先端の大規模言語モデルです。多様で複雑な実環境のデジタルワークスペースでトレーニングされた M2.5 は、M2.1 のコーディング能力をベースに一般的なオフィス業務へと拡張し、Word・Excel・PowerPoint ファイルの生成と操作、多様なソフトウェア環境間のコンテキスト切り替え、異なるエージェントや人間チーム間での協働を流暢にこなします。SWE-Bench Verified で 80.2%、Multi-SWE-Bench で 51.3%、BrowseComp で 76.3% を達成し、計画的な行動と出力の最適化トレーニングにより、前世代よりもトークン効率に優れています。
 
-[こちら](https://bit.ly/3Nue8mA)から MiniMax Coding Plan の限定 12% オフを入手！
+[こちら](https://platform.minimax.io/subscribe/coding-plan?code=ClLhgxr2je&source=link)から MiniMax Coding Plan の限定 12% オフを入手！
 
 ---
 
@@ -58,6 +58,16 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <tr>
 <td width="180"><a href="https://aicoding.sh/i/CCSWITCH"><img src="assets/partners/logos/aicoding.jpg" alt="AICoding" width="150"></a></td>
 <td>AICoding.sh のご支援に感謝します！AICoding.sh —— グローバル AI モデル API 超お得な中継サービス！Claude Code 81% オフ、GPT 99% オフ！数百社の企業に高コストパフォーマンスの AI サービスを提供。Claude Code、GPT、Gemini および国内主要モデルに対応、エンタープライズ級の高同時接続、迅速な請求書発行、24 時間年中無休の専属テクニカルサポート。<a href="https://aicoding.sh/i/CCSWITCH">こちらのリンク</a>から登録した CC Switch ユーザーは、初回チャージ 10% オフ！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch"><img src="assets/partners/logos/crazyrouter.jpg" alt="AICoding" width="150"></a></td>
+<td>Crazyrouter のご支援に感謝します！Crazyrouter は高性能 AI API アグリゲーションプラットフォームです。1 つの API キーで Claude Code、Codex、Gemini CLI など 300 以上のモデルにアクセス可能。全モデルが公式価格の 55% で利用でき、自動フェイルオーバー、スマートルーティング、無制限同時接続に対応。CC Switch ユーザー向けの限定特典：<a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch">こちらのリンク</a>から登録すると <strong>$2 の無料クレジット</strong> を即時進呈。さらに初回チャージ時にプロモコード `CCSWITCH` を入力すると <strong>30% のボーナスクレジット</strong> が追加されます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.sssaicode.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
+<td>SSSAiCode のご支援に感謝します！SSSAiCode は安定性と信頼性に優れた API 中継サービスで、安定的で信頼性が高く、手頃な価格の Claude・Codex モデルサービスを提供しています。請求書発行にも対応。CC Switch ユーザー向けの特別特典：<a href="https://www.sssaicode.com/register?ref=DCP0SM">こちらのリンク</a>から登録すると、毎回のチャージで $10 の追加ボーナスを長期的に受けられます！</td>
 </tr>
 
 </table>
