@@ -375,3 +375,74 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
 // ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================
+
+// ============================================================================
+// Models API - Fetch available models from provider's /v1/models endpoint
+// ============================================================================
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub owned_by: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ModelsResponse {
+    pub models: Vec<ModelInfo>,
+}
+
+#[tauri::command]
+pub async fn fetch_provider_models(
+    base_url: String,
+    api_key: Option<String>,
+) -> Result<ModelsResponse, String> {
+    let client = reqwest::Client::new();
+    
+    let url = base_url
+        .trim_end_matches('/')
+        .to_string();
+    
+    let models_url = format!("{}/v1/models", url);
+    
+    let mut request = client.get(&models_url);
+    
+    if let Some(key) = api_key {
+        request = request
+            .header("Authorization", format!("Bearer {}", key))
+            .header("x-api-key", &key);
+    }
+    
+    let response = request
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch models: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("API returned status {}", response.status()));
+    }
+    
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    
+    let models = json
+        .get("data")
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| {
+                    Some(ModelInfo {
+                        id: m.get("id")?.as_str()?.to_string(),
+                        owned_by: m.get("owned_by").and_then(|o| o.as_str()).map(|s| s.to_string()),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    
+    Ok(ModelsResponse { models })
+}

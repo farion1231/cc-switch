@@ -24,6 +24,7 @@ import { ApiKeySection, EndpointField } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { copilotGetModels } from "@/lib/api/copilot";
 import type { CopilotModel } from "@/lib/api/copilot";
+import { ModelPicker } from "./ModelPicker";
 import type { ProviderCategory, ClaudeApiFormat } from "@/types";
 import type { TemplateValueConfig } from "@/config/claudeProviderPresets";
 
@@ -123,133 +124,35 @@ export function ClaudeFormFields({
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
 
-  // Copilot 可用模型列表
+  // Copilot model fetching
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(false);
+  const [copilotModelsLoading, setCopilotModelsLoading] = useState(false);
 
   useEffect(() => {
-    if (!isCopilotPreset) return;
-
-    let cancelled = false;
-    setModelsLoading(true);
-    console.log("[Copilot] Fetching models, isCopilotPreset:", isCopilotPreset);
-    copilotGetModels()
-      .then((models) => {
-        console.log("[Copilot] Fetched models:", models.length, models);
-        if (!cancelled) setCopilotModels(models);
-      })
-      .catch((err) => {
-        console.warn("[Copilot] Failed to fetch models:", err);
-      })
-      .finally(() => {
-        if (!cancelled) setModelsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    if (isCopilotPreset) {
+      setCopilotModelsLoading(true);
+      copilotGetModels()
+        .then(setCopilotModels)
+        .catch(console.error)
+        .finally(() => setCopilotModelsLoading(false));
+    }
   }, [isCopilotPreset]);
 
-  // 模型输入框：支持手动输入 + 下拉选择
-  const renderModelInput = (
-    id: string,
-    value: string,
-    field: ClaudeFormFieldsProps["onModelChange"] extends (
-      f: infer F,
-      v: string,
-    ) => void
-      ? F
-      : never,
-    placeholder?: string,
-  ) => {
-    if (isCopilotPreset && copilotModels.length > 0) {
-      // 按 vendor 分组
-      const grouped: Record<string, CopilotModel[]> = {};
-      for (const model of copilotModels) {
-        const vendor = model.vendor || "Other";
-        if (!grouped[vendor]) grouped[vendor] = [];
-        grouped[vendor].push(model);
-      }
-      const vendors = Object.keys(grouped).sort();
-
-      return (
-        <div className="flex gap-1">
-          <Input
-            id={id}
-            type="text"
-            value={value}
-            onChange={(e) => onModelChange(field, e.target.value)}
-            placeholder={placeholder}
-            autoComplete="off"
-            className="flex-1"
-          />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="shrink-0">
-                <ChevronDown className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="max-h-64 overflow-y-auto z-[200]"
-            >
-              {vendors.map((vendor, vi) => (
-                <div key={vendor}>
-                  {vi > 0 && <DropdownMenuSeparator />}
-                  <DropdownMenuLabel>{vendor}</DropdownMenuLabel>
-                  {grouped[vendor].map((model) => (
-                    <DropdownMenuItem
-                      key={model.id}
-                      onSelect={() => onModelChange(field, model.id)}
-                    >
-                      {model.id}
-                    </DropdownMenuItem>
-                  ))}
-                </div>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      );
+  // Group Copilot models by vendor
+  const copilotModelsByVendor = useState(() => {
+    const groups: Record<string, CopilotModel[]> = {};
+    for (const m of copilotModels) {
+      const vendor = m.vendor || "Other";
+      if (!groups[vendor]) groups[vendor] = [];
+      groups[vendor].push(m);
     }
-
-    if (isCopilotPreset && modelsLoading) {
-      return (
-        <div className="flex gap-1">
-          <Input
-            id={id}
-            type="text"
-            value={value}
-            onChange={(e) => onModelChange(field, e.target.value)}
-            placeholder={placeholder}
-            autoComplete="off"
-            className="flex-1"
-          />
-          <Button variant="outline" size="icon" className="shrink-0" disabled>
-            <Loader2 className="h-4 w-4 animate-spin" />
-          </Button>
-        </div>
-      );
-    }
-
-    return (
-      <Input
-        id={id}
-        type="text"
-        value={value}
-        onChange={(e) => onModelChange(field, e.target.value)}
-        placeholder={placeholder}
-        autoComplete="off"
-      />
-    );
-  };
+    return groups;
+  })[0];
 
   return (
     <>
-      {/* GitHub Copilot OAuth 认证 */}
-      {isCopilotPreset && <CopilotAuthSection />}
-
-      {/* API Key 输入框（非 Copilot 预设时显示） */}
-      {shouldShowApiKey && !isCopilotPreset && (
+      {/* API Key 输入框 */}
+      {shouldShowApiKey && (
         <ApiKeySection
           value={apiKey}
           onChange={onApiKeyChange}
@@ -369,11 +272,29 @@ export function ClaudeFormFields({
               <FormLabel htmlFor="claudeModel">
                 {t("providerForm.anthropicModel", { defaultValue: "主模型" })}
               </FormLabel>
-              {renderModelInput(
-                "claudeModel",
-                claudeModel,
-                "ANTHROPIC_MODEL",
-                t("providerForm.modelPlaceholder", { defaultValue: "" }),
+              {apiFormat === "openai_chat" ? (
+                <ModelPicker
+                  baseUrl={baseUrl}
+                  apiKey={apiKey}
+                  value={claudeModel}
+                  onChange={(v) => onModelChange("ANTHROPIC_MODEL", v)}
+                  placeholder={t("providerForm.modelPlaceholder", {
+                    defaultValue: "",
+                  })}
+                />
+              ) : (
+                <Input
+                  id="claudeModel"
+                  type="text"
+                  value={claudeModel}
+                  onChange={(e) =>
+                    onModelChange("ANTHROPIC_MODEL", e.target.value)
+                  }
+                  placeholder={t("providerForm.modelPlaceholder", {
+                    defaultValue: "",
+                  })}
+                  autoComplete="off"
+                />
               )}
             </div>
 
@@ -382,10 +303,25 @@ export function ClaudeFormFields({
               <FormLabel htmlFor="reasoningModel">
                 {t("providerForm.anthropicReasoningModel")}
               </FormLabel>
-              {renderModelInput(
-                "reasoningModel",
-                reasoningModel,
-                "ANTHROPIC_REASONING_MODEL",
+              {apiFormat === "openai_chat" ? (
+                <ModelPicker
+                  baseUrl={baseUrl}
+                  apiKey={apiKey}
+                  value={reasoningModel}
+                  onChange={(v) =>
+                    onModelChange("ANTHROPIC_REASONING_MODEL", v)
+                  }
+                />
+              ) : (
+                <Input
+                  id="reasoningModel"
+                  type="text"
+                  value={reasoningModel}
+                  onChange={(e) =>
+                    onModelChange("ANTHROPIC_REASONING_MODEL", e.target.value)
+                  }
+                  autoComplete="off"
+                />
               )}
             </div>
 
@@ -396,11 +332,34 @@ export function ClaudeFormFields({
                   defaultValue: "Haiku 默认模型",
                 })}
               </FormLabel>
-              {renderModelInput(
-                "claudeDefaultHaikuModel",
-                defaultHaikuModel,
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                t("providerForm.haikuModelPlaceholder", { defaultValue: "" }),
+              {apiFormat === "openai_chat" ? (
+                <ModelPicker
+                  baseUrl={baseUrl}
+                  apiKey={apiKey}
+                  value={defaultHaikuModel}
+                  onChange={(v) =>
+                    onModelChange("ANTHROPIC_DEFAULT_HAIKU_MODEL", v)
+                  }
+                  placeholder={t("providerForm.haikuModelPlaceholder", {
+                    defaultValue: "",
+                  })}
+                />
+              ) : (
+                <Input
+                  id="claudeDefaultHaikuModel"
+                  type="text"
+                  value={defaultHaikuModel}
+                  onChange={(e) =>
+                    onModelChange(
+                      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                      e.target.value,
+                    )
+                  }
+                  placeholder={t("providerForm.haikuModelPlaceholder", {
+                    defaultValue: "",
+                  })}
+                  autoComplete="off"
+                />
               )}
             </div>
 
@@ -411,11 +370,31 @@ export function ClaudeFormFields({
                   defaultValue: "Sonnet 默认模型",
                 })}
               </FormLabel>
-              {renderModelInput(
-                "claudeDefaultSonnetModel",
-                defaultSonnetModel,
-                "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                t("providerForm.modelPlaceholder", { defaultValue: "" }),
+              {apiFormat === "openai_chat" ? (
+                <ModelPicker
+                  baseUrl={baseUrl}
+                  apiKey={apiKey}
+                  value={defaultSonnetModel}
+                  onChange={(v) =>
+                    onModelChange("ANTHROPIC_DEFAULT_SONNET_MODEL", v)
+                  }
+                />
+              ) : (
+                <Input
+                  id="claudeDefaultSonnetModel"
+                  type="text"
+                  value={defaultSonnetModel}
+                  onChange={(e) =>
+                    onModelChange(
+                      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                      e.target.value,
+                    )
+                  }
+                  placeholder={t("providerForm.modelPlaceholder", {
+                    defaultValue: "",
+                  })}
+                  autoComplete="off"
+                />
               )}
             </div>
 
@@ -426,19 +405,44 @@ export function ClaudeFormFields({
                   defaultValue: "Opus 默认模型",
                 })}
               </FormLabel>
-              {renderModelInput(
-                "claudeDefaultOpusModel",
-                defaultOpusModel,
-                "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                t("providerForm.modelPlaceholder", { defaultValue: "" }),
+              {apiFormat === "openai_chat" ? (
+                <ModelPicker
+                  baseUrl={baseUrl}
+                  apiKey={apiKey}
+                  value={defaultOpusModel}
+                  onChange={(v) =>
+                    onModelChange("ANTHROPIC_DEFAULT_OPUS_MODEL", v)
+                  }
+                />
+              ) : (
+                <Input
+                  id="claudeDefaultOpusModel"
+                  type="text"
+                  value={defaultOpusModel}
+                  onChange={(e) =>
+                    onModelChange(
+                      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                      e.target.value,
+                    )
+                  }
+                  placeholder={t("providerForm.modelPlaceholder", {
+                    defaultValue: "",
+                  })}
+                  autoComplete="off"
+                />
               )}
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            {t("providerForm.modelHelper", {
-              defaultValue:
-                "可选：指定默认使用的 Claude 模型，留空则使用系统默认。",
-            })}
+            {apiFormat === "openai_chat"
+              ? t("providerForm.modelHelperOAI", {
+                  defaultValue:
+                    "点击下拉菜单从供应商加载可用模型列表，或直接输入模型名称。",
+                })
+              : t("providerForm.modelHelper", {
+                  defaultValue:
+                    "可选：指定默认使用的 Claude 模型，留空则使用系统默认。",
+                })}
           </p>
         </div>
       )}

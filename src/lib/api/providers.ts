@@ -162,3 +162,25 @@ export const universalProvidersApi = {
     return await invoke("sync_universal_provider", { id });
   },
 };
+
+// ============================================================================
+// Models API - Fetch available models from provider's /v1/models endpoint
+// ============================================================================
+
+export interface ModelInfo {
+  id: string;
+  owned_by?: string;
+}
+
+export interface ModelsResponse {
+  models: ModelInfo[];
+}
+
+export const modelsApi = {
+  /**
+   * Fetch available models from a provider's /v1/models endpoint
+   */
+  async fetch(baseUrl: string, apiKey?: string): Promise<ModelsResponse> {
+    return await invoke("fetch_provider_models", { baseUrl, apiKey });
+  },
+};

@@ -1035,6 +1035,8 @@ pub fn run() {
             commands::set_openclaw_env,
             commands::get_openclaw_tools,
             commands::set_openclaw_tools,
+            // Models API
+            commands::fetch_provider_models,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
