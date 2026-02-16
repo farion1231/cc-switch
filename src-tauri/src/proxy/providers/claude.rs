@@ -344,11 +344,12 @@ impl ProviderAdapter for ClaudeAdapter {
             base = base.replace("/v1/v1", "/v1");
         }
 
+ 
         // GitHub Copilot 不需要 ?beta=true 参数
         if base_url.contains("githubcopilot.com") {
             return base;
         }
-
+ 
         // 为 Claude 原生 /v1/messages 端点添加 ?beta=true 参数
         // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
         // 注意：不要为 OpenAI Chat Completions (/v1/chat/completions) 添加此参数
