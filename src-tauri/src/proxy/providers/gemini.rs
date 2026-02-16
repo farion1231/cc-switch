@@ -199,7 +199,7 @@ impl ProviderAdapter for GeminiAdapter {
         }
     }
 
-    fn build_url(&self, base_url: &str, endpoint: &str) -> String {
+    fn build_url(&self, base_url: &str, endpoint: &str, _provider: &Provider) -> String {
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
 
@@ -367,10 +367,12 @@ mod tests {
     #[test]
     fn test_build_url_dedup() {
         let adapter = GeminiAdapter::new();
+        let provider = create_provider(json!({}));
         // 模拟 base_url 已包含 /v1beta，endpoint 也包含 /v1beta
         let url = adapter.build_url(
             "https://generativelanguage.googleapis.com/v1beta",
             "/v1beta/models/gemini-pro:generateContent",
+            &provider,
         );
         assert_eq!(
             url,
@@ -381,9 +383,11 @@ mod tests {
     #[test]
     fn test_build_url_normal() {
         let adapter = GeminiAdapter::new();
+        let provider = create_provider(json!({}));
         let url = adapter.build_url(
             "https://generativelanguage.googleapis.com/v1beta",
             "/models/gemini-pro:generateContent",
+            &provider,
         );
         assert_eq!(
             url,
