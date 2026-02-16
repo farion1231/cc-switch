@@ -753,8 +753,9 @@ export function ProviderForm({
       try {
         const config = JSON.parse(values.settingsConfig.trim());
         const apiKeyValue = (config.apiKey || "").trim();
+        const isResolvedValue = apiKeyValue && !apiKeyValue.includes("${");
 
-        if (apiKeyValue) {
+        if (isResolvedValue) {
           // API Key 模式：移除 AKSK 字段
           if (config.env) {
             delete config.env.AWS_ACCESS_KEY_ID;

@@ -121,8 +121,8 @@ export function ClaudeFormFields({
 
   return (
     <>
-      {/* API Key 输入框 */}
-      {shouldShowApiKey && (
+      {/* API Key 输入框 - Bedrock 模式下隐藏（认证通过模板字段处理） */}
+      {shouldShowApiKey && !isBedrock && (
         <ApiKeySection
           value={apiKey}
           onChange={onApiKeyChange}
