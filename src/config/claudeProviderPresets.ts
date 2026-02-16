@@ -565,6 +565,7 @@ export const providerPresets: ProviderPreset[] = [
         placeholder: "your-bedrock-api-key",
         editorValue: "",
         optional: true,
+        isSecret: true,
       },
       AWS_ACCESS_KEY_ID: {
         label: "Access Key ID",

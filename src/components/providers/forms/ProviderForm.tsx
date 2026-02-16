@@ -543,7 +543,7 @@ export function ProviderForm({
     if (appId === "claude" && category === "cloud_provider") {
       // 验证 Region 格式
       const regionValue = templateValues.AWS_REGION?.editorValue?.trim() || "";
-      const regionPattern = /^[a-z]{2}-[a-z]+-\d+$/;
+      const regionPattern = /^[a-z]{2}(-[a-z]+)+-\d+$/;
       if (!regionPattern.test(regionValue)) {
         toast.error(
           t("providerForm.invalidRegion", {
