@@ -51,6 +51,7 @@ import { CommonConfigEditor } from "./CommonConfigEditor";
 import GeminiConfigEditor from "./GeminiConfigEditor";
 import JsonEditor from "@/components/JsonEditor";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
@@ -868,6 +869,13 @@ export function ProviderForm({
       : null;
   const initialOpencodeOptions = initialOpencodeConfig?.options || {};
 
+  // OpenCode: NewAPI 开关状态
+  const [opencodeIsNewApi, setOpencodeIsNewApi] = useState<boolean>(() => {
+    if (appId !== "opencode") return false;
+    return initialData?.meta?.isNewApi ?? false;
+  });
+
+  // OpenCode Provider Key state
   const [opencodeProviderKey, setOpencodeProviderKey] = useState<string>(() => {
     if (appId !== "opencode") return "";
     return providerId || "";
@@ -1527,6 +1535,8 @@ export function ProviderForm({
         appId === "claude" && category !== "official"
           ? localApiFormat
           : undefined,
+      // OpenCode: NewAPI 标记
+      isNewApi: appId === "opencode" ? opencodeIsNewApi : undefined,
     };
 
     onSubmit(payload);
@@ -1647,6 +1657,7 @@ export function ProviderForm({
         setOpencodeApiKey("");
         setOpencodeModels({});
         setOpencodeExtraOptions({});
+        setOpencodeIsNewApi(false);
         resetOmoDraftState();
       }
       // OpenClaw 自定义模式：重置为空配置
@@ -1930,6 +1941,25 @@ export function ProviderForm({
           }
         />
 
+        {/* OpenCode: NewAPI 开关 - 放在 Provider Name 后面 */}
+        {appId === "opencode" && (
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div className="space-y-0.5">
+              <Label>NewAPI</Label>
+              <p className="text-xs text-muted-foreground">
+                {t("opencode.newApiHint", {
+                  defaultValue: "启用后可通过 /v1/models 接口自动获取模型列表",
+                })}
+              </p>
+            </div>
+            <Switch
+              checked={opencodeIsNewApi}
+              onCheckedChange={setOpencodeIsNewApi}
+            />
+          </div>
+        )}
+
+        {/* Claude 专属字段 */}
         {appId === "claude" && (
           <ClaudeFormFields
             providerId={providerId}
@@ -2049,6 +2079,7 @@ export function ProviderForm({
             onModelsChange={handleOpencodeModelsChange}
             extraOptions={opencodeExtraOptions}
             onExtraOptionsChange={handleOpencodeExtraOptionsChange}
+            isNewApi={opencodeIsNewApi}
           />
         )}
 

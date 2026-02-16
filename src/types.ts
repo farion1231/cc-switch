@@ -148,6 +148,8 @@ export interface ProviderMeta {
   apiFormat?: "anthropic" | "openai_chat";
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
+  // OpenCode: 是否为 NewAPI 兼容供应商（支持 /v1/models 获取模型列表）
+  isNewApi?: boolean;
 }
 
 // Skill 同步方式

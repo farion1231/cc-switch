@@ -1057,6 +1057,8 @@ pub fn run() {
             commands::get_current_omo_provider_id,
             commands::get_omo_provider_count,
             commands::disable_current_omo,
+            // Remote models (NewAPI)
+            commands::fetch_remote_models,
             // Workspace files (OpenClaw)
             commands::read_workspace_file,
             commands::write_workspace_file,
