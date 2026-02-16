@@ -137,7 +137,7 @@ impl ProviderAdapter for CodexAdapter {
             .map(|key| AuthInfo::new(key, AuthStrategy::Bearer))
     }
 
-    fn build_url(&self, base_url: &str, endpoint: &str) -> String {
+    fn build_url(&self, base_url: &str, endpoint: &str, _provider: &Provider) -> String {
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
 
@@ -242,29 +242,33 @@ mod tests {
     #[test]
     fn test_build_url() {
         let adapter = CodexAdapter::new();
-        let url = adapter.build_url("https://api.openai.com/v1", "/responses");
+        let provider = create_provider(json!({}));
+        let url = adapter.build_url("https://api.openai.com/v1", "/responses", &provider);
         assert_eq!(url, "https://api.openai.com/v1/responses");
     }
 
     #[test]
     fn test_build_url_origin_adds_v1() {
         let adapter = CodexAdapter::new();
-        let url = adapter.build_url("https://api.openai.com", "/responses");
+        let provider = create_provider(json!({}));
+        let url = adapter.build_url("https://api.openai.com", "/responses", &provider);
         assert_eq!(url, "https://api.openai.com/v1/responses");
     }
 
     #[test]
     fn test_build_url_custom_prefix_no_v1() {
         let adapter = CodexAdapter::new();
-        let url = adapter.build_url("https://example.com/openai", "/responses");
+        let provider = create_provider(json!({}));
+        let url = adapter.build_url("https://example.com/openai", "/responses", &provider);
         assert_eq!(url, "https://example.com/openai/responses");
     }
 
     #[test]
     fn test_build_url_dedup_v1() {
         let adapter = CodexAdapter::new();
+        let provider = create_provider(json!({}));
         // base_url 已包含 /v1，endpoint 也包含 /v1
-        let url = adapter.build_url("https://www.packyapi.com/v1", "/v1/responses");
+        let url = adapter.build_url("https://www.packyapi.com/v1", "/v1/responses", &provider);
         assert_eq!(url, "https://www.packyapi.com/v1/responses");
     }
 
