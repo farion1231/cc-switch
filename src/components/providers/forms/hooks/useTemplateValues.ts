@@ -263,6 +263,10 @@ export function useTemplateValues({
     }
 
     for (const [key, config] of templateValueEntries) {
+      // 跳过可选字段
+      if (config.optional) {
+        continue;
+      }
       const entry = templateValues[key];
       const resolvedValue = (
         entry?.editorValue ??
