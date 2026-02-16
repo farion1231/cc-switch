@@ -76,6 +76,9 @@ interface ClaudeFormFieldsProps {
   // Auth Key Field (ANTHROPIC_AUTH_TOKEN vs ANTHROPIC_API_KEY)
   apiKeyField: ClaudeApiKeyField;
   onApiKeyFieldChange: (field: ClaudeApiKeyField) => void;
+
+  // Bedrock 模式标识
+  isBedrock?: boolean;
 }
 
 export function ClaudeFormFields({
@@ -112,6 +115,7 @@ export function ClaudeFormFields({
   onApiFormatChange,
   apiKeyField,
   onApiKeyFieldChange,
+  isBedrock,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -147,8 +151,8 @@ export function ClaudeFormFields({
                 </FormLabel>
                 <Input
                   id={`template-${key}`}
-                  type="text"
-                  required
+                  type={config.isSecret ? "password" : "text"}
+                  required={!config.optional}
                   value={
                     templateValues[key]?.editorValue ??
                     config.editorValue ??
@@ -165,8 +169,8 @@ export function ClaudeFormFields({
         </div>
       )}
 
-      {/* Base URL 输入框 */}
-      {shouldShowSpeedTest && (
+      {/* Base URL 输入框 - Bedrock 模式下隐藏 */}
+      {shouldShowSpeedTest && !isBedrock && (
         <EndpointField
           id="baseUrl"
           label={t("providerForm.apiEndpoint")}
@@ -182,8 +186,8 @@ export function ClaudeFormFields({
         />
       )}
 
-      {/* 端点测速弹窗 */}
-      {shouldShowSpeedTest && isEndpointModalOpen && (
+      {/* 端点测速弹窗 - Bedrock 模式下隐藏 */}
+      {shouldShowSpeedTest && !isBedrock && isEndpointModalOpen && (
         <EndpointSpeedTest
           appId="claude"
           providerId={providerId}
