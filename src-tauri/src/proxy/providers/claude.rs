@@ -28,6 +28,59 @@ impl ClaudeAdapter {
         Self
     }
 
+    fn is_anthropic_model_id(model: &str) -> bool {
+        let normalized = model.trim().to_lowercase();
+        normalized.starts_with("claude-") || normalized.starts_with("anthropic/claude-")
+    }
+
+    /// Auto-detect OpenRouter model family.
+    ///
+    /// OpenRouter Claude-compatible endpoint works best for Anthropic Claude model IDs.
+    /// If provider defaults are non-Anthropic model IDs (e.g. `openrouter/free`,
+    /// `deepseek/...`), force OpenAI Chat transform mode.
+    fn should_force_openai_chat_for_openrouter(&self, provider: &Provider) -> bool {
+        if !self.is_openrouter(provider) {
+            return false;
+        }
+
+        let Some(env) = provider
+            .settings_config
+            .get("env")
+            .and_then(|v| v.as_object())
+        else {
+            return false;
+        };
+
+        let model_keys = [
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_REASONING_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        ];
+
+        let mut has_any_model = false;
+        for key in model_keys {
+            let Some(model) = env.get(key).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let model = model.trim();
+            if model.is_empty() {
+                continue;
+            }
+            has_any_model = true;
+            if !Self::is_anthropic_model_id(model) {
+                return true;
+            }
+        }
+
+        if !has_any_model {
+            return false;
+        }
+
+        false
+    }
+
     /// 获取供应商类型
     ///
     /// 根据 base_url 和 auth_mode 检测具体的供应商类型：
@@ -62,13 +115,22 @@ impl ClaudeAdapter {
     /// - "anthropic" (默认): Anthropic Messages API 格式，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
     fn get_api_format(&self, provider: &Provider) -> &'static str {
+        // OpenRouter with non-Anthropic model IDs must use OpenAI Chat format.
+        // This guard intentionally overrides user meta.api_format="anthropic",
+        // because Anthropic passthrough cannot serve those model families.
+        if self.should_force_openai_chat_for_openrouter(provider) {
+            return "openai_chat";
+        }
+
         // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
         if let Some(meta) = provider.meta.as_ref() {
             if let Some(api_format) = meta.api_format.as_deref() {
-                return if api_format == "openai_chat" {
-                    "openai_chat"
-                } else {
-                    "anthropic"
+                return match api_format {
+                    "openai_chat" => "openai_chat",
+                    "anthropic" if self.should_force_openai_chat_for_opencode_zen(provider) => {
+                        "openai_chat"
+                    }
+                    _ => "anthropic",
                 };
             }
         }
@@ -79,10 +141,12 @@ impl ClaudeAdapter {
             .get("api_format")
             .and_then(|v| v.as_str())
         {
-            return if api_format == "openai_chat" {
-                "openai_chat"
-            } else {
-                "anthropic"
+            return match api_format {
+                "openai_chat" => "openai_chat",
+                "anthropic" if self.should_force_openai_chat_for_opencode_zen(provider) => {
+                    "openai_chat"
+                }
+                _ => "anthropic",
             };
         }
 
@@ -92,14 +156,23 @@ impl ClaudeAdapter {
             .get("apiFormat")
             .and_then(|v| v.as_str())
         {
-            return if api_format == "openai_chat" {
-                "openai_chat"
-            } else {
-                "anthropic"
+            return match api_format {
+                "openai_chat" => "openai_chat",
+                "anthropic" if self.should_force_openai_chat_for_opencode_zen(provider) => {
+                    "openai_chat"
+                }
+                _ => "anthropic",
             };
         }
 
-        // 4) Backward compatibility: legacy openrouter_compat_mode (bool/number/string)
+        // 4) OpenCode Zen mixed-endpoint compatibility:
+        // If default mapped model is non-Claude (e.g. glm/kimi),
+        // force OpenAI Chat routing even if old data still defaults to anthropic.
+        if self.should_force_openai_chat_for_opencode_zen(provider) {
+            return "openai_chat";
+        }
+
+        // 5) Backward compatibility: legacy openrouter_compat_mode (bool/number/string)
         let raw = provider.settings_config.get("openrouter_compat_mode");
         let enabled = match raw {
             Some(serde_json::Value::Bool(v)) => *v,
@@ -116,6 +189,44 @@ impl ClaudeAdapter {
         } else {
             "anthropic"
         }
+    }
+
+    fn is_opencode_zen_base_url(&self, provider: &Provider) -> bool {
+        self.extract_base_url(provider)
+            .map(|url| url.to_ascii_lowercase().contains("opencode.ai/zen"))
+            .unwrap_or(false)
+    }
+
+    fn extract_configured_default_model(provider: &Provider) -> Option<&str> {
+        provider
+            .settings_config
+            .get("env")
+            .and_then(|env| {
+                env.get("ANTHROPIC_MODEL")
+                    .or_else(|| env.get("ANTHROPIC_DEFAULT_SONNET_MODEL"))
+                    .or_else(|| env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"))
+                    .or_else(|| env.get("ANTHROPIC_DEFAULT_OPUS_MODEL"))
+            })
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    fn is_anthropic_native_model(model: &str) -> bool {
+        let normalized = model.trim().to_ascii_lowercase();
+        normalized.contains("claude") || normalized.starts_with("anthropic/")
+    }
+
+    fn should_force_openai_chat_for_opencode_zen(&self, provider: &Provider) -> bool {
+        if !self.is_opencode_zen_base_url(provider) {
+            return false;
+        }
+
+        let Some(model) = Self::extract_configured_default_model(provider) else {
+            return false;
+        };
+
+        !Self::is_anthropic_native_model(model)
     }
 
     /// 检查 Harmony API 支持
@@ -258,6 +369,22 @@ impl ProviderAdapter for ClaudeAdapter {
         if let Some(url) = provider
             .settings_config
             .get("baseURL")
+            .and_then(|v| v.as_str())
+        {
+            return Ok(url.trim_end_matches('/').to_string());
+        }
+
+        if let Some(url) = provider
+            .settings_config
+            .get("apiBaseUrl")
+            .and_then(|v| v.as_str())
+        {
+            return Ok(url.trim_end_matches('/').to_string());
+        }
+
+        if let Some(url) = provider
+            .settings_config
+            .get("api_base_url")
             .and_then(|v| v.as_str())
         {
             return Ok(url.trim_end_matches('/').to_string());
@@ -441,6 +568,17 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_base_url_from_api_base_url() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "apiBaseUrl": "https://api.z.ai/api/anthropic/"
+        }));
+
+        let url = adapter.extract_base_url(&provider).unwrap();
+        assert_eq!(url, "https://api.z.ai/api/anthropic");
+    }
+
+    #[test]
     fn test_extract_auth_anthropic() {
         let adapter = ClaudeAdapter::new();
         let provider = create_provider(json!({
@@ -620,6 +758,46 @@ mod tests {
         );
         assert!(!adapter.needs_transform(&explicit_anthropic));
 
+        // OpenCode Zen + non-Claude default model should force openai_chat,
+        // even when legacy/default meta still stores anthropic.
+        let opencode_non_claude_with_anthropic_meta = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/v1",
+                    "ANTHROPIC_MODEL": "glm-5-free"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("anthropic".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(adapter.needs_transform(&opencode_non_claude_with_anthropic_meta));
+
+        // OpenCode Zen + Claude model keeps anthropic path.
+        let opencode_claude_with_anthropic_meta = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/v1",
+                    "ANTHROPIC_MODEL": "claude-sonnet-4-5-20250929"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("anthropic".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(!adapter.needs_transform(&opencode_claude_with_anthropic_meta));
+
+        // OpenCode Zen + non-Claude default model should also work without meta.
+        let opencode_non_claude_without_meta = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/v1",
+                "ANTHROPIC_MODEL": "glm-5-free"
+            }
+        }));
+        assert!(adapter.needs_transform(&opencode_non_claude_without_meta));
+
         // Legacy settings_config.api_format: openai_chat should enable transform
         let legacy_settings_api_format = create_provider(json!({
             "env": {
@@ -706,5 +884,53 @@ mod tests {
             },
         );
         assert!(!adapter.needs_transform(&unknown_format));
+    }
+
+    #[test]
+    fn test_openrouter_non_anthropic_defaults_force_transform() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                "ANTHROPIC_MODEL": "openrouter/free",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek/deepseek-r1-0528:free"
+            }
+        }));
+
+        assert!(adapter.needs_transform(&provider));
+    }
+
+    #[test]
+    fn test_openrouter_anthropic_defaults_keep_passthrough() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                "ANTHROPIC_MODEL": "anthropic/claude-sonnet-4.5",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "anthropic/claude-sonnet-4.5"
+            }
+        }));
+
+        assert!(!adapter.needs_transform(&provider));
+    }
+
+    #[test]
+    fn test_openrouter_non_anthropic_overrides_meta_anthropic() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                    "ANTHROPIC_MODEL": "openrouter/free",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek/deepseek-r1-0528:free"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("anthropic".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert!(adapter.needs_transform(&provider));
     }
 }

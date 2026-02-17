@@ -830,6 +830,38 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "OpenCode Zen",
+    websiteUrl: "https://opencode.ai/docs/",
+    apiKeyUrl: "https://opencode.ai/docs/",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "OpenCode Zen",
+      options: {
+        baseURL: "https://opencode.ai/zen/v1",
+        apiKey: "",
+      },
+      models: {
+        "glm-5": { name: "GLM 5" },
+      },
+    },
+    category: "aggregator",
+    icon: "opencode",
+    iconColor: "#211E1E",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://opencode.ai/zen/v1",
+        defaultValue: "https://opencode.ai/zen/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
 
   {
     name: "AiHubMix",
