@@ -95,6 +95,33 @@ impl ModelMapping {
     }
 }
 
+fn is_anthropic_model_id(model: &str) -> bool {
+    let normalized = model.trim().to_lowercase();
+    normalized.starts_with("claude-") || normalized.starts_with("anthropic/claude-")
+}
+
+fn has_tools(body: &Value) -> bool {
+    body.get("tools")
+        .and_then(|v| v.as_array())
+        .map(|arr| !arr.is_empty())
+        .unwrap_or(false)
+}
+
+fn should_fallback_to_default_for_tool_use(mapped_model: &str) -> bool {
+    let normalized = mapped_model.trim().to_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    if is_anthropic_model_id(&normalized) {
+        return false;
+    }
+
+    // Generic rule: non-Anthropic free variants may not support tool-use.
+    // Prefer provider default model for tool-use requests.
+    normalized.ends_with(":free")
+}
+
 /// 检测请求是否启用了 thinking 模式
 pub fn has_thinking_enabled(body: &Value) -> bool {
     match body
@@ -134,7 +161,20 @@ pub fn apply_model_mapping(
 
     if let Some(ref original) = original_model {
         let has_thinking = has_thinking_enabled(&body);
-        let mapped = mapping.map_model(original, has_thinking);
+        let mut mapped = mapping.map_model(original, has_thinking);
+
+        if has_tools(&body) && should_fallback_to_default_for_tool_use(&mapped) {
+            if let Some(default_model) = mapping.default_model.as_ref() {
+                if !default_model.trim().is_empty() && default_model != &mapped {
+                    log::info!(
+                        "[ModelMapper] tool-use fallback to provider default model: {} → {}",
+                        mapped,
+                        default_model
+                    );
+                    mapped = default_model.clone();
+                }
+            }
+        }
 
         if mapped != *original {
             log::debug!("[ModelMapper] 模型映射: {original} → {mapped}");
@@ -200,6 +240,29 @@ mod tests {
             settings_config: json!({
                 "env": {
                     "ANTHROPIC_REASONING_MODEL": "reasoning-only-model"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn create_openrouter_provider_with_free_sonnet_mapping() -> Provider {
+        Provider {
+            id: "test-openrouter".to_string(),
+            name: "OpenRouter".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                    "ANTHROPIC_MODEL": "openrouter/free",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek/deepseek-r1-0528:free"
                 }
             }),
             website_url: None,
@@ -341,5 +404,44 @@ mod tests {
         let (result, _, mapped) = apply_model_mapping(body, &provider);
         assert_eq!(result["model"], "sonnet-mapped");
         assert_eq!(mapped, Some("sonnet-mapped".to_string()));
+    }
+
+    #[test]
+    fn test_openrouter_tools_request_fallbacks_to_default_model() {
+        let provider = create_openrouter_provider_with_free_sonnet_mapping();
+        let body = json!({
+            "model": "claude-sonnet-4-5-20250929",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [{
+                "name": "echo",
+                "description": "echo",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }]
+        });
+
+        let (result, original, mapped) = apply_model_mapping(body, &provider);
+        assert_eq!(original, Some("claude-sonnet-4-5-20250929".to_string()));
+        assert_eq!(result["model"], "openrouter/free");
+        assert_eq!(mapped, Some("openrouter/free".to_string()));
+    }
+
+    #[test]
+    fn test_openrouter_non_tools_request_keeps_type_specific_mapping() {
+        let provider = create_openrouter_provider_with_free_sonnet_mapping();
+        let body = json!({
+            "model": "claude-sonnet-4-5-20250929",
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let (result, _, mapped) = apply_model_mapping(body, &provider);
+        assert_eq!(result["model"], "deepseek/deepseek-r1-0528:free");
+        assert_eq!(
+            mapped,
+            Some("deepseek/deepseek-r1-0528:free".to_string())
+        );
     }
 }

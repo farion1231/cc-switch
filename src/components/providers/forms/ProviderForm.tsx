@@ -1955,6 +1955,7 @@ export function ProviderForm({
             speedTestEndpoints={speedTestEndpoints}
             apiFormat={localApiFormat}
             onApiFormatChange={handleApiFormatChange}
+            proxyConfig={proxyConfig}
           />
         )}
 

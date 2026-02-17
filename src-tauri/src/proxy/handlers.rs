@@ -105,6 +105,57 @@ pub async fn handle_messages(
     process_response(response, &ctx, &state, &CLAUDE_PARSER_CONFIG).await
 }
 
+/// 处理 /v1/messages/count_tokens 请求（Claude Count Tokens API）
+///
+/// 说明：
+/// - Anthropic 原生供应商：转发到上游 `/v1/messages/count_tokens`
+/// - OpenAI Chat 兼容供应商（如 OpenRouter/Nvidia 的 openai_chat 模式）：
+///   本地估算 input_tokens，避免上游 404 干扰 Claude CLI 会话。
+pub async fn handle_count_tokens(
+    State(state): State<ProxyState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<axum::response::Response, ProxyError> {
+    let mut ctx =
+        RequestContext::new(&state, &body, &headers, AppType::Claude, "Claude", "claude").await?;
+
+    let adapter = get_adapter(&AppType::Claude);
+
+    // OpenAI Chat 兼容模式通常不支持 Anthropic 的 /count_tokens。
+    // 这里返回本地估算值，避免客户端反复收到 404。
+    if adapter.needs_transform(&ctx.provider) {
+        let estimated = estimate_anthropic_input_tokens(&body);
+        let payload = json!({ "input_tokens": estimated });
+        return Ok((StatusCode::OK, Json(payload)).into_response());
+    }
+
+    let forwarder = ctx.create_forwarder(&state);
+    let result = match forwarder
+        .forward_with_retry(
+            &AppType::Claude,
+            "/v1/messages/count_tokens",
+            body,
+            headers,
+            ctx.get_providers(),
+        )
+        .await
+    {
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, false, &err.error);
+            return Err(err.error);
+        }
+    };
+
+    ctx.provider = result.provider;
+    let response = result.response;
+
+    process_response(response, &ctx, &state, &CLAUDE_PARSER_CONFIG).await
+}
+
 /// Claude 格式转换处理（独有逻辑）
 ///
 /// 处理 OpenRouter 旧 OpenAI 兼容接口的回退方案（当前默认不启用）
@@ -497,5 +548,48 @@ async fn log_usage(
         is_streaming,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
+    }
+}
+
+/// 估算 Anthropic count_tokens 返回的 input_tokens。
+///
+/// 采用轻量字符近似（约 4 chars/token），只统计对 token 有贡献的文本字段。
+fn estimate_anthropic_input_tokens(body: &Value) -> u32 {
+    fn text_len(value: &Value) -> usize {
+        match value {
+            Value::String(s) => s.chars().count(),
+            Value::Array(arr) => arr.iter().map(text_len).sum(),
+            Value::Object(map) => map.values().map(text_len).sum(),
+            _ => 0,
+        }
+    }
+
+    let chars = body.get("system").map(text_len).unwrap_or(0)
+        + body.get("messages").map(text_len).unwrap_or(0)
+        + body.get("tools").map(text_len).unwrap_or(0);
+
+    let estimated = ((chars + 3) / 4).max(1);
+    estimated.min(u32::MAX as usize) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::estimate_anthropic_input_tokens;
+    use serde_json::json;
+
+    #[test]
+    fn estimate_count_tokens_has_minimum_one() {
+        let body = json!({});
+        assert_eq!(estimate_anthropic_input_tokens(&body), 1);
+    }
+
+    #[test]
+    fn estimate_count_tokens_scales_with_text() {
+        let body = json!({
+            "messages": [
+                { "role": "user", "content": "hello world" }
+            ]
+        });
+        assert!(estimate_anthropic_input_tokens(&body) >= 2);
     }
 }

@@ -28,6 +28,59 @@ impl ClaudeAdapter {
         Self
     }
 
+    fn is_anthropic_model_id(model: &str) -> bool {
+        let normalized = model.trim().to_lowercase();
+        normalized.starts_with("claude-") || normalized.starts_with("anthropic/claude-")
+    }
+
+    /// Auto-detect OpenRouter model family.
+    ///
+    /// OpenRouter Claude-compatible endpoint works best for Anthropic Claude model IDs.
+    /// If provider defaults are non-Anthropic model IDs (e.g. `openrouter/free`,
+    /// `deepseek/...`), force OpenAI Chat transform mode.
+    fn should_force_openai_chat_for_openrouter(&self, provider: &Provider) -> bool {
+        if !self.is_openrouter(provider) {
+            return false;
+        }
+
+        let Some(env) = provider
+            .settings_config
+            .get("env")
+            .and_then(|v| v.as_object())
+        else {
+            return false;
+        };
+
+        let model_keys = [
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_REASONING_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        ];
+
+        let mut has_any_model = false;
+        for key in model_keys {
+            let Some(model) = env.get(key).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let model = model.trim();
+            if model.is_empty() {
+                continue;
+            }
+            has_any_model = true;
+            if !Self::is_anthropic_model_id(model) {
+                return true;
+            }
+        }
+
+        if !has_any_model {
+            return false;
+        }
+
+        false
+    }
+
     /// 获取供应商类型
     ///
     /// 根据 base_url 和 auth_mode 检测具体的供应商类型：
@@ -62,6 +115,13 @@ impl ClaudeAdapter {
     /// - "anthropic" (默认): Anthropic Messages API 格式，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
     fn get_api_format(&self, provider: &Provider) -> &'static str {
+        // OpenRouter with non-Anthropic model IDs must use OpenAI Chat format.
+        // This guard intentionally overrides user meta.api_format="anthropic",
+        // because Anthropic passthrough cannot serve those model families.
+        if self.should_force_openai_chat_for_openrouter(provider) {
+            return "openai_chat";
+        }
+
         // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
         if let Some(meta) = provider.meta.as_ref() {
             if let Some(api_format) = meta.api_format.as_deref() {
@@ -265,6 +325,22 @@ impl ProviderAdapter for ClaudeAdapter {
 
         if let Some(url) = provider
             .settings_config
+            .get("apiBaseUrl")
+            .and_then(|v| v.as_str())
+        {
+            return Ok(url.trim_end_matches('/').to_string());
+        }
+
+        if let Some(url) = provider
+            .settings_config
+            .get("api_base_url")
+            .and_then(|v| v.as_str())
+        {
+            return Ok(url.trim_end_matches('/').to_string());
+        }
+
+        if let Some(url) = provider
+            .settings_config
             .get("apiEndpoint")
             .and_then(|v| v.as_str())
         {
@@ -438,6 +514,17 @@ mod tests {
 
         let url = adapter.extract_base_url(&provider).unwrap();
         assert_eq!(url, "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn test_extract_base_url_from_api_base_url() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "apiBaseUrl": "https://api.z.ai/api/anthropic/"
+        }));
+
+        let url = adapter.extract_base_url(&provider).unwrap();
+        assert_eq!(url, "https://api.z.ai/api/anthropic");
     }
 
     #[test]
@@ -706,5 +793,53 @@ mod tests {
             },
         );
         assert!(!adapter.needs_transform(&unknown_format));
+    }
+
+    #[test]
+    fn test_openrouter_non_anthropic_defaults_force_transform() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                "ANTHROPIC_MODEL": "openrouter/free",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek/deepseek-r1-0528:free"
+            }
+        }));
+
+        assert!(adapter.needs_transform(&provider));
+    }
+
+    #[test]
+    fn test_openrouter_anthropic_defaults_keep_passthrough() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                "ANTHROPIC_MODEL": "anthropic/claude-sonnet-4.5",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "anthropic/claude-sonnet-4.5"
+            }
+        }));
+
+        assert!(!adapter.needs_transform(&provider));
+    }
+
+    #[test]
+    fn test_openrouter_non_anthropic_overrides_meta_anthropic() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                    "ANTHROPIC_MODEL": "openrouter/free",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek/deepseek-r1-0528:free"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("anthropic".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert!(adapter.needs_transform(&provider));
     }
 }
