@@ -75,6 +75,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://opencode.ai/zen",
         ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-4-5-20250929",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-4-5-20250929",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-5-20250929",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-sonnet-4-5-20250929",
       },
     },
     endpointCandidates: ["https://opencode.ai/zen"],
