@@ -50,6 +50,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#4285F4",
   },
   {
+    name: "OpenCode Zen",
+    websiteUrl: "https://opencode.ai/docs/",
+    apiKeyUrl: "https://opencode.ai/docs/",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://opencode.ai/zen/v1",
+        GEMINI_MODEL: "gemini-3-pro",
+      },
+    },
+    baseURL: "https://opencode.ai/zen/v1",
+    model: "gemini-3-pro",
+    description: "OpenCode Zen",
+    category: "aggregator",
+    endpointCandidates: ["https://opencode.ai/zen/v1"],
+    icon: "opencode",
+    iconColor: "#211E1E",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
     apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
