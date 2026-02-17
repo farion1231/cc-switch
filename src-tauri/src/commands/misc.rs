@@ -199,7 +199,7 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
     #[cfg(not(target_os = "windows"))]
     let output = {
         Command::new("sh")
-            .arg("-c")
+            .arg("-lc")
             .arg(format!("{tool} --version"))
             .output()
     };
@@ -397,6 +397,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
+        push_unique_path(&mut search_paths, home.join(".opencode/bin"));
         push_unique_path(&mut search_paths, home.join("n/bin"));
         push_unique_path(&mut search_paths, home.join(".volta/bin"));
     }
@@ -433,13 +434,23 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         );
     }
 
-    let fnm_base = home.join(".local/state/fnm_multishells");
-    if fnm_base.exists() {
-        if let Ok(entries) = std::fs::read_dir(&fnm_base) {
-            for entry in entries.flatten() {
-                let bin_path = entry.path().join("bin");
-                if bin_path.exists() {
-                    push_unique_path(&mut search_paths, bin_path);
+    let fnm_paths = vec![
+        home.join(".local/state/fnm_multishells"),
+        #[cfg(target_os = "linux")]
+        std::path::PathBuf::from(format!(
+            "/run/user/{}/fnm_multishells",
+            unsafe { libc::getuid() }
+        )),
+    ];
+
+    for fnm_base in fnm_paths {
+        if fnm_base.exists() {
+            if let Ok(entries) = std::fs::read_dir(&fnm_base) {
+                for entry in entries.flatten() {
+                    let bin_path = entry.path().join("bin");
+                    if bin_path.exists() {
+                        push_unique_path(&mut search_paths, bin_path);
+                    }
                 }
             }
         }
