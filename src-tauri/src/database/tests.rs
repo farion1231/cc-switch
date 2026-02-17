@@ -172,13 +172,38 @@ fn schema_migration_sets_user_version_when_missing() {
 fn schema_migration_rejects_future_version() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
-    Database::set_user_version(&conn, SCHEMA_VERSION + 1).expect("set future version");
+    Database::set_user_version(&conn, SCHEMA_VERSION + 2).expect("set future version");
 
     let err =
         Database::apply_schema_migrations_on_conn(&conn).expect_err("should reject higher version");
     assert!(
         err.to_string().contains("数据库版本过新"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn schema_migration_normalizes_legacy_v6_marker_to_v5() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+
+    conn.execute(
+        "ALTER TABLE mcp_servers ADD COLUMN enabled_openclaw BOOLEAN NOT NULL DEFAULT 0",
+        [],
+    )
+    .expect("add mcp enabled_openclaw");
+    conn.execute(
+        "ALTER TABLE skills ADD COLUMN enabled_openclaw BOOLEAN NOT NULL DEFAULT 0",
+        [],
+    )
+    .expect("add skills enabled_openclaw");
+
+    Database::set_user_version(&conn, 6).expect("set legacy v6 marker");
+    Database::apply_schema_migrations_on_conn(&conn).expect("normalize legacy v6 marker");
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after normalization"),
+        SCHEMA_VERSION
     );
 }
 
