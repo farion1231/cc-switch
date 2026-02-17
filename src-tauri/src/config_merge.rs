@@ -299,11 +299,21 @@ pub fn compute_final_toml_config_str(
 }
 
 /// Check if two TOML values are deeply equal.
+/// Handles special float values (NaN, Infinity) correctly.
 fn toml_deep_equal(a: &TomlValue, b: &TomlValue) -> bool {
     match (a, b) {
         (TomlValue::String(a), TomlValue::String(b)) => a == b,
         (TomlValue::Integer(a), TomlValue::Integer(b)) => a == b,
-        (TomlValue::Float(a), TomlValue::Float(b)) => (a - b).abs() < f64::EPSILON,
+        (TomlValue::Float(a), TomlValue::Float(b)) => {
+            // Handle special float values: NaN, Infinity, -Infinity
+            if a.is_nan() && b.is_nan() {
+                true
+            } else if a.is_infinite() && b.is_infinite() {
+                a.signum() == b.signum()
+            } else {
+                (a - b).abs() < f64::EPSILON
+            }
+        }
         (TomlValue::Boolean(a), TomlValue::Boolean(b)) => a == b,
         (TomlValue::Datetime(a), TomlValue::Datetime(b)) => a == b,
         (TomlValue::Array(a), TomlValue::Array(b)) => {
@@ -383,12 +393,33 @@ pub fn extract_toml_difference_str(
     let mut custom_table = toml::map::Map::new();
     let mut has_common_keys = false;
 
+    /// Maximum recursion depth for TOML extraction to prevent stack overflow
+    const MAX_RECURSION_DEPTH: usize = 100;
+
     fn extract_recursive_toml(
         live: &toml::map::Map<String, TomlValue>,
         common: &toml::map::Map<String, TomlValue>,
         target: &mut toml::map::Map<String, TomlValue>,
         has_common: &mut bool,
+        depth: usize,
     ) {
+        // Prevent stack overflow with deeply nested TOML
+        if depth > MAX_RECURSION_DEPTH {
+            // Log warning and treat all remaining keys as custom (different from common)
+            eprintln!(
+                "[config_merge] Warning: Maximum recursion depth ({}) exceeded in TOML extraction",
+                MAX_RECURSION_DEPTH
+            );
+            for (key, live_value) in live {
+                if !common.contains_key(key) || !toml_deep_equal(live_value, common.get(key).unwrap()) {
+                    target.insert(key.clone(), live_value.clone());
+                } else {
+                    *has_common = true;
+                }
+            }
+            return;
+        }
+
         for (key, live_value) in live {
             match common.get(key) {
                 None => {
@@ -397,7 +428,7 @@ pub fn extract_toml_difference_str(
                 Some(common_value) => match (live_value, common_value) {
                     (TomlValue::Table(live_map), TomlValue::Table(common_map)) => {
                         let mut nested = toml::map::Map::new();
-                        extract_recursive_toml(live_map, common_map, &mut nested, has_common);
+                        extract_recursive_toml(live_map, common_map, &mut nested, has_common, depth + 1);
                         if !nested.is_empty() {
                             target.insert(key.clone(), TomlValue::Table(nested));
                         } else {
@@ -420,6 +451,7 @@ pub fn extract_toml_difference_str(
         common_table,
         &mut custom_table,
         &mut has_common_keys,
+        0,
     );
 
     let custom_config = TomlValue::Table(custom_table);

@@ -171,22 +171,21 @@ export function syncCommonConfigToProviders(
 }
 
 /**
- * 带锁执行同步（防止并发）
+ * 带锁执行同步（防止并发，支持 single-flight：新请求覆盖旧请求）
  */
 async function executeSyncWithLock(appType: SyncAppType): Promise<void> {
-  // 如果正在同步中，等待下一次调度
+  // 如果正在同步中，直接返回（新参数已保存到 pendingSyncParams，会在当前同步完成后自动处理）
   if (syncInFlight[appType]) {
-    // 已有同步在执行，参数已保存，等同步完成后会检查是否需要再次执行
     return;
   }
 
-  // 获取最新的参数
+  // 获取最新的参数（如果为 null，说明没有待执行的同步）
   const params = pendingSyncParams[appType];
   if (!params) {
     return;
   }
 
-  // 清除参数并设置锁
+  // 清除参数并设置锁（必须在执行前清除，以确保 single-flight 语义：后续新请求会覆盖）
   pendingSyncParams[appType] = null;
   syncDebounceTimers[appType] = null;
   syncInFlight[appType] = true;
@@ -216,8 +215,12 @@ async function executeSyncWithLock(appType: SyncAppType): Promise<void> {
 
     // 检查是否有新的待执行参数（在同步期间又有新的请求）
     if (pendingSyncParams[appType]) {
-      // 递归执行，处理新的请求
-      executeSyncWithLock(appType);
+      // 递归执行，处理新的请求（添加 await 和错误处理）
+      try {
+        await executeSyncWithLock(appType);
+      } catch (error) {
+        console.error(`[syncCommonConfig] ${appType} 递归同步失败:`, error);
+      }
     }
   }
 }
