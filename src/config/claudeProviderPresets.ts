@@ -554,6 +554,25 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "Nebius",
+    websiteUrl: "https://nebius.com",
+    apiKeyUrl: "https://tokenfactory.nebius.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.studio.nebius.ai/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "meta-llama/Meta-Llama-3.1-405B-Instruct",
+      },
+    },
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    icon: "openai",
+    iconColor: "#000000",
+  },
+  {
     name: "Xiaomi MiMo",
     websiteUrl: "https://platform.xiaomimimo.com",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
