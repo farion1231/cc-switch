@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
+import { providersApi } from "@/lib/api/providers";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -10,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Trash2, ChevronRight } from "lucide-react";
+import { Plus, Trash2, ChevronRight, Download, Loader2 } from "lucide-react";
 import { ApiKeySection } from "./shared";
 import { opencodeNpmPackages } from "@/config/opencodeProviderPresets";
 import { cn } from "@/lib/utils";
@@ -153,6 +155,9 @@ interface OpenCodeFormFieldsProps {
   // Extra Options
   extraOptions: Record<string, string>;
   onExtraOptionsChange: (options: Record<string, string>) => void;
+
+  // NewAPI
+  isNewApi: boolean;
 }
 
 export function OpenCodeFormFields({
@@ -171,11 +176,63 @@ export function OpenCodeFormFields({
   onModelsChange,
   extraOptions,
   onExtraOptionsChange,
+  isNewApi,
 }: OpenCodeFormFieldsProps) {
   const { t } = useTranslation();
 
   // Track which models have expanded options panel
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
+
+  // NewAPI: fetch models state
+  const [isFetching, setIsFetching] = useState(false);
+
+  const canFetchModels = isNewApi && baseUrl.trim() !== "" && apiKey.trim() !== "";
+
+  const handleFetchModels = async () => {
+    if (!canFetchModels) return;
+    setIsFetching(true);
+    try {
+      const result = await providersApi.fetchRemoteModels(
+        baseUrl.trim(),
+        apiKey.trim(),
+      );
+      if (result.length === 0) {
+        toast.info(
+          t("opencode.noRemoteModels", {
+            defaultValue: "远程 API 未返回任何模型",
+          }),
+        );
+        return;
+      }
+      // 直接追加到模型列表，跳过已存在的
+      const newModels = { ...models };
+      let added = 0;
+      for (const m of result) {
+        if (!newModels[m.id]) {
+          newModels[m.id] = { name: m.id };
+          added++;
+        }
+      }
+      onModelsChange(newModels);
+      toast.success(
+        t("opencode.modelsImported", {
+          defaultValue: "已导入 {{count}} 个模型（共 {{total}} 个，跳过 {{skipped}} 个已存在）",
+          count: added,
+          total: result.length,
+          skipped: result.length - added,
+        }),
+      );
+    } catch (err) {
+      toast.error(
+        t("opencode.fetchModelsFailed", {
+          defaultValue: "获取模型失败: {{error}}",
+          error: String(err),
+        }),
+      );
+    } finally {
+      setIsFetching(false);
+    }
+  };
 
   // Toggle model expand state
   const toggleModelExpand = (key: string) => {
@@ -485,16 +542,36 @@ export function OpenCodeFormFields({
           <FormLabel>
             {t("opencode.models", { defaultValue: "Models" })}
           </FormLabel>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleAddModel}
-            className="h-7 gap-1"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("opencode.addModel", { defaultValue: "Add" })}
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Fetch Models Button (visible when NewAPI enabled) */}
+            {isNewApi && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleFetchModels}
+                disabled={!canFetchModels || isFetching}
+                className="h-7 gap-1"
+              >
+                {isFetching ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                {t("opencode.fetchModels", { defaultValue: "获取模型" })}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAddModel}
+              className="h-7 gap-1"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("opencode.addModel", { defaultValue: "Add" })}
+            </Button>
+          </div>
         </div>
 
         {Object.keys(models).length === 0 ? (
