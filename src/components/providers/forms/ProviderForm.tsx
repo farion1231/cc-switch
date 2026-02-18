@@ -1731,6 +1731,7 @@ export function ProviderForm({
       setOpencodeApiKey(config.options?.apiKey || "");
       setOpencodeModels(config.models || {});
       setOpencodeExtraOptions(toOpencodeExtraOptions(config.options || {}));
+      setOpencodeIsNewApi(preset.meta?.isNewApi ?? false);
 
       form.reset({
         name: preset.name,

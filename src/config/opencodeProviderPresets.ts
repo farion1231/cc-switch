@@ -15,6 +15,7 @@ export interface OpenCodeProviderPreset {
   icon?: string;
   iconColor?: string;
   isCustomTemplate?: boolean;
+  meta?: import("@/types").ProviderMeta;
 }
 
 export const opencodeNpmPackages = [

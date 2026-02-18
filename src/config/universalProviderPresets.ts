@@ -33,6 +33,8 @@ export interface UniversalProviderPreset {
   description?: string;
   /** 是否为自定义模板（允许用户完全自定义） */
   isCustomTemplate?: boolean;
+  /** 元数据 */
+  meta?: import("@/types").ProviderMeta;
 }
 
 /**
@@ -72,6 +74,9 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
     iconColor: "#00A67E",
     description:
       "NewAPI 是一个可自部署的 API 网关，支持 Anthropic、OpenAI、Gemini 等多种协议",
+    meta: {
+      isNewApi: true,
+    },
   },
   {
     name: "Kilo.ai",
@@ -152,6 +157,7 @@ export function createUniversalProviderFromPreset(
     websiteUrl: preset.websiteUrl,
     icon: preset.icon,
     iconColor: preset.iconColor,
+    meta: preset.meta,
     createdAt: Date.now(),
   };
 }
