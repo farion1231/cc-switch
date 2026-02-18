@@ -1,3 +1,7 @@
+/**
+ * Code-based capability queries avoid DDL changes: source is reversible, schemas are not.
+ */
+
 export type ApiFormat =
   | "anthropic"
   | "openai_chat"
