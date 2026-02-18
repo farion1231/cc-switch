@@ -1,45 +1,29 @@
-/**
- * 统一供应商（Universal Provider）预设配置
- *
- * 统一供应商是跨应用共享的配置，修改后会自动同步到 Claude、Codex、Gemini 三个应用。
- * 适用于 NewAPI 等支持多种协议的 API 网关。
- */
-
 import type {
   UniversalProvider,
   UniversalProviderApps,
   UniversalProviderModels,
 } from "@/types";
+import {
+  ENDPOINTS,
+  deriveApps,
+  isUniversal,
+  type ProviderEndpoint,
+} from "./capabilities";
 
-/**
- * 统一供应商预设接口
- */
 export interface UniversalProviderPreset {
-  /** 预设名称 */
   name: string;
-  /** 供应商类型标识 */
   providerType: string;
-  /** 默认启用的应用 */
   defaultApps: UniversalProviderApps;
-  /** 默认模型配置 */
   defaultModels: UniversalProviderModels;
-  /** 网站链接 */
   websiteUrl?: string;
-  /** 图标名称 */
   icon?: string;
-  /** 图标颜色 */
   iconColor?: string;
-  /** 描述 */
   description?: string;
-  /** 是否为自定义模板（允许用户完全自定义） */
   isCustomTemplate?: boolean;
-  /** 元数据 */
   meta?: import("@/types").ProviderMeta;
+  endpointId?: string;
 }
 
-/**
- * NewAPI 默认模型配置
- */
 const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
   claude: {
     model: "claude-3-5-sonnet-20240620",
@@ -56,78 +40,23 @@ const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
   },
 };
 
-/**
- * 统一供应商预设列表
- */
 export const universalProviderPresets: UniversalProviderPreset[] = [
   {
     name: "NewAPI",
     providerType: "newapi",
-    defaultApps: {
-      claude: true,
-      codex: true,
-      gemini: true,
-    },
+    defaultApps: { claude: true, codex: true, gemini: true },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     websiteUrl: "https://www.newapi.ai",
     icon: "newapi",
     iconColor: "#00A67E",
     description:
       "NewAPI 是一个可自部署的 API 网关，支持 Anthropic、OpenAI、Gemini 等多种协议",
-    meta: {
-      isNewApi: true,
-    },
-  },
-  {
-    name: "Kilo.ai",
-    providerType: "kilo",
-    defaultApps: {
-      claude: true,
-      codex: true,
-      gemini: true,
-    },
-    defaultModels: NEWAPI_DEFAULT_MODELS,
-    websiteUrl: "https://kilo.ai",
-    icon: "openai",
-    iconColor: "#000000",
-    description: "Kilo.ai API Gateway (OpenAI Compatible)",
-  },
-  {
-    name: "Nebius",
-    providerType: "nebius",
-    defaultApps: {
-      claude: true,
-      codex: true,
-      gemini: true,
-    },
-    defaultModels: {
-      claude: {
-        model: "meta-llama/Meta-Llama-3.1-70B-Instruct",
-        haikuModel: "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        sonnetModel: "meta-llama/Meta-Llama-3.1-70B-Instruct",
-        opusModel: "meta-llama/Meta-Llama-3.1-405B-Instruct",
-      },
-      codex: {
-        model: "meta-llama/Meta-Llama-3.1-70B-Instruct",
-        reasoningEffort: "high",
-      },
-      gemini: {
-        model: "meta-llama/Meta-Llama-3.1-70B-Instruct",
-      },
-    },
-    websiteUrl: "https://nebius.com",
-    icon: "openai",
-    iconColor: "#000000",
-    description: "Nebius AI Studio (OpenAI Compatible)",
+    meta: { isNewApi: true },
   },
   {
     name: "自定义网关",
     providerType: "custom_gateway",
-    defaultApps: {
-      claude: true,
-      codex: true,
-      gemini: true,
-    },
+    defaultApps: { claude: true, codex: true, gemini: true },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     icon: "openai",
     iconColor: "#6366F1",
@@ -136,9 +65,8 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
   },
 ];
 
-/**
- * 根据预设创建统一供应商
- */
+export const UNIVERSAL_ENDPOINTS = ENDPOINTS.filter(isUniversal);
+
 export function createUniversalProviderFromPreset(
   preset: UniversalProviderPreset,
   id: string,
@@ -153,7 +81,7 @@ export function createUniversalProviderFromPreset(
     apps: { ...preset.defaultApps },
     baseUrl,
     apiKey,
-    models: JSON.parse(JSON.stringify(preset.defaultModels)), // Deep copy
+    models: JSON.parse(JSON.stringify(preset.defaultModels)),
     websiteUrl: preset.websiteUrl,
     icon: preset.icon,
     iconColor: preset.iconColor,
@@ -162,16 +90,38 @@ export function createUniversalProviderFromPreset(
   };
 }
 
-/**
- * 获取预设的显示名称（用于 UI）
- */
+export function createUniversalProviderFromEndpoint(
+  endpoint: ProviderEndpoint,
+  apiKey: string,
+  customName?: string,
+): UniversalProvider | null {
+  if (!isUniversal(endpoint)) return null;
+
+  const derived = deriveApps(endpoint);
+  const apps: UniversalProviderApps = {
+    claude: derived.claude,
+    codex: derived.codex,
+    gemini: derived.gemini,
+  };
+  return {
+    id: endpoint.id,
+    name: customName || endpoint.name,
+    providerType: endpoint.id,
+    apps,
+    baseUrl: endpoint.transport.baseUrl,
+    apiKey,
+    models: JSON.parse(JSON.stringify(NEWAPI_DEFAULT_MODELS)),
+    websiteUrl: endpoint.websiteUrl,
+    icon: endpoint.icon,
+    iconColor: endpoint.iconColor,
+    createdAt: Date.now(),
+  };
+}
+
 export function getPresetDisplayName(preset: UniversalProviderPreset): string {
   return preset.name;
 }
 
-/**
- * 根据类型查找预设
- */
 export function findPresetByType(
   providerType: string,
 ): UniversalProviderPreset | undefined {
