@@ -68,6 +68,25 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#D4915D",
   },
   {
+    name: "OpenCode Zen",
+    websiteUrl: "https://opencode.ai/docs/",
+    apiKeyUrl: "https://opencode.ai/docs/",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-4-5-20250929",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-4-5-20250929",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-5-20250929",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-sonnet-4-5-20250929",
+      },
+    },
+    endpointCandidates: ["https://opencode.ai/zen"],
+    category: "aggregator",
+    icon: "opencode",
+    iconColor: "#211E1E",
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     settingsConfig: {
@@ -497,6 +516,25 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#6566F1",
   },
   {
+    name: "Kilo.ai",
+    websiteUrl: "https://kilo.ai",
+    apiKeyUrl: "https://kilo.ai/docs/gateway/authentication",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.kilo.ai/api/gateway",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "anthropic/claude-sonnet-4.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-4.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-4.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-4.5",
+      },
+    },
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    icon: "openai",
+    iconColor: "#000000",
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
@@ -513,6 +551,25 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     apiFormat: "openai_chat",
     icon: "nvidia",
+    iconColor: "#000000",
+  },
+  {
+    name: "Nebius",
+    websiteUrl: "https://nebius.com",
+    apiKeyUrl: "https://tokenfactory.nebius.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.studio.nebius.ai/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "meta-llama/Meta-Llama-3.1-405B-Instruct",
+      },
+    },
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    icon: "openai",
     iconColor: "#000000",
   },
   {

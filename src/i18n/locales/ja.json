@@ -744,7 +744,12 @@
     "noExtraOptions": "追加オプションはありません",
     "noModelOptions": "モデルオプション、+ をクリックして追加",
     "modelOptionKeyPlaceholder": "provider",
-    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}",
+    "newApiHint": "有効にすると /v1/models エンドポイントからモデル一覧を自動取得できます",
+    "fetchModels": "モデルを取得",
+    "noRemoteModels": "リモート API からモデルが返されませんでした",
+    "modelsImported": "{{count}} 件のモデルをインポートしました（全 {{total}} 件、既存 {{skipped}} 件はスキップ）",
+    "fetchModelsFailed": "モデルの取得に失敗しました: {{error}}"
   },
   "openclaw": {
     "providerKey": "プロバイダーキー",

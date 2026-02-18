@@ -33,6 +33,8 @@ export interface UniversalProviderPreset {
   description?: string;
   /** 是否为自定义模板（允许用户完全自定义） */
   isCustomTemplate?: boolean;
+  /** 元数据 */
+  meta?: import("@/types").ProviderMeta;
 }
 
 /**
@@ -40,17 +42,17 @@ export interface UniversalProviderPreset {
  */
 const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
   claude: {
-    model: "claude-sonnet-4-20250514",
-    haikuModel: "claude-haiku-4-20250514",
-    sonnetModel: "claude-sonnet-4-20250514",
-    opusModel: "claude-sonnet-4-20250514",
+    model: "claude-3-5-sonnet-20240620",
+    haikuModel: "claude-3-haiku-20240307",
+    sonnetModel: "claude-3-5-sonnet-20240620",
+    opusModel: "claude-3-opus-20240229",
   },
   codex: {
     model: "gpt-4o",
     reasoningEffort: "high",
   },
   gemini: {
-    model: "gemini-2.5-pro",
+    model: "gemini-1.5-pro",
   },
 };
 
@@ -67,11 +69,56 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
       gemini: true,
     },
     defaultModels: NEWAPI_DEFAULT_MODELS,
-    websiteUrl: "https://www.newapi.pro",
+    websiteUrl: "https://www.newapi.ai",
     icon: "newapi",
     iconColor: "#00A67E",
     description:
       "NewAPI 是一个可自部署的 API 网关，支持 Anthropic、OpenAI、Gemini 等多种协议",
+    meta: {
+      isNewApi: true,
+    },
+  },
+  {
+    name: "Kilo.ai",
+    providerType: "kilo",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: true,
+    },
+    defaultModels: NEWAPI_DEFAULT_MODELS,
+    websiteUrl: "https://kilo.ai",
+    icon: "openai",
+    iconColor: "#000000",
+    description: "Kilo.ai API Gateway (OpenAI Compatible)",
+  },
+  {
+    name: "Nebius",
+    providerType: "nebius",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: true,
+    },
+    defaultModels: {
+      claude: {
+        model: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        haikuModel: "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        sonnetModel: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        opusModel: "meta-llama/Meta-Llama-3.1-405B-Instruct",
+      },
+      codex: {
+        model: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        reasoningEffort: "high",
+      },
+      gemini: {
+        model: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+      },
+    },
+    websiteUrl: "https://nebius.com",
+    icon: "openai",
+    iconColor: "#000000",
+    description: "Nebius AI Studio (OpenAI Compatible)",
   },
   {
     name: "自定义网关",
@@ -110,6 +157,7 @@ export function createUniversalProviderFromPreset(
     websiteUrl: preset.websiteUrl,
     icon: preset.icon,
     iconColor: preset.iconColor,
+    meta: preset.meta,
     createdAt: Date.now(),
   };
 }

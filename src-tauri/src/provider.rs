@@ -230,6 +230,12 @@ pub struct ProviderMeta {
     /// 供应商单独的代理配置
     #[serde(rename = "proxyConfig", skip_serializing_if = "Option::is_none")]
     pub proxy_config: Option<ProviderProxyConfig>,
+    /// Harmony API 支持（用于 gpt-oss 模型）
+    /// - None/"auto": 自动检测（根据模型名判断）
+    /// - "enabled": 强制使用 Harmony Responses API（/v1/responses）
+    /// - "disabled": 禁用 Harmony，使用 OpenAI Chat Completions
+    #[serde(rename = "harmonySupport", skip_serializing_if = "Option::is_none")]
+    pub harmony_support: Option<String>,
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换

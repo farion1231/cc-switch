@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Provider,
+  ProviderProxyConfig,
   UniversalProvider,
   UniversalProvidersMap,
 } from "@/types";
@@ -15,6 +16,12 @@ export interface ProviderSortUpdate {
 export interface ProviderSwitchEvent {
   appType: AppId;
   providerId: string;
+}
+
+export interface RemoteModelInfo {
+  id: string;
+  provider?: string | null;
+  displayName?: string | null;
 }
 
 export const providersApi = {
@@ -106,6 +113,27 @@ export const providersApi = {
   async getOpenClawLiveProviderIds(): Promise<string[]> {
     return await invoke("get_openclaw_live_provider_ids");
   },
+
+  /**
+   * Enumerate available remote models for a provider endpoint.
+   * Uses Rust backend to avoid browser CORS restrictions.
+   */
+  async enumerateModels(params: {
+    baseUrl: string;
+    apiKey: string;
+    apiFormat?: "anthropic" | "openai_chat";
+    proxyConfig?: ProviderProxyConfig;
+    forceRefresh?: boolean;
+  }): Promise<RemoteModelInfo[]> {
+    if (!(window as any).__TAURI_INTERNALS__) {
+      throw new Error(
+        "This feature is only available in the CC Switch desktop app",
+      );
+    }
+    return await invoke("enumerate_provider_models", params);
+  },
+
+
 };
 
 // ============================================================================

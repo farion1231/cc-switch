@@ -892,6 +892,7 @@ pub fn run() {
             commands::get_current_prompt_file_content,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
+            commands::enumerate_provider_models,
             commands::get_custom_endpoints,
             commands::add_custom_endpoint,
             commands::remove_custom_endpoint,
@@ -1038,6 +1039,8 @@ pub fn run() {
             // Workspace files (OpenClaw)
             commands::read_workspace_file,
             commands::write_workspace_file,
+            // Remote models (NewAPI)
+
         ]);
 
     let app = builder
