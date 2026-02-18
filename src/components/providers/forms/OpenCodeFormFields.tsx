@@ -192,10 +192,16 @@ export function OpenCodeFormFields({
     if (!canFetchModels) return;
     setIsFetching(true);
     try {
-      const result = await providersApi.fetchRemoteModels(
-        baseUrl.trim(),
-        apiKey.trim(),
-      );
+      // Determined API format based on selected NPM package
+      const apiFormat = npm === "@ai-sdk/anthropic" ? "anthropic" : "openai_chat";
+
+      const result = await providersApi.enumerateModels({
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey.trim(),
+        apiFormat,
+        forceRefresh: true, // User explicitly clicked fetch, so force refresh
+      });
+
       if (result.length === 0) {
         toast.info(
           t("opencode.noRemoteModels", {
@@ -204,12 +210,13 @@ export function OpenCodeFormFields({
         );
         return;
       }
+
       // 直接追加到模型列表，跳过已存在的
       const newModels = { ...models };
       let added = 0;
       for (const m of result) {
         if (!newModels[m.id]) {
-          newModels[m.id] = { name: m.id };
+          newModels[m.id] = { name: m.displayName || m.id };
           added++;
         }
       }

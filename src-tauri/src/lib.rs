@@ -1040,7 +1040,7 @@ pub fn run() {
             commands::read_workspace_file,
             commands::write_workspace_file,
             // Remote models (NewAPI)
-            commands::fetch_remote_models,
+
         ]);
 
     let app = builder

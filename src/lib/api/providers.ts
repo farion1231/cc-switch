@@ -133,19 +133,7 @@ export const providersApi = {
     return await invoke("enumerate_provider_models", params);
   },
 
-  /**
-   * 通过 /v1/models 接口获取远程模型列表（NewAPI 兼容供应商）
-   * 通过 Rust 后端调用以绕过浏览器 CORS 限制
-   */
-  async fetchRemoteModels(
-    baseUrl: string,
-    apiKey: string,
-  ): Promise<{ id: string; ownedBy: string | null }[]> {
-    if (!(window as any).__TAURI_INTERNALS__) {
-      throw new Error("此功能仅在应用内可用，请在 CC Switch 应用窗口中操作");
-    }
-    return await invoke("fetch_remote_models", { baseUrl, apiKey });
-  },
+
 };
 
 // ============================================================================
