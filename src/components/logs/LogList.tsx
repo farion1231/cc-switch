@@ -365,9 +365,16 @@ export function LogList({ startDate, endDate, providerFilter, modelFilter, refre
                       {log.isStreaming && log.firstTokenMs ? `${log.firstTokenMs}ms` : '-'}
                     </td>
                     <td className="p-3 align-middle text-center text-sm">
-                      {log.latencyMs && log.outputTokens > 0
-                        ? `${Math.round(log.outputTokens * 1000 / log.latencyMs).toLocaleString()}`
-                        : '-'}
+                      {log.isStreaming && log.firstTokenMs
+                        ? (() => {
+                            const outputTimeMs = log.latencyMs - log.firstTokenMs;
+                            return outputTimeMs > 0 && log.outputTokens > 0
+                              ? `${(log.outputTokens * 1000 / outputTimeMs).toFixed(2)}`
+                              : '-';
+                          })()
+                        : log.latencyMs && log.outputTokens > 0
+                          ? `${(log.outputTokens * 1000 / log.latencyMs).toFixed(2)}`
+                          : '-'}
                     </td>
                     <td className="p-3 align-middle text-center text-sm">
                       {fmtUsd(log.totalCostUsd, 4)}
