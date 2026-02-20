@@ -29,16 +29,30 @@ interface ProviderInfo {
   name: string;
 }
 
+// Get initial filter values from URL or defaults
+const getInitialFilterFromUrl = () => {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    provider: params.get("provider") || "",
+    model: params.get("model") || "",
+    protocol: params.get("protocol") || "",
+    status: (params.get("status") as "all" | "success" | "error") || "all",
+    page: parseInt(params.get("page") || "0", 10),
+    pageSize: parseInt(params.get("pageSize") || "10", 10),
+  };
+};
+
 export function LogList({ startDate, endDate, providerFilter, modelFilter, refreshIntervalMs, manualRefreshTrigger }: LogListProps) {
   const { t } = useTranslation();
   const refreshIntervalRef = useRef<number | undefined>(undefined);
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(10);
+  const initialFilters = useMemo(() => getInitialFilterFromUrl(), []);
+  const [page, setPage] = useState(initialFilters.page);
+  const [pageSize, setPageSize] = useState(initialFilters.pageSize);
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
-  const [selectedProvider, setSelectedProvider] = useState<string>("");
-  const [selectedModel, setSelectedModel] = useState<string>("");
-  const [selectedProtocol, setSelectedProtocol] = useState<string>("");
-  const [selectedStatusFilter, setSelectedStatusFilter] = useState<"all" | "success" | "error">("all");
+  const [selectedProvider, setSelectedProvider] = useState(initialFilters.provider);
+  const [selectedModel, setSelectedModel] = useState(initialFilters.model);
+  const [selectedProtocol, setSelectedProtocol] = useState(initialFilters.protocol);
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<"all" | "success" | "error">(initialFilters.status);
 
   // Protocol options list - only include provider types
   const PROTOCOL_OPTIONS = [
@@ -51,6 +65,43 @@ export function LogList({ startDate, endDate, providerFilter, modelFilter, refre
   useEffect(() => {
     setPage(0);
   }, [startDate, endDate, selectedStatusFilter, selectedProtocol, pageSize]);
+
+  // Update URL when filters change
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (selectedProvider) {
+      params.set("provider", selectedProvider);
+    } else {
+      params.delete("provider");
+    }
+    if (selectedModel) {
+      params.set("model", selectedModel);
+    } else {
+      params.delete("model");
+    }
+    if (selectedProtocol) {
+      params.set("protocol", selectedProtocol);
+    } else {
+      params.delete("protocol");
+    }
+    if (selectedStatusFilter !== "all") {
+      params.set("status", selectedStatusFilter);
+    } else {
+      params.delete("status");
+    }
+    if (page > 0) {
+      params.set("page", page.toString());
+    } else {
+      params.delete("page");
+    }
+    if (pageSize !== 10) {
+      params.set("pageSize", pageSize.toString());
+    } else {
+      params.delete("pageSize");
+    }
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, "", newUrl);
+  }, [selectedProvider, selectedModel, selectedProtocol, selectedStatusFilter, page, pageSize]);
 
   // Use parent filter if provided, otherwise use local selection
   const effectiveProviderFilter = providerFilter || selectedProvider;

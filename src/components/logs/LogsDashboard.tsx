@@ -12,12 +12,23 @@ import { LogList } from "./LogList";
 
 interface LogsDashboardProps {}
 
+// Get initial time range from URL or default
+const getInitialTimeRange = (): TimeRange => {
+  const params = new URLSearchParams(window.location.search);
+  const timeRange = params.get("timeRange");
+  const validRanges: TimeRange[] = ["5m", "15m", "30m", "1h", "5h", "12h", "1d", "7d", "30d"];
+  if (timeRange && validRanges.includes(timeRange as TimeRange)) {
+    return timeRange as TimeRange;
+  }
+  return "5m";
+};
+
 export function LogsDashboard({}: LogsDashboardProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const isFetching = useIsFetching({ queryKey: usageKeys.all });
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(0);
-  const [timeRange, setTimeRange] = useState<TimeRange>("5m");
+  const [timeRange, setTimeRange] = useState<TimeRange>(getInitialTimeRange);
   const [showRefreshMenu, setShowRefreshMenu] = useState(false);
   const [showTimeMenu, setShowTimeMenu] = useState(false);
   const [manualRefreshTrigger, setManualRefreshTrigger] = useState(0);
@@ -136,6 +147,14 @@ export function LogsDashboard({}: LogsDashboardProps) {
 
   // Check if current time is in quick options
   const isQuickTime = QUICK_TIME_OPTIONS.some((o) => o.value === timeRange);
+
+  // Update URL when timeRange changes
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("timeRange", timeRange);
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, "", newUrl);
+  }, [timeRange]);
 
   return (
     <div className="flex flex-col h-full">
