@@ -11,5 +11,7 @@ export { openclawApi } from "./openclaw";
 export { sessionsApi } from "./sessions";
 export { workspaceApi } from "./workspace";
 export * as configApi from "./config";
+export { pluginsApi } from "./plugins";
 export type { ProviderSwitchEvent } from "./providers";
 export type { Prompt } from "./prompts";
+export type { PluginState } from "./plugins";
