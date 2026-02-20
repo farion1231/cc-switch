@@ -27,8 +27,13 @@ export function useSetPluginEnabled() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ pluginId, enabled }: { pluginId: string; enabled: boolean }) =>
-      pluginsApi.setEnabled(pluginId, enabled),
+    mutationFn: ({
+      pluginId,
+      enabled,
+    }: {
+      pluginId: string;
+      enabled: boolean;
+    }) => pluginsApi.setEnabled(pluginId, enabled),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: PLUGINS_QUERY_KEY });
     },

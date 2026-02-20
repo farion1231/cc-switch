@@ -342,7 +342,8 @@ fn schema_migration_v5_adds_plugin_states_table() {
     {
         let conn = db.conn.lock().unwrap();
         // 删除 plugin_states 表，模拟 v5 数据库状态
-        conn.execute("DROP TABLE IF EXISTS plugin_states", []).unwrap();
+        conn.execute("DROP TABLE IF EXISTS plugin_states", [])
+            .unwrap();
         Database::set_user_version(&conn, 5).unwrap();
     }
     // 重新运行迁移
@@ -675,7 +676,13 @@ fn test_schema_version_is_6() {
 #[test]
 fn test_upsert_new_plugin_defaults_enabled() {
     let db = Database::memory().unwrap();
-    db.upsert_plugin_state("superpowers@superpowers-marketplace", "/some/path", Some("4.3.0"), "user").unwrap();
+    db.upsert_plugin_state(
+        "superpowers@superpowers-marketplace",
+        "/some/path",
+        Some("4.3.0"),
+        "user",
+    )
+    .unwrap();
     let states = db.get_all_plugin_states().unwrap();
     assert_eq!(states.len(), 1);
     assert!(states[0].enabled);
@@ -685,10 +692,12 @@ fn test_upsert_new_plugin_defaults_enabled() {
 #[test]
 fn test_upsert_existing_plugin_preserves_enabled_false() {
     let db = Database::memory().unwrap();
-    db.upsert_plugin_state("foo@bar", "/path", None, "user").unwrap();
+    db.upsert_plugin_state("foo@bar", "/path", None, "user")
+        .unwrap();
     db.set_plugin_enabled("foo@bar", false).unwrap();
     // Re-upsert (simulating re-install) should NOT reset enabled
-    db.upsert_plugin_state("foo@bar", "/path/new", Some("2.0"), "user").unwrap();
+    db.upsert_plugin_state("foo@bar", "/path/new", Some("2.0"), "user")
+        .unwrap();
     let states = db.get_all_plugin_states().unwrap();
     assert!(!states[0].enabled); // preserved
 }

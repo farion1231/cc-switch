@@ -28,8 +28,7 @@ pub async fn apply_claude_plugin_config(
     if official {
         crate::claude_plugin::clear_claude_config().map_err(|e| e.to_string())
     } else {
-        crate::claude_plugin::write_claude_config_with_db(&state.db)
-            .map_err(|e| e.to_string())
+        crate::claude_plugin::write_claude_config_with_db(&state.db).map_err(|e| e.to_string())
     }
 }
 
@@ -78,8 +77,7 @@ pub async fn set_plugin_enabled(
     // 检查是否已开启 Claude 插件集成，若是则重写 config.json
     let settings = crate::settings::get_settings();
     if settings.enable_claude_plugin_integration {
-        crate::claude_plugin::write_claude_config_with_db(&state.db)
-            .map_err(|e| e.to_string())?;
+        crate::claude_plugin::write_claude_config_with_db(&state.db).map_err(|e| e.to_string())?;
     }
 
     Ok(true)

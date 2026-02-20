@@ -59,38 +59,6 @@ fn load_existing_config_obj() -> Result<serde_json::Value, AppError> {
     })
 }
 
-pub fn write_claude_config() -> Result<bool, AppError> {
-    // 增量写入：仅设置 primaryApiKey = "any"，保留其它字段
-    let path = claude_config_path()?;
-    ensure_claude_dir_exists()?;
-
-    let mut obj = load_existing_config_obj()?;
-
-    let mut changed = false;
-    if let Some(map) = obj.as_object_mut() {
-        let cur = map
-            .get("primaryApiKey")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if cur != "any" {
-            map.insert(
-                "primaryApiKey".to_string(),
-                serde_json::Value::String("any".to_string()),
-            );
-            changed = true;
-        }
-    }
-
-    if changed || !path.exists() {
-        let serialized = serde_json::to_string_pretty(&obj)
-            .map_err(|e| AppError::JsonSerialize { source: e })?;
-        fs::write(&path, format!("{serialized}\n")).map_err(|e| AppError::io(&path, e))?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
-}
-
 pub fn clear_claude_config() -> Result<bool, AppError> {
     let path = claude_config_path()?;
     if !path.exists() {
@@ -155,8 +123,8 @@ pub fn write_claude_config_with_db(db: &Arc<Database>) -> Result<bool, AppError>
         serde_json::Value::Object(plugins_json),
     );
 
-    let serialized = serde_json::to_string_pretty(&obj)
-        .map_err(|e| AppError::JsonSerialize { source: e })?;
+    let serialized =
+        serde_json::to_string_pretty(&obj).map_err(|e| AppError::JsonSerialize { source: e })?;
     fs::write(&path, format!("{serialized}\n")).map_err(|e| AppError::io(&path, e))?;
     Ok(true)
 }
@@ -186,7 +154,8 @@ mod tests {
     #[serial]
     fn test_write_config_includes_enabled_plugins() {
         let (_dir, db) = setup_test_env();
-        db.upsert_plugin_state("p@r", "/p", Some("1.0"), "user").unwrap();
+        db.upsert_plugin_state("p@r", "/p", Some("1.0"), "user")
+            .unwrap();
         write_claude_config_with_db(&db).unwrap();
         let content = read_claude_config().unwrap().unwrap();
         let val: serde_json::Value = serde_json::from_str(&content).unwrap();

@@ -49,14 +49,8 @@ pub fn sync_plugins_from_json(json: &str, db: &Arc<Database>) -> Result<(), AppE
     for (plugin_id, entries) in &installed.plugins {
         if let Some(entry) = entries.first() {
             new_ids.insert(plugin_id.clone());
-            let version = entry.version.as_deref()
-                .or(entry.git_commit_sha.as_deref());
-            db.upsert_plugin_state(
-                plugin_id,
-                &entry.install_path,
-                version,
-                &entry.scope,
-            )?;
+            let version = entry.version.as_deref().or(entry.git_commit_sha.as_deref());
+            db.upsert_plugin_state(plugin_id, &entry.install_path, version, &entry.scope)?;
         }
     }
 
@@ -193,10 +187,8 @@ mod tests {
     #[test]
     fn test_sync_missing_file_returns_ok() {
         let db = Arc::new(Database::memory().unwrap());
-        let result = sync_plugins_from_file_path(
-            Path::new("/nonexistent/path/installed_plugins.json"),
-            &db,
-        );
+        let result =
+            sync_plugins_from_file_path(Path::new("/nonexistent/path/installed_plugins.json"), &db);
         assert!(result.is_ok());
     }
 
