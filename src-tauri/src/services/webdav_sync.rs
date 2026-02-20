@@ -5,7 +5,9 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::future::Future;
 use std::process::Command;
+use std::sync::OnceLock;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -33,6 +35,21 @@ const REMOTE_DB_SQL: &str = "db.sql";
 const REMOTE_SKILLS_ZIP: &str = "skills.zip";
 const REMOTE_MANIFEST: &str = "manifest.json";
 const MAX_DEVICE_NAME_LEN: usize = 64;
+const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
+pub(super) const MAX_SYNC_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
+
+pub fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+pub async fn run_with_sync_lock<T, Fut>(operation: Fut) -> Result<T, AppError>
+where
+    Fut: Future<Output = Result<T, AppError>>,
+{
+    let _guard = sync_mutex().lock().await;
+    operation.await
+}
 
 fn localized(key: &'static str, zh: impl Into<String>, en: impl Into<String>) -> AppError {
     AppError::localized(key, zh, en)
@@ -145,13 +162,15 @@ pub async fn download(
     let auth = auth_for(settings);
 
     let manifest_url = remote_file_url(settings, REMOTE_MANIFEST)?;
-    let (manifest_bytes, etag) = get_bytes(&manifest_url, &auth).await?.ok_or_else(|| {
-        localized(
-            "webdav.sync.remote_empty",
-            "远端没有可下载的同步数据",
-            "No downloadable sync data found on the remote.",
-        )
-    })?;
+    let (manifest_bytes, etag) = get_bytes(&manifest_url, &auth, MAX_MANIFEST_BYTES)
+        .await?
+        .ok_or_else(|| {
+            localized(
+                "webdav.sync.remote_empty",
+                "远端没有可下载的同步数据",
+                "No downloadable sync data found on the remote.",
+            )
+        })?;
 
     let manifest: SyncManifest =
         serde_json::from_slice(&manifest_bytes).map_err(|e| AppError::Json {
@@ -181,7 +200,7 @@ pub async fn fetch_remote_info(settings: &WebDavSyncSettings) -> Result<Option<V
     let auth = auth_for(settings);
     let manifest_url = remote_file_url(settings, REMOTE_MANIFEST)?;
 
-    let Some((bytes, _)) = get_bytes(&manifest_url, &auth).await? else {
+    let Some((bytes, _)) = get_bytes(&manifest_url, &auth, MAX_MANIFEST_BYTES).await? else {
         return Ok(None);
     };
 
@@ -214,6 +233,7 @@ fn persist_sync_success(
     let status = WebDavSyncStatus {
         last_sync_at: Some(Utc::now().timestamp()),
         last_error: None,
+        last_error_source: None,
         last_local_manifest_hash: Some(manifest_hash.clone()),
         last_remote_manifest_hash: Some(manifest_hash),
         last_remote_etag: etag,
@@ -319,14 +339,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn detect_system_device_name() -> Option<String> {
-    let env_name = [
-        "CC_SWITCH_DEVICE_NAME",
-        "COMPUTERNAME",
-        "HOSTNAME",
-    ]
-    .iter()
-    .filter_map(|key| std::env::var(key).ok())
-    .find_map(|value| normalize_device_name(&value));
+    let env_name = ["CC_SWITCH_DEVICE_NAME", "COMPUTERNAME", "HOSTNAME"]
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .find_map(|value| normalize_device_name(&value));
 
     if env_name.is_some() {
         return env_name;
@@ -341,21 +357,26 @@ fn detect_system_device_name() -> Option<String> {
 }
 
 fn normalize_device_name(raw: &str) -> Option<String> {
-    let compact = raw.chars().fold(String::with_capacity(raw.len()), |mut acc, ch| {
-        if ch.is_whitespace() {
-            acc.push(' ');
-        } else if !ch.is_control() {
-            acc.push(ch);
-        }
-        acc
-    });
+    let compact = raw
+        .chars()
+        .fold(String::with_capacity(raw.len()), |mut acc, ch| {
+            if ch.is_whitespace() {
+                acc.push(' ');
+            } else if !ch.is_control() {
+                acc.push(ch);
+            }
+            acc
+        });
     let normalized = compact.split_whitespace().collect::<Vec<_>>().join(" ");
     let trimmed = normalized.trim();
     if trimmed.is_empty() {
         return None;
     }
 
-    let limited = trimmed.chars().take(MAX_DEVICE_NAME_LEN).collect::<String>();
+    let limited = trimmed
+        .chars()
+        .take(MAX_DEVICE_NAME_LEN)
+        .collect::<String>();
     if limited.is_empty() {
         None
     } else {
@@ -405,14 +426,18 @@ async fn download_and_verify(
             format!("Manifest missing artifact: {artifact_name}"),
         )
     })?;
+    validate_artifact_size_limit(artifact_name, meta.size)?;
+
     let url = remote_file_url(settings, artifact_name)?;
-    let (bytes, _) = get_bytes(&url, auth).await?.ok_or_else(|| {
-        localized(
-            "webdav.sync.remote_missing_artifact",
-            format!("远端缺少 artifact 文件: {artifact_name}"),
-            format!("Remote artifact file missing: {artifact_name}"),
-        )
-    })?;
+    let (bytes, _) = get_bytes(&url, auth, MAX_SYNC_ARTIFACT_BYTES as usize)
+        .await?
+        .ok_or_else(|| {
+            localized(
+                "webdav.sync.remote_missing_artifact",
+                format!("远端缺少 artifact 文件: {artifact_name}"),
+                format!("Remote artifact file missing: {artifact_name}"),
+            )
+        })?;
 
     // Quick size check before expensive hash
     if bytes.len() as u64 != meta.size {
@@ -501,6 +526,21 @@ fn remote_file_url(settings: &WebDavSyncSettings, file_name: &str) -> Result<Str
 
 fn auth_for(settings: &WebDavSyncSettings) -> WebDavAuth {
     auth_from_credentials(&settings.username, &settings.password)
+}
+
+fn validate_artifact_size_limit(artifact_name: &str, size: u64) -> Result<(), AppError> {
+    if size > MAX_SYNC_ARTIFACT_BYTES {
+        let max_mb = MAX_SYNC_ARTIFACT_BYTES / 1024 / 1024;
+        return Err(localized(
+            "webdav.sync.artifact_too_large",
+            format!("artifact {artifact_name} 超过下载上限（{} MB）", max_mb),
+            format!(
+                "Artifact {artifact_name} exceeds download limit ({} MB)",
+                max_mb
+            ),
+        ));
+    }
+    Ok(())
 }
 
 // ─── Tests ───────────────────────────────────────────────────
@@ -645,5 +685,20 @@ mod tests {
             value.get("deviceId").is_none(),
             "manifest should not contain deviceId"
         );
+    }
+
+    #[test]
+    fn validate_artifact_size_limit_rejects_oversized_artifacts() {
+        let err = validate_artifact_size_limit("skills.zip", MAX_SYNC_ARTIFACT_BYTES + 1)
+            .expect_err("artifact larger than limit should be rejected");
+        assert!(
+            err.to_string().contains("too large") || err.to_string().contains("超过"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_artifact_size_limit_accepts_limit_boundary() {
+        assert!(validate_artifact_size_limit("skills.zip", MAX_SYNC_ARTIFACT_BYTES).is_ok());
     }
 }

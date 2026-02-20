@@ -58,7 +58,10 @@
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
     "extractFailed": "抽出に失敗しました: {{error}}",
-    "saveFailed": "保存に失敗しました: {{error}}"
+    "saveFailed": "保存に失敗しました: {{error}}",
+    "hideAttribution": "AI署名を非表示",
+    "alwaysThinking": "拡張思考",
+    "enableTeammates": "Teammates モード"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",
@@ -291,6 +294,8 @@
       "passwordPlaceholder": "アプリパスワード",
       "remoteRoot": "リモートルートディレクトリ",
       "profile": "同期プロファイル名",
+      "autoSync": "自動同期",
+      "autoSyncHint": "有効にすると、データベース変更のたびに WebDAV へ自動アップロードします。",
       "test": "接続テスト",
       "testing": "テスト中...",
       "testSuccess": "接続成功",
@@ -302,11 +307,14 @@
       "uploading": "アップロード中...",
       "uploadSuccess": "WebDAV にアップロードしました",
       "uploadFailed": "アップロードに失敗しました：{{error}}",
+      "autoSyncFailedToast": "自動同期に失敗しました：{{error}}",
       "download": "クラウドからダウンロード",
       "downloading": "ダウンロード中...",
       "downloadSuccess": "WebDAV からダウンロード・復元しました",
       "downloadFailed": "ダウンロードに失敗しました：{{error}}",
       "lastSync": "前回の同期：{{time}}",
+      "autoSyncLastErrorTitle": "前回の自動同期に失敗しました",
+      "autoSyncLastErrorHint": "ネットワークまたは WebDAV 設定を確認してください。次回の変更時に自動再試行されます。",
       "missingUrl": "WebDAV サーバー URL を入力してください",
       "presets": {
         "label": "サービス",
@@ -1334,7 +1342,7 @@
       "skillCount": "{{count}} 件のスキルを検出"
     },
     "search": "スキルを検索",
-    "searchPlaceholder": "スキル名または説明で検索...",
+    "searchPlaceholder": "スキル名またはリポジトリで検索...",
     "filter": {
       "placeholder": "状態で絞り込み",
       "all": "すべて",

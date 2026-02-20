@@ -129,6 +129,20 @@ impl SkillApps {
         apps.set_enabled_for(app, true);
         apps
     }
+
+    /// 从来源标签列表构建启用状态
+    ///
+    /// 标签与 AppType::as_str() 一致时启用对应应用，
+    /// 其他标签（如 "agents", "cc-switch"）忽略。
+    pub fn from_labels(labels: &[String]) -> Self {
+        let mut apps = Self::default();
+        for label in labels {
+            if let Ok(app) = label.parse::<AppType>() {
+                apps.set_enabled_for(&app, true);
+            }
+        }
+        apps
+    }
 }
 
 /// 已安装的 Skill（v3.10.0+ 统一结构）
@@ -175,6 +189,8 @@ pub struct UnmanagedSkill {
     pub description: Option<String>,
     /// 在哪些应用目录中发现（如 ["claude", "codex"]）
     pub found_in: Vec<String>,
+    /// 发现路径（首个匹配的完整路径）
+    pub path: String,
 }
 
 /// MCP 服务器定义（v3.7.0 统一结构）

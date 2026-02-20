@@ -45,6 +45,7 @@ export interface UnmanagedSkill {
   name: string;
   description?: string;
   foundIn: string[];
+  path: string;
 }
 
 /** 技能对象（兼容旧 API） */

@@ -170,6 +170,7 @@ export interface VisibleApps {
 export interface WebDavSyncStatus {
   lastSyncAt?: number | null;
   lastError?: string | null;
+  lastErrorSource?: string | null;
   lastRemoteEtag?: string | null;
   lastLocalManifestHash?: string | null;
   lastRemoteManifestHash?: string | null;
@@ -178,6 +179,7 @@ export interface WebDavSyncStatus {
 // WebDAV v2 同步配置
 export interface WebDavSyncSettings {
   enabled?: boolean;
+  autoSync?: boolean;
   baseUrl?: string;
   username?: string;
   password?: string;

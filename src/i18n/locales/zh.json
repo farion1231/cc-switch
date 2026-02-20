@@ -58,7 +58,10 @@
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
-    "saveFailed": "保存失败: {{error}}"
+    "saveFailed": "保存失败: {{error}}",
+    "hideAttribution": "隐藏 AI 署名",
+    "alwaysThinking": "扩展思考",
+    "enableTeammates": "Teammates 模式"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
@@ -291,6 +294,8 @@
       "passwordPlaceholder": "应用密码（坚果云请使用「第三方应用密码」）",
       "remoteRoot": "远程根目录",
       "profile": "同步配置名",
+      "autoSync": "自动同步",
+      "autoSyncHint": "开启后每次数据库变更都会自动上传到 WebDAV。",
       "test": "测试连接",
       "testing": "测试中...",
       "testSuccess": "连接成功",
@@ -302,11 +307,14 @@
       "uploading": "上传中...",
       "uploadSuccess": "已上传到 WebDAV",
       "uploadFailed": "上传失败：{{error}}",
+      "autoSyncFailedToast": "自动同步失败：{{error}}",
       "download": "从云端下载",
       "downloading": "下载中...",
       "downloadSuccess": "已从 WebDAV 下载并恢复",
       "downloadFailed": "下载失败：{{error}}",
       "lastSync": "上次同步：{{time}}",
+      "autoSyncLastErrorTitle": "上次自动同步失败",
+      "autoSyncLastErrorHint": "请检查网络或 WebDAV 配置，系统会在后续变更时继续自动重试。",
       "missingUrl": "请填写 WebDAV 服务器地址",
       "presets": {
         "label": "服务商",
@@ -1336,7 +1344,7 @@
       "skillCount": "识别到 {{count}} 个技能"
     },
     "search": "搜索技能",
-    "searchPlaceholder": "搜索技能名称或描述...",
+    "searchPlaceholder": "搜索技能名称或仓库名称...",
     "filter": {
       "placeholder": "状态筛选",
       "all": "全部",

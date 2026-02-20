@@ -16,6 +16,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -162,6 +163,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     password: config?.password ?? "",
     remoteRoot: config?.remoteRoot ?? "cc-switch-sync",
     profile: config?.profile ?? "default",
+    autoSync: config?.autoSync ?? false,
   }));
 
   // Preset selector — derived from initial URL, updated on user selection
@@ -196,6 +198,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
       password: config.password ?? "",
       remoteRoot: config.remoteRoot ?? "cc-switch-sync",
       profile: config.profile ?? "default",
+      autoSync: config.autoSync ?? false,
     });
     setPasswordTouched(false);
     setPresetId(detectPreset(config.baseUrl ?? ""));
@@ -237,6 +240,16 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     }
   }, [form.baseUrl, presetId]);
 
+  const handleAutoSyncChange = useCallback((checked: boolean) => {
+    setForm((prev) => ({ ...prev, autoSync: checked }));
+    setDirty(true);
+    setJustSaved(false);
+    if (justSavedTimerRef.current) {
+      clearTimeout(justSavedTimerRef.current);
+      justSavedTimerRef.current = null;
+    }
+  }, []);
+
   const buildSettings = useCallback((): WebDavSyncSettings | null => {
     const baseUrl = form.baseUrl.trim();
     if (!baseUrl) return null;
@@ -247,6 +260,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
       password: form.password,
       remoteRoot: form.remoteRoot.trim() || "cc-switch-sync",
       profile: form.profile.trim() || "default",
+      autoSync: form.autoSync,
     };
   }, [form]);
 
@@ -433,6 +447,9 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
   const lastSyncDisplay = lastSyncAt
     ? new Date(lastSyncAt * 1000).toLocaleString()
     : null;
+  const lastError = config?.status?.lastError?.trim();
+  const showAutoSyncError =
+    !!lastError && config?.status?.lastErrorSource === "auto";
 
   // ─── Render ─────────────────────────────────────────────
 
@@ -559,6 +576,23 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
               disabled={isLoading}
             />
           </div>
+
+          <div className="flex items-start gap-4">
+            <label className="w-40 text-xs font-medium text-foreground shrink-0">
+              {t("settings.webdavSync.autoSync")}
+              <span className="block text-[10px] font-normal text-muted-foreground">
+                {t("settings.webdavSync.autoSyncHint")}
+              </span>
+            </label>
+            <div className="pt-1">
+              <Switch
+                checked={form.autoSync}
+                onCheckedChange={handleAutoSyncChange}
+                aria-label={t("settings.webdavSync.autoSync")}
+                disabled={isLoading}
+              />
+            </div>
+          </div>
         </div>
 
         {/* Last sync time */}
@@ -566,6 +600,17 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
           <p className="text-xs text-muted-foreground">
             {t("settings.webdavSync.lastSync", { time: lastSyncDisplay })}
           </p>
+        )}
+        {showAutoSyncError && (
+          <div className="rounded-lg border border-red-300/70 bg-red-50/80 px-3 py-2 text-xs text-red-900 dark:border-red-500/50 dark:bg-red-950/30 dark:text-red-200">
+            <p className="font-medium">
+              {t("settings.webdavSync.autoSyncLastErrorTitle")}
+            </p>
+            <p className="mt-1 break-all whitespace-pre-wrap">{lastError}</p>
+            <p className="mt-1 text-[11px] text-red-700/90 dark:text-red-300/80">
+              {t("settings.webdavSync.autoSyncLastErrorHint")}
+            </p>
+          </div>
         )}
 
         {/* Config buttons + save status */}

@@ -702,6 +702,10 @@ pub fn run() {
             }
 
             let _tray = tray_builder.build(app)?;
+            crate::services::webdav_auto_sync::start_worker(
+                app_state.db.clone(),
+                app.handle().clone(),
+            );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 

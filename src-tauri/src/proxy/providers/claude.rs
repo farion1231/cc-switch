@@ -280,7 +280,22 @@ impl ProviderAdapter for ClaudeAdapter {
         // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
         let base = dedup_v1_v1_boundary_safe(base);
 
-        format!("{base}{suffix}")
+        let url = format!("{base}{suffix}");
+
+        // 为 Claude 原生 /v1/messages 端点添加 ?beta=true 参数
+        // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
+        // 注意：不要为 OpenAI Chat Completions (/v1/chat/completions) 添加此参数
+        //       当 apiFormat="openai_chat" 时，请求会转发到 /v1/chat/completions，
+        //       但该端点是 OpenAI 标准，不支持 ?beta=true 参数
+        if endpoint.contains("/v1/messages")
+            && !endpoint.contains("/v1/chat/completions")
+            && !endpoint.contains('?')
+            && !url.contains('?')
+        {
+            format!("{url}?beta=true")
+        } else {
+            url
+        }
     }
 
     fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
@@ -493,14 +508,14 @@ mod tests {
     fn test_build_url_anthropic() {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages");
-        assert_eq!(url, "https://api.anthropic.com/v1/messages");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
     }
 
     #[test]
     fn test_build_url_openrouter() {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://openrouter.ai/api", "/v1/messages");
-        assert_eq!(url, "https://openrouter.ai/api/v1/messages");
+        assert_eq!(url, "https://openrouter.ai/api/v1/messages?beta=true");
     }
 
     #[test]
@@ -524,7 +539,7 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         // base_url 已包含完整路径 /v1/messages，不再追加
         let url = adapter.build_url("https://example.com/api/v1/messages", "/v1/messages");
-        assert_eq!(url, "https://example.com/api/v1/messages");
+        assert_eq!(url, "https://example.com/api/v1/messages?beta=true");
     }
 
     #[test]
@@ -543,7 +558,7 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         // base_url 以 /messages 结尾（无 /v1 前缀）
         let url = adapter.build_url("https://example.com/api/messages", "/v1/messages");
-        assert_eq!(url, "https://example.com/api/messages");
+        assert_eq!(url, "https://example.com/api/messages?beta=true");
 
         // base_url 以 /chat/completions 结尾（无 /v1 前缀）
         let url2 = adapter.build_url(
@@ -566,7 +581,16 @@ mod tests {
 
         // 另一个场景：/v1 + /v1/messages
         let url2 = adapter.build_url("https://api.example.com/v1", "/v1/messages");
-        assert_eq!(url2, "https://api.example.com/v1/messages");
+        assert_eq!(url2, "https://api.example.com/v1/messages?beta=true");
+    }
+
+    #[test]
+    fn test_build_url_no_beta_for_openai_chat_completions() {
+        let adapter = ClaudeAdapter::new();
+        // OpenAI Chat Completions 端点不添加 ?beta=true
+        // 这是 Nvidia 等 apiFormat="openai_chat" 供应商使用的端点
+        let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/chat/completions");
+        assert_eq!(url, "https://integrate.api.nvidia.com/v1/chat/completions");
     }
 
     #[test]

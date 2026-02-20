@@ -306,6 +306,7 @@ interface ImportSkillsDialogProps {
     name: string;
     description?: string;
     foundIn: string[];
+    path: string;
   }>;
   onImport: (directories: string[]) => void;
   onClose: () => void;
@@ -362,8 +363,11 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                     {skill.description}
                   </div>
                 )}
-                <div className="text-xs text-muted-foreground/70 mt-1">
-                  {t("skills.foundIn")}: {skill.foundIn.join(", ")}
+                <div
+                  className="text-xs text-muted-foreground/50 mt-1 truncate"
+                  title={skill.path}
+                >
+                  {skill.path}
                 </div>
               </div>
             </label>

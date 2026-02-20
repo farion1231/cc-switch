@@ -1,8 +1,6 @@
 #![allow(non_snake_case)]
 
-use serde_json::{Value, json};
-use std::future::Future;
-use std::sync::OnceLock;
+use serde_json::{json, Value};
 use tauri::State;
 
 use crate::commands::sync_support::{
@@ -13,8 +11,9 @@ use crate::services::webdav_sync as webdav_sync_service;
 use crate::settings::{self, WebDavSyncSettings};
 use crate::store::AppState;
 
-fn persist_sync_error(settings: &mut WebDavSyncSettings, error: &AppError) {
+fn persist_sync_error(settings: &mut WebDavSyncSettings, error: &AppError, source: &str) {
     settings.status.last_error = Some(error.to_string());
+    settings.status.last_error_source = Some(source.to_string());
     let _ = settings::update_webdav_sync_status(settings.status.clone());
 }
 
@@ -57,20 +56,16 @@ fn resolve_password_for_request(
     incoming
 }
 
+#[cfg(test)]
 fn webdav_sync_mutex() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    webdav_sync_service::sync_mutex()
 }
 
 async fn run_with_webdav_lock<T, Fut>(operation: Fut) -> Result<T, AppError>
 where
-    Fut: Future<Output = Result<T, AppError>>,
+    Fut: std::future::Future<Output = Result<T, AppError>>,
 {
-    let result = {
-        let _guard = webdav_sync_mutex().lock().await;
-        operation.await
-    };
-    result
+    webdav_sync_service::run_with_sync_lock(operation).await
 }
 
 fn map_sync_result<T, F>(result: Result<T, AppError>, on_error: F) -> Result<T, String>
@@ -112,7 +107,9 @@ pub async fn webdav_sync_upload(state: State<'_, AppState>) -> Result<Value, Str
     let mut settings = require_enabled_webdav_settings()?;
 
     let result = run_with_webdav_lock(webdav_sync_service::upload(&db, &mut settings)).await;
-    map_sync_result(result, |error| persist_sync_error(&mut settings, error))
+    map_sync_result(result, |error| {
+        persist_sync_error(&mut settings, error, "manual")
+    })
 }
 
 #[tauri::command]
@@ -120,10 +117,11 @@ pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, S
     let db = state.db.clone();
     let db_for_sync = db.clone();
     let mut settings = require_enabled_webdav_settings()?;
+    let _auto_sync_suppression = crate::services::webdav_auto_sync::AutoSyncSuppressionGuard::new();
 
     let sync_result = run_with_webdav_lock(webdav_sync_service::download(&db, &mut settings)).await;
     let mut result = map_sync_result(sync_result, |error| {
-        persist_sync_error(&mut settings, error)
+        persist_sync_error(&mut settings, error, "manual")
     })?;
 
     // Post-download sync is best-effort: snapshot restore has already succeeded.
@@ -179,8 +177,8 @@ mod tests {
     use crate::error::AppError;
     use crate::settings::{AppSettings, WebDavSyncSettings};
     use serial_test::serial;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
 
     #[tokio::test]
@@ -287,6 +285,7 @@ mod tests {
         persist_sync_error(
             &mut current,
             &crate::error::AppError::Config("boom".to_string()),
+            "manual",
         );
 
         let after = crate::settings::get_webdav_sync_settings().expect("read webdav settings");
@@ -304,6 +303,7 @@ mod tests {
                 .contains("boom"),
             "status error should be updated"
         );
+        assert_eq!(after.status.last_error_source.as_deref(), Some("manual"));
     }
 
     #[test]
