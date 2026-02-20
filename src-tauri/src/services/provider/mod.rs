@@ -118,6 +118,74 @@ base_url = "http://localhost:8080"
             "should keep mcp_servers.* base_url"
         );
     }
+
+    #[test]
+    fn merge_backfilled_claude_settings_preserves_existing_env_when_live_missing_env() {
+        let existing = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "sk-test"
+            },
+            "featureFlag": true
+        });
+
+        let live = json!({
+            "apiBaseUrl": "https://api.z.ai/api/anthropic",
+            "featureFlag": false
+        });
+
+        let merged = ProviderService::merge_backfilled_settings(&AppType::Claude, &existing, &live);
+
+        assert_eq!(
+            merged
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+                .and_then(|v| v.as_str()),
+            Some("https://api.z.ai/api/anthropic")
+        );
+        assert_eq!(
+            merged.get("apiBaseUrl").and_then(|v| v.as_str()),
+            Some("https://api.z.ai/api/anthropic")
+        );
+        assert_eq!(
+            merged.get("featureFlag").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn merge_backfilled_claude_settings_prefers_live_env_values() {
+        let existing = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "sk-old"
+            }
+        });
+
+        let live = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://integrate.api.nvidia.com",
+                "ANTHROPIC_AUTH_TOKEN": "sk-new"
+            }
+        });
+
+        let merged = ProviderService::merge_backfilled_settings(&AppType::Claude, &existing, &live);
+
+        assert_eq!(
+            merged
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+                .and_then(|v| v.as_str()),
+            Some("https://integrate.api.nvidia.com")
+        );
+        assert_eq!(
+            merged
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_AUTH_TOKEN"))
+                .and_then(|v| v.as_str()),
+            Some("sk-new")
+        );
+    }
 }
 
 impl ProviderService {
@@ -569,7 +637,11 @@ impl ProviderService {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
-                            current_provider.settings_config = live_config;
+                            current_provider.settings_config = Self::merge_backfilled_settings(
+                                &app_type,
+                                &current_provider.settings_config,
+                                &live_config,
+                            );
                             // Ignore backfill failure, don't affect switch flow
                             let _ = state.db.save_provider(app_type.as_str(), &current_provider);
                         }
@@ -1418,6 +1490,21 @@ impl ProviderService {
             (base_val, patch_val) => {
                 *base_val = patch_val.clone();
             }
+        }
+    }
+
+    /// 合并切换回填配置，避免 Claude 因 live 文件字段缺失导致关键 env 丢失
+    fn merge_backfilled_settings(
+        app_type: &AppType,
+        existing: &serde_json::Value,
+        live: &serde_json::Value,
+    ) -> serde_json::Value {
+        if matches!(app_type, AppType::Claude) {
+            let mut merged = existing.clone();
+            Self::merge_json(&mut merged, live);
+            merged
+        } else {
+            live.clone()
         }
     }
 }

@@ -19,9 +19,66 @@ use reqwest::RequestBuilder;
 /// Claude 适配器
 pub struct ClaudeAdapter;
 
+/// Harmony models that require /v1/responses endpoint
+/// These models use the Harmony response format (gpt-oss series)
+const HARMONY_MODEL_PATTERNS: &[&str] = &["gpt-oss-", "openai/gpt-oss-"];
+
 impl ClaudeAdapter {
     pub fn new() -> Self {
         Self
+    }
+
+    fn is_anthropic_model_id(model: &str) -> bool {
+        let normalized = model.trim().to_lowercase();
+        normalized.starts_with("claude-") || normalized.starts_with("anthropic/claude-")
+    }
+
+    /// Auto-detect OpenRouter model family.
+    ///
+    /// OpenRouter Claude-compatible endpoint works best for Anthropic Claude model IDs.
+    /// If provider defaults are non-Anthropic model IDs (e.g. `openrouter/free`,
+    /// `deepseek/...`), force OpenAI Chat transform mode.
+    fn should_force_openai_chat_for_openrouter(&self, provider: &Provider) -> bool {
+        if !self.is_openrouter(provider) {
+            return false;
+        }
+
+        let Some(env) = provider
+            .settings_config
+            .get("env")
+            .and_then(|v| v.as_object())
+        else {
+            return false;
+        };
+
+        let model_keys = [
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_REASONING_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        ];
+
+        let mut has_any_model = false;
+        for key in model_keys {
+            let Some(model) = env.get(key).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let model = model.trim();
+            if model.is_empty() {
+                continue;
+            }
+            has_any_model = true;
+            if !Self::is_anthropic_model_id(model) {
+                return true;
+            }
+        }
+
+        if !has_any_model {
+            return false;
+        }
+
+        false
     }
 
     /// 获取供应商类型
@@ -58,6 +115,13 @@ impl ClaudeAdapter {
     /// - "anthropic" (默认): Anthropic Messages API 格式，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
     fn get_api_format(&self, provider: &Provider) -> &'static str {
+        // OpenRouter with non-Anthropic model IDs must use OpenAI Chat format.
+        // This guard intentionally overrides user meta.api_format="anthropic",
+        // because Anthropic passthrough cannot serve those model families.
+        if self.should_force_openai_chat_for_openrouter(provider) {
+            return "openai_chat";
+        }
+
         // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
         if let Some(meta) = provider.meta.as_ref() {
             if let Some(api_format) = meta.api_format.as_deref() {
@@ -82,7 +146,20 @@ impl ClaudeAdapter {
             };
         }
 
-        // 3) Backward compatibility: legacy openrouter_compat_mode (bool/number/string)
+        // 3) Backward compatibility: settings_config.apiFormat (camelCase)
+        if let Some(api_format) = provider
+            .settings_config
+            .get("apiFormat")
+            .and_then(|v| v.as_str())
+        {
+            return if api_format == "openai_chat" {
+                "openai_chat"
+            } else {
+                "anthropic"
+            };
+        }
+
+        // 4) Backward compatibility: legacy openrouter_compat_mode (bool/number/string)
         let raw = provider.settings_config.get("openrouter_compat_mode");
         let enabled = match raw {
             Some(serde_json::Value::Bool(v)) => *v,
@@ -99,6 +176,33 @@ impl ClaudeAdapter {
         } else {
             "anthropic"
         }
+    }
+
+    /// 检查 Harmony API 支持
+    ///
+    /// 返回值：
+    /// - Some(true): 强制启用 Harmony
+    /// - Some(false): 强制禁用 Harmony
+    /// - None: 自动检测（根据模型名判断）
+    /// 检查模型是否为 Harmony 格式模型
+    fn is_harmony_model(model: &str) -> bool {
+        let model_lower = model.to_lowercase();
+        HARMONY_MODEL_PATTERNS
+            .iter()
+            .any(|prefix| model_lower.starts_with(prefix))
+    }
+
+    fn get_harmony_support(&self, provider: &Provider) -> Option<bool> {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.harmony_support.as_deref())
+            .and_then(|s| match s {
+                "enabled" | "true" | "1" => Some(true),
+                "disabled" | "false" | "0" => Some(false),
+                "auto" => None,
+                _ => None,
+            })
     }
 
     /// 检测是否为仅 Bearer 认证模式
@@ -221,6 +325,22 @@ impl ProviderAdapter for ClaudeAdapter {
 
         if let Some(url) = provider
             .settings_config
+            .get("apiBaseUrl")
+            .and_then(|v| v.as_str())
+        {
+            return Ok(url.trim_end_matches('/').to_string());
+        }
+
+        if let Some(url) = provider
+            .settings_config
+            .get("api_base_url")
+            .and_then(|v| v.as_str())
+        {
+            return Ok(url.trim_end_matches('/').to_string());
+        }
+
+        if let Some(url) = provider
+            .settings_config
             .get("apiEndpoint")
             .and_then(|v| v.as_str())
         {
@@ -308,13 +428,38 @@ impl ProviderAdapter for ClaudeAdapter {
     fn transform_request(
         &self,
         body: serde_json::Value,
-        _provider: &Provider,
+        provider: &Provider,
     ) -> Result<serde_json::Value, ProxyError> {
-        super::transform::anthropic_to_openai(body)
+        // Check if this is a Harmony model and provider supports it
+        let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
+
+        // If apiFormat is explicitly "openai_chat", never use Harmony
+        let api_format = self.get_api_format(provider);
+        if api_format == "openai_chat" {
+            return super::transform::anthropic_to_openai(body);
+        }
+
+        let harmony_override = self.get_harmony_support(provider);
+        let is_harmony = harmony_override.unwrap_or_else(|| Self::is_harmony_model(model));
+
+        if is_harmony {
+            // Direct Anthropic -> Harmony transformation
+            super::transform::anthropic_to_harmony(body)
+        } else {
+            // Standard Anthropic -> OpenAI Chat Completions
+            super::transform::anthropic_to_openai(body)
+        }
     }
 
     fn transform_response(&self, body: serde_json::Value) -> Result<serde_json::Value, ProxyError> {
-        super::transform::openai_to_anthropic(body)
+        // Detect response format: Harmony has "output", OpenAI has "choices"
+        let is_harmony_response = body.get("output").is_some();
+
+        if is_harmony_response {
+            super::transform::harmony_to_anthropic(body)
+        } else {
+            super::transform::openai_to_anthropic(body)
+        }
     }
 }
 
@@ -369,6 +514,17 @@ mod tests {
 
         let url = adapter.extract_base_url(&provider).unwrap();
         assert_eq!(url, "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn test_extract_base_url_from_api_base_url() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "apiBaseUrl": "https://api.z.ai/api/anthropic/"
+        }));
+
+        let url = adapter.extract_base_url(&provider).unwrap();
+        assert_eq!(url, "https://api.z.ai/api/anthropic");
     }
 
     #[test]
@@ -560,6 +716,15 @@ mod tests {
         }));
         assert!(adapter.needs_transform(&legacy_settings_api_format));
 
+        // Backward compatibility: settings_config.apiFormat (camelCase)
+        let settings_api_format_camel_case = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.example.com"
+            },
+            "apiFormat": "openai_chat"
+        }));
+        assert!(adapter.needs_transform(&settings_api_format_camel_case));
+
         // Legacy openrouter_compat_mode: bool/number/string should enable transform
         let legacy_openrouter_bool = create_provider(json!({
             "env": {
@@ -628,5 +793,53 @@ mod tests {
             },
         );
         assert!(!adapter.needs_transform(&unknown_format));
+    }
+
+    #[test]
+    fn test_openrouter_non_anthropic_defaults_force_transform() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                "ANTHROPIC_MODEL": "openrouter/free",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek/deepseek-r1-0528:free"
+            }
+        }));
+
+        assert!(adapter.needs_transform(&provider));
+    }
+
+    #[test]
+    fn test_openrouter_anthropic_defaults_keep_passthrough() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                "ANTHROPIC_MODEL": "anthropic/claude-sonnet-4.5",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "anthropic/claude-sonnet-4.5"
+            }
+        }));
+
+        assert!(!adapter.needs_transform(&provider));
+    }
+
+    #[test]
+    fn test_openrouter_non_anthropic_overrides_meta_anthropic() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                    "ANTHROPIC_MODEL": "openrouter/free",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek/deepseek-r1-0528:free"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("anthropic".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert!(adapter.needs_transform(&provider));
     }
 }

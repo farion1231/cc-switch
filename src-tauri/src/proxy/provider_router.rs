@@ -7,6 +7,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::providers;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -21,6 +22,24 @@ pub struct ProviderRouter {
 }
 
 impl ProviderRouter {
+    fn is_provider_routable(&self, app_type: &str, provider: &Provider) -> bool {
+        let app_enum = match AppType::from_str(app_type) {
+            Ok(v) => v,
+            Err(_) => return true,
+        };
+
+        // Additive apps are not proxy targets; keep behavior permissive.
+        if app_enum.is_additive_mode() {
+            return true;
+        }
+
+        let adapter = providers::get_adapter(&app_enum);
+        let has_auth = adapter.extract_auth(provider).is_some();
+        let has_base_url = adapter.extract_base_url(provider).is_ok();
+
+        has_auth && has_base_url
+    }
+
     /// 创建新的供应商路由器
     pub fn new(db: Arc<Database>) -> Self {
         Self {
@@ -67,6 +86,15 @@ impl ProviderRouter {
                     continue;
                 };
 
+                if !self.is_provider_routable(app_type, &provider) {
+                    log::warn!(
+                        "[{app_type}] skipping unroutable provider '{}' ({})",
+                        provider.id,
+                        provider.name
+                    );
+                    continue;
+                }
+
                 let circuit_key = format!("{app_type}:{}", provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
@@ -78,6 +106,7 @@ impl ProviderRouter {
             }
         } else {
             // 故障转移关闭：仅使用当前供应商，跳过熔断器检查
+            let all_providers = self.db.get_all_providers(app_type)?;
             let current_id = AppType::from_str(app_type)
                 .ok()
                 .and_then(|app_enum| {
@@ -88,9 +117,37 @@ impl ProviderRouter {
                 .or_else(|| self.db.get_current_provider(app_type).ok().flatten());
 
             if let Some(current_id) = current_id {
-                if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
+                if let Some(current) = all_providers.get(&current_id).cloned() {
+                    if self.is_provider_routable(app_type, &current) {
+                        result.push(current);
+                        total_providers = 1;
+                    } else {
+                        log::warn!(
+                            "[{app_type}] current provider '{}' ({}) is unroutable, trying fallback",
+                            current.id,
+                            current.name
+                        );
+                    }
+                }
+            }
+
+            if result.is_empty() {
+                if let Some((fallback_id, fallback)) = all_providers
+                    .iter()
+                    .find(|(_, provider)| self.is_provider_routable(app_type, provider))
+                {
+                    log::warn!(
+                        "[{app_type}] fallback to routable provider '{}' ({})",
+                        fallback_id,
+                        fallback.name
+                    );
+                    result.push(fallback.clone());
                     total_providers = 1;
-                    result.push(current);
+
+                    let _ = self.db.set_current_provider(app_type, fallback_id);
+                    if let Ok(app_enum) = AppType::from_str(app_type) {
+                        let _ = crate::settings::set_current_provider(&app_enum, Some(fallback_id));
+                    }
                 }
             }
         }
@@ -323,10 +380,28 @@ mod tests {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
 
-        let provider_a =
-            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
-        let provider_b =
-            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "Provider A".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-ant-a"
+                }
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "Provider B".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-ant-b"
+                }
+            }),
+            None,
+        );
 
         db.save_provider("claude", &provider_a).unwrap();
         db.save_provider("claude", &provider_b).unwrap();
@@ -338,6 +413,37 @@ mod tests {
 
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "a");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_failover_disabled_fallbacks_when_current_provider_unroutable() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "Provider B".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-or-test"
+                }
+            }),
+            None,
+        );
+
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let providers = router.select_providers("claude").await.unwrap();
+
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "b");
     }
 
     #[tokio::test]
