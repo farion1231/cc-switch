@@ -21,11 +21,15 @@ pub async fn read_claude_plugin_config() -> Result<Option<String>, String> {
 
 /// Claude 插件：写入/清除固定配置
 #[tauri::command]
-pub async fn apply_claude_plugin_config(official: bool) -> Result<bool, String> {
+pub async fn apply_claude_plugin_config(
+    official: bool,
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<bool, String> {
     if official {
         crate::claude_plugin::clear_claude_config().map_err(|e| e.to_string())
     } else {
-        crate::claude_plugin::write_claude_config().map_err(|e| e.to_string())
+        crate::claude_plugin::write_claude_config_with_db(&state.db)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -45,4 +49,34 @@ pub async fn apply_claude_onboarding_skip() -> Result<bool, String> {
 #[tauri::command]
 pub async fn clear_claude_onboarding_skip() -> Result<bool, String> {
     crate::claude_mcp::clear_has_completed_onboarding().map_err(|e| e.to_string())
+}
+
+/// 获取所有插件列表及启用状态
+#[tauri::command]
+pub async fn list_plugins(
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<Vec<crate::database::PluginState>, String> {
+    state.db.get_all_plugin_states().map_err(|e| e.to_string())
+}
+
+/// 设置插件启用/禁用状态，并重写 config.json
+#[tauri::command]
+pub async fn set_plugin_enabled(
+    plugin_id: String,
+    enabled: bool,
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<bool, String> {
+    state
+        .db
+        .set_plugin_enabled(&plugin_id, enabled)
+        .map_err(|e| e.to_string())?;
+
+    // 检查是否已开启 Claude 插件集成，若是则重写 config.json
+    let settings = crate::settings::get_settings();
+    if settings.enable_claude_plugin_integration {
+        crate::claude_plugin::write_claude_config_with_db(&state.db)
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(true)
 }
