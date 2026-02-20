@@ -223,8 +223,12 @@ type UsageCallbackWithTiming = Arc<dyn Fn(ExtractedStreamData, Option<u64>, u64,
 /// Extracted data from SSE stream - replaces storing raw events
 #[derive(Default, Clone)]
 pub struct ExtractedStreamData {
-    /// Combined text from all delta events
+    /// Text content (final output)
     pub text: String,
+    /// Thinking content (final output)
+    pub thinking: String,
+    /// Tool use content (final output)
+    pub tool_use: Vec<Value>,
     /// Message ID from response
     pub message_id: Option<String>,
     /// Stop reason (completion, length, etc.)
@@ -241,6 +245,14 @@ pub struct ExtractedStreamData {
     pub cache_read_tokens: u32,
     /// Cache creation tokens
     pub cache_creation_tokens: u32,
+
+    // ============================================================================
+    // Temporary state for incremental parsing (not part of final output)
+    // ============================================================================
+    /// Current tool_use being built (for incremental parsing)
+    current_tool_use_id: Option<String>,
+    current_tool_use_name: Option<String>,
+    current_tool_use_input: String,
 }
 
 /// SSE 使用量收集器
@@ -310,104 +322,6 @@ impl SseUsageCollector {
         (message_id, stop_reason, created)
     }
 
-    /// Extract text content from SSE events
-    fn extract_text_from_events(events: &[Value]) -> String {
-        let mut combined_text = String::new();
-
-        for event in events {
-            // 1. Extract delta.text content (Claude format: content_block_delta)
-            if let Some(delta) = event.get("delta") {
-                // text_delta format
-                if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
-                    combined_text.push_str(text);
-                }
-                // thinking_delta format (MiniMax etc)
-                if let Some(thinking) = delta.get("thinking").and_then(|t| t.as_str()) {
-                    combined_text.push_str(thinking);
-                }
-                // input_json_delta format (tool use)
-                if let Some(partial_json) = delta.get("partial_json").and_then(|t| t.as_str()) {
-                    combined_text.push_str(partial_json);
-                }
-                // signature_delta format - skip, don't extract signature
-                if delta.get("signature").is_some() {
-                    // Skip signature
-                }
-                // Also check if delta itself is a string
-                if let Some(text) = delta.as_str() {
-                    combined_text.push_str(text);
-                }
-            }
-
-            // 2. Extract choices[0].delta.content (OpenAI format)
-            if let Some(choices) = event.get("choices").and_then(|c| c.as_array()) {
-                for choice in choices {
-                    if let Some(delta) = choice.get("delta") {
-                        if let Some(content) = delta.get("content").and_then(|t| t.as_str()) {
-                            combined_text.push_str(content);
-                        }
-                    }
-                }
-            }
-
-            // 3. Root-level text field
-            if let Some(text) = event.get("text").and_then(|t| t.as_str()) {
-                combined_text.push_str(text);
-            }
-
-            // 4. Text in content array
-            if let Some(content) = event.get("content").and_then(|c| c.as_array()) {
-                for item in content {
-                    if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                        combined_text.push_str(text);
-                    }
-                    // thinking content
-                    if let Some(thinking) = item.get("thinking").and_then(|t| t.as_str()) {
-                        combined_text.push_str(thinking);
-                    }
-                }
-            }
-
-            // 5. Extract content field directly from event (some formats)
-            if let Some(content) = event.get("content").and_then(|c| c.as_str()) {
-                combined_text.push_str(content);
-            }
-
-            // 6. Check message.content array (Claude message format)
-            if let Some(message) = event.get("message") {
-                if let Some(content) = message.get("content").and_then(|c| c.as_array()) {
-                    for item in content {
-                        if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                            combined_text.push_str(text);
-                        }
-                        if let Some(thinking) = item.get("thinking").and_then(|t| t.as_str()) {
-                            combined_text.push_str(thinking);
-                        }
-                    }
-                }
-            }
-        }
-
-        combined_text
-    }
-
-    /// Extract text content from SSE events and build final JSON response body
-    pub fn build_final_response_body(events: &[Value]) -> Option<String> {
-        let text = Self::extract_text_from_events(events);
-        if text.is_empty() {
-            return None;
-        }
-
-        // Build final JSON response body
-        let final_response = serde_json::json!({
-            "text": text,
-            "extracted": true,
-            "events_count": events.len()
-        });
-
-        serde_json::to_string(&final_response).ok()
-    }
-
     /// 创建新的使用量收集器
     pub fn new(
         start_time: std::time::Instant,
@@ -432,6 +346,62 @@ impl SseUsageCollector {
         *response_body = Some(body);
     }
 
+    /// Finalize current tool_use and add to array
+    fn finalize_tool_use(data: &mut ExtractedStreamData) {
+        if let (Some(id), Some(name)) = (data.current_tool_use_id.take(), data.current_tool_use_name.take()) {
+            let input: Value = if !data.current_tool_use_input.is_empty() {
+                serde_json::from_str(&data.current_tool_use_input).unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::Value::Null
+            };
+            data.current_tool_use_input.clear();
+
+            let tool_use_item = serde_json::json!({
+                "type": "tool_use",
+                "id": id,
+                "name": name,
+                "input": input
+            });
+            data.tool_use.push(tool_use_item);
+        }
+    }
+
+    /// Extract text, thinking, tool_use from a content array
+    fn extract_content_array(content: &Value, data: &mut ExtractedStreamData) {
+        if let Some(items) = content.as_array() {
+            for item in items {
+                if let Some(item_type) = item.get("type").and_then(|t| t.as_str()) {
+                    match item_type {
+                        "text" => {
+                            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                                data.text.push_str(text);
+                            }
+                        }
+                        "tool_use" => {
+                            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                                if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                                    let tool_use_item = serde_json::json!({
+                                        "type": "tool_use",
+                                        "id": id,
+                                        "name": name,
+                                        "input": item.get("input").cloned().unwrap_or(serde_json::Value::Null)
+                                    });
+                                    data.tool_use.push(tool_use_item);
+                                }
+                            }
+                        }
+                        "thinking" => {
+                            if let Some(thinking) = item.get("thinking").and_then(|t| t.as_str()) {
+                                data.thinking.push_str(thinking);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     /// Push SSE event - extracts and stores data incrementally
     pub async fn push(&self, event: Value) {
         let elapsed_ms = self.inner.start_time.elapsed().as_millis() as u64;
@@ -440,7 +410,6 @@ impl SseUsageCollector {
         let mut data = self.inner.data.lock().await;
 
         // Record first token time (event with content)
-        // Check for: content_block_delta, thinking_delta, or OpenAI format (choices[0].delta.content)
         let event_type = event.get("type").and_then(|t| t.as_str());
         let is_content_event = event_type == Some("content_block_delta")
             || event_type == Some("thinking_delta")
@@ -460,19 +429,60 @@ impl SseUsageCollector {
             }
         }
 
-        // Extract text delta
-        if let Some(delta) = event.get("delta") {
-            // text_delta format
-            if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
-                data.text.push_str(text);
+        // Extract from content_block_delta events
+        if event_type == Some("content_block_delta") {
+            if let Some(delta) = event.get("delta") {
+                if let Some(delta_type) = delta.get("type").and_then(|t| t.as_str()) {
+                    match delta_type {
+                        "text_delta" => {
+                            if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
+                                data.text.push_str(text);
+                            }
+                        }
+                        "thinking_delta" => {
+                            if let Some(thinking) = delta.get("thinking").and_then(|t| t.as_str()) {
+                                data.thinking.push_str(thinking);
+                            }
+                        }
+                        "input_json_delta" => {
+                            // Tool use partial JSON - accumulate for tool_use
+                            if let Some(partial_json) = delta.get("partial_json").and_then(|t| t.as_str()) {
+                                data.current_tool_use_input.push_str(partial_json);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
-            // thinking_delta format (MiniMax etc)
-            if let Some(thinking) = delta.get("thinking").and_then(|t| t.as_str()) {
-                data.text.push_str(thinking);
+        }
+
+        // Handle content_block_start (tool_use block started)
+        if event_type == Some("content_block_start") {
+            if let Some(content_block) = event.get("content_block") {
+                if content_block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                    // Start a new tool_use block
+                    data.current_tool_use_id = content_block.get("id").and_then(|v| v.as_str()).map(String::from);
+                    data.current_tool_use_name = content_block.get("name").and_then(|v| v.as_str()).map(String::from);
+                    data.current_tool_use_input.clear();
+                }
             }
-            // partial_json_delta format (tool use)
-            if let Some(partial_json) = delta.get("partial_json").and_then(|t| t.as_str()) {
-                data.text.push_str(partial_json);
+        }
+
+        // Handle content_block_stop (tool_use block finished)
+        if event_type == Some("content_block_stop") {
+            Self::finalize_tool_use(&mut data);
+        }
+
+        // Extract from content arrays (event.content or message.content)
+        // Skip if this is content_block_delta (already handled above)
+        if event_type != Some("content_block_delta") {
+            if let Some(content) = event.get("content") {
+                Self::extract_content_array(content, &mut data);
+            }
+            if let Some(message) = event.get("message") {
+                if let Some(content) = message.get("content") {
+                    Self::extract_content_array(content, &mut data);
+                }
             }
         }
 
@@ -563,6 +573,8 @@ impl SseUsageCollector {
 
         let data = {
             let mut guard = self.inner.data.lock().await;
+            // Finalize any incomplete tool_use (e.g., if stream ended abnormally)
+            Self::finalize_tool_use(&mut guard);
             std::mem::take(&mut *guard)
         };
 
@@ -584,12 +596,12 @@ impl SseUsageCollector {
 
     /// Build final JSON response body from extracted stream data
     fn build_final_response_body_from_data(data: &ExtractedStreamData) -> Option<String> {
-        if data.text.is_empty() {
+        if data.text.is_empty() && data.thinking.is_empty() && data.tool_use.is_empty() {
             return None;
         }
 
         let final_json = serde_json::json!({
-            "text": data.text,
+            "content": build_content_json(data),
             "id": data.message_id,
             "stop_reason": data.stop_reason,
             "created": data.created,
@@ -604,6 +616,15 @@ impl SseUsageCollector {
 // 内部辅助函数
 // ============================================================================
 
+/// Build content JSON from extracted data
+fn build_content_json(data: &ExtractedStreamData) -> Value {
+    serde_json::json!({
+        "text": data.text,
+        "thinking": data.thinking,
+        "tool_use": data.tool_use,
+    })
+}
+
 /// Build final response body from extracted stream data
 fn build_response_from_data(
     data: &ExtractedStreamData,
@@ -611,13 +632,15 @@ fn build_response_from_data(
     usage: Option<&TokenUsage>,
     first_token_ms: Option<u64>,
 ) -> Option<String> {
-    if data.text.is_empty() {
+    if data.text.is_empty() && data.thinking.is_empty() && data.tool_use.is_empty() {
         return fallback_response_body;
     }
 
+    let content = build_content_json(data);
+
     let final_json = if let Some(usage) = usage {
         serde_json::json!({
-            "text": data.text,
+            "content": content,
             "usage": {
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
@@ -632,7 +655,7 @@ fn build_response_from_data(
         })
     } else {
         serde_json::json!({
-            "text": data.text,
+            "content": content,
             "id": data.message_id,
             "stop_reason": data.stop_reason,
             "created": data.created,
