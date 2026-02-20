@@ -57,6 +57,16 @@ pub fn get_request_detail(
     state.db.get_request_detail(&request_id)
 }
 
+/// 获取指定时间范围内所有可用的 Provider 和 Model 筛选选项
+#[tauri::command]
+pub fn get_available_filters(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+) -> Result<AvailableFilters, AppError> {
+    state.db.get_available_filters(start_date, end_date)
+}
+
 /// 获取模型定价列表
 #[tauri::command]
 pub fn get_model_pricing(state: State<'_, AppState>) -> Result<Vec<ModelPricingInfo>, AppError> {

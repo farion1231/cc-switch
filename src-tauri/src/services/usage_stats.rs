@@ -67,9 +67,12 @@ pub struct ModelStats {
 #[serde(rename_all = "camelCase")]
 pub struct LogFilters {
     pub app_type: Option<String>,
+    pub provider_type: Option<String>,
     pub provider_name: Option<String>,
+    pub provider_id: Option<String>,
     pub model: Option<String>,
     pub status_code: Option<u16>,
+    pub status_filter: Option<String>,
     pub start_date: Option<i64>,
     pub end_date: Option<i64>,
 }
@@ -82,6 +85,22 @@ pub struct PaginatedLogs {
     pub total: u32,
     pub page: u32,
     pub page_size: u32,
+}
+
+/// Available filter options (based on all requests in specified time range)
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableFilters {
+    pub providers: Vec<ProviderOption>,
+    pub models: Vec<String>,
+}
+
+/// Provider options
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderOption {
+    pub id: String,
+    pub name: String,
 }
 
 /// 请求日志详情
@@ -109,9 +128,12 @@ pub struct RequestLogDetail {
     pub is_streaming: bool,
     pub latency_ms: u64,
     pub first_token_ms: Option<u64>,
-    pub duration_ms: Option<u64>,
     pub status_code: u16,
     pub error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_body: Option<String>,
     pub created_at: i64,
 }
 
@@ -398,9 +420,18 @@ impl Database {
             conditions.push("l.app_type = ?");
             params.push(Box::new(app_type.clone()));
         }
+        if let Some(ref provider_type) = filters.provider_type {
+            conditions.push("l.provider_type = ?");
+            params.push(Box::new(provider_type.clone()));
+        }
         if let Some(ref provider_name) = filters.provider_name {
+            // Use providers table name for filtering
             conditions.push("p.name LIKE ?");
             params.push(Box::new(format!("%{provider_name}%")));
+        }
+        if let Some(ref provider_id) = filters.provider_id {
+            conditions.push("l.provider_id = ?");
+            params.push(Box::new(provider_id.clone()));
         }
         if let Some(ref model) = filters.model {
             conditions.push("l.model LIKE ?");
@@ -409,6 +440,18 @@ impl Database {
         if let Some(status) = filters.status_code {
             conditions.push("l.status_code = ?");
             params.push(Box::new(status as i64));
+        }
+        if let Some(ref status_filter) = filters.status_filter {
+            match status_filter.as_str() {
+                "success" => {
+                    conditions.push("l.status_code >= 200");
+                    conditions.push("l.status_code < 300");
+                }
+                "error" => {
+                    conditions.push("l.status_code >= 400");
+                }
+                _ => {}
+            }
         }
         if let Some(start) = filters.start_date {
             conditions.push("l.created_at >= ?");
@@ -442,12 +485,12 @@ impl Database {
         params.push(Box::new(offset as i64));
 
         let sql = format!(
-            "SELECT l.request_id, l.provider_id, p.name as provider_name, l.app_type, l.model,
+            "SELECT l.request_id, l.provider_id, COALESCE(p.name, l.provider_id) as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
-                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
-                    l.status_code, l.error_message, l.created_at
+                    l.is_streaming, l.latency_ms, l.first_token_ms,
+                    l.status_code, l.error_message, l.request_body, l.response_body, l.created_at
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -455,7 +498,9 @@ impl Database {
              LIMIT ? OFFSET ?"
         );
 
-        let mut stmt = conn.prepare(&sql)?;
+        let mut stmt = conn.prepare(&sql).map_err(|e| {
+            AppError::Database(format!("Failed to prepare SQL: {} - SQL: {}", e, sql))
+        })?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
             Ok(RequestLogDetail {
@@ -480,10 +525,11 @@ impl Database {
                 is_streaming: row.get::<_, i64>(16)? != 0,
                 latency_ms: row.get::<_, i64>(17)? as u64,
                 first_token_ms: row.get::<_, Option<i64>>(18)?.map(|v| v as u64),
-                duration_ms: row.get::<_, Option<i64>>(19)?.map(|v| v as u64),
-                status_code: row.get::<_, i64>(20)? as u16,
-                error_message: row.get(21)?,
-                created_at: row.get(22)?,
+                status_code: row.get::<_, i64>(19)? as u16,
+                error_message: row.get(20)?,
+                request_body: row.get(21)?,
+                response_body: row.get(22)?,
+                created_at: row.get(23)?,
             })
         })?;
 
@@ -520,10 +566,10 @@ impl Database {
         let result = conn.query_row(
             "SELECT l.request_id, l.provider_id, p.name as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
-                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-                    is_streaming, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at
+                    l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
+                    l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
+                    l.is_streaming, l.latency_ms, l.first_token_ms,
+                    l.status_code, l.error_message, l.request_body, l.response_body, l.created_at
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?",
@@ -549,10 +595,11 @@ impl Database {
                     is_streaming: row.get::<_, i64>(16)? != 0,
                     latency_ms: row.get::<_, i64>(17)? as u64,
                     first_token_ms: row.get::<_, Option<i64>>(18)?.map(|v| v as u64),
-                    duration_ms: row.get::<_, Option<i64>>(19)?.map(|v| v as u64),
-                    status_code: row.get::<_, i64>(20)? as u16,
-                    error_message: row.get(21)?,
-                    created_at: row.get(22)?,
+                    status_code: row.get::<_, i64>(19)? as u16,
+                    error_message: row.get(20)?,
+                    request_body: row.get(21)?,
+                    response_body: row.get(22)?,
+                    created_at: row.get(23)?,
                 })
             },
         );
@@ -572,6 +619,92 @@ impl Database {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(AppError::Database(e.to_string())),
         }
+    }
+
+    /// Get all available Provider and Model list within specified time range
+    pub fn get_available_filters(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<AvailableFilters, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        // Build params for time filter
+        let mut params: Vec<i64> = Vec::new();
+        let time_where = match (start_date, end_date) {
+            (Some(start), Some(end)) => {
+                params.push(start);
+                params.push(end);
+                "WHERE l.created_at >= ? AND l.created_at <= ?"
+            }
+            (Some(start), None) => {
+                params.push(start);
+                "WHERE l.created_at >= ?"
+            }
+            (None, Some(end)) => {
+                params.push(end);
+                "WHERE l.created_at <= ?"
+            }
+            (None, None) => "",
+        };
+
+        // Get all unique providers (use JOIN to get name)
+        let providers_sql = if params.is_empty() {
+            "SELECT DISTINCT l.provider_id, COALESCE(p.name, l.provider_id) as provider_name
+             FROM proxy_request_logs l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             ORDER BY provider_name".to_string()
+        } else {
+            format!(
+                "SELECT DISTINCT l.provider_id, COALESCE(p.name, l.provider_id) as provider_name
+             FROM proxy_request_logs l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             {}
+             ORDER BY provider_name",
+                time_where
+            )
+        };
+
+        let mut stmt = conn.prepare(&providers_sql).map_err(|e| {
+            AppError::Database(format!("Failed to prepare providers SQL: {}", e))
+        })?;
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        let providers: Vec<ProviderOption> = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok(ProviderOption {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Get all unique models
+        let models_sql = if params.is_empty() {
+            "SELECT DISTINCT l.model
+             FROM proxy_request_logs l
+             ORDER BY l.model".to_string()
+        } else {
+            format!(
+                "SELECT DISTINCT l.model
+             FROM proxy_request_logs l
+             {}
+             ORDER BY l.model",
+                time_where
+            )
+        };
+
+        let mut stmt = conn.prepare(&models_sql).map_err(|e| {
+            AppError::Database(format!("Failed to prepare models SQL: {}", e))
+        })?;
+
+        let models: Vec<String> = stmt
+            .query_map(params_refs.as_slice(), |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(AvailableFilters { providers, models })
     }
 
     /// 检查 Provider 使用限额

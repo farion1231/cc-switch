@@ -3,18 +3,11 @@ import { useTranslation } from "react-i18next";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UsageSummaryCards } from "./UsageSummaryCards";
 import { UsageTrendChart } from "./UsageTrendChart";
-import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
 import type { TimeRange } from "@/types/usage";
 import { motion } from "framer-motion";
-import {
-  BarChart3,
-  ListFilter,
-  Activity,
-  RefreshCw,
-  Coins,
-} from "lucide-react";
+import { BarChart3, Activity, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useQueryClient } from "@tanstack/react-query";
 import { usageKeys } from "@/lib/query/usage";
@@ -105,13 +98,9 @@ export function UsageDashboard() {
       <UsageTrendChart days={days} refreshIntervalMs={refreshIntervalMs} />
 
       <div className="space-y-4">
-        <Tabs defaultValue="logs" className="w-full">
+        <Tabs defaultValue="providers" className="w-full">
           <div className="flex items-center justify-between mb-4">
             <TabsList className="bg-muted/50">
-              <TabsTrigger value="logs" className="gap-2">
-                <ListFilter className="h-4 w-4" />
-                {t("usage.requestLogs")}
-              </TabsTrigger>
               <TabsTrigger value="providers" className="gap-2">
                 <Activity className="h-4 w-4" />
                 {t("usage.providerStats")}
@@ -128,9 +117,6 @@ export function UsageDashboard() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
           >
-            <TabsContent value="logs" className="mt-0">
-              <RequestLogTable refreshIntervalMs={refreshIntervalMs} />
-            </TabsContent>
 
             <TabsContent value="providers" className="mt-0">
               <ProviderStatsTable refreshIntervalMs={refreshIntervalMs} />

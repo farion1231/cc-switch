@@ -11,7 +11,7 @@ use super::{
 };
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
-use futures::stream::{Stream, StreamExt};
+use futures::stream::{Stream, StreamExt, TryStreamExt};
 use reqwest::header::HeaderMap;
 use serde_json::Value;
 use std::{
@@ -59,16 +59,21 @@ pub async fn handle_streaming(
         builder = builder.header(key, value);
     }
 
-    // 创建字节流
-    let stream = response
-        .bytes_stream()
-        .map(|chunk| chunk.map_err(|e| std::io::Error::other(e.to_string())));
-
-    // 创建使用量收集器
-    let usage_collector = create_usage_collector(ctx, state, status.as_u16(), parser_config);
+    // Create usage collector before processing stream
+    let usage_collector: SseUsageCollector = create_usage_collector(
+        ctx,
+        state,
+        status.as_u16(),
+        parser_config,
+        ctx.request_body.clone(),
+        None, // response_body will be obtained after stream processing
+    );
 
     // 获取流式超时配置
     let timeout_config = ctx.streaming_timeout_config();
+
+    // Use actual streaming processing and convert error types
+    let stream = response.bytes_stream().map_err(|e: reqwest::Error| std::io::Error::other(e.to_string()));
 
     // 创建带日志和超时的透传流
     let logged_stream =
@@ -78,8 +83,8 @@ pub async fn handle_streaming(
     match builder.body(body) {
         Ok(resp) => resp,
         Err(e) => {
-            log::error!("[{}] 构建流式响应失败: {e}", ctx.tag);
-            ProxyError::Internal(format!("Failed to build streaming response: {e}")).into_response()
+            log::error!("[{}] 构建流式响应失败: {}", ctx.tag, e);
+            ProxyError::Internal(format!("Failed to build streaming response: {}", e)).into_response()
         }
     }
 }
@@ -114,6 +119,7 @@ pub async fn handle_non_streaming(
     );
 
     // 解析并记录使用量
+    let response_body = String::from_utf8_lossy(&body_bytes).to_string();
     if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
         // 解析使用量
         if let Some(usage) = (parser_config.response_parser)(&json_value) {
@@ -134,6 +140,8 @@ pub async fn handle_non_streaming(
                 &ctx.request_model,
                 status.as_u16(),
                 false,
+                ctx.request_body.clone(),
+                Some(response_body),
             );
         } else {
             let model = json_value
@@ -149,6 +157,8 @@ pub async fn handle_non_streaming(
                 &ctx.request_model,
                 status.as_u16(),
                 false,
+                ctx.request_body.clone(),
+                Some(response_body),
             );
             log::debug!(
                 "[{}] 未能解析 usage 信息，跳过记录",
@@ -169,6 +179,8 @@ pub async fn handle_non_streaming(
             &ctx.request_model,
             status.as_u16(),
             false,
+            ctx.request_body.clone(),
+            Some(response_body),
         );
     }
 
@@ -205,7 +217,31 @@ pub async fn process_response(
 // SSE 使用量收集器
 // ============================================================================
 
-type UsageCallbackWithTiming = Arc<dyn Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static>;
+// Callback type: extracted data, first_token_ms, latency_ms, response_body, combined_output
+type UsageCallbackWithTiming = Arc<dyn Fn(ExtractedStreamData, Option<u64>, u64, Option<String>, Option<String>) + Send + Sync + 'static>;
+
+/// Extracted data from SSE stream - replaces storing raw events
+#[derive(Default, Clone)]
+pub struct ExtractedStreamData {
+    /// Combined text from all delta events
+    pub text: String,
+    /// Message ID from response
+    pub message_id: Option<String>,
+    /// Stop reason (completion, length, etc.)
+    pub stop_reason: Option<String>,
+    /// Creation timestamp
+    pub created: Option<i64>,
+    /// Model name from response
+    pub model: Option<String>,
+    /// Input tokens (from message_start)
+    pub input_tokens: u32,
+    /// Output tokens (from message_delta)
+    pub output_tokens: u32,
+    /// Cache read tokens
+    pub cache_read_tokens: u32,
+    /// Cache creation tokens
+    pub cache_creation_tokens: u32,
+}
 
 /// SSE 使用量收集器
 #[derive(Clone)]
@@ -214,42 +250,309 @@ pub struct SseUsageCollector {
 }
 
 struct SseUsageCollectorInner {
-    events: Mutex<Vec<Value>>,
-    first_event_time: Mutex<Option<std::time::Instant>>,
+    data: Mutex<ExtractedStreamData>,
+    first_token_ms: Mutex<Option<u64>>,  // First token time in ms
     start_time: std::time::Instant,
     on_complete: UsageCallbackWithTiming,
     finished: AtomicBool,
+    response_body: Mutex<Option<String>>,  // Complete streaming response body
 }
 
+#[allow(dead_code)]
 impl SseUsageCollector {
+    /// Extract metadata from SSE events
+    fn extract_metadata_from_events(events: &[Value]) -> (Option<String>, Option<String>, Option<i64>) {
+        let mut message_id: Option<String> = None;
+        let mut stop_reason: Option<String> = None;
+        let mut created: Option<i64> = None;
+
+        for event in events {
+            let event_type = event.get("type").and_then(|t| t.as_str());
+
+            match event_type {
+                // Claude format
+                Some("message_start") => {
+                    if let Some(msg) = event.get("message") {
+                        if message_id.is_none() {
+                            message_id = msg.get("id").and_then(|v| v.as_str()).map(String::from);
+                        }
+                        if created.is_none() {
+                            created = msg.get("created").and_then(|v| v.as_i64());
+                        }
+                    }
+                }
+                Some("message_delta") => {
+                    if let Some(delta) = event.get("delta") {
+                        if stop_reason.is_none() {
+                            stop_reason = delta.get("stop_reason").and_then(|v| v.as_str()).map(String::from);
+                        }
+                    }
+                }
+                // OpenAI format
+                _ => {
+                    if message_id.is_none() {
+                        message_id = event.get("id").and_then(|v| v.as_str()).map(String::from);
+                    }
+                    if created.is_none() {
+                        created = event.get("created").and_then(|v| v.as_i64());
+                    }
+                    if stop_reason.is_none() {
+                        if let Some(choices) = event.get("choices").and_then(|c| c.as_array()) {
+                            if let Some(choice) = choices.first() {
+                                stop_reason = choice.get("finish_reason").and_then(|v| v.as_str()).map(String::from);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        (message_id, stop_reason, created)
+    }
+
+    /// Extract text content from SSE events
+    fn extract_text_from_events(events: &[Value]) -> String {
+        let mut combined_text = String::new();
+
+        for event in events {
+            // 1. Extract delta.text content (Claude format: content_block_delta)
+            if let Some(delta) = event.get("delta") {
+                // text_delta format
+                if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
+                    combined_text.push_str(text);
+                }
+                // thinking_delta format (MiniMax etc)
+                if let Some(thinking) = delta.get("thinking").and_then(|t| t.as_str()) {
+                    combined_text.push_str(thinking);
+                }
+                // input_json_delta format (tool use)
+                if let Some(partial_json) = delta.get("partial_json").and_then(|t| t.as_str()) {
+                    combined_text.push_str(partial_json);
+                }
+                // signature_delta format - skip, don't extract signature
+                if delta.get("signature").is_some() {
+                    // Skip signature
+                }
+                // Also check if delta itself is a string
+                if let Some(text) = delta.as_str() {
+                    combined_text.push_str(text);
+                }
+            }
+
+            // 2. Extract choices[0].delta.content (OpenAI format)
+            if let Some(choices) = event.get("choices").and_then(|c| c.as_array()) {
+                for choice in choices {
+                    if let Some(delta) = choice.get("delta") {
+                        if let Some(content) = delta.get("content").and_then(|t| t.as_str()) {
+                            combined_text.push_str(content);
+                        }
+                    }
+                }
+            }
+
+            // 3. Root-level text field
+            if let Some(text) = event.get("text").and_then(|t| t.as_str()) {
+                combined_text.push_str(text);
+            }
+
+            // 4. Text in content array
+            if let Some(content) = event.get("content").and_then(|c| c.as_array()) {
+                for item in content {
+                    if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                        combined_text.push_str(text);
+                    }
+                    // thinking content
+                    if let Some(thinking) = item.get("thinking").and_then(|t| t.as_str()) {
+                        combined_text.push_str(thinking);
+                    }
+                }
+            }
+
+            // 5. Extract content field directly from event (some formats)
+            if let Some(content) = event.get("content").and_then(|c| c.as_str()) {
+                combined_text.push_str(content);
+            }
+
+            // 6. Check message.content array (Claude message format)
+            if let Some(message) = event.get("message") {
+                if let Some(content) = message.get("content").and_then(|c| c.as_array()) {
+                    for item in content {
+                        if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                            combined_text.push_str(text);
+                        }
+                        if let Some(thinking) = item.get("thinking").and_then(|t| t.as_str()) {
+                            combined_text.push_str(thinking);
+                        }
+                    }
+                }
+            }
+        }
+
+        combined_text
+    }
+
+    /// Extract text content from SSE events and build final JSON response body
+    pub fn build_final_response_body(events: &[Value]) -> Option<String> {
+        let text = Self::extract_text_from_events(events);
+        if text.is_empty() {
+            return None;
+        }
+
+        // Build final JSON response body
+        let final_response = serde_json::json!({
+            "text": text,
+            "extracted": true,
+            "events_count": events.len()
+        });
+
+        serde_json::to_string(&final_response).ok()
+    }
+
     /// 创建新的使用量收集器
     pub fn new(
         start_time: std::time::Instant,
-        callback: impl Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static,
+        callback: impl Fn(ExtractedStreamData, Option<u64>, u64, Option<String>, Option<String>) + Send + Sync + 'static,
     ) -> Self {
         let on_complete: UsageCallbackWithTiming = Arc::new(callback);
         Self {
             inner: Arc::new(SseUsageCollectorInner {
-                events: Mutex::new(Vec::new()),
-                first_event_time: Mutex::new(None),
+                data: Mutex::new(ExtractedStreamData::default()),
+                first_token_ms: Mutex::new(None),
                 start_time,
                 on_complete,
                 finished: AtomicBool::new(false),
+                response_body: Mutex::new(None),
             }),
         }
     }
 
-    /// 推送 SSE 事件
+    /// Set complete streaming response body
+    pub async fn set_response_body(&self, body: String) {
+        let mut response_body = self.inner.response_body.lock().await;
+        *response_body = Some(body);
+    }
+
+    /// Push SSE event - extracts and stores data incrementally
     pub async fn push(&self, event: Value) {
-        // 记录首个事件时间
-        {
-            let mut first_time = self.inner.first_event_time.lock().await;
+        let elapsed_ms = self.inner.start_time.elapsed().as_millis() as u64;
+
+        // Extract and store data from event
+        let mut data = self.inner.data.lock().await;
+
+        // Record first token time (event with content)
+        // Check for: content_block_delta, thinking_delta, or OpenAI format (choices[0].delta.content)
+        let event_type = event.get("type").and_then(|t| t.as_str());
+        let is_content_event = event_type == Some("content_block_delta")
+            || event_type == Some("thinking_delta")
+            // OpenAI format: no type field, but has choices[0].delta.content
+            || (event_type.is_none()
+                && event
+                    .get("choices")
+                    .and_then(|c| c.as_array())
+                    .and_then(|c| c.first())
+                    .and_then(|c| c.get("delta"))
+                    .and_then(|d| d.get("content"))
+                    .is_some());
+        if is_content_event {
+            let mut first_time = self.inner.first_token_ms.lock().await;
             if first_time.is_none() {
-                *first_time = Some(std::time::Instant::now());
+                *first_time = Some(elapsed_ms);
             }
         }
-        let mut events = self.inner.events.lock().await;
-        events.push(event);
+
+        // Extract text delta
+        if let Some(delta) = event.get("delta") {
+            // text_delta format
+            if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
+                data.text.push_str(text);
+            }
+            // thinking_delta format (MiniMax etc)
+            if let Some(thinking) = delta.get("thinking").and_then(|t| t.as_str()) {
+                data.text.push_str(thinking);
+            }
+            // partial_json_delta format (tool use)
+            if let Some(partial_json) = delta.get("partial_json").and_then(|t| t.as_str()) {
+                data.text.push_str(partial_json);
+            }
+        }
+
+        // Extract metadata based on event type
+        match event_type {
+            // Claude format
+            Some("message_start") => {
+                if data.message_id.is_none() {
+                    data.message_id = event.get("message").and_then(|m| m.get("id")).and_then(|v| v.as_str()).map(String::from);
+                }
+                if data.created.is_none() {
+                    data.created = event.get("message").and_then(|m| m.get("created")).and_then(|v| v.as_i64());
+                }
+                // Extract model from message_start
+                if data.model.is_none() {
+                    data.model = event.get("message").and_then(|m| m.get("model")).and_then(|v| v.as_str()).map(String::from);
+                }
+                // Extract usage from message_start (Claude native format)
+                if let Some(usage) = event.get("message").and_then(|m| m.get("usage")) {
+                    if data.input_tokens == 0 {
+                        data.input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                    }
+                    if data.cache_read_tokens == 0 {
+                        data.cache_read_tokens = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                    }
+                    if data.cache_creation_tokens == 0 {
+                        data.cache_creation_tokens = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                    }
+                }
+            }
+            Some("content_block_start") => {
+                // Extract model from content_block_start
+                if data.model.is_none() {
+                    data.model = event.get("message").and_then(|m| m.get("model")).and_then(|v| v.as_str()).map(String::from);
+                }
+            }
+            Some("message_delta") => {
+                if data.stop_reason.is_none() {
+                    data.stop_reason = event.get("delta").and_then(|d| d.get("stop_reason")).and_then(|v| v.as_str()).map(String::from);
+                }
+                // Extract model from message_delta usage
+                if data.model.is_none() {
+                    data.model = event.get("usage").and_then(|u| u.get("model")).and_then(|v| v.as_str()).map(String::from);
+                }
+                // Extract usage from message_delta
+                if data.output_tokens == 0 {
+                    data.output_tokens = event.get("usage").and_then(|u| u.get("output_tokens")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                }
+            }
+            // OpenAI format
+            _ => {
+                if data.message_id.is_none() {
+                    data.message_id = event.get("id").and_then(|v| v.as_str()).map(String::from);
+                }
+                if data.created.is_none() {
+                    data.created = event.get("created").and_then(|v| v.as_i64());
+                }
+                if data.stop_reason.is_none() {
+                    if let Some(choices) = event.get("choices").and_then(|c| c.as_array()) {
+                        if let Some(choice) = choices.first() {
+                            data.stop_reason = choice.get("finish_reason").and_then(|v| v.as_str()).map(String::from);
+                        }
+                    }
+                }
+                // Extract usage from OpenAI format (usage field in the response)
+                if data.input_tokens == 0 {
+                    data.input_tokens = event.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                }
+                if data.output_tokens == 0 {
+                    data.output_tokens = event.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                }
+                if data.cache_read_tokens == 0 {
+                    data.cache_read_tokens = event.get("usage")
+                        .and_then(|u| u.get("prompt_tokens_details"))
+                        .and_then(|p| p.get("cached_tokens"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                }
+            }
+        }
     }
 
     /// 完成收集并触发回调
@@ -258,17 +561,42 @@ impl SseUsageCollector {
             return;
         }
 
-        let events = {
-            let mut guard = self.inner.events.lock().await;
+        let data = {
+            let mut guard = self.inner.data.lock().await;
             std::mem::take(&mut *guard)
         };
 
-        let first_token_ms = {
-            let first_time = self.inner.first_event_time.lock().await;
-            first_time.map(|t| (t - self.inner.start_time).as_millis() as u64)
-        };
+        // First token time (TTFT)
+        let first_token_ms = *self.inner.first_token_ms.lock().await;
 
-        (self.inner.on_complete)(events, first_token_ms);
+        // Total latency (for streaming, this is the end-to-end latency)
+        let latency_ms = self.inner.start_time.elapsed().as_millis() as u64;
+
+        // Streaming response body
+        let response_body = self.inner.response_body.lock().await.take();
+
+        // Build final JSON response body from extracted data
+        let combined_output = Self::build_final_response_body_from_data(&data);
+
+        // Pass: data, first_token_ms, latency_ms, response_body, combined_output
+        (self.inner.on_complete)(data, first_token_ms, latency_ms, response_body, combined_output);
+    }
+
+    /// Build final JSON response body from extracted stream data
+    fn build_final_response_body_from_data(data: &ExtractedStreamData) -> Option<String> {
+        if data.text.is_empty() {
+            return None;
+        }
+
+        let final_json = serde_json::json!({
+            "text": data.text,
+            "id": data.message_id,
+            "stop_reason": data.stop_reason,
+            "created": data.created,
+            "model": data.model,
+        });
+
+        serde_json::to_string(&final_json).ok()
     }
 }
 
@@ -276,12 +604,54 @@ impl SseUsageCollector {
 // 内部辅助函数
 // ============================================================================
 
+/// Build final response body from extracted stream data
+fn build_response_from_data(
+    data: &ExtractedStreamData,
+    fallback_response_body: Option<String>,
+    usage: Option<&TokenUsage>,
+    first_token_ms: Option<u64>,
+) -> Option<String> {
+    if data.text.is_empty() {
+        return fallback_response_body;
+    }
+
+    let final_json = if let Some(usage) = usage {
+        serde_json::json!({
+            "text": data.text,
+            "usage": {
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "cache_read_tokens": usage.cache_read_tokens,
+                "cache_creation_tokens": usage.cache_creation_tokens,
+            },
+            "id": data.message_id,
+            "stop_reason": data.stop_reason,
+            "created": data.created,
+            "model": usage.model.clone().unwrap_or_else(|| data.model.clone().unwrap_or_default()),
+            "first_token_ms": first_token_ms,
+        })
+    } else {
+        serde_json::json!({
+            "text": data.text,
+            "id": data.message_id,
+            "stop_reason": data.stop_reason,
+            "created": data.created,
+            "model": data.model,
+            "first_token_ms": first_token_ms,
+        })
+    };
+
+    serde_json::to_string(&final_json).ok().or(fallback_response_body)
+}
+
 /// 创建使用量收集器
 fn create_usage_collector(
     ctx: &RequestContext,
     state: &ProxyState,
     status_code: u16,
     parser_config: &UsageParserConfig,
+    request_body: Option<String>,
+    response_body: Option<String>,
 ) -> SseUsageCollector {
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
@@ -289,60 +659,68 @@ fn create_usage_collector(
     let app_type_str = parser_config.app_type_str;
     let tag = ctx.tag;
     let start_time = ctx.start_time;
-    let stream_parser = parser_config.stream_parser;
     let model_extractor = parser_config.model_extractor;
     let session_id = ctx.session_id.clone();
 
-    SseUsageCollector::new(start_time, move |events, first_token_ms| {
-        if let Some(usage) = stream_parser(&events) {
-            let model = model_extractor(&events, &request_model);
-            let latency_ms = start_time.elapsed().as_millis() as u64;
+    SseUsageCollector::new(start_time, move |data, first_token_ms, latency_ms, stream_response_body, _combined_output| {
+        // Get model from extracted data or use model_extractor with request_model as fallback
+        let model = data.model.clone().unwrap_or_else(|| model_extractor(&[], &request_model));
 
-            let state = state.clone();
-            let provider_id = provider_id.clone();
-            let session_id = session_id.clone();
-            let request_model = request_model.clone();
+        // Construct TokenUsage from extracted stream data
+        let usage = TokenUsage {
+            input_tokens: data.input_tokens,
+            output_tokens: data.output_tokens,
+            cache_read_tokens: data.cache_read_tokens,
+            cache_creation_tokens: data.cache_creation_tokens,
+            model: data.model.clone(),
+        };
 
-            tokio::spawn(async move {
-                log_usage_internal(
-                    &state,
-                    &provider_id,
-                    app_type_str,
-                    &model,
-                    &request_model,
-                    usage,
-                    latency_ms,
-                    first_token_ms,
-                    true, // is_streaming
-                    status_code,
-                    Some(session_id),
-                )
-                .await;
-            });
+        let has_usage = data.input_tokens > 0 || data.output_tokens > 0 || data.cache_read_tokens > 0 || data.cache_creation_tokens > 0;
+
+        // Build response body using helper function
+        let fallback_response_body = stream_response_body.or_else(|| response_body.clone());
+        let final_body = if has_usage {
+            build_response_from_data(
+                &data,
+                fallback_response_body,
+                Some(&usage),
+                first_token_ms,
+            )
         } else {
-            let model = model_extractor(&events, &request_model);
-            let latency_ms = start_time.elapsed().as_millis() as u64;
-            let state = state.clone();
-            let provider_id = provider_id.clone();
-            let session_id = session_id.clone();
-            let request_model = request_model.clone();
+            build_response_from_data(
+                &data,
+                fallback_response_body,
+                None,
+                first_token_ms,
+            )
+        };
 
-            tokio::spawn(async move {
-                log_usage_internal(
-                    &state,
-                    &provider_id,
-                    app_type_str,
-                    &model,
-                    &request_model,
-                    TokenUsage::default(),
-                    latency_ms,
-                    first_token_ms,
-                    true, // is_streaming
-                    status_code,
-                    Some(session_id),
-                )
-                .await;
-            });
+        let state = state.clone();
+        let provider_id = provider_id.clone();
+        let session_id = session_id.clone();
+        let request_model = request_model.clone();
+        let request_body = request_body.clone();
+
+        tokio::spawn(async move {
+            log_usage_internal(
+                &state,
+                &provider_id,
+                app_type_str,
+                &model,
+                &request_model,
+                usage,
+                latency_ms,
+                first_token_ms,
+                true, // is_streaming
+                status_code,
+                Some(session_id),
+                request_body,
+                final_body,
+            )
+            .await;
+        });
+
+        if !has_usage {
             log::debug!("[{tag}] 流式响应缺少 usage 统计，跳过消费记录");
         }
     })
@@ -357,6 +735,8 @@ fn spawn_log_usage(
     request_model: &str,
     status_code: u16,
     is_streaming: bool,
+    request_body: Option<String>,
+    response_body: Option<String>,
 ) {
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
@@ -375,10 +755,12 @@ fn spawn_log_usage(
             &request_model,
             usage,
             latency_ms,
-            None,
+            None, // first_token_ms
             is_streaming,
             status_code,
             Some(session_id),
+            request_body,
+            response_body,
         )
         .await;
     });
@@ -398,6 +780,8 @@ async fn log_usage_internal(
     is_streaming: bool,
     status_code: u16,
     session_id: Option<String>,
+    request_body: Option<String>,
+    response_body: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -434,8 +818,10 @@ async fn log_usage_internal(
         first_token_ms,
         status_code,
         session_id,
-        None, // provider_type
+        Some(app_type.to_string()), // provider_type
         is_streaming,
+        request_body,
+        response_body,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }
@@ -449,7 +835,10 @@ pub fn create_logged_passthrough_stream(
     timeout_config: StreamingTimeoutConfig,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
+        // Temporary buffer for parsing SSE events
         let mut buffer = String::new();
+        // Buffer for saving complete response body
+        let mut response_body_buffer = String::new();
         let mut collector = usage_collector;
         let mut is_first_chunk = true;
 
@@ -502,6 +891,9 @@ pub fn create_logged_passthrough_stream(
                     }
                     is_first_chunk = false;
                     let text = String::from_utf8_lossy(&bytes);
+                    // Append to complete response body buffer
+                    response_body_buffer.push_str(&text);
+                    // Also append to event parsing buffer
                     buffer.push_str(&text);
 
                     // 尝试解析并记录完整的 SSE 事件
@@ -534,11 +926,18 @@ pub fn create_logged_passthrough_stream(
                 }
                 Some(Err(e)) => {
                     log::error!("[{tag}] 流错误: {e}");
+                    // Set received response body even on error
+                    if let Some(ref c) = collector {
+                        c.set_response_body(response_body_buffer.clone()).await;
+                    }
                     yield Err(std::io::Error::other(e.to_string()));
                     break;
                 }
                 None => {
-                    // 流正常结束
+                    // Stream ended normally (stream.next() returned None), set response body to collector
+                    if let Some(ref c) = collector {
+                        c.set_response_body(response_body_buffer.clone()).await;
+                    }
                     break;
                 }
             }
@@ -655,10 +1054,12 @@ mod tests {
             "req-model",
             usage,
             10,
-            None,
+            None, // first_token_ms
             false,
             200,
             None,
+            None, // request_body
+            None, // response_body
         )
         .await;
 
@@ -714,10 +1115,12 @@ mod tests {
             "req-model",
             usage,
             10,
-            None,
+            None, // first_token_ms
             false,
             200,
             None,
+            None, // request_body
+            None, // response_body
         )
         .await;
 

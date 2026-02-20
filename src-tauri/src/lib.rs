@@ -989,6 +989,7 @@ pub fn run() {
             commands::get_model_stats,
             commands::get_request_logs,
             commands::get_request_detail,
+            commands::get_available_filters,
             commands::get_model_pricing,
             commands::update_model_pricing,
             commands::delete_model_pricing,

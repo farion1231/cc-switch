@@ -82,6 +82,13 @@ export const usageApi = {
     return invoke("get_request_detail", { requestId });
   },
 
+  getAvailableFilters: async (
+    startDate?: number,
+    endDate?: number,
+  ): Promise<{ providers: { id: string; name: string }[]; models: string[] }> => {
+    return invoke("get_available_filters", { startDate, endDate });
+  },
+
   getModelPricing: async (): Promise<ModelPricing[]> => {
     return invoke("get_model_pricing");
   },
