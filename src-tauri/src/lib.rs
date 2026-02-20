@@ -690,6 +690,11 @@ pub fn run() {
                 app_state.db.clone(),
                 app.handle().clone(),
             );
+            // 启动 Claude 插件文件监听服务
+            crate::services::plugin_watcher::start_watcher(
+                app_state.db.clone(),
+                app.handle().clone(),
+            );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
