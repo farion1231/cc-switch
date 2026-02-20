@@ -251,3 +251,23 @@ export function useDeleteModelPricing() {
     },
   });
 }
+
+export function useDeleteRequestLogsByDate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ startDate, endDate }: { startDate: number; endDate: number }) =>
+      usageApi.deleteRequestLogsByDate(startDate, endDate),
+    onSuccess: () => {
+      // Invalidate all log queries to refresh the list
+      queryClient.invalidateQueries({ queryKey: ["usage", "logs"] });
+    },
+  });
+}
+
+export function useCountRequestLogsByDate() {
+  return useMutation({
+    mutationFn: ({ startDate, endDate }: { startDate: number; endDate: number }) =>
+      usageApi.countRequestLogsByDate(startDate, endDate),
+  });
+}

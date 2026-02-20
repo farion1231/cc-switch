@@ -994,6 +994,8 @@ pub fn run() {
             commands::update_model_pricing,
             commands::delete_model_pricing,
             commands::check_provider_limits,
+            commands::delete_request_logs_by_date,
+            commands::count_request_logs_by_date,
             // Stream health check
             commands::stream_check_provider,
             commands::stream_check_all_providers,

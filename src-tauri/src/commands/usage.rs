@@ -176,6 +176,26 @@ pub fn delete_model_pricing(state: State<'_, AppState>, model_id: String) -> Res
     Ok(())
 }
 
+/// 按日期范围删除请求日志
+#[tauri::command]
+pub fn delete_request_logs_by_date(
+    state: State<'_, AppState>,
+    start_date: i64,
+    end_date: i64,
+) -> Result<u64, AppError> {
+    state.db.delete_request_logs_by_date(start_date, end_date)
+}
+
+/// 获取指定日期范围内的日志数量（用于删除前确认）
+#[tauri::command]
+pub fn count_request_logs_by_date(
+    state: State<'_, AppState>,
+    start_date: i64,
+    end_date: i64,
+) -> Result<u64, AppError> {
+    state.db.count_request_logs_by_date(start_date, end_date)
+}
+
 /// 模型定价信息
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

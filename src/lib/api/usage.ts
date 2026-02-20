@@ -121,4 +121,18 @@ export const usageApi = {
   ): Promise<ProviderLimitStatus> => {
     return invoke("check_provider_limits", { providerId, appType });
   },
+
+  deleteRequestLogsByDate: async (
+    startDate: number,
+    endDate: number,
+  ): Promise<number> => {
+    return invoke("delete_request_logs_by_date", { startDate, endDate });
+  },
+
+  countRequestLogsByDate: async (
+    startDate: number,
+    endDate: number,
+  ): Promise<number> => {
+    return invoke("count_request_logs_by_date", { startDate, endDate });
+  },
 };

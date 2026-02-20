@@ -1,9 +1,10 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAvailableFilters } from "@/lib/query/usage";
+import { useDeleteRequestLogsByDate, useCountRequestLogsByDate } from "@/lib/query/usage";
 import { usageApi } from "@/lib/api/usage";
 import type { LogFilters } from "@/types/usage";
-import { X, ChevronDown } from "lucide-react";
+import { X, ChevronDown, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -14,6 +15,8 @@ import {
 import { LogDetail } from "./LogDetail";
 import { fmtUsd } from "../usage/format";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { toast } from "sonner";
 
 interface LogListProps {
   startDate?: number;
@@ -53,6 +56,11 @@ export function LogList({ startDate, endDate, providerFilter, modelFilter, refre
   const [selectedModel, setSelectedModel] = useState(initialFilters.model);
   const [selectedProtocol, setSelectedProtocol] = useState(initialFilters.protocol);
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<"all" | "success" | "error">(initialFilters.status);
+
+  // Delete dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteDays, setDeleteDays] = useState<number | null>(null); // null means delete all
+  const [deleteCount, setDeleteCount] = useState<number>(0);
 
   // Protocol options list - only include provider types
   const PROTOCOL_OPTIONS = [
@@ -193,6 +201,28 @@ export function LogList({ startDate, endDate, providerFilter, modelFilter, refre
   // Get all available Provider and Model filter options for current time range
   const { data: availableFilters, isLoading: isFiltersLoading } = useAvailableFilters(startDate, endDate);
 
+  // Delete mutations
+  const deleteLogsMutation = useDeleteRequestLogsByDate();
+  const countLogsMutation = useCountRequestLogsByDate();
+
+  // Helper function to prepare delete (count logs first, then open confirm dialog)
+  const prepareDelete = (days: number | null) => {
+    const endDate = days === null
+      ? Math.floor(Date.now() / 1000)
+      : Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
+    const startDate = 0;
+    setDeleteDays(days);
+    countLogsMutation.mutate(
+      { startDate, endDate },
+      {
+        onSuccess: (count) => {
+          setDeleteCount(count);
+          setDeleteDialogOpen(true);
+        },
+      }
+    );
+  };
+
   // Get Provider and Model lists from available filter options
   const allProviders = useMemo((): ProviderInfo[] => {
     if (!availableFilters?.providers) return [];
@@ -215,6 +245,52 @@ export function LogList({ startDate, endDate, providerFilter, modelFilter, refre
     <div className="flex flex-col h-full">
       {/* Filter dropdowns - fixed */}
       <div className="flex flex-wrap items-center gap-2 shrink-0">
+        {/* Delete button with dropdown */}
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <Button variant="destructive" size="sm" className="h-8">
+              <Trash2 className="h-4 w-4 mr-1" />
+              {t("logs.delete")}
+              <ChevronDown className="ml-1 h-3 w-3" />
+            </Button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content className="min-w-[150px] bg-background rounded-md border shadow-md p-1">
+              <DropdownMenu.Item
+                className="cursor-pointer px-2 py-1.5 text-sm rounded hover:bg-accent"
+                onClick={() => prepareDelete(1)}
+              >
+                {t("logs.delete1Day")}
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="cursor-pointer px-2 py-1.5 text-sm rounded hover:bg-accent"
+                onClick={() => prepareDelete(7)}
+              >
+                {t("logs.delete7Days")}
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="cursor-pointer px-2 py-1.5 text-sm rounded hover:bg-accent"
+                onClick={() => prepareDelete(30)}
+              >
+                {t("logs.delete30Days")}
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="cursor-pointer px-2 py-1.5 text-sm rounded hover:bg-accent"
+                onClick={() => prepareDelete(90)}
+              >
+                {t("logs.delete90Days")}
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator className="h-px bg-border my-1" />
+              <DropdownMenu.Item
+                className="cursor-pointer px-2 py-1.5 text-sm rounded hover:bg-accent text-destructive"
+                onClick={() => prepareDelete(null)}
+              >
+                {t("logs.deleteAll")}
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
+
         {/* Filter group - using TabsList style */}
         <Tabs className="flex">
           <TabsList className="h-10 p-1 bg-card/60 border border-border/50 backdrop-blur-sm flex items-center">
@@ -487,6 +563,42 @@ export function LogList({ startDate, endDate, providerFilter, modelFilter, refre
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete confirm dialog */}
+      <ConfirmDialog
+        isOpen={deleteDialogOpen}
+        title={t("logs.deleteConfirmTitle")}
+        message={t("logs.deleteConfirmMessage", { count: deleteCount, days: deleteDays === null ? t("logs.all") : t("logs.daysAgo", { days: deleteDays }) })}
+        confirmText={t("logs.delete")}
+        cancelText={t("common.cancel")}
+        onConfirm={() => {
+          const endDate = deleteDays === null
+            ? Math.floor(Date.now() / 1000)
+            : Math.floor(Date.now() / 1000) - deleteDays * 24 * 60 * 60;
+          const startDate = 0;
+          deleteLogsMutation.mutate(
+            { startDate, endDate },
+            {
+              onSuccess: (deletedCount) => {
+                setDeleteDialogOpen(false);
+                // Trigger refresh with a small delay to ensure state is properly updated
+                setTimeout(() => {
+                  setRefreshCounter(c => c + 1);
+                }, 0);
+                toast.success(t("logs.deleteSuccess"));
+              },
+              onError: (error) => {
+                setDeleteDialogOpen(false);
+                toast.error(t("logs.deleteError") + ": " + String(error));
+              },
+            }
+          );
+        }}
+        onCancel={() => {
+          setDeleteDialogOpen(false);
+          setDeleteDays(null);
+        }}
+      />
     </div>
   );
 }

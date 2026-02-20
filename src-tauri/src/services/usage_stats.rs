@@ -490,7 +490,7 @@ impl Database {
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms,
-                    l.status_code, l.error_message, l.request_body, l.response_body, l.created_at
+                    l.status_code, l.error_message, l.created_at
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -527,9 +527,9 @@ impl Database {
                 first_token_ms: row.get::<_, Option<i64>>(18)?.map(|v| v as u64),
                 status_code: row.get::<_, i64>(19)? as u16,
                 error_message: row.get(20)?,
-                request_body: row.get(21)?,
-                response_body: row.get(22)?,
-                created_at: row.get(23)?,
+                request_body: None,
+                response_body: None,
+                created_at: row.get(21)?,
             })
         })?;
 
@@ -780,6 +780,44 @@ impl Database {
             monthly_limit: limit_monthly.map(|l| format!("{l:.2}")),
             monthly_exceeded,
         })
+    }
+
+    /// 按日期范围删除请求日志
+    pub fn delete_request_logs_by_date(
+        &self,
+        start_date: i64,
+        end_date: i64,
+    ) -> Result<u64, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let count = conn
+            .execute(
+                "DELETE FROM proxy_request_logs WHERE created_at >= ?1 AND created_at <= ?2",
+                params![start_date, end_date],
+            )
+            .map_err(|e| AppError::Database(format!("按日期删除请求日志失败: {e}")))?;
+
+        log::info!("已删除 {} 条请求日志 (start: {}, end: {})", count, start_date, end_date);
+        Ok(count as u64)
+    }
+
+    /// 获取指定日期范围内的日志数量
+    pub fn count_request_logs_by_date(
+        &self,
+        start_date: i64,
+        end_date: i64,
+    ) -> Result<u64, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE created_at >= ?1 AND created_at <= ?2",
+                params![start_date, end_date],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(format!("查询日志数量失败: {e}")))?;
+
+        Ok(count as u64)
     }
 }
 
