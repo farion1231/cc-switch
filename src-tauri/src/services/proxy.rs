@@ -830,7 +830,7 @@ impl ProxyService {
     ///
     /// 代理服务器的路由已经根据 API 端点自动区分应用类型：
     /// - `/v1/messages` → Claude
-    /// - `/v1/chat/completions`, `/v1/responses` → Codex
+    /// - `/v1/responses` → Codex
     /// - `/v1beta/*` → Gemini
     ///
     /// 因此不需要在 URL 中添加应用前缀。

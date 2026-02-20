@@ -43,7 +43,10 @@ import {
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
-import { applyTemplateValues } from "@/utils/providerConfigUtils";
+import {
+  applyTemplateValues,
+  setCodexWireApi,
+} from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
@@ -405,14 +408,13 @@ export function ProviderForm({
     onConfigChange: (config) => form.setValue("settingsConfig", config),
   });
 
-  const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
-    if (appId !== "claude") return "anthropic";
-    return initialData?.meta?.apiFormat ?? "anthropic";
-  });
-
-  const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
-    setLocalApiFormat(format);
-  }, []);
+  const [localClaudeApiFormat, setLocalClaudeApiFormat] =
+    useState<ClaudeApiFormat>(() => {
+      if (appId !== "claude") return "anthropic";
+      return initialData?.meta?.apiFormat === "openai_chat"
+        ? "openai_chat"
+        : "anthropic";
+    });
 
   const {
     codexAuth,
@@ -439,6 +441,10 @@ export function ProviderForm({
     },
     [originalHandleCodexConfigChange, debouncedValidate],
   );
+
+  const handleClaudeApiFormatChange = useCallback((format: ClaudeApiFormat) => {
+    setLocalClaudeApiFormat(format);
+  }, []);
 
   useEffect(() => {
     if (appId === "codex" && !initialData && selectedPresetId === "custom") {
@@ -1361,7 +1367,7 @@ export function ProviderForm({
         const authJson = JSON.parse(codexAuth);
         const configObj = {
           auth: authJson,
-          config: codexConfig ?? "",
+          config: setCodexWireApi(codexConfig ?? "", "responses"),
         };
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
@@ -1496,6 +1502,11 @@ export function ProviderForm({
       }
     }
 
+    const providerApiFormat =
+      appId === "claude" && category !== "official"
+        ? localClaudeApiFormat
+        : undefined;
+
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
     payload.meta = {
@@ -1510,10 +1521,7 @@ export function ProviderForm({
         pricingConfig.enabled && pricingConfig.pricingModelSource !== "inherit"
           ? pricingConfig.pricingModelSource
           : undefined,
-      apiFormat:
-        appId === "claude" && category !== "official"
-          ? localApiFormat
-          : undefined,
+      apiFormat: providerApiFormat,
     };
 
     onSubmit(payload);
@@ -1768,9 +1776,9 @@ export function ProviderForm({
     );
 
     if (preset.apiFormat) {
-      setLocalApiFormat(preset.apiFormat);
+      setLocalClaudeApiFormat(preset.apiFormat);
     } else {
-      setLocalApiFormat("anthropic");
+      setLocalClaudeApiFormat("anthropic");
     }
 
     form.reset({
@@ -1953,8 +1961,8 @@ export function ProviderForm({
             defaultOpusModel={defaultOpusModel}
             onModelChange={handleModelChange}
             speedTestEndpoints={speedTestEndpoints}
-            apiFormat={localApiFormat}
-            onApiFormatChange={handleApiFormatChange}
+            apiFormat={localClaudeApiFormat}
+            onApiFormatChange={handleClaudeApiFormatChange}
           />
         )}
 

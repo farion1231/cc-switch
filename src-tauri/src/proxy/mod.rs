@@ -24,6 +24,8 @@ pub mod session;
 pub mod thinking_budget_rectifier;
 pub mod thinking_rectifier;
 pub(crate) mod types;
+pub mod url_builder;
+pub(crate) mod url_utils;
 pub mod usage;
 
 // 公开导出给外部使用（commands, services等模块需要）

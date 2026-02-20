@@ -407,3 +407,43 @@ pub async fn get_circuit_breaker_stats(
     let _ = (state, provider_id, app_type);
     Ok(None)
 }
+
+// ==================== URL 预览相关命令 ====================
+
+use crate::app_config::AppType;
+use crate::proxy::url_builder::{self, UrlPreview};
+
+/// 构建 URL 预览
+///
+/// 根据 app_type、base_url 和 api_format 计算直连和代理模式的请求地址。
+/// 这个命令与后端代理的 URL 构建逻辑保持一致。
+#[tauri::command]
+pub fn build_url_preview(
+    app_type: String,
+    base_url: String,
+    api_format: Option<String>,
+) -> Result<UrlPreview, String> {
+    let app = app_type.parse::<AppType>().map_err(|e| e.to_string())?;
+    Ok(url_builder::build_url_preview(
+        &app,
+        &base_url,
+        api_format.as_deref(),
+    ))
+}
+
+/// 检查是否需要代理
+///
+/// 返回需要代理的原因（openai_chat_format, full_url, url_mismatch），
+/// 或 null 表示不需要代理。
+#[tauri::command]
+pub fn check_proxy_requirement(
+    app_type: String,
+    base_url: String,
+    api_format: Option<String>,
+) -> Result<Option<String>, String> {
+    let app = app_type.parse::<AppType>().map_err(|e| e.to_string())?;
+    Ok(
+        url_builder::check_proxy_requirement(&app, &base_url, api_format.as_deref())
+            .map(|s| s.to_string()),
+    )
+}

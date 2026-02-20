@@ -167,6 +167,14 @@
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
     "openAIChatFormatHint": "このプロバイダーは OpenAI Chat フォーマットを使用しており、プロキシサービスの有効化が必要です",
+    "openAIChatFormatRequiresProxy": "このプロバイダーは OpenAI Chat フォーマットを使用しており、フォーマット変換のためにプロキシサービスが必要です。先にプロキシを有効にして、現在のアプリをテイクオーバーしてください。",
+    "fullUrlRequiresProxy": "このプロバイダーは完全な API パスで構成されています。直接接続モードではクライアントがパスを重複追加する可能性があります。先にプロキシを有効にして、現在のアプリをテイクオーバーしてください。",
+    "urlMismatchRequiresProxy": "このプロバイダーのリクエスト URL 設定が API フォーマットと一致しません。直接接続モードでは正常に動作しません。先にプロキシを有効にして、現在のアプリをテイクオーバーしてください。",
+    "fullUrlWarningOnDisable": "現在のプロバイダーは完全な API パスまたは特殊なフォーマットで構成されています。プロキシを無効にすると正常に動作しない可能性があります。ベース URL 設定に変更するか、プロキシを有効のままにすることをお勧めします。",
+    "openAIChatFormatWarningOnDisable": "現在のプロバイダーは OpenAI Chat フォーマットを使用しています。プロキシを無効にすると正常に動作しない可能性があります。プロキシを有効のままにすることをお勧めします。",
+    "urlMismatchWarningOnDisable": "現在のプロバイダーのリクエスト URL 設定はプロキシに依存している可能性があります。プロキシを無効にすると正常に動作しない可能性があります。ベース URL 設定に変更するか、プロキシを有効のままにすることをお勧めします。",
+    "switchAppliedUnverified": "切り替えを適用しました（直接接続は未検証）",
+    "switchAppliedUnverifiedDesc": "このエンドポイントがプロキシを必要とするか検証できませんでした。切り替え後に動作しない場合は、プロキシを有効にして現在のアプリをテイクオーバーしてください。",
     "openLinkFailed": "リンクを開けませんでした",
     "openclawModelsRegistered": "モデルが /model リストに登録されました",
     "openclawDefaultModelSet": "デフォルトモデルに設定しました",
@@ -594,6 +602,12 @@
     "apiHint": "💡 Claude API 互換サービスのエンドポイントを入力してください。末尾にスラッシュを付けないでください",
     "apiHintOAI": "💡 OpenAI Chat Completions 互換サービスのエンドポイントを入力してください。末尾にスラッシュを付けないでください",
     "codexApiHint": "💡 OpenAI Response 互換のサービスエンドポイントを入力してください",
+    "directRequestUrl": "CLI 直接リクエスト URL：",
+    "directRequestUrlDesc": "CLI がデフォルトサフィックスを追加した後の実際のリクエスト URL",
+    "proxyRequestUrl": "CCS プロキシリクエスト URL：",
+    "proxyRequestUrlDesc": "CCS がスマートパス検出後にアップストリームへ転送する URL",
+    "fullUrlWarningTitle": "完全な API パスを検出",
+    "fullUrlWarning": "URL には完全な API パスが含まれています。この設定はプロキシモードでのみ有効です。直接接続モードではベース URL のみを入力してください。",
     "fillSupplierName": "プロバイダー名を入力してください",
     "fillConfigContent": "設定内容を入力してください",
     "fillParameter": "{{label}} を入力してください",
@@ -1486,6 +1500,10 @@
     }
   },
   "proxy": {
+    "takeover": {
+      "toggleFailed": "テイクオーバーの切り替えに失敗しました",
+      "toggleFailedDesc": "プロキシサービスの状態と権限を確認して、もう一度お試しください。"
+    },
     "panel": {
       "serviceAddress": "サービスアドレス",
       "addressCopied": "アドレスをコピーしました",

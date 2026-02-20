@@ -167,6 +167,14 @@
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings: {{error}}",
     "openAIChatFormatHint": "This provider uses OpenAI Chat format and requires the proxy service to be enabled",
+    "openAIChatFormatRequiresProxy": "This provider uses OpenAI Chat format and requires the proxy service for format conversion. Please enable the proxy and takeover the current app first.",
+    "fullUrlRequiresProxy": "This provider is configured with a full API path. The client may append duplicate paths in direct connection mode. Please enable the proxy and takeover the current app first.",
+    "urlMismatchRequiresProxy": "This provider's request URL configuration does not match the API format. It cannot work properly in direct connection mode. Please enable the proxy and takeover the current app first.",
+    "fullUrlWarningOnDisable": "The current provider is configured with a full API path or special format. It may not work properly after disabling the proxy. Consider switching to a base URL configuration or keep the proxy enabled.",
+    "openAIChatFormatWarningOnDisable": "The current provider uses OpenAI Chat format. It may not work properly after disabling the proxy. Consider keeping the proxy enabled.",
+    "urlMismatchWarningOnDisable": "The current provider's request URL configuration may rely on the proxy. It may not work properly after disabling the proxy. Consider switching to a base URL configuration or keep the proxy enabled.",
+    "switchAppliedUnverified": "Switch applied (direct mode not verified)",
+    "switchAppliedUnverifiedDesc": "Unable to verify whether this endpoint requires the proxy. If it doesn't work after switching, enable the proxy and takeover the current app.",
     "openLinkFailed": "Failed to open link",
     "openclawModelsRegistered": "Models have been registered to /model list",
     "openclawDefaultModelSet": "Set as default model",
@@ -594,6 +602,12 @@
     "apiHint": "💡 Fill in Claude API compatible service endpoint, avoid trailing slash",
     "apiHintOAI": "💡 Fill in OpenAI Chat Completions compatible service endpoint, avoid trailing slash",
     "codexApiHint": "💡 Fill in service endpoint compatible with OpenAI Response format",
+    "directRequestUrl": "CLI Direct Request URL:",
+    "directRequestUrlDesc": "Actual request URL after CLI appends default suffix",
+    "proxyRequestUrl": "CCS Proxy Request URL:",
+    "proxyRequestUrlDesc": "URL forwarded to upstream after CCS smart path detection",
+    "fullUrlWarningTitle": "Full API path detected",
+    "fullUrlWarning": "The URL contains a full API path. This configuration only works in proxy mode. For direct connection mode, please enter only the base URL.",
     "fillSupplierName": "Please fill in provider name",
     "fillConfigContent": "Please fill in configuration content",
     "fillParameter": "Please fill in {{label}}",
@@ -1488,6 +1502,10 @@
     }
   },
   "proxy": {
+    "takeover": {
+      "toggleFailed": "Failed to toggle takeover",
+      "toggleFailedDesc": "Check proxy service status and permissions, then try again."
+    },
     "panel": {
       "serviceAddress": "Service Address",
       "addressCopied": "Address copied",

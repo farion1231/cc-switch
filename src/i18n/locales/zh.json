@@ -167,6 +167,14 @@
     "settingsSaved": "设置已保存",
     "settingsSaveFailed": "保存设置失败：{{error}}",
     "openAIChatFormatHint": "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用",
+    "openAIChatFormatRequiresProxy": "此供应商使用 OpenAI Chat 格式，需要开启代理服务进行格式转换才能正常使用。请先开启代理并接管当前应用。",
+    "fullUrlRequiresProxy": "此供应商配置了完整 API 路径，直连模式下客户端可能会重复追加路径。请先开启代理并接管当前应用。",
+    "urlMismatchRequiresProxy": "此供应商的请求地址配置与 API 格式不匹配，直连模式下无法正常工作。请先开启代理并接管当前应用。",
+    "fullUrlWarningOnDisable": "当前供应商配置了完整 API 路径或特殊格式，关闭代理后可能无法正常工作。建议更换为基础地址配置或保持代理开启。",
+    "openAIChatFormatWarningOnDisable": "当前供应商使用 OpenAI Chat 格式，关闭代理后可能无法正常工作。建议保持代理开启。",
+    "urlMismatchWarningOnDisable": "当前供应商的请求地址配置可能依赖代理模式，关闭代理后可能无法正常工作。建议更换为基础地址配置或保持代理开启。",
+    "switchAppliedUnverified": "切换已应用（未验证直连兼容性）",
+    "switchAppliedUnverifiedDesc": "未能验证该端点是否需要代理。如果切换后无法正常使用，请开启代理并接管当前应用。",
     "openLinkFailed": "链接打开失败",
     "openclawModelsRegistered": "模型已注册到 /model 列表",
     "openclawDefaultModelSet": "已设为默认模型",
@@ -594,6 +602,12 @@
     "apiHint": "💡 填写兼容 Claude API 的服务端点地址，不要以斜杠结尾",
     "apiHintOAI": "💡 填写兼容 OpenAI Chat Completions 的服务端点地址，不要以斜杠结尾",
     "codexApiHint": "💡 填写兼容 OpenAI Response 格式的服务端点地址",
+    "directRequestUrl": "CLI 直连请求地址：",
+    "directRequestUrlDesc": "CLI 硬拼接默认后缀后的实际请求地址",
+    "proxyRequestUrl": "CCS 代理请求地址：",
+    "proxyRequestUrlDesc": "CCS 智能拼接后转发到上游的地址",
+    "fullUrlWarningTitle": "检测到完整 API 路径",
+    "fullUrlWarning": "填写了包含 API 路径的完整地址，此配置仅在代理模式下生效。直连模式下请只填写基础地址。",
     "fillSupplierName": "请填写供应商名称",
     "fillConfigContent": "请填写配置内容",
     "fillParameter": "请填写 {{label}}",
@@ -1488,6 +1502,10 @@
     }
   },
   "proxy": {
+    "takeover": {
+      "toggleFailed": "切换接管状态失败",
+      "toggleFailedDesc": "请检查代理服务状态与权限，然后重试。"
+    },
     "panel": {
       "serviceAddress": "服务地址",
       "addressCopied": "地址已复制",

@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
+import { proxyApi } from "@/lib/api/proxy";
 import type {
   Provider,
   UsageScript,
@@ -17,13 +18,25 @@ import {
   useSwitchProviderMutation,
 } from "@/lib/query";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { extractProviderBaseUrl } from "@/utils/providerBaseUrl";
 import { openclawKeys } from "@/hooks/useOpenClaw";
+
+interface UseProviderActionsOptions {
+  /** 代理服务是否正在运行 */
+  isProxyRunning?: boolean;
+  /** 当前应用的代理接管是否激活 */
+  isTakeoverActive?: boolean;
+}
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
  * Extracts business logic from App.tsx
  */
-export function useProviderActions(activeApp: AppId) {
+export function useProviderActions(
+  activeApp: AppId,
+  options: UseProviderActionsOptions = {},
+) {
+  const { isProxyRunning = false, isTakeoverActive = false } = options;
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
@@ -133,30 +146,11 @@ export function useProviderActions(activeApp: AppId) {
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
-      try {
-        await switchProviderMutation.mutateAsync(provider.id);
-        await syncClaudePlugin(provider);
-
-        // 根据供应商类型显示不同的成功提示
-        if (
-          activeApp === "claude" &&
-          provider.category !== "official" &&
-          provider.meta?.apiFormat === "openai_chat"
-        ) {
-          // OpenAI Chat 格式供应商：显示代理提示
-          toast.info(
-            t("notifications.openAIChatFormatHint", {
-              defaultValue:
-                "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用",
-            }),
-            {
-              duration: 5000,
-              closeButton: true,
-            },
-          );
-        } else {
-          // 普通供应商：显示切换成功
-          // OpenCode/OpenClaw: show "added to config" message instead of "switched"
+      // 官方供应商不需要检查
+      if (provider.category === "official") {
+        try {
+          await switchProviderMutation.mutateAsync(provider.id);
+          await syncClaudePlugin(provider);
           const isMultiProviderApp =
             activeApp === "opencode" || activeApp === "openclaw";
           const messageKey = isMultiProviderApp
@@ -165,7 +159,94 @@ export function useProviderActions(activeApp: AppId) {
           const defaultMessage = isMultiProviderApp
             ? "已添加到配置"
             : "切换成功！";
+          toast.success(
+            t(messageKey, { defaultValue: defaultMessage }),
+            {
+              closeButton: true,
+            },
+          );
+        } catch {
+          // 错误提示由 mutation 处理
+        }
+        return;
+      }
 
+      // 提取 base URL 和 API 格式
+      const baseUrl = extractProviderBaseUrl(provider, activeApp);
+      const apiFormat = provider.meta?.apiFormat;
+
+      // 调用后端 API 检查是否需要代理（统一由后端控制）
+      let proxyRequirement: string | null = null;
+      let proxyRequirementCheckFailed = false;
+      if (baseUrl || apiFormat) {
+        try {
+          proxyRequirement = await proxyApi.checkProxyRequirement(
+            activeApp,
+            baseUrl || "",
+            apiFormat,
+          );
+        } catch (error) {
+          console.error("Failed to check proxy requirement:", error);
+          proxyRequirementCheckFailed = true;
+        }
+      }
+
+      // 如果需要代理但代理未激活，阻止切换并提示
+      if (proxyRequirement && !(isProxyRunning && isTakeoverActive)) {
+        let message: string;
+
+        if (proxyRequirement === "openai_chat_format") {
+          message = t("notifications.openAIChatFormatRequiresProxy", {
+            defaultValue:
+              "此供应商使用 OpenAI Chat 格式，需要开启代理服务进行格式转换才能正常使用。请先开启代理并接管当前应用。",
+          });
+        } else if (proxyRequirement === "full_url") {
+          // 用户填了全链接（如 /v1/messages 结尾）
+          message = t("notifications.fullUrlRequiresProxy", {
+            defaultValue:
+              "此供应商配置了完整 API 路径，直连模式下客户端可能会重复追加路径。请先开启代理并接管当前应用。",
+          });
+        } else {
+          // url_mismatch: 直连地址和代理地址不匹配
+          message = t("notifications.urlMismatchRequiresProxy", {
+            defaultValue:
+              "此供应商的请求地址配置与 API 格式不匹配，直连模式下无法正常工作。请先开启代理并接管当前应用。",
+          });
+        }
+
+        toast.warning(message, {
+          duration: 6000,
+          closeButton: true,
+        });
+        return; // 阻止切换
+      }
+
+      try {
+        await switchProviderMutation.mutateAsync(provider.id);
+        await syncClaudePlugin(provider);
+
+        const isMultiProviderApp =
+          activeApp === "opencode" || activeApp === "openclaw";
+        const messageKey = isMultiProviderApp
+          ? "notifications.addToConfigSuccess"
+          : "notifications.switchSuccess";
+        const defaultMessage = isMultiProviderApp ? "已添加到配置" : "切换成功！";
+
+        if (proxyRequirementCheckFailed && baseUrl) {
+          toast.success(
+            t("notifications.switchAppliedUnverified", {
+              defaultValue: "切换已应用（未验证直连兼容性）",
+            }),
+            {
+              description: t("notifications.switchAppliedUnverifiedDesc", {
+                defaultValue:
+                  "未能验证该端点是否需要代理。如果切换后无法正常使用，请开启代理并接管当前应用。",
+              }),
+              closeButton: true,
+              duration: 6000,
+            },
+          );
+        } else {
           toast.success(t(messageKey, { defaultValue: defaultMessage }), {
             closeButton: true,
           });
@@ -174,7 +255,14 @@ export function useProviderActions(activeApp: AppId) {
         // 错误提示由 mutation 处理
       }
     },
-    [switchProviderMutation, syncClaudePlugin, activeApp, t],
+    [
+      switchProviderMutation,
+      syncClaudePlugin,
+      activeApp,
+      t,
+      isProxyRunning,
+      isTakeoverActive,
+    ],
   );
 
   // 删除供应商
