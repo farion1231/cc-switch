@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { AppWindow, MonitorUp, Power, EyeOff } from "lucide-react";
 import { ToggleRow } from "@/components/ui/toggle-row";
+import { PluginList } from "@/components/plugins/PluginList";
 
 interface WindowSettingsProps {
   settings: SettingsFormState;
@@ -44,6 +45,12 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
             onChange({ enableClaudePluginIntegration: value })
           }
         />
+
+        {settings.enableClaudePluginIntegration && (
+          <div className="mt-3">
+            <PluginList />
+          </div>
+        )}
 
         <ToggleRow
           icon={<MonitorUp className="h-4 w-4 text-cyan-500" />}
