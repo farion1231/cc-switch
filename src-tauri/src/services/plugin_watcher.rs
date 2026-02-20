@@ -25,7 +25,10 @@ struct InstalledPluginEntry {
     scope: String,
     #[serde(rename = "installPath")]
     install_path: String,
-    version: String,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(rename = "gitCommitSha", default)]
+    git_commit_sha: Option<String>,
 }
 
 /// 从 JSON 字符串同步插件到数据库（纯函数，便于测试）
@@ -46,10 +49,12 @@ pub fn sync_plugins_from_json(json: &str, db: &Arc<Database>) -> Result<(), AppE
     for (plugin_id, entries) in &installed.plugins {
         if let Some(entry) = entries.first() {
             new_ids.insert(plugin_id.clone());
+            let version = entry.version.as_deref()
+                .or(entry.git_commit_sha.as_deref());
             db.upsert_plugin_state(
                 plugin_id,
                 &entry.install_path,
-                Some(&entry.version),
+                version,
                 &entry.scope,
             )?;
         }
@@ -193,5 +198,20 @@ mod tests {
             &db,
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_sync_entry_with_only_git_commit_sha() {
+        let db = Arc::new(Database::memory().unwrap());
+        let json = r#"{
+            "version": 2,
+            "plugins": {
+                "foo@bar": [{"scope":"user","installPath":"/tmp/foo","gitCommitSha":"deadbeef","installedAt":"2026-01-01T00:00:00Z","lastUpdated":"2026-01-01T00:00:00Z"}]
+            }
+        }"#;
+        sync_plugins_from_json(json, &db).unwrap();
+        let states = db.get_all_plugin_states().unwrap();
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].version.as_deref(), Some("deadbeef"));
     }
 }
