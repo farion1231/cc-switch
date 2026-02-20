@@ -337,6 +337,29 @@ fn schema_migration_v4_adds_pricing_model_columns() {
 }
 
 #[test]
+fn schema_migration_v5_adds_plugin_states_table() {
+    let db = Database::memory().unwrap();
+    {
+        let conn = db.conn.lock().unwrap();
+        // 删除 plugin_states 表，模拟 v5 数据库状态
+        conn.execute("DROP TABLE IF EXISTS plugin_states", []).unwrap();
+        Database::set_user_version(&conn, 5).unwrap();
+    }
+    // 重新运行迁移
+    db.apply_schema_migrations().unwrap();
+    {
+        let conn = db.conn.lock().unwrap();
+        // 验证表已创建
+        assert!(
+            Database::table_exists(&conn, "plugin_states").unwrap(),
+            "plugin_states table should exist after v5->v6 migration"
+        );
+        // 验证版本为 6
+        assert_eq!(Database::get_user_version(&conn).unwrap(), 6);
+    }
+}
+
+#[test]
 fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
