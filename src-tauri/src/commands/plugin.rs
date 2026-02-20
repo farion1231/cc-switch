@@ -66,10 +66,14 @@ pub async fn set_plugin_enabled(
     enabled: bool,
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<bool, String> {
-    state
+    let updated = state
         .db
         .set_plugin_enabled(&plugin_id, enabled)
         .map_err(|e| e.to_string())?;
+
+    if !updated {
+        return Err(format!("Plugin not found: {plugin_id}"));
+    }
 
     // 检查是否已开启 Claude 插件集成，若是则重写 config.json
     let settings = crate::settings::get_settings();
