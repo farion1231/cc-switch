@@ -31,7 +31,7 @@ use serde_json::Value;
 ///         // 从 provider 配置中提取认证信息
 ///     }
 ///     
-///     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
+///     fn build_url(&self, base_url: &str, endpoint: &str, provider: &Provider) -> String {
 ///         format!("{}{}", base_url.trim_end_matches('/'), endpoint)
 ///     }
 ///     
@@ -69,10 +69,11 @@ pub trait ProviderAdapter: Send + Sync {
     /// # Arguments
     /// * `base_url` - 基础 URL
     /// * `endpoint` - 请求端点（如 `/v1/messages`）
+    /// * `provider` - Provider 配置（用于根据 api_format 等设置调整 URL）
     ///
     /// # Returns
     /// 完整的请求 URL
-    fn build_url(&self, base_url: &str, endpoint: &str) -> String;
+    fn build_url(&self, base_url: &str, endpoint: &str, provider: &Provider) -> String;
 
     /// 添加认证头到请求
     ///
