@@ -49,19 +49,22 @@ fn is_managed_config(content: &str) -> bool {
     }
 }
 
-pub fn write_claude_config() -> Result<bool, AppError> {
-    // 增量写入：仅设置 primaryApiKey = "any"，保留其它字段
-    let path = claude_config_path()?;
-    ensure_claude_dir_exists()?;
-
-    // 尝试读取并解析为对象
-    let mut obj = match read_claude_config()? {
+fn load_existing_config_obj() -> Result<serde_json::Value, AppError> {
+    Ok(match read_claude_config()? {
         Some(existing) => match serde_json::from_str::<serde_json::Value>(&existing) {
             Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
             _ => serde_json::json!({}),
         },
         None => serde_json::json!({}),
-    };
+    })
+}
+
+pub fn write_claude_config() -> Result<bool, AppError> {
+    // 增量写入：仅设置 primaryApiKey = "any"，保留其它字段
+    let path = claude_config_path()?;
+    ensure_claude_dir_exists()?;
+
+    let mut obj = load_existing_config_obj()?;
 
     let mut changed = false;
     if let Some(map) = obj.as_object_mut() {
@@ -129,15 +132,11 @@ pub fn write_claude_config_with_db(db: &Arc<Database>) -> Result<bool, AppError>
     let path = claude_config_path()?;
     ensure_claude_dir_exists()?;
 
-    let mut obj = match read_claude_config()? {
-        Some(existing) => match serde_json::from_str::<serde_json::Value>(&existing) {
-            Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
-            _ => serde_json::json!({}),
-        },
-        None => serde_json::json!({}),
-    };
+    let mut obj = load_existing_config_obj()?;
 
-    let map = obj.as_object_mut().unwrap();
+    let map = obj
+        .as_object_mut()
+        .ok_or_else(|| AppError::Config("config.json root is not a JSON object".to_string()))?;
 
     // 写入 primaryApiKey
     map.insert(
@@ -146,7 +145,7 @@ pub fn write_claude_config_with_db(db: &Arc<Database>) -> Result<bool, AppError>
     );
 
     // 写入 enabledPlugins
-    let plugins_map = db.get_enabled_plugins_map().unwrap_or_default();
+    let plugins_map = db.get_enabled_plugins_map()?;
     let plugins_json: serde_json::Map<String, serde_json::Value> = plugins_map
         .into_iter()
         .map(|(k, v)| (k, serde_json::Value::Bool(v)))
@@ -193,6 +192,7 @@ mod tests {
         let val: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(val["primaryApiKey"], "any");
         assert_eq!(val["enabledPlugins"]["p@r"], true);
+        std::env::remove_var("CC_SWITCH_TEST_HOME");
     }
 
     #[test]
@@ -203,6 +203,7 @@ mod tests {
         let content = read_claude_config().unwrap().unwrap();
         let val: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(val["enabledPlugins"], serde_json::json!({}));
+        std::env::remove_var("CC_SWITCH_TEST_HOME");
     }
 
     #[test]
@@ -217,5 +218,6 @@ mod tests {
         let val: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(val["skipDangerousModePermissionPrompt"], true);
         assert_eq!(val["primaryApiKey"], "any");
+        std::env::remove_var("CC_SWITCH_TEST_HOME");
     }
 }
