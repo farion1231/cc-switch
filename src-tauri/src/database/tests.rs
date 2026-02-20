@@ -633,3 +633,18 @@ fn schema_model_pricing_is_seeded_on_init() {
         gemini_count
     );
 }
+
+#[test]
+fn test_plugin_states_table_exists_after_init() {
+    let db = Database::memory().unwrap();
+    let conn = db.conn.lock().unwrap();
+    assert!(Database::table_exists(&conn, "plugin_states").unwrap());
+}
+
+#[test]
+fn test_schema_version_is_6() {
+    let db = Database::memory().unwrap();
+    let conn = db.conn.lock().unwrap();
+    let version = Database::get_user_version(&conn).unwrap();
+    assert_eq!(version, 6);
+}

@@ -232,6 +232,21 @@ impl Database {
 
         // 注意：circuit_breaker_config 已合并到 proxy_config 表中
 
+        // 13. Plugin States 表（Claude 插件启用状态）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS plugin_states (
+                plugin_id    TEXT PRIMARY KEY,
+                enabled      BOOLEAN NOT NULL DEFAULT 1,
+                install_path TEXT NOT NULL DEFAULT '',
+                scope        TEXT NOT NULL DEFAULT 'user',
+                version      TEXT,
+                created_at   DATETIME DEFAULT (datetime('now')),
+                updated_at   DATETIME DEFAULT (datetime('now'))
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 16. Proxy Live Backup 表 (Live 配置备份)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS proxy_live_backup (
@@ -359,6 +374,11 @@ impl Database {
                         log::info!("迁移数据库从 v4 到 v5（计费模式支持）");
                         Self::migrate_v4_to_v5(conn)?;
                         Self::set_user_version(conn, 5)?;
+                    }
+                    5 => {
+                        log::info!("迁移数据库从 v5 到 v6（Claude 插件状态表）");
+                        Self::migrate_v5_to_v6(conn)?;
+                        Self::set_user_version(conn, 6)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -911,6 +931,26 @@ impl Database {
         }
 
         log::info!("v4 -> v5 迁移完成：已添加计费模式与请求模型字段");
+        Ok(())
+    }
+
+    /// v5 -> v6 迁移：添加 Claude 插件状态表
+    fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS plugin_states (
+                plugin_id    TEXT PRIMARY KEY,
+                enabled      BOOLEAN NOT NULL DEFAULT 1,
+                install_path TEXT NOT NULL DEFAULT '',
+                scope        TEXT NOT NULL DEFAULT 'user',
+                version      TEXT,
+                created_at   DATETIME DEFAULT (datetime('now')),
+                updated_at   DATETIME DEFAULT (datetime('now'))
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 plugin_states 表失败: {e}")))?;
+
+        log::info!("v5 -> v6 迁移完成：已添加 plugin_states 表");
         Ok(())
     }
 
