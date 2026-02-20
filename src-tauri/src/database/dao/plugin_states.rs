@@ -2,6 +2,7 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+use indexmap::IndexMap;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
@@ -92,7 +93,7 @@ impl Database {
     /// 获取 enabledPlugins map（用于写入 config.json）
     pub fn get_enabled_plugins_map(
         &self,
-    ) -> Result<std::collections::HashMap<String, bool>, AppError> {
+    ) -> Result<IndexMap<String, bool>, AppError> {
         let states = self.get_all_plugin_states()?;
         let map = states
             .into_iter()
