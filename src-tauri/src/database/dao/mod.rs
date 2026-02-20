@@ -5,6 +5,7 @@
 pub mod failover;
 pub mod mcp;
 pub mod omo;
+pub mod plugin_states;
 pub mod prompts;
 pub mod providers;
 pub mod proxy;
@@ -17,3 +18,4 @@ pub mod universal_providers;
 // 导出 FailoverQueueItem 供外部使用
 pub use failover::FailoverQueueItem;
 pub use omo::OmoGlobalConfig;
+pub use plugin_states::PluginState;

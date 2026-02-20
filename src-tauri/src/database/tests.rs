@@ -671,3 +671,45 @@ fn test_schema_version_is_6() {
     let version = Database::get_user_version(&conn).unwrap();
     assert_eq!(version, 6);
 }
+
+#[test]
+fn test_upsert_new_plugin_defaults_enabled() {
+    let db = Database::memory().unwrap();
+    db.upsert_plugin_state("superpowers@superpowers-marketplace", "/some/path", Some("4.3.0"), "user").unwrap();
+    let states = db.get_all_plugin_states().unwrap();
+    assert_eq!(states.len(), 1);
+    assert!(states[0].enabled);
+    assert_eq!(states[0].plugin_id, "superpowers@superpowers-marketplace");
+}
+
+#[test]
+fn test_upsert_existing_plugin_preserves_enabled_false() {
+    let db = Database::memory().unwrap();
+    db.upsert_plugin_state("foo@bar", "/path", None, "user").unwrap();
+    db.set_plugin_enabled("foo@bar", false).unwrap();
+    // Re-upsert (simulating re-install) should NOT reset enabled
+    db.upsert_plugin_state("foo@bar", "/path/new", Some("2.0"), "user").unwrap();
+    let states = db.get_all_plugin_states().unwrap();
+    assert!(!states[0].enabled); // preserved
+}
+
+#[test]
+fn test_set_plugin_enabled_toggle() {
+    let db = Database::memory().unwrap();
+    db.upsert_plugin_state("p@r", "/p", None, "user").unwrap();
+    db.set_plugin_enabled("p@r", false).unwrap();
+    let states = db.get_all_plugin_states().unwrap();
+    assert!(!states[0].enabled);
+    db.set_plugin_enabled("p@r", true).unwrap();
+    let states = db.get_all_plugin_states().unwrap();
+    assert!(states[0].enabled);
+}
+
+#[test]
+fn test_remove_plugin_state() {
+    let db = Database::memory().unwrap();
+    db.upsert_plugin_state("x@y", "/x", None, "user").unwrap();
+    db.remove_plugin_state("x@y").unwrap();
+    let states = db.get_all_plugin_states().unwrap();
+    assert!(states.is_empty());
+}
