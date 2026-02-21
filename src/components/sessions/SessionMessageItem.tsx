@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { SessionMessage } from "@/types";
 import { formatTimestamp, getRoleLabel, getRoleTone } from "./utils";
+import { MarkdownContent } from "./MarkdownContent";
 
 interface SessionMessageItemProps {
   message: SessionMessage;
@@ -17,6 +18,7 @@ interface SessionMessageItemProps {
   isActive: boolean;
   setRef: (el: HTMLDivElement | null) => void;
   onCopy: (content: string) => void;
+  renderMarkdown: boolean;
 }
 
 export function SessionMessageItem({
@@ -24,6 +26,7 @@ export function SessionMessageItem({
   isActive,
   setRef,
   onCopy,
+  renderMarkdown,
 }: SessionMessageItemProps) {
   const { t } = useTranslation();
 
@@ -31,11 +34,11 @@ export function SessionMessageItem({
     <div
       ref={setRef}
       className={cn(
-        "rounded-lg border px-3 py-2.5 relative group transition-all",
+        "rounded-lg border px-3 py-2.5 relative group transition-all min-w-0",
         message.role.toLowerCase() === "user"
-          ? "bg-primary/5 border-primary/20 ml-8"
+          ? "bg-primary/5 border-primary/20 ml-4"
           : message.role.toLowerCase() === "assistant"
-            ? "bg-blue-500/5 border-blue-500/20 mr-8"
+            ? "bg-blue-500/5 border-blue-500/20 mr-4"
             : "bg-muted/40 border-border/60",
         isActive && "ring-2 ring-primary ring-offset-2",
       )}
@@ -67,9 +70,13 @@ export function SessionMessageItem({
           </span>
         )}
       </div>
-      <div className="whitespace-pre-wrap text-sm leading-relaxed">
-        {message.content}
-      </div>
+      {renderMarkdown ? (
+        <MarkdownContent content={message.content} />
+      ) : (
+        <div className="whitespace-pre-wrap text-sm leading-relaxed break-words w-0 min-w-full overflow-x-auto">
+          {message.content}
+        </div>
+      )}
     </div>
   );
 }

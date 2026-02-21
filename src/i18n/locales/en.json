@@ -37,8 +37,7 @@
     "search": "Search",
     "reset": "Reset",
     "actions": "Actions",
-    "deleting": "Deleting...",
-    "auto": "Auto"
+    "deleting": "Deleting..."
   },
   "apiKeyInput": {
     "placeholder": "Enter API Key",
@@ -174,31 +173,19 @@
     "openclawModelsRegistered": "Models have been registered to /model list",
     "openclawDefaultModelSet": "Set as default model",
     "openclawDefaultModelSetFailed": "Failed to set default model",
-    "openclawNoModels": "No models configured",
-    "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider"
+    "openclawNoModels": "No models configured"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
     "deleteProviderMessage": "Are you sure you want to delete provider \"{{name}}\"? This action cannot be undone.",
     "removeProvider": "Remove Provider",
-    "removeProviderMessage": "Are you sure you want to remove provider \"{{name}}\" from the configuration?\n\nAfter removal, this provider will no longer be active, but the configuration data will be retained in CC Switch. You can re-add it at any time.",
-    "proxy": {
-      "title": "Enable Local Proxy",
-      "message": "Local proxy is an advanced feature. Please make sure you understand how it works before enabling.\n\nWe recommend consulting the relevant documentation or your provider for proper configuration.",
-      "confirm": "I understand, enable"
-    },
-    "usage": {
-      "title": "Configure Usage Query",
-      "message": "Usage query requires a custom script or API parameters. Please make sure you have obtained the necessary information from your provider.\n\nIf unsure how to configure, please consult your provider's documentation first.",
-      "confirm": "I understand, configure"
-    }
+    "removeProviderMessage": "Are you sure you want to remove provider \"{{name}}\" from the configuration?\n\nAfter removal, this provider will no longer be active, but the configuration data will be retained in CC Switch. You can re-add it at any time."
   },
   "settings": {
     "title": "Settings",
     "general": "General",
     "tabGeneral": "General",
     "tabAdvanced": "Advanced",
-    "tabProxy": "Proxy",
     "advanced": {
       "configDir": {
         "title": "Configuration Directory",
@@ -230,15 +217,7 @@
       },
       "data": {
         "title": "Data Management",
-        "description": "Import and export local configuration data"
-      },
-      "backup": {
-        "title": "Backup & Restore",
-        "description": "Manage automatic backups, view and restore database snapshots"
-      },
-      "cloudSync": {
-        "title": "Cloud Sync",
-        "description": "Sync data across devices via WebDAV"
+        "description": "Import/export configurations and backup/restore"
       },
       "rectifier": {
         "title": "Rectifier",
@@ -300,37 +279,6 @@
     "selectFileFailed": "Please choose a valid SQL backup file",
     "configCorrupted": "SQL file may be corrupted or invalid",
     "backupId": "Backup ID",
-    "backupManager": {
-      "title": "Database Backups",
-      "description": "Automatic database snapshots for restoring to a previous state",
-      "empty": "No backups yet",
-      "restore": "Restore",
-      "restoring": "Restoring...",
-      "confirmTitle": "Confirm Restore",
-      "confirmMessage": "Restoring this backup will overwrite the current database. A safety backup will be created first.",
-      "restoreSuccess": "Restore successful! Safety backup created",
-      "restoreFailed": "Restore failed",
-      "safetyBackupId": "Safety Backup ID",
-      "intervalLabel": "Auto-backup Interval",
-      "retainLabel": "Backup Retention",
-      "intervalDisabled": "Disabled",
-      "intervalHours": "{{hours}} hours",
-      "intervalDays": "{{days}} days",
-      "rename": "Rename",
-      "renameSuccess": "Backup renamed",
-      "renameFailed": "Rename failed",
-      "namePlaceholder": "Enter new name",
-      "createBackup": "Backup Now",
-      "creating": "Backing up...",
-      "createSuccess": "Backup created successfully",
-      "createFailed": "Backup failed",
-      "delete": "Delete",
-      "deleting": "Deleting...",
-      "deleteSuccess": "Backup deleted",
-      "deleteFailed": "Delete failed",
-      "deleteConfirmTitle": "Confirm Delete",
-      "deleteConfirmMessage": "This backup will be permanently deleted. This action cannot be undone."
-    },
     "webdavSync": {
       "title": "WebDAV Cloud Sync",
       "description": "Sync database and skill configurations across devices via WebDAV.",
@@ -504,14 +452,6 @@
     "oneClickInstall": "One-click Install",
     "oneClickInstallHint": "Install Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "Local environment check",
-    "envBadge": {
-      "wsl": "WSL",
-      "windows": "Win",
-      "macos": "macOS",
-      "linux": "Linux"
-    },
-    "wslShell": "Shell",
-    "wslShellFlag": "Flag",
     "installCommandsCopied": "Install commands copied",
     "installCommandsCopyFailed": "Copy failed, please copy manually.",
     "importFailedError": "Import config failed: {{message}}",
@@ -561,7 +501,7 @@
   },
   "sessionManager": {
     "title": "Session Manager",
-    "subtitle": "Manage Claude Code, Codex, OpenCode, OpenClaw and Gemini CLI sessions",
+    "subtitle": "Manage Codex and Claude Code sessions",
     "searchPlaceholder": "Search by content, directory, or ID",
     "searchSessions": "Search sessions",
     "providerFilterAll": "All",
@@ -596,7 +536,9 @@
     "daysAgo": "{{count}} days ago",
     "roleUser": "User",
     "roleSystem": "System",
-    "roleTool": "Tool"
+    "roleTool": "Tool",
+    "showRawText": "Raw Text",
+    "showMarkdown": "Markdown"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
@@ -647,10 +589,7 @@
       "cubence": "Cubence is an official partner of CC Switch. Register using this link and enter \"CCSWITCH\" promo code during recharge to get 10% off every top-up",
       "aigocode": "AIGoCode is an official partner of CC Switch. Register using this link and get 10% bonus credit on your first top-up!",
       "rightcode": "RightCode is an official partner of CC Switch. Register using this link and get 5% bonus credit on every top-up!",
-      "aicodemirror": "AICodeMirror is an official partner of CC Switch. Register using this link to get 20% off!",
-      "aicoding": "AI Coding offers an exclusive discount for CC Switch users — 10% off your first top-up!",
-      "crazyrouter": "CrazyRouter offers an exclusive bonus for CC Switch users — 30% extra credit on your first top-up!",
-      "sssaicode": "SSAI Code offers an exclusive bonus for CC Switch users — $10 extra credit on every top-up!"
+      "aicodemirror": "AICodeMirror is an official partner of CC Switch. Register using this link to get 20% off!"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
@@ -812,6 +751,86 @@
     "noModelOptions": "Model options, click + to add",
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+  },
+  "openclaw": {
+    "providerKey": "Provider Key",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "Unique identifier in config file. Cannot be changed after creation. Use lowercase letters, numbers, and hyphens only.",
+    "providerKeyRequired": "Provider key is required",
+    "providerKeyDuplicate": "This key is already in use",
+    "providerKeyInvalid": "Invalid format. Use lowercase letters, numbers, and hyphens only.",
+    "apiProtocol": "API Protocol",
+    "selectProtocol": "Select API Protocol",
+    "apiProtocolHint": "Select the protocol type compatible with the provider's API. Most providers use OpenAI Completions format.",
+    "baseUrl": "API Endpoint",
+    "baseUrlHint": "The provider's API endpoint address.",
+    "models": "Models",
+    "addModel": "Add Model",
+    "noModels": "No models configured. Click Add Model to configure available models.",
+    "modelId": "Model ID",
+    "modelIdPlaceholder": "claude-3-sonnet",
+    "modelName": "Display Name",
+    "modelNamePlaceholder": "Claude 3 Sonnet",
+    "contextWindow": "Context Window",
+    "maxTokens": "Max Output Tokens",
+    "reasoning": "Reasoning Mode",
+    "reasoningOn": "Enabled",
+    "reasoningOff": "Disabled",
+    "inputCost": "Input Cost ($/M tokens)",
+    "outputCost": "Output Cost ($/M tokens)",
+    "advancedOptions": "Advanced Options",
+    "cacheReadCost": "Cache Read Cost ($/M tokens)",
+    "cacheWriteCost": "Cache Write Cost ($/M tokens)",
+    "cacheCostHint": "Cache costs are used to calculate Prompt Caching costs. Leave empty if not using caching.",
+    "modelsHint": "Configure the models supported by this provider. Model ID is used for API calls, Display Name for the interface.",
+    "env": {
+      "title": "Environment Variables",
+      "description": "Manage environment variables in openclaw.json (API keys, custom variables, etc.)",
+      "keyPlaceholder": "Variable name",
+      "valuePlaceholder": "Value",
+      "add": "Add Variable",
+      "saveSuccess": "Environment variables saved",
+      "saveFailed": "Failed to save environment variables",
+      "loadFailed": "Failed to load environment variables",
+      "duplicateKey": "Duplicate variable name detected: {{key}}"
+    },
+    "tools": {
+      "title": "Tool Permissions",
+      "description": "Manage tool permissions in openclaw.json (allow/deny lists)",
+      "profile": "Permission Profile",
+      "profiles": {
+        "default": "Default",
+        "strict": "Strict",
+        "permissive": "Permissive",
+        "custom": "Custom"
+      },
+      "allowList": "Allow List",
+      "denyList": "Deny List",
+      "patternPlaceholder": "Tool name or pattern",
+      "addAllow": "Add Allow",
+      "addDeny": "Add Deny",
+      "saveSuccess": "Tool permissions saved",
+      "saveFailed": "Failed to save tool permissions",
+      "loadFailed": "Failed to load tool permissions"
+    },
+    "agents": {
+      "title": "Agents Config",
+      "description": "Manage agents.defaults in openclaw.json (default model, runtime parameters, etc.)",
+      "modelSection": "Model Configuration",
+      "primaryModel": "Primary Model",
+      "primaryModelHint": "Set via the \"Set as Default Model\" button in the provider list",
+      "notSet": "Not set",
+      "fallbackModels": "Fallback Models",
+      "fallbackModelsHint": "Comma-separated, ordered by priority",
+      "runtimeSection": "Runtime Parameters",
+      "workspace": "Workspace Path",
+      "timeout": "Timeout (seconds)",
+      "contextTokens": "Context Tokens",
+      "maxConcurrent": "Max Concurrent",
+      "saveSuccess": "Agents config saved",
+      "saveFailed": "Failed to save agents config",
+      "loadFailed": "Failed to load agents config"
+    }
   },
   "providerPreset": {
     "label": "Provider Preset",
@@ -1200,107 +1219,19 @@
     "saveSuccess": "Saved successfully",
     "saveFailed": "Failed to save",
     "loadFailed": "Failed to load",
-    "openDirectory": "Open in file manager",
     "dailyMemory": {
       "title": "Daily Memory",
       "sectionTitle": "Daily Memory",
       "cardTitle": "Daily Memory Files",
       "cardDescription": "Browse & manage daily memories",
-      "createToday": "Add Memory",
+      "createToday": "Today's Note",
       "empty": "No daily memory files yet",
       "loadFailed": "Failed to load daily memory files",
       "createFailed": "Failed to create daily memory file",
       "deleteSuccess": "Daily memory file deleted",
       "deleteFailed": "Failed to delete daily memory file",
       "confirmDeleteTitle": "Delete Daily Memory",
-      "confirmDeleteMessage": "Delete the daily memory for {{date}}? This cannot be undone.",
-      "searchPlaceholder": "Search full content...",
-      "searchScopeHint": "Full-text search across all daily memories. ⌘F",
-      "searchCloseHint": "Esc to close",
-      "noSearchResults": "No daily memories match your search.",
-      "searching": "Searching...",
-      "searchFailed": "Search failed",
-      "matchCount": "{{count}} match(es)"
-    }
-  },
-  "openclaw": {
-    "providerKey": "Provider Key",
-    "providerKeyPlaceholder": "my-provider",
-    "providerKeyHint": "Unique identifier in config file. Cannot be changed after creation. Use lowercase letters, numbers, and hyphens only.",
-    "providerKeyRequired": "Provider key is required",
-    "providerKeyDuplicate": "This key is already in use",
-    "providerKeyInvalid": "Invalid format. Use lowercase letters, numbers, and hyphens only.",
-    "apiProtocol": "API Protocol",
-    "selectProtocol": "Select API Protocol",
-    "apiProtocolHint": "Select the protocol type compatible with the provider's API. Most providers use OpenAI Completions format.",
-    "baseUrl": "API Endpoint",
-    "baseUrlHint": "The provider's API endpoint address.",
-    "models": "Models",
-    "addModel": "Add Model",
-    "noModels": "No models configured. Click Add Model to configure available models.",
-    "modelId": "Model ID",
-    "modelIdPlaceholder": "claude-3-sonnet",
-    "modelName": "Display Name",
-    "modelNamePlaceholder": "Claude 3 Sonnet",
-    "contextWindow": "Context Window",
-    "maxTokens": "Max Output Tokens",
-    "reasoning": "Reasoning Mode",
-    "reasoningOn": "Enabled",
-    "reasoningOff": "Disabled",
-    "inputCost": "Input Cost ($/M tokens)",
-    "outputCost": "Output Cost ($/M tokens)",
-    "advancedOptions": "Advanced Options",
-    "cacheReadCost": "Cache Read Cost ($/M tokens)",
-    "cacheWriteCost": "Cache Write Cost ($/M tokens)",
-    "cacheCostHint": "Cache costs are used to calculate Prompt Caching costs. Leave empty if not using caching.",
-    "modelsHint": "Configure the models supported by this provider. Model ID is used for API calls, Display Name for the interface.",
-    "env": {
-      "title": "Environment Variables",
-      "description": "Manage environment variables in openclaw.json (API keys, custom variables, etc.)",
-      "keyPlaceholder": "Variable name",
-      "valuePlaceholder": "Value",
-      "add": "Add Variable",
-      "saveSuccess": "Environment variables saved",
-      "saveFailed": "Failed to save environment variables",
-      "loadFailed": "Failed to load environment variables",
-      "duplicateKey": "Duplicate variable name detected: {{key}}"
-    },
-    "tools": {
-      "title": "Tool Permissions",
-      "description": "Manage tool permissions in openclaw.json (allow/deny lists)",
-      "profile": "Permission Profile",
-      "profiles": {
-        "default": "Default",
-        "strict": "Strict",
-        "permissive": "Permissive",
-        "custom": "Custom"
-      },
-      "allowList": "Allow List",
-      "denyList": "Deny List",
-      "patternPlaceholder": "Tool name or pattern",
-      "addAllow": "Add Allow",
-      "addDeny": "Add Deny",
-      "saveSuccess": "Tool permissions saved",
-      "saveFailed": "Failed to save tool permissions",
-      "loadFailed": "Failed to load tool permissions"
-    },
-    "agents": {
-      "title": "Agents Config",
-      "description": "Manage agents.defaults in openclaw.json (default model, runtime parameters, etc.)",
-      "modelSection": "Model Configuration",
-      "primaryModel": "Primary Model",
-      "primaryModelHint": "Set via the \"Set as Default Model\" button in the provider list",
-      "notSet": "Not set",
-      "fallbackModels": "Fallback Models",
-      "fallbackModelsHint": "Comma-separated, ordered by priority",
-      "runtimeSection": "Runtime Parameters",
-      "workspace": "Workspace Path",
-      "timeout": "Timeout (seconds)",
-      "contextTokens": "Context Tokens",
-      "maxConcurrent": "Max Concurrent",
-      "saveSuccess": "Agents config saved",
-      "saveFailed": "Failed to save agents config",
-      "loadFailed": "Failed to load agents config"
+      "confirmDeleteMessage": "Delete the daily memory for {{date}}? This cannot be undone."
     }
   },
   "env": {
@@ -1582,7 +1513,7 @@
       "currentProvider": "Current Provider:",
       "waitingFirstRequest": "Current Provider: Waiting for first request...",
       "stoppedTitle": "Proxy Service Stopped",
-      "stoppedDescription": "Use the toggle above to start the service",
+      "stoppedDescription": "Use the toggle in the top right to start the service",
       "openSettings": "Configure Proxy Service",
       "stats": {
         "activeConnections": "Active Connections",
@@ -1673,12 +1604,6 @@
       "restartRequired": "Restart proxy service for address or port changes to take effect"
     },
     "switchFailed": "Switch failed: {{error}}",
-    "takeover": {
-      "hint": "Select apps to take over — once enabled, requests from that app will be routed through the local proxy",
-      "enabled": "{{app}} takeover enabled",
-      "disabled": "{{app}} takeover disabled",
-      "failed": "Failed to toggle takeover"
-    },
     "failover": {
       "proxyRequired": "Proxy service must be started to configure failover",
       "autoSwitch": "Auto Failover",
@@ -1846,6 +1771,10 @@
     "enabled": "Enabled",
     "disabled": "OMO disabled",
     "disableFailed": "Failed to disable OMO: {{error}}",
+    "writeCommonConfig": "Write to common config",
+    "editCommonConfig": "Edit common config",
+    "editCommonConfigTitle": "Common Config",
+    "commonConfigHint": "OMO common config will be merged into all OMO configs that enable it",
     "selectPlaceholder": "Select...",
     "clear": "Clear",
     "clearWrapped": "(Clear)",
@@ -1875,10 +1804,6 @@
     "customCategories": "Custom Categories",
     "modelConfiguration": "Model Configuration",
     "fillRecommended": "Fill Recommended",
-    "fillRecommendedSuccess": "Filled {{count}} recommended models",
-    "fillRecommendedPartial": "Filled {{filled}} recommended models, {{unmatched}} unmatched",
-    "fillRecommendedAllSet": "All slots already have models configured",
-    "fillRecommendedNoMatch": "Recommended models not found in configured providers",
     "configSummary": "{{agents}} agents, {{categories}} categories configured · Click ⚙ for advanced params",
     "enabledModelsCount": "{{count}} configured models available",
     "source": "from:",
