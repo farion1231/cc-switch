@@ -156,6 +156,7 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 **コア機能**
 
 - **プロバイダ管理**：Claude Code、Codex、Gemini の API 設定をワンクリックで切り替え
+- **AWS Bedrock 対応**：AWS Bedrock プロバイダプリセットを内蔵、AKSK および API Key 認証に対応、クロスリージョン推論（global/us/eu/apac）をサポート、Claude Code と OpenCode に対応
 - **速度テスト**：エンドポイント遅延を計測し、品質を可視化
 - **インポート/エクスポート**：設定をバックアップ・復元（最新 10 件を自動ローテーション）
 - **多言語対応**：UI/エラー/トレイを含む中国語・英語・日本語ローカライズ

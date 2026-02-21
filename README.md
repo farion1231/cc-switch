@@ -156,6 +156,7 @@ Claude Code / Codex / Gemini official channels at 38% / 2% / 9% of original pric
 **Core Capabilities**
 
 - **Provider Management**: One-click switching between Claude Code, Codex, and Gemini API configurations
+- **AWS Bedrock Support**: Built-in AWS Bedrock provider presets with AKSK and API Key authentication, cross-region inference support (global/us/eu/apac), covering Claude Code and OpenCode
 - **Speed Testing**: Measure API endpoint latency with visual quality indicators
 - **Import/Export**: Backup and restore configs with auto-rotation (keep 10 most recent)
 - **i18n Support**: Complete Chinese/English localization (UI, errors, tray)
