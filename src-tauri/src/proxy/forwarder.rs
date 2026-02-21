@@ -7,7 +7,7 @@ use super::{
     error::*,
     failover_switch::FailoverSwitchManager,
     provider_router::ProviderRouter,
-    providers::{get_adapter, ProviderAdapter, ProviderType},
+    providers::{get_adapter, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType},
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
@@ -15,10 +15,13 @@ use super::{
     types::{ProxyStatus, RectifierConfig},
     ProxyError,
 };
+use crate::commands::CopilotAuthState;
+use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::{app_config::AppType, provider::Provider};
 use reqwest::Response;
 use serde_json::Value;
 use std::sync::Arc;
+use tauri::Manager;
 use tokio::sync::RwLock;
 
 /// Headers 黑名单 - 不透传到上游的 Headers
@@ -749,9 +752,16 @@ impl RequestForwarder {
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
 
+        // 确定有效端点
+        // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
+        let is_copilot = base_url.contains("githubcopilot.com");
         let effective_endpoint =
             if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
-                "/v1/chat/completions"
+                if is_copilot {
+                    "/chat/completions"
+                } else {
+                    "/v1/chat/completions"
+                }
             } else {
                 endpoint
             };
@@ -841,7 +851,32 @@ impl RequestForwarder {
         request = request.header("accept-encoding", "identity");
 
         // 使用适配器添加认证头
-        if let Some(auth) = adapter.extract_auth(provider) {
+        if let Some(mut auth) = adapter.extract_auth(provider) {
+            // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
+            if auth.strategy == AuthStrategy::GitHubCopilot {
+                if let Some(app_handle) = &self.app_handle {
+                    let copilot_state = app_handle.state::<CopilotAuthState>();
+                    let copilot_auth: tokio::sync::RwLockReadGuard<'_, CopilotAuthManager> =
+                        copilot_state.0.read().await;
+                    match copilot_auth.get_valid_token().await {
+                        Ok(token) => {
+                            auth = AuthInfo::new(token, AuthStrategy::GitHubCopilot);
+                            log::debug!("[Copilot] 成功获取 Copilot token");
+                        }
+                        Err(e) => {
+                            log::error!("[Copilot] 获取 Copilot token 失败: {e}");
+                            return Err(ProxyError::AuthError(format!(
+                                "GitHub Copilot 认证失败: {e}"
+                            )));
+                        }
+                    }
+                } else {
+                    log::error!("[Copilot] AppHandle 不可用");
+                    return Err(ProxyError::AuthError(
+                        "GitHub Copilot 认证不可用（无 AppHandle）".to_string(),
+                    ));
+                }
+            }
             request = adapter.add_auth_headers(request, &auth);
         }
 

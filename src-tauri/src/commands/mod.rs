@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 mod config;
+mod copilot;
 mod deeplink;
 mod env;
 mod failover;
@@ -24,6 +25,7 @@ mod webdav_sync;
 mod workspace;
 
 pub use config::*;
+pub use copilot::*;
 pub use deeplink::*;
 pub use env::*;
 pub use failover::*;

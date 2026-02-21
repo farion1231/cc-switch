@@ -12,6 +12,7 @@ export { useSpeedTestEndpoints } from "./useSpeedTestEndpoints";
 export { useCodexTomlValidation } from "./useCodexTomlValidation";
 export { useGeminiConfigState } from "./useGeminiConfigState";
 export { useGeminiCommonConfig } from "./useGeminiCommonConfig";
+export { useCopilotAuth } from "./useCopilotAuth";
 export { useOmoModelSource } from "./useOmoModelSource";
 export { useOpencodeFormState } from "./useOpencodeFormState";
 export { useOmoDraftState } from "./useOmoDraftState";
