@@ -67,8 +67,8 @@ export function LogDetail({ requestId }: LogDetailProps) {
 
   // Cache hit rate: cache_read_tokens / (input + output + cache_read) * 100%
   const totalTokens = log.inputTokens + log.outputTokens + (log.cacheReadTokens || 0);
-  const cacheHitRate = totalTokens > 0 && log.cacheReadTokens
-    ? ((log.cacheReadTokens / totalTokens) * 100).toFixed(1)
+  const cacheHitRate = totalTokens > 0
+    ? ((log.cacheReadTokens || 0) / totalTokens * 100).toFixed(1)
     : null;
 
   // Protocol/app type display
