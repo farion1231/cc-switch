@@ -550,6 +550,44 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       modelCatalog: { "xiaomimimo/mimo-v2-flash": { alias: "MiMo" } },
     },
   },
+  {
+    name: "OpenCode Zen",
+    websiteUrl: "https://opencode.ai/docs/",
+    apiKeyUrl: "https://opencode.ai/docs/",
+    settingsConfig: {
+      baseUrl: "https://opencode.ai/zen/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "glm-5",
+          name: "GLM 5",
+          contextWindow: 128000,
+          cost: { input: 0.001, output: 0.001 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "opencode",
+    iconColor: "#211E1E",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://opencode.ai/zen/v1",
+        defaultValue: "https://opencode.ai/zen/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "opencode-zen/glm-5" },
+      modelCatalog: { "opencode-zen/glm-5": { alias: "OpenCode" } },
+    },
+  },
 
   // ========== Aggregators ==========
   {
