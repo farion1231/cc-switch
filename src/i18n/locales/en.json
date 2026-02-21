@@ -635,6 +635,7 @@
     "authenticated": "Authenticated as {{username}}",
     "notAuthenticated": "Not authenticated",
     "loginWithGitHub": "Login with GitHub",
+    "loginRequired": "Please login to GitHub Copilot first",
     "waitingForAuth": "Waiting for authorization...",
     "enterCode": "Please enter the code in your browser:",
     "logout": "Logout",

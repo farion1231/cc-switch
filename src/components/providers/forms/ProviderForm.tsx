@@ -77,6 +77,7 @@ import {
   useOpencodeFormState,
   useOmoDraftState,
   useOpenclawFormState,
+  useCopilotAuth,
 } from "./hooks";
 import { useOmoGlobalConfig, useOmoSlimGlobalConfig } from "@/lib/query/omo";
 import {
@@ -284,6 +285,9 @@ export function ProviderForm({
   const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
     setLocalApiFormat(format);
   }, []);
+
+  // Copilot OAuth 认证状态（仅 Claude 应用需要）
+  const { isAuthenticated: isCopilotAuthenticated } = useCopilotAuth();
 
   const {
     codexAuth,
@@ -611,6 +615,17 @@ export function ProviderForm({
       templatePreset?.providerType === "github_copilot" ||
       initialData?.meta?.providerType === "github_copilot" ||
       baseUrl.includes("githubcopilot.com");
+
+    // GitHub Copilot 必须先登录才能添加
+    if (isCopilotProvider && !isCopilotAuthenticated) {
+      toast.error(
+        t("copilot.loginRequired", {
+          defaultValue: "请先登录 GitHub Copilot",
+        }),
+      );
+      return;
+    }
+
     if (category !== "official") {
       if (appId === "claude") {
         if (!baseUrl.trim()) {
@@ -1264,6 +1279,7 @@ export function ProviderForm({
               initialData?.meta?.providerType === "github_copilot" ||
               baseUrl.includes("githubcopilot.com")
             }
+            isCopilotAuthenticated={isCopilotAuthenticated}
             templateValueEntries={templateValueEntries}
             templateValues={templateValues}
             templatePresetName={templatePreset?.name || ""}

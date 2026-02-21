@@ -45,6 +45,7 @@ interface ClaudeFormFieldsProps {
 
   // GitHub Copilot OAuth
   isCopilotPreset?: boolean;
+  isCopilotAuthenticated?: boolean;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -98,6 +99,7 @@ export function ClaudeFormFields({
   isPartner,
   partnerPromotionKey,
   isCopilotPreset,
+  isCopilotAuthenticated,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -127,12 +129,23 @@ export function ClaudeFormFields({
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
 
+  // 当 Copilot 预设且已认证时，加载可用模型
   useEffect(() => {
-    if (!isCopilotPreset) return;
+    // 如果不是 Copilot 预设或未认证，清空模型列表
+    if (!isCopilotPreset || !isCopilotAuthenticated) {
+      setCopilotModels([]);
+      setModelsLoading(false);
+      return;
+    }
 
     let cancelled = false;
     setModelsLoading(true);
-    console.log("[Copilot] Fetching models, isCopilotPreset:", isCopilotPreset);
+    console.log(
+      "[Copilot] Fetching models, isCopilotPreset:",
+      isCopilotPreset,
+      "isCopilotAuthenticated:",
+      isCopilotAuthenticated,
+    );
     copilotGetModels()
       .then((models) => {
         console.log("[Copilot] Fetched models:", models.length, models);
@@ -147,7 +160,7 @@ export function ClaudeFormFields({
     return () => {
       cancelled = true;
     };
-  }, [isCopilotPreset]);
+  }, [isCopilotPreset, isCopilotAuthenticated]);
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (

@@ -635,6 +635,7 @@
     "authenticated": "認証済み: {{username}}",
     "notAuthenticated": "未認証",
     "loginWithGitHub": "GitHub でログイン",
+    "loginRequired": "先に GitHub Copilot にログインしてください",
     "waitingForAuth": "認証を待っています...",
     "enterCode": "ブラウザで以下のコードを入力してください：",
     "logout": "ログアウト",

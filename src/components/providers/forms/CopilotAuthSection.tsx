@@ -150,15 +150,6 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
         </div>
       )}
 
-      {/* 成功状态 */}
-      {pollingState === "success" && (
-        <div className="p-3 rounded-lg border border-green-500/30 bg-green-500/10">
-          <p className="text-sm text-green-600 dark:text-green-400">
-            {t("copilot.authSuccess", "GitHub Copilot 认证成功！")}
-          </p>
-        </div>
-      )}
-
       {/* 已认证状态 */}
       {isAuthenticated && (
         <Button

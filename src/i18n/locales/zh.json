@@ -635,6 +635,7 @@
     "authenticated": "已认证: {{username}}",
     "notAuthenticated": "未认证",
     "loginWithGitHub": "使用 GitHub 登录",
+    "loginRequired": "请先登录 GitHub Copilot",
     "waitingForAuth": "等待授权中...",
     "enterCode": "请在浏览器中输入验证码：",
     "logout": "注销",

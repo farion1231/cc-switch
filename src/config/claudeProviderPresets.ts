@@ -509,10 +509,6 @@ export const providerPresets: ProviderPreset[] = [
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.githubcopilot.com",
-        ANTHROPIC_MODEL: "claude-sonnet-4",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gpt-4o-mini",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4.5",
       },
     },
     category: "third_party",
