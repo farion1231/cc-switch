@@ -145,10 +145,19 @@ export function useCopilotAuth() {
   // 注销
   const logoutMutation = useMutation({
     mutationFn: copilotApi.copilotLogout,
-    onSuccess: () => {
-      // 刷新认证状态
-      refetchStatus();
-      queryClient.invalidateQueries({ queryKey: ["copilot-auth-status"] });
+    onSuccess: async () => {
+      // 重置本地状态
+      setPollingState("idle");
+      setDeviceCode(null);
+      setError(null);
+      // 先清除缓存数据，然后重新获取
+      queryClient.setQueryData(["copilot-auth-status"], {
+        authenticated: false,
+        username: null,
+        expires_at: null,
+      });
+      // 使查询失效，确保下次访问时重新获取
+      await queryClient.invalidateQueries({ queryKey: ["copilot-auth-status"] });
     },
   });
 

@@ -80,6 +80,7 @@ import {
   useOpencodeFormState,
   useOmoDraftState,
   useOpenclawFormState,
+  useCopilotAuth,
 } from "./hooks";
 import {
   CLAUDE_DEFAULT_CONFIG,
@@ -330,6 +331,9 @@ export function ProviderForm({
     },
     [localApiKeyField, form, handleSettingsConfigChange],
   );
+
+  // Copilot OAuth 认证状态（仅 Claude 应用需要）
+  const { isAuthenticated: isCopilotAuthenticated } = useCopilotAuth();
 
   const {
     codexAuth,
@@ -665,6 +669,16 @@ export function ProviderForm({
       templatePreset?.providerType === "github_copilot" ||
       initialData?.meta?.providerType === "github_copilot" ||
       baseUrl.includes("githubcopilot.com");
+    // GitHub Copilot 必须先登录才能添加
+    if (isCopilotProvider && !isCopilotAuthenticated) {
+      toast.error(
+        t("copilot.loginRequired", {
+          defaultValue: "请先登录 GitHub Copilot",
+        }),
+      );
+      return;
+    }
+
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
         if (!baseUrl.trim()) {
@@ -1335,6 +1349,7 @@ export function ProviderForm({
               initialData?.meta?.providerType === "github_copilot" ||
               baseUrl.includes("githubcopilot.com")
             }
+            isCopilotAuthenticated={isCopilotAuthenticated}
             templateValueEntries={templateValueEntries}
             templateValues={templateValues}
             templatePresetName={templatePreset?.name || ""}
