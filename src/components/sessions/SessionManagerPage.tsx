@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -53,6 +53,7 @@ export function SessionManagerPage() {
   const { data, isLoading, refetch } = useSessionsQuery();
   const sessions = data ?? [];
   const detailRef = useRef<HTMLDivElement | null>(null);
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [activeMessageIndex, setActiveMessageIndex] = useState<number | null>(
@@ -60,6 +61,8 @@ export function SessionManagerPage() {
   );
   const [tocDialogOpen, setTocDialogOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [renderMarkdown, setRenderMarkdown] = useState(true);
+  const [isPending, startTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = useState("");
@@ -90,6 +93,12 @@ export function SessionManagerPage() {
       setSelectedKey(getSessionKey(filteredSessions[0]));
     }
   }, [filteredSessions, selectedKey]);
+
+  // 切换会话时滚动到顶部
+  useEffect(() => {
+    const viewport = scrollAreaRef.current?.querySelector("[data-radix-scroll-area-viewport]");
+    if (viewport) viewport.scrollTop = 0;
+  }, [selectedKey]);
 
   const selectedSession = useMemo(() => {
     if (!selectedKey) return null;
@@ -518,10 +527,10 @@ export function SessionManagerPage() {
 
                   {/* 消息列表区域 */}
                   <CardContent className="flex-1 overflow-hidden p-0">
-                    <div className="flex h-full">
+                    <div className="flex h-full overflow-hidden">
                       {/* 消息列表 */}
-                      <ScrollArea className="flex-1">
-                        <div className="p-4">
+                      <ScrollArea ref={scrollAreaRef} className="flex-1 min-w-0">
+                        <div className="p-4 overflow-x-hidden">
                           <div className="flex items-center gap-2 mb-3">
                             <MessageSquare className="size-4 text-muted-foreground" />
                             <span className="text-sm font-medium">
@@ -532,6 +541,15 @@ export function SessionManagerPage() {
                             <Badge variant="secondary" className="text-xs">
                               {messages.length}
                             </Badge>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-5 px-1.5 text-xs rounded"
+                              disabled={isPending}
+                              onClick={() => startTransition(() => setRenderMarkdown((prev) => !prev))}
+                            >
+                              {renderMarkdown ? "MD" : "Raw"}
+                            </Button>
                           </div>
 
                           {isLoadingMessages ? (
@@ -564,6 +582,7 @@ export function SessionManagerPage() {
                                       }),
                                     )
                                   }
+                                  renderMarkdown={renderMarkdown}
                                 />
                               ))}
                               <div ref={messagesEndRef} />
