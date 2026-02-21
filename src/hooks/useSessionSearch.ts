@@ -8,6 +8,7 @@ type FlexSearchIndex = InstanceType<typeof FlexSearch.Index>;
 interface UseSessionSearchOptions {
   sessions: SessionMeta[];
   providerFilter: string;
+  aliases?: Record<string, string>;
 }
 
 interface UseSessionSearchResult {
@@ -22,6 +23,7 @@ interface UseSessionSearchResult {
 export function useSessionSearch({
   sessions,
   providerFilter,
+  aliases = {},
 }: UseSessionSearchOptions): UseSessionSearchResult {
   const [isIndexing, setIsIndexing] = useState(false);
 
@@ -43,13 +45,15 @@ export function useSessionSearch({
 
     // 索引所有会话
     sessions.forEach((session, idx) => {
-      // 索引会话元数据
+      const sessionKey = `${session.providerId}:${session.sessionId}:${session.sourcePath ?? ""}`;
+      // 索引会话元数据 + 别名
       const metaContent = [
         session.sessionId,
         session.title,
         session.summary,
         session.projectDir,
         session.sourcePath,
+        aliases[sessionKey],
       ]
         .filter(Boolean)
         .join(" ");
@@ -61,7 +65,7 @@ export function useSessionSearch({
     sessionByIdxRef.current = sessions;
 
     setIsIndexing(false);
-  }, [sessions]);
+  }, [sessions, aliases]);
 
   // 搜索函数
   const search = useCallback(
@@ -89,12 +93,14 @@ export function useSessionSearch({
         // 索引未就绪，使用简单搜索
         return filtered
           .filter((session) => {
+            const sessionKey = `${session.providerId}:${session.sessionId}:${session.sourcePath ?? ""}`;
             const haystack = [
               session.sessionId,
               session.title,
               session.summary,
               session.projectDir,
               session.sourcePath,
+              aliases[sessionKey],
             ]
               .filter(Boolean)
               .join(" ")
@@ -127,7 +133,7 @@ export function useSessionSearch({
         return bTs - aTs;
       });
     },
-    [sessions, providerFilter],
+    [sessions, providerFilter, aliases],
   );
 
   return useMemo(() => ({ search, isIndexing }), [search, isIndexing]);

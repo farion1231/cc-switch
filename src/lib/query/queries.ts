@@ -152,3 +152,11 @@ export const useSessionMessagesQuery = (
     staleTime: 30 * 1000,
   });
 };
+
+export const useSessionAliasesQuery = () => {
+  return useQuery<Record<string, string>>({
+    queryKey: ["sessionAliases"],
+    queryFn: async () => sessionsApi.getAllAliases(),
+    staleTime: 60 * 1000,
+  });
+};
