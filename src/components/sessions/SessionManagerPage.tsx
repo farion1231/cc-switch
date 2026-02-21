@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -11,8 +11,14 @@ import {
   Clock,
   FolderOpen,
   X,
+  Tag,
 } from "lucide-react";
-import { useSessionMessagesQuery, useSessionsQuery } from "@/lib/query";
+import {
+  useSessionMessagesQuery,
+  useSessionsQuery,
+  useSessionAliasesQuery,
+  useSetSessionAliasMutation,
+} from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +38,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { cn } from "@/lib/utils";
 import { isMac } from "@/lib/platform";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { SessionItem } from "./SessionItem";
@@ -52,7 +59,11 @@ export function SessionManagerPage() {
   const { t } = useTranslation();
   const { data, isLoading, refetch } = useSessionsQuery();
   const sessions = data ?? [];
+  const { data: aliasesData } = useSessionAliasesQuery();
+  const aliases = aliasesData ?? {};
+  const setAliasMutation = useSetSessionAliasMutation();
   const detailRef = useRef<HTMLDivElement | null>(null);
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [activeMessageIndex, setActiveMessageIndex] = useState<number | null>(
@@ -60,45 +71,49 @@ export function SessionManagerPage() {
   );
   const [tocDialogOpen, setTocDialogOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [renderMarkdown, setRenderMarkdown] = useState(true);
+  const [isPending, startTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
+  const [onlyRenamed, setOnlyRenamed] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
+  // 防抖搜索词
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   // 使用 FlexSearch 全文搜索
   const { search: searchSessions } = useSessionSearch({
     sessions,
     providerFilter,
+    aliases,
   });
 
   const filteredSessions = useMemo(() => {
-    return searchSessions(search);
-  }, [searchSessions, search]);
+    const results = searchSessions(debouncedSearch);
+    if (!onlyRenamed) return results;
+    return results.filter((s) => aliases[getSessionKey(s)]);
+  }, [searchSessions, debouncedSearch, onlyRenamed, aliases]);
 
+  // 切换会话时滚动到顶部
   useEffect(() => {
-    if (filteredSessions.length === 0) {
-      setSelectedKey(null);
-      return;
-    }
-    const exists = selectedKey
-      ? filteredSessions.some(
-          (session) => getSessionKey(session) === selectedKey,
-        )
-      : false;
-    if (!exists) {
-      setSelectedKey(getSessionKey(filteredSessions[0]));
-    }
-  }, [filteredSessions, selectedKey]);
+    const viewport = scrollAreaRef.current?.querySelector("[data-radix-scroll-area-viewport]");
+    if (viewport) viewport.scrollTop = 0;
+  }, [selectedKey]);
 
   const selectedSession = useMemo(() => {
     if (!selectedKey) return null;
     return (
-      filteredSessions.find(
+      sessions.find(
         (session) => getSessionKey(session) === selectedKey,
       ) || null
     );
-  }, [filteredSessions, selectedKey]);
+  }, [sessions, selectedKey]);
 
   const { data: messages = [], isLoading: isLoadingMessages } =
     useSessionMessagesQuery(
@@ -150,6 +165,21 @@ export function SessionManagerPage() {
           t("common.error", { defaultValue: "Copy failed" }),
       );
     }
+  };
+
+  const handleRename = (sessionKey: string, newName: string | null) => {
+    setAliasMutation.mutate(
+      { sessionKey, alias: newName },
+      {
+        onSuccess: () => {
+          toast.success(
+            newName
+              ? t("sessionManager.renameSuccess")
+              : t("sessionManager.resetNameSuccess"),
+          );
+        },
+      },
+    );
   };
 
   const handleResume = async () => {
@@ -252,6 +282,25 @@ export function SessionManagerPage() {
                         </TooltipContent>
                       </Tooltip>
 
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "size-7",
+                              onlyRenamed && "bg-primary/10 text-primary",
+                            )}
+                            onClick={() => setOnlyRenamed((v) => !v)}
+                          >
+                            <Tag className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {t("sessionManager.filterRenamed")}
+                        </TooltipContent>
+                      </Tooltip>
+
                       <Select
                         value={providerFilter}
                         onValueChange={(value) =>
@@ -346,16 +395,18 @@ export function SessionManagerPage() {
                     ) : (
                       <div className="space-y-1">
                         {filteredSessions.map((session) => {
+                          const key = getSessionKey(session);
                           const isSelected =
-                            selectedKey !== null &&
-                            getSessionKey(session) === selectedKey;
+                            selectedKey !== null && key === selectedKey;
 
                           return (
                             <SessionItem
-                              key={getSessionKey(session)}
+                              key={key}
                               session={session}
                               isSelected={isSelected}
                               onSelect={setSelectedKey}
+                              alias={aliases[key]}
+                              onRename={handleRename}
                             />
                           );
                         })}
@@ -400,8 +451,15 @@ export function SessionManagerPage() {
                               {getProviderLabel(selectedSession.providerId, t)}
                             </TooltipContent>
                           </Tooltip>
-                          <h2 className="text-base font-semibold truncate">
-                            {formatSessionTitle(selectedSession)}
+                          <h2 className="text-base truncate">
+                            <span className="font-semibold">
+                              {(selectedKey && aliases[selectedKey]) || formatSessionTitle(selectedSession)}
+                            </span>
+                            {selectedKey && aliases[selectedKey] && (
+                              <span className="text-muted-foreground text-xs font-normal ml-1">
+                                ({formatSessionTitle(selectedSession)})
+                              </span>
+                            )}
                           </h2>
                         </div>
 
@@ -518,10 +576,10 @@ export function SessionManagerPage() {
 
                   {/* 消息列表区域 */}
                   <CardContent className="flex-1 overflow-hidden p-0">
-                    <div className="flex h-full">
+                    <div className="flex h-full overflow-hidden">
                       {/* 消息列表 */}
-                      <ScrollArea className="flex-1">
-                        <div className="p-4">
+                      <ScrollArea ref={scrollAreaRef} className="flex-1 min-w-0">
+                        <div className="p-4 overflow-x-hidden">
                           <div className="flex items-center gap-2 mb-3">
                             <MessageSquare className="size-4 text-muted-foreground" />
                             <span className="text-sm font-medium">
@@ -532,6 +590,15 @@ export function SessionManagerPage() {
                             <Badge variant="secondary" className="text-xs">
                               {messages.length}
                             </Badge>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-5 px-1.5 text-xs rounded"
+                              disabled={isPending}
+                              onClick={() => startTransition(() => setRenderMarkdown((prev) => !prev))}
+                            >
+                              {renderMarkdown ? "MD" : "Raw"}
+                            </Button>
                           </div>
 
                           {isLoadingMessages ? (
@@ -564,6 +631,7 @@ export function SessionManagerPage() {
                                       }),
                                     )
                                   }
+                                  renderMarkdown={renderMarkdown}
                                 />
                               ))}
                               <div ref={messagesEndRef} />

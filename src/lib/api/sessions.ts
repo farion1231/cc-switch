@@ -25,4 +25,16 @@ export const sessionsApi = {
       customConfig,
     });
   },
+
+  async getAllAliases(): Promise<Record<string, string>> {
+    return await invoke("get_all_session_aliases");
+  },
+
+  async setAlias(sessionKey: string, alias: string): Promise<void> {
+    return await invoke("set_session_alias", { sessionKey, alias });
+  },
+
+  async deleteAlias(sessionKey: string): Promise<void> {
+    return await invoke("delete_session_alias", { sessionKey });
+  },
 };
