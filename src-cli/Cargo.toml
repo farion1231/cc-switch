@@ -1,0 +1,22 @@
+[package]
+name = "cc-switch-cli"
+version = "3.10.3"
+edition = "2021"
+rust-version = "1.85.0"
+description = "CLI for cc-switch"
+
+[[bin]]
+name = "ccswitch"
+path = "src/main.rs"
+
+[dependencies]
+cc_switch_lib = { package = "cc-switch", path = "../src-tauri", default-features = false }
+clap = { version = "4", features = ["derive"] }
+comfy-table = "7"
+anyhow = "1.0"
+serde = "1.0"
+serde_json = "1.0"
+ratatui = "0.29"
+crossterm = "0.28"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+indexmap = { version = "2", features = ["serde"] }

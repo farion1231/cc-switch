@@ -1,15 +1,23 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "tauri-app")]
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "tauri-app")]
 use serde_json::json;
+#[cfg(feature = "tauri-app")]
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+#[cfg(feature = "tauri-app")]
+use tokio::sync::mpsc::{channel, Receiver};
+use tokio::sync::mpsc::Sender;
 
+#[cfg(feature = "tauri-app")]
 use crate::error::AppError;
+#[cfg(feature = "tauri-app")]
 use crate::services::webdav_sync as webdav_sync_service;
+#[cfg(feature = "tauri-app")]
 use crate::settings::{self, WebDavSyncSettings};
 
 const AUTO_SYNC_DEBOUNCE_MS: u64 = 1000;
@@ -72,6 +80,7 @@ pub(crate) fn auto_sync_wait_duration(started_at: Instant, now: Instant) -> Opti
     Some(debounce.min(max_wait - elapsed))
 }
 
+#[cfg(feature = "tauri-app")]
 fn should_run_auto_sync(settings: Option<&WebDavSyncSettings>) -> bool {
     let Some(sync) = settings else {
         return false;
@@ -79,12 +88,14 @@ fn should_run_auto_sync(settings: Option<&WebDavSyncSettings>) -> bool {
     sync.enabled && sync.auto_sync
 }
 
+#[cfg(feature = "tauri-app")]
 fn persist_auto_sync_error(settings: &mut WebDavSyncSettings, error: &AppError) {
     settings.status.last_error = Some(error.to_string());
     settings.status.last_error_source = Some("auto".to_string());
     let _ = settings::update_webdav_sync_status(settings.status.clone());
 }
 
+#[cfg(feature = "tauri-app")]
 fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&str>) {
     let payload = match error {
         Some(message) => json!({
@@ -103,6 +114,7 @@ fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&s
     }
 }
 
+#[cfg(feature = "tauri-app")]
 async fn run_auto_sync_upload(
     db: &crate::database::Database,
     app: &AppHandle,
@@ -148,6 +160,7 @@ pub fn notify_db_changed(table: &str) {
     let _ = enqueue_change_signal(tx, table);
 }
 
+#[cfg(feature = "tauri-app")]
 pub fn start_worker(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
     if DB_CHANGE_TX.get().is_some() {
         return;
@@ -164,6 +177,7 @@ pub fn start_worker(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
     });
 }
 
+#[cfg(feature = "tauri-app")]
 async fn run_worker_loop(
     db: Arc<crate::database::Database>,
     mut rx: Receiver<String>,
@@ -200,10 +214,9 @@ async fn run_worker_loop(
 mod tests {
     use super::{
         auto_sync_wait_duration, enqueue_change_signal, is_auto_sync_suppressed,
-        should_run_auto_sync, should_trigger_for_table, AutoSyncSuppressionGuard,
+        should_trigger_for_table, AutoSyncSuppressionGuard,
         MAX_AUTO_SYNC_WAIT_MS,
     };
-    use crate::settings::WebDavSyncSettings;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc::channel;
 
@@ -239,8 +252,11 @@ mod tests {
         assert!(!enqueue_change_signal(&tx, "providers"));
     }
 
+    #[cfg(feature = "tauri-app")]
     #[test]
     fn should_run_auto_sync_requires_enabled_and_auto_sync_flag() {
+        use super::should_run_auto_sync;
+        use crate::settings::WebDavSyncSettings;
         assert!(!should_run_auto_sync(None));
 
         let disabled = WebDavSyncSettings {

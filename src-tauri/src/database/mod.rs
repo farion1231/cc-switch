@@ -32,6 +32,7 @@ mod schema;
 mod tests;
 
 // DAO 类型导出供外部使用
+#[allow(unused_imports)]
 pub use dao::FailoverQueueItem;
 pub use dao::OmoGlobalConfig;
 

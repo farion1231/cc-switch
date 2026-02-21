@@ -18,6 +18,7 @@ pub use config::ConfigService;
 pub use mcp::McpService;
 pub use omo::OmoService;
 pub use prompt::PromptService;
+#[allow(unused_imports)]
 pub use provider::{ProviderService, ProviderSortUpdate};
 pub use proxy::ProxyService;
 #[allow(unused_imports)]

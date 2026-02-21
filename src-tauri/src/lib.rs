@@ -1,16 +1,21 @@
 mod app_config;
+#[cfg(feature = "tauri-app")]
 mod app_store;
+#[cfg(feature = "tauri-app")]
 mod auto_launch;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
+#[cfg(feature = "tauri-app")]
 mod commands;
 mod config;
 mod database;
+#[cfg(feature = "tauri-app")]
 mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+#[cfg(feature = "tauri-app")]
 mod init_status;
 mod mcp;
 mod openclaw_config;
@@ -25,15 +30,19 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+#[cfg(feature = "tauri-app")]
 mod tray;
 mod usage_script;
 
 pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
+#[cfg(feature = "tauri-app")]
 pub use commands::open_provider_terminal;
+#[cfg(feature = "tauri-app")]
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
 pub use database::Database;
+#[cfg(feature = "tauri-app")]
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use mcp::{
@@ -42,23 +51,33 @@ pub use mcp::{
     sync_enabled_to_codex, sync_enabled_to_gemini, sync_single_server_to_claude,
     sync_single_server_to_codex, sync_single_server_to_gemini,
 };
+pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
-    SkillService, SpeedtestService,
+    SkillRepo, SkillService, SpeedtestService, UsageSummary,
 };
+pub use services::env_checker::{check_env_conflicts, EnvConflict};
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
+
+#[cfg(feature = "tauri-app")]
 use tauri_plugin_deep_link::DeepLinkExt;
+#[cfg(feature = "tauri-app")]
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+#[cfg(feature = "tauri-app")]
 use std::sync::Arc;
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "tauri-app", target_os = "macos"))]
 use tauri::image::Image;
+#[cfg(feature = "tauri-app")]
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+#[cfg(feature = "tauri-app")]
 use tauri::RunEvent;
+#[cfg(feature = "tauri-app")]
 use tauri::{Emitter, Manager};
 
+#[cfg(feature = "tauri-app")]
 fn redact_url_for_log(url_str: &str) -> String {
     match url::Url::parse(url_str) {
         Ok(url) => {
@@ -95,6 +114,7 @@ fn redact_url_for_log(url_str: &str) -> String {
 /// - 解析 URL
 /// - 向前端发射 `deeplink-import` / `deeplink-error` 事件
 /// - 可选：在成功时聚焦主窗口
+#[cfg(feature = "tauri-app")]
 fn handle_deeplink_url(
     app: &tauri::AppHandle,
     url_str: &str,
@@ -152,6 +172,7 @@ fn handle_deeplink_url(
 }
 
 /// 更新托盘菜单的Tauri命令
+#[cfg(feature = "tauri-app")]
 #[tauri::command]
 async fn update_tray_menu(
     app: tauri::AppHandle,
@@ -173,7 +194,7 @@ async fn update_tray_menu(
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "tauri-app", target_os = "macos"))]
 fn macos_tray_icon() -> Option<Image<'static>> {
     const ICON_BYTES: &[u8] = include_bytes!("../icons/tray/macos/statusbar_template_3x.png");
 
@@ -186,6 +207,7 @@ fn macos_tray_icon() -> Option<Image<'static>> {
     }
 }
 
+#[cfg(feature = "tauri-app")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
@@ -1149,10 +1171,7 @@ pub fn run() {
 // ============================================================
 
 /// 应用退出前的清理工作
-///
-/// 在应用退出前检查代理服务器状态，如果正在运行则停止代理并恢复 Live 配置。
-/// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
-/// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
+#[cfg(feature = "tauri-app")]
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
         let proxy_service = &state.proxy_service;
@@ -1195,9 +1214,7 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
 // ============================================================
 
 /// 启动时根据 proxy_config 表中的代理状态自动恢复代理服务
-///
-/// 检查 `proxy_config.enabled` 字段，如果有任一应用的状态为 `true`，
-/// 则自动启动代理服务并接管对应应用的 Live 配置。
+#[cfg(feature = "tauri-app")]
 async fn restore_proxy_state_on_startup(state: &store::AppState) {
     // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
     let mut apps_to_restore = Vec::new();
@@ -1246,6 +1263,7 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
 // ============================================================
 
 /// 检测是否为中文环境
+#[cfg(feature = "tauri-app")]
 fn is_chinese_locale() -> bool {
     std::env::var("LANG")
         .or_else(|_| std::env::var("LC_ALL"))
@@ -1255,7 +1273,7 @@ fn is_chinese_locale() -> bool {
 }
 
 /// 显示迁移错误对话框
-/// 返回 true 表示用户选择重试，false 表示用户选择退出
+#[cfg(feature = "tauri-app")]
 fn show_migration_error_dialog(app: &tauri::AppHandle, error: &str) -> bool {
     let title = if is_chinese_locale() {
         "配置迁移失败"
@@ -1306,7 +1324,7 @@ fn show_migration_error_dialog(app: &tauri::AppHandle, error: &str) -> bool {
 }
 
 /// 显示数据库初始化/Schema 迁移失败对话框
-/// 返回 true 表示用户选择重试，false 表示用户选择退出
+#[cfg(feature = "tauri-app")]
 fn show_database_init_error_dialog(
     app: &tauri::AppHandle,
     db_path: &std::path::Path,

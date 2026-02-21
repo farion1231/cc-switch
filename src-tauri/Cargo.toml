@@ -15,25 +15,38 @@ name = "cc_switch_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-default = []
+default = ["tauri-app"]
+tauri-app = [
+    "dep:tauri",
+    "dep:tauri-plugin-log",
+    "dep:tauri-plugin-opener",
+    "dep:tauri-plugin-process",
+    "dep:tauri-plugin-updater",
+    "dep:tauri-plugin-dialog",
+    "dep:tauri-plugin-store",
+    "dep:tauri-plugin-deep-link",
+    "dep:tauri-plugin-single-instance",
+    "dep:auto-launch",
+    "dep:tauri-build",
+]
 test-hooks = []
 
 [build-dependencies]
-tauri-build = { version = "2.4.0", features = [] }
+tauri-build = { version = "2.4.0", features = [], optional = true }
 
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
-tauri = { version = "2.8.2", features = ["tray-icon", "protocol-asset", "image-png"] }
-tauri-plugin-log = "2"
-tauri-plugin-opener = "2"
-tauri-plugin-process = "2"
-tauri-plugin-updater = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-store = "2"
-tauri-plugin-deep-link = "2"
+tauri = { version = "2.8.2", features = ["tray-icon", "protocol-asset", "image-png"], optional = true }
+tauri-plugin-log = { version = "2", optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
+tauri-plugin-process = { version = "2", optional = true }
+tauri-plugin-updater = { version = "2", optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+tauri-plugin-store = { version = "2", optional = true }
+tauri-plugin-deep-link = { version = "2", optional = true }
 dirs = "5.0"
 toml = "0.8"
 toml_edit = "0.22"
@@ -54,7 +67,7 @@ zip = "2.2"
 serde_yaml = "0.9"
 tempfile = "3"
 url = "2.5"
-auto-launch = "0.5"
+auto-launch = { version = "0.5", optional = true }
 once_cell = "1.21.3"
 base64 = "0.22"
 rusqlite = { version = "0.31", features = ["bundled", "backup", "hooks"] }
@@ -65,10 +78,10 @@ sha2 = "0.10"
 json5 = "0.4"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
-tauri-plugin-single-instance = "2"
+tauri-plugin-single-instance = { version = "2", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-webkit2gtk = { version = "2.0.1", features = ["v2_16"] }
+webkit2gtk = { version = "2.0.1", features = ["v2_16"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
@@ -76,16 +89,6 @@ winreg = "0.52"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
-
-# Optimize release binary size to help reduce AppImage footprint
-[profile.release]
-codegen-units = 1
-lto = "thin"
-opt-level = "s"
-# 使用 unwind 以便 panic hook 能捕获 backtrace（abort 会直接终止无法捕获）
-panic = "unwind"
-strip = "symbols"
-
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"

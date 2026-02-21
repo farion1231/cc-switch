@@ -1,0 +1,10 @@
+[workspace]
+members = ["src-tauri", "src-cli"]
+resolver = "2"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+panic = "unwind"
+strip = "symbols"

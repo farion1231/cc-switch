@@ -92,7 +92,10 @@ pub struct RequestForwarder {
     /// 故障转移切换管理器
     failover_manager: Arc<FailoverSwitchManager>,
     /// AppHandle，用于发射事件和更新托盘
+    #[cfg(feature = "tauri-app")]
     app_handle: Option<tauri::AppHandle>,
+    #[cfg(not(feature = "tauri-app"))]
+    app_handle: Option<()>,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
     /// 整流器配置
@@ -109,7 +112,8 @@ impl RequestForwarder {
         status: Arc<RwLock<ProxyStatus>>,
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
         failover_manager: Arc<FailoverSwitchManager>,
-        app_handle: Option<tauri::AppHandle>,
+        #[cfg(feature = "tauri-app")] app_handle: Option<tauri::AppHandle>,
+        #[cfg(not(feature = "tauri-app"))] app_handle: Option<()>,
         current_provider_id_at_start: String,
         _streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,

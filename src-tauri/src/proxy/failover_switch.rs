@@ -12,6 +12,7 @@ use crate::error::AppError;
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
+#[cfg(feature = "tauri-app")]
 use tauri::{Emitter, Manager};
 use tokio::sync::RwLock;
 
@@ -43,7 +44,8 @@ impl FailoverSwitchManager {
     /// - `Err(e)` - 切换过程中发生错误
     pub async fn try_switch(
         &self,
-        app_handle: Option<&tauri::AppHandle>,
+        #[cfg(feature = "tauri-app")] app_handle: Option<&tauri::AppHandle>,
+        #[cfg(not(feature = "tauri-app"))] _app_handle: Option<&()>,
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
@@ -61,8 +63,13 @@ impl FailoverSwitchManager {
         }
 
         // 执行切换（确保最后清理 pending 标记）
+        #[cfg(feature = "tauri-app")]
         let result = self
             .do_switch(app_handle, app_type, provider_id, provider_name)
+            .await;
+        #[cfg(not(feature = "tauri-app"))]
+        let result = self
+            .do_switch(app_type, provider_id, provider_name)
             .await;
 
         // 清理 pending 标记
@@ -74,6 +81,7 @@ impl FailoverSwitchManager {
         result
     }
 
+    #[cfg(feature = "tauri-app")]
     async fn do_switch(
         &self,
         app_handle: Option<&tauri::AppHandle>,
@@ -81,36 +89,14 @@ impl FailoverSwitchManager {
         provider_id: &str,
         provider_name: &str,
     ) -> Result<bool, AppError> {
-        // 检查该应用是否已被代理接管（enabled=true）
-        // 只有被接管的应用才允许执行故障转移切换
-        let app_enabled = match self.db.get_proxy_config_for_app(app_type).await {
-            Ok(config) => config.enabled,
-            Err(e) => {
-                log::warn!("[FO-002] 无法读取 {app_type} 配置: {e}，跳过切换");
-                return Ok(false);
-            }
-        };
-
-        if !app_enabled {
-            log::debug!("[Failover] {app_type} 未启用代理，跳过切换");
+        if !self.check_app_enabled(app_type).await {
             return Ok(false);
         }
+        self.do_switch_core(app_type, provider_id, provider_name)?;
 
-        log::info!("[FO-001] 切换: {app_type} → {provider_name}");
-
-        // 1. 更新数据库 is_current
-        self.db.set_current_provider(app_type, provider_id)?;
-
-        // 2. 更新本地 settings（设备级）
-        let app_type_enum = crate::app_config::AppType::from_str(app_type)
-            .map_err(|_| AppError::Message(format!("无效的应用类型: {app_type}")))?;
-        crate::settings::set_current_provider(&app_type_enum, Some(provider_id))?;
-
-        // 3. 更新托盘菜单和发射事件
+        // 更新托盘菜单和发射事件
         if let Some(app) = app_handle {
-            // 更新托盘菜单
             if let Some(app_state) = app.try_state::<crate::store::AppState>() {
-                // 更新 Live 备份（确保代理停止时恢复正确配置）
                 if let Ok(Some(provider)) = self.db.get_provider_by_id(provider_id, app_type) {
                     if let Err(e) = app_state
                         .proxy_service
@@ -120,8 +106,6 @@ impl FailoverSwitchManager {
                         log::warn!("[FO-003] Live 备份更新失败: {e}");
                     }
                 }
-
-                // 重建托盘菜单
                 if let Ok(new_menu) = crate::tray::create_tray_menu(app, app_state.inner()) {
                     if let Some(tray) = app.tray_by_id("main") {
                         if let Err(e) = tray.set_menu(Some(new_menu)) {
@@ -130,18 +114,53 @@ impl FailoverSwitchManager {
                     }
                 }
             }
-
-            // 发射事件到前端
             let event_data = serde_json::json!({
                 "appType": app_type,
                 "providerId": provider_id,
-                "source": "failover"  // 标识来源是故障转移
+                "source": "failover"
             });
             if let Err(e) = app.emit("provider-switched", event_data) {
                 log::error!("[Failover] 发射事件失败: {e}");
             }
         }
-
         Ok(true)
+    }
+
+    #[cfg(not(feature = "tauri-app"))]
+    async fn do_switch(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        provider_name: &str,
+    ) -> Result<bool, AppError> {
+        if !self.check_app_enabled(app_type).await {
+            return Ok(false);
+        }
+        self.do_switch_core(app_type, provider_id, provider_name)?;
+        Ok(true)
+    }
+
+    async fn check_app_enabled(&self, app_type: &str) -> bool {
+        match self.db.get_proxy_config_for_app(app_type).await {
+            Ok(config) => config.enabled,
+            Err(e) => {
+                log::warn!("[FO-002] 无法读取 {app_type} 配置: {e}，跳过切换");
+                false
+            }
+        }
+    }
+
+    fn do_switch_core(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        provider_name: &str,
+    ) -> Result<(), AppError> {
+        log::info!("[FO-001] 切换: {app_type} → {provider_name}");
+        self.db.set_current_provider(app_type, provider_id)?;
+        let app_type_enum = crate::app_config::AppType::from_str(app_type)
+            .map_err(|_| AppError::Message(format!("无效的应用类型: {app_type}")))?;
+        crate::settings::set_current_provider(&app_type_enum, Some(provider_id))?;
+        Ok(())
     }
 }
