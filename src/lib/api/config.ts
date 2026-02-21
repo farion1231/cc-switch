@@ -1,7 +1,7 @@
 // 配置相关 API
 import { invoke } from "@tauri-apps/api/core";
 
-export type AppType = "claude" | "codex" | "gemini" | "omo";
+export type AppType = "claude" | "codex" | "gemini" | "omo" | "omo_slim";
 
 /**
  * 获取 Claude 通用配置片段（已废弃，使用 getCommonConfigSnippet）

@@ -98,7 +98,29 @@ pub fn switch_provider(
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
-    ProviderService::import_default_config(state, app_type)
+    let imported = ProviderService::import_default_config(state, app_type.clone())?;
+
+    if imported {
+        // Extract common config snippet (mirrors old startup logic in lib.rs)
+        if state
+            .db
+            .get_config_snippet(app_type.as_str())
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            match ProviderService::extract_common_config_snippet(state, app_type.clone()) {
+                Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
+                    let _ = state
+                        .db
+                        .set_config_snippet(app_type.as_str(), Some(snippet));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(imported)
 }
 
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
@@ -371,3 +393,7 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
         .map(|providers| providers.keys().cloned().collect())
         .map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
+// ============================================================================

@@ -27,8 +27,8 @@ export interface OmoLocalFileData {
 export interface OmoAgentDef {
   key: string;
   display: string;
-  descZh: string;
-  descEn: string;
+  descKey: string;
+  tooltipKey: string;
   recommended?: string;
   group: "main" | "sub";
 }
@@ -36,97 +36,97 @@ export interface OmoAgentDef {
 export interface OmoCategoryDef {
   key: string;
   display: string;
-  descZh: string;
-  descEn: string;
+  descKey: string;
+  tooltipKey: string;
   recommended?: string;
 }
 
 export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
   {
-    key: "Sisyphus",
+    key: "sisyphus",
     display: "Sisyphus",
-    descZh: "主编排者",
-    descEn: "Main orchestrator",
+    descKey: "omo.agentDesc.sisyphus",
+    tooltipKey: "omo.agentTooltip.sisyphus",
     recommended: "claude-opus-4-6",
     group: "main",
   },
   {
-    key: "Hephaestus",
+    key: "hephaestus",
     display: "Hephaestus",
-    descZh: "自主深度工作者",
-    descEn: "Autonomous deep worker",
+    descKey: "omo.agentDesc.hephaestus",
+    tooltipKey: "omo.agentTooltip.hephaestus",
     recommended: "gpt-5.3-codex",
     group: "main",
   },
   {
-    key: "Prometheus",
+    key: "prometheus",
     display: "Prometheus",
-    descZh: "战略规划者",
-    descEn: "Strategic planner",
+    descKey: "omo.agentDesc.prometheus",
+    tooltipKey: "omo.agentTooltip.prometheus",
     recommended: "claude-opus-4-6",
     group: "main",
   },
   {
-    key: "Atlas",
+    key: "atlas",
     display: "Atlas",
-    descZh: "任务管理者",
-    descEn: "Task manager",
+    descKey: "omo.agentDesc.atlas",
+    tooltipKey: "omo.agentTooltip.atlas",
     recommended: "kimi-k2.5",
     group: "main",
   },
   {
     key: "oracle",
     display: "Oracle",
-    descZh: "战略顾问",
-    descEn: "Strategic advisor",
+    descKey: "omo.agentDesc.oracle",
+    tooltipKey: "omo.agentTooltip.oracle",
     recommended: "gpt-5.3",
     group: "sub",
   },
   {
     key: "librarian",
     display: "Librarian",
-    descZh: "多仓库研究员",
-    descEn: "Multi-repo researcher",
+    descKey: "omo.agentDesc.librarian",
+    tooltipKey: "omo.agentTooltip.librarian",
     recommended: "glm-4.7",
     group: "sub",
   },
   {
     key: "explore",
     display: "Explore",
-    descZh: "快速代码搜索",
-    descEn: "Fast code search",
+    descKey: "omo.agentDesc.explore",
+    tooltipKey: "omo.agentTooltip.explore",
     recommended: "grok-code-fast-1",
     group: "sub",
   },
   {
     key: "multimodal-looker",
     display: "Multimodal-Looker",
-    descZh: "媒体分析器",
-    descEn: "Media analyzer",
+    descKey: "omo.agentDesc.multimodalLooker",
+    tooltipKey: "omo.agentTooltip.multimodalLooker",
     recommended: "gemini-3-flash",
     group: "sub",
   },
   {
-    key: "Metis",
+    key: "metis",
     display: "Metis",
-    descZh: "规划前分析顾问",
-    descEn: "Pre-plan analysis advisor",
+    descKey: "omo.agentDesc.metis",
+    tooltipKey: "omo.agentTooltip.metis",
     recommended: "claude-opus-4-6",
     group: "sub",
   },
   {
-    key: "Momus",
+    key: "momus",
     display: "Momus",
-    descZh: "计划审查者",
-    descEn: "Plan reviewer",
+    descKey: "omo.agentDesc.momus",
+    tooltipKey: "omo.agentTooltip.momus",
     recommended: "gpt-5.3",
     group: "sub",
   },
   {
-    key: "Sisyphus-Junior",
+    key: "sisyphus-junior",
     display: "Sisyphus-Junior",
-    descZh: "委托任务执行器",
-    descEn: "Delegated task executor",
+    descKey: "omo.agentDesc.sisyphusJunior",
+    tooltipKey: "omo.agentTooltip.sisyphusJunior",
     group: "sub",
   },
 ];
@@ -135,57 +135,57 @@ export const OMO_BUILTIN_CATEGORIES: OmoCategoryDef[] = [
   {
     key: "visual-engineering",
     display: "Visual Engineering",
-    descZh: "视觉/前端工程",
-    descEn: "Visual/frontend engineering",
+    descKey: "omo.categoryDesc.visualEngineering",
+    tooltipKey: "omo.categoryTooltip.visualEngineering",
     recommended: "gemini-3-pro",
   },
   {
     key: "ultrabrain",
     display: "Ultrabrain",
-    descZh: "超级思考",
-    descEn: "Ultra thinking",
+    descKey: "omo.categoryDesc.ultrabrain",
+    tooltipKey: "omo.categoryTooltip.ultrabrain",
     recommended: "claude-opus-4-6",
   },
   {
     key: "deep",
     display: "Deep",
-    descZh: "深度工作",
-    descEn: "Deep work",
+    descKey: "omo.categoryDesc.deep",
+    tooltipKey: "omo.categoryTooltip.deep",
     recommended: "gpt-5.3-codex",
   },
   {
     key: "artistry",
     display: "Artistry",
-    descZh: "创意/文艺",
-    descEn: "Creative/artistic",
+    descKey: "omo.categoryDesc.artistry",
+    tooltipKey: "omo.categoryTooltip.artistry",
     recommended: "claude-opus-4-6",
   },
   {
     key: "quick",
     display: "Quick",
-    descZh: "快速响应",
-    descEn: "Quick response",
+    descKey: "omo.categoryDesc.quick",
+    tooltipKey: "omo.categoryTooltip.quick",
     recommended: "gemini-3-flash",
   },
   {
     key: "unspecified-low",
     display: "Unspecified Low",
-    descZh: "通用低配",
-    descEn: "General low tier",
+    descKey: "omo.categoryDesc.unspecifiedLow",
+    tooltipKey: "omo.categoryTooltip.unspecifiedLow",
     recommended: "gemini-3-flash",
   },
   {
     key: "unspecified-high",
     display: "Unspecified High",
-    descZh: "通用高配",
-    descEn: "General high tier",
+    descKey: "omo.categoryDesc.unspecifiedHigh",
+    tooltipKey: "omo.categoryTooltip.unspecifiedHigh",
     recommended: "gpt-5.3-codex",
   },
   {
     key: "writing",
     display: "Writing",
-    descZh: "写作",
-    descEn: "Writing",
+    descKey: "omo.categoryDesc.writing",
+    tooltipKey: "omo.categoryTooltip.writing",
     recommended: "claude-opus-4-6",
   },
 ];
@@ -316,46 +316,196 @@ export const OMO_CLAUDE_CODE_PLACEHOLDER = `{
   "plugins": true
 }`;
 
+export function parseOmoOtherFieldsObject(
+  raw: string,
+): Record<string, unknown> | undefined {
+  if (!raw.trim()) return undefined;
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  return parsed as Record<string, unknown>;
+}
+
+// ============================================================================
+// OMO Slim (oh-my-opencode-slim) definitions
+// ============================================================================
+
+export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
+  {
+    key: "orchestrator",
+    display: "Orchestrator",
+    descKey: "omo.slimAgentDesc.orchestrator",
+    tooltipKey: "omo.slimAgentTooltip.orchestrator",
+    recommended: "kimi-for-coding/k2p5",
+    group: "main",
+  },
+  {
+    key: "oracle",
+    display: "Oracle",
+    descKey: "omo.slimAgentDesc.oracle",
+    tooltipKey: "omo.slimAgentTooltip.oracle",
+    recommended: "openai/gpt-5.2-codex",
+    group: "sub",
+  },
+  {
+    key: "librarian",
+    display: "Librarian",
+    descKey: "omo.slimAgentDesc.librarian",
+    tooltipKey: "omo.slimAgentTooltip.librarian",
+    recommended: "openai/gpt-5.1-codex-mini",
+    group: "sub",
+  },
+  {
+    key: "explorer",
+    display: "Explorer",
+    descKey: "omo.slimAgentDesc.explorer",
+    tooltipKey: "omo.slimAgentTooltip.explorer",
+    recommended: "openai/gpt-5.1-codex-mini",
+    group: "sub",
+  },
+  {
+    key: "designer",
+    display: "Designer",
+    descKey: "omo.slimAgentDesc.designer",
+    tooltipKey: "omo.slimAgentTooltip.designer",
+    recommended: "kimi-for-coding/k2p5",
+    group: "sub",
+  },
+  {
+    key: "fixer",
+    display: "Fixer",
+    descKey: "omo.slimAgentDesc.fixer",
+    tooltipKey: "omo.slimAgentTooltip.fixer",
+    recommended: "openai/gpt-5.1-codex-mini",
+    group: "sub",
+  },
+];
+
+export const OMO_SLIM_DISABLEABLE_AGENTS = [
+  { value: "orchestrator", label: "Orchestrator" },
+  { value: "oracle", label: "Oracle" },
+  { value: "librarian", label: "Librarian" },
+  { value: "explorer", label: "Explorer" },
+  { value: "designer", label: "Designer" },
+  { value: "fixer", label: "Fixer" },
+] as const;
+
+export const OMO_SLIM_DISABLEABLE_MCPS = [
+  { value: "context7", label: "context7" },
+  { value: "grep_app", label: "grep_app" },
+  { value: "websearch", label: "websearch" },
+] as const;
+
+export const OMO_SLIM_DISABLEABLE_HOOKS = [
+  { value: "auto-update-checker", label: "auto-update-checker" },
+  { value: "phase-reminder", label: "phase-reminder" },
+  { value: "post-read-nudge", label: "post-read-nudge" },
+] as const;
+
+export const OMO_SLIM_DEFAULT_SCHEMA_URL =
+  "https://raw.githubusercontent.com/alvinunreal/oh-my-opencode-slim/master/assets/oh-my-opencode-slim.schema.json";
+
 export function mergeOmoConfigPreview(
-  global: OmoGlobalConfig,
+  global: OmoGlobalConfig | undefined,
   agents: Record<string, Record<string, unknown>>,
-  categories: Record<string, Record<string, unknown>>,
+  categories: Record<string, Record<string, unknown>> | undefined,
   otherFieldsStr: string,
+  options?: { slim?: boolean },
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
+  const isSlim = options?.slim ?? false;
 
-  if (global.schemaUrl) result["$schema"] = global.schemaUrl;
+  if (global) {
+    if (global.schemaUrl) result["$schema"] = global.schemaUrl;
 
-  if (global.sisyphusAgent) result["sisyphus_agent"] = global.sisyphusAgent;
-  if (global.disabledAgents?.length)
-    result["disabled_agents"] = global.disabledAgents;
-  if (global.disabledMcps?.length)
-    result["disabled_mcps"] = global.disabledMcps;
-  if (global.disabledHooks?.length)
-    result["disabled_hooks"] = global.disabledHooks;
-  if (global.disabledSkills?.length)
-    result["disabled_skills"] = global.disabledSkills;
-  if (global.lsp) result["lsp"] = global.lsp;
-  if (global.experimental) result["experimental"] = global.experimental;
-  if (global.backgroundTask) result["background_task"] = global.backgroundTask;
-  if (global.browserAutomationEngine)
-    result["browser_automation_engine"] = global.browserAutomationEngine;
-  if (global.claudeCode) result["claude_code"] = global.claudeCode;
+    if (!isSlim) {
+      if (global.sisyphusAgent) result["sisyphus_agent"] = global.sisyphusAgent;
+    }
+    if (global.disabledAgents?.length)
+      result["disabled_agents"] = global.disabledAgents;
+    if (global.disabledMcps?.length)
+      result["disabled_mcps"] = global.disabledMcps;
+    if (global.disabledHooks?.length)
+      result["disabled_hooks"] = global.disabledHooks;
 
-  if (global.otherFields) {
-    for (const [k, v] of Object.entries(global.otherFields)) {
-      result[k] = v;
+    if (!isSlim) {
+      if (global.disabledSkills?.length)
+        result["disabled_skills"] = global.disabledSkills;
+      if (global.lsp) result["lsp"] = global.lsp;
+      if (global.experimental) result["experimental"] = global.experimental;
+      if (global.backgroundTask)
+        result["background_task"] = global.backgroundTask;
+      if (global.browserAutomationEngine)
+        result["browser_automation_engine"] = global.browserAutomationEngine;
+      if (global.claudeCode) result["claude_code"] = global.claudeCode;
+    }
+
+    if (global.otherFields) {
+      for (const [k, v] of Object.entries(global.otherFields)) {
+        result[k] = v;
+      }
     }
   }
 
   if (Object.keys(agents).length > 0) result["agents"] = agents;
-  if (Object.keys(categories).length > 0) result["categories"] = categories;
+  if (!isSlim && categories && Object.keys(categories).length > 0)
+    result["categories"] = categories;
+
   try {
-    const other = JSON.parse(otherFieldsStr || "{}");
-    for (const [k, v] of Object.entries(other)) {
-      result[k] = v;
+    const other = parseOmoOtherFieldsObject(otherFieldsStr);
+    if (other) {
+      for (const [k, v] of Object.entries(other)) {
+        result[k] = v;
+      }
     }
   } catch {}
 
   return result;
+}
+
+/** @deprecated Use mergeOmoConfigPreview with options.slim=true */
+export function mergeOmoSlimConfigPreview(
+  global: OmoGlobalConfig | undefined,
+  agents: Record<string, Record<string, unknown>>,
+  otherFieldsStr: string,
+): Record<string, unknown> {
+  return mergeOmoConfigPreview(global, agents, undefined, otherFieldsStr, {
+    slim: true,
+  });
+}
+
+export function buildOmoProfilePreview(
+  agents: Record<string, Record<string, unknown>>,
+  categories: Record<string, Record<string, unknown>> | undefined,
+  otherFieldsStr: string,
+  options?: { slim?: boolean },
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const isSlim = options?.slim ?? false;
+
+  if (Object.keys(agents).length > 0) result["agents"] = agents;
+  if (!isSlim && categories && Object.keys(categories).length > 0)
+    result["categories"] = categories;
+
+  try {
+    const other = parseOmoOtherFieldsObject(otherFieldsStr);
+    if (other) {
+      for (const [k, v] of Object.entries(other)) {
+        result[k] = v;
+      }
+    }
+  } catch {}
+
+  return result;
+}
+
+/** @deprecated Use buildOmoProfilePreview with options.slim=true */
+export function buildOmoSlimProfilePreview(
+  agents: Record<string, Record<string, unknown>>,
+  otherFieldsStr: string,
+): Record<string, unknown> {
+  return buildOmoProfilePreview(agents, undefined, otherFieldsStr, {
+    slim: true,
+  });
 }

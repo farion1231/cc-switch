@@ -13,6 +13,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   Plus,
   Trash2,
   ChevronDown,
@@ -21,13 +34,18 @@ import {
   Settings,
   FolderInput,
   Loader2,
+  HelpCircle,
+  Check,
+  ChevronsUpDown,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { useReadOmoLocalFile } from "@/lib/query/omo";
+import { useReadOmoLocalFile, useReadOmoSlimLocalFile } from "@/lib/query/omo";
 import {
   OMO_BUILTIN_AGENTS,
   OMO_BUILTIN_CATEGORIES,
+  OMO_SLIM_BUILTIN_AGENTS,
   type OmoAgentDef,
   type OmoCategoryDef,
 } from "@/types/omo";
@@ -43,29 +61,170 @@ const ADVANCED_PLACEHOLDER = `{
 interface OmoFormFieldsProps {
   modelOptions: Array<{ value: string; label: string }>;
   modelVariantsMap?: Record<string, string[]>;
+  presetMetaMap?: Record<
+    string,
+    {
+      options?: Record<string, unknown>;
+      limit?: { context?: number; output?: number };
+    }
+  >;
   agents: Record<string, Record<string, unknown>>;
   onAgentsChange: (agents: Record<string, Record<string, unknown>>) => void;
-  categories: Record<string, Record<string, unknown>>;
-  onCategoriesChange: (
+  categories?: Record<string, Record<string, unknown>>;
+  onCategoriesChange?: (
     categories: Record<string, Record<string, unknown>>,
   ) => void;
   otherFieldsStr: string;
   onOtherFieldsStrChange: (value: string) => void;
+  isSlim?: boolean;
 }
 
-type CustomModelItem = { key: string; model: string };
+export type CustomModelItem = {
+  key: string;
+  model: string;
+  sourceKey?: string;
+};
 type BuiltinModelDef = Pick<
   OmoAgentDef | OmoCategoryDef,
-  "key" | "display" | "descZh" | "descEn" | "recommended"
+  "key" | "display" | "descKey" | "recommended" | "tooltipKey"
 >;
 type ModelOption = { value: string; label: string };
 
+function DeferredKeyInput({
+  value,
+  onCommit,
+  placeholder,
+  className,
+}: {
+  value: string;
+  onCommit: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  return (
+    <Input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== value) {
+          onCommit(draft);
+        }
+      }}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
+}
+
 const BUILTIN_AGENT_KEYS = new Set(OMO_BUILTIN_AGENTS.map((a) => a.key));
+const BUILTIN_AGENT_KEYS_SLIM = new Set(
+  OMO_SLIM_BUILTIN_AGENTS.map((a) => a.key),
+);
 const BUILTIN_CATEGORY_KEYS = new Set(OMO_BUILTIN_CATEGORIES.map((c) => c.key));
-const EMPTY_MODEL_VALUE = "__cc_switch_omo_model_empty__";
-const UNAVAILABLE_MODEL_VALUE = "__cc_switch_omo_model_unavailable__";
 const EMPTY_VARIANT_VALUE = "__cc_switch_omo_variant_empty__";
-const UNAVAILABLE_VARIANT_VALUE = "__cc_switch_omo_variant_unavailable__";
+
+function ModelCombobox({
+  value,
+  options,
+  recommended,
+  onChange,
+}: {
+  value: string;
+  options: ModelOption[];
+  recommended?: string;
+  onChange: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+
+  const selectedLabel = options.find((o) => o.value === value)?.label;
+
+  const selectModelText = t("omo.selectModel", {
+    defaultValue: "Select configured model",
+  });
+  const placeholderText = recommended
+    ? `${selectModelText} (${t("omo.recommendedHint", { model: recommended, defaultValue: "Recommended: {{model}}" })})`
+    : selectModelText;
+
+  return (
+    <Popover modal open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          role="combobox"
+          aria-expanded={open}
+          className="flex flex-1 h-8 items-center justify-between whitespace-nowrap rounded-md border border-border-default bg-background px-3 py-1 text-sm shadow-sm ring-offset-background focus:outline-none focus-visible:outline-none focus:border-border-default focus-visible:border-border-default focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span className={cn("truncate", !value && "text-muted-foreground")}>
+            {selectedLabel || placeholderText}
+          </span>
+          <span className="flex items-center shrink-0 ml-1 gap-0.5">
+            {value && (
+              <X
+                className="h-3.5 w-3.5 opacity-50 hover:opacity-100 cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChange("");
+                }}
+              />
+            )}
+            <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" />
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="bottom"
+        align="start"
+        sideOffset={6}
+        avoidCollisions={true}
+        collisionPadding={8}
+        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border-default"
+      >
+        <Command>
+          <CommandInput
+            placeholder={t("omo.searchModel", {
+              defaultValue: "Search model...",
+            })}
+          />
+          <CommandList>
+            <CommandEmpty>
+              {t("omo.noEnabledModels", {
+                defaultValue: "No configured models",
+              })}
+            </CommandEmpty>
+            <CommandGroup>
+              {options.map((option) => (
+                <CommandItem
+                  key={option.value}
+                  value={option.value}
+                  keywords={[option.label]}
+                  onSelect={() => {
+                    onChange(option.value);
+                    setOpen(false);
+                  }}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      value === option.value ? "opacity-100" : "opacity-0",
+                    )}
+                  />
+                  {option.label}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function getAdvancedStr(config: Record<string, unknown> | undefined): string {
   if (!config) return "";
@@ -86,24 +245,58 @@ function collectCustomModels(
       customs.push({
         key: k,
         model: ((v as Record<string, unknown>).model as string) || "",
+        sourceKey: k,
       });
     }
   }
   return customs;
 }
 
-function mergeCustomModelsIntoStore(
+export function mergeCustomModelsIntoStore(
   store: Record<string, Record<string, unknown>>,
   builtinKeys: Set<string>,
   customs: CustomModelItem[],
+  modelVariantsMap: Record<string, string[]>,
 ): Record<string, Record<string, unknown>> {
-  const updated = { ...store };
-  for (const key of Object.keys(updated)) {
-    if (!builtinKeys.has(key)) delete updated[key];
+  const updated: Record<string, Record<string, unknown>> = {};
+
+  for (const [key, value] of Object.entries(store)) {
+    if (builtinKeys.has(key)) {
+      updated[key] = { ...value };
+    }
   }
+
   for (const custom of customs) {
-    if (custom.key.trim()) {
-      updated[custom.key] = { ...updated[custom.key], model: custom.model };
+    const targetKey = custom.key.trim();
+    if (!targetKey) continue;
+
+    const sourceKey = (custom.sourceKey || targetKey).trim();
+    const sourceEntry = store[sourceKey] ?? store[targetKey];
+    const nextEntry = {
+      ...(updated[targetKey] || {}),
+      ...(sourceEntry || {}),
+    };
+
+    if (custom.model.trim()) {
+      nextEntry.model = custom.model;
+      const currentVariant =
+        typeof nextEntry.variant === "string" ? nextEntry.variant : "";
+      if (currentVariant) {
+        const validVariants = modelVariantsMap[custom.model] || [];
+        if (!validVariants.includes(currentVariant)) {
+          delete nextEntry.variant;
+        }
+      }
+      updated[targetKey] = nextEntry;
+      continue;
+    }
+
+    delete nextEntry.model;
+    delete nextEntry.variant;
+    if (Object.keys(nextEntry).length > 0) {
+      updated[targetKey] = nextEntry;
+    } else {
+      delete updated[targetKey];
     }
   }
   return updated;
@@ -112,15 +305,23 @@ function mergeCustomModelsIntoStore(
 export function OmoFormFields({
   modelOptions,
   modelVariantsMap = {},
+  presetMetaMap: _presetMetaMap = {},
   agents,
   onAgentsChange,
-  categories,
+  categories = {},
   onCategoriesChange,
   otherFieldsStr,
   onOtherFieldsStrChange,
+  isSlim = false,
 }: OmoFormFieldsProps) {
-  const { t, i18n } = useTranslation();
-  const isZh = i18n.language?.startsWith("zh");
+  const { t } = useTranslation();
+
+  const builtinAgentDefs = isSlim
+    ? OMO_SLIM_BUILTIN_AGENTS
+    : OMO_BUILTIN_AGENTS;
+  const builtinAgentKeys = isSlim
+    ? BUILTIN_AGENT_KEYS_SLIM
+    : BUILTIN_AGENT_KEYS;
 
   const [mainAgentsOpen, setMainAgentsOpen] = useState(true);
   const [subAgentsOpen, setSubAgentsOpen] = useState(true);
@@ -141,7 +342,7 @@ export function OmoFormFields({
   >({});
 
   const [customAgents, setCustomAgents] = useState<CustomModelItem[]>(() =>
-    collectCustomModels(agents, BUILTIN_AGENT_KEYS),
+    collectCustomModels(agents, builtinAgentKeys),
   );
 
   const [customCategories, setCustomCategories] = useState<CustomModelItem[]>(
@@ -149,7 +350,7 @@ export function OmoFormFields({
   );
 
   useEffect(() => {
-    setCustomAgents(collectCustomModels(agents, BUILTIN_AGENT_KEYS));
+    setCustomAgents(collectCustomModels(agents, builtinAgentKeys));
   }, [agents]);
 
   useEffect(() => {
@@ -159,19 +360,30 @@ export function OmoFormFields({
   const syncCustomAgents = useCallback(
     (customs: CustomModelItem[]) => {
       onAgentsChange(
-        mergeCustomModelsIntoStore(agents, BUILTIN_AGENT_KEYS, customs),
+        mergeCustomModelsIntoStore(
+          agents,
+          builtinAgentKeys,
+          customs,
+          modelVariantsMap,
+        ),
       );
     },
-    [agents, onAgentsChange],
+    [agents, onAgentsChange, modelVariantsMap, builtinAgentKeys],
   );
 
   const syncCustomCategories = useCallback(
     (customs: CustomModelItem[]) => {
+      if (!onCategoriesChange) return;
       onCategoriesChange(
-        mergeCustomModelsIntoStore(categories, BUILTIN_CATEGORY_KEYS, customs),
+        mergeCustomModelsIntoStore(
+          categories,
+          BUILTIN_CATEGORY_KEYS,
+          customs,
+          modelVariantsMap,
+        ),
       );
     },
-    [categories, onCategoriesChange],
+    [categories, onCategoriesChange, modelVariantsMap],
   );
 
   const buildEffectiveModelOptions = useCallback(
@@ -212,43 +424,16 @@ export function OmoFormFields({
   const renderModelSelect = (
     currentModel: string,
     onChange: (value: string) => void,
-    placeholder?: string,
+    recommended?: string,
   ) => {
     const options = buildEffectiveModelOptions(currentModel);
     return (
-      <Select
-        value={currentModel || EMPTY_MODEL_VALUE}
-        onValueChange={(value) =>
-          onChange(value === EMPTY_MODEL_VALUE ? "" : value)
-        }
-      >
-        <SelectTrigger className="flex-1 h-8 text-sm">
-          <SelectValue
-            placeholder={
-              placeholder ||
-              t("omo.selectEnabledModel", {
-                defaultValue: "Select enabled model",
-              })
-            }
-          />
-        </SelectTrigger>
-        <SelectContent className="max-h-72">
-          <SelectItem value={EMPTY_MODEL_VALUE}>
-            {t("omo.clearWrapped", { defaultValue: "(Clear)" })}
-          </SelectItem>
-          {options.length === 0 ? (
-            <SelectItem value={UNAVAILABLE_MODEL_VALUE} disabled>
-              {t("omo.noEnabledModels", { defaultValue: "No enabled models" })}
-            </SelectItem>
-          ) : (
-            options.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))
-          )}
-        </SelectContent>
-      </Select>
+      <ModelCombobox
+        value={currentModel}
+        options={options}
+        recommended={recommended}
+        onChange={onChange}
+      />
     );
   };
 
@@ -268,11 +453,21 @@ export function OmoFormFields({
     currentVariant: string,
     onChange: (value: string) => void,
   ) => {
+    const hasModel = Boolean(currentModel);
+    const modelVariantKeys = hasModel
+      ? modelVariantsMap[currentModel] || []
+      : [];
+    const hasVariants = modelVariantKeys.length > 0;
+    const shouldShow = hasModel && (hasVariants || Boolean(currentVariant));
+
+    if (!shouldShow) {
+      return null;
+    }
+
     const variantOptions = buildEffectiveVariantOptions(
       currentModel,
       currentVariant,
     );
-    const hasModel = Boolean(currentModel);
     const firstIsUnavailable =
       Boolean(currentVariant) &&
       !(modelVariantsMap[currentModel] || []).includes(currentVariant);
@@ -283,9 +478,8 @@ export function OmoFormFields({
         onValueChange={(value) =>
           onChange(value === EMPTY_VARIANT_VALUE ? "" : value)
         }
-        disabled={!hasModel}
       >
-        <SelectTrigger className="w-32 h-8 text-xs shrink-0">
+        <SelectTrigger className="w-28 h-8 text-xs shrink-0">
           <SelectValue
             placeholder={t("omo.variantPlaceholder", {
               defaultValue: "variant",
@@ -296,30 +490,16 @@ export function OmoFormFields({
           <SelectItem value={EMPTY_VARIANT_VALUE}>
             {t("omo.defaultWrapped", { defaultValue: "(Default)" })}
           </SelectItem>
-          {!hasModel ? (
-            <SelectItem value={UNAVAILABLE_VARIANT_VALUE} disabled>
-              {t("omo.selectModelFirst", {
-                defaultValue: "Select model first",
-              })}
+          {variantOptions.map((variant, index) => (
+            <SelectItem key={`${variant}-${index}`} value={variant}>
+              {firstIsUnavailable && index === 0
+                ? t("omo.currentValueUnavailable", {
+                    value: variant,
+                    defaultValue: "{{value}} (current value, unavailable)",
+                  })
+                : variant}
             </SelectItem>
-          ) : variantOptions.length === 0 ? (
-            <SelectItem value={UNAVAILABLE_VARIANT_VALUE} disabled>
-              {t("omo.noVariantsForModel", {
-                defaultValue: "No variants for model",
-              })}
-            </SelectItem>
-          ) : (
-            variantOptions.map((variant, index) => (
-              <SelectItem key={`${variant}-${index}`} value={variant}>
-                {firstIsUnavailable && index === 0
-                  ? t("omo.currentValueUnavailable", {
-                      value: variant,
-                      defaultValue: "{{value}} (current value, unavailable)",
-                    })
-                  : variant}
-              </SelectItem>
-            ))
-          )}
+          ))}
         </SelectContent>
       </Select>
     );
@@ -536,14 +716,14 @@ export function OmoFormFields({
       toast.warning(
         t("omo.noEnabledModelsWarning", {
           defaultValue:
-            "No enabled models available. Configure and enable OpenCode models first.",
+            "No configured models available. Configure OpenCode models first.",
         }),
       );
       return;
     }
 
     const updatedAgents = { ...agents };
-    for (const agentDef of OMO_BUILTIN_AGENTS) {
+    for (const agentDef of builtinAgentDefs) {
       const recommendedValue = resolveRecommendedModel(agentDef.recommended);
       if (recommendedValue && !updatedAgents[agentDef.key]?.model) {
         updatedAgents[agentDef.key] = {
@@ -554,30 +734,35 @@ export function OmoFormFields({
     }
     onAgentsChange(updatedAgents);
 
-    const updatedCategories = { ...categories };
-    for (const catDef of OMO_BUILTIN_CATEGORIES) {
-      const recommendedValue = resolveRecommendedModel(catDef.recommended);
-      if (recommendedValue && !updatedCategories[catDef.key]?.model) {
-        updatedCategories[catDef.key] = {
-          ...updatedCategories[catDef.key],
-          model: recommendedValue,
-        };
+    if (!isSlim && onCategoriesChange) {
+      const updatedCategories = { ...categories };
+      for (const catDef of OMO_BUILTIN_CATEGORIES) {
+        const recommendedValue = resolveRecommendedModel(catDef.recommended);
+        if (recommendedValue && !updatedCategories[catDef.key]?.model) {
+          updatedCategories[catDef.key] = {
+            ...updatedCategories[catDef.key],
+            model: recommendedValue,
+          };
+        }
       }
+      onCategoriesChange(updatedCategories);
     }
-    onCategoriesChange(updatedCategories);
   };
 
   const configuredAgentCount = Object.keys(agents).length;
-  const configuredCategoryCount = Object.keys(categories).length;
-  const mainAgents = OMO_BUILTIN_AGENTS.filter((a) => a.group === "main");
-  const subAgents = OMO_BUILTIN_AGENTS.filter((a) => a.group === "sub");
+  const configuredCategoryCount = isSlim ? 0 : Object.keys(categories).length;
+  const mainAgents = builtinAgentDefs.filter((a) => a.group === "main");
+  const subAgents = builtinAgentDefs.filter((a) => a.group === "sub");
 
   const readLocalFile = useReadOmoLocalFile();
+  const readSlimLocalFile = useReadOmoSlimLocalFile();
   const [localFilePath, setLocalFilePath] = useState<string | null>(null);
 
   const handleImportFromLocal = useCallback(async () => {
     try {
-      const data = await readLocalFile.mutateAsync();
+      const data = isSlim
+        ? await readSlimLocalFile.mutateAsync()
+        : await readLocalFile.mutateAsync();
       const importedAgents =
         (data.agents as Record<string, Record<string, unknown>> | undefined) ||
         {};
@@ -587,16 +772,20 @@ export function OmoFormFields({
           | undefined) || {};
 
       onAgentsChange(importedAgents);
-      onCategoriesChange(importedCategories);
+      if (!isSlim && onCategoriesChange) {
+        onCategoriesChange(importedCategories);
+      }
       onOtherFieldsStrChange(
         data.otherFields ? JSON.stringify(data.otherFields, null, 2) : "",
       );
       setAgentAdvancedDrafts({});
       setCategoryAdvancedDrafts({});
-      setCustomAgents(collectCustomModels(importedAgents, BUILTIN_AGENT_KEYS));
-      setCustomCategories(
-        collectCustomModels(importedCategories, BUILTIN_CATEGORY_KEYS),
-      );
+      setCustomAgents(collectCustomModels(importedAgents, builtinAgentKeys));
+      if (!isSlim) {
+        setCustomCategories(
+          collectCustomModels(importedCategories, BUILTIN_CATEGORY_KEYS),
+        );
+      }
       setLocalFilePath(data.filePath);
       toast.success(
         t("omo.importLocalReplaceSuccess", {
@@ -626,7 +815,7 @@ export function OmoFormFields({
   ) => {
     const isAgent = scope === "agent";
     const store = isAgent ? agents : categories;
-    const setter = isAgent ? onAgentsChange : onCategoriesChange;
+    const setter = isAgent ? onAgentsChange : onCategoriesChange!;
     const drafts = isAgent ? agentAdvancedDrafts : categoryAdvancedDrafts;
     const expanded = isAgent ? expandedAgents : expandedCategories;
 
@@ -641,9 +830,17 @@ export function OmoFormFields({
       <div key={key} className="border-b border-border/30 last:border-b-0">
         <div className="flex items-center gap-2 py-1.5">
           <div className="w-32 shrink-0">
-            <div className="text-sm font-medium">{def.display}</div>
+            <div className="flex items-center gap-1 text-sm font-medium">
+              {def.display}
+              <span className="relative inline-flex group/tip">
+                <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/60 hover:text-muted-foreground cursor-help shrink-0" />
+                <span className="invisible opacity-0 group-hover/tip:visible group-hover/tip:opacity-100 transition-opacity duration-150 absolute left-0 top-full mt-1 z-50 w-[260px] rounded-md bg-popover text-popover-foreground border border-border shadow-md px-3 py-2 text-xs leading-relaxed font-normal pointer-events-none">
+                  {t(def.tooltipKey)}
+                </span>
+              </span>
+            </div>
             <div className="text-xs text-muted-foreground truncate">
-              {isZh ? def.descZh : def.descEn}
+              {t(def.descKey)}
             </div>
           </div>
           {renderModelSelect(
@@ -692,7 +889,7 @@ export function OmoFormFields({
   ) => {
     const isAgent = scope === "agent";
     const store = isAgent ? agents : categories;
-    const setter = isAgent ? onAgentsChange : onCategoriesChange;
+    const setter = isAgent ? onAgentsChange : onCategoriesChange!;
     const drafts = isAgent ? agentAdvancedDrafts : categoryAdvancedDrafts;
     const expanded = isAgent ? expandedAgents : expandedCategories;
     const customs = isAgent ? customAgents : customCategories;
@@ -727,16 +924,14 @@ export function OmoFormFields({
         className="border-b border-border/30 last:border-b-0"
       >
         <div className="flex items-center gap-2 py-1.5">
-          <Input
+          <DeferredKeyInput
             value={item.key}
-            onChange={(e) => updateCustom({ key: e.target.value })}
+            onCommit={(value) => updateCustom({ key: value })}
             placeholder={keyPlaceholder}
             className="w-32 shrink-0 h-8 text-sm text-primary"
           />
-          {renderModelSelect(
-            item.model,
-            (value) => updateCustom({ model: value }),
-            t("omo.modelNamePlaceholder", { defaultValue: "model-name" }),
+          {renderModelSelect(item.model, (value) =>
+            updateCustom({ model: value }),
           )}
           {renderVariantSelect(item.model, currentVariant, (value) => {
             if (!item.key) return;
@@ -877,11 +1072,17 @@ export function OmoFormFields({
 
   const addCustomModel = (scope: AdvancedScope) => {
     if (scope === "agent") {
-      setCustomAgents((prev) => [...prev, { key: "", model: "" }]);
+      setCustomAgents((prev) => [
+        ...prev,
+        { key: "", model: "", sourceKey: "" },
+      ]);
       setSubAgentsOpen(true);
       return;
     }
-    setCustomCategories((prev) => [...prev, { key: "", model: "" }]);
+    setCustomCategories((prev) => [
+      ...prev,
+      { key: "", model: "", sourceKey: "" },
+    ]);
     setCategoriesOpen(true);
   };
 
@@ -931,7 +1132,7 @@ export function OmoFormFields({
           ·{" "}
           {t("omo.enabledModelsCount", {
             count: modelOptions.length,
-            defaultValue: "{{count}} enabled models available",
+            defaultValue: "{{count}} configured models available",
           })}
         </span>
         {localFilePath && (
@@ -975,30 +1176,31 @@ export function OmoFormFields({
         ),
       })}
 
-      {renderModelSection({
-        title: t("omo.categories", { defaultValue: "Categories" }),
-        isOpen: categoriesOpen,
-        onToggle: () => setCategoriesOpen(!categoriesOpen),
-        badge: `${OMO_BUILTIN_CATEGORIES.length + customCategories.length}`,
-        action: renderCustomAddButton(() => addCustomModel("category")),
-        children: (
-          <>
-            {OMO_BUILTIN_CATEGORIES.map(renderCategoryRow)}
-            {customCategories.length > 0 && (
-              <>
-                {renderCustomDivider(
-                  t("omo.customCategories", {
-                    defaultValue: "Custom Categories",
-                  }),
-                )}
-                {customCategories.map((c, i) =>
-                  renderCustomModelRow("category", c, i),
-                )}
-              </>
-            )}
-          </>
-        ),
-      })}
+      {!isSlim &&
+        renderModelSection({
+          title: t("omo.categories", { defaultValue: "Categories" }),
+          isOpen: categoriesOpen,
+          onToggle: () => setCategoriesOpen(!categoriesOpen),
+          badge: `${OMO_BUILTIN_CATEGORIES.length + customCategories.length}`,
+          action: renderCustomAddButton(() => addCustomModel("category")),
+          children: (
+            <>
+              {OMO_BUILTIN_CATEGORIES.map(renderCategoryRow)}
+              {customCategories.length > 0 && (
+                <>
+                  {renderCustomDivider(
+                    t("omo.customCategories", {
+                      defaultValue: "Custom Categories",
+                    }),
+                  )}
+                  {customCategories.map((c, i) =>
+                    renderCustomModelRow("category", c, i),
+                  )}
+                </>
+              )}
+            </>
+          ),
+        })}
 
       {renderModelSection({
         title: t("omo.otherFieldsJson", {

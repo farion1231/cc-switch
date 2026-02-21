@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import {
   ChevronDown,
   ChevronRight,
-  FlaskConical,
+  // FlaskConical, // Hidden: stream check feature disabled
   Globe,
   Coins,
   Eye,
@@ -87,15 +87,16 @@ function parseProxyUrl(url: string): Partial<ProviderProxyConfig> {
 }
 
 export function ProviderAdvancedConfig({
-  testConfig,
+  testConfig: _testConfig, // Hidden: stream check feature disabled
   proxyConfig,
   pricingConfig,
-  onTestConfigChange,
+  onTestConfigChange: _onTestConfigChange, // Hidden: stream check feature disabled
   onProxyConfigChange,
   onPricingConfigChange,
 }: ProviderAdvancedConfigProps) {
   const { t } = useTranslation();
-  const [isTestConfigOpen, setIsTestConfigOpen] = useState(testConfig.enabled);
+  // Hidden: stream check feature disabled
+  // const [isTestConfigOpen, setIsTestConfigOpen] = useState(testConfig.enabled);
   const [isProxyConfigOpen, setIsProxyConfigOpen] = useState(
     proxyConfig.enabled,
   );
@@ -110,10 +111,10 @@ export function ProviderAdvancedConfig({
   // 标记是否为用户主动输入（用于区分外部更新和用户输入）
   const [isUserTyping, setIsUserTyping] = useState(false);
 
-  // 同步外部 testConfig.enabled 变化到展开状态
-  useEffect(() => {
-    setIsTestConfigOpen(testConfig.enabled);
-  }, [testConfig.enabled]);
+  // Hidden: stream check feature disabled
+  // useEffect(() => {
+  //   setIsTestConfigOpen(testConfig.enabled);
+  // }, [testConfig.enabled]);
 
   // 同步外部 proxyConfig.enabled 变化到展开状态
   useEffect(() => {
@@ -167,7 +168,7 @@ export function ProviderAdvancedConfig({
 
   return (
     <div className="space-y-4">
-      {/* 模型测试配置 */}
+      {/* Hidden: stream check feature disabled — model test config panel
       <div className="rounded-lg border border-border/50 bg-muted/20">
         <button
           type="button"
@@ -343,6 +344,7 @@ export function ProviderAdvancedConfig({
           </div>
         </div>
       </div>
+      */}
 
       {/* 代理配置 */}
       <div className="rounded-lg border border-border/50 bg-muted/20">

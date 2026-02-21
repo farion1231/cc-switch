@@ -78,18 +78,6 @@ export const useProvidersQuery = (
         console.error("获取当前供应商失败:", error);
       }
 
-      if (Object.keys(providers).length === 0) {
-        try {
-          const success = await providersApi.importDefault(appId);
-          if (success) {
-            providers = await providersApi.getAll(appId);
-            currentProviderId = await providersApi.getCurrent(appId);
-          }
-        } catch (error) {
-          console.error("导入默认配置失败:", error);
-        }
-      }
-
       return {
         providers: sortProviders(providers),
         currentProviderId,

@@ -53,7 +53,7 @@ export function ImportExportSection({
         </p>
       </header>
 
-      <div className="space-y-4 rounded-xl glass-card p-6 border border-white/10">
+      <div className="space-y-4 rounded-lg border border-border bg-muted/40 p-6">
         {/* Import and Export Buttons Side by Side */}
         <div className="grid grid-cols-2 gap-4 items-stretch">
           {/* Import Button */}

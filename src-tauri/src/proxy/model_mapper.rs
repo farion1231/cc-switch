@@ -97,11 +97,21 @@ impl ModelMapping {
 
 /// 检测请求是否启用了 thinking 模式
 pub fn has_thinking_enabled(body: &Value) -> bool {
-    body.get("thinking")
+    match body
+        .get("thinking")
         .and_then(|v| v.as_object())
         .and_then(|o| o.get("type"))
         .and_then(|t| t.as_str())
-        == Some("enabled")
+    {
+        Some("enabled") | Some("adaptive") => true,
+        Some("disabled") | None => false,
+        Some(other) => {
+            log::warn!(
+                "[ModelMapper] 未知 thinking.type='{other}'，按 disabled 处理以避免误路由 reasoning 模型"
+            );
+            false
+        }
+    }
 }
 
 /// 对请求体应用模型映射
@@ -298,6 +308,30 @@ mod tests {
         assert_eq!(result["model"], "claude-sonnet-4-5");
         assert_eq!(original, Some("claude-sonnet-4-5".to_string()));
         assert!(mapped.is_none());
+    }
+
+    #[test]
+    fn test_thinking_adaptive() {
+        let provider = create_provider_with_mapping();
+        let body = json!({
+            "model": "claude-sonnet-4-5",
+            "thinking": {"type": "adaptive"}
+        });
+        let (result, _, mapped) = apply_model_mapping(body, &provider);
+        assert_eq!(result["model"], "reasoning-model");
+        assert_eq!(mapped, Some("reasoning-model".to_string()));
+    }
+
+    #[test]
+    fn test_thinking_unknown_type() {
+        let provider = create_provider_with_mapping();
+        let body = json!({
+            "model": "claude-sonnet-4-5",
+            "thinking": {"type": "some_future_type"}
+        });
+        let (result, _, mapped) = apply_model_mapping(body, &provider);
+        assert_eq!(result["model"], "sonnet-mapped");
+        assert_eq!(mapped, Some("sonnet-mapped".to_string()));
     }
 
     #[test]

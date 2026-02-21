@@ -5,6 +5,7 @@ import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import type { Provider, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
+import { openclawKeys } from "@/hooks/useOpenClaw";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -16,12 +17,12 @@ export const useAddProviderMutation = (appId: AppId) => {
     ) => {
       let id: string;
 
-      if (appId === "opencode") {
+      if (appId === "opencode" || appId === "openclaw") {
         if (providerInput.category === "omo") {
           id = `omo-${generateUUID()}`;
         } else {
           if (!providerInput.providerKey) {
-            throw new Error("Provider key is required for OpenCode");
+            throw new Error(`Provider key is required for ${appId}`);
           }
           id = providerInput.providerKey;
         }
@@ -29,8 +30,10 @@ export const useAddProviderMutation = (appId: AppId) => {
         id = generateUUID();
       }
 
+      const { providerKey: _providerKey, ...rest } = providerInput;
+
       const newProvider: Provider = {
-        ...providerInput,
+        ...rest,
         id,
         createdAt: Date.now(),
       };
@@ -174,12 +177,21 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
+      // OpenCode/OpenClaw: also invalidate live provider IDs cache to update button state
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
           queryKey: ["opencodeLiveProviderIds"],
         });
         await queryClient.invalidateQueries({
           queryKey: ["omo", "current-provider-id"],
+        });
+      }
+      if (appId === "openclaw") {
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.liveProviderIds,
+        });
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.defaultModel,
         });
       }
 

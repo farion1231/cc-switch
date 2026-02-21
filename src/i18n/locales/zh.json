@@ -58,7 +58,10 @@
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
-    "saveFailed": "保存失败: {{error}}"
+    "saveFailed": "保存失败: {{error}}",
+    "hideAttribution": "隐藏 AI 署名",
+    "alwaysThinking": "扩展思考",
+    "enableTeammates": "Teammates 模式"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
@@ -74,7 +77,9 @@
     "tabProvider": "供应商",
     "tabUniversal": "统一供应商",
     "noProviders": "还没有添加任何供应商",
-    "noProvidersDescription": "点击右上角的\"添加供应商\"按钮开始配置您的第一个API供应商",
+    "noProvidersDescription": "点击下方的\"导入当前配置\"按钮导入已有配置，或手动添加新的供应商",
+    "importCurrent": "导入当前配置",
+    "importCurrentDescription": "将当前正在使用的配置导入为默认供应商",
     "currentlyUsing": "当前使用",
     "enable": "启用",
     "inUse": "使用中",
@@ -88,6 +93,8 @@
     "addOpenCodeProvider": "添加 OpenCode 供应商",
     "addToConfig": "添加",
     "removeFromConfig": "移除",
+    "setAsDefault": "设为默认",
+    "isDefault": "当前默认",
     "inConfig": "已添加",
     "addProviderHint": "填写信息后即可在列表中快速切换供应商。",
     "editClaudeProvider": "编辑 Claude Code 供应商",
@@ -162,7 +169,11 @@
     "settingsSaved": "设置已保存",
     "settingsSaveFailed": "保存设置失败：{{error}}",
     "openAIChatFormatHint": "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用",
-    "openLinkFailed": "链接打开失败"
+    "openLinkFailed": "链接打开失败",
+    "openclawModelsRegistered": "模型已注册到 /model 列表",
+    "openclawDefaultModelSet": "已设为默认模型",
+    "openclawDefaultModelSetFailed": "设置默认模型失败",
+    "openclawNoModels": "该供应商没有配置模型"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -183,6 +194,8 @@
       "proxy": {
         "title": "本地代理",
         "description": "控制代理服务开关、查看状态与端口信息",
+        "enableFeature": "在主页面显示本地代理开关",
+        "enableFeatureDescription": "开启后，主页面顶部将显示代理和故障转移开关",
         "running": "运行中",
         "stopped": "已停止"
       },
@@ -214,7 +227,9 @@
         "requestGroup": "请求整流",
         "responseGroup": "响应整流",
         "thinkingSignature": "Thinking 签名整流",
-        "thinkingSignatureDescription": "自动修复 Claude API 中因 thinking 签名校验失败导致的请求错误"
+        "thinkingSignatureDescription": "当 Anthropic 类型供应商返回 thinking 签名不兼容或非法请求等错误时，自动移除不兼容的 thinking 相关块并对同一供应商重试一次",
+        "thinkingBudget": "Thinking Budget 整流",
+        "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次"
       },
       "logConfig": {
         "title": "日志管理",
@@ -264,6 +279,82 @@
     "selectFileFailed": "请选择有效的 SQL 备份文件",
     "configCorrupted": "SQL 文件可能已损坏或格式不正确",
     "backupId": "备份ID",
+    "webdavSync": {
+      "title": "WebDAV 云同步",
+      "description": "通过 WebDAV 在多设备间同步数据库和技能配置。",
+      "baseUrl": "WebDAV 服务器地址",
+      "baseUrlPlaceholder": "https://dav.jianguoyun.com/dav/",
+      "username": "WebDAV 账户",
+      "usernamePlaceholder": "邮箱账号",
+      "password": "WebDAV 密码",
+      "passwordPlaceholder": "应用密码（坚果云请使用「第三方应用密码」）",
+      "remoteRoot": "远程根目录",
+      "profile": "同步配置名",
+      "autoSync": "自动同步",
+      "autoSyncHint": "开启后每次数据库变更都会自动上传到 WebDAV。",
+      "test": "测试连接",
+      "testing": "测试中...",
+      "testSuccess": "连接成功",
+      "testFailed": "连接失败：{{error}}",
+      "save": "保存配置",
+      "saving": "保存中...",
+      "saveFailed": "保存配置失败：{{error}}",
+      "upload": "上传到云端",
+      "uploading": "上传中...",
+      "uploadSuccess": "已上传到 WebDAV",
+      "uploadFailed": "上传失败：{{error}}",
+      "autoSyncFailedToast": "自动同步失败：{{error}}",
+      "download": "从云端下载",
+      "downloading": "下载中...",
+      "downloadSuccess": "已从 WebDAV 下载并恢复",
+      "downloadFailed": "下载失败：{{error}}",
+      "lastSync": "上次同步：{{time}}",
+      "autoSyncLastErrorTitle": "上次自动同步失败",
+      "autoSyncLastErrorHint": "请检查网络或 WebDAV 配置，系统会在后续变更时继续自动重试。",
+      "missingUrl": "请填写 WebDAV 服务器地址",
+      "presets": {
+        "label": "服务商",
+        "jianguoyun": "坚果云",
+        "jianguoyunHint": "请在坚果云「安全选项」中生成「第三方应用密码」，不要使用登录密码。",
+        "nextcloud": "Nextcloud",
+        "nextcloudHint": "请将 your-server 替换为你的 Nextcloud 服务器地址，USERNAME 替换为你的用户名。",
+        "synology": "群晖 NAS",
+        "synologyHint": "请先在群晖「套件中心」安装并启用 WebDAV Server 套件。",
+        "custom": "自定义"
+      },
+      "remoteRootDefault": "默认: cc-switch-sync",
+      "profileDefault": "默认: default",
+      "saveAndTestSuccess": "配置已保存，连接正常",
+      "saveAndTestFailed": "配置已保存，但连接测试失败：{{error}}",
+      "noRemoteData": "云端没有找到同步数据",
+      "incompatibleVersion": "远端数据版本不兼容（v{{version}}），当前支持 v2",
+      "unsaved": "未保存",
+      "saved": "已保存",
+      "unsavedChanges": "请先保存配置",
+      "saveBeforeSync": "请先保存配置，再使用上传/下载。",
+      "fetchingRemote": "获取远端信息...",
+      "fetchRemoteFailed": "获取远端信息失败，请检查配置和网络后重试。",
+      "confirmDownload": {
+        "title": "从云端恢复",
+        "deviceName": "上传设备",
+        "createdAt": "上传时间",
+        "artifacts": "包含内容",
+        "warning": "恢复将覆盖本地所有数据和技能配置",
+        "confirm": "确认恢复"
+      },
+      "confirmUpload": {
+        "title": "上传到云端",
+        "content": "将同步以下内容到 WebDAV 服务器：",
+        "dbItem": "数据库（所有 Provider 配置和数据）",
+        "skillsItem": "技能包（所有自定义技能）",
+        "targetPath": "目标路径",
+        "existingData": "云端已有数据",
+        "deviceName": "上传设备",
+        "createdAt": "上传时间",
+        "warning": "将覆盖云端已有的同步数据",
+        "confirm": "确认上传"
+      }
+    },
     "autoReload": "数据已刷新",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
@@ -405,7 +496,8 @@
     "claude": "Claude",
     "codex": "Codex",
     "gemini": "Gemini",
-    "opencode": "OpenCode"
+    "opencode": "OpenCode",
+    "openclaw": "OpenClaw"
   },
   "sessionManager": {
     "title": "会话管理",
@@ -488,7 +580,6 @@
     "officialHint": "💡 官方供应商使用浏览器登录，无需配置 API Key",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
-      "zhipu": "智谱 GLM 是 CC Switch 的官方合作伙伴，使用此链接充值可以获得9折优惠",
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
       "minimax_cn": "MiniMax Coding Plan 特惠，Starter 套餐 9.9 元起",
       "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 套餐现仅 $2/月（2折优惠！）",
@@ -672,6 +763,38 @@
     "noModelOptions": "模型选项，点击 + 添加",
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+  },
+  "openclaw": {
+    "providerKey": "供应商标识",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "配置文件中的唯一标识符，创建后无法修改，只能使用小写字母、数字和连字符",
+    "providerKeyRequired": "请填写供应商标识",
+    "providerKeyDuplicate": "此标识已被使用，请更换",
+    "providerKeyInvalid": "标识格式无效，只能使用小写字母、数字和连字符",
+    "apiProtocol": "API 协议",
+    "selectProtocol": "选择 API 协议",
+    "apiProtocolHint": "选择与供应商 API 兼容的协议类型。大多数供应商使用 OpenAI Completions 格式。",
+    "baseUrl": "API 端点",
+    "baseUrlHint": "供应商的 API 端点地址。",
+    "models": "模型列表",
+    "addModel": "添加模型",
+    "noModels": "暂无模型配置。点击添加模型来配置可用模型。",
+    "modelId": "模型 ID",
+    "modelIdPlaceholder": "claude-3-sonnet",
+    "modelName": "显示名称",
+    "modelNamePlaceholder": "Claude 3 Sonnet",
+    "contextWindow": "上下文窗口",
+    "maxTokens": "最大输出 Tokens",
+    "reasoning": "推理模式",
+    "reasoningOn": "启用",
+    "reasoningOff": "关闭",
+    "inputCost": "输入价格 ($/M tokens)",
+    "outputCost": "输出价格 ($/M tokens)",
+    "advancedOptions": "高级选项",
+    "cacheReadCost": "缓存读取价格 ($/M tokens)",
+    "cacheWriteCost": "缓存写入价格 ($/M tokens)",
+    "cacheCostHint": "缓存价格用于计算 Prompt Caching 的成本。如不使用缓存可留空。",
+    "modelsHint": "配置该供应商支持的模型。模型 ID 用于 API 调用，显示名称用于界面展示。"
   },
   "providerPreset": {
     "label": "预设供应商",
@@ -872,7 +995,8 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
-        "opencode": "OpenCode"
+        "opencode": "OpenCode",
+        "openclaw": "OpenClaw"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -1045,6 +1169,89 @@
       "deleteMessage": "确定要删除提示词 \"{{name}}\" 吗？"
     }
   },
+  "workspace": {
+    "title": "Workspace 文件管理",
+    "manage": "Workspace",
+    "files": {
+      "agents": "Agent 操作指令和规则",
+      "soul": "Agent 人格和沟通风格",
+      "user": "用户档案和偏好",
+      "identity": "Agent 名称和头像",
+      "tools": "本地工具文档",
+      "memory": "长期记忆和决策记录",
+      "heartbeat": "心跳运行清单",
+      "bootstrap": "首次运行仪式",
+      "boot": "网关重启清单"
+    },
+    "editing": "编辑 {{filename}}",
+    "saveSuccess": "保存成功",
+    "saveFailed": "保存失败",
+    "loadFailed": "读取失败",
+    "dailyMemory": {
+      "title": "每日记忆",
+      "sectionTitle": "每日记忆",
+      "cardTitle": "每日记忆文件",
+      "cardDescription": "浏览管理每日记忆",
+      "createToday": "今日笔记",
+      "empty": "暂无每日记忆文件",
+      "loadFailed": "加载每日记忆文件失败",
+      "createFailed": "创建每日记忆文件失败",
+      "deleteSuccess": "每日记忆文件已删除",
+      "deleteFailed": "删除每日记忆文件失败",
+      "confirmDeleteTitle": "删除每日记忆",
+      "confirmDeleteMessage": "确定删除 {{date}} 的每日记忆吗？此操作不可撤销。"
+    }
+  },
+  "openclaw": {
+    "env": {
+      "title": "环境变量",
+      "description": "管理 openclaw.json 中的环境变量配置（API Key、自定义变量等）",
+      "keyPlaceholder": "变量名",
+      "valuePlaceholder": "值",
+      "add": "添加变量",
+      "saveSuccess": "环境变量已保存",
+      "saveFailed": "保存环境变量失败",
+      "loadFailed": "读取环境变量失败",
+      "duplicateKey": "检测到重复的变量名: {{key}}"
+    },
+    "tools": {
+      "title": "工具权限",
+      "description": "管理 openclaw.json 中的工具权限配置（允许/拒绝列表）",
+      "profile": "权限模式",
+      "profiles": {
+        "default": "默认",
+        "strict": "严格",
+        "permissive": "宽松",
+        "custom": "自定义"
+      },
+      "allowList": "允许列表",
+      "denyList": "拒绝列表",
+      "patternPlaceholder": "工具名称或模式",
+      "addAllow": "添加允许",
+      "addDeny": "添加拒绝",
+      "saveSuccess": "工具权限已保存",
+      "saveFailed": "保存工具权限失败",
+      "loadFailed": "读取工具权限失败"
+    },
+    "agents": {
+      "title": "Agents 配置",
+      "description": "管理 openclaw.json 中的 agents.defaults 配置（默认模型、运行参数等）",
+      "modelSection": "模型配置",
+      "primaryModel": "主模型",
+      "primaryModelHint": "在供应商列表中通过「设为默认模型」按钮设置",
+      "notSet": "未设置",
+      "fallbackModels": "回退模型",
+      "fallbackModelsHint": "逗号分隔，按优先级排列",
+      "runtimeSection": "运行参数",
+      "workspace": "工作区路径",
+      "timeout": "超时时间（秒）",
+      "contextTokens": "上下文 Token 数",
+      "maxConcurrent": "最大并发数",
+      "saveSuccess": "Agents 配置已保存",
+      "saveFailed": "保存 Agents 配置失败",
+      "loadFailed": "读取 Agents 配置失败"
+    }
+  },
   "env": {
     "warning": {
       "title": "检测到系统环境变量冲突",
@@ -1160,7 +1367,7 @@
       "skillCount": "识别到 {{count}} 个技能"
     },
     "search": "搜索技能",
-    "searchPlaceholder": "搜索技能名称或描述...",
+    "searchPlaceholder": "搜索技能名称或仓库名称...",
     "filter": {
       "placeholder": "状态筛选",
       "all": "全部",
@@ -1187,7 +1394,8 @@
       "claude": "Claude",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "openclaw": "OpenClaw"
     },
     "installFromZip": {
       "button": "从 ZIP 安装",
@@ -1590,16 +1798,21 @@
     "clearWrapped": "（清空）",
     "defaultWrapped": "（默认）",
     "variantPlaceholder": "思考等级",
-    "selectEnabledModel": "选择已启用模型",
+    "selectEnabledModel": "选择已配置模型",
+    "selectModel": "选择已配置模型",
+    "recommendedHint": "推荐: {{model}}",
+    "searchModel": "搜索模型...",
     "selectModelFirst": "先选择模型",
-    "noEnabledModels": "暂无已启用模型",
+    "noEnabledModels": "暂无已配置模型",
     "noVariantsForModel": "该模型无思考等级",
-    "currentValueNotEnabled": "{{value}}（当前值，未启用）",
-    "currentValueUnavailable": "{{value}}（当前值，未启用）",
+    "currentValueNotEnabled": "{{value}}（当前值，未配置）",
+    "currentValueUnavailable": "{{value}}（当前值，不可用）",
     "advancedLabel": "高级参数",
     "advancedJsonInvalid": "高级参数 JSON 无效",
     "advancedJsonHint": "temperature, top_p, budgetTokens, prompt_append, permission 等，留空使用默认值",
-    "noEnabledModelsWarning": "当前没有可用的已启用模型，请先启用并配置 OpenCode 模型",
+    "noEnabledModelsWarning": "当前没有可用的已配置模型，请先配置 OpenCode 模型",
+    "modelSourcePartialWarning": "部分供应商模型配置无效，已自动跳过。",
+    "modelSourceFallbackWarning": "读取 live 供应商状态失败，已回退到已配置供应商列表。",
     "importLocalReplaceSuccess": "已从本地文件导入并覆盖 Agent/Category/Other Fields",
     "importLocalFailed": "读取本地文件失败: {{error}}",
     "agentKeyPlaceholder": "agent 键名",
@@ -1610,7 +1823,7 @@
     "modelConfiguration": "模型配置",
     "fillRecommended": "填充推荐",
     "configSummary": "已配置 {{agents}} 个 Agent，{{categories}} 个 Category · 点击 ⚙ 展开高级参数",
-    "enabledModelsCount": "可选已启用模型 {{count}} 个",
+    "enabledModelsCount": "可选已配置模型 {{count}} 个",
     "source": "来源:",
     "otherFieldsJson": "其他字段 (JSON)",
     "searchOrType": "搜索或输入自定义值...",
@@ -1636,6 +1849,97 @@
     "advancedExperimental": "实验性功能",
     "advancedBackgroundTask": "后台任务",
     "advancedBrowserAutomation": "浏览器自动化",
-    "advancedClaudeCode": "Claude Code"
+    "advancedClaudeCode": "Claude Code",
+    "agentDesc": {
+      "sisyphus": "主编排者",
+      "hephaestus": "自主深度工作者",
+      "prometheus": "战略规划者",
+      "atlas": "任务管理者",
+      "oracle": "战略顾问",
+      "librarian": "多仓库研究员",
+      "explore": "快速代码搜索",
+      "multimodalLooker": "媒体分析器",
+      "metis": "规划前分析顾问",
+      "momus": "计划审查者",
+      "sisyphusJunior": "委托任务执行器"
+    },
+    "agentTooltip": {
+      "sisyphus": "主编排器，负责任务规划、委派与并行执行，使用扩展思考（32k 预算），通过 TODO 驱动工作流确保任务完成。",
+      "atlas": "主编排器（持有 TODO 列表），负责执行阶段的任务分发与协调，不直接完成所有工作而是委派给专业代理。",
+      "prometheus": "战略规划师，通过访谈模式收集需求并制定详细工作计划，仅能在 .sisyphus/ 目录读写 Markdown 文件，从不直接写代码。",
+      "hephaestus": "自主深度工作者（「合法工匠」），受 AmpCode 深度模式启发，目标导向执行，行动前会并行启动 2-5 个探索/图书管理员代理进行研究。",
+      "oracle": "架构决策与调试顾问，只读咨询代理，提供出色的逻辑推理和深度分析，不能写文件或委派任务。",
+      "librarian": "多仓库分析与文档检索专家，深度理解代码库并提供基于证据的答案，擅长查找官方文档和开源实现示例。",
+      "explore": "快速代码库探索与上下文 grep 专家，使用轻量级模型进行高速搜索，是理解代码结构的先锋。",
+      "multimodalLooker": "视觉内容专家，分析 PDF、图片、图表等非文本媒体，提取其中的信息与洞察。",
+      "metis": "计划顾问，在规划前进行预分析，识别隐藏意图、模糊点和 AI 失败点，防止过度工程化。",
+      "momus": "计划评审员，高精度验证计划的清晰度、可验证性和完整性，拒绝并要求修订直到计划完美。",
+      "sisyphusJunior": "类别生成的执行器，由 category 参数自动生成，专注于执行分配的任务且不能再委派，防止无限委派循环。"
+    },
+    "categoryDesc": {
+      "visualEngineering": "视觉/前端工程",
+      "ultrabrain": "超级思考",
+      "deep": "深度工作",
+      "artistry": "创意/文艺",
+      "quick": "快速响应",
+      "unspecifiedLow": "通用低配",
+      "unspecifiedHigh": "通用高配",
+      "writing": "写作"
+    },
+    "categoryTooltip": {
+      "visualEngineering": "前端与视觉工程类别，专注于 UI/UX 设计、样式、动画和界面实现，默认使用 Gemini 3 Pro 模型。",
+      "ultrabrain": "深度逻辑推理类别，用于需要广泛分析的复杂架构决策，默认使用 GPT-5.3 Codex 的超高推理变体。",
+      "deep": "深度自主问题解决类别，目标导向执行，行动前进行彻底研究，适用于需要深度理解的棘手问题。",
+      "artistry": "高度创意与艺术性任务类别，激发新颖想法和创造性解决方案，默认使用 Gemini 3 Pro 的最大变体。",
+      "quick": "轻量任务类别，用于单文件修改、错别字修复、简单调整等琐碎工作，默认使用 Claude Haiku 4.5 快速模型。",
+      "unspecifiedLow": "未归类低工作量任务类别，适用于不适合其他类别且工作量较小的任务，默认使用 Claude Sonnet 4.5。",
+      "unspecifiedHigh": "未归类高工作量任务类别，适用于不适合其他类别且工作量较大的任务，默认使用 Claude Opus 4.6 的最大变体。",
+      "writing": "写作类别，专注于文档、散文和技术写作，默认使用 Gemini 3 Flash 快速生成模型。"
+    },
+    "slimAgentDesc": {
+      "orchestrator": "编排者",
+      "oracle": "神谕者",
+      "librarian": "图书管理员",
+      "explorer": "探索者",
+      "designer": "设计师",
+      "fixer": "修复者"
+    },
+    "slimAgentTooltip": {
+      "orchestrator": "编写执行代码，编排多代理工作流，召唤专家",
+      "oracle": "根本原因分析、架构审查、调试指导（只读）",
+      "librarian": "文档查询、GitHub 代码搜索（只读）",
+      "explorer": "正则搜索、AST 模式匹配、文件发现（只读）",
+      "designer": "现代响应式设计、CSS/Tailwind 精通",
+      "fixer": "代码实现、重构、测试、验证"
+    }
+  },
+  "openclawConfig": {
+    "defaultModel": {
+      "title": "默认模型",
+      "description": "配置 OpenClaw 的默认主模型和回退模型",
+      "primary": "主模型",
+      "primaryPlaceholder": "例如: deepseek/deepseek-chat",
+      "fallbacks": "回退模型",
+      "fallbacksPlaceholder": "例如: openrouter/anthropic/claude-sonnet-4.5",
+      "addFallback": "添加回退模型",
+      "saved": "默认模型配置已保存",
+      "saveFailed": "保存默认模型失败"
+    },
+    "modelCatalog": {
+      "title": "模型目录",
+      "description": "配置可用模型的别名和允许列表",
+      "modelId": "模型 ID",
+      "modelIdPlaceholder": "例如: deepseek/deepseek-chat",
+      "alias": "别名",
+      "aliasPlaceholder": "例如: DeepSeek",
+      "addEntry": "添加模型",
+      "removeEntry": "移除",
+      "saved": "模型目录已保存",
+      "saveFailed": "保存模型目录失败",
+      "empty": "暂无模型目录配置",
+      "emptyHint": "添加模型到目录以配置别名"
+    },
+    "suggestedDefaults": "应用建议默认配置",
+    "suggestedDefaultsHint": "使用此预设推荐的默认模型配置"
   }
 }
