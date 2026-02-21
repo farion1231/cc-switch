@@ -43,6 +43,7 @@ const DialogContent = React.forwardRef<
     zIndex?: "base" | "nested" | "alert" | "top";
     variant?: "default" | "fullscreen";
     overlayClassName?: string;
+    closeOnOverlayClick?: boolean;
   }
 >(
   (
@@ -52,6 +53,7 @@ const DialogContent = React.forwardRef<
       zIndex = "base",
       variant = "default",
       overlayClassName,
+      closeOnOverlayClick = false,
       ...props
     },
     ref,
@@ -77,8 +79,10 @@ const DialogContent = React.forwardRef<
           ref={ref}
           className={cn(variantClass, zIndexMap[zIndex], className)}
           onInteractOutside={(e) => {
-            // 防止点击遮罩层关闭对话框
-            e.preventDefault();
+            if (!closeOnOverlayClick) {
+              // 防止点击遮罩层关闭对话框
+              e.preventDefault();
+            }
           }}
           {...props}
         >

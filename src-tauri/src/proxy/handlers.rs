@@ -127,21 +127,42 @@ async fn handle_claude_transform(
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let model = ctx.request_model.clone();
+            let app_type = ctx.app_type_str;
             let status_code = status.as_u16();
             let start_time = ctx.start_time;
+            let request_body = ctx.request_body.clone();
 
-            SseUsageCollector::new(start_time, move |events, first_token_ms| {
-                if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
-                    let latency_ms = start_time.elapsed().as_millis() as u64;
+            SseUsageCollector::new(start_time, move |data, first_token_ms, latency_ms, response_body, combined_output| {
+                // Extract usage from the incrementally collected data
+                let has_usage = data.input_tokens > 0 || data.output_tokens > 0 || data.cache_read_tokens > 0 || data.cache_creation_tokens > 0;
+
+                if has_usage {
+                    // Construct TokenUsage from extracted stream data
+                    let usage = TokenUsage {
+                        input_tokens: data.input_tokens,
+                        output_tokens: data.output_tokens,
+                        cache_read_tokens: data.cache_read_tokens,
+                        cache_creation_tokens: data.cache_creation_tokens,
+                        model: data.model.clone(),
+                    };
+
+                    // latency_ms is now the end-to-end latency (total stream time for streaming)
                     let state = state.clone();
                     let provider_id = provider_id.clone();
                     let model = model.clone();
+                    let request_body = request_body.clone();
+                    // For streaming responses, if there is a merged output text, it should be used as the response body first.
+                    let final_body = if let Some(ref combined) = combined_output {
+                        Some(combined.clone())
+                    } else {
+                        response_body
+                    };
 
                     tokio::spawn(async move {
                         log_usage(
                             &state,
                             &provider_id,
-                            "claude",
+                            app_type,
                             &model,
                             &model,
                             usage,
@@ -149,6 +170,8 @@ async fn handle_claude_transform(
                             first_token_ms,
                             true,
                             status_code,
+                            request_body,
+                            final_body,
                         )
                         .await;
                     });
@@ -215,6 +238,9 @@ async fn handle_claude_transform(
         let latency_ms = ctx.latency_ms();
 
         let request_model = ctx.request_model.clone();
+        let request_body = ctx.request_body.clone();
+        let app_type = ctx.app_type_str;
+        let response_body = serde_json::to_string(&anthropic_response).ok();
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
@@ -223,14 +249,16 @@ async fn handle_claude_transform(
                 log_usage(
                     &state,
                     &provider_id,
-                    "claude",
+                    app_type,
                     &model,
                     &request_model,
                     usage,
                     latency_ms,
-                    None,
+                    None, // first_token_ms
                     false,
                     status.as_u16(),
+                    request_body,
+                    response_body,
                 )
                 .await;
             }
@@ -448,6 +476,8 @@ async fn log_usage(
     first_token_ms: Option<u64>,
     is_streaming: bool,
     status_code: u16,
+    request_body: Option<String>,
+    response_body: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -476,8 +506,10 @@ async fn log_usage(
         first_token_ms,
         status_code,
         None,
-        None, // provider_type
+        Some(app_type.to_string()), // provider_type
         is_streaming,
+        request_body,
+        response_body,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }

@@ -59,6 +59,7 @@ pub struct RequestContext {
     pub session_id: String,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
+    pub request_body: Option<String>,
 }
 
 impl RequestContext {
@@ -108,6 +109,8 @@ impl RequestContext {
         let session_result = extract_session_id(headers, body, app_type_str);
         let session_id = session_result.session_id.clone();
 
+        let request_body = serde_json::to_string(body).ok();
+
         log::debug!(
             "[{}] Session ID: {} (from {:?}, client_provided: {})",
             tag,
@@ -156,6 +159,7 @@ impl RequestContext {
             app_type,
             session_id,
             rectifier_config,
+            request_body,
         })
     }
 

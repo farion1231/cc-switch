@@ -82,6 +82,13 @@ export const usageApi = {
     return invoke("get_request_detail", { requestId });
   },
 
+  getAvailableFilters: async (
+    startDate?: number,
+    endDate?: number,
+  ): Promise<{ providers: { id: string; name: string }[]; models: string[] }> => {
+    return invoke("get_available_filters", { startDate, endDate });
+  },
+
   getModelPricing: async (): Promise<ModelPricing[]> => {
     return invoke("get_model_pricing");
   },
@@ -113,5 +120,19 @@ export const usageApi = {
     appType: string,
   ): Promise<ProviderLimitStatus> => {
     return invoke("check_provider_limits", { providerId, appType });
+  },
+
+  deleteRequestLogsByDate: async (
+    startDate: number,
+    endDate: number,
+  ): Promise<number> => {
+    return invoke("delete_request_logs_by_date", { startDate, endDate });
+  },
+
+  countRequestLogsByDate: async (
+    startDate: number,
+    endDate: number,
+  ): Promise<number> => {
+    return invoke("count_request_logs_by_date", { startDate, endDate });
   },
 };

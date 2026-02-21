@@ -49,6 +49,7 @@ import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
+import { LogsDashboard } from "@/components/logs/LogsDashboard";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { useSettings } from "@/hooks/useSettings";
@@ -221,7 +222,7 @@ export function SettingsPage({
           onValueChange={setActiveTab}
           className="flex flex-col h-full"
         >
-          <TabsList className="grid w-full grid-cols-4 mb-6 glass rounded-lg">
+          <TabsList className="grid w-full grid-cols-5 mb-6 glass rounded-lg">
             <TabsTrigger value="general">
               {t("settings.tabGeneral")}
             </TabsTrigger>
@@ -229,6 +230,7 @@ export function SettingsPage({
               {t("settings.tabAdvanced")}
             </TabsTrigger>
             <TabsTrigger value="usage">{t("usage.title")}</TabsTrigger>
+            <TabsTrigger value="logs">{t("logs.title")}</TabsTrigger>
             <TabsTrigger value="about">{t("common.about")}</TabsTrigger>
           </TabsList>
 
@@ -645,12 +647,16 @@ export function SettingsPage({
                 ) : null}
               </TabsContent>
 
-              <TabsContent value="about" className="mt-0">
-                <AboutSection isPortable={isPortable} />
-              </TabsContent>
-
               <TabsContent value="usage" className="mt-0">
                 <UsageDashboard />
+              </TabsContent>
+
+              <TabsContent value="logs" className="mt-0 h-full overflow-hidden">
+                <LogsDashboard />
+              </TabsContent>
+
+              <TabsContent value="about" className="mt-0">
+                <AboutSection isPortable={isPortable} />
               </TabsContent>
             </div>
 

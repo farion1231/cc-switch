@@ -29,6 +29,10 @@ pub struct RequestLog {
     pub is_streaming: bool,
     /// 成本倍数
     pub cost_multiplier: String,
+    /// Request body (optional, for debugging and log viewing)
+    pub request_body: Option<String>,
+    /// Response body (optional, for debugging and log viewing)
+    pub response_body: Option<String>,
 }
 
 /// 使用量记录器
@@ -78,8 +82,8 @@ impl<'a> UsageLogger<'a> {
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
-                provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+                provider_type, is_streaming, cost_multiplier, request_body, response_body, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             rusqlite::params![
                 log.request_id,
                 log.provider_id,
@@ -103,6 +107,8 @@ impl<'a> UsageLogger<'a> {
                 log.provider_type,
                 log.is_streaming as i64,
                 log.cost_multiplier,
+                log.request_body,
+                log.response_body,
                 created_at,
             ],
         )
@@ -142,6 +148,8 @@ impl<'a> UsageLogger<'a> {
             provider_type: None,
             is_streaming: false,
             cost_multiplier: "1.0".to_string(),
+            request_body: None,
+            response_body: None,
         };
 
         self.log_request(&log)
@@ -181,6 +189,8 @@ impl<'a> UsageLogger<'a> {
             provider_type,
             is_streaming,
             cost_multiplier: "1.0".to_string(),
+            request_body: None,
+            response_body: None,
         };
 
         self.log_request(&log)
@@ -300,6 +310,8 @@ impl<'a> UsageLogger<'a> {
         session_id: Option<String>,
         provider_type: Option<String>,
         is_streaming: bool,
+        request_body: Option<String>,
+        response_body: Option<String>,
     ) -> Result<(), AppError> {
         let pricing = self.get_model_pricing(&pricing_model)?;
 
@@ -325,6 +337,8 @@ impl<'a> UsageLogger<'a> {
             provider_type,
             is_streaming,
             cost_multiplier: cost_multiplier.to_string(),
+            request_body,
+            response_body,
         };
 
         self.log_request(&log)
@@ -375,6 +389,8 @@ mod tests {
             None,
             Some("claude".to_string()),
             false,
+            None, // request_body
+            None, // response_body
         )?;
 
         // 验证记录已插入

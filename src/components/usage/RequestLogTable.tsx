@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Table,
@@ -17,8 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useRequestLogs, usageKeys } from "@/lib/query/usage";
-import { useQueryClient } from "@tanstack/react-query";
+import { useRequestLogs } from "@/lib/query/usage";
 import type { LogFilters } from "@/types/usage";
 import { ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react";
 import {
@@ -39,7 +38,6 @@ type TimeMode = "rolling" | "fixed";
 
 export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
-  const queryClient = useQueryClient();
 
   const getRollingRange = () => {
     const now = Math.floor(Date.now() / 1000);
@@ -56,16 +54,22 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
   const pageSize = 20;
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const { data: result, isLoading } = useRequestLogs({
+  const { data: result, isLoading, refetch } = useRequestLogs({
     filters: appliedFilters,
     timeMode: appliedTimeMode,
     rollingWindowSeconds: ONE_DAY_SECONDS,
     page,
     pageSize,
-    options: {
-      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-    },
   });
+
+  useEffect(() => {
+    if (refreshIntervalMs && refreshIntervalMs > 0) {
+      const timer = setInterval(() => {
+        refetch();
+      }, refreshIntervalMs);
+      return () => clearInterval(timer);
+    }
+  }, [refreshIntervalMs, refetch]);
 
   const logs = result?.data ?? [];
   const total = result?.total ?? 0;
@@ -122,22 +126,7 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
   };
 
   const handleRefresh = () => {
-    const key = {
-      timeMode: appliedTimeMode,
-      rollingWindowSeconds:
-        appliedTimeMode === "rolling" ? ONE_DAY_SECONDS : undefined,
-      appType: appliedFilters.appType,
-      providerName: appliedFilters.providerName,
-      model: appliedFilters.model,
-      statusCode: appliedFilters.statusCode,
-      startDate:
-        appliedTimeMode === "fixed" ? appliedFilters.startDate : undefined,
-      endDate: appliedTimeMode === "fixed" ? appliedFilters.endDate : undefined,
-    };
-
-    queryClient.invalidateQueries({
-      queryKey: usageKeys.logs(key, page, pageSize),
-    });
+    refetch();
   };
 
   // 将 Unix 时间戳转换为本地时间的 datetime-local 格式
@@ -249,8 +238,8 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-3 w-full">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground flex-1">
             <span className="whitespace-nowrap">{t("usage.timeRange")}:</span>
             <Input
               type="datetime-local"
@@ -295,7 +284,7 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
             />
           </div>
 
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="flex items-center gap-2 shrink-0">
             <Button
               size="sm"
               variant="default"
@@ -439,11 +428,7 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
                       <TableCell>
                         <div className="flex items-center justify-center gap-1">
                           {(() => {
-                            const durationMs =
-                              typeof log.durationMs === "number"
-                                ? log.durationMs
-                                : log.latencyMs;
-                            const durationSec = durationMs / 1000;
+                            const durationSec = log.latencyMs / 1000;
                             const durationColor = Number.isFinite(durationSec)
                               ? durationSec <= 5
                                 ? "bg-green-100 text-green-800"
