@@ -538,7 +538,12 @@
     "roleSystem": "システム",
     "roleTool": "ツール",
     "showRawText": "原文表示",
-    "showMarkdown": "Markdown 表示"
+    "showMarkdown": "Markdown 表示",
+    "rename": "名前を変更",
+    "resetName": "デフォルト名に戻す",
+    "renameSuccess": "セッション名を変更しました",
+    "resetNameSuccess": "デフォルト名に戻しました",
+    "filterRenamed": "名前変更済みのみ表示"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",

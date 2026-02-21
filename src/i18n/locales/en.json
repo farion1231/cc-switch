@@ -538,7 +538,12 @@
     "roleSystem": "System",
     "roleTool": "Tool",
     "showRawText": "Raw Text",
-    "showMarkdown": "Markdown"
+    "showMarkdown": "Markdown",
+    "rename": "Rename",
+    "resetName": "Reset Name",
+    "renameSuccess": "Session renamed",
+    "resetNameSuccess": "Name reset to default",
+    "filterRenamed": "Show only renamed sessions"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",

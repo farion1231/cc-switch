@@ -538,7 +538,12 @@
     "roleSystem": "系统",
     "roleTool": "工具",
     "showRawText": "显示原文",
-    "showMarkdown": "Markdown 渲染"
+    "showMarkdown": "Markdown 渲染",
+    "rename": "重命名",
+    "resetName": "恢复默认名称",
+    "renameSuccess": "会话已重命名",
+    "resetNameSuccess": "已恢复默认名称",
+    "filterRenamed": "仅显示已重命名的会话"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",

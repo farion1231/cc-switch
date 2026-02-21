@@ -11,8 +11,14 @@ import {
   Clock,
   FolderOpen,
   X,
+  Tag,
 } from "lucide-react";
-import { useSessionMessagesQuery, useSessionsQuery } from "@/lib/query";
+import {
+  useSessionMessagesQuery,
+  useSessionsQuery,
+  useSessionAliasesQuery,
+  useSetSessionAliasMutation,
+} from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +38,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { cn } from "@/lib/utils";
 import { isMac } from "@/lib/platform";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { SessionItem } from "./SessionItem";
@@ -58,6 +65,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
   const { data, isLoading, refetch } = useSessionsQuery();
   const sessions = data ?? [];
+  const { data: aliasesData } = useSessionAliasesQuery();
+  const aliases = aliasesData ?? {};
+  const setAliasMutation = useSetSessionAliasMutation();
   const detailRef = useRef<HTMLDivElement | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -72,35 +82,31 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>(
     appId as ProviderFilter,
   );
+  const [onlyRenamed, setOnlyRenamed] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
+  // 防抖搜索词
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   // 使用 FlexSearch 全文搜索
   const { search: searchSessions } = useSessionSearch({
     sessions,
     providerFilter,
+    aliases,
   });
 
   const filteredSessions = useMemo(() => {
-    return searchSessions(search);
-  }, [searchSessions, search]);
-
-  useEffect(() => {
-    if (filteredSessions.length === 0) {
-      setSelectedKey(null);
-      return;
-    }
-    const exists = selectedKey
-      ? filteredSessions.some(
-          (session) => getSessionKey(session) === selectedKey,
-        )
-      : false;
-    if (!exists) {
-      setSelectedKey(getSessionKey(filteredSessions[0]));
-    }
-  }, [filteredSessions, selectedKey]);
+    const results = searchSessions(debouncedSearch);
+    if (!onlyRenamed) return results;
+    return results.filter((s) => aliases[getSessionKey(s)]);
+  }, [searchSessions, debouncedSearch, onlyRenamed, aliases]);
 
   // 切换会话时滚动到顶部
   useEffect(() => {
@@ -111,11 +117,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const selectedSession = useMemo(() => {
     if (!selectedKey) return null;
     return (
-      filteredSessions.find(
+      sessions.find(
         (session) => getSessionKey(session) === selectedKey,
       ) || null
     );
-  }, [filteredSessions, selectedKey]);
+  }, [sessions, selectedKey]);
 
   const { data: messages = [], isLoading: isLoadingMessages } =
     useSessionMessagesQuery(
@@ -167,6 +173,21 @@ export function SessionManagerPage({ appId }: { appId: string }) {
           t("common.error", { defaultValue: "Copy failed" }),
       );
     }
+  };
+
+  const handleRename = (sessionKey: string, newName: string | null) => {
+    setAliasMutation.mutate(
+      { sessionKey, alias: newName },
+      {
+        onSuccess: () => {
+          toast.success(
+            newName
+              ? t("sessionManager.renameSuccess")
+              : t("sessionManager.resetNameSuccess"),
+          );
+        },
+      },
+    );
   };
 
   const handleResume = async () => {
@@ -266,6 +287,25 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         </TooltipTrigger>
                         <TooltipContent>
                           {t("sessionManager.searchSessions")}
+                        </TooltipContent>
+                      </Tooltip>
+
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "size-7",
+                              onlyRenamed && "bg-primary/10 text-primary",
+                            )}
+                            onClick={() => setOnlyRenamed((v) => !v)}
+                          >
+                            <Tag className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {t("sessionManager.filterRenamed")}
                         </TooltipContent>
                       </Tooltip>
 
@@ -391,16 +431,18 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     ) : (
                       <div className="space-y-1">
                         {filteredSessions.map((session) => {
+                          const key = getSessionKey(session);
                           const isSelected =
-                            selectedKey !== null &&
-                            getSessionKey(session) === selectedKey;
+                            selectedKey !== null && key === selectedKey;
 
                           return (
                             <SessionItem
-                              key={getSessionKey(session)}
+                              key={key}
                               session={session}
                               isSelected={isSelected}
                               onSelect={setSelectedKey}
+                              alias={aliases[key]}
+                              onRename={handleRename}
                             />
                           );
                         })}
@@ -445,8 +487,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               {getProviderLabel(selectedSession.providerId, t)}
                             </TooltipContent>
                           </Tooltip>
-                          <h2 className="text-base font-semibold truncate">
-                            {formatSessionTitle(selectedSession)}
+                          <h2 className="text-base truncate">
+                            <span className="font-semibold">
+                              {(selectedKey && aliases[selectedKey]) || formatSessionTitle(selectedSession)}
+                            </span>
+                            {selectedKey && aliases[selectedKey] && (
+                              <span className="text-muted-foreground text-xs font-normal ml-1">
+                                ({formatSessionTitle(selectedSession)})
+                              </span>
+                            )}
                           </h2>
                         </div>
 
