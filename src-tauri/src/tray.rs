@@ -9,6 +9,9 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::store::AppState;
 
+/// Claude 供应商"打开终端"菜单项前缀
+pub const CLAUDE_TERMINAL_PREFIX: &str = "claude_terminal_";
+
 /// 托盘菜单文本（国际化）
 #[derive(Clone, Copy)]
 pub struct TrayTexts {
@@ -16,6 +19,7 @@ pub struct TrayTexts {
     pub no_provider_hint: &'static str,
     pub quit: &'static str,
     pub _auto_label: &'static str,
+    pub open_terminal: &'static str,
 }
 
 impl TrayTexts {
@@ -26,6 +30,7 @@ impl TrayTexts {
                 no_provider_hint: "  (No providers yet, please add them from the main window)",
                 quit: "Quit",
                 _auto_label: "Auto (Failover)",
+                open_terminal: "Open in Terminal",
             },
             "ja" => Self {
                 show_main: "メインウィンドウを開く",
@@ -33,12 +38,14 @@ impl TrayTexts {
                     "  (プロバイダーがまだありません。メイン画面から追加してください)",
                 quit: "終了",
                 _auto_label: "自動 (フェイルオーバー)",
+                open_terminal: "ターミナルで開く",
             },
             _ => Self {
                 show_main: "打开主界面",
                 no_provider_hint: "  (无供应商，请在主界面添加)",
                 quit: "退出",
                 _auto_label: "自动 (故障转移)",
+                open_terminal: "在终端中打开",
             },
         }
     }
@@ -154,6 +161,21 @@ fn append_provider_section<'a>(
         )
         .map_err(|e| AppError::Message(format!("创建{}菜单项失败: {e}", section.log_name)))?;
         menu_builder = menu_builder.item(&item);
+
+        // Claude 分区：紧跟一个终端菜单项，后续通过 apply_alternate_menu_items 设为 alternate
+        if section.app_type == AppType::Claude {
+            let terminal_label =
+                format!("{} ({})", provider.name, tray_texts.open_terminal);
+            let terminal_item = MenuItem::with_id(
+                app,
+                format!("{}{}", CLAUDE_TERMINAL_PREFIX, id),
+                &terminal_label,
+                true,
+                None::<&str>,
+            )
+            .map_err(|e| AppError::Message(format!("创建终端菜单项失败: {e}")))?;
+            menu_builder = menu_builder.item(&terminal_item);
+        }
     }
 
     Ok(menu_builder)
@@ -161,6 +183,19 @@ fn append_provider_section<'a>(
 
 /// 处理供应商托盘事件
 pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool {
+    // Claude 终端菜单项（alternate 模式下触发）
+    if let Some(provider_id) = event_id.strip_prefix(CLAUDE_TERMINAL_PREFIX) {
+        log::info!("托盘：以 Claude 供应商 {provider_id} 打开终端");
+        let app_handle = app.clone();
+        let provider_id = provider_id.to_string();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(e) = handle_terminal_click(&app_handle, &provider_id) {
+                log::error!("托盘打开终端失败: {e}");
+            }
+        });
+        return true;
+    }
+
     for section in TRAY_SECTIONS.iter() {
         if let Some(suffix) = event_id.strip_prefix(section.prefix) {
             // 处理 Auto 点击
@@ -257,11 +292,7 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
         }
 
         // 4) 更新托盘菜单
-        if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
-            if let Some(tray) = app.tray_by_id("main") {
-                let _ = tray.set_menu(Some(new_menu));
-            }
-        }
+        let _ = set_tray_menu(app, app_state.inner());
 
         // 5) 发射事件到前端
         let event_data = serde_json::json!({
@@ -305,11 +336,7 @@ fn handle_provider_click(
         .map_err(AppError::Message)?;
 
         // 更新托盘菜单
-        if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
-            if let Some(tray) = app.tray_by_id("main") {
-                let _ = tray.set_menu(Some(new_menu));
-            }
-        }
+        let _ = set_tray_menu(app, app_state.inner());
 
         // 发射事件到前端
         let event_data = serde_json::json!({
@@ -326,6 +353,27 @@ fn handle_provider_click(
             log::error!("发射 provider-switched 事件失败: {e}");
         }
     }
+    Ok(())
+}
+
+/// 处理 Claude 终端点击：以指定供应商配置打开终端
+fn handle_terminal_click(app: &tauri::AppHandle, provider_id: &str) -> Result<(), AppError> {
+    let Some(app_state) = app.try_state::<AppState>() else {
+        return Err(AppError::Message("无法获取应用状态".to_string()));
+    };
+
+    let providers = crate::services::ProviderService::list(app_state.inner(), AppType::Claude)
+        .map_err(|e| AppError::Message(format!("获取供应商列表失败: {e}")))?;
+
+    let provider = providers
+        .get(provider_id)
+        .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
+
+    let env_vars =
+        crate::commands::extract_env_vars_from_config(&provider.settings_config, &AppType::Claude);
+    crate::commands::launch_terminal_with_env(env_vars, provider_id)
+        .map_err(|e| AppError::Message(format!("启动终端失败: {e}")))?;
+
     Ok(())
 }
 
@@ -391,6 +439,104 @@ pub fn create_tray_menu(
     menu_builder
         .build()
         .map_err(|e| AppError::Message(format!("构建菜单失败: {e}")))
+}
+
+/// 创建托盘菜单并设置到 tray，同时应用 macOS alternate 菜单项。
+/// 所有需要更新托盘菜单的地方都应该调用这个函数。
+pub fn set_tray_menu(app: &tauri::AppHandle, app_state: &AppState) -> Result<(), AppError> {
+    let new_menu = create_tray_menu(app, app_state)?;
+    if let Some(tray) = app.tray_by_id("main") {
+        tray.set_menu(Some(new_menu))
+            .map_err(|e| AppError::Message(format!("设置托盘菜单失败: {e}")))?;
+        #[cfg(target_os = "macos")]
+        apply_alternate_menu_items(app);
+    }
+    Ok(())
+}
+
+/// 在 tray 菜单设置完成后调用，将 Claude 终端菜单项设置为 macOS alternate menu item。
+///
+/// macOS alternate menu item 要求：
+/// 1. 两个菜单项紧邻
+/// 2. alternate 项的 action/target 与前一项相同
+/// 3. alternate 项设置 isAlternate = YES
+/// 4. alternate 项的 keyEquivalentModifierMask 包含 Option
+///
+/// 效果：正常显示供应商名称（带勾选），按住 Option 时同一位置替换显示"打开终端"。
+#[cfg(target_os = "macos")]
+pub fn apply_alternate_menu_items(app: &tauri::AppHandle) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::NSEventModifierFlags;
+
+    let Some(tray) = app.tray_by_id("main") else {
+        log::warn!("[Tray] 找不到 main tray icon");
+        return;
+    };
+
+    let result = tray.with_inner_tray_icon(|inner| {
+        let Some(status_item) = inner.ns_status_item() else {
+            log::warn!("[Tray] 无法获取 NSStatusItem");
+            return;
+        };
+
+        unsafe {
+            // 转为原始指针绕过 objc2 版本不匹配（tray-icon 用 0.3，我们用 0.2）
+            let status_ptr = &*status_item as *const _ as *const AnyObject;
+
+            // NSStatusItem.menu -> NSMenu
+            let ns_menu: *const AnyObject = msg_send![status_ptr, menu];
+            if ns_menu.is_null() {
+                log::warn!("[Tray] NSStatusItem 没有菜单");
+                return;
+            }
+
+            let count: isize = msg_send![ns_menu, numberOfItems];
+
+            for i in 0..count {
+                let item: *const AnyObject = msg_send![ns_menu, itemAtIndex: i];
+                if item.is_null() {
+                    continue;
+                }
+
+                // 获取 title
+                let title: *const AnyObject = msg_send![item, title];
+                if title.is_null() {
+                    continue;
+                }
+                let utf8: *const std::ffi::c_char = msg_send![title, UTF8String];
+                if utf8.is_null() {
+                    continue;
+                }
+                let title_str = std::ffi::CStr::from_ptr(utf8).to_string_lossy();
+
+                // 终端菜单项的 title 格式: "供应商名 (打开终端文案)"
+                // 它紧跟在对应的供应商 CheckMenuItem 后面
+                if i > 0 && title_str.contains('(') && title_str.ends_with(')') {
+                    let prev_item: *const AnyObject = msg_send![ns_menu, itemAtIndex: i - 1];
+                    if prev_item.is_null() {
+                        continue;
+                    }
+
+                    // 不复制前一项的 action/target — 保留终端菜单项自己的 handler，
+                    // 这样点击时 muda 会正确分发终端菜单项的 MenuId。
+
+                    // 设置 isAlternate = YES
+                    let _: () = msg_send![item, setAlternate: true];
+
+                    // 设置 keyEquivalentModifierMask = NSEventModifierFlagOption
+                    let option_mask = NSEventModifierFlags::NSEventModifierFlagOption;
+                    let _: () = msg_send![item, setKeyEquivalentModifierMask: option_mask];
+
+                    log::debug!("[Tray] 设置 alternate 菜单项: {title_str}");
+                }
+            }
+        }
+    });
+
+    if let Err(e) = result {
+        log::error!("[Tray] 设置 alternate 菜单项失败: {e}");
+    }
 }
 
 #[cfg(target_os = "macos")]
