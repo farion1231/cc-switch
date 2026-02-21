@@ -592,7 +592,7 @@ pub async fn open_provider_terminal(
 }
 
 /// 从提供商配置中提取环境变量
-fn extract_env_vars_from_config(
+pub(crate) fn extract_env_vars_from_config(
     config: &serde_json::Value,
     app_type: &AppType,
 ) -> Vec<(String, String)> {
@@ -643,7 +643,7 @@ fn extract_env_vars_from_config(
 
 /// 创建临时配置文件并启动 claude 终端
 /// 使用 --settings 参数传入提供商特定的 API 配置
-fn launch_terminal_with_env(
+pub(crate) fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
 ) -> Result<(), String> {
