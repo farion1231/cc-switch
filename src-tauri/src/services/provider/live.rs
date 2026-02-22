@@ -241,7 +241,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 // Key fields definitions for partial merge
 // ============================================================================
 
-/// Claude env-level key fields that belong to the provider
+/// Claude env-level key fields that belong to the provider.
+/// When adding a new field here, also update backfill_claude_key_fields().
 const CLAUDE_KEY_ENV_FIELDS: &[&str] = &[
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
@@ -251,17 +252,31 @@ const CLAUDE_KEY_ENV_FIELDS: &[&str] = &[
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
 ];
 
-/// Claude top-level key fields (legacy format)
-const CLAUDE_KEY_TOP_LEVEL: &[&str] = &["apiBaseUrl", "primaryModel", "smallFastModel"];
+/// Claude top-level key fields (legacy + modern format).
+/// When adding a new field here, also update backfill_claude_key_fields().
+const CLAUDE_KEY_TOP_LEVEL: &[&str] = &["apiBaseUrl", "primaryModel", "smallFastModel", "model"];
 
-/// Codex TOML key fields
-const CODEX_KEY_TOP_LEVEL: &[&str] = &["model_provider", "model", "model_reasoning_effort"];
+/// Codex TOML key fields.
+/// When adding a new field here, also update backfill_codex_key_fields().
+const CODEX_KEY_TOP_LEVEL: &[&str] = &[
+    "model_provider",
+    "model",
+    "model_reasoning_effort",
+    "review_model",
+    "plan_mode_reasoning_effort",
+];
 
-/// Gemini env-level key fields
-const GEMINI_KEY_ENV_FIELDS: &[&str] =
-    &["GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY", "GEMINI_MODEL"];
+/// Gemini env-level key fields.
+/// When adding a new field here, also update backfill_gemini_key_fields().
+const GEMINI_KEY_ENV_FIELDS: &[&str] = &[
+    "GOOGLE_GEMINI_BASE_URL",
+    "GEMINI_API_KEY",
+    "GEMINI_MODEL",
+    "GOOGLE_API_KEY",
+];
 
 // ============================================================================
 // Partial merge: write only key fields to live config
