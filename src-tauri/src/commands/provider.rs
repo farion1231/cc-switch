@@ -97,27 +97,7 @@ pub fn switch_provider(
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
-    let imported = ProviderService::import_default_config(state, app_type.clone())?;
-
-    if imported {
-        // Extract common config snippet (mirrors old startup logic in lib.rs)
-        if state
-            .db
-            .get_config_snippet(app_type.as_str())
-            .ok()
-            .flatten()
-            .is_none()
-        {
-            match ProviderService::extract_common_config_snippet(state, app_type.clone()) {
-                Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
-                    let _ = state
-                        .db
-                        .set_config_snippet(app_type.as_str(), Some(snippet));
-                }
-                _ => {}
-            }
-        }
-    }
+    let imported = ProviderService::import_default_config(state, app_type)?;
 
     Ok(imported)
 }

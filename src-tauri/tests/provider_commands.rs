@@ -126,12 +126,9 @@ command = "say"
         .get("config")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
-    // 供应商配置应该包含在 live 文件中
-    // 注意：live 文件还会包含 MCP 同步后的内容
-    assert!(
-        config_text.contains("mcp_servers.latest"),
-        "live file should contain provider's original config"
-    );
+    // With partial merge, only key fields (model_provider, model, model_providers)
+    // are written to the live file. MCP servers are synced separately.
+    // The provider's stored config should still contain mcp_servers.latest.
     assert!(
         new_config_text.contains("mcp_servers.latest"),
         "provider snapshot should contain provider's original config"
@@ -268,11 +265,22 @@ fn switch_provider_updates_claude_live_and_state() {
     let legacy_provider = providers
         .get("old-provider")
         .expect("legacy provider still exists");
-    // 回填机制：切换前会将 live 配置回填到当前供应商
-    // 这保护了用户在 live 文件中的手动修改
+    // Backfill mechanism: before switching, the live config's key fields are
+    // backfilled to the current provider. With partial merge, only key fields
+    // (auth, model, endpoint) are extracted — non-key fields like workspace
+    // are NOT included in the backfill.
     assert_eq!(
-        legacy_provider.settings_config, legacy_live,
-        "previous provider should be backfilled with live config"
+        legacy_provider
+            .settings_config
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+            .and_then(|key| key.as_str()),
+        Some("legacy-key"),
+        "previous provider should be backfilled with live auth key"
+    );
+    assert!(
+        legacy_provider.settings_config.get("workspace").is_none(),
+        "backfill should NOT include non-key fields like workspace"
     );
 
     let new_provider = providers.get("new-provider").expect("new provider exists");

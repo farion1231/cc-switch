@@ -414,9 +414,19 @@ fn provider_service_switch_claude_updates_live_and_state() {
     let legacy_provider = providers
         .get("old-provider")
         .expect("legacy provider still exists");
+    // With partial merge backfill, only key fields are extracted from live config
     assert_eq!(
-        legacy_provider.settings_config, legacy_live,
-        "previous provider should receive backfilled live config"
+        legacy_provider
+            .settings_config
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+            .and_then(|key| key.as_str()),
+        Some("legacy-key"),
+        "previous provider should receive backfilled auth key"
+    );
+    assert!(
+        legacy_provider.settings_config.get("workspace").is_none(),
+        "backfill should NOT include non-key fields like workspace"
     );
 }
 

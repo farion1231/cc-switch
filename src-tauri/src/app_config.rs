@@ -352,49 +352,6 @@ impl FromStr for AppType {
     }
 }
 
-/// 通用配置片段（按应用分治）
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CommonConfigSnippets {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claude: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub codex: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gemini: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opencode: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub openclaw: Option<String>,
-}
-
-impl CommonConfigSnippets {
-    /// 获取指定应用的通用配置片段
-    pub fn get(&self, app: &AppType) -> Option<&String> {
-        match app {
-            AppType::Claude => self.claude.as_ref(),
-            AppType::Codex => self.codex.as_ref(),
-            AppType::Gemini => self.gemini.as_ref(),
-            AppType::OpenCode => self.opencode.as_ref(),
-            AppType::OpenClaw => self.openclaw.as_ref(),
-        }
-    }
-
-    /// 设置指定应用的通用配置片段
-    pub fn set(&mut self, app: &AppType, snippet: Option<String>) {
-        match app {
-            AppType::Claude => self.claude = snippet,
-            AppType::Codex => self.codex = snippet,
-            AppType::Gemini => self.gemini = snippet,
-            AppType::OpenCode => self.opencode = snippet,
-            AppType::OpenClaw => self.openclaw = snippet,
-        }
-    }
-}
-
 /// 多应用配置结构（向后兼容）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiAppConfig {
@@ -412,12 +369,6 @@ pub struct MultiAppConfig {
     /// Claude Skills 配置
     #[serde(default)]
     pub skills: SkillStore,
-    /// 通用配置片段（按应用分治）
-    #[serde(default)]
-    pub common_config_snippets: CommonConfigSnippets,
-    /// Claude 通用配置片段（旧字段，用于向后兼容迁移）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claude_common_config_snippet: Option<String>,
 }
 
 fn default_version() -> u32 {
@@ -439,8 +390,6 @@ impl Default for MultiAppConfig {
             mcp: McpRoot::default(),
             prompts: PromptRoot::default(),
             skills: SkillStore::default(),
-            common_config_snippets: CommonConfigSnippets::default(),
-            claude_common_config_snippet: None,
         }
     }
 }
@@ -531,15 +480,6 @@ impl MultiAppConfig {
         // 且 prompts 仍然是空的，则尝试自动导入现有提示词文件。
         let imported_prompts = config.maybe_auto_import_prompts_for_existing_config()?;
         if imported_prompts {
-            updated = true;
-        }
-
-        // 迁移通用配置片段：claude_common_config_snippet → common_config_snippets.claude
-        if let Some(old_claude_snippet) = config.claude_common_config_snippet.take() {
-            log::info!(
-                "迁移通用配置：claude_common_config_snippet → common_config_snippets.claude"
-            );
-            config.common_config_snippets.claude = Some(old_claude_snippet);
             updated = true;
         }
 
