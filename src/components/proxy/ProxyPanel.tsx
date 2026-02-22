@@ -408,9 +408,6 @@ export function ProxyPanel() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* 空白区域避免冲突 */}
-            <div className="h-4"></div>
-
             {/* 基础设置 - 监听地址/端口 */}
             <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-4">
               <div>

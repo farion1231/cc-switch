@@ -5,6 +5,7 @@ import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import type { Provider, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
+import { openclawKeys } from "@/hooks/useOpenClaw";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -16,23 +17,26 @@ export const useAddProviderMutation = (appId: AppId) => {
     ) => {
       let id: string;
 
-      if (appId === "opencode") {
-        // OpenCode: use user-provided providerKey as ID
-        if (!providerInput.providerKey) {
-          throw new Error("Provider key is required for OpenCode");
+      if (appId === "opencode" || appId === "openclaw") {
+        if (providerInput.category === "omo") {
+          id = `omo-${generateUUID()}`;
+        } else {
+          if (!providerInput.providerKey) {
+            throw new Error(`Provider key is required for ${appId}`);
+          }
+          id = providerInput.providerKey;
         }
-        id = providerInput.providerKey;
       } else {
-        // Other apps: use random UUID
         id = generateUUID();
       }
 
+      const { providerKey: _providerKey, ...rest } = providerInput;
+
       const newProvider: Provider = {
-        ...providerInput,
+        ...rest,
         id,
         createdAt: Date.now(),
       };
-      // Remove providerKey from the provider object before saving
       delete (newProvider as any).providerKey;
 
       await providersApi.add(newProvider, appId);
@@ -41,7 +45,15 @@ export const useAddProviderMutation = (appId: AppId) => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
-      // 更新托盘菜单（失败不影响主操作）
+      if (appId === "opencode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["omo", "current-provider-id"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo", "provider-count"],
+        });
+      }
+
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -115,7 +127,15 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
-      // 更新托盘菜单（失败不影响主操作）
+      if (appId === "opencode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["omo", "current-provider-id"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo", "provider-count"],
+        });
+      }
+
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -157,14 +177,24 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
-      // OpenCode: also invalidate live provider IDs cache to update button state
+      // OpenCode/OpenClaw: also invalidate live provider IDs cache to update button state
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
           queryKey: ["opencodeLiveProviderIds"],
         });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo", "current-provider-id"],
+        });
+      }
+      if (appId === "openclaw") {
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.liveProviderIds,
+        });
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.defaultModel,
+        });
       }
 
-      // 更新托盘菜单（失败不影响主操作）
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -173,14 +203,10 @@ export const useSwitchProviderMutation = (appId: AppId) => {
           trayError,
         );
       }
-
-      // Note: Success toast is handled by useProviderActions.switchProvider
-      // to allow customization based on provider properties (e.g., apiFormat)
     },
     onError: (error: Error) => {
       const detail = extractErrorMessage(error) || t("common.unknown");
 
-      // 标题与详情分离，便于扫描 + 一键复制
       toast.error(
         t("notifications.switchFailedTitle", { defaultValue: "切换失败" }),
         {

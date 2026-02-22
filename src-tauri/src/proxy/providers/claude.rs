@@ -263,10 +263,13 @@ impl ProviderAdapter for ClaudeAdapter {
             base = base.replace("/v1/v1", "/v1");
         }
 
-        // 为 Claude 相关端点添加 ?beta=true 参数
+        // 为 Claude 原生 /v1/messages 端点添加 ?beta=true 参数
         // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
-        // 注：openai_chat 模式下会转发到 /v1/chat/completions，此处也需要保持一致
-        if (endpoint.contains("/v1/messages") || endpoint.contains("/v1/chat/completions"))
+        // 注意：不要为 OpenAI Chat Completions (/v1/chat/completions) 添加此参数
+        //       当 apiFormat="openai_chat" 时，请求会转发到 /v1/chat/completions，
+        //       但该端点是 OpenAI 标准，不支持 ?beta=true 参数
+        if endpoint.contains("/v1/messages")
+            && !endpoint.contains("/v1/chat/completions")
             && !endpoint.contains('?')
         {
             format!("{base}?beta=true")
@@ -511,6 +514,15 @@ mod tests {
         // 已有查询参数时不重复添加
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar");
         assert_eq!(url, "https://api.anthropic.com/v1/messages?foo=bar");
+    }
+
+    #[test]
+    fn test_build_url_no_beta_for_openai_chat_completions() {
+        let adapter = ClaudeAdapter::new();
+        // OpenAI Chat Completions 端点不添加 ?beta=true
+        // 这是 Nvidia 等 apiFormat="openai_chat" 供应商使用的端点
+        let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/chat/completions");
+        assert_eq!(url, "https://integrate.api.nvidia.com/v1/chat/completions");
     }
 
     #[test]

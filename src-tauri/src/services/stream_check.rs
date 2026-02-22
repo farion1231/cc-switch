@@ -12,7 +12,7 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::providers::{get_adapter, AuthInfo};
+use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
 /// 健康状态枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -240,6 +240,14 @@ impl StreamCheckService {
                     "OpenCode does not support health check yet",
                 ));
             }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support stream check yet
+                return Err(AppError::localized(
+                    "openclaw_no_stream_check",
+                    "OpenClaw 暂不支持健康检查",
+                    "OpenClaw does not support health check yet",
+                ));
+            }
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -303,12 +311,18 @@ impl StreamCheckService {
         let os_name = Self::get_os_name();
         let arch_name = Self::get_arch_name();
 
-        // 严格按照 Claude CLI 请求格式设置 headers
-        let response = client
+        // 根据 auth.strategy 构建认证 headers
+        let mut request_builder = client
             .post(&url)
-            // 认证 headers（双重认证）
-            .header("authorization", format!("Bearer {}", auth.api_key))
-            .header("x-api-key", &auth.api_key)
+            .header("authorization", format!("Bearer {}", auth.api_key));
+
+        // 只有 Anthropic 官方策略才添加 x-api-key
+        if auth.strategy == AuthStrategy::Anthropic {
+            request_builder = request_builder.header("x-api-key", &auth.api_key);
+        }
+
+        // 严格按照 Claude CLI 请求格式设置其他 headers
+        let response = request_builder
             // Anthropic 必需 headers
             .header("anthropic-version", "2023-06-01")
             .header(
@@ -561,6 +575,11 @@ impl StreamCheckService {
                 // Try to extract first model from the models object
                 Self::extract_opencode_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }
+            AppType::OpenClaw => {
+                // OpenClaw uses models array in settings_config
+                // Try to extract first model from the models array
+                Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
+            }
         }
     }
 
@@ -572,6 +591,21 @@ impl StreamCheckService {
 
         // Return the first model ID from the models map
         models.keys().next().map(|s| s.to_string())
+    }
+
+    fn extract_openclaw_model(provider: &Provider) -> Option<String> {
+        // OpenClaw uses models array: [{ "id": "model-id", "name": "Model Name" }]
+        let models = provider
+            .settings_config
+            .get("models")
+            .and_then(|m| m.as_array())?;
+
+        // Return the first model ID from the models array
+        models
+            .first()
+            .and_then(|m| m.get("id"))
+            .and_then(|id| id.as_str())
+            .map(|s| s.to_string())
     }
 
     fn extract_env_model(provider: &Provider, key: &str) -> Option<String> {
@@ -702,5 +736,23 @@ mod tests {
         // 在 x86_64 上应该返回 "x86_64"
         #[cfg(target_arch = "x86_64")]
         assert_eq!(arch_name, "x86_64");
+    }
+
+    #[test]
+    fn test_auth_strategy_imports() {
+        // 验证 AuthStrategy 枚举可以正常使用
+        let anthropic = AuthStrategy::Anthropic;
+        let claude_auth = AuthStrategy::ClaudeAuth;
+        let bearer = AuthStrategy::Bearer;
+
+        // 验证不同的策略是不相等的
+        assert_ne!(anthropic, claude_auth);
+        assert_ne!(anthropic, bearer);
+        assert_ne!(claude_auth, bearer);
+
+        // 验证相同策略是相等的
+        assert_eq!(anthropic, AuthStrategy::Anthropic);
+        assert_eq!(claude_auth, AuthStrategy::ClaudeAuth);
+        assert_eq!(bearer, AuthStrategy::Bearer);
     }
 }

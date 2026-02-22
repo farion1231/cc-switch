@@ -3,8 +3,20 @@ import {
   type UseQueryResult,
   keepPreviousData,
 } from "@tanstack/react-query";
-import { providersApi, settingsApi, usageApi, type AppId } from "@/lib/api";
-import type { Provider, Settings, UsageResult } from "@/types";
+import {
+  providersApi,
+  settingsApi,
+  usageApi,
+  sessionsApi,
+  type AppId,
+} from "@/lib/api";
+import type {
+  Provider,
+  Settings,
+  UsageResult,
+  SessionMeta,
+  SessionMessage,
+} from "@/types";
 
 const sortProviders = (
   providers: Record<string, Provider>,
@@ -66,18 +78,6 @@ export const useProvidersQuery = (
         console.error("获取当前供应商失败:", error);
       }
 
-      if (Object.keys(providers).length === 0) {
-        try {
-          const success = await providersApi.importDefault(appId);
-          if (success) {
-            providers = await providersApi.getAll(appId);
-            currentProviderId = await providersApi.getCurrent(appId);
-          }
-        } catch (error) {
-          console.error("导入默认配置失败:", error);
-        }
-      }
-
       return {
         providers: sortProviders(providers),
         currentProviderId,
@@ -131,4 +131,24 @@ export const useUsageQuery = (
     ...query,
     lastQueriedAt: query.dataUpdatedAt || null,
   };
+};
+
+export const useSessionsQuery = () => {
+  return useQuery<SessionMeta[]>({
+    queryKey: ["sessions"],
+    queryFn: async () => sessionsApi.list(),
+    staleTime: 30 * 1000,
+  });
+};
+
+export const useSessionMessagesQuery = (
+  providerId?: string,
+  sourcePath?: string,
+) => {
+  return useQuery<SessionMessage[]>({
+    queryKey: ["sessionMessages", providerId, sourcePath],
+    queryFn: async () => sessionsApi.getMessages(providerId!, sourcePath!),
+    enabled: Boolean(providerId && sourcePath),
+    staleTime: 30 * 1000,
+  });
 };

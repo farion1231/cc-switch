@@ -99,8 +99,6 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "zhipu", // 促销信息 i18n key
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
@@ -119,30 +117,24 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "zhipu", // 促销信息 i18n key
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
   {
-    name: "Qwen Coder",
+    name: "Bailian",
     websiteUrl: "https://bailian.console.aliyun.com",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://dashscope.aliyuncs.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "qwen3-max",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3-max",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3-max",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3-max",
       },
     },
     category: "cn_official",
-    icon: "qwen",
-    iconColor: "#FF6A00",
+    icon: "bailian",
+    iconColor: "#624AFF",
   },
   {
-    name: "Kimi k2",
+    name: "Kimi",
     websiteUrl: "https://platform.moonshot.cn/console",
     settingsConfig: {
       env: {
@@ -438,7 +430,7 @@ export const providerPresets: ProviderPreset[] = [
     apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.aigocode.com/api",
+        ANTHROPIC_BASE_URL: "https://api.aigocode.com",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },

@@ -3,13 +3,14 @@ import {
   Check,
   Copy,
   Edit,
-  Loader2,
+  // Loader2, // Hidden: stream check feature disabled
   Minus,
   Play,
   Plus,
   Terminal,
-  TestTube2,
+  // TestTube2, // Hidden: stream check feature disabled
   Trash2,
+  Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -19,60 +20,73 @@ import type { AppId } from "@/lib/api";
 interface ProviderActionsProps {
   appId?: AppId;
   isCurrent: boolean;
-  /** OpenCode: 是否已添加到配置 */
   isInConfig?: boolean;
   isTesting?: boolean;
   isProxyTakeover?: boolean;
+  isOmo?: boolean;
+  isLastOmo?: boolean;
   onSwitch: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
   onConfigureUsage: () => void;
   onDelete: () => void;
-  /** OpenCode: remove from live config (not delete from database) */
   onRemoveFromConfig?: () => void;
+  onDisableOmo?: () => void;
   onOpenTerminal?: () => void;
-  // 故障转移相关
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
+  // OpenClaw: default model
+  isDefaultModel?: boolean;
+  onSetAsDefault?: () => void;
 }
 
 export function ProviderActions({
   appId,
   isCurrent,
   isInConfig = false,
-  isTesting,
+  isTesting: _isTesting, // Hidden: stream check feature disabled
   isProxyTakeover = false,
+  isOmo = false,
+  isLastOmo = false,
   onSwitch,
   onEdit,
   onDuplicate,
-  onTest,
+  onTest: _onTest, // Hidden: stream check feature disabled
   onConfigureUsage,
   onDelete,
   onRemoveFromConfig,
+  onDisableOmo,
   onOpenTerminal,
-  // 故障转移相关
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
+  // OpenClaw: default model
+  isDefaultModel = false,
+  onSetAsDefault,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
 
-  // OpenCode 使用累加模式
-  const isOpenCodeMode = appId === "opencode";
+  // 累加模式应用（OpenCode 非 OMO 和 OpenClaw）
+  const isAdditiveMode =
+    (appId === "opencode" && !isOmo) || appId === "openclaw";
 
-  // 故障转移模式下的按钮逻辑（OpenCode 不支持故障转移）
+  // 故障转移模式下的按钮逻辑（累加模式和 OMO 应用不支持故障转移）
   const isFailoverMode =
-    !isOpenCodeMode && isAutoFailoverEnabled && onToggleFailover;
+    !isAdditiveMode && !isOmo && isAutoFailoverEnabled && onToggleFailover;
 
-  // 处理主按钮点击
   const handleMainButtonClick = () => {
-    if (isOpenCodeMode) {
-      // OpenCode 模式：切换配置状态（添加/移除）
+    if (isOmo) {
+      if (isCurrent) {
+        onDisableOmo?.();
+      } else {
+        onSwitch();
+      }
+    } else if (isAdditiveMode) {
+      // 累加模式：切换配置状态（添加/移除）
       if (isInConfig) {
-        // Use onRemoveFromConfig if available, otherwise fall back to onDelete
         if (onRemoveFromConfig) {
           onRemoveFromConfig();
         } else {
@@ -82,24 +96,43 @@ export function ProviderActions({
         onSwitch(); // 添加到配置
       }
     } else if (isFailoverMode) {
-      // 故障转移模式：切换队列状态
       onToggleFailover(!isInFailoverQueue);
     } else {
-      // 普通模式：切换供应商
       onSwitch();
     }
   };
 
-  // 主按钮的状态和样式
   const getMainButtonState = () => {
-    // OpenCode 累加模式
-    if (isOpenCodeMode) {
-      if (isInConfig) {
+    if (isOmo) {
+      if (isCurrent) {
         return {
           disabled: false,
           variant: "secondary" as const,
           className:
+            "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+          icon: <Check className="h-4 w-4" />,
+          text: t("provider.inUse"),
+        };
+      }
+      return {
+        disabled: false,
+        variant: "default" as const,
+        className: "",
+        icon: <Play className="h-4 w-4" />,
+        text: t("provider.enable"),
+      };
+    }
+
+    // 累加模式（OpenCode 非 OMO / OpenClaw）
+    if (isAdditiveMode) {
+      if (isInConfig) {
+        return {
+          disabled: isDefaultModel === true,
+          variant: "secondary" as const,
+          className: cn(
             "bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-900/70",
+            isDefaultModel && "opacity-40 cursor-not-allowed",
+          ),
           icon: <Minus className="h-4 w-4" />,
           text: t("provider.removeFromConfig", { defaultValue: "移除" }),
         };
@@ -114,7 +147,6 @@ export function ProviderActions({
       };
     }
 
-    // 故障转移模式
     if (isFailoverMode) {
       if (isInFailoverQueue) {
         return {
@@ -136,7 +168,6 @@ export function ProviderActions({
       };
     }
 
-    // 普通模式
     if (isCurrent) {
       return {
         disabled: true,
@@ -161,11 +192,34 @@ export function ProviderActions({
 
   const buttonState = getMainButtonState();
 
-  // OpenCode 模式下删除按钮始终可用（主按钮"移除"是从 live 配置移除，删除是从数据库删除）
-  const canDelete = isOpenCodeMode ? true : !isCurrent;
+  const canDelete = isOmo
+    ? !(isLastOmo && isCurrent)
+    : isAdditiveMode
+      ? true
+      : !isCurrent;
 
   return (
     <div className="flex items-center gap-1.5">
+      {appId === "openclaw" && isInConfig && onSetAsDefault && (
+        <Button
+          size="sm"
+          variant={isDefaultModel ? "secondary" : "default"}
+          onClick={isDefaultModel ? undefined : onSetAsDefault}
+          disabled={isDefaultModel}
+          className={cn(
+            "w-fit px-2.5",
+            isDefaultModel
+              ? "bg-gray-200 text-muted-foreground dark:bg-gray-700 opacity-60 cursor-not-allowed"
+              : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+          )}
+        >
+          <Zap className="h-4 w-4" />
+          {isDefaultModel
+            ? t("provider.isDefault", { defaultValue: "当前默认" })
+            : t("provider.setAsDefault", { defaultValue: "设为默认" })}
+        </Button>
+      )}
+
       <Button
         size="sm"
         variant={buttonState.variant}
@@ -198,6 +252,7 @@ export function ProviderActions({
           <Copy className="h-4 w-4" />
         </Button>
 
+        {/* Hidden: stream check feature disabled
         {onTest && (
           <Button
             size="icon"
@@ -214,6 +269,7 @@ export function ProviderActions({
             )}
           </Button>
         )}
+        */}
 
         <Button
           size="icon"

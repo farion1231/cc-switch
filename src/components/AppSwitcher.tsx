@@ -9,7 +9,8 @@ interface AppSwitcherProps {
   compact?: boolean;
 }
 
-const ALL_APPS: AppId[] = ["claude", "codex", "gemini", "opencode"];
+const ALL_APPS: AppId[] = ["claude", "codex", "gemini", "opencode", "openclaw"];
+const STORAGE_KEY = "cc-switch-last-app";
 
 export function AppSwitcher({
   activeApp,
@@ -19,6 +20,7 @@ export function AppSwitcher({
 }: AppSwitcherProps) {
   const handleSwitch = (app: AppId) => {
     if (app === activeApp) return;
+    localStorage.setItem(STORAGE_KEY, app);
     onSwitch(app);
   };
   const iconSize = 20;
@@ -27,12 +29,14 @@ export function AppSwitcher({
     codex: "openai",
     gemini: "gemini",
     opencode: "opencode",
+    openclaw: "openclaw",
   };
   const appDisplayName: Record<AppId, string> = {
     claude: "Claude",
     codex: "Codex",
     gemini: "Gemini",
     opencode: "OpenCode",
+    openclaw: "OpenClaw",
   };
 
   // Filter apps based on visibility settings (default all visible)

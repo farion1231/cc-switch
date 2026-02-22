@@ -919,7 +919,16 @@ impl Database {
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
     fn seed_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_data = [
-            // Claude 4.5 系列 (Latest Models)
+            // Claude 4.6 系列
+            (
+                "claude-opus-4-6-20260206",
+                "Claude Opus 4.6",
+                "5",
+                "25",
+                "0.50",
+                "6.25",
+            ),
+            // Claude 4.5 系列
             (
                 "claude-opus-4-5-20251101",
                 "Claude Opus 4.5",
@@ -1020,6 +1029,40 @@ impl Database {
             (
                 "gpt-5.2-codex-xhigh",
                 "GPT-5.2 Codex",
+                "1.75",
+                "14",
+                "0.175",
+                "0",
+            ),
+            // GPT-5.3 Codex 系列
+            ("gpt-5.3-codex", "GPT-5.3 Codex", "1.75", "14", "0.175", "0"),
+            (
+                "gpt-5.3-codex-low",
+                "GPT-5.3 Codex",
+                "1.75",
+                "14",
+                "0.175",
+                "0",
+            ),
+            (
+                "gpt-5.3-codex-medium",
+                "GPT-5.3 Codex",
+                "1.75",
+                "14",
+                "0.175",
+                "0",
+            ),
+            (
+                "gpt-5.3-codex-high",
+                "GPT-5.3 Codex",
+                "1.75",
+                "14",
+                "0.175",
+                "0",
+            ),
+            (
+                "gpt-5.3-codex-xhigh",
+                "GPT-5.3 Codex",
                 "1.75",
                 "14",
                 "0.175",
@@ -1212,7 +1255,7 @@ impl Database {
 
         for (model_id, display_name, input, output, cache_read, cache_creation) in pricing_data {
             conn.execute(
-                "INSERT OR REPLACE INTO model_pricing (
+                "INSERT OR IGNORE INTO model_pricing (
                     model_id, display_name, input_cost_per_million, output_cost_per_million,
                     cache_read_cost_per_million, cache_creation_cost_per_million
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1239,14 +1282,8 @@ impl Database {
     }
 
     fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM model_pricing", [], |row| row.get(0))
-            .map_err(|e| AppError::Database(format!("统计模型定价数据失败: {e}")))?;
-
-        if count == 0 {
-            Self::seed_model_pricing(conn)?;
-        }
-        Ok(())
+        // 每次启动都执行 INSERT OR IGNORE，增量追加新模型，已有数据不覆盖
+        Self::seed_model_pricing(conn)
     }
 
     // --- 辅助方法 ---

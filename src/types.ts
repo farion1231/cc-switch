@@ -3,7 +3,9 @@ export type ProviderCategory =
   | "cn_official" // 开源官方（原"国产官方"）
   | "aggregator" // 聚合网站
   | "third_party" // 第三方供应商
-  | "custom"; // 自定义
+  | "custom" // 自定义
+  | "omo" // Oh My OpenCode
+  | "omo-slim"; // Oh My OpenCode Slim
 
 export interface Provider {
   id: string;
@@ -159,6 +161,39 @@ export interface VisibleApps {
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
+  openclaw: boolean;
+}
+
+// WebDAV v2 同步状态
+export interface WebDavSyncStatus {
+  lastSyncAt?: number | null;
+  lastError?: string | null;
+  lastErrorSource?: string | null;
+  lastRemoteEtag?: string | null;
+  lastLocalManifestHash?: string | null;
+  lastRemoteManifestHash?: string | null;
+}
+
+// WebDAV v2 同步配置
+export interface WebDavSyncSettings {
+  enabled?: boolean;
+  autoSync?: boolean;
+  baseUrl?: string;
+  username?: string;
+  password?: string;
+  remoteRoot?: string;
+  profile?: string;
+  status?: WebDavSyncStatus;
+}
+
+// 远端快照信息（下载前预览）
+export interface RemoteSnapshotInfo {
+  deviceName: string;
+  createdAt: string;
+  snapshotId: string;
+  version: number;
+  compatible: boolean;
+  artifacts: string[];
 }
 
 // 应用设置类型（用于设置对话框与 Tauri API）
@@ -177,6 +212,8 @@ export interface Settings {
   launchOnStartup?: boolean;
   // 静默启动（程序启动时不显示主窗口）
   silentStartup?: boolean;
+  // 是否启用主页面本地代理功能（默认关闭）
+  enableLocalProxy?: boolean;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "ja";
 
@@ -192,6 +229,8 @@ export interface Settings {
   geminiConfigDir?: string;
   // 覆盖 OpenCode 配置目录（可选）
   opencodeConfigDir?: string;
+  // 覆盖 OpenClaw 配置目录（可选）
+  openclawConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -205,12 +244,33 @@ export interface Settings {
   // Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
   skillSyncMethod?: SkillSyncMethod;
 
+  // ===== WebDAV v2 同步设置 =====
+  webdavSync?: WebDavSyncSettings;
+
   // ===== 终端设置 =====
   // 首选终端应用（可选，默认使用系统默认终端）
   // macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty"
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
+}
+
+export interface SessionMeta {
+  providerId: string;
+  sessionId: string;
+  title?: string;
+  summary?: string;
+  projectDir?: string | null;
+  createdAt?: number;
+  lastActiveAt?: number;
+  sourcePath?: string;
+  resumeCommand?: string;
+}
+
+export interface SessionMessage {
+  role: string;
+  content: string;
+  ts?: number;
 }
 
 // MCP 服务器连接参数（宽松：允许扩展字段）
@@ -235,6 +295,7 @@ export interface McpApps {
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
+  openclaw: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -371,4 +432,65 @@ export interface OpenCodeMcpServerSpec {
   headers?: Record<string, string>;
   // 通用字段
   enabled?: boolean;
+}
+
+// ============================================================================
+// OpenClaw 专属配置（v3.11.0+）
+// ============================================================================
+
+// OpenClaw 模型配置
+export interface OpenClawModel {
+  id: string;
+  name: string;
+  alias?: string;
+  reasoning?: boolean; // 是否支持推理模式（如 o1、DeepSeek R1）
+  input?: string[]; // 支持的输入类型（如 ["text"]、["text", "image"]）
+  cost?: {
+    input: number;
+    output: number;
+    cacheRead?: number; // 缓存读取价格
+    cacheWrite?: number; // 缓存写入价格
+  };
+  contextWindow?: number;
+  maxTokens?: number; // 最大输出 token 数
+}
+
+// OpenClaw 默认模型配置（agents.defaults.model）
+export interface OpenClawDefaultModel {
+  primary: string;
+  fallbacks?: string[];
+}
+
+// OpenClaw 模型目录条目（agents.defaults.models 中的值）
+export interface OpenClawModelCatalogEntry {
+  alias?: string;
+}
+
+// OpenClaw 供应商配置（settings_config 结构）
+// 对应 OpenClaw 的 models.providers.<provider-id> 配置
+export interface OpenClawProviderConfig {
+  baseUrl?: string; // API 端点
+  apiKey?: string; // API 密钥
+  api?: string; // API 协议类型（如 "openai-completions"、"anthropic"）
+  models?: OpenClawModel[]; // 可用模型列表
+}
+
+// OpenClaw agents.defaults 完整配置
+export interface OpenClawAgentsDefaults {
+  model?: OpenClawDefaultModel;
+  models?: Record<string, OpenClawModelCatalogEntry>;
+  [key: string]: unknown; // preserve unknown fields
+}
+
+// OpenClaw env 配置（openclaw.json 的 env 节点）
+export interface OpenClawEnvConfig {
+  [key: string]: unknown;
+}
+
+// OpenClaw tools 配置（openclaw.json 的 tools 节点）
+export interface OpenClawToolsConfig {
+  profile?: string;
+  allow?: string[];
+  deny?: string[];
+  [key: string]: unknown; // preserve unknown fields
 }

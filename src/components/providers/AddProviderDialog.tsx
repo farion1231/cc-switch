@@ -17,7 +17,7 @@ import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
-// Note: opencodeProviderPresets is loaded via ProviderForm, not needed here
+import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 
 interface AddProviderDialogProps {
@@ -25,7 +25,10 @@ interface AddProviderDialogProps {
   onOpenChange: (open: boolean) => void;
   appId: AppId;
   onSubmit: (
-    provider: Omit<Provider, "id"> & { providerKey?: string },
+    provider: Omit<Provider, "id"> & {
+      providerKey?: string;
+      suggestedDefaults?: OpenClawSuggestedDefaults;
+    },
   ) => Promise<void> | void;
 }
 
@@ -36,8 +39,8 @@ export function AddProviderDialog({
   onSubmit,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
-  // OpenCode doesn't support universal providers
-  const showUniversalTab = appId !== "opencode";
+  // OpenCode and OpenClaw don't support universal providers
+  const showUniversalTab = appId !== "opencode" && appId !== "openclaw";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
   );
@@ -45,7 +48,6 @@ export function AddProviderDialog({
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
 
-  // Handle universal provider save
   const handleUniversalProviderSave = useCallback(
     async (provider: UniversalProvider) => {
       try {
@@ -73,7 +75,6 @@ export function AddProviderDialog({
     [t, onOpenChange],
   );
 
-  // Close universal form and return to main dialog
   const handleUniversalFormClose = useCallback(() => {
     setUniversalFormOpen(false);
     setSelectedUniversalPreset(null);
@@ -87,7 +88,10 @@ export function AddProviderDialog({
       >;
 
       // 构造基础提交数据
-      const providerData: Omit<Provider, "id"> & { providerKey?: string } = {
+      const providerData: Omit<Provider, "id"> & {
+        providerKey?: string;
+        suggestedDefaults?: OpenClawSuggestedDefaults;
+      } = {
         name: values.name.trim(),
         notes: values.notes?.trim() || undefined,
         websiteUrl: values.websiteUrl?.trim() || undefined,
@@ -98,8 +102,11 @@ export function AddProviderDialog({
         ...(values.meta ? { meta: values.meta } : {}),
       };
 
-      // OpenCode: pass providerKey for ID generation
-      if (appId === "opencode" && values.providerKey) {
+      // OpenCode/OpenClaw: pass providerKey for ID generation
+      if (
+        (appId === "opencode" || appId === "openclaw") &&
+        values.providerKey
+      ) {
         providerData.providerKey = values.providerKey;
       }
 
@@ -107,8 +114,7 @@ export function AddProviderDialog({
         providerData.meta?.custom_endpoints &&
         Object.keys(providerData.meta.custom_endpoints).length > 0;
 
-      if (!hasCustomEndpoints) {
-        // 收集端点候选（仅在缺少自定义端点时兜底）
+      if (!hasCustomEndpoints && values.presetCategory !== "omo") {
         const urlSet = new Set<string>();
 
         const addUrl = (rawUrl?: string) => {
@@ -163,7 +169,6 @@ export function AddProviderDialog({
               }
             }
           }
-          // Note: OpenCode doesn't use endpointCandidates - it handles endpoints internally
         }
 
         if (appId === "claude") {
@@ -187,12 +192,16 @@ export function AddProviderDialog({
             addUrl(env.GOOGLE_GEMINI_BASE_URL);
           }
         } else if (appId === "opencode") {
-          // OpenCode uses options.baseURL
           const options = parsedConfig.options as
             | Record<string, any>
             | undefined;
           if (options?.baseURL) {
             addUrl(options.baseURL);
+          }
+        } else if (appId === "openclaw") {
+          // OpenClaw uses baseUrl directly
+          if (parsedConfig.baseUrl) {
+            addUrl(parsedConfig.baseUrl as string);
           }
         }
 
@@ -215,13 +224,17 @@ export function AddProviderDialog({
         }
       }
 
+      // OpenClaw: pass suggestedDefaults for model registration
+      if (appId === "openclaw" && values.suggestedDefaults) {
+        providerData.suggestedDefaults = values.suggestedDefaults;
+      }
+
       await onSubmit(providerData);
       onOpenChange(false);
     },
     [appId, onSubmit, onOpenChange],
   );
 
-  // 动态 footer：根据当前 Tab 显示不同按钮
   const footer =
     !showUniversalTab || activeTab === "app-specific" ? (
       <>
@@ -296,7 +309,7 @@ export function AddProviderDialog({
           </TabsContent>
         </Tabs>
       ) : (
-        // OpenCode: directly show form without tabs
+        // OpenCode/OpenClaw: directly show form without tabs
         <ProviderForm
           appId={appId}
           submitLabel={t("common.add")}
@@ -306,7 +319,6 @@ export function AddProviderDialog({
         />
       )}
 
-      {/* Universal Provider Form Modal */}
       {showUniversalTab && (
         <UniversalProviderFormModal
           isOpen={universalFormOpen}

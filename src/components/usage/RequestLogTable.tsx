@@ -21,44 +21,122 @@ import { useRequestLogs, usageKeys } from "@/lib/query/usage";
 import { useQueryClient } from "@tanstack/react-query";
 import type { LogFilters } from "@/types/usage";
 import { ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react";
+import {
+  fmtInt,
+  fmtUsd,
+  getLocaleFromLanguage,
+  parseFiniteNumber,
+} from "./format";
 
-export function RequestLogTable() {
+interface RequestLogTableProps {
+  refreshIntervalMs: number;
+}
+
+const ONE_DAY_SECONDS = 24 * 60 * 60;
+const MAX_FIXED_RANGE_SECONDS = 30 * ONE_DAY_SECONDS;
+
+type TimeMode = "rolling" | "fixed";
+
+export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
 
-  // 默认时间范围：过去24小时
-  const getDefaultFilters = (): LogFilters => {
+  const getRollingRange = () => {
     const now = Math.floor(Date.now() / 1000);
-    const oneDayAgo = now - 24 * 60 * 60;
+    const oneDayAgo = now - ONE_DAY_SECONDS;
     return { startDate: oneDayAgo, endDate: now };
   };
 
-  const [filters, setFilters] = useState<LogFilters>(getDefaultFilters);
-  const [tempFilters, setTempFilters] = useState<LogFilters>(getDefaultFilters);
+  const [appliedTimeMode, setAppliedTimeMode] = useState<TimeMode>("rolling");
+  const [draftTimeMode, setDraftTimeMode] = useState<TimeMode>("rolling");
+
+  const [appliedFilters, setAppliedFilters] = useState<LogFilters>({});
+  const [draftFilters, setDraftFilters] = useState<LogFilters>({});
   const [page, setPage] = useState(0);
   const pageSize = 20;
+  const [validationError, setValidationError] = useState<string | null>(null);
 
-  const { data: result, isLoading } = useRequestLogs(filters, page, pageSize);
+  const { data: result, isLoading } = useRequestLogs({
+    filters: appliedFilters,
+    timeMode: appliedTimeMode,
+    rollingWindowSeconds: ONE_DAY_SECONDS,
+    page,
+    pageSize,
+    options: {
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
+  });
 
   const logs = result?.data ?? [];
   const total = result?.total ?? 0;
   const totalPages = Math.ceil(total / pageSize);
 
   const handleSearch = () => {
-    setFilters(tempFilters);
+    setValidationError(null);
+
+    if (draftTimeMode === "fixed") {
+      const start = draftFilters.startDate;
+      const end = draftFilters.endDate;
+
+      if (typeof start !== "number" || typeof end !== "number") {
+        setValidationError(
+          t("usage.invalidTimeRange", "请选择完整的开始/结束时间"),
+        );
+        return;
+      }
+
+      if (start > end) {
+        setValidationError(
+          t("usage.invalidTimeRangeOrder", "开始时间不能晚于结束时间"),
+        );
+        return;
+      }
+
+      if (end - start > MAX_FIXED_RANGE_SECONDS) {
+        setValidationError(
+          t("usage.timeRangeTooLarge", "时间范围过大，请缩小范围"),
+        );
+        return;
+      }
+    }
+
+    setAppliedTimeMode(draftTimeMode);
+    setAppliedFilters((prev) => {
+      const next = { ...prev, ...draftFilters };
+      if (draftTimeMode === "rolling") {
+        delete next.startDate;
+        delete next.endDate;
+      }
+      return next;
+    });
     setPage(0);
   };
 
   const handleReset = () => {
-    const defaults = getDefaultFilters();
-    setTempFilters(defaults);
-    setFilters(defaults);
+    setValidationError(null);
+    setAppliedTimeMode("rolling");
+    setDraftTimeMode("rolling");
+    setDraftFilters({});
+    setAppliedFilters({});
     setPage(0);
   };
 
   const handleRefresh = () => {
+    const key = {
+      timeMode: appliedTimeMode,
+      rollingWindowSeconds:
+        appliedTimeMode === "rolling" ? ONE_DAY_SECONDS : undefined,
+      appType: appliedFilters.appType,
+      providerName: appliedFilters.providerName,
+      model: appliedFilters.model,
+      statusCode: appliedFilters.statusCode,
+      startDate:
+        appliedTimeMode === "fixed" ? appliedFilters.startDate : undefined,
+      endDate: appliedTimeMode === "fixed" ? appliedFilters.endDate : undefined,
+    };
+
     queryClient.invalidateQueries({
-      queryKey: usageKeys.logs(filters, page, pageSize),
+      queryKey: usageKeys.logs(key, page, pageSize),
     });
   };
 
@@ -84,12 +162,11 @@ export function RequestLogTable() {
     return Math.floor(timestamp / 1000);
   };
 
-  const dateLocale =
-    i18n.language === "zh"
-      ? "zh-CN"
-      : i18n.language === "ja"
-        ? "ja-JP"
-        : "en-US";
+  const language = i18n.resolvedLanguage || i18n.language || "en";
+  const locale = getLocaleFromLanguage(language);
+
+  const rollingRangeForDisplay =
+    draftTimeMode === "rolling" ? getRollingRange() : null;
 
   return (
     <div className="space-y-4">
@@ -97,10 +174,10 @@ export function RequestLogTable() {
       <div className="flex flex-col gap-4 rounded-lg border bg-card/50 p-4 backdrop-blur-sm">
         <div className="flex flex-wrap items-center gap-3">
           <Select
-            value={tempFilters.appType || "all"}
+            value={draftFilters.appType || "all"}
             onValueChange={(v) =>
-              setTempFilters({
-                ...tempFilters,
+              setDraftFilters({
+                ...draftFilters,
                 appType: v === "all" ? undefined : v,
               })
             }
@@ -117,11 +194,16 @@ export function RequestLogTable() {
           </Select>
 
           <Select
-            value={tempFilters.statusCode?.toString() || "all"}
+            value={draftFilters.statusCode?.toString() || "all"}
             onValueChange={(v) =>
-              setTempFilters({
-                ...tempFilters,
-                statusCode: v === "all" ? undefined : parseInt(v),
+              setDraftFilters({
+                ...draftFilters,
+                statusCode:
+                  v === "all"
+                    ? undefined
+                    : Number.isFinite(Number.parseInt(v, 10))
+                      ? Number.parseInt(v, 10)
+                      : undefined,
               })
             }
           >
@@ -144,10 +226,10 @@ export function RequestLogTable() {
               <Input
                 placeholder={t("usage.searchProviderPlaceholder")}
                 className="pl-9 bg-background"
-                value={tempFilters.providerName || ""}
+                value={draftFilters.providerName || ""}
                 onChange={(e) =>
-                  setTempFilters({
-                    ...tempFilters,
+                  setDraftFilters({
+                    ...draftFilters,
                     providerName: e.target.value || undefined,
                   })
                 }
@@ -156,10 +238,10 @@ export function RequestLogTable() {
             <Input
               placeholder={t("usage.searchModelPlaceholder")}
               className="w-[180px] bg-background"
-              value={tempFilters.model || ""}
+              value={draftFilters.model || ""}
               onChange={(e) =>
-                setTempFilters({
-                  ...tempFilters,
+                setDraftFilters({
+                  ...draftFilters,
                   model: e.target.value || undefined,
                 })
               }
@@ -174,14 +256,18 @@ export function RequestLogTable() {
               type="datetime-local"
               className="h-8 w-[200px] bg-background"
               value={
-                tempFilters.startDate
-                  ? timestampToLocalDatetime(tempFilters.startDate)
+                (rollingRangeForDisplay?.startDate ?? draftFilters.startDate)
+                  ? timestampToLocalDatetime(
+                      (rollingRangeForDisplay?.startDate ??
+                        draftFilters.startDate) as number,
+                    )
                   : ""
               }
               onChange={(e) => {
                 const timestamp = localDatetimeToTimestamp(e.target.value);
-                setTempFilters({
-                  ...tempFilters,
+                setDraftTimeMode("fixed");
+                setDraftFilters({
+                  ...draftFilters,
                   startDate: timestamp,
                 });
               }}
@@ -191,14 +277,18 @@ export function RequestLogTable() {
               type="datetime-local"
               className="h-8 w-[200px] bg-background"
               value={
-                tempFilters.endDate
-                  ? timestampToLocalDatetime(tempFilters.endDate)
+                (rollingRangeForDisplay?.endDate ?? draftFilters.endDate)
+                  ? timestampToLocalDatetime(
+                      (rollingRangeForDisplay?.endDate ??
+                        draftFilters.endDate) as number,
+                    )
                   : ""
               }
               onChange={(e) => {
                 const timestamp = localDatetimeToTimestamp(e.target.value);
-                setTempFilters({
-                  ...tempFilters,
+                setDraftTimeMode("fixed");
+                setDraftFilters({
+                  ...draftFilters,
                   endDate: timestamp,
                 });
               }}
@@ -234,6 +324,10 @@ export function RequestLogTable() {
             </Button>
           </div>
         </div>
+
+        {validationError && (
+          <div className="text-sm text-red-600">{validationError}</div>
+        )}
       </div>
 
       {isLoading ? (
@@ -293,9 +387,7 @@ export function RequestLogTable() {
                   logs.map((log) => (
                     <TableRow key={log.requestId}>
                       <TableCell>
-                        {new Date(log.createdAt * 1000).toLocaleString(
-                          dateLocale,
-                        )}
+                        {new Date(log.createdAt * 1000).toLocaleString(locale)}
                       </TableCell>
                       <TableCell>
                         {log.providerName || t("usage.unknownProvider")}
@@ -321,19 +413,19 @@ export function RequestLogTable() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        {log.inputTokens.toLocaleString()}
+                        {fmtInt(log.inputTokens, locale)}
                       </TableCell>
                       <TableCell className="text-right">
-                        {log.outputTokens.toLocaleString()}
+                        {fmtInt(log.outputTokens, locale)}
                       </TableCell>
                       <TableCell className="text-right">
-                        {log.cacheReadTokens.toLocaleString()}
+                        {fmtInt(log.cacheReadTokens, locale)}
                       </TableCell>
                       <TableCell className="text-right">
-                        {log.cacheCreationTokens.toLocaleString()}
+                        {fmtInt(log.cacheCreationTokens, locale)}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs">
-                        {parseFloat(log.costMultiplier) !== 1 ? (
+                        {(parseFiniteNumber(log.costMultiplier) ?? 1) !== 1 ? (
                           <span className="text-orange-600">
                             ×{log.costMultiplier}
                           </span>
@@ -342,24 +434,30 @@ export function RequestLogTable() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        ${parseFloat(log.totalCostUsd).toFixed(6)}
+                        {fmtUsd(log.totalCostUsd, 6)}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center justify-center gap-1">
                           {(() => {
-                            const durationSec =
-                              (log.durationMs ?? log.latencyMs) / 1000;
-                            const durationColor =
-                              durationSec <= 5
+                            const durationMs =
+                              typeof log.durationMs === "number"
+                                ? log.durationMs
+                                : log.latencyMs;
+                            const durationSec = durationMs / 1000;
+                            const durationColor = Number.isFinite(durationSec)
+                              ? durationSec <= 5
                                 ? "bg-green-100 text-green-800"
                                 : durationSec <= 120
                                   ? "bg-orange-100 text-orange-800"
-                                  : "bg-red-200 text-red-900";
+                                  : "bg-red-200 text-red-900"
+                              : "bg-gray-100 text-gray-700";
                             return (
                               <span
                                 className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs ${durationColor}`}
                               >
-                                {Math.round(durationSec)}s
+                                {Number.isFinite(durationSec)
+                                  ? `${Math.round(durationSec)}s`
+                                  : "--"}
                               </span>
                             );
                           })()}
@@ -367,17 +465,20 @@ export function RequestLogTable() {
                             log.firstTokenMs != null &&
                             (() => {
                               const firstSec = log.firstTokenMs / 1000;
-                              const firstColor =
-                                firstSec <= 5
+                              const firstColor = Number.isFinite(firstSec)
+                                ? firstSec <= 5
                                   ? "bg-green-100 text-green-800"
                                   : firstSec <= 120
                                     ? "bg-orange-100 text-orange-800"
-                                    : "bg-red-200 text-red-900";
+                                    : "bg-red-200 text-red-900"
+                                : "bg-gray-100 text-gray-700";
                               return (
                                 <span
                                   className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs ${firstColor}`}
                                 >
-                                  {firstSec.toFixed(1)}s
+                                  {Number.isFinite(firstSec)
+                                    ? `${firstSec.toFixed(1)}s`
+                                    : "--"}
                                 </span>
                               );
                             })()}

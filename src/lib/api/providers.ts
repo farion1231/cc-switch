@@ -98,6 +98,14 @@ export const providersApi = {
   async getOpenCodeLiveProviderIds(): Promise<string[]> {
     return await invoke("get_opencode_live_provider_ids");
   },
+
+  /**
+   * 获取 OpenClaw live 配置中的供应商 ID 列表
+   * 用于前端判断供应商是否已添加到 openclaw.json
+   */
+  async getOpenClawLiveProviderIds(): Promise<string[]> {
+    return await invoke("get_openclaw_live_provider_ids");
+  },
 };
 
 // ============================================================================
