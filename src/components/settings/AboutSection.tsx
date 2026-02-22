@@ -221,7 +221,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     return () => {
       active = false;
     };
-  }, [loadAllToolVersions]);
+    // Mount-only: loadAllToolVersions is intentionally excluded to avoid
+    // re-fetching all tools whenever wslShellByTool changes. Single-tool
+    // refreshes are handled by refreshToolVersions in the shell/flag handlers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ... (handlers like handleOpenReleaseNotes, handleCheckUpdate) ...
 
