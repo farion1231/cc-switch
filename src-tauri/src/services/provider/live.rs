@@ -244,20 +244,48 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 /// Claude env-level key fields that belong to the provider.
 /// When adding a new field here, also update backfill_claude_key_fields().
 const CLAUDE_KEY_ENV_FIELDS: &[&str] = &[
+    // --- API auth & endpoint ---
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_API_KEY",
+    // --- Model selection ---
     "ANTHROPIC_MODEL",
     "ANTHROPIC_REASONING_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "CLAUDE_CODE_SUBAGENT_MODEL",
+    // --- AWS Bedrock ---
+    "CLAUDE_CODE_USE_BEDROCK",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_REGION",
+    "AWS_PROFILE",
+    "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
+    // --- Google Vertex AI ---
+    "CLAUDE_CODE_USE_VERTEX",
+    "ANTHROPIC_VERTEX_PROJECT_ID",
+    "CLOUD_ML_REGION",
+    // --- Microsoft Foundry ---
+    "CLAUDE_CODE_USE_FOUNDRY",
+    // --- Provider behavior ---
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    "API_TIMEOUT_MS",
+    "DISABLE_PROMPT_CACHING",
 ];
 
 /// Claude top-level key fields (legacy + modern format).
 /// When adding a new field here, also update backfill_claude_key_fields().
-const CLAUDE_KEY_TOP_LEVEL: &[&str] = &["apiBaseUrl", "primaryModel", "smallFastModel", "model"];
+const CLAUDE_KEY_TOP_LEVEL: &[&str] = &[
+    "apiBaseUrl",     // legacy
+    "primaryModel",   // legacy
+    "smallFastModel", // legacy
+    "model",          // modern
+    "apiKey",         // Bedrock API Key auth
+];
 
 /// Codex TOML key fields.
 /// When adding a new field here, also update backfill_codex_key_fields().
