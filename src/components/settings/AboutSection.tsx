@@ -11,6 +11,13 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { getVersion } from "@tauri-apps/api/app";
@@ -46,6 +53,32 @@ const WSL_SHELL_OPTIONS = ["sh", "bash", "zsh", "fish", "dash"] as const;
 // UI-friendly order: login shell first.
 const WSL_SHELL_FLAG_OPTIONS = ["-lic", "-lc", "-c"] as const;
 
+const ENV_BADGE_CONFIG: Record<
+  string,
+  { labelKey: string; className: string }
+> = {
+  wsl: {
+    labelKey: "settings.envBadge.wsl",
+    className:
+      "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20",
+  },
+  windows: {
+    labelKey: "settings.envBadge.windows",
+    className:
+      "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+  },
+  macos: {
+    labelKey: "settings.envBadge.macos",
+    className:
+      "bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20",
+  },
+  linux: {
+    labelKey: "settings.envBadge.linux",
+    className:
+      "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20",
+  },
+};
+
 const ONE_CLICK_INSTALL_COMMANDS = `# Claude Code (Native install - recommended)
 curl -fsSL https://claude.ai/install.sh | bash
 # Codex
@@ -73,48 +106,53 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     isChecking,
   } = useUpdate();
 
-  const [wslShellByTool, setWslShellByTool] = useState<Record<
-    string,
-    WslShellPreference
-  >>({});
+  const [wslShellByTool, setWslShellByTool] = useState<
+    Record<string, WslShellPreference>
+  >({});
   const [loadingTools, setLoadingTools] = useState<Record<string, boolean>>({});
 
-  const refreshToolVersions = useCallback(async (
-    toolNames: ToolName[],
-    wslOverrides?: Record<string, WslShellPreference>,
-  ) => {
-    if (toolNames.length === 0) return;
+  const refreshToolVersions = useCallback(
+    async (
+      toolNames: ToolName[],
+      wslOverrides?: Record<string, WslShellPreference>,
+    ) => {
+      if (toolNames.length === 0) return;
 
-    // 单工具刷新使用统一后端入口（get_tool_versions）并带工具过滤。
-    setLoadingTools((prev) => {
-      const next = { ...prev };
-      for (const name of toolNames) next[name] = true;
-      return next;
-    });
-
-    try {
-      const updated = await settingsApi.getToolVersions(toolNames, wslOverrides);
-
-      setToolVersions((prev) => {
-        if (prev.length === 0) return updated;
-        const byName = new Map(updated.map((t) => [t.name, t]));
-        const merged = prev.map((t) => byName.get(t.name) ?? t);
-        const existing = new Set(prev.map((t) => t.name));
-        for (const u of updated) {
-          if (!existing.has(u.name)) merged.push(u);
-        }
-        return merged;
-      });
-    } catch (error) {
-      console.error("[AboutSection] Failed to refresh tools", error);
-    } finally {
+      // 单工具刷新使用统一后端入口（get_tool_versions）并带工具过滤。
       setLoadingTools((prev) => {
         const next = { ...prev };
-        for (const name of toolNames) next[name] = false;
+        for (const name of toolNames) next[name] = true;
         return next;
       });
-    }
-  }, []);
+
+      try {
+        const updated = await settingsApi.getToolVersions(
+          toolNames,
+          wslOverrides,
+        );
+
+        setToolVersions((prev) => {
+          if (prev.length === 0) return updated;
+          const byName = new Map(updated.map((t) => [t.name, t]));
+          const merged = prev.map((t) => byName.get(t.name) ?? t);
+          const existing = new Set(prev.map((t) => t.name));
+          for (const u of updated) {
+            if (!existing.has(u.name)) merged.push(u);
+          }
+          return merged;
+        });
+      } catch (error) {
+        console.error("[AboutSection] Failed to refresh tools", error);
+      } finally {
+        setLoadingTools((prev) => {
+          const next = { ...prev };
+          for (const name of toolNames) next[name] = false;
+          return next;
+        });
+      }
+    },
+    [],
+  );
 
   const loadAllToolVersions = useCallback(async () => {
     setIsLoadingTools(true);
@@ -142,7 +180,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     await refreshToolVersions([toolName], { [toolName]: nextPref });
   };
 
-  const handleToolShellFlagChange = async (toolName: ToolName, value: string) => {
+  const handleToolShellFlagChange = async (
+    toolName: ToolName,
+    value: string,
+  ) => {
     const wslShellFlag = value === "auto" ? null : value;
     const nextPref: WslShellPreference = {
       ...(wslShellByTool[toolName] ?? {}),
@@ -156,14 +197,13 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     let active = true;
     const load = async () => {
       try {
-        const [appVersion, tools] = await Promise.all([
+        const [appVersion] = await Promise.all([
           getVersion(),
-          settingsApi.getToolVersions(),
+          loadAllToolVersions(),
         ]);
 
         if (active) {
           setVersion(appVersion);
-          setToolVersions(tools);
         }
       } catch (error) {
         console.error("[AboutSection] Failed to load info", error);
@@ -173,7 +213,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       } finally {
         if (active) {
           setIsLoadingVersion(false);
-          setIsLoadingTools(false);
         }
       }
     };
@@ -182,7 +221,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [loadAllToolVersions]);
 
   // ... (handlers like handleOpenReleaseNotes, handleCheckUpdate) ...
 
@@ -423,55 +462,60 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     <Terminal className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm font-medium">{displayName}</span>
                     {/* Environment Badge */}
-                    {tool?.env_type && (
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${tool.env_type === "wsl"
-                        ? "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20"
-                        : tool.env_type === "windows"
-                          ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
-                          : tool.env_type === "macos"
-                            ? "bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20"
-                            : "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20"
-                        }`}>
-                        {tool.env_type === "wsl" ? "WSL" :
-                          tool.env_type === "windows" ? "Win" :
-                            tool.env_type === "macos" ? "macOS" :
-                              tool.env_type === "linux" ? "Linux" : tool.env_type}
+                    {tool?.env_type && ENV_BADGE_CONFIG[tool.env_type] && (
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG[tool.env_type].className}`}
+                      >
+                        {t(ENV_BADGE_CONFIG[tool.env_type].labelKey)}
                       </span>
                     )}
-                    {/* Shell Selector - Inline with WSL badge */}
+                    {/* WSL Shell Selector */}
                     {tool?.env_type === "wsl" && (
-                      <select
-                        className="h-6 text-xs rounded border border-input bg-background text-foreground px-2 py-0.5 shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [&>option]:bg-background [&>option]:text-foreground"
+                      <Select
                         value={wslShellByTool[toolName]?.wslShell || "auto"}
-                        onChange={(e) => handleToolShellChange(toolName, e.target.value)}
-                        disabled={isLoadingTools || loadingTools[toolName]}
-                      >
-                        <option value="auto">auto</option>
-                        {WSL_SHELL_OPTIONS.map((shell) => (
-                          <option key={shell} value={shell}>
-                            {shell}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-
-                    {/* Shell Flag Selector */}
-                    {tool?.env_type === "wsl" && (
-                      <select
-                        className="h-6 text-xs rounded border border-input bg-background text-foreground px-2 py-0.5 shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [&>option]:bg-background [&>option]:text-foreground"
-                        value={wslShellByTool[toolName]?.wslShellFlag || "auto"}
-                        onChange={(e) =>
-                          handleToolShellFlagChange(toolName, e.target.value)
+                        onValueChange={(v) =>
+                          handleToolShellChange(toolName, v)
                         }
                         disabled={isLoadingTools || loadingTools[toolName]}
                       >
-                        <option value="auto">auto</option>
-                        {WSL_SHELL_FLAG_OPTIONS.map((flag) => (
-                          <option key={flag} value={flag}>
-                            {flag}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger className="h-6 w-[70px] text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">
+                            {t("common.auto")}
+                          </SelectItem>
+                          {WSL_SHELL_OPTIONS.map((shell) => (
+                            <SelectItem key={shell} value={shell}>
+                              {shell}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    {/* WSL Shell Flag Selector */}
+                    {tool?.env_type === "wsl" && (
+                      <Select
+                        value={wslShellByTool[toolName]?.wslShellFlag || "auto"}
+                        onValueChange={(v) =>
+                          handleToolShellFlagChange(toolName, v)
+                        }
+                        disabled={isLoadingTools || loadingTools[toolName]}
+                      >
+                        <SelectTrigger className="h-6 w-[70px] text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">
+                            {t("common.auto")}
+                          </SelectItem>
+                          {WSL_SHELL_FLAG_OPTIONS.map((flag) => (
+                            <SelectItem key={flag} value={flag}>
+                              {flag}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     )}
                   </div>
                   {isLoadingTools || loadingTools[toolName] ? (

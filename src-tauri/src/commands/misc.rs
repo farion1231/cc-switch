@@ -315,6 +315,31 @@ fn is_valid_wsl_distro_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
+/// Validate that the given shell name is one of the allowed shells.
+#[cfg(target_os = "windows")]
+fn is_valid_shell(shell: &str) -> bool {
+    matches!(
+        shell.rsplit('/').next().unwrap_or(shell),
+        "sh" | "bash" | "zsh" | "fish" | "dash"
+    )
+}
+
+/// Validate that the given shell flag is one of the allowed flags.
+#[cfg(target_os = "windows")]
+fn is_valid_shell_flag(flag: &str) -> bool {
+    matches!(flag, "-c" | "-lc" | "-lic")
+}
+
+/// Return the default invocation flag for the given shell.
+#[cfg(target_os = "windows")]
+fn default_flag_for_shell(shell: &str) -> &'static str {
+    match shell.rsplit('/').next().unwrap_or(shell) {
+        "dash" | "sh" => "-c",
+        "fish" => "-lc",
+        _ => "-lic",
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn try_get_version_wsl(
     tool: &str,
@@ -333,25 +358,6 @@ fn try_get_version_wsl(
     // 校验 distro 名称，防止命令注入
     if !is_valid_wsl_distro_name(distro) {
         return (None, Some(format!("[WSL:{distro}] invalid distro name")));
-    }
-
-    fn is_valid_shell_flag(flag: &str) -> bool {
-        matches!(flag, "-c" | "-lc" | "-lic")
-    }
-
-    fn is_valid_shell(shell: &str) -> bool {
-        matches!(
-            shell.rsplit('/').next().unwrap_or(shell),
-            "sh" | "bash" | "zsh" | "fish" | "dash"
-        )
-    }
-
-    fn default_flag_for_shell(shell: &str) -> &'static str {
-        match shell.rsplit('/').next().unwrap_or(shell) {
-            "dash" | "sh" => "-c",
-            "fish" => "-lc",
-            _ => "-lic",
-        }
     }
 
     // 构建 Shell 脚本检测逻辑
@@ -1087,4 +1093,66 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_version() {
+        assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
+        assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
+        assert_eq!(extract_version("no version here"), "no version here");
+    }
+
+    #[cfg(target_os = "windows")]
+    mod wsl_helpers {
+        use super::super::*;
+
+        #[test]
+        fn test_is_valid_shell() {
+            assert!(is_valid_shell("bash"));
+            assert!(is_valid_shell("zsh"));
+            assert!(is_valid_shell("sh"));
+            assert!(is_valid_shell("fish"));
+            assert!(is_valid_shell("dash"));
+            assert!(is_valid_shell("/usr/bin/bash"));
+            assert!(is_valid_shell("/bin/zsh"));
+            assert!(!is_valid_shell("powershell"));
+            assert!(!is_valid_shell("cmd"));
+            assert!(!is_valid_shell(""));
+        }
+
+        #[test]
+        fn test_is_valid_shell_flag() {
+            assert!(is_valid_shell_flag("-c"));
+            assert!(is_valid_shell_flag("-lc"));
+            assert!(is_valid_shell_flag("-lic"));
+            assert!(!is_valid_shell_flag("-x"));
+            assert!(!is_valid_shell_flag(""));
+            assert!(!is_valid_shell_flag("--login"));
+        }
+
+        #[test]
+        fn test_default_flag_for_shell() {
+            assert_eq!(default_flag_for_shell("sh"), "-c");
+            assert_eq!(default_flag_for_shell("dash"), "-c");
+            assert_eq!(default_flag_for_shell("/bin/dash"), "-c");
+            assert_eq!(default_flag_for_shell("fish"), "-lc");
+            assert_eq!(default_flag_for_shell("bash"), "-lic");
+            assert_eq!(default_flag_for_shell("zsh"), "-lic");
+            assert_eq!(default_flag_for_shell("/usr/bin/zsh"), "-lic");
+        }
+
+        #[test]
+        fn test_is_valid_wsl_distro_name() {
+            assert!(is_valid_wsl_distro_name("Ubuntu"));
+            assert!(is_valid_wsl_distro_name("Ubuntu-22.04"));
+            assert!(is_valid_wsl_distro_name("my_distro"));
+            assert!(!is_valid_wsl_distro_name(""));
+            assert!(!is_valid_wsl_distro_name("distro with spaces"));
+            assert!(!is_valid_wsl_distro_name(&"a".repeat(65)));
+        }
+    }
 }

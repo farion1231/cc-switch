@@ -36,7 +36,8 @@
     "search": "検索",
     "reset": "リセット",
     "actions": "操作",
-    "deleting": "削除中..."
+    "deleting": "削除中...",
+    "auto": "自動"
   },
   "apiKeyInput": {
     "placeholder": "API Key を入力",
@@ -354,6 +355,14 @@
     "oneClickInstall": "ワンクリックインストール",
     "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / OpenCode をインストール",
     "localEnvCheck": "ローカル環境チェック",
+    "envBadge": {
+      "wsl": "WSL",
+      "windows": "Win",
+      "macos": "macOS",
+      "linux": "Linux"
+    },
+    "wslShell": "Shell",
+    "wslShellFlag": "フラグ",
     "installCommandsCopied": "インストールコマンドをコピーしました",
     "installCommandsCopyFailed": "コピーに失敗しました。手動でコピーしてください。",
     "importFailedError": "設定のインポートに失敗しました: {{message}}",

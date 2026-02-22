@@ -36,7 +36,8 @@
     "search": "Search",
     "reset": "Reset",
     "actions": "Actions",
-    "deleting": "Deleting..."
+    "deleting": "Deleting...",
+    "auto": "Auto"
   },
   "apiKeyInput": {
     "placeholder": "Enter API Key",
@@ -354,6 +355,14 @@
     "oneClickInstall": "One-click Install",
     "oneClickInstallHint": "Install Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "Local environment check",
+    "envBadge": {
+      "wsl": "WSL",
+      "windows": "Win",
+      "macos": "macOS",
+      "linux": "Linux"
+    },
+    "wslShell": "Shell",
+    "wslShellFlag": "Flag",
     "installCommandsCopied": "Install commands copied",
     "installCommandsCopyFailed": "Copy failed, please copy manually.",
     "importFailedError": "Import config failed: {{message}}",

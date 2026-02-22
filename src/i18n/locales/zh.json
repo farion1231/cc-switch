@@ -36,7 +36,8 @@
     "search": "查询",
     "reset": "重置",
     "actions": "操作",
-    "deleting": "删除中..."
+    "deleting": "删除中...",
+    "auto": "自动"
   },
   "apiKeyInput": {
     "placeholder": "请输入API Key",
@@ -354,6 +355,14 @@
     "oneClickInstall": "一键安装",
     "oneClickInstallHint": "安装 Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "本地环境检查",
+    "envBadge": {
+      "wsl": "WSL",
+      "windows": "Win",
+      "macos": "macOS",
+      "linux": "Linux"
+    },
+    "wslShell": "Shell",
+    "wslShellFlag": "标志",
     "installCommandsCopied": "安装命令已复制",
     "installCommandsCopyFailed": "复制失败，请手动复制。",
     "importFailedError": "导入配置失败：{{message}}",
