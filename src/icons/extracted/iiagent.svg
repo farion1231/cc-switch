@@ -1,0 +1,12 @@
+<svg height="1em" width="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<title>IIAgent</title>
+<defs>
+  <linearGradient id="ii-agent-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#6366F1"/>
+    <stop offset="100%" stop-color="#8B5CF6"/>
+  </linearGradient>
+</defs>
+<path d="M12 2L2 7l10 5 10-5-10-5z" fill="url(#ii-agent-gradient)"/>
+<path d="M2 17l10 5 10-5M2 12l10 5 10-5" stroke="url(#ii-agent-gradient)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="12" cy="12" r="3" fill="url(#ii-agent-gradient)"/>
+</svg>
