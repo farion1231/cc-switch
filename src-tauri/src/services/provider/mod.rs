@@ -27,12 +27,12 @@ pub use live::{
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::sanitize_claude_settings_for_live;
-pub(crate) use live::write_live_snapshot;
+pub(crate) use live::write_live_partial;
 
 // Internal re-exports
 use live::{
     backfill_key_fields, remove_openclaw_provider_from_live, remove_opencode_provider_from_live,
-    write_gemini_live, write_live_partial,
+    write_live_snapshot,
 };
 use usage::validate_usage_script;
 
@@ -567,9 +567,6 @@ impl ProviderService {
         // Sync to live (partial merge: only key fields, preserving user settings)
         write_live_partial(&app_type, provider)?;
 
-        // Sync MCP
-        McpService::sync_all_enabled(state)?;
-
         Ok(result)
     }
 
@@ -683,10 +680,6 @@ impl ProviderService {
             template_type,
         )
         .await
-    }
-
-    pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
-        write_gemini_live(provider)
     }
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {

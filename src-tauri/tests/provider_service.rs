@@ -112,9 +112,12 @@ command = "say"
 
     let config_text =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    // With partial merge, only key fields (model, provider, model_providers) are
+    // merged into config.toml. The existing MCP section should be preserved.
+    // MCP sync from DB is handled separately (at startup or explicit sync).
     assert!(
-        config_text.contains("mcp_servers.echo-server"),
-        "config.toml should contain synced MCP servers"
+        config_text.contains("mcp_servers.legacy"),
+        "config.toml should preserve existing MCP servers after partial merge"
     );
 
     let current_id = state
@@ -142,11 +145,6 @@ command = "say"
     assert!(
         new_config_text.contains("mcp_servers.latest"),
         "provider config should contain original MCP servers"
-    );
-    // live 文件额外包含同步的 MCP 服务器
-    assert!(
-        config_text.contains("mcp_servers.echo-server"),
-        "live config should include synced MCP servers"
     );
 
     let legacy = providers
