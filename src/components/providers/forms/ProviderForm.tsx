@@ -45,6 +45,7 @@ import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import GeminiConfigEditor from "./GeminiConfigEditor";
 import JsonEditor from "@/components/JsonEditor";
+import { ClaudeQuickToggles, jsonMergePatch } from "./ClaudeQuickToggles";
 import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
@@ -1432,8 +1433,24 @@ export function ProviderForm({
               <Label htmlFor="settingsConfig">
                 {t("claudeConfig.configLabel")}
               </Label>
+              <ClaudeQuickToggles
+                onPatchApplied={(patch) => {
+                  try {
+                    const cfg = JSON.parse(
+                      form.getValues("settingsConfig") || "{}",
+                    );
+                    jsonMergePatch(cfg, patch);
+                    form.setValue(
+                      "settingsConfig",
+                      JSON.stringify(cfg, null, 2),
+                    );
+                  } catch {
+                    // invalid JSON in editor — skip mirror
+                  }
+                }}
+              />
               <JsonEditor
-                value={form.getValues("settingsConfig")}
+                value={form.watch("settingsConfig")}
                 onChange={(value) => form.setValue("settingsConfig", value)}
                 placeholder={`{
   "env": {

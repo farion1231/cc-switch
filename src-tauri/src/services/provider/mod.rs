@@ -587,6 +587,11 @@ impl ProviderService {
         read_live_settings(app_type)
     }
 
+    /// Patch Claude live settings directly (user-level preferences)
+    pub fn patch_claude_live(patch: Value) -> Result<(), AppError> {
+        live::patch_claude_live(patch)
+    }
+
     /// Get custom endpoints list (re-export)
     pub fn get_custom_endpoints(
         state: &AppState,

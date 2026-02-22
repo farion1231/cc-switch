@@ -168,6 +168,12 @@ pub fn read_live_provider_settings(app: String) -> Result<serde_json::Value, Str
 }
 
 #[tauri::command]
+pub fn patch_claude_live_settings(patch: serde_json::Value) -> Result<bool, String> {
+    ProviderService::patch_claude_live(patch).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
 pub async fn test_api_endpoints(
     urls: Vec<String>,
     #[allow(non_snake_case)] timeoutSecs: Option<u64>,

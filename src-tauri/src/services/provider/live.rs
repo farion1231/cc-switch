@@ -284,6 +284,46 @@ pub(crate) fn write_live_partial(app_type: &AppType, provider: &Provider) -> Res
     }
 }
 
+/// Apply a JSON merge patch (RFC 7396) directly to Claude live settings.json.
+/// Used for user-level preferences (attribution, thinking, etc.) that are
+/// independent of the active provider.
+pub fn patch_claude_live(patch: Value) -> Result<(), AppError> {
+    let path = get_claude_settings_path();
+    let mut live = if path.exists() {
+        read_json_file(&path).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+    json_merge_patch(&mut live, &patch);
+    let settings = sanitize_claude_settings_for_live(&live);
+    write_json_file(&path, &settings)?;
+    Ok(())
+}
+
+/// RFC 7396 JSON Merge Patch: null deletes, objects merge recursively, rest overwrites.
+fn json_merge_patch(target: &mut Value, patch: &Value) {
+    if let Some(patch_obj) = patch.as_object() {
+        if !target.is_object() {
+            *target = json!({});
+        }
+        let target_obj = target.as_object_mut().unwrap();
+        for (key, value) in patch_obj {
+            if value.is_null() {
+                target_obj.remove(key);
+            } else if value.is_object() {
+                let entry = target_obj.entry(key.clone()).or_insert(json!({}));
+                json_merge_patch(entry, value);
+                // Clean up empty container objects
+                if entry.as_object().map_or(false, |o| o.is_empty()) {
+                    target_obj.remove(key);
+                }
+            } else {
+                target_obj.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
 /// Claude: merge only key env and top-level fields into live settings.json
 fn write_claude_live_partial(provider: &Provider) -> Result<(), AppError> {
     let path = get_claude_settings_path();

@@ -848,6 +848,7 @@ pub fn run() {
             commands::get_common_config_snippet,
             commands::set_common_config_snippet,
             commands::read_live_provider_settings,
+            commands::patch_claude_live_settings,
             commands::get_settings,
             commands::save_settings,
             commands::get_rectifier_config,
