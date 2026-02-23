@@ -145,6 +145,10 @@ export interface ProviderMeta {
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   apiFormat?: "anthropic" | "openai_chat";
+  // Claude 认证字段名（仅 Claude 供应商使用）
+  // - "ANTHROPIC_AUTH_TOKEN" (默认): 大多数第三方/聚合供应商
+  // - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
+  apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 }
 
 // Skill 同步方式
@@ -154,6 +158,11 @@ export type SkillSyncMethod = "auto" | "symlink" | "copy";
 // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
 export type ClaudeApiFormat = "anthropic" | "openai_chat";
+
+// Claude 认证字段类型
+// - "ANTHROPIC_AUTH_TOKEN": 大多数第三方/聚合供应商使用（默认）
+// - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
+export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
 // 主页面显示的应用配置
 export interface VisibleApps {

@@ -135,9 +135,13 @@ export const hasApiKeyField = (
 export const setApiKeyInConfig = (
   jsonString: string,
   apiKey: string,
-  options: { createIfMissing?: boolean; appType?: string } = {},
+  options: {
+    createIfMissing?: boolean;
+    appType?: string;
+    apiKeyField?: string;
+  } = {},
 ): string => {
-  const { createIfMissing = false, appType } = options;
+  const { createIfMissing = false, appType, apiKeyField } = options;
   try {
     const config = JSON.parse(jsonString);
     if (!config.env) {
@@ -170,13 +174,13 @@ export const setApiKeyInConfig = (
       return JSON.stringify(config, null, 2);
     }
 
-    // Claude API Key (优先写入已存在的字段；若两者均不存在且允许创建，则默认创建 AUTH_TOKEN 字段)
+    // Claude API Key (优先写入已存在的字段；若两者均不存在且允许创建，则使用 apiKeyField 指定的字段名)
     if ("ANTHROPIC_AUTH_TOKEN" in env) {
       env.ANTHROPIC_AUTH_TOKEN = apiKey;
     } else if ("ANTHROPIC_API_KEY" in env) {
       env.ANTHROPIC_API_KEY = apiKey;
     } else if (createIfMissing) {
-      env.ANTHROPIC_AUTH_TOKEN = apiKey;
+      env[apiKeyField ?? "ANTHROPIC_AUTH_TOKEN"] = apiKey;
     } else {
       return jsonString;
     }
