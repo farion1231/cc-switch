@@ -134,8 +134,19 @@ export function useProviderActions(activeApp: AppId) {
   const switchProvider = useCallback(
     async (provider: Provider) => {
       try {
-        await switchProviderMutation.mutateAsync(provider.id);
+        const result = await switchProviderMutation.mutateAsync(provider.id);
         await syncClaudePlugin(provider);
+
+        // Show backfill warning if present
+        if (result?.warnings?.length) {
+          toast.warning(
+            t("notifications.backfillWarning", {
+              defaultValue:
+                "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
+            }),
+            { duration: 5000 },
+          );
+        }
 
         // 根据供应商类型显示不同的成功提示
         if (

@@ -169,15 +169,23 @@ export const settingsApi = {
     return await invoke("get_auto_launch_status");
   },
 
-  async getToolVersions(): Promise<
+  async getToolVersions(
+    tools?: string[],
+    wslShellByTool?: Record<
+      string,
+      { wslShell?: string | null; wslShellFlag?: string | null }
+    >,
+  ): Promise<
     Array<{
       name: string;
       version: string | null;
       latest_version: string | null;
       error: string | null;
+      env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
+      wsl_distro: string | null;
     }>
   > {
-    return await invoke("get_tool_versions");
+    return await invoke("get_tool_versions", { tools, wslShellByTool });
   },
 
   async getRectifierConfig(): Promise<RectifierConfig> {
@@ -207,3 +215,23 @@ export interface LogConfig {
   enabled: boolean;
   level: "error" | "warn" | "info" | "debug" | "trace";
 }
+
+export interface BackupEntry {
+  filename: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export const backupsApi = {
+  async listDbBackups(): Promise<BackupEntry[]> {
+    return await invoke("list_db_backups");
+  },
+
+  async restoreDbBackup(filename: string): Promise<string> {
+    return await invoke("restore_db_backup", { filename });
+  },
+
+  async renameDbBackup(oldFilename: string, newName: string): Promise<string> {
+    return await invoke("rename_db_backup", { oldFilename, newName });
+  },
+};

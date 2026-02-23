@@ -38,6 +38,13 @@ use usage::validate_usage_script;
 /// Provider business logic service
 pub struct ProviderService;
 
+/// Result of a provider switch operation, including any non-fatal warnings
+#[derive(Debug, serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchResult {
+    pub warnings: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,7 +454,7 @@ impl ProviderService {
     ///    c. Update database is_current (as default for new devices)
     ///    d. Write target provider config to live files
     ///    e. Sync MCP configuration
-    pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+    pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
         // Check if provider exists
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let _provider = providers
@@ -519,7 +526,7 @@ impl ProviderService {
 
             // Note: No Live config write, no MCP sync
             // The proxy server will route requests to the new provider via is_current
-            return Ok(());
+            return Ok(SwitchResult::default());
         }
 
         // Normal mode: full switch with Live config write
@@ -532,7 +539,7 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
         providers: &indexmap::IndexMap<String, Provider>,
-    ) -> Result<(), AppError> {
+    ) -> Result<SwitchResult, AppError> {
         let provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
@@ -545,7 +552,7 @@ impl ProviderService {
                 state,
                 &crate::services::omo::STANDARD,
             )?;
-            return Ok(());
+            return Ok(SwitchResult::default());
         }
 
         if matches!(app_type, AppType::OpenCode) && provider.category.as_deref() == Some("omo-slim")
@@ -554,8 +561,10 @@ impl ProviderService {
                 .db
                 .set_omo_provider_current(app_type.as_str(), id, "omo-slim")?;
             crate::services::OmoService::write_config_to_file(state, &crate::services::omo::SLIM)?;
-            return Ok(());
+            return Ok(SwitchResult::default());
         }
+
+        let mut result = SwitchResult::default();
 
         // Backfill: Backfill current live config to current provider
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
@@ -570,8 +579,14 @@ impl ProviderService {
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
                             current_provider.settings_config = live_config;
-                            // Ignore backfill failure, don't affect switch flow
-                            let _ = state.db.save_provider(app_type.as_str(), &current_provider);
+                            if let Err(e) =
+                                state.db.save_provider(app_type.as_str(), &current_provider)
+                            {
+                                log::warn!("Backfill failed: {e}");
+                                result
+                                    .warnings
+                                    .push(format!("backfill_failed:{current_id}"));
+                            }
                         }
                     }
                 }
@@ -593,7 +608,7 @@ impl ProviderService {
         // Sync MCP
         McpService::sync_all_enabled(state)?;
 
-        Ok(())
+        Ok(result)
     }
 
     /// Sync current provider to live configuration (re-export)

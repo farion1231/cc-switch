@@ -17,6 +17,10 @@ export interface ProviderSwitchEvent {
   providerId: string;
 }
 
+export interface SwitchResult {
+  warnings: string[];
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -46,7 +50,7 @@ export const providersApi = {
     return await invoke("remove_provider_from_live_config", { id, app: appId });
   },
 
-  async switch(id: string, appId: AppId): Promise<boolean> {
+  async switch(id: string, appId: AppId): Promise<SwitchResult> {
     return await invoke("switch_provider", { id, app: appId });
   },
 
