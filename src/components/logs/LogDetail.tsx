@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useRequestDetail } from "@/lib/query/usage";
-import { Loader2, Copy, Check, Clock, Zap, FileText, Hash, Server, Gauge, Timer, GaugeCircle, Percent } from "lucide-react";
+import { Loader2, Copy, Check, Clock, Zap, FileText, Hash, Server, Gauge, Timer, GaugeCircle, Percent, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fmtUsd } from "../usage/format";
 import { useState } from "react";
@@ -103,7 +103,7 @@ export function LogDetail({ requestId }: LogDetailProps) {
         </span>
       </div>
 
-      {/* Basic info: protocol | provider | response mode | model */}
+      {/* Basic info: protocol | provider | response mode */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
         <div className="flex items-center gap-1.5">
           <Hash className="h-4 w-4 text-purple-500" />
@@ -122,10 +122,20 @@ export function LogDetail({ requestId }: LogDetailProps) {
             {log.isStreaming ? t("usage.stream") : t("usage.nonStream")}
           </span>
         </div>
+      </div>
+
+      {/* Model info */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
         <div className="flex items-center gap-1.5">
           <div className="h-4 w-4 rounded-full bg-green-500" />
           <span className="text-muted-foreground">{t("logs.model")}:</span>
-          <span className="font-mono font-medium">{log.model}</span>
+          <span className="font-mono font-medium">{log.requestModel || log.model}</span>
+          {log.requestModel && log.requestModel !== log.model && (
+            <>
+              <ArrowRight className="h-4 w-4 text-muted-foreground" />
+              <span className="font-mono font-medium">{log.model}</span>
+            </>
+          )}
         </div>
       </div>
 
