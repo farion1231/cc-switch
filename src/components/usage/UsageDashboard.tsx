@@ -7,7 +7,7 @@ import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
 import type { TimeRange } from "@/types/usage";
 import { motion } from "framer-motion";
-import { BarChart3, Activity, RefreshCw } from "lucide-react";
+import { BarChart3, Activity, RefreshCw, Coins } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useQueryClient } from "@tanstack/react-query";
 import { usageKeys } from "@/lib/query/usage";

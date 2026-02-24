@@ -132,53 +132,59 @@ async fn handle_claude_transform(
             let start_time = ctx.start_time;
             let request_body = ctx.request_body.clone();
 
-            SseUsageCollector::new(start_time, move |data, first_token_ms, latency_ms, response_body, combined_output| {
-                // Extract usage from the incrementally collected data
-                let has_usage = data.input_tokens > 0 || data.output_tokens > 0 || data.cache_read_tokens > 0 || data.cache_creation_tokens > 0;
+            SseUsageCollector::new(
+                start_time,
+                move |data, first_token_ms, latency_ms, response_body, combined_output| {
+                    // Extract usage from the incrementally collected data
+                    let has_usage = data.input_tokens > 0
+                        || data.output_tokens > 0
+                        || data.cache_read_tokens > 0
+                        || data.cache_creation_tokens > 0;
 
-                if has_usage {
-                    // Construct TokenUsage from extracted stream data
-                    let usage = TokenUsage {
-                        input_tokens: data.input_tokens,
-                        output_tokens: data.output_tokens,
-                        cache_read_tokens: data.cache_read_tokens,
-                        cache_creation_tokens: data.cache_creation_tokens,
-                        model: data.model.clone(),
-                    };
+                    if has_usage {
+                        // Construct TokenUsage from extracted stream data
+                        let usage = TokenUsage {
+                            input_tokens: data.input_tokens,
+                            output_tokens: data.output_tokens,
+                            cache_read_tokens: data.cache_read_tokens,
+                            cache_creation_tokens: data.cache_creation_tokens,
+                            model: data.model.clone(),
+                        };
 
-                    // latency_ms is now the end-to-end latency (total stream time for streaming)
-                    let state = state.clone();
-                    let provider_id = provider_id.clone();
-                    let model = model.clone();
-                    let request_body = request_body.clone();
-                    // For streaming responses, if there is a merged output text, it should be used as the response body first.
-                    let final_body = if let Some(ref combined) = combined_output {
-                        Some(combined.clone())
+                        // latency_ms is now the end-to-end latency (total stream time for streaming)
+                        let state = state.clone();
+                        let provider_id = provider_id.clone();
+                        let model = model.clone();
+                        let request_body = request_body.clone();
+                        // For streaming responses, if there is a merged output text, it should be used as the response body first.
+                        let final_body = if let Some(ref combined) = combined_output {
+                            Some(combined.clone())
+                        } else {
+                            response_body
+                        };
+
+                        tokio::spawn(async move {
+                            log_usage(
+                                &state,
+                                &provider_id,
+                                app_type,
+                                &model,
+                                &model,
+                                usage,
+                                latency_ms,
+                                first_token_ms,
+                                true,
+                                status_code,
+                                request_body,
+                                final_body,
+                            )
+                            .await;
+                        });
                     } else {
-                        response_body
-                    };
-
-                    tokio::spawn(async move {
-                        log_usage(
-                            &state,
-                            &provider_id,
-                            app_type,
-                            &model,
-                            &model,
-                            usage,
-                            latency_ms,
-                            first_token_ms,
-                            true,
-                            status_code,
-                            request_body,
-                            final_body,
-                        )
-                        .await;
-                    });
-                } else {
-                    log::debug!("[Claude] OpenRouter 流式响应缺少 usage 统计，跳过消费记录");
-                }
-            })
+                        log::debug!("[Claude] OpenRouter 流式响应缺少 usage 统计，跳过消费记录");
+                    }
+                },
+            )
         };
 
         // 获取流式超时配置

@@ -653,7 +653,8 @@ impl Database {
             "SELECT DISTINCT l.provider_id, COALESCE(p.name, l.provider_id) as provider_name
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
-             ORDER BY provider_name".to_string()
+             ORDER BY provider_name"
+                .to_string()
         } else {
             format!(
                 "SELECT DISTINCT l.provider_id, COALESCE(p.name, l.provider_id) as provider_name
@@ -665,11 +666,12 @@ impl Database {
             )
         };
 
-        let mut stmt = conn.prepare(&providers_sql).map_err(|e| {
-            AppError::Database(format!("Failed to prepare providers SQL: {}", e))
-        })?;
+        let mut stmt = conn
+            .prepare(&providers_sql)
+            .map_err(|e| AppError::Database(format!("Failed to prepare providers SQL: {}", e)))?;
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
         let providers: Vec<ProviderOption> = stmt
             .query_map(params_refs.as_slice(), |row| {
                 Ok(ProviderOption {
@@ -684,7 +686,8 @@ impl Database {
         let models_sql = if params.is_empty() {
             "SELECT DISTINCT l.model
              FROM proxy_request_logs l
-             ORDER BY l.model".to_string()
+             ORDER BY l.model"
+                .to_string()
         } else {
             format!(
                 "SELECT DISTINCT l.model
@@ -695,9 +698,9 @@ impl Database {
             )
         };
 
-        let mut stmt = conn.prepare(&models_sql).map_err(|e| {
-            AppError::Database(format!("Failed to prepare models SQL: {}", e))
-        })?;
+        let mut stmt = conn
+            .prepare(&models_sql)
+            .map_err(|e| AppError::Database(format!("Failed to prepare models SQL: {}", e)))?;
 
         let models: Vec<String> = stmt
             .query_map(params_refs.as_slice(), |row| row.get(0))?
@@ -797,7 +800,12 @@ impl Database {
             )
             .map_err(|e| AppError::Database(format!("按日期删除请求日志失败: {e}")))?;
 
-        log::info!("已删除 {} 条请求日志 (start: {}, end: {})", count, start_date, end_date);
+        log::info!(
+            "已删除 {} 条请求日志 (start: {}, end: {})",
+            count,
+            start_date,
+            end_date
+        );
         Ok(count as u64)
     }
 
