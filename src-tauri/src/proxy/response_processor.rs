@@ -73,7 +73,9 @@ pub async fn handle_streaming(
     let timeout_config = ctx.streaming_timeout_config();
 
     // Use actual streaming processing and convert error types
-    let stream = response.bytes_stream().map_err(|e: reqwest::Error| std::io::Error::other(e.to_string()));
+    let stream = response
+        .bytes_stream()
+        .map_err(|e: reqwest::Error| std::io::Error::other(e.to_string()));
 
     // 创建带日志和超时的透传流
     let logged_stream =
@@ -84,7 +86,8 @@ pub async fn handle_streaming(
         Ok(resp) => resp,
         Err(e) => {
             log::error!("[{}] 构建流式响应失败: {}", ctx.tag, e);
-            ProxyError::Internal(format!("Failed to build streaming response: {}", e)).into_response()
+            ProxyError::Internal(format!("Failed to build streaming response: {}", e))
+                .into_response()
         }
     }
 }
@@ -218,7 +221,12 @@ pub async fn process_response(
 // ============================================================================
 
 // Callback type: extracted data, first_token_ms, latency_ms, response_body, combined_output
-type UsageCallbackWithTiming = Arc<dyn Fn(ExtractedStreamData, Option<u64>, u64, Option<String>, Option<String>) + Send + Sync + 'static>;
+type UsageCallbackWithTiming = Arc<
+    dyn Fn(ExtractedStreamData, Option<u64>, u64, Option<String>, Option<String>)
+        + Send
+        + Sync
+        + 'static,
+>;
 
 /// Extracted data from SSE stream - replaces storing raw events
 #[derive(Default, Clone)]
@@ -233,8 +241,8 @@ pub struct ExtractedStreamData {
     pub message_id: Option<String>,
     /// Stop reason (completion, length, etc.)
     pub stop_reason: Option<String>,
-    /// Creation timestamp
-    pub created: Option<i64>,
+    /// Creation timestamp (Unix timestamp in seconds)
+    pub created: Option<u64>,
     /// Model name from response
     pub model: Option<String>,
     /// Input tokens (from message_start)
@@ -250,9 +258,13 @@ pub struct ExtractedStreamData {
     // Temporary state for incremental parsing (not part of final output)
     // ============================================================================
     /// Current tool_use being built (for incremental parsing)
+    /// For Claude format: single tool_use at a time
     current_tool_use_id: Option<String>,
     current_tool_use_name: Option<String>,
     current_tool_use_input: String,
+    /// For OpenAI format: multiple concurrent tool_calls by index
+    /// Maps tool_call index -> (id, name, accumulated_arguments)
+    openai_tool_calls: std::collections::HashMap<usize, (Option<String>, Option<String>, String)>,
 }
 
 /// SSE 使用量收集器
@@ -263,69 +275,42 @@ pub struct SseUsageCollector {
 
 struct SseUsageCollectorInner {
     data: Mutex<ExtractedStreamData>,
-    first_token_ms: Mutex<Option<u64>>,  // First token time in ms
+    first_token_ms: Mutex<Option<u64>>, // First token time in ms
     start_time: std::time::Instant,
     on_complete: UsageCallbackWithTiming,
     finished: AtomicBool,
-    response_body: Mutex<Option<String>>,  // Complete streaming response body
+    response_body: Mutex<Option<String>>, // Complete streaming response body
+}
+
+/// SSE event type constants
+mod sse_event {
+    // Claude event types
+    pub const MESSAGE_START: &str = "message_start";
+    pub const MESSAGE_DELTA: &str = "message_delta";
+    pub const CONTENT_BLOCK_START: &str = "content_block_start";
+    pub const CONTENT_BLOCK_STOP: &str = "content_block_stop";
+    pub const CONTENT_BLOCK_DELTA: &str = "content_block_delta";
+
+    // Delta subtypes
+    pub const TEXT_DELTA: &str = "text_delta";
+    pub const THINKING_DELTA: &str = "thinking_delta";
+    pub const INPUT_JSON_DELTA: &str = "input_json_delta";
+
+    // Content types
+    pub const TEXT: &str = "text";
+    pub const THINKING: &str = "thinking";
+    pub const TOOL_USE: &str = "tool_use";
 }
 
 #[allow(dead_code)]
 impl SseUsageCollector {
-    /// Extract metadata from SSE events
-    fn extract_metadata_from_events(events: &[Value]) -> (Option<String>, Option<String>, Option<i64>) {
-        let mut message_id: Option<String> = None;
-        let mut stop_reason: Option<String> = None;
-        let mut created: Option<i64> = None;
-
-        for event in events {
-            let event_type = event.get("type").and_then(|t| t.as_str());
-
-            match event_type {
-                // Claude format
-                Some("message_start") => {
-                    if let Some(msg) = event.get("message") {
-                        if message_id.is_none() {
-                            message_id = msg.get("id").and_then(|v| v.as_str()).map(String::from);
-                        }
-                        if created.is_none() {
-                            created = msg.get("created").and_then(|v| v.as_i64());
-                        }
-                    }
-                }
-                Some("message_delta") => {
-                    if let Some(delta) = event.get("delta") {
-                        if stop_reason.is_none() {
-                            stop_reason = delta.get("stop_reason").and_then(|v| v.as_str()).map(String::from);
-                        }
-                    }
-                }
-                // OpenAI format
-                _ => {
-                    if message_id.is_none() {
-                        message_id = event.get("id").and_then(|v| v.as_str()).map(String::from);
-                    }
-                    if created.is_none() {
-                        created = event.get("created").and_then(|v| v.as_i64());
-                    }
-                    if stop_reason.is_none() {
-                        if let Some(choices) = event.get("choices").and_then(|c| c.as_array()) {
-                            if let Some(choice) = choices.first() {
-                                stop_reason = choice.get("finish_reason").and_then(|v| v.as_str()).map(String::from);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        (message_id, stop_reason, created)
-    }
-
     /// 创建新的使用量收集器
     pub fn new(
         start_time: std::time::Instant,
-        callback: impl Fn(ExtractedStreamData, Option<u64>, u64, Option<String>, Option<String>) + Send + Sync + 'static,
+        callback: impl Fn(ExtractedStreamData, Option<u64>, u64, Option<String>, Option<String>)
+            + Send
+            + Sync
+            + 'static,
     ) -> Self {
         let on_complete: UsageCallbackWithTiming = Arc::new(callback);
         Self {
@@ -346,23 +331,63 @@ impl SseUsageCollector {
         *response_body = Some(body);
     }
 
+    /// Build tool use item and add to array
+    fn add_tool_use(data: &mut ExtractedStreamData, id: String, name: String, input: Value) {
+        data.tool_use.push(serde_json::json!({
+            "type": sse_event::TOOL_USE,
+            "id": id,
+            "name": name,
+            "input": input
+        }));
+    }
+
+    /// Parse tool call input JSON
+    fn parse_tool_input(input_str: &str, id: &str, name: &str) -> Value {
+        if input_str.is_empty() {
+            return serde_json::Value::Null;
+        }
+        match serde_json::from_str(input_str) {
+            Ok(json) => json,
+            Err(e) => {
+                    log::warn!(
+                        "[SseUsageCollector] Failed to parse tool call arguments (id: {}, name: {}): {}",
+                        id,
+                        name,
+                        e
+                    );
+                serde_json::Value::Null
+            }
+        }
+    }
+
+    /// Finalize all OpenAI format tool calls
+    fn finalize_openai_tool_calls(data: &mut ExtractedStreamData) {
+        if data.openai_tool_calls.is_empty() {
+            return;
+        }
+
+        let mut indices: Vec<_> = data.openai_tool_calls.keys().copied().collect();
+        indices.sort();
+
+        for idx in indices {
+            if let Some((id, name, input_str)) = data.openai_tool_calls.remove(&idx) {
+                if let (Some(id), Some(name)) = (id, name) {
+                    let input = Self::parse_tool_input(&input_str, &id, &name);
+                    Self::add_tool_use(data, id, name, input);
+                }
+            }
+        }
+    }
+
     /// Finalize current tool_use and add to array
     fn finalize_tool_use(data: &mut ExtractedStreamData) {
-        if let (Some(id), Some(name)) = (data.current_tool_use_id.take(), data.current_tool_use_name.take()) {
-            let input: Value = if !data.current_tool_use_input.is_empty() {
-                serde_json::from_str(&data.current_tool_use_input).unwrap_or(serde_json::Value::Null)
-            } else {
-                serde_json::Value::Null
-            };
+        if let (Some(id), Some(name)) = (
+            data.current_tool_use_id.take(),
+            data.current_tool_use_name.take(),
+        ) {
+            let input = Self::parse_tool_input(&data.current_tool_use_input, &id, &name);
             data.current_tool_use_input.clear();
-
-            let tool_use_item = serde_json::json!({
-                "type": "tool_use",
-                "id": id,
-                "name": name,
-                "input": input
-            });
-            data.tool_use.push(tool_use_item);
+            Self::add_tool_use(data, id, name, input);
         }
     }
 
@@ -372,16 +397,16 @@ impl SseUsageCollector {
             for item in items {
                 if let Some(item_type) = item.get("type").and_then(|t| t.as_str()) {
                     match item_type {
-                        "text" => {
+                        sse_event::TEXT => {
                             if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
                                 data.text.push_str(text);
                             }
                         }
-                        "tool_use" => {
+                        sse_event::TOOL_USE => {
                             if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
                                 if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
                                     let tool_use_item = serde_json::json!({
-                                        "type": "tool_use",
+                                        "type": sse_event::TOOL_USE,
                                         "id": id,
                                         "name": name,
                                         "input": item.get("input").cloned().unwrap_or(serde_json::Value::Null)
@@ -390,7 +415,7 @@ impl SseUsageCollector {
                                 }
                             }
                         }
-                        "thinking" => {
+                        sse_event::THINKING => {
                             if let Some(thinking) = item.get("thinking").and_then(|t| t.as_str()) {
                                 data.thinking.push_str(thinking);
                             }
@@ -402,80 +427,348 @@ impl SseUsageCollector {
         }
     }
 
+    /// Check if event contains actual content (for TTFT detection)
+    fn has_actual_content(event: &Value, event_type: Option<&str>) -> bool {
+        let is_non_empty_string = |v: &Value| v.as_str().map(|s| !s.is_empty()).unwrap_or(false);
+
+        match event_type {
+            Some(sse_event::CONTENT_BLOCK_DELTA) => {
+                // Claude format content detection
+                if let Some(delta) = event.get("delta") {
+                    match delta.get("type").and_then(|t| t.as_str()) {
+                        Some(sse_event::TEXT_DELTA) => {
+                            delta.get("text").map(is_non_empty_string).unwrap_or(false)
+                        }
+                        Some(sse_event::THINKING_DELTA) => delta
+                            .get("thinking")
+                            .map(is_non_empty_string)
+                            .unwrap_or(false),
+                        Some(sse_event::INPUT_JSON_DELTA) => delta
+                            .get("partial_json")
+                            .map(is_non_empty_string)
+                            .unwrap_or(false),
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            }
+            None => {
+                // OpenAI format content detection
+                if Self::has_openai_content(event, is_non_empty_string) {
+                    return true;
+                }
+                // Gemini format content detection
+                if Self::has_gemini_content(event, is_non_empty_string) {
+                    return true;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if OpenAI format event has content
+    fn has_openai_content(event: &Value, is_non_empty_string: impl Fn(&Value) -> bool) -> bool {
+        if let Some(delta) = event
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|c| c.first())
+            .and_then(|c| c.get("delta"))
+        {
+            let has_text = delta
+                .get("content")
+                .map(&is_non_empty_string)
+                .unwrap_or(false);
+            let has_reasoning = delta
+                .get("reasoning")
+                .or_else(|| delta.get("reasoning_content"))
+                .or_else(|| delta.get("thinking"))
+                .map(&is_non_empty_string)
+                .unwrap_or(false);
+            let has_tool_calls = delta
+                .get("tool_calls")
+                .and_then(|t| t.as_array())
+                .map(|arr| {
+                    arr.iter().any(|tc| {
+                        tc.get("function")
+                            .map(|f| {
+                                f.get("name").map(&is_non_empty_string).unwrap_or(false)
+                                    || f.get("arguments")
+                                        .map(&is_non_empty_string)
+                                        .unwrap_or(false)
+                            })
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false);
+            has_text || has_reasoning || has_tool_calls
+        } else {
+            false
+        }
+    }
+
+    /// Check if Gemini format event has content
+    fn has_gemini_content(event: &Value, is_non_empty_string: impl Fn(&Value) -> bool) -> bool {
+        event
+            .get("candidates")
+            .and_then(|c| c.as_array())
+            .and_then(|c| c.first())
+            .and_then(|candidate| candidate.get("content"))
+            .and_then(|content| content.get("parts"))
+            .and_then(|parts| parts.as_array())
+            .map(|parts| {
+                parts
+                    .iter()
+                    .any(|part| part.get("text").map(&is_non_empty_string).unwrap_or(false))
+            })
+            .unwrap_or(false)
+    }
+
+    /// Extract content from Claude format content_block_delta
+    fn extract_claude_delta(event: &Value, data: &mut ExtractedStreamData) {
+        if let Some(delta) = event.get("delta") {
+            match delta.get("type").and_then(|t| t.as_str()) {
+                Some(sse_event::TEXT_DELTA) => {
+                    if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
+                        data.text.push_str(text);
+                    }
+                }
+                Some(sse_event::THINKING_DELTA) => {
+                    if let Some(thinking) = delta.get("thinking").and_then(|t| t.as_str()) {
+                        data.thinking.push_str(thinking);
+                    }
+                }
+                Some(sse_event::INPUT_JSON_DELTA) => {
+                    if let Some(partial_json) = delta.get("partial_json").and_then(|t| t.as_str()) {
+                        data.current_tool_use_input.push_str(partial_json);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Extract content from OpenAI format
+    fn extract_openai_content(event: &Value, data: &mut ExtractedStreamData) {
+        if let Some(choice) = event
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|c| c.first())
+        {
+            if let Some(delta) = choice.get("delta") {
+                if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                    data.text.push_str(content);
+                }
+                if let Some(reasoning) = delta.get("reasoning").and_then(|r| r.as_str()) {
+                    data.thinking.push_str(reasoning);
+                }
+                // Handle tool_calls
+                if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+                    for tc in tool_calls {
+                        let index = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                        let entry = data.openai_tool_calls.entry(index).or_insert((
+                            None,
+                            None,
+                            String::new(),
+                        ));
+
+                        if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
+                            entry.0 = Some(id.to_string());
+                        }
+                        if let Some(function) = tc.get("function") {
+                            if let Some(name) = function.get("name").and_then(|n| n.as_str()) {
+                                entry.1 = Some(name.to_string());
+                            }
+                            if let Some(args) = function.get("arguments").and_then(|a| a.as_str()) {
+                                entry.2.push_str(args);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Handle finish_reason
+            if let Some(finish_reason) = choice.get("finish_reason") {
+                if !finish_reason.is_null() {
+                    Self::finalize_openai_tool_calls(data);
+                }
+            }
+        }
+    }
+
+    /// Handle content_block_start (tool_use block started)
+    fn handle_claude_block_start(event: &Value, data: &mut ExtractedStreamData) {
+        if let Some(content_block) = event.get("content_block") {
+            if content_block.get("type").and_then(|t| t.as_str()) == Some(sse_event::TOOL_USE) {
+                // Start a new tool_use block
+                data.current_tool_use_id = content_block
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                data.current_tool_use_name = content_block
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                data.current_tool_use_input.clear();
+            }
+        }
+    }
+
+    /// Extract metadata from message_start event
+    fn extract_message_start(event: &Value, data: &mut ExtractedStreamData) {
+        if let Some(msg) = event.get("message") {
+            if data.message_id.is_none() {
+                data.message_id = msg.get("id").and_then(|v| v.as_str()).map(String::from);
+            }
+            if data.created.is_none() {
+                data.created = msg.get("created").and_then(|v| v.as_u64());
+            }
+            if data.model.is_none() {
+                data.model = msg.get("model").and_then(|v| v.as_str()).map(String::from);
+            }
+            // Extract usage
+            if let Some(usage) = msg.get("usage") {
+                Self::extract_usage(usage, data, true);
+            }
+        }
+    }
+
+    /// Extract metadata from message_delta event
+    fn extract_message_delta(event: &Value, data: &mut ExtractedStreamData) {
+        if let Some(delta) = event.get("delta") {
+            if data.stop_reason.is_none() {
+                data.stop_reason = delta
+                    .get("stop_reason")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+            }
+        }
+        if data.model.is_none() {
+            data.model = event
+                .get("usage")
+                .and_then(|u| u.get("model"))
+                .and_then(|v| v.as_str())
+                .map(String::from);
+        }
+        if let Some(usage) = event.get("usage") {
+            Self::extract_usage(usage, data, false);
+        }
+    }
+
+    /// Extract metadata from OpenAI format event
+    fn extract_openai_metadata(event: &Value, data: &mut ExtractedStreamData) {
+        if data.message_id.is_none() {
+            data.message_id = event.get("id").and_then(|v| v.as_str()).map(String::from);
+        }
+        if data.created.is_none() {
+            data.created = event.get("created").and_then(|v| v.as_u64());
+        }
+        if data.stop_reason.is_none() {
+            if let Some(choice) = event
+                .get("choices")
+                .and_then(|c| c.as_array())
+                .and_then(|c| c.first())
+            {
+                data.stop_reason = choice
+                    .get("finish_reason")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+            }
+        }
+        if let Some(usage) = event.get("usage") {
+            Self::extract_openai_usage(usage, data);
+        }
+    }
+
+    /// Extract Claude format usage
+    fn extract_usage(usage: &Value, data: &mut ExtractedStreamData, is_start: bool) {
+        if data.input_tokens == 0 {
+            data.input_tokens = usage
+                .get("input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+        }
+        if is_start {
+            if data.cache_read_tokens == 0 {
+                data.cache_read_tokens = usage
+                    .get("cache_read_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+            }
+            if data.cache_creation_tokens == 0 {
+                data.cache_creation_tokens = usage
+                    .get("cache_creation_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+            }
+        } else {
+            if data.output_tokens == 0 {
+                data.output_tokens = usage
+                    .get("output_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+            }
+        }
+    }
+
+    /// Extract OpenAI format usage
+    fn extract_openai_usage(usage: &Value, data: &mut ExtractedStreamData) {
+        if data.input_tokens == 0 {
+            data.input_tokens = usage
+                .get("prompt_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+        }
+        if data.output_tokens == 0 {
+            data.output_tokens = usage
+                .get("completion_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+        }
+        if data.cache_read_tokens == 0 {
+            data.cache_read_tokens = usage
+                .get("prompt_tokens_details")
+                .and_then(|p| p.get("cached_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+        }
+    }
+
     /// Push SSE event - extracts and stores data incrementally
     pub async fn push(&self, event: Value) {
         let elapsed_ms = self.inner.start_time.elapsed().as_millis() as u64;
-
-        // Extract and store data from event
         let mut data = self.inner.data.lock().await;
-
-        // Record first token time (event with content)
         let event_type = event.get("type").and_then(|t| t.as_str());
-        let is_content_event = event_type == Some("content_block_delta")
-            || event_type == Some("thinking_delta")
-            // OpenAI format: no type field, but has choices[0].delta.content
-            || (event_type.is_none()
-                && event
-                    .get("choices")
-                    .and_then(|c| c.as_array())
-                    .and_then(|c| c.first())
-                    .and_then(|c| c.get("delta"))
-                    .and_then(|d| d.get("content"))
-                    .is_some());
-        if is_content_event {
+
+        // 1. TTFT detection
+        if Self::has_actual_content(&event, event_type) {
             let mut first_time = self.inner.first_token_ms.lock().await;
             if first_time.is_none() {
                 *first_time = Some(elapsed_ms);
             }
         }
 
-        // Extract from content_block_delta events
-        if event_type == Some("content_block_delta") {
-            if let Some(delta) = event.get("delta") {
-                if let Some(delta_type) = delta.get("type").and_then(|t| t.as_str()) {
-                    match delta_type {
-                        "text_delta" => {
-                            if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
-                                data.text.push_str(text);
-                            }
-                        }
-                        "thinking_delta" => {
-                            if let Some(thinking) = delta.get("thinking").and_then(|t| t.as_str()) {
-                                data.thinking.push_str(thinking);
-                            }
-                        }
-                        "input_json_delta" => {
-                            // Tool use partial JSON - accumulate for tool_use
-                            if let Some(partial_json) = delta.get("partial_json").and_then(|t| t.as_str()) {
-                                data.current_tool_use_input.push_str(partial_json);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+        // 2. Content extraction
+        match event_type {
+            Some(sse_event::CONTENT_BLOCK_DELTA) => {
+                Self::extract_claude_delta(&event, &mut data);
             }
-        }
-
-        // Handle content_block_start (tool_use block started)
-        if event_type == Some("content_block_start") {
-            if let Some(content_block) = event.get("content_block") {
-                if content_block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                    // Start a new tool_use block
-                    data.current_tool_use_id = content_block.get("id").and_then(|v| v.as_str()).map(String::from);
-                    data.current_tool_use_name = content_block.get("name").and_then(|v| v.as_str()).map(String::from);
-                    data.current_tool_use_input.clear();
-                }
+            Some(sse_event::CONTENT_BLOCK_START) => {
+                Self::handle_claude_block_start(&event, &mut data);
             }
+            Some(sse_event::CONTENT_BLOCK_STOP) => {
+                Self::finalize_tool_use(&mut data);
+            }
+            None => {
+                // OpenAI format
+                Self::extract_openai_content(&event, &mut data);
+            }
+            _ => {}
         }
 
-        // Handle content_block_stop (tool_use block finished)
-        if event_type == Some("content_block_stop") {
-            Self::finalize_tool_use(&mut data);
-        }
-
-        // Extract from content arrays (event.content or message.content)
-        // Skip if this is content_block_delta (already handled above)
-        if event_type != Some("content_block_delta") {
+        // 3. Content array extraction (non-delta events)
+        if event_type != Some(sse_event::CONTENT_BLOCK_DELTA) {
             if let Some(content) = event.get("content") {
                 Self::extract_content_array(content, &mut data);
             }
@@ -486,82 +779,18 @@ impl SseUsageCollector {
             }
         }
 
-        // Extract metadata based on event type
+        // 4. Metadata extraction
         match event_type {
-            // Claude format
-            Some("message_start") => {
-                if data.message_id.is_none() {
-                    data.message_id = event.get("message").and_then(|m| m.get("id")).and_then(|v| v.as_str()).map(String::from);
-                }
-                if data.created.is_none() {
-                    data.created = event.get("message").and_then(|m| m.get("created")).and_then(|v| v.as_i64());
-                }
-                // Extract model from message_start
-                if data.model.is_none() {
-                    data.model = event.get("message").and_then(|m| m.get("model")).and_then(|v| v.as_str()).map(String::from);
-                }
-                // Extract usage from message_start (Claude native format)
-                if let Some(usage) = event.get("message").and_then(|m| m.get("usage")) {
-                    if data.input_tokens == 0 {
-                        data.input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                    }
-                    if data.cache_read_tokens == 0 {
-                        data.cache_read_tokens = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                    }
-                    if data.cache_creation_tokens == 0 {
-                        data.cache_creation_tokens = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                    }
-                }
+            Some(sse_event::MESSAGE_START) => {
+                Self::extract_message_start(&event, &mut data);
             }
-            Some("content_block_start") => {
-                // Extract model from content_block_start
-                if data.model.is_none() {
-                    data.model = event.get("message").and_then(|m| m.get("model")).and_then(|v| v.as_str()).map(String::from);
-                }
+            Some(sse_event::MESSAGE_DELTA) => {
+                Self::extract_message_delta(&event, &mut data);
             }
-            Some("message_delta") => {
-                if data.stop_reason.is_none() {
-                    data.stop_reason = event.get("delta").and_then(|d| d.get("stop_reason")).and_then(|v| v.as_str()).map(String::from);
-                }
-                // Extract model from message_delta usage
-                if data.model.is_none() {
-                    data.model = event.get("usage").and_then(|u| u.get("model")).and_then(|v| v.as_str()).map(String::from);
-                }
-                // Extract usage from message_delta
-                if data.output_tokens == 0 {
-                    data.output_tokens = event.get("usage").and_then(|u| u.get("output_tokens")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                }
+            None => {
+                Self::extract_openai_metadata(&event, &mut data);
             }
-            // OpenAI format
-            _ => {
-                if data.message_id.is_none() {
-                    data.message_id = event.get("id").and_then(|v| v.as_str()).map(String::from);
-                }
-                if data.created.is_none() {
-                    data.created = event.get("created").and_then(|v| v.as_i64());
-                }
-                if data.stop_reason.is_none() {
-                    if let Some(choices) = event.get("choices").and_then(|c| c.as_array()) {
-                        if let Some(choice) = choices.first() {
-                            data.stop_reason = choice.get("finish_reason").and_then(|v| v.as_str()).map(String::from);
-                        }
-                    }
-                }
-                // Extract usage from OpenAI format (usage field in the response)
-                if data.input_tokens == 0 {
-                    data.input_tokens = event.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                }
-                if data.output_tokens == 0 {
-                    data.output_tokens = event.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                }
-                if data.cache_read_tokens == 0 {
-                    data.cache_read_tokens = event.get("usage")
-                        .and_then(|u| u.get("prompt_tokens_details"))
-                        .and_then(|p| p.get("cached_tokens"))
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
-                }
-            }
+            _ => {}
         }
     }
 
@@ -573,8 +802,16 @@ impl SseUsageCollector {
 
         let data = {
             let mut guard = self.inner.data.lock().await;
-            // Finalize any incomplete tool_use (e.g., if stream ended abnormally)
+            // Finalize Claude format tool calls
             Self::finalize_tool_use(&mut guard);
+            // Finalize OpenAI format tool calls
+            if !guard.openai_tool_calls.is_empty() {
+                log::warn!(
+                    "[SseUsageCollector] Stream ended abnormally, finalizing {} incomplete OpenAI tool calls",
+                    guard.openai_tool_calls.len()
+                );
+                Self::finalize_openai_tool_calls(&mut guard);
+            }
             std::mem::take(&mut *guard)
         };
 
@@ -591,7 +828,13 @@ impl SseUsageCollector {
         let combined_output = Self::build_final_response_body_from_data(&data);
 
         // Pass: data, first_token_ms, latency_ms, response_body, combined_output
-        (self.inner.on_complete)(data, first_token_ms, latency_ms, response_body, combined_output);
+        (self.inner.on_complete)(
+            data,
+            first_token_ms,
+            latency_ms,
+            response_body,
+            combined_output,
+        );
     }
 
     /// Build final JSON response body from extracted stream data
@@ -632,7 +875,13 @@ fn build_response_from_data(
     usage: Option<&TokenUsage>,
     first_token_ms: Option<u64>,
 ) -> Option<String> {
-    if data.text.is_empty() && data.thinking.is_empty() && data.tool_use.is_empty() {
+    // Check if we have any meaningful data to build a response
+    let has_content =
+        !data.text.is_empty() || !data.thinking.is_empty() || !data.tool_use.is_empty();
+    let has_usage = usage.is_some();
+
+    // If no content and no usage, fallback to raw response
+    if !has_content && !has_usage {
         return fallback_response_body;
     }
 
@@ -664,7 +913,9 @@ fn build_response_from_data(
         })
     };
 
-    serde_json::to_string(&final_json).ok().or(fallback_response_body)
+    serde_json::to_string(&final_json)
+        .ok()
+        .or(fallback_response_body)
 }
 
 /// 创建使用量收集器
@@ -685,68 +936,72 @@ fn create_usage_collector(
     let model_extractor = parser_config.model_extractor;
     let session_id = ctx.session_id.clone();
 
-    SseUsageCollector::new(start_time, move |data, first_token_ms, latency_ms, stream_response_body, _combined_output| {
-        // Get model from extracted data or use model_extractor with request_model as fallback
-        let model = data.model.clone().unwrap_or_else(|| model_extractor(&[], &request_model));
+    SseUsageCollector::new(
+        start_time,
+        move |data, first_token_ms, latency_ms, stream_response_body, _combined_output| {
+            // Get model from extracted data or use model_extractor with request_model as fallback
+            let model = data
+                .model
+                .clone()
+                .unwrap_or_else(|| model_extractor(&[], &request_model));
 
-        // Construct TokenUsage from extracted stream data
-        let usage = TokenUsage {
-            input_tokens: data.input_tokens,
-            output_tokens: data.output_tokens,
-            cache_read_tokens: data.cache_read_tokens,
-            cache_creation_tokens: data.cache_creation_tokens,
-            model: data.model.clone(),
-        };
+            // Construct TokenUsage from extracted stream data
+            let usage = TokenUsage {
+                input_tokens: data.input_tokens,
+                output_tokens: data.output_tokens,
+                cache_read_tokens: data.cache_read_tokens,
+                cache_creation_tokens: data.cache_creation_tokens,
+                model: data.model.clone(),
+            };
 
-        let has_usage = data.input_tokens > 0 || data.output_tokens > 0 || data.cache_read_tokens > 0 || data.cache_creation_tokens > 0;
+            let has_usage = data.input_tokens > 0
+                || data.output_tokens > 0
+                || data.cache_read_tokens > 0
+                || data.cache_creation_tokens > 0;
 
-        // Build response body using helper function
-        let fallback_response_body = stream_response_body.or_else(|| response_body.clone());
-        let final_body = if has_usage {
-            build_response_from_data(
-                &data,
-                fallback_response_body,
-                Some(&usage),
-                first_token_ms,
-            )
-        } else {
-            build_response_from_data(
-                &data,
-                fallback_response_body,
-                None,
-                first_token_ms,
-            )
-        };
+            // Build response body using helper function
+            let fallback_response_body = stream_response_body.or_else(|| response_body.clone());
+            let final_body = if has_usage {
+                build_response_from_data(
+                    &data,
+                    fallback_response_body,
+                    Some(&usage),
+                    first_token_ms,
+                )
+            } else {
+                build_response_from_data(&data, fallback_response_body, None, first_token_ms)
+            };
 
-        let state = state.clone();
-        let provider_id = provider_id.clone();
-        let session_id = session_id.clone();
-        let request_model = request_model.clone();
-        let request_body = request_body.clone();
+            let state = state.clone();
+            let provider_id = provider_id.clone();
+            let session_id = session_id.clone();
+            let request_model = request_model.clone();
+            let request_body = request_body.clone();
 
-        tokio::spawn(async move {
-            log_usage_internal(
-                &state,
-                &provider_id,
-                app_type_str,
-                &model,
-                &request_model,
-                usage,
-                latency_ms,
-                first_token_ms,
-                true, // is_streaming
-                status_code,
-                Some(session_id),
-                request_body,
-                final_body,
-            )
-            .await;
-        });
+            tokio::spawn(async move {
+                log_usage_internal(
+                    &state,
+                    &provider_id,
+                    app_type_str,
+                    &model,
+                    &request_model,
+                    usage,
+                    latency_ms,
+                    first_token_ms,
+                    true, // is_streaming
+                    status_code,
+                    Some(session_id),
+                    request_body,
+                    final_body,
+                )
+                .await;
+            });
 
-        if !has_usage {
-            log::debug!("[{tag}] 流式响应缺少 usage 统计，跳过消费记录");
-        }
-    })
+            if !has_usage {
+                log::debug!("[{tag}] 流式响应缺少 usage 统计，跳过消费记录");
+            }
+        },
+    )
 }
 
 /// 异步记录使用量
