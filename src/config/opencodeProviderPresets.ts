@@ -325,8 +325,8 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       modalities: { input: ["text", "image", "pdf"], output: ["text"] },
     },
     {
-      id: "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
-      name: "Claude Sonnet 4.5",
+      id: "global.anthropic.claude-sonnet-4-6",
+      name: "Claude Sonnet 4.6",
       contextLimit: 200000,
       outputLimit: 64000,
       modalities: { input: ["text", "image", "pdf"], output: ["text"] },
@@ -1147,8 +1147,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "global.anthropic.claude-opus-4-6-v1": { name: "Claude Opus 4.6" },
-        "global.anthropic.claude-sonnet-4-5-20250929-v1:0": {
-          name: "Claude Sonnet 4.5",
+        "global.anthropic.claude-sonnet-4-6": {
+          name: "Claude Sonnet 4.6",
         },
         "global.anthropic.claude-haiku-4-5-20251001-v1:0": {
           name: "Claude Haiku 4.5",

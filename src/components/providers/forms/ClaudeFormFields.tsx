@@ -76,9 +76,6 @@ interface ClaudeFormFieldsProps {
   // Auth Key Field (ANTHROPIC_AUTH_TOKEN vs ANTHROPIC_API_KEY)
   apiKeyField: ClaudeApiKeyField;
   onApiKeyFieldChange: (field: ClaudeApiKeyField) => void;
-
-  // Bedrock 模式标识
-  isBedrock?: boolean;
 }
 
 export function ClaudeFormFields({
@@ -115,14 +112,13 @@ export function ClaudeFormFields({
   onApiFormatChange,
   apiKeyField,
   onApiKeyFieldChange,
-  isBedrock,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
 
   return (
     <>
-      {/* API Key 输入框 - Bedrock 模式下隐藏（认证通过模板字段处理） */}
-      {shouldShowApiKey && !isBedrock && (
+      {/* API Key 输入框 */}
+      {shouldShowApiKey && (
         <ApiKeySection
           value={apiKey}
           onChange={onApiKeyChange}
@@ -151,8 +147,8 @@ export function ClaudeFormFields({
                 </FormLabel>
                 <Input
                   id={`template-${key}`}
-                  type={config.isSecret ? "password" : "text"}
-                  required={!config.optional}
+                  type="text"
+                  required
                   value={
                     templateValues[key]?.editorValue ??
                     config.editorValue ??
@@ -169,8 +165,8 @@ export function ClaudeFormFields({
         </div>
       )}
 
-      {/* Base URL 输入框 - Bedrock 模式下隐藏 */}
-      {shouldShowSpeedTest && !isBedrock && (
+      {/* Base URL 输入框 */}
+      {shouldShowSpeedTest && (
         <EndpointField
           id="baseUrl"
           label={t("providerForm.apiEndpoint")}
@@ -186,8 +182,8 @@ export function ClaudeFormFields({
         />
       )}
 
-      {/* 端点测速弹窗 - Bedrock 模式下隐藏 */}
-      {shouldShowSpeedTest && !isBedrock && isEndpointModalOpen && (
+      {/* 端点测速弹窗 */}
+      {shouldShowSpeedTest && isEndpointModalOpen && (
         <EndpointSpeedTest
           appId="claude"
           providerId={providerId}
@@ -202,8 +198,8 @@ export function ClaudeFormFields({
         />
       )}
 
-      {/* API 格式选择（仅非官方供应商显示） */}
-      {shouldShowModelSelector && (
+      {/* API 格式选择（仅非官方、非云服务商显示） */}
+      {shouldShowModelSelector && category !== "cloud_provider" && (
         <div className="space-y-2">
           <FormLabel htmlFor="apiFormat">
             {t("providerForm.apiFormat", { defaultValue: "API 格式" })}

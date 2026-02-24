@@ -40,7 +40,10 @@ import {
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
-import { applyTemplateValues } from "@/utils/providerConfigUtils";
+import {
+  applyTemplateValues,
+  hasApiKeyField,
+} from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
@@ -539,37 +542,6 @@ export function ProviderForm({
       }
     }
 
-    // Bedrock 专属验证
-    if (appId === "claude" && category === "cloud_provider") {
-      // 验证 Region 格式
-      const regionValue = templateValues.AWS_REGION?.editorValue?.trim() || "";
-      const regionPattern = /^[a-z]{2}(-[a-z]+)+-\d+$/;
-      if (!regionPattern.test(regionValue)) {
-        toast.error(
-          t("providerForm.invalidRegion", {
-            defaultValue: "请输入有效的 AWS Region 格式（如 us-west-2）",
-          }),
-        );
-        return;
-      }
-
-      // 验证至少填写一种认证方式
-      const apiKeyValue = templateValues.BEDROCK_API_KEY?.editorValue?.trim() || "";
-      const accessKeyValue = templateValues.AWS_ACCESS_KEY_ID?.editorValue?.trim() || "";
-      const secretKeyValue = templateValues.AWS_SECRET_ACCESS_KEY?.editorValue?.trim() || "";
-      const hasApiKey = apiKeyValue.length > 0;
-      const hasAksk = accessKeyValue.length > 0 && secretKeyValue.length > 0;
-
-      if (!hasApiKey && !hasAksk) {
-        toast.error(
-          t("providerForm.bedrockAuthRequired", {
-            defaultValue: "请至少填写一种认证方式：Bedrock API Key 或 Access Key ID + Secret Access Key",
-          }),
-        );
-        return;
-      }
-    }
-
     if (!values.name.trim()) {
       toast.error(
         t("providerForm.fillSupplierName", {
@@ -625,7 +597,7 @@ export function ProviderForm({
     }
 
     // 非官方供应商必填校验：端点和 API Key
-    // cloud_provider（如 Bedrock）有自己的认证方式，跳过通用校验
+    // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
         if (!baseUrl.trim()) {
@@ -748,28 +720,6 @@ export function ProviderForm({
         }
       }
       settingsConfig = JSON.stringify(omoConfig);
-    } else if (appId === "claude" && category === "cloud_provider") {
-      // Bedrock: 根据认证方式清理 settingsConfig
-      try {
-        const config = JSON.parse(values.settingsConfig.trim());
-        const apiKeyValue = (config.apiKey || "").trim();
-        const isResolvedValue = apiKeyValue && !apiKeyValue.includes("${");
-
-        if (isResolvedValue) {
-          // API Key 模式：移除 AKSK 字段
-          if (config.env) {
-            delete config.env.AWS_ACCESS_KEY_ID;
-            delete config.env.AWS_SECRET_ACCESS_KEY;
-          }
-        } else {
-          // AKSK 模式：移除空的 apiKey
-          delete config.apiKey;
-        }
-
-        settingsConfig = JSON.stringify(config);
-      } catch {
-        settingsConfig = values.settingsConfig.trim();
-      }
     } else {
       settingsConfig = values.settingsConfig.trim();
     }
@@ -897,7 +847,8 @@ export function ProviderForm({
     );
   }, [groupedPresets]);
 
-  const shouldShowSpeedTest = category !== "official";
+  const shouldShowSpeedTest =
+    category !== "official" && category !== "cloud_provider";
 
   const {
     shouldShowApiKeyLink: shouldShowClaudeApiKeyLink,
@@ -1287,11 +1238,13 @@ export function ProviderForm({
         {appId === "claude" && (
           <ClaudeFormFields
             providerId={providerId}
-            isBedrock={category === "cloud_provider"}
-            shouldShowApiKey={shouldShowApiKey(
-              form.getValues("settingsConfig"),
-              isEditMode,
-            )}
+            shouldShowApiKey={
+              hasApiKeyField(form.getValues("settingsConfig"), "claude") &&
+              shouldShowApiKey(
+                form.getValues("settingsConfig"),
+                isEditMode,
+              )
+            }
             apiKey={apiKey}
             onApiKeyChange={handleApiKeyChange}
             category={category}
