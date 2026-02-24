@@ -239,6 +239,11 @@ pub struct ProviderMeta {
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
     pub provider_type: Option<String>,
+    /// Claude 认证字段名（仅 Claude 供应商使用）
+    /// - "ANTHROPIC_AUTH_TOKEN" (默认): 大多数第三方/聚合供应商
+    /// - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
+    #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
+    pub api_key_field: Option<String>,
 }
 
 impl ProviderManager {

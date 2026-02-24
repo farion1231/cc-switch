@@ -780,6 +780,25 @@ pub fn run() {
 
                 // 检查 settings 表中的代理状态，自动恢复代理服务
                 restore_proxy_state_on_startup(&state).await;
+
+                // Periodic backup check (on startup)
+                if let Err(e) = state.db.periodic_backup_if_needed() {
+                    log::warn!("Periodic backup failed on startup: {e}");
+                }
+
+                // Periodic backup timer: check every hour while the app is running
+                let db_for_timer = state.db.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut interval =
+                        tokio::time::interval(std::time::Duration::from_secs(3600));
+                    interval.tick().await; // skip immediate first tick (already checked above)
+                    loop {
+                        interval.tick().await;
+                        if let Err(e) = db_for_timer.periodic_backup_if_needed() {
+                            log::warn!("Periodic backup timer failed: {e}");
+                        }
+                    }
+                });
             });
 
             // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏
@@ -838,12 +857,10 @@ pub fn run() {
             commands::get_skills_migration_result,
             commands::get_app_config_path,
             commands::open_app_config_folder,
-            commands::get_claude_common_config_snippet,
-            commands::set_claude_common_config_snippet,
             commands::get_common_config_snippet,
             commands::set_common_config_snippet,
-            commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
+            commands::patch_claude_live_settings,
             commands::get_settings,
             commands::save_settings,
             commands::get_rectifier_config,
@@ -908,6 +925,9 @@ pub fn run() {
             commands::save_file_dialog,
             commands::open_file_dialog,
             commands::open_zip_file_dialog,
+            commands::list_db_backups,
+            commands::restore_db_backup,
+            commands::rename_db_backup,
             commands::sync_current_providers_live,
             // Deep link import
             commands::parse_deeplink,

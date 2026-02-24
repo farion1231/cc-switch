@@ -189,6 +189,12 @@ pub struct AppSettings {
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
+    /// User has confirmed the local proxy first-run notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_confirmed: Option<bool>,
+    /// User has confirmed the usage query first-run notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
@@ -238,6 +244,14 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_backup: Option<serde_json::Value>,
 
+    // ===== 备份策略设置 =====
+    /// Auto-backup interval in hours (default 24, 0 = disabled)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_interval_hours: Option<u32>,
+    /// Maximum number of backup files to retain (default 10)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_retain_count: Option<u32>,
+
     // ===== 终端设置 =====
     /// 首选终端应用（可选，默认使用系统默认终端）
     /// - macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty"
@@ -265,6 +279,8 @@ impl Default for AppSettings {
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,
+            proxy_confirmed: None,
+            usage_confirmed: None,
             language: None,
             visible_apps: None,
             claude_config_dir: None,
@@ -280,6 +296,8 @@ impl Default for AppSettings {
             skill_sync_method: SyncMethod::default(),
             webdav_sync: None,
             webdav_backup: None,
+            backup_interval_hours: None,
+            backup_retain_count: None,
             preferred_terminal: None,
         }
     }
@@ -612,6 +630,33 @@ pub fn get_skill_sync_method() -> SyncMethod {
             e.into_inner()
         })
         .skill_sync_method
+}
+
+// ===== 备份策略管理函数 =====
+
+/// Get the effective auto-backup interval in hours (default 24)
+pub fn effective_backup_interval_hours() -> u32 {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .backup_interval_hours
+        .unwrap_or(24)
+}
+
+/// Get the effective backup retain count (default 10, minimum 1)
+pub fn effective_backup_retain_count() -> usize {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .backup_retain_count
+        .map(|n| (n as usize).max(1))
+        .unwrap_or(10)
 }
 
 // ===== 终端设置管理函数 =====

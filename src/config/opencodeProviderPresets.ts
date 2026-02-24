@@ -40,15 +40,15 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
 > = {
   "@ai-sdk/openai-compatible": [
     {
-      id: "MiniMax-M2.1",
-      name: "MiniMax M2.1",
+      id: "MiniMax-M2.5",
+      name: "MiniMax M2.5",
       contextLimit: 204800,
       outputLimit: 131072,
       modalities: { input: ["text"], output: ["text"] },
     },
     {
-      id: "glm-4.7",
-      name: "GLM 4.7",
+      id: "glm-5",
+      name: "GLM 5",
       contextLimit: 204800,
       outputLimit: 131072,
       modalities: { input: ["text"], output: ["text"] },
@@ -441,7 +441,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "glm-4.7": { name: "GLM-4.7" },
+        "glm-5": { name: "GLM-5" },
       },
     },
     category: "cn_official",
@@ -473,7 +473,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "glm-4.7": { name: "GLM-4.7" },
+        "glm-5": { name: "GLM-5" },
       },
     },
     category: "cn_official",
@@ -599,7 +599,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "ZhipuAI/GLM-4.7": { name: "GLM-4.7" },
+        "ZhipuAI/GLM-5": { name: "GLM-5" },
       },
     },
     category: "aggregator",
@@ -703,7 +703,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "MiniMax-M2.1": { name: "MiniMax M2.1" },
+        "MiniMax-M2.5": { name: "MiniMax M2.5" },
       },
     },
     category: "cn_official",
@@ -735,7 +735,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "MiniMax-M2.1": { name: "MiniMax M2.1" },
+        "MiniMax-M2.5": { name: "MiniMax M2.5" },
       },
     },
     category: "cn_official",
@@ -767,7 +767,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "doubao-seed-code-preview-latest": { name: "Doubao Seed Code Preview" },
+        "doubao-seed-2-0-code-preview-latest": {
+          name: "Doubao Seed Code Preview",
+        },
       },
     },
     category: "cn_official",
@@ -792,7 +794,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "Ling-1T": { name: "Ling 1T" },
+        "Ling-2.5-1T": { name: "Ling 2.5-1T" },
       },
     },
     category: "cn_official",

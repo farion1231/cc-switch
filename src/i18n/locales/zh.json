@@ -37,7 +37,8 @@
     "search": "查询",
     "reset": "重置",
     "actions": "操作",
-    "deleting": "删除中..."
+    "deleting": "删除中...",
+    "auto": "自动"
   },
   "apiKeyInput": {
     "placeholder": "请输入API Key",
@@ -50,15 +51,7 @@
   },
   "claudeConfig": {
     "configLabel": "Claude Code 配置 (JSON) *",
-    "writeCommonConfig": "写入通用配置",
-    "editCommonConfig": "编辑通用配置",
-    "editCommonConfigTitle": "编辑通用配置片段",
-    "commonConfigHint": "该片段会在勾选\"写入通用配置\"时合并到 settings.json 中",
     "fullSettingsHint": "完整的 Claude Code settings.json 配置内容",
-    "extractFromCurrent": "从编辑内容提取",
-    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
-    "extractFailed": "提取失败: {{error}}",
-    "saveFailed": "保存失败: {{error}}",
     "hideAttribution": "隐藏 AI 署名",
     "alwaysThinking": "扩展思考",
     "enableTeammates": "Teammates 模式"
@@ -124,11 +117,7 @@
     "notes": "备注",
     "notesPlaceholder": "例如：公司专用账号",
     "configJson": "配置 JSON",
-    "writeCommonConfig": "写入通用配置",
-    "editCommonConfigButton": "编辑通用配置",
     "configJsonHint": "请填写完整的 Claude Code 配置",
-    "editCommonConfigTitle": "编辑通用配置片段",
-    "editCommonConfigHint": "通用配置片段将合并到所有启用它的供应商配置中",
     "addProvider": "添加供应商",
     "sortUpdated": "排序已更新",
     "usageSaved": "用量查询配置已保存",
@@ -173,19 +162,31 @@
     "openclawModelsRegistered": "模型已注册到 /model 列表",
     "openclawDefaultModelSet": "已设为默认模型",
     "openclawDefaultModelSetFailed": "设置默认模型失败",
-    "openclawNoModels": "该供应商没有配置模型"
+    "openclawNoModels": "该供应商没有配置模型",
+    "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
     "deleteProviderMessage": "确定要删除供应商 \"{{name}}\" 吗？此操作无法撤销。",
     "removeProvider": "移除供应商",
-    "removeProviderMessage": "确定要从配置中移除供应商 \"{{name}}\" 吗？\n\n移除后该供应商将不再生效，但配置数据会保留在 CC Switch 中，您可以随时重新添加。"
+    "removeProviderMessage": "确定要从配置中移除供应商 \"{{name}}\" 吗？\n\n移除后该供应商将不再生效，但配置数据会保留在 CC Switch 中，您可以随时重新添加。",
+    "proxy": {
+      "title": "启用本地代理服务",
+      "message": "本地代理是一项高级功能，启用前请确保您已了解其工作原理。\n\n建议先查阅相关文档或咨询您的供应商，以获取正确的配置方式。",
+      "confirm": "我已了解，继续启用"
+    },
+    "usage": {
+      "title": "配置用量查询",
+      "message": "用量查询需要配置专用的查询脚本或 API 参数，请确保您已从供应商处获取相关信息。\n\n如不确定如何配置，请先查阅供应商文档。",
+      "confirm": "我已了解，继续配置"
+    }
   },
   "settings": {
     "title": "设置",
     "general": "通用",
     "tabGeneral": "通用",
     "tabAdvanced": "高级",
+    "tabProxy": "代理",
     "advanced": {
       "configDir": {
         "title": "配置文件目录",
@@ -217,7 +218,15 @@
       },
       "data": {
         "title": "数据管理",
-        "description": "导入导出配置与备份恢复"
+        "description": "导入和导出本地配置数据"
+      },
+      "backup": {
+        "title": "备份与恢复",
+        "description": "管理自动备份，查看和恢复数据库快照"
+      },
+      "cloudSync": {
+        "title": "云同步",
+        "description": "通过 WebDAV 在多设备间同步数据"
       },
       "rectifier": {
         "title": "整流器",
@@ -279,6 +288,27 @@
     "selectFileFailed": "请选择有效的 SQL 备份文件",
     "configCorrupted": "SQL 文件可能已损坏或格式不正确",
     "backupId": "备份ID",
+    "backupManager": {
+      "title": "数据库备份",
+      "description": "自动备份的数据库快照，可用于恢复到之前的状态",
+      "empty": "暂无备份",
+      "restore": "恢复",
+      "restoring": "恢复中...",
+      "confirmTitle": "确认恢复备份",
+      "confirmMessage": "恢复到此备份将覆盖当前数据库。恢复前会自动创建安全备份。",
+      "restoreSuccess": "恢复成功！安全备份已创建",
+      "restoreFailed": "恢复失败",
+      "safetyBackupId": "安全备份ID",
+      "intervalLabel": "自动备份间隔",
+      "retainLabel": "备份保留数量",
+      "intervalDisabled": "禁用",
+      "intervalHours": "{{hours}} 小时",
+      "intervalDays": "{{days}} 天",
+      "rename": "重命名",
+      "renameSuccess": "备份重命名成功",
+      "renameFailed": "重命名失败",
+      "namePlaceholder": "输入新名称"
+    },
     "webdavSync": {
       "title": "WebDAV 云同步",
       "description": "通过 WebDAV 在多设备间同步数据库和技能配置。",
@@ -452,6 +482,14 @@
     "oneClickInstall": "一键安装",
     "oneClickInstallHint": "安装 Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "本地环境检查",
+    "envBadge": {
+      "wsl": "WSL",
+      "windows": "Win",
+      "macos": "macOS",
+      "linux": "Linux"
+    },
+    "wslShell": "Shell",
+    "wslShellFlag": "标志",
     "installCommandsCopied": "安装命令已复制",
     "installCommandsCopyFailed": "复制失败，请手动复制。",
     "importFailedError": "导入配置失败：{{message}}",
@@ -501,7 +539,7 @@
   },
   "sessionManager": {
     "title": "会话管理",
-    "subtitle": "管理 Codex 与 Claude Code 会话记录",
+    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw 与 Gemini CLI 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",
     "searchSessions": "搜索会话",
     "providerFilterAll": "全部",
@@ -617,6 +655,10 @@
     "apiFormatHint": "选择供应商 API 的输入格式",
     "apiFormatAnthropic": "Anthropic Messages (原生)",
     "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启代理)",
+    "authField": "认证字段",
+    "authFieldAuthToken": "Auth Token (默认)",
+    "authFieldApiKey": "API Key",
+    "authFieldHint": "大多数第三方供应商使用 Auth Token；少数供应商需要 API Key",
     "anthropicDefaultHaikuModel": "Haiku 默认模型",
     "anthropicDefaultSonnetModel": "Sonnet 默认模型",
     "anthropicDefaultOpusModel": "Opus 默认模型",
@@ -703,33 +745,15 @@
     "authJsonHint": "Codex auth.json 配置内容",
     "configToml": "config.toml (TOML)",
     "configTomlHint": "Codex config.toml 配置内容",
-    "writeCommonConfig": "写入通用配置",
-    "editCommonConfig": "编辑通用配置",
-    "editCommonConfigTitle": "编辑 Codex 通用配置片段",
-    "commonConfigHint": "该片段会在勾选'写入通用配置'时追加到 config.toml 末尾",
-    "apiUrlLabel": "API 请求地址",
-    "extractFromCurrent": "从编辑内容提取",
-    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
-    "extractFailed": "提取失败: {{error}}",
-    "saveFailed": "保存失败: {{error}}"
+    "apiUrlLabel": "API 请求地址"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
     "envFileHint": "使用 .env 格式配置 Gemini 环境变量",
     "configJson": "配置文件 (config.json)",
     "configJsonHint": "使用 JSON 格式配置 Gemini 扩展参数（可选）",
-    "writeCommonConfig": "写入通用配置",
-    "editCommonConfig": "编辑通用配置",
-    "editCommonConfigTitle": "编辑 Gemini 通用配置片段",
-    "commonConfigHint": "该片段会写入 Gemini 的 .env（不允许包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
-    "extractFromCurrent": "从编辑内容提取",
-    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
-    "extractFailed": "提取失败: {{error}}",
-    "saveFailed": "保存失败: {{error}}",
     "extractedConfigInvalid": "提取的配置格式错误",
     "invalidJsonFormat": "通用配置片段格式错误（必须是有效的 JSON）",
-    "commonConfigInvalidKeys": "通用配置片段不能包含 GOOGLE_GEMINI_BASE_URL 或 GEMINI_API_KEY（发现：{{keys}}）",
-    "commonConfigInvalidValues": "通用配置片段的值必须是字符串",
     "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
     "configMergeFailed": "配置合并失败: {{error}}",
     "configReplaceFailed": "配置替换失败: {{error}}"

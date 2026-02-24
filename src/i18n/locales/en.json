@@ -37,7 +37,8 @@
     "search": "Search",
     "reset": "Reset",
     "actions": "Actions",
-    "deleting": "Deleting..."
+    "deleting": "Deleting...",
+    "auto": "Auto"
   },
   "apiKeyInput": {
     "placeholder": "Enter API Key",
@@ -50,15 +51,7 @@
   },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
-    "writeCommonConfig": "Write Common Config",
-    "editCommonConfig": "Edit Common Config",
-    "editCommonConfigTitle": "Edit Common Config Snippet",
-    "commonConfigHint": "This snippet will be merged into settings.json when 'Write Common Config' is checked",
     "fullSettingsHint": "Full Claude Code settings.json content",
-    "extractFromCurrent": "Extract from Editor",
-    "extractNoCommonConfig": "No common config available to extract from editor",
-    "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}",
     "hideAttribution": "Hide AI Attribution",
     "alwaysThinking": "Extended Thinking",
     "enableTeammates": "Teammates Mode"
@@ -124,11 +117,7 @@
     "notes": "Notes",
     "notesPlaceholder": "e.g., Company dedicated account",
     "configJson": "Config JSON",
-    "writeCommonConfig": "Write common config",
-    "editCommonConfigButton": "Edit common config",
     "configJsonHint": "Please fill in complete Claude Code configuration",
-    "editCommonConfigTitle": "Edit common config snippet",
-    "editCommonConfigHint": "Common config snippet will be merged into all providers that enable it",
     "addProvider": "Add Provider",
     "sortUpdated": "Sort order updated",
     "usageSaved": "Usage query configuration saved",
@@ -173,19 +162,31 @@
     "openclawModelsRegistered": "Models have been registered to /model list",
     "openclawDefaultModelSet": "Set as default model",
     "openclawDefaultModelSetFailed": "Failed to set default model",
-    "openclawNoModels": "No models configured"
+    "openclawNoModels": "No models configured",
+    "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
     "deleteProviderMessage": "Are you sure you want to delete provider \"{{name}}\"? This action cannot be undone.",
     "removeProvider": "Remove Provider",
-    "removeProviderMessage": "Are you sure you want to remove provider \"{{name}}\" from the configuration?\n\nAfter removal, this provider will no longer be active, but the configuration data will be retained in CC Switch. You can re-add it at any time."
+    "removeProviderMessage": "Are you sure you want to remove provider \"{{name}}\" from the configuration?\n\nAfter removal, this provider will no longer be active, but the configuration data will be retained in CC Switch. You can re-add it at any time.",
+    "proxy": {
+      "title": "Enable Local Proxy",
+      "message": "Local proxy is an advanced feature. Please make sure you understand how it works before enabling.\n\nWe recommend consulting the relevant documentation or your provider for proper configuration.",
+      "confirm": "I understand, enable"
+    },
+    "usage": {
+      "title": "Configure Usage Query",
+      "message": "Usage query requires a custom script or API parameters. Please make sure you have obtained the necessary information from your provider.\n\nIf unsure how to configure, please consult your provider's documentation first.",
+      "confirm": "I understand, configure"
+    }
   },
   "settings": {
     "title": "Settings",
     "general": "General",
     "tabGeneral": "General",
     "tabAdvanced": "Advanced",
+    "tabProxy": "Proxy",
     "advanced": {
       "configDir": {
         "title": "Configuration Directory",
@@ -217,7 +218,15 @@
       },
       "data": {
         "title": "Data Management",
-        "description": "Import/export configurations and backup/restore"
+        "description": "Import and export local configuration data"
+      },
+      "backup": {
+        "title": "Backup & Restore",
+        "description": "Manage automatic backups, view and restore database snapshots"
+      },
+      "cloudSync": {
+        "title": "Cloud Sync",
+        "description": "Sync data across devices via WebDAV"
       },
       "rectifier": {
         "title": "Rectifier",
@@ -279,6 +288,27 @@
     "selectFileFailed": "Please choose a valid SQL backup file",
     "configCorrupted": "SQL file may be corrupted or invalid",
     "backupId": "Backup ID",
+    "backupManager": {
+      "title": "Database Backups",
+      "description": "Automatic database snapshots for restoring to a previous state",
+      "empty": "No backups yet",
+      "restore": "Restore",
+      "restoring": "Restoring...",
+      "confirmTitle": "Confirm Restore",
+      "confirmMessage": "Restoring this backup will overwrite the current database. A safety backup will be created first.",
+      "restoreSuccess": "Restore successful! Safety backup created",
+      "restoreFailed": "Restore failed",
+      "safetyBackupId": "Safety Backup ID",
+      "intervalLabel": "Auto-backup Interval",
+      "retainLabel": "Backup Retention",
+      "intervalDisabled": "Disabled",
+      "intervalHours": "{{hours}} hours",
+      "intervalDays": "{{days}} days",
+      "rename": "Rename",
+      "renameSuccess": "Backup renamed",
+      "renameFailed": "Rename failed",
+      "namePlaceholder": "Enter new name"
+    },
     "webdavSync": {
       "title": "WebDAV Cloud Sync",
       "description": "Sync database and skill configurations across devices via WebDAV.",
@@ -452,6 +482,14 @@
     "oneClickInstall": "One-click Install",
     "oneClickInstallHint": "Install Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "Local environment check",
+    "envBadge": {
+      "wsl": "WSL",
+      "windows": "Win",
+      "macos": "macOS",
+      "linux": "Linux"
+    },
+    "wslShell": "Shell",
+    "wslShellFlag": "Flag",
     "installCommandsCopied": "Install commands copied",
     "installCommandsCopyFailed": "Copy failed, please copy manually.",
     "importFailedError": "Import config failed: {{message}}",
@@ -501,7 +539,7 @@
   },
   "sessionManager": {
     "title": "Session Manager",
-    "subtitle": "Manage Codex and Claude Code sessions",
+    "subtitle": "Manage Claude Code, Codex, OpenCode, OpenClaw and Gemini CLI sessions",
     "searchPlaceholder": "Search by content, directory, or ID",
     "searchSessions": "Search sessions",
     "providerFilterAll": "All",
@@ -617,6 +655,10 @@
     "apiFormatHint": "Select the input format for the provider's API",
     "apiFormatAnthropic": "Anthropic Messages (Native)",
     "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires proxy)",
+    "authField": "Auth Field",
+    "authFieldAuthToken": "Auth Token (Default)",
+    "authFieldApiKey": "API Key",
+    "authFieldHint": "Most third-party providers use Auth Token; a few require API Key",
     "anthropicDefaultHaikuModel": "Default Haiku Model",
     "anthropicDefaultSonnetModel": "Default Sonnet Model",
     "anthropicDefaultOpusModel": "Default Opus Model",
@@ -703,33 +745,15 @@
     "authJsonHint": "Codex auth.json configuration content",
     "configToml": "config.toml (TOML)",
     "configTomlHint": "Codex config.toml configuration content",
-    "writeCommonConfig": "Write Common Config",
-    "editCommonConfig": "Edit Common Config",
-    "editCommonConfigTitle": "Edit Codex Common Config Snippet",
-    "commonConfigHint": "This snippet will be appended to the end of config.toml when 'Write Common Config' is checked",
-    "apiUrlLabel": "API Request URL",
-    "extractFromCurrent": "Extract from Editor",
-    "extractNoCommonConfig": "No common config available to extract from editor",
-    "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}"
+    "apiUrlLabel": "API Request URL"
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
     "envFileHint": "Configure Gemini environment variables in .env format",
     "configJson": "Configuration File (config.json)",
     "configJsonHint": "Configure Gemini extended parameters in JSON format (optional)",
-    "writeCommonConfig": "Write Common Config",
-    "editCommonConfig": "Edit Common Config",
-    "editCommonConfigTitle": "Edit Gemini Common Config Snippet",
-    "commonConfigHint": "This snippet writes to Gemini .env (GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY are not allowed)",
-    "extractFromCurrent": "Extract from Editor",
-    "extractNoCommonConfig": "No common config available to extract from editor",
-    "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}",
     "extractedConfigInvalid": "Extracted config format is invalid",
     "invalidJsonFormat": "Common config snippet format error (must be valid JSON)",
-    "commonConfigInvalidKeys": "Common config snippet must not include GOOGLE_GEMINI_BASE_URL or GEMINI_API_KEY (found: {{keys}})",
-    "commonConfigInvalidValues": "Common config snippet values must be strings",
     "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
     "configMergeFailed": "Config merge failed: {{error}}",
     "configReplaceFailed": "Config replace failed: {{error}}"

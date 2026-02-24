@@ -23,7 +23,7 @@
 //!     └── settings.rs
 //! ```
 
-mod backup;
+pub(crate) mod backup;
 mod dao;
 mod migration;
 mod schema;
@@ -42,9 +42,6 @@ use serde::Serialize;
 use std::sync::Mutex;
 
 // DAO 方法通过 impl Database 提供，无需额外导出
-
-/// 数据库备份保留数量
-const DB_BACKUP_RETAIN: usize = 10;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
@@ -110,6 +107,22 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.create_tables()?;
+
+        // Pre-migration backup: only when upgrading from an existing database
+        {
+            let conn = lock_conn!(db.conn);
+            let version = Self::get_user_version(&conn)?;
+            drop(conn);
+            if version > 0 && version < SCHEMA_VERSION {
+                log::info!(
+                    "Creating pre-migration database backup (v{version} → v{SCHEMA_VERSION})"
+                );
+                if let Err(e) = db.backup_database_file() {
+                    log::warn!("Pre-migration backup failed, continuing migration: {e}");
+                }
+            }
+        }
+
         db.apply_schema_migrations()?;
         db.ensure_model_pricing_seeded()?;
 

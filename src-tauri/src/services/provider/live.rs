@@ -237,6 +237,439 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     Ok(())
 }
 
+// ============================================================================
+// Key fields definitions for partial merge
+// ============================================================================
+
+/// Claude env-level key fields that belong to the provider.
+/// When adding a new field here, also update backfill_claude_key_fields().
+const CLAUDE_KEY_ENV_FIELDS: &[&str] = &[
+    // --- API auth & endpoint ---
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    // --- Model selection ---
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_REASONING_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+    // --- AWS Bedrock ---
+    "CLAUDE_CODE_USE_BEDROCK",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_REGION",
+    "AWS_PROFILE",
+    "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
+    // --- Google Vertex AI ---
+    "CLAUDE_CODE_USE_VERTEX",
+    "ANTHROPIC_VERTEX_PROJECT_ID",
+    "CLOUD_ML_REGION",
+    // --- Microsoft Foundry ---
+    "CLAUDE_CODE_USE_FOUNDRY",
+    // --- Provider behavior ---
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    "API_TIMEOUT_MS",
+    "DISABLE_PROMPT_CACHING",
+];
+
+/// Claude top-level key fields (legacy + modern format).
+/// When adding a new field here, also update backfill_claude_key_fields().
+const CLAUDE_KEY_TOP_LEVEL: &[&str] = &[
+    "apiBaseUrl",     // legacy
+    "primaryModel",   // legacy
+    "smallFastModel", // legacy
+    "model",          // modern
+    "apiKey",         // Bedrock API Key auth
+];
+
+/// Codex TOML key fields.
+/// When adding a new field here, also update backfill_codex_key_fields().
+const CODEX_KEY_TOP_LEVEL: &[&str] = &[
+    "model_provider",
+    "model",
+    "model_reasoning_effort",
+    "review_model",
+    "plan_mode_reasoning_effort",
+];
+
+/// Gemini env-level key fields.
+/// When adding a new field here, also update backfill_gemini_key_fields().
+const GEMINI_KEY_ENV_FIELDS: &[&str] = &[
+    "GOOGLE_GEMINI_BASE_URL",
+    "GEMINI_API_KEY",
+    "GEMINI_MODEL",
+    "GOOGLE_API_KEY",
+];
+
+// ============================================================================
+// Partial merge: write only key fields to live config
+// ============================================================================
+
+/// Write only provider-specific key fields to live configuration,
+/// preserving all other user settings in the live file.
+///
+/// Used for switch-mode apps (Claude, Codex, Gemini) during:
+/// - `switch_normal()` — switching providers
+/// - `sync_current_to_live()` — startup sync
+/// - `add()` / `update()` when the provider is current
+pub(crate) fn write_live_partial(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+    match app_type {
+        AppType::Claude => write_claude_live_partial(provider),
+        AppType::Codex => write_codex_live_partial(provider),
+        AppType::Gemini => write_gemini_live_partial(provider),
+        // Additive mode apps still use full snapshot
+        AppType::OpenCode | AppType::OpenClaw => write_live_snapshot(app_type, provider),
+    }
+}
+
+/// Apply a JSON merge patch (RFC 7396) directly to Claude live settings.json.
+/// Used for user-level preferences (attribution, thinking, etc.) that are
+/// independent of the active provider.
+pub fn patch_claude_live(patch: Value) -> Result<(), AppError> {
+    let path = get_claude_settings_path();
+    let mut live = if path.exists() {
+        read_json_file(&path).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+    json_merge_patch(&mut live, &patch);
+    let settings = sanitize_claude_settings_for_live(&live);
+    write_json_file(&path, &settings)?;
+    Ok(())
+}
+
+/// RFC 7396 JSON Merge Patch: null deletes, objects merge recursively, rest overwrites.
+fn json_merge_patch(target: &mut Value, patch: &Value) {
+    if let Some(patch_obj) = patch.as_object() {
+        if !target.is_object() {
+            *target = json!({});
+        }
+        let target_obj = target.as_object_mut().unwrap();
+        for (key, value) in patch_obj {
+            if value.is_null() {
+                target_obj.remove(key);
+            } else if value.is_object() {
+                let entry = target_obj.entry(key.clone()).or_insert(json!({}));
+                json_merge_patch(entry, value);
+                // Clean up empty container objects
+                if entry.as_object().map_or(false, |o| o.is_empty()) {
+                    target_obj.remove(key);
+                }
+            } else {
+                target_obj.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
+/// Claude: merge only key env and top-level fields into live settings.json
+fn write_claude_live_partial(provider: &Provider) -> Result<(), AppError> {
+    let path = get_claude_settings_path();
+
+    // 1. Read existing live config (start from empty if file doesn't exist)
+    let mut live = if path.exists() {
+        read_json_file(&path).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+
+    // 2. Ensure live.env exists as an object
+    if !live.get("env").is_some_and(|v| v.is_object()) {
+        live.as_object_mut()
+            .unwrap()
+            .insert("env".into(), json!({}));
+    }
+
+    // 3. Clear key env fields from live, then write from provider
+    let live_env = live.get_mut("env").unwrap().as_object_mut().unwrap();
+    for key in CLAUDE_KEY_ENV_FIELDS {
+        live_env.remove(*key);
+    }
+
+    if let Some(provider_env) = provider
+        .settings_config
+        .get("env")
+        .and_then(|v| v.as_object())
+    {
+        for key in CLAUDE_KEY_ENV_FIELDS {
+            if let Some(value) = provider_env.get(*key) {
+                live_env.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+
+    // 4. Handle top-level legacy key fields
+    let live_obj = live.as_object_mut().unwrap();
+    for key in CLAUDE_KEY_TOP_LEVEL {
+        live_obj.remove(*key);
+    }
+    if let Some(provider_obj) = provider.settings_config.as_object() {
+        for key in CLAUDE_KEY_TOP_LEVEL {
+            if let Some(value) = provider_obj.get(*key) {
+                live_obj.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+
+    // 5. Sanitize and write
+    let settings = sanitize_claude_settings_for_live(&live);
+    write_json_file(&path, &settings)?;
+    Ok(())
+}
+
+/// Codex: replace auth.json entirely, partially merge config.toml key fields
+fn write_codex_live_partial(provider: &Provider) -> Result<(), AppError> {
+    let obj = provider
+        .settings_config
+        .as_object()
+        .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
+
+    // auth.json is entirely provider-specific, replace it wholesale
+    let auth = obj
+        .get("auth")
+        .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
+
+    let provider_config_str = obj.get("config").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Read existing config.toml (or start from empty)
+    let config_path = get_codex_config_path();
+    let existing_toml = if config_path.exists() {
+        std::fs::read_to_string(&config_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // Parse both existing and provider TOML
+    let mut live_doc = existing_toml
+        .parse::<toml_edit::DocumentMut>()
+        .unwrap_or_else(|_| toml_edit::DocumentMut::new());
+
+    // Remove key fields from live doc
+    let live_root = live_doc.as_table_mut();
+    for key in CODEX_KEY_TOP_LEVEL {
+        live_root.remove(key);
+    }
+    live_root.remove("model_providers");
+
+    // Parse provider TOML and extract key fields
+    if !provider_config_str.is_empty() {
+        if let Ok(provider_doc) = provider_config_str.parse::<toml_edit::DocumentMut>() {
+            let provider_root = provider_doc.as_table();
+
+            // Copy key top-level fields from provider
+            for key in CODEX_KEY_TOP_LEVEL {
+                if let Some(item) = provider_root.get(key) {
+                    live_root.insert(key, item.clone());
+                }
+            }
+
+            // Copy model_providers table from provider
+            if let Some(mp) = provider_root.get("model_providers") {
+                live_root.insert("model_providers", mp.clone());
+            }
+        }
+    }
+
+    // Write using atomic write
+    crate::codex_config::write_codex_live_atomic(auth, Some(&live_doc.to_string()))?;
+    Ok(())
+}
+
+/// Gemini: merge only key env fields, preserve settings.json (MCP etc.)
+fn write_gemini_live_partial(provider: &Provider) -> Result<(), AppError> {
+    use crate::gemini_config::{get_gemini_env_path, read_gemini_env, write_gemini_env_atomic};
+
+    let auth_type = detect_gemini_auth_type(provider);
+
+    // 1. Read existing env from live .env file
+    let mut env_map = if get_gemini_env_path().exists() {
+        read_gemini_env().unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
+
+    // 2. Remove key fields from existing env
+    for key in GEMINI_KEY_ENV_FIELDS {
+        env_map.remove(*key);
+    }
+
+    // 3. Extract key fields from provider and merge
+    if let Some(provider_env) = provider
+        .settings_config
+        .get("env")
+        .and_then(|v| v.as_object())
+    {
+        for key in GEMINI_KEY_ENV_FIELDS {
+            if let Some(value) = provider_env.get(*key).and_then(|v| v.as_str()) {
+                if !value.is_empty() {
+                    env_map.insert(key.to_string(), value.to_string());
+                }
+            }
+        }
+    }
+
+    // 4. Handle auth type specific behavior
+    match auth_type {
+        GeminiAuthType::GoogleOfficial => {
+            // Google official uses OAuth, clear all env
+            env_map.clear();
+            write_gemini_env_atomic(&env_map)?;
+        }
+        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
+            // Validate and write env
+            crate::gemini_config::validate_gemini_settings_strict(&provider.settings_config)?;
+            write_gemini_env_atomic(&env_map)?;
+        }
+    }
+
+    // 5. Handle settings.json (same as write_gemini_live — preserve existing MCP etc.)
+    use crate::gemini_config::get_gemini_settings_path;
+    let settings_path = get_gemini_settings_path();
+
+    if let Some(config_value) = provider.settings_config.get("config") {
+        if config_value.is_object() {
+            let mut merged = if settings_path.exists() {
+                read_json_file::<Value>(&settings_path).unwrap_or_else(|_| json!({}))
+            } else {
+                json!({})
+            };
+            if let (Some(merged_obj), Some(config_obj)) =
+                (merged.as_object_mut(), config_value.as_object())
+            {
+                for (k, v) in config_obj {
+                    merged_obj.insert(k.clone(), v.clone());
+                }
+            }
+            write_json_file(&settings_path, &merged)?;
+        } else if !config_value.is_null() {
+            return Err(AppError::localized(
+                "gemini.validation.invalid_config",
+                "Gemini 配置格式错误: config 必须是对象或 null",
+                "Gemini config invalid: config must be an object or null",
+            ));
+        }
+    }
+
+    // 6. Set security flag based on auth type
+    match auth_type {
+        GeminiAuthType::GoogleOfficial => ensure_google_oauth_security_flag(provider)?,
+        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
+            crate::gemini_config::write_packycode_settings()?;
+        }
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Backfill: extract only key fields from live config
+// ============================================================================
+
+/// Extract only provider-specific key fields from a live config value.
+///
+/// Used during backfill to ensure the provider's `settings_config` converges
+/// to containing only key fields over time.
+pub(crate) fn backfill_key_fields(app_type: &AppType, live_config: &Value) -> Value {
+    match app_type {
+        AppType::Claude => backfill_claude_key_fields(live_config),
+        AppType::Codex => backfill_codex_key_fields(live_config),
+        AppType::Gemini => backfill_gemini_key_fields(live_config),
+        // Additive mode: return full config (no backfill needed)
+        _ => live_config.clone(),
+    }
+}
+
+fn backfill_claude_key_fields(live: &Value) -> Value {
+    let mut result = json!({});
+    let result_obj = result.as_object_mut().unwrap();
+
+    // Extract key env fields
+    if let Some(live_env) = live.get("env").and_then(|v| v.as_object()) {
+        let mut env_obj = serde_json::Map::new();
+        for key in CLAUDE_KEY_ENV_FIELDS {
+            if let Some(value) = live_env.get(*key) {
+                env_obj.insert(key.to_string(), value.clone());
+            }
+        }
+        if !env_obj.is_empty() {
+            result_obj.insert("env".to_string(), Value::Object(env_obj));
+        }
+    }
+
+    // Extract key top-level fields
+    if let Some(live_obj) = live.as_object() {
+        for key in CLAUDE_KEY_TOP_LEVEL {
+            if let Some(value) = live_obj.get(*key) {
+                result_obj.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+
+    result
+}
+
+fn backfill_codex_key_fields(live: &Value) -> Value {
+    let mut result = json!({});
+    let result_obj = result.as_object_mut().unwrap();
+
+    // auth is entirely provider-specific — keep it as-is
+    if let Some(auth) = live.get("auth") {
+        result_obj.insert("auth".to_string(), auth.clone());
+    }
+
+    // Extract key TOML fields from config string
+    if let Some(config_str) = live.get("config").and_then(|v| v.as_str()) {
+        if let Ok(doc) = config_str.parse::<toml_edit::DocumentMut>() {
+            let mut new_doc = toml_edit::DocumentMut::new();
+            let new_root = new_doc.as_table_mut();
+
+            // Copy key top-level fields
+            for key in CODEX_KEY_TOP_LEVEL {
+                if let Some(item) = doc.as_table().get(key) {
+                    new_root.insert(key, item.clone());
+                }
+            }
+
+            // Copy model_providers table
+            if let Some(mp) = doc.as_table().get("model_providers") {
+                new_root.insert("model_providers", mp.clone());
+            }
+
+            let toml_str = new_doc.to_string();
+            if !toml_str.trim().is_empty() {
+                result_obj.insert("config".to_string(), Value::String(toml_str));
+            }
+        }
+    }
+
+    result
+}
+
+fn backfill_gemini_key_fields(live: &Value) -> Value {
+    let mut result = json!({});
+    let result_obj = result.as_object_mut().unwrap();
+
+    // Extract key env fields
+    if let Some(live_env) = live.get("env").and_then(|v| v.as_object()) {
+        let mut env_obj = serde_json::Map::new();
+        for key in GEMINI_KEY_ENV_FIELDS {
+            if let Some(value) = live_env.get(*key) {
+                env_obj.insert(key.to_string(), value.clone());
+            }
+        }
+        if !env_obj.is_empty() {
+            result_obj.insert("env".to_string(), Value::Object(env_obj));
+        }
+    }
+
+    result
+}
+
 /// Sync all providers to live configuration (for additive mode apps)
 ///
 /// Writes all providers from the database to the live configuration file.
@@ -286,7 +719,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
             let providers = state.db.get_all_providers(app_type.as_str())?;
             if let Some(provider) = providers.get(&current_id) {
-                write_live_snapshot(&app_type, provider)?;
+                write_live_partial(&app_type, provider)?;
             }
             // Note: get_effective_current_provider already validates existence,
             // so providers.get() should always succeed here

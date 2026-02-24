@@ -4,8 +4,9 @@ import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData } from "@/types";
-import { usageApi, type AppId } from "@/lib/api";
+import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage } from "@/lib/api/copilot";
+import { useSettingsQuery } from "@/lib/query";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
@@ -16,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
 import { TEMPLATE_TYPES, PROVIDER_TYPES } from "@/config/constants";
 
@@ -111,6 +113,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 }) => {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { data: settingsData } = useSettingsQuery();
+  const [showUsageConfirm, setShowUsageConfirm] = useState(false);
 
   // 生成带国际化的预设模板
   const PRESET_TEMPLATES = generatePresetTemplates(t);
@@ -249,6 +253,27 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const [showApiKey, setShowApiKey] = useState(false);
   const [showAccessToken, setShowAccessToken] = useState(false);
+
+  const handleEnableToggle = (checked: boolean) => {
+    if (checked && !settingsData?.usageConfirmed) {
+      setShowUsageConfirm(true);
+    } else {
+      setScript({ ...script, enabled: checked });
+    }
+  };
+
+  const handleUsageConfirm = async () => {
+    setShowUsageConfirm(false);
+    try {
+      if (settingsData) {
+        await settingsApi.save({ ...settingsData, usageConfirmed: true });
+        await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      }
+    } catch (error) {
+      console.error("Failed to save usage confirmed:", error);
+    }
+    setScript({ ...script, enabled: true });
+  };
 
   const handleSave = () => {
     // Copilot 模板不需要脚本验证
@@ -479,9 +504,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         </p>
         <Switch
           checked={script.enabled}
-          onCheckedChange={(checked) =>
-            setScript({ ...script, enabled: checked })
-          }
+          onCheckedChange={handleEnableToggle}
           aria-label={t("usageScript.enableUsageQuery")}
         />
       </div>
@@ -912,6 +935,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={showUsageConfirm}
+        variant="info"
+        title={t("confirm.usage.title")}
+        message={t("confirm.usage.message")}
+        confirmText={t("confirm.usage.confirm")}
+        onConfirm={() => void handleUsageConfirm()}
+        onCancel={() => setShowUsageConfirm(false)}
+      />
     </FullScreenPanel>
   );
 };

@@ -165,38 +165,6 @@ pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub async fn get_claude_common_config_snippet(
-    state: tauri::State<'_, crate::store::AppState>,
-) -> Result<Option<String>, String> {
-    state
-        .db
-        .get_config_snippet("claude")
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn set_claude_common_config_snippet(
-    snippet: String,
-    state: tauri::State<'_, crate::store::AppState>,
-) -> Result<(), String> {
-    if !snippet.trim().is_empty() {
-        serde_json::from_str::<serde_json::Value>(&snippet).map_err(invalid_json_format_error)?;
-    }
-
-    let value = if snippet.trim().is_empty() {
-        None
-    } else {
-        Some(snippet)
-    };
-
-    state
-        .db
-        .set_config_snippet("claude", value)
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
 pub async fn get_common_config_snippet(
     app_type: String,
     state: tauri::State<'_, crate::store::AppState>,
@@ -262,27 +230,4 @@ pub async fn set_common_config_snippet(
         .map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-#[tauri::command]
-pub async fn extract_common_config_snippet(
-    appType: String,
-    settingsConfig: Option<String>,
-    state: tauri::State<'_, crate::store::AppState>,
-) -> Result<String, String> {
-    let app = AppType::from_str(&appType).map_err(|e| e.to_string())?;
-
-    if let Some(settings_config) = settingsConfig.filter(|s| !s.trim().is_empty()) {
-        let settings: serde_json::Value =
-            serde_json::from_str(&settings_config).map_err(invalid_json_format_error)?;
-
-        return crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
-            app,
-            &settings,
-        )
-        .map_err(|e| e.to_string());
-    }
-
-    crate::services::provider::ProviderService::extract_common_config_snippet(&state, app)
-        .map_err(|e| e.to_string())
 }

@@ -5,7 +5,9 @@ use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::services::{EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService};
+use crate::services::{
+    EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
+};
 use crate::store::AppState;
 use std::str::FromStr;
 
@@ -72,7 +74,11 @@ pub fn remove_provider_from_live_config(
         .map_err(|e| e.to_string())
 }
 
-fn switch_provider_internal(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+fn switch_provider_internal(
+    state: &AppState,
+    app_type: AppType,
+    id: &str,
+) -> Result<SwitchResult, AppError> {
     ProviderService::switch(state, app_type, id)
 }
 
@@ -81,7 +87,7 @@ pub fn switch_provider_test_hook(
     state: &AppState,
     app_type: AppType,
     id: &str,
-) -> Result<(), AppError> {
+) -> Result<SwitchResult, AppError> {
     switch_provider_internal(state, app_type, id)
 }
 
@@ -90,35 +96,13 @@ pub fn switch_provider(
     state: State<'_, AppState>,
     app: String,
     id: String,
-) -> Result<bool, String> {
+) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    switch_provider_internal(&state, app_type, &id)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+    switch_provider_internal(&state, app_type, &id).map_err(|e| e.to_string())
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
-    let imported = ProviderService::import_default_config(state, app_type.clone())?;
-
-    if imported {
-        // Extract common config snippet (mirrors old startup logic in lib.rs)
-        if state
-            .db
-            .get_config_snippet(app_type.as_str())
-            .ok()
-            .flatten()
-            .is_none()
-        {
-            match ProviderService::extract_common_config_snippet(state, app_type.clone()) {
-                Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
-                    let _ = state
-                        .db
-                        .set_config_snippet(app_type.as_str(), Some(snippet));
-                }
-                _ => {}
-            }
-        }
-    }
+    let imported = ProviderService::import_default_config(state, app_type)?;
 
     Ok(imported)
 }
@@ -234,6 +218,12 @@ pub async fn testUsageScript(
 pub fn read_live_provider_settings(app: String) -> Result<serde_json::Value, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::read_live_settings(app_type).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn patch_claude_live_settings(patch: serde_json::Value) -> Result<bool, String> {
+    ProviderService::patch_claude_live(patch).map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 #[tauri::command]
