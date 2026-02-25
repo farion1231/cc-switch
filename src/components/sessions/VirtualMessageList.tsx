@@ -102,7 +102,7 @@ export function VirtualMessageList({
     return (
         <div
             ref={scrollRef}
-            className="h-full overflow-y-auto overflow-x-hidden"
+            className="h-full overflow-y-scroll overflow-x-hidden virtual-message-list"
             style={{ overflowAnchor: "none" }}
         >
             <div
