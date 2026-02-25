@@ -24,7 +24,7 @@ interface SessionMessageItemProps {
     renderMarkdown: boolean;
     defaultCollapsed?: boolean;
     showMessageIndex?: boolean;
-    onBeforeToggle?: (el: HTMLDivElement | null) => void;
+    onBeforeToggle?: (el: HTMLDivElement | null, isCollapsing: boolean) => void;
     onAfterToggle?: () => void;
 }
 
@@ -128,7 +128,7 @@ export function SessionMessageItem({
                         type="button"
                         className="flex items-center gap-1 hover:text-foreground transition-colors"
                         onClick={() => {
-                            onBeforeToggle?.(rootRef.current);
+                            onBeforeToggle?.(rootRef.current, !collapsed);
                             setCollapsed((v) => !v);
                         }}
                     >
