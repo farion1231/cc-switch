@@ -64,7 +64,11 @@
     "switchToChinese": "切换到中文",
     "switchToEnglish": "切换到英文",
     "enterEditMode": "进入编辑模式",
-    "exitEditMode": "退出编辑模式"
+    "exitEditMode": "退出编辑模式",
+    "windowMinimize": "最小化窗口",
+    "windowMaximize": "最大化窗口",
+    "windowRestore": "还原窗口",
+    "windowClose": "关闭窗口"
   },
   "provider": {
     "tabProvider": "供应商",
@@ -163,7 +167,8 @@
     "openclawDefaultModelSet": "已设为默认模型",
     "openclawDefaultModelSetFailed": "设置默认模型失败",
     "openclawNoModels": "该供应商没有配置模型",
-    "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存"
+    "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
+    "windowControlFailed": "窗口控制失败：{{error}}"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -398,6 +403,8 @@
     "autoLaunchFailed": "设置开机自启失败",
     "minimizeToTray": "关闭时最小化到托盘",
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
+    "useAppWindowControls": "启用应用级窗口按钮",
+    "useAppWindowControlsDescription": "开启后使用应用自建的最小化、最大化/还原、关闭按钮；关闭后沿用系统窗口模式。",
     "enableClaudePluginIntegration": "应用到 Claude Code 插件",
     "enableClaudePluginIntegrationDescription": "开启后 Vscode Claude Code 插件的供应商将随本软件切换",
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",

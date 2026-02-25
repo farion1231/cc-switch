@@ -64,7 +64,11 @@
     "switchToChinese": "Switch to Chinese",
     "switchToEnglish": "Switch to English",
     "enterEditMode": "Enter Edit Mode",
-    "exitEditMode": "Exit Edit Mode"
+    "exitEditMode": "Exit Edit Mode",
+    "windowMinimize": "Minimize window",
+    "windowMaximize": "Maximize window",
+    "windowRestore": "Restore window",
+    "windowClose": "Close window"
   },
   "provider": {
     "tabProvider": "Provider",
@@ -163,7 +167,8 @@
     "openclawDefaultModelSet": "Set as default model",
     "openclawDefaultModelSetFailed": "Failed to set default model",
     "openclawNoModels": "No models configured",
-    "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider"
+    "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
+    "windowControlFailed": "Window control failed: {{error}}"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -398,6 +403,8 @@
     "autoLaunchFailed": "Failed to set auto-launch",
     "minimizeToTray": "Minimize to tray on close",
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
+    "useAppWindowControls": "Enable app-level window controls",
+    "useAppWindowControlsDescription": "Use built-in minimize, maximize/restore, and close buttons in the app header.",
     "enableClaudePluginIntegration": "Apply to Claude Code extension",
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
