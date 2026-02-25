@@ -235,11 +235,19 @@ pub struct ProviderMeta {
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// 供应商类型标识（用于特殊供应商检测）
+    /// - "github_copilot": GitHub Copilot 供应商
+    #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
+    pub provider_type: Option<String>,
     /// Claude 认证字段名（仅 Claude 供应商使用）
     /// - "ANTHROPIC_AUTH_TOKEN" (默认): 大多数第三方/聚合供应商
     /// - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
     #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
     pub api_key_field: Option<String>,
+    /// GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
+    /// 用于多账号支持，关联到特定的 GitHub 账号
+    #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
+    pub github_account_id: Option<String>,
 }
 
 impl ProviderManager {

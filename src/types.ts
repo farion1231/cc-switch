@@ -49,13 +49,15 @@ export interface EndpointCandidate {
   isCustom?: boolean;
 }
 
+import type { TemplateType } from "./config/constants";
+
 // 用量查询脚本配置
 export interface UsageScript {
   enabled: boolean; // 是否启用用量查询
   language: "javascript"; // 脚本语言
   code: string; // 脚本代码（JSON 格式配置）
   timeout?: number; // 超时时间（秒，默认 10）
-  templateType?: "custom" | "general" | "newapi"; // 模板类型（用于后端判断验证规则）
+  templateType?: TemplateType; // 模板类型（用于后端判断验证规则）
   apiKey?: string; // 用量查询专用的 API Key（通用模板使用）
   baseUrl?: string; // 用量查询专用的 Base URL（通用和 NewAPI 模板使用）
   accessToken?: string; // 访问令牌（NewAPI 模板使用）
@@ -146,10 +148,15 @@ export interface ProviderMeta {
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   apiFormat?: "anthropic" | "openai_chat";
+  // 供应商类型（用于识别 Copilot 等特殊供应商）
+  providerType?: string;
   // Claude 认证字段名（仅 Claude 供应商使用）
   // - "ANTHROPIC_AUTH_TOKEN" (默认): 大多数第三方/聚合供应商
   // - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
   apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
+  // GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
+  // 用于多账号支持，关联到特定的 GitHub 账号
+  githubAccountId?: string;
 }
 
 // Skill 同步方式

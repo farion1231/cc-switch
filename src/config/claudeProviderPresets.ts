@@ -48,6 +48,13 @@ export interface ProviderPreset {
   // - "anthropic" (默认): Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   apiFormat?: "anthropic" | "openai_chat";
+
+  // 供应商类型标识（用于特殊供应商检测）
+  // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
+  providerType?: "github_copilot";
+
+  // 是否需要 OAuth 认证（而非 API Key）
+  requiresOAuth?: boolean;
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -493,6 +500,21 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "openrouter",
     iconColor: "#6566F1",
+  },
+  {
+    name: "GitHub Copilot",
+    websiteUrl: "https://github.com/features/copilot",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.githubcopilot.com",
+      },
+    },
+    category: "third_party",
+    apiFormat: "openai_chat",
+    providerType: "github_copilot",
+    requiresOAuth: true,
+    icon: "github",
+    iconColor: "#000000",
   },
   {
     name: "Nvidia",

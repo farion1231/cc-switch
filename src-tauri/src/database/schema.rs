@@ -4,7 +4,7 @@
 
 use super::{lock_conn, Database, SCHEMA_VERSION};
 use crate::error::AppError;
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 impl Database {
     /// 创建所有数据库表
@@ -359,6 +359,13 @@ impl Database {
                         log::info!("迁移数据库从 v4 到 v5（计费模式支持）");
                         Self::migrate_v4_to_v5(conn)?;
                         Self::set_user_version(conn, 5)?;
+                    }
+                    5 => {
+                        log::info!(
+                            "迁移数据库从 v5 到 v6（统一 Copilot 模板类型为 github_copilot）"
+                        );
+                        Self::migrate_v5_to_v6(conn)?;
+                        Self::set_user_version(conn, 6)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -911,6 +918,63 @@ impl Database {
         }
 
         log::info!("v4 -> v5 迁移完成：已添加计费模式与请求模型字段");
+        Ok(())
+    }
+
+    /// v5 -> v6: 统一 Copilot 模板类型为 github_copilot
+    fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
+        // 查询所有 providers
+        let mut stmt = conn
+            .prepare("SELECT id, app_type, meta FROM providers")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut updates = Vec::new();
+        for row in rows {
+            let (id, app_type, meta_str) = row.map_err(|e| AppError::Database(e.to_string()))?;
+
+            // 解析 meta JSON
+            if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                let mut updated = false;
+
+                // 检查 usage_script.template_type
+                if let Some(usage_script) = meta.get_mut("usage_script") {
+                    if let Some(template_type) = usage_script.get_mut("template_type") {
+                        if template_type == "copilot" {
+                            *template_type =
+                                serde_json::Value::String("github_copilot".to_string());
+                            updated = true;
+                        }
+                    }
+                }
+
+                if updated {
+                    let new_meta_str = serde_json::to_string(&meta)
+                        .map_err(|e| AppError::Database(e.to_string()))?;
+                    updates.push((id, app_type, new_meta_str));
+                }
+            }
+        }
+
+        // 批量更新
+        for (id, app_type, new_meta) in updates {
+            conn.execute(
+                "UPDATE providers SET meta = ?1 WHERE id = ?2 AND app_type = ?3",
+                params![new_meta, id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        log::info!("v5 -> v6 迁移完成：已将 copilot 模板类型统一为 github_copilot");
         Ok(())
     }
 
