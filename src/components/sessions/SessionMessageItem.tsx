@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Copy, ChevronDown, ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -23,8 +23,8 @@ interface SessionMessageItemProps {
     onCopy: (content: string) => void;
     renderMarkdown: boolean;
     defaultCollapsed?: boolean;
-    onBeforeToggle?: () => number | undefined;
-    onAfterToggle?: (offsetBefore: number | undefined) => void;
+    onBeforeToggle?: (el: HTMLDivElement | null) => void;
+    onAfterToggle?: () => void;
 }
 
 export function SessionMessageItem({
@@ -40,10 +40,24 @@ export function SessionMessageItem({
     const { t } = useTranslation();
     const [collapsed, setCollapsed] = useState(defaultCollapsed);
     const isLong = message.content.length > 500;
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    const isFirstRender = useRef(true);
+
+    // collapsed 变化且 DOM 更新后，通知父组件修正滚动位置
+    useEffect(() => {
+        if (isFirstRender.current) {
+            isFirstRender.current = false;
+            return;
+        }
+        onAfterToggle?.();
+    }, [collapsed, onAfterToggle]);
 
     return (
         <div
-            ref={setRef}
+            ref={(el) => {
+                rootRef.current = el;
+                setRef(el);
+            }}
             className={cn(
                 "rounded-lg border px-3 py-2.5 relative group transition-all min-w-0",
                 message.role.toLowerCase() === "user"
@@ -110,9 +124,8 @@ export function SessionMessageItem({
                         type="button"
                         className="flex items-center gap-1 hover:text-foreground transition-colors"
                         onClick={() => {
-                            const offset = onBeforeToggle?.();
+                            onBeforeToggle?.(rootRef.current);
                             setCollapsed((v) => !v);
-                            onAfterToggle?.(offset);
                         }}
                     >
                         {collapsed ? (
