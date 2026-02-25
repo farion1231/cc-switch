@@ -845,12 +845,10 @@ pub fn run() {
             commands::get_skills_migration_result,
             commands::get_app_config_path,
             commands::open_app_config_folder,
-            commands::get_claude_common_config_snippet,
-            commands::set_claude_common_config_snippet,
             commands::get_common_config_snippet,
             commands::set_common_config_snippet,
-            commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
+            commands::patch_claude_live_settings,
             commands::get_settings,
             commands::save_settings,
             commands::get_rectifier_config,
@@ -1058,6 +1056,8 @@ pub fn run() {
             commands::read_daily_memory_file,
             commands::write_daily_memory_file,
             commands::delete_daily_memory_file,
+            commands::search_daily_memory_files,
+            commands::open_workspace_directory,
         ]);
 
     let app = builder

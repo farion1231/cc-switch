@@ -10,7 +10,11 @@ import {
 } from "@/components/ui/select";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField } from "./shared";
-import type { ProviderCategory, ClaudeApiFormat } from "@/types";
+import type {
+  ProviderCategory,
+  ClaudeApiFormat,
+  ClaudeApiKeyField,
+} from "@/types";
 import type { TemplateValueConfig } from "@/config/claudeProviderPresets";
 
 interface EndpointCandidate {
@@ -68,6 +72,10 @@ interface ClaudeFormFieldsProps {
   // API Format (for third-party providers that use OpenAI Chat Completions format)
   apiFormat: ClaudeApiFormat;
   onApiFormatChange: (format: ClaudeApiFormat) => void;
+
+  // Auth Key Field (ANTHROPIC_AUTH_TOKEN vs ANTHROPIC_API_KEY)
+  apiKeyField: ClaudeApiKeyField;
+  onApiKeyFieldChange: (field: ClaudeApiKeyField) => void;
 }
 
 export function ClaudeFormFields({
@@ -102,6 +110,8 @@ export function ClaudeFormFields({
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
+  apiKeyField,
+  onApiKeyFieldChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -188,8 +198,8 @@ export function ClaudeFormFields({
         />
       )}
 
-      {/* API 格式选择（仅非官方供应商显示） */}
-      {shouldShowModelSelector && (
+      {/* API 格式选择（仅非官方、非云服务商显示） */}
+      {shouldShowModelSelector && category !== "cloud_provider" && (
         <div className="space-y-2">
           <FormLabel htmlFor="apiFormat">
             {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
@@ -214,6 +224,41 @@ export function ClaudeFormFields({
           <p className="text-xs text-muted-foreground">
             {t("providerForm.apiFormatHint", {
               defaultValue: "选择供应商 API 的输入格式",
+            })}
+          </p>
+        </div>
+      )}
+
+      {/* 认证字段选择（仅非官方供应商显示） */}
+      {shouldShowModelSelector && (
+        <div className="space-y-2">
+          <FormLabel htmlFor="apiKeyField">
+            {t("providerForm.authField", { defaultValue: "认证字段" })}
+          </FormLabel>
+          <Select
+            value={apiKeyField}
+            onValueChange={(v) => onApiKeyFieldChange(v as ClaudeApiKeyField)}
+          >
+            <SelectTrigger id="apiKeyField" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ANTHROPIC_AUTH_TOKEN">
+                {t("providerForm.authFieldAuthToken", {
+                  defaultValue: "Auth Token (默认)",
+                })}
+              </SelectItem>
+              <SelectItem value="ANTHROPIC_API_KEY">
+                {t("providerForm.authFieldApiKey", {
+                  defaultValue: "API Key",
+                })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.authFieldHint", {
+              defaultValue:
+                "大多数第三方供应商使用 Auth Token；少数供应商需要 API Key",
             })}
           </p>
         </div>

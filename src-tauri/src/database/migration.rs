@@ -58,9 +58,6 @@ impl Database {
         // 4. 迁移 Skills
         Self::migrate_skills(tx, config)?;
 
-        // 5. 迁移 Common Config
-        Self::migrate_common_config(tx, config)?;
-
         Ok(())
     }
 
@@ -208,36 +205,6 @@ impl Database {
                 "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled) VALUES (?1, ?2, ?3, ?4)",
                 params![repo.owner, repo.name, repo.branch, repo.enabled],
             ).map_err(|e| AppError::Database(format!("Migrate skill repo failed: {e}")))?;
-        }
-
-        Ok(())
-    }
-
-    /// 迁移通用配置片段
-    fn migrate_common_config(
-        tx: &rusqlite::Transaction<'_>,
-        config: &MultiAppConfig,
-    ) -> Result<(), AppError> {
-        if let Some(snippet) = &config.common_config_snippets.claude {
-            tx.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
-                params!["common_config_claude", snippet],
-            )
-            .map_err(|e| AppError::Database(format!("Migrate settings failed: {e}")))?;
-        }
-        if let Some(snippet) = &config.common_config_snippets.codex {
-            tx.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
-                params!["common_config_codex", snippet],
-            )
-            .map_err(|e| AppError::Database(format!("Migrate settings failed: {e}")))?;
-        }
-        if let Some(snippet) = &config.common_config_snippets.gemini {
-            tx.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
-                params!["common_config_gemini", snippet],
-            )
-            .map_err(|e| AppError::Database(format!("Migrate settings failed: {e}")))?;
         }
 
         Ok(())

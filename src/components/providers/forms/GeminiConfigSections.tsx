@@ -7,10 +7,6 @@ interface GeminiEnvSectionProps {
   onChange: (value: string) => void;
   onBlur?: () => void;
   error?: string;
-  useCommonConfig: boolean;
-  onCommonConfigToggle: (checked: boolean) => void;
-  onEditCommonConfig: () => void;
-  commonConfigError?: string;
 }
 
 /**
@@ -21,10 +17,6 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
   onChange,
   onBlur,
   error,
-  useCommonConfig,
-  onCommonConfigToggle,
-  onEditCommonConfig,
-  commonConfigError,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -53,44 +45,12 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <label
-          htmlFor="geminiEnv"
-          className="block text-sm font-medium text-foreground"
-        >
-          {t("geminiConfig.envFile", { defaultValue: "环境变量 (.env)" })}
-        </label>
-
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={useCommonConfig}
-            onChange={(e) => onCommonConfigToggle(e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          {t("geminiConfig.writeCommonConfig", {
-            defaultValue: "写入通用配置",
-          })}
-        </label>
-      </div>
-
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={onEditCommonConfig}
-          className="text-xs text-blue-500 dark:text-blue-400 hover:underline"
-        >
-          {t("geminiConfig.editCommonConfig", {
-            defaultValue: "编辑通用配置",
-          })}
-        </button>
-      </div>
-
-      {commonConfigError && (
-        <p className="text-xs text-red-500 dark:text-red-400 text-right">
-          {commonConfigError}
-        </p>
-      )}
+      <label
+        htmlFor="geminiEnv"
+        className="block text-sm font-medium text-foreground"
+      >
+        {t("geminiConfig.envFile", { defaultValue: "环境变量 (.env)" })}
+      </label>
 
       <JsonEditor
         value={value}

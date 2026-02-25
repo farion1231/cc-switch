@@ -14,6 +14,7 @@ import {
   Circle,
   Calendar,
   ChevronRight,
+  FolderOpen,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { workspaceApi } from "@/lib/api/workspace";
@@ -83,8 +84,13 @@ const WorkspaceFilesPanel: React.FC = () => {
 
   return (
     <div className="px-6 pt-4 pb-8">
-      <p className="text-sm text-muted-foreground mb-6">
+      <p
+        className="text-sm text-muted-foreground mb-6 cursor-pointer hover:text-foreground transition-colors inline-flex items-center gap-1"
+        onClick={() => workspaceApi.openDirectory("workspace")}
+        title={t("workspace.openDirectory")}
+      >
         ~/.openclaw/workspace/
+        <FolderOpen className="w-3.5 h-3.5" />
       </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

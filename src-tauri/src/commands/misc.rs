@@ -657,6 +657,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     (None, Some("not installed or not executable".to_string()))
 }
 
+#[cfg(target_os = "windows")]
 fn wsl_distro_for_tool(tool: &str) -> Option<String> {
     let override_dir = match tool {
         "claude" => crate::settings::get_claude_override_dir(),
@@ -692,12 +693,6 @@ fn wsl_distro_from_path(path: &Path) -> Option<String> {
         }
         _ => None,
     }
-}
-
-/// 非 Windows 平台不支持 WSL 路径解析
-#[cfg(not(target_os = "windows"))]
-fn wsl_distro_from_path(_path: &Path) -> Option<String> {
-    None
 }
 
 /// 打开指定提供商的终端
