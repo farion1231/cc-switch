@@ -23,6 +23,8 @@ interface SessionMessageItemProps {
     onCopy: (content: string) => void;
     renderMarkdown: boolean;
     defaultCollapsed?: boolean;
+    onBeforeToggle?: () => number | undefined;
+    onAfterToggle?: (offsetBefore: number | undefined) => void;
 }
 
 export function SessionMessageItem({
@@ -32,6 +34,8 @@ export function SessionMessageItem({
     onCopy,
     renderMarkdown,
     defaultCollapsed = true,
+    onBeforeToggle,
+    onAfterToggle,
 }: SessionMessageItemProps) {
     const { t } = useTranslation();
     const [collapsed, setCollapsed] = useState(defaultCollapsed);
@@ -105,7 +109,11 @@ export function SessionMessageItem({
                     <button
                         type="button"
                         className="flex items-center gap-1 hover:text-foreground transition-colors"
-                        onClick={() => setCollapsed((v) => !v)}
+                        onClick={() => {
+                            const offset = onBeforeToggle?.();
+                            setCollapsed((v) => !v);
+                            onAfterToggle?.(offset);
+                        }}
                     >
                         {collapsed ? (
                             <>

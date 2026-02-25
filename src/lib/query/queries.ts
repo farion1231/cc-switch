@@ -137,7 +137,7 @@ export const useSessionsQuery = () => {
   return useQuery<SessionMeta[]>({
     queryKey: ["sessions"],
     queryFn: async () => sessionsApi.list(),
-    staleTime: 30 * 1000,
+    staleTime: 2 * 60 * 1000,
   });
 };
 
