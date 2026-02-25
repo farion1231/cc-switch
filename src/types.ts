@@ -291,6 +291,7 @@ export interface SessionMessage {
   role: string;
   content: string;
   ts?: number;
+  toolName?: string;
 }
 
 // MCP 服务器连接参数（宽松：允许扩展字段）

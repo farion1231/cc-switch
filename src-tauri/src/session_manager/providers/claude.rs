@@ -30,6 +30,8 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let file = File::open(path).map_err(|e| format!("Failed to open session file: {e}"))?;
     let reader = BufReader::new(file);
     let mut messages = Vec::new();
+    // tool_use_id -> tool name 映射
+    let mut tool_name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -50,11 +52,52 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             None => continue,
         };
 
-        let role = message
+        let raw_role = message
             .get("role")
             .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
+            .unwrap_or("unknown");
+
+        // 从 assistant 消息的 tool_use 块中收集工具名称
+        if raw_role == "assistant" {
+            if let Some(Value::Array(items)) = message.get("content") {
+                for item in items {
+                    if item.get("type").and_then(Value::as_str) == Some("tool_use") {
+                        if let (Some(id), Some(name)) = (
+                            item.get("id").and_then(Value::as_str),
+                            item.get("name").and_then(Value::as_str),
+                        ) {
+                            tool_name_map.insert(id.to_string(), name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // content 数组全是 tool_result 时，标记为 "tool" 并提取工具名称
+        let (role, tool_name) = if raw_role == "user" {
+            if let Some(Value::Array(items)) = message.get("content") {
+                let all_tool_result = !items.is_empty()
+                    && items.iter().all(|item| {
+                        item.get("type").and_then(Value::as_str) == Some("tool_result")
+                    });
+                if all_tool_result {
+                    // 取第一个 tool_result 的 tool_use_id 查找工具名称
+                    let name = items.first()
+                        .and_then(|item| item.get("tool_use_id"))
+                        .and_then(Value::as_str)
+                        .and_then(|id| tool_name_map.get(id))
+                        .cloned();
+                    ("tool".to_string(), name)
+                } else {
+                    (raw_role.to_string(), None)
+                }
+            } else {
+                (raw_role.to_string(), None)
+            }
+        } else {
+            (raw_role.to_string(), None)
+        };
+
         let content = message.get("content").map(extract_text).unwrap_or_default();
         if content.trim().is_empty() {
             continue;
@@ -62,7 +105,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
 
-        messages.push(SessionMessage { role, content, ts });
+        messages.push(SessionMessage { role, content, ts, tool_name });
     }
 
     Ok(messages)
