@@ -592,6 +592,8 @@
     "defaultRenderMdHint": "Show messages in Markdown format by default when switching sessions. Disable to show raw text instead",
     "defaultCollapseTitle": "Collapse long messages by default",
     "defaultCollapseHint": "Long messages are collapsed by default. Click to expand and view the full content",
+    "showMessageIndexTitle": "Show message index",
+    "showMessageIndexHint": "Display index number before each message for easy navigation",
     "expandMessage": "Show more",
     "collapseMessage": "Show less"
   },

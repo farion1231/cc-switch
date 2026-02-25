@@ -592,6 +592,8 @@
     "defaultRenderMdHint": "セッション切り替え時にデフォルトで Markdown 形式で表示します。無効にすると原文表示になります",
     "defaultCollapseTitle": "長いメッセージをデフォルトで折りたたむ",
     "defaultCollapseHint": "長いメッセージはデフォルトで折りたたまれます。クリックで全文を表示できます",
+    "showMessageIndexTitle": "メッセージ番号を表示",
+    "showMessageIndexHint": "各メッセージの前に番号を表示して、位置を把握しやすくします",
     "expandMessage": "全文を表示",
     "collapseMessage": "折りたたむ"
   },

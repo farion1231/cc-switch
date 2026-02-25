@@ -592,6 +592,8 @@
     "defaultRenderMdHint": "切换会话时默认使用 Markdown 格式展示消息，关闭则默认展示原文",
     "defaultCollapseTitle": "默认收缩长消息",
     "defaultCollapseHint": "超长消息默认折叠显示，点击可展开查看全文",
+    "showMessageIndexTitle": "显示消息序号",
+    "showMessageIndexHint": "在每条消息前显示序号，方便定位",
     "expandMessage": "展开全文",
     "collapseMessage": "收起"
   },
