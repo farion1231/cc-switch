@@ -525,15 +525,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                   {isLoadingTools || loadingTools[toolName] ? (
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                   ) : tool?.version ? (
-                    <div className="flex items-center gap-1.5">
-                      {tool.latest_version &&
-                        tool.version !== tool.latest_version && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20">
-                            {tool.latest_version}
-                          </span>
-                        )}
+                    tool.latest_version &&
+                    tool.version !== tool.latest_version ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20">
+                        {tool.latest_version}
+                      </span>
+                    ) : (
                       <CheckCircle2 className="h-4 w-4 text-green-500" />
-                    </div>
+                    )
                   ) : (
                     <AlertCircle className="h-4 w-4 text-yellow-500" />
                   )}

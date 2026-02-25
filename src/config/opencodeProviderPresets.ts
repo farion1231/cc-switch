@@ -21,6 +21,7 @@ export const opencodeNpmPackages = [
   { value: "@ai-sdk/openai", label: "OpenAI" },
   { value: "@ai-sdk/openai-compatible", label: "OpenAI Compatible" },
   { value: "@ai-sdk/anthropic", label: "Anthropic" },
+  { value: "@ai-sdk/amazon-bedrock", label: "Amazon Bedrock" },
   { value: "@ai-sdk/google", label: "Google (Gemini)" },
 ] as const;
 
@@ -313,6 +314,50 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
           textVerbosity: "medium",
         },
       },
+    },
+  ],
+  "@ai-sdk/amazon-bedrock": [
+    {
+      id: "global.anthropic.claude-opus-4-6-v1",
+      name: "Claude Opus 4.6",
+      contextLimit: 1000000,
+      outputLimit: 128000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+    },
+    {
+      id: "global.anthropic.claude-sonnet-4-6",
+      name: "Claude Sonnet 4.6",
+      contextLimit: 200000,
+      outputLimit: 64000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+    },
+    {
+      id: "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+      name: "Claude Haiku 4.5",
+      contextLimit: 200000,
+      outputLimit: 64000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+    },
+    {
+      id: "us.amazon.nova-pro-v1:0",
+      name: "Amazon Nova Pro",
+      contextLimit: 300000,
+      outputLimit: 5000,
+      modalities: { input: ["text", "image"], output: ["text"] },
+    },
+    {
+      id: "us.meta.llama4-maverick-17b-instruct-v1:0",
+      name: "Meta Llama 4 Maverick",
+      contextLimit: 131072,
+      outputLimit: 131072,
+      modalities: { input: ["text"], output: ["text"] },
+    },
+    {
+      id: "us.deepseek.r1-v1:0",
+      name: "DeepSeek R1",
+      contextLimit: 131072,
+      outputLimit: 131072,
+      modalities: { input: ["text"], output: ["text"] },
     },
   ],
   "@ai-sdk/anthropic": [
@@ -1089,6 +1134,54 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
 
+  {
+    name: "AWS Bedrock",
+    websiteUrl: "https://aws.amazon.com/bedrock/",
+    settingsConfig: {
+      npm: "@ai-sdk/amazon-bedrock",
+      name: "AWS Bedrock",
+      options: {
+        region: "${region}",
+        accessKeyId: "${accessKeyId}",
+        secretAccessKey: "${secretAccessKey}",
+      },
+      models: {
+        "global.anthropic.claude-opus-4-6-v1": { name: "Claude Opus 4.6" },
+        "global.anthropic.claude-sonnet-4-6": {
+          name: "Claude Sonnet 4.6",
+        },
+        "global.anthropic.claude-haiku-4-5-20251001-v1:0": {
+          name: "Claude Haiku 4.5",
+        },
+        "us.amazon.nova-pro-v1:0": { name: "Amazon Nova Pro" },
+        "us.meta.llama4-maverick-17b-instruct-v1:0": {
+          name: "Meta Llama 4 Maverick",
+        },
+        "us.deepseek.r1-v1:0": { name: "DeepSeek R1" },
+      },
+    },
+    category: "cloud_provider",
+    icon: "aws",
+    iconColor: "#FF9900",
+    templateValues: {
+      region: {
+        label: "AWS Region",
+        placeholder: "us-west-2",
+        defaultValue: "us-west-2",
+        editorValue: "us-west-2",
+      },
+      accessKeyId: {
+        label: "Access Key ID",
+        placeholder: "AKIA...",
+        editorValue: "",
+      },
+      secretAccessKey: {
+        label: "Secret Access Key",
+        placeholder: "your-secret-key",
+        editorValue: "",
+      },
+    },
+  },
   {
     name: "OpenAI Compatible",
     websiteUrl: "",

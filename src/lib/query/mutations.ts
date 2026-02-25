@@ -19,8 +19,12 @@ export const useAddProviderMutation = (appId: AppId) => {
       let id: string;
 
       if (appId === "opencode" || appId === "openclaw") {
-        if (providerInput.category === "omo") {
-          id = `omo-${generateUUID()}`;
+        if (
+          providerInput.category === "omo" ||
+          providerInput.category === "omo-slim"
+        ) {
+          const prefix = providerInput.category === "omo" ? "omo" : "omo-slim";
+          id = `${prefix}-${generateUUID()}`;
         } else {
           if (!providerInput.providerKey) {
             throw new Error(`Provider key is required for ${appId}`);

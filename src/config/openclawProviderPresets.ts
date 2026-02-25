@@ -1054,6 +1054,41 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
 
+  // ========== Cloud Providers ==========
+  {
+    name: "AWS Bedrock",
+    websiteUrl: "https://aws.amazon.com/bedrock/",
+    settingsConfig: {
+      // 请将 us-west-2 替换为你的 AWS Region
+      baseUrl: "https://bedrock-runtime.us-west-2.amazonaws.com",
+      apiKey: "",
+      api: "bedrock-converse-stream",
+      models: [
+        {
+          id: "anthropic.claude-opus-4-6-20250514-v1:0",
+          name: "Claude Opus 4.6",
+          contextWindow: 200000,
+          cost: { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
+        },
+        {
+          id: "anthropic.claude-sonnet-4-6",
+          name: "Claude Sonnet 4.6",
+          contextWindow: 200000,
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        },
+        {
+          id: "anthropic.claude-haiku-4-5-20251022-v1:0",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+          cost: { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "aws",
+    iconColor: "#FF9900",
+  },
+
   // ========== Custom Template ==========
   {
     name: "OpenAI Compatible",

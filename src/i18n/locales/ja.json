@@ -1212,19 +1212,27 @@
     "saveSuccess": "保存しました",
     "saveFailed": "保存に失敗しました",
     "loadFailed": "読み込みに失敗しました",
+    "openDirectory": "ファイルマネージャーで開く",
     "dailyMemory": {
       "title": "デイリーメモリー",
       "sectionTitle": "デイリーメモリー",
       "cardTitle": "デイリーメモリーファイル",
       "cardDescription": "デイリーメモリーの閲覧・管理",
-      "createToday": "今日のノート",
+      "createToday": "メモリーを追加",
       "empty": "デイリーメモリーファイルはまだありません",
       "loadFailed": "デイリーメモリーファイルの読み込みに失敗しました",
       "createFailed": "デイリーメモリーファイルの作成に失敗しました",
       "deleteSuccess": "デイリーメモリーファイルを削除しました",
       "deleteFailed": "デイリーメモリーファイルの削除に失敗しました",
       "confirmDeleteTitle": "デイリーメモリーを削除",
-      "confirmDeleteMessage": "{{date}} のデイリーメモリーを削除しますか？この操作は取り消せません。"
+      "confirmDeleteMessage": "{{date}} のデイリーメモリーを削除しますか？この操作は取り消せません。",
+      "searchPlaceholder": "全文検索...",
+      "searchScopeHint": "すべてのデイリーメモリーを全文検索 ⌘F",
+      "searchCloseHint": "Escで閉じる",
+      "noSearchResults": "検索に一致するデイリーメモリーはありません。",
+      "searching": "検索中...",
+      "searchFailed": "検索に失敗しました",
+      "matchCount": "{{count}}件一致"
     }
   },
   "openclaw": {

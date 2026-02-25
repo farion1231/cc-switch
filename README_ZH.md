@@ -157,6 +157,7 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 **核心功能**
 
 - **供应商管理**：一键切换 Claude Code、Codex 与 Gemini 的 API 配置
+- **AWS Bedrock 支持**：内置 AWS Bedrock 供应商预设，支持 AKSK 和 API Key 两种认证方式，支持跨区域推理（global/us/eu/apac），覆盖 Claude Code 和 OpenCode
 - **速度测试**：测量 API 端点延迟，可视化连接质量指示器
 - **导入导出**：备份和恢复配置，自动轮换（保留最近 10 个）
 - **国际化支持**：完整的中英文本地化（UI、错误、托盘）
