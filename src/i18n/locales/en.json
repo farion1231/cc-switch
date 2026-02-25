@@ -593,7 +593,19 @@
     "resetName": "Reset Name",
     "renameSuccess": "Session renamed",
     "resetNameSuccess": "Name reset to default",
-    "filterRenamed": "Show only renamed sessions"
+    "filterRenamed": "Show only renamed sessions",
+    "settings": "Session settings",
+    "resumeExtraArgs": "Resume extra arguments",
+    "resumeExtraArgsHint": "Arguments appended when resuming sessions, e.g. --model opus",
+    "settingsSaved": "Settings saved",
+    "skipPermissionsTitle": "Skip permission prompts",
+    "skipPermissionsHint": "Automatically add --dangerously-skip-permissions when resuming sessions, skipping tool call permission prompts",
+    "defaultRenderMdTitle": "Default Markdown rendering",
+    "defaultRenderMdHint": "Show messages in Markdown format by default when switching sessions. Disable to show raw text instead",
+    "defaultCollapseTitle": "Collapse long messages by default",
+    "defaultCollapseHint": "Long messages are collapsed by default. Click to expand and view the full content",
+    "expandMessage": "Show more",
+    "collapseMessage": "Show less"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",

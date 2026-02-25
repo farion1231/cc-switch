@@ -12,12 +12,14 @@ import {
   FolderOpen,
   X,
   Tag,
+  Settings,
 } from "lucide-react";
 import {
   useSessionMessagesQuery,
   useSessionsQuery,
   useSessionAliasesQuery,
   useSetSessionAliasMutation,
+  useSessionConfigQuery,
 } from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -68,6 +70,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const { data: aliasesData } = useSessionAliasesQuery();
   const aliases = aliasesData ?? {};
   const setAliasMutation = useSetSessionAliasMutation();
+  const { data: resumeExtraArgs } = useSessionConfigQuery("resumeExtraArgs");
+  const { data: skipPermissionsRaw } = useSessionConfigQuery("skipPermissions");
+  const skipPermissions = skipPermissionsRaw === "true";
+  const { data: defaultRenderModeRaw } = useSessionConfigQuery("defaultRenderMode");
+  const defaultRenderMarkdown = defaultRenderModeRaw !== "raw";
+  const { data: defaultCollapseRaw } = useSessionConfigQuery("defaultCollapse");
+  const defaultCollapsed = defaultCollapseRaw !== "false";
+  const [extraArgsInput, setExtraArgsInput] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
   const detailRef = useRef<HTMLDivElement | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -89,6 +100,13 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const [onlyRenamed, setOnlyRenamed] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
+  // 打开设置面板时同步输入框
+  useEffect(() => {
+    if (showSettings) {
+      setExtraArgsInput(resumeExtraArgs ?? "");
+    }
+  }, [showSettings, resumeExtraArgs]);
+
   // 防抖搜索词
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 300);
@@ -108,11 +126,12 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     return results.filter((s) => aliases[getSessionKey(s)]);
   }, [searchSessions, debouncedSearch, onlyRenamed, aliases]);
 
-  // 切换会话时滚动到顶部
+  // 切换会话时滚动到顶部，并重置渲染模式为默认配置
   useEffect(() => {
     const viewport = scrollAreaRef.current?.querySelector("[data-radix-scroll-area-viewport]");
     if (viewport) viewport.scrollTop = 0;
-  }, [selectedKey]);
+    setRenderMarkdown(defaultRenderMarkdown);
+  }, [selectedKey, defaultRenderMarkdown]);
 
   const selectedSession = useMemo(() => {
     if (!selectedKey) return null;
@@ -193,9 +212,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const handleResume = async () => {
     if (!selectedSession?.resumeCommand) return;
 
+    // 组装完整恢复命令
+    const parts = [selectedSession.resumeCommand];
+    if (skipPermissions) parts.push("--dangerously-skip-permissions");
+    if (resumeExtraArgs) parts.push(resumeExtraArgs);
+    const fullCommand = parts.join(" ");
+
     if (!isMac()) {
       await handleCopy(
-        selectedSession.resumeCommand,
+        fullCommand,
         t("sessionManager.resumeCommandCopied"),
       );
       return;
@@ -203,20 +228,157 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
     try {
       await sessionsApi.launchTerminal({
-        command: selectedSession.resumeCommand,
+        command: fullCommand,
         cwd: selectedSession.projectDir ?? undefined,
       });
       toast.success(t("sessionManager.terminalLaunched"));
     } catch (error) {
-      const fallback = selectedSession.resumeCommand;
-      await handleCopy(fallback, t("sessionManager.resumeFallbackCopied"));
+      await handleCopy(fullCommand, t("sessionManager.resumeFallbackCopied"));
       toast.error(extractErrorMessage(error) || t("sessionManager.openFailed"));
     }
   };
 
+  const settingsButton = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "size-7 fixed right-6 z-50",
+            showSettings && "bg-primary/10 text-primary",
+          )}
+          style={{ top: 46, WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          onClick={() => {
+            const next = !showSettings;
+            setShowSettings(next);
+            if (next) setExtraArgsInput(resumeExtraArgs ?? "");
+          }}
+        >
+          <Settings className="size-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{t("sessionManager.settings")}</TooltipContent>
+    </Tooltip>
+  );
+
   return (
     <TooltipProvider>
       <div className="mx-auto px-4 sm:px-6 flex flex-col h-[calc(100vh-8rem)]">
+        {settingsButton}
+        {showSettings ? (
+          <div className="flex-1 overflow-hidden flex flex-col gap-4">
+            <Card className="flex-1 overflow-hidden">
+              <CardHeader className="py-3 px-4 border-b shrink-0">
+                <CardTitle className="text-sm font-medium">
+                  {t("sessionManager.settings")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 space-y-6">
+                {/* --dangerously-skip-permissions 勾选项 */}
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="skipPermissions"
+                    checked={skipPermissions}
+                    onChange={async (e) => {
+                      await sessionsApi.setConfig("skipPermissions", e.target.checked ? "true" : "false");
+                      const { queryClient } = await import("@/lib/query");
+                      await queryClient.invalidateQueries({ queryKey: ["sessionConfig", "skipPermissions"] });
+                    }}
+                    className="mt-0.5 size-4 rounded border-input accent-primary cursor-poin"
+                  />
+                  <div>
+                    <label htmlFor="skipPermissions" className="text-sm font-medium cursor-pointer">
+                      {t("sessionManager.skipPermissionsTitle")}
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("sessionManager.skipPermissionsHint")}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 默认渲染模式 */}
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="defaultRenderMarkdown"
+                    checked={defaultRenderMarkdown}
+                    onChange={async (e) => {
+                      await sessionsApi.setConfig("defaultRenderMode", e.target.checked ? "md" : "raw");
+                      const { queryClient } = await import("@/lib/query");
+                      await queryClient.invalidateQueries({ queryKey: ["sessionConfig", "defaultRenderMode"] });
+                    }}
+                    className="mt-0.5 size-4 rounded border-input accent-primary cursor-pointer"
+                  />
+                  <div>
+                    <label htmlFor="defaultRenderMarkdown" className="text-sm font-medium cursor-pointer">
+                      {t("sessionManager.defaultRenderMdTitle")}
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("sessionManager.defaultRenderMdHint")}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 默认收缩消息 */}
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="defaultCollapse"
+                    checked={defaultCollapsed}
+                    onChange={async (e) => {
+                      await sessionsApi.setConfig("defaultCollapse", e.target.checked ? "true" : "false");
+                      const { queryClient } = await import("@/lib/query");
+                      await queryClient.invalidateQueries({ queryKey: ["sessionConfig", "defaultCollapse"] });
+                    }}
+                    className="mt-0.5 size-4 rounded border-input accent-primary cursor-pointer"
+                  />
+                  <div>
+                    <label htmlFor="defaultCollapse" className="text-sm font-medium cursor-pointer">
+                      {t("sessionManager.defaultCollapseTitle")}
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("sessionManager.defaultCollapseHint")}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 额外参数 */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    {t("sessionManager.resumeExtraArgs")}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={extraArgsInput}
+                      onChange={(e) => setExtraArgsInput(e.target.value)}
+                      placeholder="--model opus"
+                      className="h-8 text-sm font-mono"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-3 shrink-0"
+                      onClick={async () => {
+                        const trimmed = extraArgsInput.trim();
+                        await sessionsApi.setConfig("resumeExtraArgs", trimmed);
+                        const { queryClient } = await import("@/lib/query");
+                        await queryClient.invalidateQueries({ queryKey: ["sessionConfig", "resumeExtraArgs"] });
+                        toast.success(t("sessionManager.settingsSaved"));
+                      }}
+                    >
+                      {t("common.save")}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t("sessionManager.resumeExtraArgsHint")}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
           {/* 主内容区域 - 左右分栏 */}
           <div className="flex-1 overflow-hidden grid gap-4 md:grid-cols-[320px_1fr]">
@@ -582,7 +744,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     {selectedSession.resumeCommand && (
                       <div className="mt-3 flex items-center gap-2">
                         <div className="flex-1 rounded-md bg-muted/60 px-3 py-1.5 font-mono text-xs text-muted-foreground truncate">
-                          {selectedSession.resumeCommand}
+                          {[
+                            selectedSession.resumeCommand,
+                            skipPermissions && "--dangerously-skip-permissions",
+                            resumeExtraArgs,
+                          ].filter(Boolean).join(" ")}
                         </div>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -590,12 +756,17 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               variant="ghost"
                               size="icon"
                               className="size-7 shrink-0"
-                              onClick={() =>
-                                void handleCopy(
+                              onClick={() => {
+                                const cmd = [
                                   selectedSession.resumeCommand!,
+                                  skipPermissions && "--dangerously-skip-permissions",
+                                  resumeExtraArgs,
+                                ].filter(Boolean).join(" ");
+                                void handleCopy(
+                                  cmd,
                                   t("sessionManager.resumeCommandCopied"),
-                                )
-                              }
+                                );
+                              }}
                             >
                               <Copy className="size-3.5" />
                             </Button>
@@ -668,6 +839,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                     )
                                   }
                                   renderMarkdown={renderMarkdown}
+                                  defaultCollapsed={defaultCollapsed}
                                 />
                               ))}
                               <div ref={messagesEndRef} />
@@ -696,6 +868,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
             </Card>
           </div>
         </div>
+        )}
       </div>
     </TooltipProvider>
   );

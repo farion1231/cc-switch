@@ -316,6 +316,16 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 18. Session Config 表（会话管理配置，key-value）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(())
     }
 

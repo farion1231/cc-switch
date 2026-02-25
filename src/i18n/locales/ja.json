@@ -593,7 +593,19 @@
     "resetName": "デフォルト名に戻す",
     "renameSuccess": "セッション名を変更しました",
     "resetNameSuccess": "デフォルト名に戻しました",
-    "filterRenamed": "名前変更済みのみ表示"
+    "filterRenamed": "名前変更済みのみ表示",
+    "settings": "セッション設定",
+    "resumeExtraArgs": "再開時の追加引数",
+    "resumeExtraArgsHint": "セッション再開時に自動的に追加される引数（例: --model opus）",
+    "settingsSaved": "設定を保存しました",
+    "skipPermissionsTitle": "権限確認をスキップ",
+    "skipPermissionsHint": "セッション再開時に --dangerously-skip-permissions を自動追加し、ツール呼び出しの権限確認をスキップします",
+    "defaultRenderMdTitle": "デフォルト Markdown 表示",
+    "defaultRenderMdHint": "セッション切り替え時にデフォルトで Markdown 形式で表示します。無効にすると原文表示になります",
+    "defaultCollapseTitle": "長いメッセージをデフォルトで折りたたむ",
+    "defaultCollapseHint": "長いメッセージはデフォルトで折りたたまれます。クリックで全文を表示できます",
+    "expandMessage": "全文を表示",
+    "collapseMessage": "折りたたむ"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",

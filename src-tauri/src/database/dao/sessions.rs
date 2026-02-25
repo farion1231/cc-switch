@@ -50,4 +50,38 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
+
+    /// 获取会话配置项
+    pub fn get_session_config(&self, key: &str) -> Result<Option<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare("SELECT value FROM session_config WHERE key = ?1")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let result = stmt
+            .query_row(params![key], |row| row.get::<_, String>(0))
+            .ok();
+        Ok(result)
+    }
+
+    /// 设置会话配置项
+    pub fn set_session_config(&self, key: &str, value: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "INSERT OR REPLACE INTO session_config (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// 删除会话配置项
+    pub fn delete_session_config(&self, key: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "DELETE FROM session_config WHERE key = ?1",
+            params![key],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
 }

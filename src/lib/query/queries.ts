@@ -160,3 +160,11 @@ export const useSessionAliasesQuery = () => {
     staleTime: 60 * 1000,
   });
 };
+
+export const useSessionConfigQuery = (key: string) => {
+  return useQuery<string | null>({
+    queryKey: ["sessionConfig", key],
+    queryFn: async () => sessionsApi.getConfig(key),
+    staleTime: 5 * 60 * 1000,
+  });
+};

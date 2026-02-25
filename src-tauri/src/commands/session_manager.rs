@@ -89,3 +89,23 @@ pub async fn delete_session_alias(
         .delete_session_alias(&sessionKey)
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn get_session_config(
+    state: tauri::State<'_, AppState>,
+    key: String,
+) -> Result<Option<String>, String> {
+    state.db.get_session_config(&key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_session_config(
+    state: tauri::State<'_, AppState>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    state
+        .db
+        .set_session_config(&key, &value)
+        .map_err(|e| e.to_string())
+}

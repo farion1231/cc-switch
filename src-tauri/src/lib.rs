@@ -1007,6 +1007,8 @@ pub fn run() {
             commands::get_all_session_aliases,
             commands::set_session_alias,
             commands::delete_session_alias,
+            commands::get_session_config,
+            commands::set_session_config,
             commands::get_tool_versions,
             // Provider terminal
             commands::open_provider_terminal,

@@ -37,4 +37,12 @@ export const sessionsApi = {
   async deleteAlias(sessionKey: string): Promise<void> {
     return await invoke("delete_session_alias", { sessionKey });
   },
+
+  async getConfig(key: string): Promise<string | null> {
+    return await invoke("get_session_config", { key });
+  },
+
+  async setConfig(key: string, value: string): Promise<void> {
+    return await invoke("set_session_config", { key, value });
+  },
 };

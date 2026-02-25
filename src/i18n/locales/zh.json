@@ -593,7 +593,19 @@
     "resetName": "恢复默认名称",
     "renameSuccess": "会话已重命名",
     "resetNameSuccess": "已恢复默认名称",
-    "filterRenamed": "仅显示已重命名的会话"
+    "filterRenamed": "仅显示已重命名的会话",
+    "settings": "会话设置",
+    "resumeExtraArgs": "恢复会话额外参数",
+    "resumeExtraArgsHint": "恢复会话时自动追加的参数，如 --model opus",
+    "settingsSaved": "设置已保存",
+    "skipPermissionsTitle": "跳过权限确认",
+    "skipPermissionsHint": "恢复会话时自动添加 --dangerously-skip-permissions 参数，跳过工具调用的权限确认提示",
+    "defaultRenderMdTitle": "默认 Markdown 渲染",
+    "defaultRenderMdHint": "切换会话时默认使用 Markdown 格式展示消息，关闭则默认展示原文",
+    "defaultCollapseTitle": "默认收缩长消息",
+    "defaultCollapseHint": "超长消息默认折叠显示，点击可展开查看全文",
+    "expandMessage": "展开全文",
+    "collapseMessage": "收起"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",
