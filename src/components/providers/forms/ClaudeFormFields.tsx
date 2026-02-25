@@ -198,8 +198,8 @@ export function ClaudeFormFields({
         />
       )}
 
-      {/* API 格式选择（仅非官方供应商显示） */}
-      {shouldShowModelSelector && (
+      {/* API 格式选择（仅非官方、非云服务商显示） */}
+      {shouldShowModelSelector && category !== "cloud_provider" && (
         <div className="space-y-2">
           <FormLabel htmlFor="apiFormat">
             {t("providerForm.apiFormat", { defaultValue: "API 格式" })}

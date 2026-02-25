@@ -40,7 +40,10 @@ import {
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
-import { applyTemplateValues } from "@/utils/providerConfigUtils";
+import {
+  applyTemplateValues,
+  hasApiKeyField,
+} from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
@@ -548,7 +551,7 @@ export function ProviderForm({
       return;
     }
 
-    if (appId === "opencode" && category !== "omo") {
+    if (appId === "opencode" && !isAnyOmoCategory) {
       const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
       if (!opencodeForm.opencodeProviderKey.trim()) {
         toast.error(t("opencode.providerKeyRequired"));
@@ -594,7 +597,8 @@ export function ProviderForm({
     }
 
     // 非官方供应商必填校验：端点和 API Key
-    if (category !== "official") {
+    // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
+    if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
         if (!baseUrl.trim()) {
           toast.error(
@@ -728,9 +732,10 @@ export function ProviderForm({
     };
 
     if (appId === "opencode") {
-      if (category === "omo") {
+      if (isAnyOmoCategory) {
         if (!isEditMode) {
-          payload.providerKey = `omo-${crypto.randomUUID().slice(0, 8)}`;
+          const prefix = category === "omo" ? "omo" : "omo-slim";
+          payload.providerKey = `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
         }
       } else {
         payload.providerKey = opencodeForm.opencodeProviderKey;
@@ -739,8 +744,8 @@ export function ProviderForm({
       payload.providerKey = openclawForm.openclawProviderKey;
     }
 
-    if (category === "omo" && !payload.presetCategory) {
-      payload.presetCategory = "omo";
+    if (isAnyOmoCategory && !payload.presetCategory) {
+      payload.presetCategory = category;
     }
 
     if (activePreset) {
@@ -843,7 +848,8 @@ export function ProviderForm({
     );
   }, [groupedPresets]);
 
-  const shouldShowSpeedTest = category !== "official";
+  const shouldShowSpeedTest =
+    category !== "official" && category !== "cloud_provider";
 
   const {
     shouldShowApiKeyLink: shouldShowClaudeApiKeyLink,
@@ -995,10 +1001,10 @@ export function ProviderForm({
       const preset = entry.preset as OpenCodeProviderPreset;
       const config = preset.settingsConfig;
 
-      if (preset.category === "omo") {
+      if (preset.category === "omo" || preset.category === "omo-slim") {
         omoDraft.resetOmoDraftState();
         form.reset({
-          name: "OMO",
+          name: preset.category === "omo" ? "OMO" : "OMO Slim",
           websiteUrl: preset.websiteUrl ?? "",
           settingsConfig: JSON.stringify({}, null, 2),
           icon: preset.icon ?? "",
@@ -1108,7 +1114,7 @@ export function ProviderForm({
         <BasicFormFields
           form={form}
           beforeNameSlot={
-            appId === "opencode" && category !== "omo" ? (
+            appId === "opencode" && !isAnyOmoCategory ? (
               <div className="space-y-2">
                 <Label htmlFor="opencode-key">
                   {t("opencode.providerKey")}
@@ -1233,10 +1239,13 @@ export function ProviderForm({
         {appId === "claude" && (
           <ClaudeFormFields
             providerId={providerId}
-            shouldShowApiKey={shouldShowApiKey(
-              form.getValues("settingsConfig"),
-              isEditMode,
-            )}
+            shouldShowApiKey={
+              hasApiKeyField(form.getValues("settingsConfig"), "claude") &&
+              shouldShowApiKey(
+                form.getValues("settingsConfig"),
+                isEditMode,
+              )
+            }
             apiKey={apiKey}
             onApiKeyChange={handleApiKeyChange}
             category={category}
@@ -1329,7 +1338,7 @@ export function ProviderForm({
           />
         )}
 
-        {appId === "opencode" && category !== "omo" && (
+        {appId === "opencode" && !isAnyOmoCategory && (
           <OpenCodeFormFields
             npm={opencodeForm.opencodeNpm}
             onNpmChange={opencodeForm.handleOpencodeNpmChange}
@@ -1523,7 +1532,7 @@ export function ProviderForm({
           </>
         )}
 
-        {category !== "omo" && appId !== "opencode" && appId !== "openclaw" && (
+        {!isAnyOmoCategory && appId !== "opencode" && appId !== "openclaw" && (
           <ProviderAdvancedConfig
             testConfig={testConfig}
             proxyConfig={proxyConfig}

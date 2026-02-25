@@ -29,6 +29,16 @@ export const getApiKeyFromConfig = (
 ): string => {
   try {
     const config = JSON.parse(jsonString);
+
+    // 优先检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    if (
+      typeof config?.apiKey === "string" &&
+      config.apiKey &&
+      !config.apiKey.includes("${")
+    ) {
+      return config.apiKey;
+    }
+
     const env = config?.env;
 
     if (!env) return "";
@@ -112,6 +122,12 @@ export const hasApiKeyField = (
 ): boolean => {
   try {
     const config = JSON.parse(jsonString);
+
+    // 检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    if (Object.prototype.hasOwnProperty.call(config, "apiKey")) {
+      return true;
+    }
+
     const env = config?.env ?? {};
 
     if (appType === "gemini") {
@@ -144,6 +160,13 @@ export const setApiKeyInConfig = (
   const { createIfMissing = false, appType, apiKeyField } = options;
   try {
     const config = JSON.parse(jsonString);
+
+    // 优先检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    if (Object.prototype.hasOwnProperty.call(config, "apiKey")) {
+      config.apiKey = apiKey;
+      return JSON.stringify(config, null, 2);
+    }
+
     if (!config.env) {
       if (!createIfMissing) return jsonString;
       config.env = {};

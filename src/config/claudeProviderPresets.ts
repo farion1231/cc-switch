@@ -531,4 +531,73 @@ export const providerPresets: ProviderPreset[] = [
     icon: "xiaomimimo",
     iconColor: "#000000",
   },
+  {
+    name: "AWS Bedrock (AKSK)",
+    websiteUrl: "https://aws.amazon.com/bedrock/",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://bedrock-runtime.${AWS_REGION}.amazonaws.com",
+        AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}",
+        AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}",
+        AWS_REGION: "${AWS_REGION}",
+        ANTHROPIC_MODEL: "global.anthropic.claude-opus-4-6-v1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL:
+          "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+        ANTHROPIC_DEFAULT_SONNET_MODEL:
+          "global.anthropic.claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "global.anthropic.claude-opus-4-6-v1",
+        CLAUDE_CODE_USE_BEDROCK: "1",
+      },
+    },
+    category: "cloud_provider",
+    templateValues: {
+      AWS_REGION: {
+        label: "AWS Region",
+        placeholder: "us-west-2",
+        editorValue: "us-west-2",
+      },
+      AWS_ACCESS_KEY_ID: {
+        label: "Access Key ID",
+        placeholder: "AKIA...",
+        editorValue: "",
+      },
+      AWS_SECRET_ACCESS_KEY: {
+        label: "Secret Access Key",
+        placeholder: "your-secret-key",
+        editorValue: "",
+      },
+    },
+    icon: "aws",
+    iconColor: "#FF9900",
+  },
+  {
+    name: "AWS Bedrock (API Key)",
+    websiteUrl: "https://aws.amazon.com/bedrock/",
+    settingsConfig: {
+      apiKey: "",
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://bedrock-runtime.${AWS_REGION}.amazonaws.com",
+        AWS_REGION: "${AWS_REGION}",
+        ANTHROPIC_MODEL: "global.anthropic.claude-opus-4-6-v1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL:
+          "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+        ANTHROPIC_DEFAULT_SONNET_MODEL:
+          "global.anthropic.claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "global.anthropic.claude-opus-4-6-v1",
+        CLAUDE_CODE_USE_BEDROCK: "1",
+      },
+    },
+    category: "cloud_provider",
+    templateValues: {
+      AWS_REGION: {
+        label: "AWS Region",
+        placeholder: "us-west-2",
+        editorValue: "us-west-2",
+      },
+    },
+    icon: "aws",
+    iconColor: "#FF9900",
+  },
 ];

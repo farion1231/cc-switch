@@ -133,10 +133,11 @@ impl ProviderService {
 
         // Additive mode apps (OpenCode, OpenClaw) - always write to live config
         if app_type.is_additive_mode() {
-            // OMO providers use exclusive mode and write to dedicated config file.
-            if matches!(app_type, AppType::OpenCode) && provider.category.as_deref() == Some("omo")
+            // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
+            if matches!(app_type, AppType::OpenCode)
+                && matches!(provider.category.as_deref(), Some("omo") | Some("omo-slim"))
             {
-                // Do not auto-enable newly added OMO providers.
+                // Do not auto-enable newly added OMO / OMO Slim providers.
                 // Users must explicitly switch/apply an OMO provider to activate it.
                 return Ok(true);
             }
