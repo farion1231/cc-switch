@@ -43,10 +43,10 @@ export function SessionMessageItem({
             className={cn(
                 "rounded-lg border px-3 py-2.5 relative group transition-all min-w-0",
                 message.role.toLowerCase() === "user"
-                    ? "bg-primary/5 border-primary/20 ml-4"
+                    ? "bg-primary/5 border-primary/20 ml-8"
                     : message.role.toLowerCase() === "assistant"
-                        ? "bg-blue-500/5 border-blue-500/20 mr-4"
-                        : "bg-muted/40 border-border/60",
+                        ? "bg-blue-500/5 border-blue-500/20 mr-8"
+                        : "bg-muted/40 border-border/60 mr-8",
                 isActive && "ring-2 ring-primary ring-offset-2",
             )}
         >
@@ -70,6 +70,11 @@ export function SessionMessageItem({
             <div className="flex items-center justify-between text-xs mb-1.5 pr-6">
                 <span className={cn("font-semibold", getRoleTone(message.role))}>
                     {getRoleLabel(message.role, t)}
+                    {message.toolName && (
+                        <span className="text-muted-foreground font-normal ml-1">
+                            ({message.toolName})
+                        </span>
+                    )}
                 </span>
                 {message.ts && (
                     <span className="text-muted-foreground">
