@@ -44,7 +44,7 @@ import { cn } from "@/lib/utils";
 import { isMac } from "@/lib/platform";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { SessionItem } from "./SessionItem";
-import { SessionMessageItem } from "./SessionMessageItem";
+import { VirtualMessageList } from "./VirtualMessageList";
 import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
 import {
   formatSessionTitle,
@@ -80,8 +80,6 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const [extraArgsInput, setExtraArgsInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const detailRef = useRef<HTMLDivElement | null>(null);
-  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [activeMessageIndex, setActiveMessageIndex] = useState<number | null>(
     null,
@@ -128,8 +126,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
   // 切换会话时滚动到顶部，并重置渲染模式为默认配置
   useEffect(() => {
-    const viewport = scrollAreaRef.current?.querySelector("[data-radix-scroll-area-viewport]");
-    if (viewport) viewport.scrollTop = 0;
+    if (messageScrollRef.current) messageScrollRef.current.scrollTop = 0;
     setRenderMarkdown(defaultRenderMarkdown);
   }, [selectedKey, defaultRenderMarkdown]);
 
@@ -147,6 +144,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       selectedSession?.providerId,
       selectedSession?.sourcePath,
     );
+
+  // 虚拟列表：滚动容器 ref
+  const messageScrollRef = useRef<HTMLDivElement | null>(null);
 
   // 提取用户消息用于目录
   const userMessagesToc = useMemo(() => {
@@ -785,68 +785,57 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                   <CardContent className="flex-1 overflow-hidden p-0">
                     <div className="flex h-full overflow-hidden">
                       {/* 消息列表 */}
-                      <ScrollArea ref={scrollAreaRef} className="flex-1 min-w-0">
-                        <div className="p-4 overflow-x-hidden">
-                          <div className="flex items-center gap-2 mb-3">
-                            <MessageSquare className="size-4 text-muted-foreground" />
-                            <span className="text-sm font-medium">
-                              {t("sessionManager.conversationHistory", {
-                                defaultValue: "对话记录",
-                              })}
-                            </span>
-                            <Badge variant="secondary" className="text-xs">
-                              {messages.length}
-                            </Badge>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-5 px-1.5 text-xs rounded"
-                              disabled={isPending}
-                              onClick={() => startTransition(() => setRenderMarkdown((prev) => !prev))}
-                            >
-                              {renderMarkdown ? "MD" : "Raw"}
-                            </Button>
-                          </div>
-
-                          {isLoadingMessages ? (
-                            <div className="flex items-center justify-center py-12">
-                              <RefreshCw className="size-5 animate-spin text-muted-foreground" />
-                            </div>
-                          ) : messages.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-12 text-center">
-                              <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
-                              <p className="text-sm text-muted-foreground">
-                                {t("sessionManager.emptySession")}
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-3">
-                              {messages.map((message, index) => (
-                                <SessionMessageItem
-                                  key={`${message.role}-${index}`}
-                                  message={message}
-                                  index={index}
-                                  isActive={activeMessageIndex === index}
-                                  setRef={(el) => {
-                                    if (el) messageRefs.current.set(index, el);
-                                  }}
-                                  onCopy={(content) =>
-                                    handleCopy(
-                                      content,
-                                      t("sessionManager.messageCopied", {
-                                        defaultValue: "已复制消息内容",
-                                      }),
-                                    )
-                                  }
-                                  renderMarkdown={renderMarkdown}
-                                  defaultCollapsed={defaultCollapsed}
-                                />
-                              ))}
-                              <div ref={messagesEndRef} />
-                            </div>
-                          )}
+                      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+                        <div className="flex items-center gap-2 px-4 pt-4 pb-2">
+                          <MessageSquare className="size-4 text-muted-foreground" />
+                          <span className="text-sm font-medium">
+                            {t("sessionManager.conversationHistory", {
+                              defaultValue: "对话记录",
+                            })}
+                          </span>
+                          <Badge variant="secondary" className="text-xs">
+                            {messages.length}
+                          </Badge>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-5 px-1.5 text-xs rounded"
+                            disabled={isPending}
+                            onClick={() => startTransition(() => setRenderMarkdown((prev) => !prev))}
+                          >
+                            {renderMarkdown ? "MD" : "Raw"}
+                          </Button>
                         </div>
-                      </ScrollArea>
+
+                        {isLoadingMessages ? (
+                          <div className="flex items-center justify-center py-12">
+                            <RefreshCw className="size-5 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : messages.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-12 text-center">
+                            <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
+                            <p className="text-sm text-muted-foreground">
+                     {t("sessionManager.emptySession")}
+                            </p>
+                          </div>
+                        ) : (
+                          <VirtualMessageList
+                            messages={messages}
+                            activeMessageIndex={activeMessageIndex}
+                            messageRefs={messageRefs}
+                            onCopy={(content) =>
+                              handleCopy(
+                                content,
+                                t("sessionManager.messageCopied", {
+                                  defaultValue: "已复制消息内容",
+                                }),
+                              )
+                            }
+                            renderMarkdown={renderMarkdown}
+                            defaultCollapsed={defaultCollapsed}
+                          />
+                        )}
+                      </div>
 
                       {/* 右侧目录 - 类似少数派 (大屏幕) */}
                       <SessionTocSidebar
