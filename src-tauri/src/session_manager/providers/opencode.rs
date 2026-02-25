@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::utils::{parse_timestamp_to_ms, path_basename};
 
 const PROVIDER_ID: &str = "opencode";
 
@@ -56,7 +56,6 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let mut msg_files = Vec::new();
     collect_json_files(path, &mut msg_files);
 
-    // Parse all messages and collect (created_ts, message_id, role, parts_text)
     let mut entries: Vec<(i64, String, String, String)> = Vec::new();
 
     for msg_path in &msg_files {
@@ -86,7 +85,6 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             .and_then(parse_timestamp_to_ms)
             .unwrap_or(0);
 
-        // Collect text parts from storage/part/{messageID}/
         let part_dir = storage.join("part").join(&msg_id);
         let text = collect_parts_text(&part_dir);
         if text.trim().is_empty() {
@@ -96,7 +94,6 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         entries.push((created_ts, msg_id, role, text));
     }
 
-    // Sort by created timestamp
     entries.sort_by_key(|(ts, _, _, _)| *ts);
 
     let messages = entries
@@ -105,12 +102,14 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             role,
             content,
             ts: if ts > 0 { Some(ts) } else { None },
+            tool_name: None,
         })
         .collect();
 
     Ok(messages)
 }
 
+/// 读取 session JSON 提取元数据，不读取消息内容（跳过 summary）
 fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
     let data = std::fs::read_to_string(path).ok()?;
     let value: Value = serde_json::from_str(&data).ok()?;
@@ -135,7 +134,6 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
         .and_then(|t| t.get("updated"))
         .and_then(parse_timestamp_to_ms);
 
-    // Derive title from directory basename if no explicit title
     let display_title = title.or_else(|| {
         directory
             .as_deref()
@@ -143,76 +141,20 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
             .map(|s| s.to_string())
     });
 
-    // Build source_path = message directory for this session
     let msg_dir = storage.join("message").join(&session_id);
     let source_path = msg_dir.to_string_lossy().to_string();
-
-    // Get summary from first user message
-    let summary = get_first_user_summary(storage, &session_id);
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
         title: display_title,
-        summary,
+        summary: None,
         project_dir: directory,
         created_at,
         last_active_at: updated_at.or(created_at),
         source_path: Some(source_path),
         resume_command: Some(format!("opencode session resume {session_id}")),
     })
-}
-
-/// Read the first user message's first text part to use as summary.
-fn get_first_user_summary(storage: &Path, session_id: &str) -> Option<String> {
-    let msg_dir = storage.join("message").join(session_id);
-    if !msg_dir.is_dir() {
-        return None;
-    }
-
-    let mut msg_files = Vec::new();
-    collect_json_files(&msg_dir, &mut msg_files);
-
-    // Collect user messages with timestamps for ordering
-    let mut user_msgs: Vec<(i64, String)> = Vec::new();
-    for msg_path in &msg_files {
-        let data = match std::fs::read_to_string(msg_path) {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-        let value: Value = match serde_json::from_str(&data) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        if value.get("role").and_then(Value::as_str) != Some("user") {
-            continue;
-        }
-
-        let msg_id = match value.get("id").and_then(Value::as_str) {
-            Some(id) => id.to_string(),
-            None => continue,
-        };
-
-        let ts = value
-            .get("time")
-            .and_then(|t| t.get("created"))
-            .and_then(parse_timestamp_to_ms)
-            .unwrap_or(0);
-
-        user_msgs.push((ts, msg_id));
-    }
-
-    user_msgs.sort_by_key(|(ts, _)| *ts);
-
-    // Take first user message and get its parts
-    let (_, first_id) = user_msgs.first()?;
-    let part_dir = storage.join("part").join(first_id);
-    let text = collect_parts_text(&part_dir);
-    if text.trim().is_empty() {
-        return None;
-    }
-    Some(truncate_summary(&text, 160))
 }
 
 /// Collect text content from all parts in a part directory.
@@ -235,7 +177,6 @@ fn collect_parts_text(part_dir: &Path) -> String {
             Err(_) => continue,
         };
 
-        // Only include text-type parts
         if value.get("type").and_then(Value::as_str) != Some("text") {
             continue;
         }

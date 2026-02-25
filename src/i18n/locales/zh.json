@@ -574,7 +574,28 @@
     "daysAgo": "{{count}} 天前",
     "roleUser": "用户",
     "roleSystem": "系统",
-    "roleTool": "工具"
+    "roleTool": "工具",
+    "showRawText": "显示原文",
+    "showMarkdown": "Markdown 渲染",
+    "rename": "重命名",
+    "resetName": "恢复默认名称",
+    "renameSuccess": "会话已重命名",
+    "resetNameSuccess": "已恢复默认名称",
+    "filterRenamed": "仅显示已重命名的会话",
+    "settings": "会话设置",
+    "resumeExtraArgs": "恢复会话额外参数",
+    "resumeExtraArgsHint": "恢复会话时自动追加的参数，如 --model opus",
+    "settingsSaved": "设置已保存",
+    "skipPermissionsTitle": "跳过权限确认",
+    "skipPermissionsHint": "恢复会话时自动添加 --dangerously-skip-permissions 参数，跳过工具调用的权限确认提示",
+    "defaultRenderMdTitle": "默认 Markdown 渲染",
+    "defaultRenderMdHint": "切换会话时默认使用 Markdown 格式展示消息，关闭则默认展示原文",
+    "defaultCollapseTitle": "默认收缩长消息",
+    "defaultCollapseHint": "超长消息默认折叠显示，点击可展开查看全文",
+    "showMessageIndexTitle": "显示消息序号",
+    "showMessageIndexHint": "在每条消息前显示序号，方便定位",
+    "expandMessage": "展开全文",
+    "collapseMessage": "收起"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",
@@ -807,7 +828,55 @@
     "cacheReadCost": "缓存读取价格 ($/M tokens)",
     "cacheWriteCost": "缓存写入价格 ($/M tokens)",
     "cacheCostHint": "缓存价格用于计算 Prompt Caching 的成本。如不使用缓存可留空。",
-    "modelsHint": "配置该供应商支持的模型。模型 ID 用于 API 调用，显示名称用于界面展示。"
+    "modelsHint": "配置该供应商支持的模型。模型 ID 用于 API 调用，显示名称用于界面展示。",
+    "env": {
+      "title": "环境变量",
+      "description": "管理 openclaw.json 中的环境变量配置（API Key、自定义变量等）",
+      "keyPlaceholder": "变量名",
+      "valuePlaceholder": "值",
+      "add": "添加变量",
+      "saveSuccess": "环境变量已保存",
+      "saveFailed": "保存环境变量失败",
+      "loadFailed": "读取环境变量失败",
+      "duplicateKey": "检测到重复的变量名: {{key}}"
+    },
+    "tools": {
+      "title": "工具权限",
+      "description": "管理 openclaw.json 中的工具权限配置（允许/拒绝列表）",
+      "profile": "权限模式",
+      "profiles": {
+        "default": "默认",
+        "strict": "严格",
+        "permissive": "宽松",
+        "custom": "自定义"
+      },
+      "allowList": "允许列表",
+      "denyList": "拒绝列表",
+      "patternPlaceholder": "工具名称或模式",
+      "addAllow": "添加允许",
+      "addDeny": "添加拒绝",
+      "saveSuccess": "工具权限已保存",
+      "saveFailed": "保存工具权限失败",
+      "loadFailed": "读取工具权限失败"
+    },
+    "agents": {
+      "title": "Agents 配置",
+      "description": "管理 openclaw.json 中的 agents.defaults 配置（默认模型、运行参数等）",
+      "modelSection": "模型配置",
+      "primaryModel": "主模型",
+      "primaryModelHint": "在供应商列表中通过「设为默认模型」按钮设置",
+      "notSet": "未设置",
+      "fallbackModels": "回退模型",
+      "fallbackModelsHint": "逗号分隔，按优先级排列",
+      "runtimeSection": "运行参数",
+      "workspace": "工作区路径",
+      "timeout": "超时时间（秒）",
+      "contextTokens": "上下文 Token 数",
+      "maxConcurrent": "最大并发数",
+      "saveSuccess": "Agents 配置已保存",
+      "saveFailed": "保存 Agents 配置失败",
+      "loadFailed": "读取 Agents 配置失败"
+    }
   },
   "providerPreset": {
     "label": "预设供应商",
@@ -1217,56 +1286,6 @@
       "searching": "搜索中...",
       "searchFailed": "搜索失败",
       "matchCount": "{{count}} 处匹配"
-    }
-  },
-  "openclaw": {
-    "env": {
-      "title": "环境变量",
-      "description": "管理 openclaw.json 中的环境变量配置（API Key、自定义变量等）",
-      "keyPlaceholder": "变量名",
-      "valuePlaceholder": "值",
-      "add": "添加变量",
-      "saveSuccess": "环境变量已保存",
-      "saveFailed": "保存环境变量失败",
-      "loadFailed": "读取环境变量失败",
-      "duplicateKey": "检测到重复的变量名: {{key}}"
-    },
-    "tools": {
-      "title": "工具权限",
-      "description": "管理 openclaw.json 中的工具权限配置（允许/拒绝列表）",
-      "profile": "权限模式",
-      "profiles": {
-        "default": "默认",
-        "strict": "严格",
-        "permissive": "宽松",
-        "custom": "自定义"
-      },
-      "allowList": "允许列表",
-      "denyList": "拒绝列表",
-      "patternPlaceholder": "工具名称或模式",
-      "addAllow": "添加允许",
-      "addDeny": "添加拒绝",
-      "saveSuccess": "工具权限已保存",
-      "saveFailed": "保存工具权限失败",
-      "loadFailed": "读取工具权限失败"
-    },
-    "agents": {
-      "title": "Agents 配置",
-      "description": "管理 openclaw.json 中的 agents.defaults 配置（默认模型、运行参数等）",
-      "modelSection": "模型配置",
-      "primaryModel": "主模型",
-      "primaryModelHint": "在供应商列表中通过「设为默认模型」按钮设置",
-      "notSet": "未设置",
-      "fallbackModels": "回退模型",
-      "fallbackModelsHint": "逗号分隔，按优先级排列",
-      "runtimeSection": "运行参数",
-      "workspace": "工作区路径",
-      "timeout": "超时时间（秒）",
-      "contextTokens": "上下文 Token 数",
-      "maxConcurrent": "最大并发数",
-      "saveSuccess": "Agents 配置已保存",
-      "saveFailed": "保存 Agents 配置失败",
-      "loadFailed": "读取 Agents 配置失败"
     }
   },
   "env": {

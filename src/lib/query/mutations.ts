@@ -232,6 +232,30 @@ export const useSwitchProviderMutation = (appId: AppId) => {
   });
 };
 
+export const useSetSessionAliasMutation = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      sessionKey,
+      alias,
+    }: {
+      sessionKey: string;
+      alias: string | null;
+    }) => {
+      const { sessionsApi } = await import("@/lib/api");
+      if (alias) {
+        await sessionsApi.setAlias(sessionKey, alias);
+      } else {
+        await sessionsApi.deleteAlias(sessionKey);
+      }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["sessionAliases"] });
+    },
+  });
+};
+
 export const useSaveSettingsMutation = () => {
   const queryClient = useQueryClient();
 

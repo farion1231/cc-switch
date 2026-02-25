@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -11,8 +11,16 @@ import {
   Clock,
   FolderOpen,
   X,
+  Tag,
+  Settings,
 } from "lucide-react";
-import { useSessionMessagesQuery, useSessionsQuery } from "@/lib/query";
+import {
+  useSessionMessagesQuery,
+  useSessionsQuery,
+  useSessionAliasesQuery,
+  useSetSessionAliasMutation,
+  useSessionConfigQuery,
+} from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,10 +40,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { cn } from "@/lib/utils";
 import { isMac } from "@/lib/platform";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { SessionItem } from "./SessionItem";
-import { SessionMessageItem } from "./SessionMessageItem";
+import { VirtualMessageList } from "./VirtualMessageList";
 import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
 import {
   formatSessionTitle,
@@ -58,61 +67,88 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
   const { data, isLoading, refetch } = useSessionsQuery();
   const sessions = data ?? [];
+  const { data: aliasesData } = useSessionAliasesQuery();
+  const aliases = aliasesData ?? {};
+  const setAliasMutation = useSetSessionAliasMutation();
+  const { data: resumeExtraArgs } = useSessionConfigQuery("resumeExtraArgs");
+  const { data: skipPermissionsRaw } = useSessionConfigQuery("skipPermissions");
+  const skipPermissions = skipPermissionsRaw === "true";
+  const { data: defaultRenderModeRaw } = useSessionConfigQuery("defaultRenderMode");
+  const defaultRenderMarkdown = defaultRenderModeRaw !== "raw";
+  const { data: defaultCollapseRaw } = useSessionConfigQuery("defaultCollapse");
+  const defaultCollapsed = defaultCollapseRaw !== "false";
+  const { data: showMessageIndexRaw } = useSessionConfigQuery("showMessageIndex");
+  const showMessageIndex = showMessageIndexRaw !== "false";
+  const [extraArgsInput, setExtraArgsInput] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
   const detailRef = useRef<HTMLDivElement | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [activeMessageIndex, setActiveMessageIndex] = useState<number | null>(
     null,
   );
   const [tocDialogOpen, setTocDialogOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [renderMarkdown, setRenderMarkdown] = useState(true);
+  const [isPending, startTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>(
     appId as ProviderFilter,
   );
+  const [onlyRenamed, setOnlyRenamed] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
+  // 打开设置面板时同步输入框
+  useEffect(() => {
+    if (showSettings) {
+      setExtraArgsInput(resumeExtraArgs ?? "");
+    }
+  }, [showSettings, resumeExtraArgs]);
+
+  // 防抖搜索词
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   // 使用 FlexSearch 全文搜索
   const { search: searchSessions } = useSessionSearch({
     sessions,
     providerFilter,
+    aliases,
   });
 
   const filteredSessions = useMemo(() => {
-    return searchSessions(search);
-  }, [searchSessions, search]);
+    const results = searchSessions(debouncedSearch);
+    if (!onlyRenamed) return results;
+    return results.filter((s) => aliases[getSessionKey(s)]);
+  }, [searchSessions, debouncedSearch, onlyRenamed, aliases]);
 
+  // 切换会话时滚动到顶部，并重置渲染模式为默认配置
   useEffect(() => {
-    if (filteredSessions.length === 0) {
-      setSelectedKey(null);
-      return;
-    }
-    const exists = selectedKey
-      ? filteredSessions.some(
-          (session) => getSessionKey(session) === selectedKey,
-        )
-      : false;
-    if (!exists) {
-      setSelectedKey(getSessionKey(filteredSessions[0]));
-    }
-  }, [filteredSessions, selectedKey]);
+    if (messageScrollRef.current) messageScrollRef.current.scrollTop = 0;
+    setRenderMarkdown(defaultRenderMarkdown);
+  }, [selectedKey, defaultRenderMarkdown]);
 
   const selectedSession = useMemo(() => {
     if (!selectedKey) return null;
     return (
-      filteredSessions.find(
+      sessions.find(
         (session) => getSessionKey(session) === selectedKey,
       ) || null
     );
-  }, [filteredSessions, selectedKey]);
+  }, [sessions, selectedKey]);
 
   const { data: messages = [], isLoading: isLoadingMessages } =
     useSessionMessagesQuery(
       selectedSession?.providerId,
       selectedSession?.sourcePath,
     );
+
+  // 虚拟列表：滚动容器 ref
+  const messageScrollRef = useRef<HTMLDivElement | null>(null);
 
   // 提取用户消息用于目录
   const userMessagesToc = useMemo(() => {
@@ -160,12 +196,33 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     }
   };
 
+  const handleRename = (sessionKey: string, newName: string | null) => {
+    setAliasMutation.mutate(
+      { sessionKey, alias: newName },
+      {
+        onSuccess: () => {
+          toast.success(
+            newName
+              ? t("sessionManager.renameSuccess")
+              : t("sessionManager.resetNameSuccess"),
+          );
+        },
+      },
+    );
+  };
+
   const handleResume = async () => {
     if (!selectedSession?.resumeCommand) return;
 
+    // 组装完整恢复命令
+    const parts = [selectedSession.resumeCommand];
+    if (skipPermissions) parts.push("--dangerously-skip-permissions");
+    if (resumeExtraArgs) parts.push(resumeExtraArgs);
+    const fullCommand = parts.join(" ");
+
     if (!isMac()) {
       await handleCopy(
-        selectedSession.resumeCommand,
+        fullCommand,
         t("sessionManager.resumeCommandCopied"),
       );
       return;
@@ -173,20 +230,180 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
     try {
       await sessionsApi.launchTerminal({
-        command: selectedSession.resumeCommand,
+        command: fullCommand,
         cwd: selectedSession.projectDir ?? undefined,
       });
       toast.success(t("sessionManager.terminalLaunched"));
     } catch (error) {
-      const fallback = selectedSession.resumeCommand;
-      await handleCopy(fallback, t("sessionManager.resumeFallbackCopied"));
+      await handleCopy(fullCommand, t("sessionManager.resumeFallbackCopied"));
       toast.error(extractErrorMessage(error) || t("sessionManager.openFailed"));
     }
   };
 
+  const settingsButton = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "size-7 fixed right-6 z-50",
+            showSettings && "bg-primary/10 text-primary",
+          )}
+          style={{ top: 46, WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          onClick={() => {
+            const next = !showSettings;
+            setShowSettings(next);
+            if (next) setExtraArgsInput(resumeExtraArgs ?? "");
+          }}
+        >
+          <Settings className="size-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{t("sessionManager.settings")}</TooltipContent>
+    </Tooltip>
+  );
+
   return (
     <TooltipProvider>
       <div className="mx-auto px-4 sm:px-6 flex flex-col h-[calc(100vh-8rem)]">
+        {settingsButton}
+        {showSettings ? (
+          <div className="flex-1 overflow-hidden flex flex-col gap-4">
+            <Card className="flex-1 overflow-hidden">
+              <CardHeader className="py-3 px-4 border-b shrink-0">
+                <CardTitle className="text-sm font-medium">
+                  {t("sessionManager.settings")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 space-y-6">
+                {/* --dangerously-skip-permissions 勾选项 */}
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="skipPermissions"
+                    checked={skipPermissions}
+                    onChange={async (e) => {
+                      await sessionsApi.setConfig("skipPermissions", e.target.checked ? "true" : "false");
+                      const { queryClient } = await import("@/lib/query");
+                      await queryClient.invalidateQueries({ queryKey: ["sessionConfig", "skipPermissions"] });
+                    }}
+                    className="mt-0.5 size-4 rounded border-input accent-primary cursor-poin"
+                  />
+                  <div>
+                    <label htmlFor="skipPermissions" className="text-sm font-medium cursor-pointer">
+                      {t("sessionManager.skipPermissionsTitle")}
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("sessionManager.skipPermissionsHint")}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 默认渲染模式 */}
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="defaultRenderMarkdown"
+                    checked={defaultRenderMarkdown}
+                    onChange={async (e) => {
+                      await sessionsApi.setConfig("defaultRenderMode", e.target.checked ? "md" : "raw");
+                      const { queryClient } = await import("@/lib/query");
+                      await queryClient.invalidateQueries({ queryKey: ["sessionConfig", "defaultRenderMode"] });
+                    }}
+                    className="mt-0.5 size-4 rounded border-input accent-primary cursor-pointer"
+                  />
+                  <div>
+                    <label htmlFor="defaultRenderMarkdown" className="text-sm font-medium cursor-pointer">
+                      {t("sessionManager.defaultRenderMdTitle")}
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("sessionManager.defaultRenderMdHint")}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 默认收缩消息 */}
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="defaultCollapse"
+                    checked={defaultCollapsed}
+                    onChange={async (e) => {
+                      await sessionsApi.setConfig("defaultCollapse", e.target.checked ? "true" : "false");
+                      const { queryClient } = await import("@/lib/query");
+                      await queryClient.invalidateQueries({ queryKey: ["sessionConfig", "defaultCollapse"] });
+                    }}
+                    className="mt-0.5 size-4 rounded border-input accent-primary cursor-pointer"
+                  />
+                  <div>
+                    <label htmlFor="defaultCollapse" className="text-sm font-medium cursor-pointer">
+                      {t("sessionManager.defaultCollapseTitle")}
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("sessionManager.defaultCollapseHint")}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 显示消息序号 */}
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="showMessageIndex"
+                    checked={showMessageIndex}
+                    onChange={async (e) => {
+                      await sessionsApi.setConfig("showMessageIndex", e.target.checked ? "true" : "false");
+                      const { queryClient } = await import("@/lib/query");
+                      await queryClient.invalidateQueries({ queryKey: ["sessionConfig", "showMessageIndex"] });
+                    }}
+                    className="mt-0.5 size-4 rounded border-input accent-primary cursor-pointer"
+                  />
+                  <div>
+                    <label htmlFor="showMessageIndex" className="text-sm font-medium cursor-pointer">
+                      {t("sessionManager.showMessageIndexTitle")}
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("sessionManager.showMessageIndexHint")}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 额外参数 */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    {t("sessionManager.resumeExtraArgs")}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={extraArgsInput}
+                      onChange={(e) => setExtraArgsInput(e.target.value)}
+                      placeholder="--model opus"
+                      className="h-8 text-sm font-mono"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-3 shrink-0"
+                      onClick={async () => {
+                        const trimmed = extraArgsInput.trim();
+                        await sessionsApi.setConfig("resumeExtraArgs", trimmed);
+                        const { queryClient } = await import("@/lib/query");
+                        await queryClient.invalidateQueries({ queryKey: ["sessionConfig", "resumeExtraArgs"] });
+                        toast.success(t("sessionManager.settingsSaved"));
+                      }}
+                    >
+                      {t("common.save")}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t("sessionManager.resumeExtraArgsHint")}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
           {/* 主内容区域 - 左右分栏 */}
           <div className="flex-1 overflow-hidden grid gap-4 md:grid-cols-[320px_1fr]">
@@ -257,6 +474,25 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         </TooltipTrigger>
                         <TooltipContent>
                           {t("sessionManager.searchSessions")}
+                        </TooltipContent>
+                      </Tooltip>
+
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "size-7",
+                              onlyRenamed && "bg-primary/10 text-primary",
+                            )}
+                            onClick={() => setOnlyRenamed((v) => !v)}
+                          >
+                            <Tag className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {t("sessionManager.filterRenamed")}
                         </TooltipContent>
                       </Tooltip>
 
@@ -382,16 +618,18 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     ) : (
                       <div className="space-y-1">
                         {filteredSessions.map((session) => {
+                          const key = getSessionKey(session);
                           const isSelected =
-                            selectedKey !== null &&
-                            getSessionKey(session) === selectedKey;
+                            selectedKey !== null && key === selectedKey;
 
                           return (
                             <SessionItem
-                              key={getSessionKey(session)}
+                              key={key}
                               session={session}
                               isSelected={isSelected}
                               onSelect={setSelectedKey}
+                              alias={aliases[key]}
+                              onRename={handleRename}
                             />
                           );
                         })}
@@ -436,8 +674,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               {getProviderLabel(selectedSession.providerId, t)}
                             </TooltipContent>
                           </Tooltip>
-                          <h2 className="text-base font-semibold truncate">
-                            {formatSessionTitle(selectedSession)}
+                          <h2 className="text-base truncate">
+                            <span className="font-semibold">
+                              {(selectedKey && aliases[selectedKey]) || formatSessionTitle(selectedSession)}
+                            </span>
+                            {selectedKey && aliases[selectedKey] && (
+                              <span className="text-muted-foreground text-xs font-normal ml-1">
+                                ({formatSessionTitle(selectedSession)})
+                              </span>
+                            )}
                           </h2>
                         </div>
 
@@ -524,7 +769,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     {selectedSession.resumeCommand && (
                       <div className="mt-3 flex items-center gap-2">
                         <div className="flex-1 rounded-md bg-muted/60 px-3 py-1.5 font-mono text-xs text-muted-foreground truncate">
-                          {selectedSession.resumeCommand}
+                          {[
+                            selectedSession.resumeCommand,
+                            skipPermissions && "--dangerously-skip-permissions",
+                            resumeExtraArgs,
+                          ].filter(Boolean).join(" ")}
                         </div>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -532,12 +781,17 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               variant="ghost"
                               size="icon"
                               className="size-7 shrink-0"
-                              onClick={() =>
-                                void handleCopy(
+                              onClick={() => {
+                                const cmd = [
                                   selectedSession.resumeCommand!,
+                                  skipPermissions && "--dangerously-skip-permissions",
+                                  resumeExtraArgs,
+                                ].filter(Boolean).join(" ");
+                                void handleCopy(
+                                  cmd,
                                   t("sessionManager.resumeCommandCopied"),
-                                )
-                              }
+                                );
+                              }}
                             >
                               <Copy className="size-3.5" />
                             </Button>
@@ -554,59 +808,60 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
                   {/* 消息列表区域 */}
                   <CardContent className="flex-1 overflow-hidden p-0">
-                    <div className="flex h-full">
+                    <div className="flex h-full overflow-hidden">
                       {/* 消息列表 */}
-                      <ScrollArea className="flex-1">
-                        <div className="p-4">
-                          <div className="flex items-center gap-2 mb-3">
-                            <MessageSquare className="size-4 text-muted-foreground" />
-                            <span className="text-sm font-medium">
-                              {t("sessionManager.conversationHistory", {
-                                defaultValue: "对话记录",
-                              })}
-                            </span>
-                            <Badge variant="secondary" className="text-xs">
-                              {messages.length}
-                            </Badge>
-                          </div>
-
-                          {isLoadingMessages ? (
-                            <div className="flex items-center justify-center py-12">
-                              <RefreshCw className="size-5 animate-spin text-muted-foreground" />
-                            </div>
-                          ) : messages.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-12 text-center">
-                              <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
-                              <p className="text-sm text-muted-foreground">
-                                {t("sessionManager.emptySession")}
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-3">
-                              {messages.map((message, index) => (
-                                <SessionMessageItem
-                                  key={`${message.role}-${index}`}
-                                  message={message}
-                                  index={index}
-                                  isActive={activeMessageIndex === index}
-                                  setRef={(el) => {
-                                    if (el) messageRefs.current.set(index, el);
-                                  }}
-                                  onCopy={(content) =>
-                                    handleCopy(
-                                      content,
-                                      t("sessionManager.messageCopied", {
-                                        defaultValue: "已复制消息内容",
-                                      }),
-                                    )
-                                  }
-                                />
-                              ))}
-                              <div ref={messagesEndRef} />
-                            </div>
-                          )}
+                      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+                        <div className="flex items-center gap-2 px-4 pt-4 pb-2">
+                          <MessageSquare className="size-4 text-muted-foreground" />
+                          <span className="text-sm font-medium">
+                            {t("sessionManager.conversationHistory", {
+                              defaultValue: "对话记录",
+                            })}
+                          </span>
+                          <Badge variant="secondary" className="text-xs">
+                            {messages.length}
+                          </Badge>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-5 px-1.5 text-xs rounded"
+                            disabled={isPending}
+                            onClick={() => startTransition(() => setRenderMarkdown((prev) => !prev))}
+                          >
+                            {renderMarkdown ? "MD" : "Raw"}
+                          </Button>
                         </div>
-                      </ScrollArea>
+
+                        {isLoadingMessages ? (
+                          <div className="flex items-center justify-center py-12">
+                            <RefreshCw className="size-5 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : messages.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-12 text-center">
+                            <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
+                            <p className="text-sm text-muted-foreground">
+                     {t("sessionManager.emptySession")}
+                            </p>
+                          </div>
+                        ) : (
+                          <VirtualMessageList
+                            messages={messages}
+                            activeMessageIndex={activeMessageIndex}
+                            messageRefs={messageRefs}
+                            onCopy={(content) =>
+                              handleCopy(
+                                content,
+                                t("sessionManager.messageCopied", {
+                                  defaultValue: "已复制消息内容",
+                                }),
+                              )
+                            }
+                            renderMarkdown={renderMarkdown}
+                            defaultCollapsed={defaultCollapsed}
+                            showMessageIndex={showMessageIndex}
+                          />
+                        )}
+                      </div>
 
                       {/* 右侧目录 - 类似少数派 (大屏幕) */}
                       <SessionTocSidebar
@@ -628,6 +883,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
             </Card>
           </div>
         </div>
+        )}
       </div>
     </TooltipProvider>
   );

@@ -574,7 +574,28 @@
     "daysAgo": "{{count}} days ago",
     "roleUser": "User",
     "roleSystem": "System",
-    "roleTool": "Tool"
+    "roleTool": "Tool",
+    "showRawText": "Raw Text",
+    "showMarkdown": "Markdown",
+    "rename": "Rename",
+    "resetName": "Reset Name",
+    "renameSuccess": "Session renamed",
+    "resetNameSuccess": "Name reset to default",
+    "filterRenamed": "Show only renamed sessions",
+    "settings": "Session settings",
+    "resumeExtraArgs": "Resume extra arguments",
+    "resumeExtraArgsHint": "Arguments appended when resuming sessions, e.g. --model opus",
+    "settingsSaved": "Settings saved",
+    "skipPermissionsTitle": "Skip permission prompts",
+    "skipPermissionsHint": "Automatically add --dangerously-skip-permissions when resuming sessions, skipping tool call permission prompts",
+    "defaultRenderMdTitle": "Default Markdown rendering",
+    "defaultRenderMdHint": "Show messages in Markdown format by default when switching sessions. Disable to show raw text instead",
+    "defaultCollapseTitle": "Collapse long messages by default",
+    "defaultCollapseHint": "Long messages are collapsed by default. Click to expand and view the full content",
+    "showMessageIndexTitle": "Show message index",
+    "showMessageIndexHint": "Display index number before each message for easy navigation",
+    "expandMessage": "Show more",
+    "collapseMessage": "Show less"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
@@ -807,7 +828,55 @@
     "cacheReadCost": "Cache Read Cost ($/M tokens)",
     "cacheWriteCost": "Cache Write Cost ($/M tokens)",
     "cacheCostHint": "Cache costs are used to calculate Prompt Caching costs. Leave empty if not using caching.",
-    "modelsHint": "Configure the models supported by this provider. Model ID is used for API calls, Display Name for the interface."
+    "modelsHint": "Configure the models supported by this provider. Model ID is used for API calls, Display Name for the interface.",
+    "env": {
+      "title": "Environment Variables",
+      "description": "Manage environment variables in openclaw.json (API keys, custom variables, etc.)",
+      "keyPlaceholder": "Variable name",
+      "valuePlaceholder": "Value",
+      "add": "Add Variable",
+      "saveSuccess": "Environment variables saved",
+      "saveFailed": "Failed to save environment variables",
+      "loadFailed": "Failed to load environment variables",
+      "duplicateKey": "Duplicate variable name detected: {{key}}"
+    },
+    "tools": {
+      "title": "Tool Permissions",
+      "description": "Manage tool permissions in openclaw.json (allow/deny lists)",
+      "profile": "Permission Profile",
+      "profiles": {
+        "default": "Default",
+        "strict": "Strict",
+        "permissive": "Permissive",
+        "custom": "Custom"
+      },
+      "allowList": "Allow List",
+      "denyList": "Deny List",
+      "patternPlaceholder": "Tool name or pattern",
+      "addAllow": "Add Allow",
+      "addDeny": "Add Deny",
+      "saveSuccess": "Tool permissions saved",
+      "saveFailed": "Failed to save tool permissions",
+      "loadFailed": "Failed to load tool permissions"
+    },
+    "agents": {
+      "title": "Agents Config",
+      "description": "Manage agents.defaults in openclaw.json (default model, runtime parameters, etc.)",
+      "modelSection": "Model Configuration",
+      "primaryModel": "Primary Model",
+      "primaryModelHint": "Set via the \"Set as Default Model\" button in the provider list",
+      "notSet": "Not set",
+      "fallbackModels": "Fallback Models",
+      "fallbackModelsHint": "Comma-separated, ordered by priority",
+      "runtimeSection": "Runtime Parameters",
+      "workspace": "Workspace Path",
+      "timeout": "Timeout (seconds)",
+      "contextTokens": "Context Tokens",
+      "maxConcurrent": "Max Concurrent",
+      "saveSuccess": "Agents config saved",
+      "saveFailed": "Failed to save agents config",
+      "loadFailed": "Failed to load agents config"
+    }
   },
   "providerPreset": {
     "label": "Provider Preset",
@@ -1217,56 +1286,6 @@
       "searching": "Searching...",
       "searchFailed": "Search failed",
       "matchCount": "{{count}} match(es)"
-    }
-  },
-  "openclaw": {
-    "env": {
-      "title": "Environment Variables",
-      "description": "Manage environment variables in openclaw.json (API keys, custom variables, etc.)",
-      "keyPlaceholder": "Variable name",
-      "valuePlaceholder": "Value",
-      "add": "Add Variable",
-      "saveSuccess": "Environment variables saved",
-      "saveFailed": "Failed to save environment variables",
-      "loadFailed": "Failed to load environment variables",
-      "duplicateKey": "Duplicate variable name detected: {{key}}"
-    },
-    "tools": {
-      "title": "Tool Permissions",
-      "description": "Manage tool permissions in openclaw.json (allow/deny lists)",
-      "profile": "Permission Profile",
-      "profiles": {
-        "default": "Default",
-        "strict": "Strict",
-        "permissive": "Permissive",
-        "custom": "Custom"
-      },
-      "allowList": "Allow List",
-      "denyList": "Deny List",
-      "patternPlaceholder": "Tool name or pattern",
-      "addAllow": "Add Allow",
-      "addDeny": "Add Deny",
-      "saveSuccess": "Tool permissions saved",
-      "saveFailed": "Failed to save tool permissions",
-      "loadFailed": "Failed to load tool permissions"
-    },
-    "agents": {
-      "title": "Agents Config",
-      "description": "Manage agents.defaults in openclaw.json (default model, runtime parameters, etc.)",
-      "modelSection": "Model Configuration",
-      "primaryModel": "Primary Model",
-      "primaryModelHint": "Set via the \"Set as Default Model\" button in the provider list",
-      "notSet": "Not set",
-      "fallbackModels": "Fallback Models",
-      "fallbackModelsHint": "Comma-separated, ordered by priority",
-      "runtimeSection": "Runtime Parameters",
-      "workspace": "Workspace Path",
-      "timeout": "Timeout (seconds)",
-      "contextTokens": "Context Tokens",
-      "maxConcurrent": "Max Concurrent",
-      "saveSuccess": "Agents config saved",
-      "saveFailed": "Failed to save agents config",
-      "loadFailed": "Failed to load agents config"
     }
   },
   "env": {

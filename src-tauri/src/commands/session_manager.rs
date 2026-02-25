@@ -1,6 +1,8 @@
 #![allow(non_snake_case)]
 
 use crate::session_manager;
+use crate::store::AppState;
+use std::collections::HashMap;
 
 #[tauri::command]
 pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
@@ -56,4 +58,54 @@ pub async fn launch_session_terminal(
     .map_err(|e| format!("Failed to launch terminal: {e}"))??;
 
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn get_all_session_aliases(
+    state: tauri::State<'_, AppState>,
+) -> Result<HashMap<String, String>, String> {
+    state.db.get_all_session_aliases().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_session_alias(
+    state: tauri::State<'_, AppState>,
+    sessionKey: String,
+    alias: String,
+) -> Result<(), String> {
+    state
+        .db
+        .set_session_alias(&sessionKey, &alias)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_session_alias(
+    state: tauri::State<'_, AppState>,
+    sessionKey: String,
+) -> Result<(), String> {
+    state
+        .db
+        .delete_session_alias(&sessionKey)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_session_config(
+    state: tauri::State<'_, AppState>,
+    key: String,
+) -> Result<Option<String>, String> {
+    state.db.get_session_config(&key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_session_config(
+    state: tauri::State<'_, AppState>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    state
+        .db
+        .set_session_config(&key, &value)
+        .map_err(|e| e.to_string())
 }

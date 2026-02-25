@@ -49,20 +49,6 @@ fn extract_text_from_item(item: &Value) -> Option<String> {
     None
 }
 
-pub fn truncate_summary(text: &str, max_chars: usize) -> String {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    if trimmed.chars().count() <= max_chars {
-        return trimmed.to_string();
-    }
-
-    let mut result = trimmed.chars().take(max_chars).collect::<String>();
-    result.push_str("...");
-    result
-}
-
 pub fn path_basename(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {

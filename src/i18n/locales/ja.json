@@ -574,7 +574,28 @@
     "daysAgo": "{{count}}日前",
     "roleUser": "ユーザー",
     "roleSystem": "システム",
-    "roleTool": "ツール"
+    "roleTool": "ツール",
+    "showRawText": "原文表示",
+    "showMarkdown": "Markdown 表示",
+    "rename": "名前を変更",
+    "resetName": "デフォルト名に戻す",
+    "renameSuccess": "セッション名を変更しました",
+    "resetNameSuccess": "デフォルト名に戻しました",
+    "filterRenamed": "名前変更済みのみ表示",
+    "settings": "セッション設定",
+    "resumeExtraArgs": "再開時の追加引数",
+    "resumeExtraArgsHint": "セッション再開時に自動的に追加される引数（例: --model opus）",
+    "settingsSaved": "設定を保存しました",
+    "skipPermissionsTitle": "権限確認をスキップ",
+    "skipPermissionsHint": "セッション再開時に --dangerously-skip-permissions を自動追加し、ツール呼び出しの権限確認をスキップします",
+    "defaultRenderMdTitle": "デフォルト Markdown 表示",
+    "defaultRenderMdHint": "セッション切り替え時にデフォルトで Markdown 形式で表示します。無効にすると原文表示になります",
+    "defaultCollapseTitle": "長いメッセージをデフォルトで折りたたむ",
+    "defaultCollapseHint": "長いメッセージはデフォルトで折りたたまれます。クリックで全文を表示できます",
+    "showMessageIndexTitle": "メッセージ番号を表示",
+    "showMessageIndexHint": "各メッセージの前に番号を表示して、位置を把握しやすくします",
+    "expandMessage": "全文を表示",
+    "collapseMessage": "折りたたむ"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",
@@ -807,7 +828,55 @@
     "cacheReadCost": "キャッシュ読取コスト ($/M トークン)",
     "cacheWriteCost": "キャッシュ書込コスト ($/M トークン)",
     "cacheCostHint": "キャッシュコストは Prompt Caching のコスト計算に使用されます。キャッシュを使用しない場合は空欄のままにしてください。",
-    "modelsHint": "このプロバイダーがサポートするモデルを設定します。モデル ID は API 呼び出しに、表示名はインターフェースに使用されます。"
+    "modelsHint": "このプロバイダーがサポートするモデルを設定します。モデル ID は API 呼び出しに、表示名はインターフェースに使用されます。",
+    "env": {
+      "title": "環境変数",
+      "description": "openclaw.json の環境変数設定を管理（APIキー、カスタム変数など）",
+      "keyPlaceholder": "変数名",
+      "valuePlaceholder": "値",
+      "add": "変数を追加",
+      "saveSuccess": "環境変数を保存しました",
+      "saveFailed": "環境変数の保存に失敗しました",
+      "loadFailed": "環境変数の読み込みに失敗しました",
+      "duplicateKey": "重複する変数名が検出されました: {{key}}"
+    },
+    "tools": {
+      "title": "ツール権限",
+      "description": "openclaw.json のツール権限設定を管理（許可/拒否リスト）",
+      "profile": "権限プロファイル",
+      "profiles": {
+        "default": "デフォルト",
+        "strict": "厳格",
+        "permissive": "寛容",
+        "custom": "カスタム"
+      },
+      "allowList": "許可リスト",
+      "denyList": "拒否リスト",
+      "patternPlaceholder": "ツール名またはパターン",
+      "addAllow": "許可を追加",
+      "addDeny": "拒否を追加",
+      "saveSuccess": "ツール権限を保存しました",
+      "saveFailed": "ツール権限の保存に失敗しました",
+      "loadFailed": "ツール権限の読み込みに失敗しました"
+    },
+    "agents": {
+      "title": "Agents 設定",
+      "description": "openclaw.json の agents.defaults 設定を管理（デフォルトモデル、ランタイムパラメータなど）",
+      "modelSection": "モデル設定",
+      "primaryModel": "プライマリモデル",
+      "primaryModelHint": "プロバイダ一覧の「デフォルトモデルに設定」ボタンで設定します",
+      "notSet": "未設定",
+      "fallbackModels": "フォールバックモデル",
+      "fallbackModelsHint": "カンマ区切り、優先度順",
+      "runtimeSection": "ランタイムパラメータ",
+      "workspace": "ワークスペースパス",
+      "timeout": "タイムアウト（秒）",
+      "contextTokens": "コンテキストトークン数",
+      "maxConcurrent": "最大同時実行数",
+      "saveSuccess": "Agents 設定を保存しました",
+      "saveFailed": "Agents 設定の保存に失敗しました",
+      "loadFailed": "Agents 設定の読み込みに失敗しました"
+    }
   },
   "providerPreset": {
     "label": "プロバイダータイプ",
@@ -1217,56 +1286,6 @@
       "searching": "検索中...",
       "searchFailed": "検索に失敗しました",
       "matchCount": "{{count}}件一致"
-    }
-  },
-  "openclaw": {
-    "env": {
-      "title": "環境変数",
-      "description": "openclaw.json の環境変数設定を管理（APIキー、カスタム変数など）",
-      "keyPlaceholder": "変数名",
-      "valuePlaceholder": "値",
-      "add": "変数を追加",
-      "saveSuccess": "環境変数を保存しました",
-      "saveFailed": "環境変数の保存に失敗しました",
-      "loadFailed": "環境変数の読み込みに失敗しました",
-      "duplicateKey": "重複する変数名が検出されました: {{key}}"
-    },
-    "tools": {
-      "title": "ツール権限",
-      "description": "openclaw.json のツール権限設定を管理（許可/拒否リスト）",
-      "profile": "権限プロファイル",
-      "profiles": {
-        "default": "デフォルト",
-        "strict": "厳格",
-        "permissive": "寛容",
-        "custom": "カスタム"
-      },
-      "allowList": "許可リスト",
-      "denyList": "拒否リスト",
-      "patternPlaceholder": "ツール名またはパターン",
-      "addAllow": "許可を追加",
-      "addDeny": "拒否を追加",
-      "saveSuccess": "ツール権限を保存しました",
-      "saveFailed": "ツール権限の保存に失敗しました",
-      "loadFailed": "ツール権限の読み込みに失敗しました"
-    },
-    "agents": {
-      "title": "Agents 設定",
-      "description": "openclaw.json の agents.defaults 設定を管理（デフォルトモデル、ランタイムパラメータなど）",
-      "modelSection": "モデル設定",
-      "primaryModel": "プライマリモデル",
-      "primaryModelHint": "プロバイダ一覧の「デフォルトモデルに設定」ボタンで設定します",
-      "notSet": "未設定",
-      "fallbackModels": "フォールバックモデル",
-      "fallbackModelsHint": "カンマ区切り、優先度順",
-      "runtimeSection": "ランタイムパラメータ",
-      "workspace": "ワークスペースパス",
-      "timeout": "タイムアウト（秒）",
-      "contextTokens": "コンテキストトークン数",
-      "maxConcurrent": "最大同時実行数",
-      "saveSuccess": "Agents 設定を保存しました",
-      "saveFailed": "Agents 設定の保存に失敗しました",
-      "loadFailed": "Agents 設定の読み込みに失敗しました"
     }
   },
   "env": {
