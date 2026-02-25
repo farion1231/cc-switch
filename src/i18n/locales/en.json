@@ -684,7 +684,18 @@
     "authSuccess": "GitHub Copilot authentication successful",
     "authFailed": "Authentication failed: {{error}}",
     "authTimeout": "Authentication timed out, please try again",
-    "tokenExpired": "Token expired, please re-authenticate"
+    "tokenExpired": "Token expired, please re-authenticate",
+    "accountCount": "{{count}} account(s)",
+    "selectAccount": "Select Account",
+    "selectAccountPlaceholder": "Select a GitHub account",
+    "useDefaultAccount": "Use default account",
+    "loggedInAccounts": "Logged in accounts",
+    "selected": "Selected",
+    "removeAccount": "Remove account",
+    "addAnotherAccount": "Add another account",
+    "logoutAll": "Logout all accounts",
+    "retry": "Retry",
+    "copyCode": "Copy code"
   },
   "endpointTest": {
     "title": "API Endpoint Management",

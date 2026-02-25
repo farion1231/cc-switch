@@ -1,7 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { copilotApi, settingsApi } from "@/lib/api";
-import type { CopilotAuthStatus, CopilotDeviceCodeResponse } from "@/lib/api";
+import type {
+  CopilotAuthStatus,
+  CopilotDeviceCodeResponse,
+  GitHubAccount,
+} from "@/lib/api";
 
 /**
  * OAuth 轮询状态
@@ -12,6 +16,7 @@ type PollingState = "idle" | "polling" | "success" | "error";
  * Copilot OAuth 认证 Hook
  *
  * 管理 GitHub Copilot OAuth 设备码流程的状态和操作。
+ * 支持多账号管理。
  */
 export function useCopilotAuth() {
   const queryClient = useQueryClient();
@@ -28,7 +33,7 @@ export function useCopilotAuth() {
   );
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 获取认证状态
+  // 获取认证状态（包含账号列表）
   const {
     data: authStatus,
     isLoading: isLoadingStatus,
@@ -58,7 +63,7 @@ export function useCopilotAuth() {
     };
   }, [stopPolling]);
 
-  // 启动设备码流程
+  // 启动设备码流程（添加账号）
   const startDeviceFlowMutation = useMutation({
     mutationFn: copilotApi.copilotStartDeviceFlow,
     onSuccess: async (response) => {
@@ -85,7 +90,7 @@ export function useCopilotAuth() {
       const interval = Math.max((response.interval || 5) + 3, 8) * 1000;
       const expiresAt = Date.now() + response.expires_in * 1000;
 
-      // 轮询函数
+      // 轮询函数（使用多账号 API）
       const pollOnce = async () => {
         // 检查是否过期
         if (Date.now() > expiresAt) {
@@ -96,18 +101,23 @@ export function useCopilotAuth() {
         }
 
         try {
-          const success = await copilotApi.copilotPollForAuth(
+          // 使用多账号版本的轮询 API
+          const newAccount = await copilotApi.copilotPollForAccount(
             response.device_code,
           );
-          if (success) {
+          if (newAccount) {
             stopPolling();
             setPollingState("success");
+            console.log("[CopilotAuth] 新账号已添加:", newAccount.login);
             // 刷新认证状态
             await refetchStatus();
             // 使相关查询失效
             queryClient.invalidateQueries({
               queryKey: ["copilot-auth-status"],
             });
+            // success 仅作为瞬时状态，避免 UI 卡在非 idle 导致登录按钮不显示
+            setPollingState("idle");
+            setDeviceCode(null);
           }
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
@@ -142,7 +152,7 @@ export function useCopilotAuth() {
     },
   });
 
-  // 注销
+  // 注销所有账号
   const logoutMutation = useMutation({
     mutationFn: copilotApi.copilotLogout,
     onSuccess: async () => {
@@ -155,13 +165,36 @@ export function useCopilotAuth() {
         authenticated: false,
         username: null,
         expires_at: null,
+        accounts: [],
       });
       // 使查询失效，确保下次访问时重新获取
       await queryClient.invalidateQueries({ queryKey: ["copilot-auth-status"] });
     },
   });
 
-  // 启动认证
+  // 移除单个账号
+  const removeAccountMutation = useMutation({
+    mutationFn: (accountId: string) =>
+      copilotApi.copilotRemoveAccount(accountId),
+    onSuccess: async () => {
+      // 移除账号后恢复 idle，确保无账号时重新显示登录按钮
+      setPollingState("idle");
+      setDeviceCode(null);
+      setError(null);
+      // 刷新认证状态
+      await refetchStatus();
+      // 使相关查询失效
+      queryClient.invalidateQueries({
+        queryKey: ["copilot-auth-status"],
+      });
+    },
+    onError: (e) => {
+      console.error("[CopilotAuth] 移除账号失败:", e);
+      setError(e instanceof Error ? e.message : String(e));
+    },
+  });
+
+  // 启动认证 / 添加账号
   const startAuth = useCallback(() => {
     setPollingState("idle");
     setDeviceCode(null);
@@ -178,28 +211,50 @@ export function useCopilotAuth() {
     setError(null);
   }, [stopPolling]);
 
-  // 注销
+  // 注销所有账号
   const logout = useCallback(() => {
     logoutMutation.mutate();
   }, [logoutMutation]);
 
+  // 移除指定账号
+  const removeAccount = useCallback(
+    (accountId: string) => {
+      removeAccountMutation.mutate(accountId);
+    },
+    [removeAccountMutation],
+  );
+
+  // 计算账号列表（兼容旧版数据）
+  const accounts: GitHubAccount[] = authStatus?.accounts ?? [];
+  const hasAnyAccount = accounts.length > 0;
+
   return {
-    // 状态
+    // 状态（向后兼容）
     authStatus,
     isLoadingStatus,
     isAuthenticated: authStatus?.authenticated ?? false,
     username: authStatus?.username ?? null,
+
+    // 多账号状态
+    accounts,
+    hasAnyAccount,
 
     // 轮询状态
     pollingState,
     deviceCode,
     error,
     isPolling: pollingState === "polling",
+    isAddingAccount: startDeviceFlowMutation.isPending || pollingState === "polling",
+    isRemovingAccount: removeAccountMutation.isPending,
 
-    // 操作
+    // 操作（向后兼容）
     startAuth,
     cancelAuth,
     logout,
     refetchStatus,
+
+    // 多账号操作
+    addAccount: startAuth, // 别名
+    removeAccount,
   };
 }

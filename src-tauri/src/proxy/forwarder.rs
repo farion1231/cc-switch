@@ -858,13 +858,38 @@ impl RequestForwarder {
                     let copilot_state = app_handle.state::<CopilotAuthState>();
                     let copilot_auth: tokio::sync::RwLockReadGuard<'_, CopilotAuthManager> =
                         copilot_state.0.read().await;
-                    match copilot_auth.get_valid_token().await {
+
+                    // 从 provider.meta 获取关联的 GitHub 账号 ID（多账号支持）
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|m| m.github_account_id.clone());
+
+                    // 根据账号 ID 获取对应 token（向后兼容：无账号 ID 时使用第一个账号）
+                    let token_result = match &account_id {
+                        Some(id) => {
+                            log::debug!("[Copilot] 使用指定账号 {id} 获取 token");
+                            copilot_auth.get_valid_token_for_account(id).await
+                        }
+                        None => {
+                            log::debug!("[Copilot] 使用默认账号获取 token");
+                            copilot_auth.get_valid_token().await
+                        }
+                    };
+
+                    match token_result {
                         Ok(token) => {
                             auth = AuthInfo::new(token, AuthStrategy::GitHubCopilot);
-                            log::debug!("[Copilot] 成功获取 Copilot token");
+                            log::debug!(
+                                "[Copilot] 成功获取 Copilot token (account={})",
+                                account_id.as_deref().unwrap_or("default")
+                            );
                         }
                         Err(e) => {
-                            log::error!("[Copilot] 获取 Copilot token 失败: {e}");
+                            log::error!(
+                                "[Copilot] 获取 Copilot token 失败 (account={}): {e}",
+                                account_id.as_deref().unwrap_or("default")
+                            );
                             return Err(ProxyError::AuthError(format!(
                                 "GitHub Copilot 认证失败: {e}"
                             )));

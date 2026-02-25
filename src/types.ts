@@ -154,6 +154,9 @@ export interface ProviderMeta {
   // - "ANTHROPIC_AUTH_TOKEN" (默认): 大多数第三方/聚合供应商
   // - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
   apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
+  // GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
+  // 用于多账号支持，关联到特定的 GitHub 账号
+  githubAccountId?: string;
 }
 
 // Skill 同步方式

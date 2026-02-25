@@ -684,7 +684,18 @@
     "authSuccess": "GitHub Copilot 認証に成功しました",
     "authFailed": "認証に失敗しました: {{error}}",
     "authTimeout": "認証がタイムアウトしました。もう一度お試しください",
-    "tokenExpired": "トークンの有効期限が切れました。再認証してください"
+    "tokenExpired": "トークンの有効期限が切れました。再認証してください",
+    "accountCount": "{{count}} アカウント",
+    "selectAccount": "アカウントを選択",
+    "selectAccountPlaceholder": "GitHub アカウントを選択",
+    "useDefaultAccount": "デフォルトアカウントを使用",
+    "loggedInAccounts": "ログイン済みアカウント",
+    "selected": "選択中",
+    "removeAccount": "アカウントを削除",
+    "addAnotherAccount": "別のアカウントを追加",
+    "logoutAll": "すべてのアカウントをログアウト",
+    "retry": "再試行",
+    "copyCode": "コードをコピー"
   },
   "endpointTest": {
     "title": "API エンドポイント管理",

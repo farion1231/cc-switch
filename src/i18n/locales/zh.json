@@ -684,7 +684,18 @@
     "authSuccess": "GitHub Copilot 认证成功",
     "authFailed": "认证失败: {{error}}",
     "authTimeout": "认证超时，请重试",
-    "tokenExpired": "令牌已过期，请重新认证"
+    "tokenExpired": "令牌已过期，请重新认证",
+    "accountCount": "{{count}} 个账号",
+    "selectAccount": "选择账号",
+    "selectAccountPlaceholder": "选择一个 GitHub 账号",
+    "useDefaultAccount": "使用默认账号",
+    "loggedInAccounts": "已登录账号",
+    "selected": "已选中",
+    "removeAccount": "移除账号",
+    "addAnotherAccount": "添加其他账号",
+    "logoutAll": "注销所有账号",
+    "retry": "重试",
+    "copyCode": "复制代码"
   },
   "endpointTest": {
     "title": "请求地址管理",

@@ -244,6 +244,10 @@ pub struct ProviderMeta {
     /// - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
     #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
     pub api_key_field: Option<String>,
+    /// GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
+    /// 用于多账号支持，关联到特定的 GitHub 账号
+    #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
+    pub github_account_id: Option<String>,
 }
 
 impl ProviderManager {
