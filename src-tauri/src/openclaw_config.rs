@@ -222,7 +222,7 @@ pub fn read_openclaw_config() -> Result<Value, AppError> {
 
     // 尝试 JSON5 解析（支持注释和尾随逗号）
     json5::from_str(&content)
-        .map_err(|e| AppError::Config(format!("Failed to parse OpenClaw config as JSON5: {}", e)))
+        .map_err(|e| AppError::Config(format!("Failed to parse OpenClaw config as JSON5: {e}")))
 }
 
 /// 写入 OpenClaw 配置文件（原子写入）

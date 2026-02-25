@@ -533,11 +533,8 @@ fn validate_artifact_size_limit(artifact_name: &str, size: u64) -> Result<(), Ap
         let max_mb = MAX_SYNC_ARTIFACT_BYTES / 1024 / 1024;
         return Err(localized(
             "webdav.sync.artifact_too_large",
-            format!("artifact {artifact_name} 超过下载上限（{} MB）", max_mb),
-            format!(
-                "Artifact {artifact_name} exceeds download limit ({} MB)",
-                max_mb
-            ),
+            format!("artifact {artifact_name} 超过下载上限（{max_mb} MB）"),
+            format!("Artifact {artifact_name} exceeds download limit ({max_mb} MB)"),
         ));
     }
     Ok(())
