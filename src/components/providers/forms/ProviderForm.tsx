@@ -335,6 +335,11 @@ export function ProviderForm({
   // Copilot OAuth 认证状态（仅 Claude 应用需要）
   const { isAuthenticated: isCopilotAuthenticated } = useCopilotAuth();
 
+  // 选中的 GitHub 账号 ID（多账号支持）
+  const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
+    string | null
+  >(() => initialData?.meta?.githubAccountId ?? null);
+
   const {
     codexAuth,
     codexConfig,
@@ -904,6 +909,11 @@ export function ProviderForm({
       endpointAutoSelect,
       // 保存 providerType（用于识别 Copilot 等特殊供应商）
       providerType,
+      // GitHub Copilot 多账号：保存关联的账号 ID
+      githubAccountId:
+        isCopilotProvider && selectedGitHubAccountId
+          ? selectedGitHubAccountId
+          : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
       proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
       costMultiplier: pricingConfig.enabled
@@ -1349,7 +1359,15 @@ export function ProviderForm({
               initialData?.meta?.providerType === "github_copilot" ||
               baseUrl.includes("githubcopilot.com")
             }
+            usesOAuth={
+              templatePreset?.requiresOAuth === true ||
+              templatePreset?.providerType === "github_copilot" ||
+              initialData?.meta?.providerType === "github_copilot" ||
+              baseUrl.includes("githubcopilot.com")
+            }
             isCopilotAuthenticated={isCopilotAuthenticated}
+            selectedGitHubAccountId={selectedGitHubAccountId}
+            onGitHubAccountSelect={setSelectedGitHubAccountId}
             templateValueEntries={templateValueEntries}
             templateValues={templateValues}
             templatePresetName={templatePreset?.name || ""}

@@ -1044,6 +1044,22 @@ pub fn run() {
             commands::scan_local_proxies,
             // Window theme control
             commands::set_window_theme,
+            // Copilot OAuth commands (multi-account support)
+            commands::copilot_start_device_flow,
+            commands::copilot_poll_for_auth,
+            commands::copilot_poll_for_account,
+            commands::copilot_list_accounts,
+            commands::copilot_remove_account,
+            commands::copilot_get_auth_status,
+            commands::copilot_logout,
+            commands::copilot_is_authenticated,
+            commands::copilot_get_token,
+            commands::copilot_get_token_for_account,
+            commands::copilot_get_models,
+            commands::copilot_get_models_for_account,
+            commands::copilot_get_usage,
+            commands::copilot_get_usage_for_account,
+            // OMO commands
             commands::read_omo_local_file,
             commands::get_current_omo_provider_id,
             commands::disable_current_omo,
@@ -1060,15 +1076,6 @@ pub fn run() {
             commands::delete_daily_memory_file,
             commands::search_daily_memory_files,
             commands::open_workspace_directory,
-            // Copilot OAuth commands
-            commands::copilot_start_device_flow,
-            commands::copilot_poll_for_auth,
-            commands::copilot_get_auth_status,
-            commands::copilot_logout,
-            commands::copilot_is_authenticated,
-            commands::copilot_get_token,
-            commands::copilot_get_models,
-            commands::copilot_get_usage,
         ]);
 
     let app = builder

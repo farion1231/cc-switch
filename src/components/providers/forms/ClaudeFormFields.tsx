@@ -54,7 +54,12 @@ interface ClaudeFormFieldsProps {
 
   // GitHub Copilot OAuth
   isCopilotPreset?: boolean;
+  usesOAuth?: boolean;
   isCopilotAuthenticated?: boolean;
+  /** 当前选中的 GitHub 账号 ID（多账号支持） */
+  selectedGitHubAccountId?: string | null;
+  /** GitHub 账号选择回调（多账号支持） */
+  onGitHubAccountSelect?: (accountId: string | null) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -112,7 +117,10 @@ export function ClaudeFormFields({
   isPartner,
   partnerPromotionKey,
   isCopilotPreset,
+  usesOAuth,
   isCopilotAuthenticated,
+  selectedGitHubAccountId,
+  onGitHubAccountSelect,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -292,10 +300,15 @@ export function ClaudeFormFields({
   return (
     <>
       {/* GitHub Copilot OAuth 认证 */}
-      {isCopilotPreset && <CopilotAuthSection />}
+      {isCopilotPreset && (
+        <CopilotAuthSection
+          selectedAccountId={selectedGitHubAccountId}
+          onAccountSelect={onGitHubAccountSelect}
+        />
+      )}
 
-      {/* API Key 输入框（非 Copilot 预设时显示） */}
-      {shouldShowApiKey && !isCopilotPreset && (
+      {/* API Key 输入框（非 OAuth 预设时显示） */}
+      {shouldShowApiKey && !usesOAuth && (
         <ApiKeySection
           value={apiKey}
           onChange={onApiKeyChange}

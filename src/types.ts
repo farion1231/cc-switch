@@ -157,6 +157,9 @@ export interface ProviderMeta {
   promptCacheKey?: string;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
+  // GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
+  // 用于多账号支持，关联到特定的 GitHub 账号
+  githubAccountId?: string;
 }
 
 // Skill 同步方式
