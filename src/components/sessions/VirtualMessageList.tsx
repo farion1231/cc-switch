@@ -25,6 +25,8 @@ export function VirtualMessageList({
     defaultCollapsed,
 }: VirtualMessageListProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
+    // 展开/收起前记录卡片顶部相对视口的偏移
+    const anchorRef = useRef<{ el: HTMLDivElement; offsetTop: number } | null>(null);
 
     const virtualizer = useVirtualizer({
         count: messages.length,
@@ -34,55 +36,65 @@ export function VirtualMessageList({
         gap: GAP,
     });
 
-    // 展开/收起前记录当前 item 顶部相对于视口的偏移
-    const handleBeforeToggle = useCallback(
-        (index: number) => {
-            const scrollEl = scrollRef.current;
-            if (!scrollEl) return undefined;
-            const item = virtualizer.getVirtualItems().find(
-                (v) => v.index === index,
-            );
-            if (!item) return undefined;
-            return item.start - scrollEl.scrollTop;
-        },
-        [virtualizer],
-    );
+    const handleBeforeToggle = useCallback((el: HTMLDivElement | null) => {
+        if (!el || !scrollRef.current) return;
+        // 记录卡片顶部相对于滚动容器视口顶部的偏移
+        const scrollTop = scrollRef.current.scrollTop;
+        const elTop = el.getBoundingClientRect().top
+            - scrollRef.current.getBoundingClientRect().top
+            + scrollTop;
+        anchorRef.current = { el, offsetTop: elTop - scrollTop };
+    }, []);
 
-    // 展开/收起后，根据之前记录的偏移修正 scrollTop，保持视觉位置不变
-    const handleAfterToggle = useCallback(
-        (index: number, offsetBefore: number | undefined) => {
-            if (offsetBefore === undefined) return;
+    const handleAfterToggle = useCallback(() => {
+        const anchor = anchorRef.current;
+        if (!anchor || !scrollRef.current) return;
+        anchorRef.current = null;
+
+        const el = anchor.el;
+        const savedOffset = anchor.offsetTop;
+        const scrollEl = scrollRef.current;
+
+        // 用双 rAF 确保 virtualizer 的 ResizeObserver 也完成了重新布局
+        requestAnimationFrame(() => {
             requestAnimationFrame(() => {
-                const scrollEl = scrollRef.current;
                 if (!scrollEl) return;
-                const item = virtualizer.getVirtualItems().find(
-                    (v) => v.index === index,
-                );
-                if (!item) return;
-                scrollEl.scrollTop = item.start - offsetBefore;
+                const newElTop = el.getBoundingClientRect().top
+                    - scrollEl.getBoundingClientRect().top
+                    + scrollEl.scrollTop;
+                scrollEl.scrollTop = newElTop - savedOffset;
             });
-        },
-        [virtualizer],
-    );
+        });
+    }, []);
+
+    const virtualItems = virtualizer.getVirtualItems();
+
+    const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+    const paddingBottom = virtualItems.length > 0
+        ? virtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end
+        : 0;
 
     return (
         <div
             ref={scrollRef}
             className="h-full overflow-y-auto overflow-x-hidden"
+            style={{ overflowAnchor: "none" }}
         >
             <div
-                className="relative w-full"
-                style={{ height: virtualizer.getTotalSize() }}
+                style={{
+                    paddingTop,
+                    paddingBottom,
+                }}
             >
-                {virtualizer.getVirtualItems().map((virtualItem) => {
+                {virtualItems.map((virtualItem) => {
                     const message = messages[virtualItem.index];
                     return (
                         <div
                             key={virtualItem.key}
                             data-index={virtualItem.index}
                             ref={virtualizer.measureElement}
-                            className="absolute left-0 right-0 px-4"
-                            style={{ top: virtualItem.start }}
+                            className="px-4"
+                            style={{ marginBottom: GAP }}
                         >
                             <SessionMessageItem
                                 message={message}
@@ -94,8 +106,8 @@ export function VirtualMessageList({
                                 onCopy={onCopy}
                                 renderMarkdown={renderMarkdown}
                                 defaultCollapsed={defaultCollapsed}
-                                onBeforeToggle={() => handleBeforeToggle(virtualItem.index)}
-                                onAfterToggle={(offset) => handleAfterToggle(virtualItem.index, offset)}
+                                onBeforeToggle={handleBeforeToggle}
+                                onAfterToggle={handleAfterToggle}
                             />
                         </div>
                     );
