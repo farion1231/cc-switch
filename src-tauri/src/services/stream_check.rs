@@ -293,11 +293,11 @@ impl StreamCheckService {
         timeout: std::time::Duration,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
-        // URL 必须包含 ?beta=true 参数（某些中转服务依赖此参数验证请求来源）
+        // 健康检查不注入 ?beta=true，依赖 anthropic-beta header 传递身份验证信息
         let url = if base.ends_with("/v1") {
-            format!("{base}/messages?beta=true")
+            format!("{base}/messages")
         } else {
-            format!("{base}/v1/messages?beta=true")
+            format!("{base}/v1/messages")
         };
 
         let body = json!({
