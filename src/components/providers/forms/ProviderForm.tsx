@@ -1240,7 +1240,8 @@ export function ProviderForm({
           <ClaudeFormFields
             providerId={providerId}
             shouldShowApiKey={
-              hasApiKeyField(form.getValues("settingsConfig"), "claude") &&
+              (selectedPresetId === "custom" ||
+                hasApiKeyField(form.getValues("settingsConfig"), "claude")) &&
               shouldShowApiKey(
                 form.getValues("settingsConfig"),
                 isEditMode,
