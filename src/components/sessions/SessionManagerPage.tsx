@@ -77,6 +77,8 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const defaultRenderMarkdown = defaultRenderModeRaw !== "raw";
   const { data: defaultCollapseRaw } = useSessionConfigQuery("defaultCollapse");
   const defaultCollapsed = defaultCollapseRaw !== "false";
+  const { data: showMessageIndexRaw } = useSessionConfigQuery("showMessageIndex");
+  const showMessageIndex = showMessageIndexRaw !== "false";
   const [extraArgsInput, setExtraArgsInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const detailRef = useRef<HTMLDivElement | null>(null);
@@ -340,6 +342,29 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     </label>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {t("sessionManager.defaultCollapseHint")}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 显示消息序号 */}
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="showMessageIndex"
+                    checked={showMessageIndex}
+                    onChange={async (e) => {
+                      await sessionsApi.setConfig("showMessageIndex", e.target.checked ? "true" : "false");
+                      const { queryClient } = await import("@/lib/query");
+                      await queryClient.invalidateQueries({ queryKey: ["sessionConfig", "showMessageIndex"] });
+                    }}
+                    className="mt-0.5 size-4 rounded border-input accent-primary cursor-pointer"
+                  />
+                  <div>
+                    <label htmlFor="showMessageIndex" className="text-sm font-medium cursor-pointer">
+                      {t("sessionManager.showMessageIndexTitle")}
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t("sessionManager.showMessageIndexHint")}
                     </p>
                   </div>
                 </div>
@@ -833,6 +858,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             }
                             renderMarkdown={renderMarkdown}
                             defaultCollapsed={defaultCollapsed}
+                            showMessageIndex={showMessageIndex}
                           />
                         )}
                       </div>

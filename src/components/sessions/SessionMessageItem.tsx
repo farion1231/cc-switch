@@ -23,17 +23,20 @@ interface SessionMessageItemProps {
     onCopy: (content: string) => void;
     renderMarkdown: boolean;
     defaultCollapsed?: boolean;
+    showMessageIndex?: boolean;
     onBeforeToggle?: (el: HTMLDivElement | null) => void;
     onAfterToggle?: () => void;
 }
 
 export function SessionMessageItem({
     message,
+    index,
     isActive,
     setRef,
     onCopy,
     renderMarkdown,
     defaultCollapsed = true,
+    showMessageIndex = true,
     onBeforeToggle,
     onAfterToggle,
 }: SessionMessageItemProps) {
@@ -87,6 +90,7 @@ export function SessionMessageItem({
             </Tooltip>
             <div className="flex items-center justify-between text-xs mb-1.5 pr-6">
                 <span className={cn("font-semibold", getRoleTone(message.role))}>
+                    {showMessageIndex && <span className="text-muted-foreground font-normal mr-1.5">#{index + 1}</span>}
                     {getRoleLabel(message.role, t)}
                     {message.toolName && (
                         <span className="text-muted-foreground font-normal ml-1">

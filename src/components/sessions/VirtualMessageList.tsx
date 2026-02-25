@@ -11,6 +11,7 @@ interface VirtualMessageListProps {
     onCopy: (content: string) => void;
     renderMarkdown: boolean;
     defaultCollapsed: boolean;
+    showMessageIndex: boolean;
 }
 
 const ESTIMATED_ITEM_HEIGHT = 120;
@@ -23,6 +24,7 @@ export function VirtualMessageList({
     onCopy,
     renderMarkdown,
     defaultCollapsed,
+    showMessageIndex,
 }: VirtualMessageListProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
     // 展开/收起前记录卡片顶部相对视口的偏移
@@ -106,6 +108,7 @@ export function VirtualMessageList({
                                 onCopy={onCopy}
                                 renderMarkdown={renderMarkdown}
                                 defaultCollapsed={defaultCollapsed}
+                                showMessageIndex={showMessageIndex}
                                 onBeforeToggle={handleBeforeToggle}
                                 onAfterToggle={handleAfterToggle}
                             />
