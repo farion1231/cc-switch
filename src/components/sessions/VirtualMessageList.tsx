@@ -27,8 +27,12 @@ export function VirtualMessageList({
     showMessageIndex,
 }: VirtualMessageListProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
-    // 展开/收起前记录卡片顶部相对视口的偏移
-    const anchorRef = useRef<{ el: HTMLDivElement; offsetTop: number } | null>(null);
+    // 展开/收起前记录锚定信息
+    const anchorRef = useRef<{
+        el: HTMLDivElement;
+        offset: number;
+        isCollapsing: boolean;
+    } | null>(null);
 
     const virtualizer = useVirtualizer({
         count: messages.length,
@@ -38,14 +42,26 @@ export function VirtualMessageList({
         gap: GAP,
     });
 
-    const handleBeforeToggle = useCallback((el: HTMLDivElement | null) => {
+    const handleBeforeToggle = useCallback((el: HTMLDivElement | null, isCollapsing: boolean) => {
         if (!el || !scrollRef.current) return;
-        // 记录卡片顶部相对于滚动容器视口顶部的偏移
-        const scrollTop = scrollRef.current.scrollTop;
-        const elTop = el.getBoundingClientRect().top
-            - scrollRef.current.getBoundingClientRect().top
-            + scrollTop;
-        anchorRef.current = { el, offsetTop: elTop - scrollTop };
+        const scrollRect = scrollRef.current.getBoundingClientRect();
+        if (isCollapsing) {
+            // 收起：锚定卡片底部相对视口的位置（下面不动，上面缩）
+            const elBottom = el.getBoundingClientRect().bottom;
+            anchorRef.current = {
+                el,
+                offset: elBottom - scrollRect.bottom,
+                isCollapsing: true,
+            };
+        } else {
+            // 展开：锚定卡片顶部相对视口的位置（上面不动，向下展开）
+            const elTop = el.getBoundingClientRect().top;
+            anchorRef.current = {
+                el,
+                offset: elTop - scrollRect.top,
+                isCollapsing: false,
+            };
+        }
     }, []);
 
     const handleAfterToggle = useCallback(() => {
@@ -53,18 +69,25 @@ export function VirtualMessageList({
         if (!anchor || !scrollRef.current) return;
         anchorRef.current = null;
 
-        const el = anchor.el;
-        const savedOffset = anchor.offsetTop;
+        const { el, offset, isCollapsing } = anchor;
         const scrollEl = scrollRef.current;
 
-        // 用双 rAF 确保 virtualizer 的 ResizeObserver 也完成了重新布局
+        // 双 rAF 确保 virtualizer 的 ResizeObserver 完成重新布局
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
                 if (!scrollEl) return;
-                const newElTop = el.getBoundingClientRect().top
-                    - scrollEl.getBoundingClientRect().top
-                    + scrollEl.scrollTop;
-                scrollEl.scrollTop = newElTop - savedOffset;
+                const scrollRect = scrollEl.getBoundingClientRect();
+                if (isCollapsing) {
+                    // 收起：让卡片底部保持在视口中的同一位置
+                    const newBottom = el.getBoundingClientRect().bottom;
+                    const currentOffset = newBottom - scrollRect.bottom;
+                    scrollEl.scrollTop += currentOffset - offset;
+                } else {
+                    // 展开：让卡片顶部保持在视口中的同一位置
+                    const newTop = el.getBoundingClientRect().top;
+                    const currentOffset = newTop - scrollRect.top;
+                    scrollEl.scrollTop += currentOffset - offset;
+                }
             });
         });
     }, []);
