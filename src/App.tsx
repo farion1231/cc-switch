@@ -244,7 +244,7 @@ function App() {
     deleteProvider,
     saveUsageScript,
     setAsDefaultModel,
-  } = useProviderActions(activeApp);
+  } = useProviderActions(activeApp, isProxyRunning);
 
   const disableOmoMutation = useDisableCurrentOmo();
   const handleDisableOmo = () => {

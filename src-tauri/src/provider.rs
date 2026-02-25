@@ -240,6 +240,9 @@ pub struct ProviderMeta {
     /// - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
     #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
     pub api_key_field: Option<String>,
+    /// 是否将 base_url 视为完整 API 端点（不拼接 endpoint 路径）
+    #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
+    pub is_full_url: Option<bool>,
 }
 
 impl ProviderManager {

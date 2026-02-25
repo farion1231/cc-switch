@@ -23,7 +23,7 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
  * Hook for managing provider actions (add, update, delete, switch)
  * Extracts business logic from App.tsx
  */
-export function useProviderActions(activeApp: AppId) {
+export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
@@ -133,6 +133,22 @@ export function useProviderActions(activeApp: AppId) {
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
+      // 阻断逻辑：需要代理的供应商在代理未运行时不允许切换
+      if (
+        activeApp === "claude" &&
+        provider.category !== "official" &&
+        (provider.meta?.isFullUrl ||
+          provider.meta?.apiFormat === "openai_chat") &&
+        !isProxyRunning
+      ) {
+        toast.warning(
+          t("notifications.proxyRequiredForSwitch", {
+            defaultValue: "此供应商需要代理服务，请先启动代理",
+          }),
+        );
+        return;
+      }
+
       try {
         const result = await switchProviderMutation.mutateAsync(provider.id);
         await syncClaudePlugin(provider);
@@ -185,7 +201,7 @@ export function useProviderActions(activeApp: AppId) {
         // 错误提示由 mutation 处理
       }
     },
-    [switchProviderMutation, syncClaudePlugin, activeApp, t],
+    [switchProviderMutation, syncClaudePlugin, activeApp, isProxyRunning, t],
   );
 
   // 删除供应商

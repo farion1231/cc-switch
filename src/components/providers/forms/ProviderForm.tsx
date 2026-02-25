@@ -203,6 +203,9 @@ export function ProviderForm({
       setDraftCustomEndpoints([]);
     }
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
+    setLocalIsFullUrl(
+      appId === "claude" ? (initialData?.meta?.isFullUrl ?? false) : false,
+    );
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
     setProxyConfig(initialData?.meta?.proxyConfig ?? { enabled: false });
     setPricingConfig({
@@ -247,6 +250,11 @@ export function ProviderForm({
   const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
     if (appId !== "claude") return "anthropic";
     return initialData?.meta?.apiFormat ?? "anthropic";
+  });
+
+  const [localIsFullUrl, setLocalIsFullUrl] = useState<boolean>(() => {
+    if (appId !== "claude") return false;
+    return initialData?.meta?.isFullUrl ?? false;
   });
 
   const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
@@ -826,6 +834,10 @@ export function ProviderForm({
         appId === "claude" && category !== "official"
           ? localApiKeyField
           : undefined,
+      isFullUrl:
+        appId === "claude" && category !== "official" && localIsFullUrl
+          ? true
+          : undefined,
     };
 
     onSubmit(payload);
@@ -1241,10 +1253,7 @@ export function ProviderForm({
             providerId={providerId}
             shouldShowApiKey={
               hasApiKeyField(form.getValues("settingsConfig"), "claude") &&
-              shouldShowApiKey(
-                form.getValues("settingsConfig"),
-                isEditMode,
-              )
+              shouldShowApiKey(form.getValues("settingsConfig"), isEditMode)
             }
             apiKey={apiKey}
             onApiKeyChange={handleApiKeyChange}
@@ -1279,6 +1288,8 @@ export function ProviderForm({
             onApiFormatChange={handleApiFormatChange}
             apiKeyField={localApiKeyField}
             onApiKeyFieldChange={handleApiKeyFieldChange}
+            isFullUrl={localIsFullUrl}
+            onFullUrlChange={setLocalIsFullUrl}
           />
         )}
 
