@@ -117,13 +117,13 @@ pub async fn handle_non_streaming(
     if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
         // 解析使用量
         if let Some(usage) = (parser_config.response_parser)(&json_value) {
-            // 优先使用 usage 中解析出的模型名称，其次使用响应中的 model 字段，最后回退到请求模型
+            // 优先使用 usage 中解析出的模型名称，其次使用响应中的 model 字段，最后回退到映射后的模型
             let model = if let Some(ref m) = usage.model {
                 m.clone()
             } else if let Some(m) = json_value.get("model").and_then(|m| m.as_str()) {
                 m.to_string()
             } else {
-                ctx.request_model.clone()
+                ctx.mapped_model.clone()
             };
 
             spawn_log_usage(
@@ -139,7 +139,7 @@ pub async fn handle_non_streaming(
             let model = json_value
                 .get("model")
                 .and_then(|m| m.as_str())
-                .unwrap_or(&ctx.request_model)
+                .unwrap_or(&ctx.mapped_model)
                 .to_string();
             spawn_log_usage(
                 state,
@@ -165,7 +165,7 @@ pub async fn handle_non_streaming(
             state,
             ctx,
             TokenUsage::default(),
-            &ctx.request_model,
+            &ctx.mapped_model,
             &ctx.request_model,
             status.as_u16(),
             false,
@@ -286,6 +286,7 @@ fn create_usage_collector(
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
     let request_model = ctx.request_model.clone();
+    let mapped_model = ctx.mapped_model.clone();
     let app_type_str = parser_config.app_type_str;
     let tag = ctx.tag;
     let start_time = ctx.start_time;
@@ -295,7 +296,7 @@ fn create_usage_collector(
 
     SseUsageCollector::new(start_time, move |events, first_token_ms| {
         if let Some(usage) = stream_parser(&events) {
-            let model = model_extractor(&events, &request_model);
+            let model = model_extractor(&events, &request_model, &mapped_model);
             let latency_ms = start_time.elapsed().as_millis() as u64;
 
             let state = state.clone();
@@ -320,7 +321,7 @@ fn create_usage_collector(
                 .await;
             });
         } else {
-            let model = model_extractor(&events, &request_model);
+            let model = model_extractor(&events, &request_model, &mapped_model);
             let latency_ms = start_time.elapsed().as_millis() as u64;
             let state = state.clone();
             let provider_id = provider_id.clone();

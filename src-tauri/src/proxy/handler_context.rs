@@ -7,6 +7,7 @@ use crate::provider::Provider;
 use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
+    model_mapper::apply_model_mapping,
     server::ProxyState,
     types::{AppProxyConfig, RectifierConfig},
     ProxyError,
@@ -48,6 +49,8 @@ pub struct RequestContext {
     pub current_provider_id: String,
     /// 请求中的模型名称
     pub request_model: String,
+    /// 映射后的模型名称（实际发送给上游的模型）
+    pub mapped_model: String,
     /// 日志标签（如 "Claude"、"Codex"、"Gemini"）
     pub tag: &'static str,
     /// 应用类型字符串（如 "claude"、"codex"、"gemini"）
@@ -135,6 +138,11 @@ impl RequestContext {
             .cloned()
             .ok_or(ProxyError::NoAvailableProvider)?;
 
+        // 计算映射后的模型名称
+        let (_mapped_body, _original_model, mapped_model) =
+            apply_model_mapping(body.clone(), &provider);
+        let mapped_model = mapped_model.unwrap_or_else(|| request_model.clone());
+
         log::debug!(
             "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
             tag,
@@ -151,6 +159,7 @@ impl RequestContext {
             providers,
             current_provider_id,
             request_model,
+            mapped_model,
             tag,
             app_type_str,
             app_type,
@@ -169,13 +178,17 @@ impl RequestContext {
             .map(|pq| pq.as_str())
             .unwrap_or(uri.path());
 
-        self.request_model = endpoint
+        let extracted_model = endpoint
             .split('/')
             .find(|s| s.starts_with("models/"))
             .and_then(|s| s.strip_prefix("models/"))
             .map(|s| s.split(':').next().unwrap_or(s))
             .unwrap_or("unknown")
             .to_string();
+
+        self.request_model = extracted_model.clone();
+        // Gemini 的 mapped_model 通常与 request_model 相同（因为模型映射主要针对 Claude 模型）
+        self.mapped_model = extracted_model;
 
         self
     }
