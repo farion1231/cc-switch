@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -62,6 +63,12 @@ interface ClaudeFormFieldsProps {
     value: string,
   ) => void;
 
+  // Unified Mapping
+  unifiedMappingEnabled: boolean;
+  unifiedTargetModel: string;
+  onUnifiedMappingChange: (enabled: boolean) => void;
+  onUnifiedTargetModelChange: (model: string) => void;
+
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 
@@ -99,6 +106,10 @@ export function ClaudeFormFields({
   defaultSonnetModel,
   defaultOpusModel,
   onModelChange,
+  unifiedMappingEnabled,
+  unifiedTargetModel,
+  onUnifiedMappingChange,
+  onUnifiedTargetModelChange,
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
@@ -214,6 +225,39 @@ export function ClaudeFormFields({
           <p className="text-xs text-muted-foreground">
             {t("providerForm.apiFormatHint", {
               defaultValue: "选择供应商 API 的输入格式",
+            })}
+          </p>
+        </div>
+      )}
+
+      {/* 统一模型映射 */}
+      {shouldShowModelSelector && (
+        <div className="space-y-3 border rounded-lg p-4 bg-muted/30">
+          <div className="flex items-center justify-between">
+            <FormLabel htmlFor="unifiedMapping" className="mb-0">
+              {t("providerForm.unifiedMapping", {
+                defaultValue: "统一映射到一个上游模型",
+              })}
+            </FormLabel>
+            <Switch
+              id="unifiedMapping"
+              checked={unifiedMappingEnabled}
+              onCheckedChange={onUnifiedMappingChange}
+            />
+          </div>
+          {unifiedMappingEnabled && (
+            <Input
+              id="unifiedTargetModel"
+              value={unifiedTargetModel}
+              onChange={(e) => onUnifiedTargetModelChange(e.target.value)}
+              placeholder="qwen3.5-plus"
+              autoComplete="off"
+            />
+          )}
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.unifiedMappingHint", {
+              defaultValue:
+                "将所有 Claude 模型请求统一映射到指定的上游模型，适用于第三方兼容接口",
             })}
           </p>
         </div>

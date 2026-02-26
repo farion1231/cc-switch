@@ -35,11 +35,19 @@ fn get_app_config_dir() -> PathBuf {
 
 /// 获取崩溃日志文件路径
 fn get_crash_log_path() -> PathBuf {
+    // 开发版本使用 logs-dev 目录
+    if APP_VERSION.contains("dev") {
+        return get_app_config_dir().join("logs-dev/crash.log");
+    }
     get_app_config_dir().join("crash.log")
 }
 
 /// 获取日志目录路径
 pub fn get_log_dir() -> PathBuf {
+    // 开发版本使用 logs-dev 目录
+    if APP_VERSION.contains("dev") {
+        return get_app_config_dir().join("logs-dev");
+    }
     get_app_config_dir().join("logs")
 }
 

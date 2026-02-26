@@ -6,6 +6,7 @@ use super::{
     body_filter::filter_private_params_with_whitelist,
     error::*,
     failover_switch::FailoverSwitchManager,
+    model_mapper::apply_model_mapping,
     provider_router::ProviderRouter,
     providers::{get_adapter, ProviderAdapter, ProviderType},
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
@@ -663,12 +664,37 @@ impl RequestForwarder {
                                     Some(format!("Provider {} 失败: {}", provider.name, e));
                             }
 
+                            // 提取错误详情（status 和 body）
+                            let error_detail = match &e {
+                                ProxyError::UpstreamError { status, body } => {
+                                    let body_summary = body
+                                        .as_ref()
+                                        .map(|b| {
+                                            if b.len() > 100 {
+                                                format!("{}...", &b[..100])
+                                            } else {
+                                                b.clone()
+                                            }
+                                        })
+                                        .unwrap_or_else(|| "".to_string());
+                                    format!("status={}, body={}", status, body_summary)
+                                }
+                                _ => e.to_string(),
+                            };
+
+                            // 获取模型映射信息
+                            let (_mapped_body, original_model, mapped_model) =
+                                apply_model_mapping(body.clone(), provider);
+
                             log::warn!(
-                                "[{}] [FWD-001] Provider {} 失败，切换下一个 ({}/{})",
+                                "[{}] [FWD-001] Provider {} 失败，切换下一个 ({}/{}) | error={} | original_model={} | mapped_model={}",
                                 app_type_str,
                                 provider.name,
                                 attempted_providers,
-                                providers.len()
+                                providers.len(),
+                                error_detail,
+                                original_model.unwrap_or_else(|| "N/A".to_string()),
+                                mapped_model.unwrap_or_else(|| "N/A".to_string())
                             );
 
                             last_error = Some(e);
@@ -762,6 +788,14 @@ impl RequestForwarder {
         // 应用模型映射（独立于格式转换）
         let (mapped_body, _original_model, _mapped_model) =
             super::model_mapper::apply_model_mapping(body.clone(), provider);
+
+        // DashScope 请求体清洗：在模型映射之后、格式转换之前执行
+        let mapped_body = if is_dashscope_provider(provider) {
+            log::debug!("[DashScope] 执行请求体清洗");
+            sanitize_dashscope_request(mapped_body)?
+        } else {
+            mapped_body
+        };
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mapped_body = normalize_thinking_type(mapped_body);
@@ -926,4 +960,154 @@ fn extract_error_message(error: &ProxyError) -> Option<String> {
         ProxyError::UpstreamError { body, .. } => body.clone(),
         _ => Some(error.to_string()),
     }
+}
+
+/// 判断是否为 DashScope Provider
+///
+/// 满足以下任一条件即视为 DashScope：
+/// - base_url 包含 "dashscope.aliyuncs.com"
+/// - base_url 包含 "bailian"
+/// - provider.icon 包含 "qwen"（不区分大小写）
+/// - provider.name 包含 "qwen"（不区分大小写）
+///
+/// base_url 的获取方式：
+/// - 先尝试从 `settings_config.get("base_url")` 获取
+/// - 如果没有，尝试从 `settings_config.get("env").and_then(|e| e.get("ANTHROPIC_BASE_URL"))` 获取
+pub fn is_dashscope_provider(provider: &Provider) -> bool {
+    // 1. 检查 base_url
+    let base_url = provider
+        .settings_config
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("env")
+                .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        });
+
+    if let Some(url) = base_url {
+        if url.contains("dashscope.aliyuncs.com") || url.contains("bailian") {
+            return true;
+        }
+    }
+
+    // 2. 检查 icon（不区分大小写）
+    if let Some(ref icon) = provider.icon {
+        if icon.to_lowercase().contains("qwen") {
+            return true;
+        }
+    }
+
+    // 3. 检查 name（不区分大小写）
+    if provider.name.to_lowercase().contains("qwen") {
+        return true;
+    }
+
+    false
+}
+
+/// 清洗 DashScope 请求体（白名单策略）
+///
+/// 保留白名单中的字段，删除黑名单中的字段：
+///
+/// 白名单（保留的字段）：
+/// - 必选：model, messages, max_tokens, stream
+/// - 可选：system, temperature, top_p, top_k, stop_sequences, tools, tool_choice
+/// - metadata（仅保留 user_id）
+///
+/// 黑名单（删除的字段）：
+/// - thinking: 会触发 DashScope 400 错误
+/// - output_config: Claude Code 结构化输出相关字段
+///
+/// # Arguments
+/// * `body` - 原始请求体
+///
+/// # Returns
+/// 清洗后的请求体
+///
+/// # Errors
+/// * `InvalidRequest` - 当 messages 不是数组或 model 不是字符串时
+pub fn sanitize_dashscope_request(body: Value) -> Result<Value, ProxyError> {
+    // 白名单：必选字段
+    const REQUIRED_FIELDS: &[&str] = &["model", "messages", "max_tokens", "stream"];
+
+    // 白名单：可选字段
+    const OPTIONAL_FIELDS: &[&str] = &[
+        "system",
+        "temperature",
+        "top_p",
+        "top_k",
+        "stop_sequences",
+        "tools",
+        "tool_choice",
+    ];
+
+    // 黑名单：需要删除的字段
+    const BLACKLIST_FIELDS: &[&str] = &["thinking", "output_config"];
+
+    // 类型校验
+    // 1. messages 必须为数组
+    if let Some(messages) = body.get("messages") {
+        if !messages.is_array() {
+            log::warn!("[DashScope] messages 必须是数组，当前类型: {}", messages);
+            return Err(ProxyError::InvalidRequest(
+                "messages must be an array".to_string(),
+            ));
+        }
+    }
+
+    // 2. model 必须为字符串
+    if let Some(model) = body.get("model") {
+        if !model.is_string() {
+            log::warn!("[DashScope] model 必须是字符串，当前类型: {}", model);
+            return Err(ProxyError::InvalidRequest(
+                "model must be a string".to_string(),
+            ));
+        }
+    }
+
+    // 构建白名单字段集合
+    let mut allowed_fields: Vec<&str> = REQUIRED_FIELDS.to_vec();
+    allowed_fields.extend(OPTIONAL_FIELDS);
+
+    // 创建清洗后的对象
+    let mut sanitized_object = serde_json::Map::new();
+
+    // 1. 添加必选和可选字段（白名单）
+    for field in &allowed_fields {
+        if let Some(value) = body.get(*field) {
+            // 特殊处理 metadata：仅保留 user_id
+            if *field == "metadata" {
+                if let Some(metadata_obj) = value.as_object() {
+                    let mut filtered_metadata = serde_json::Map::new();
+                    if let Some(user_id) = metadata_obj.get("user_id") {
+                        filtered_metadata.insert("user_id".to_string(), user_id.clone());
+                    }
+                    if !filtered_metadata.is_empty() {
+                        sanitized_object.insert("metadata".to_string(), Value::Object(filtered_metadata));
+                    }
+                }
+            } else {
+                sanitized_object.insert(field.to_string(), value.clone());
+            }
+        }
+    }
+
+    // 2. 删除黑名单字段（已在构建时忽略，但显式记录日志）
+    for field in BLACKLIST_FIELDS {
+        if body.get(*field).is_some() {
+            log::debug!("[DashScope] 已删除黑名单字段: {}", field);
+        }
+    }
+
+    log::info!(
+        "[DashScope] 请求体清洗完成，保留字段: {:?}",
+        sanitized_object.keys().collect::<Vec<_>>()
+    );
+
+    Ok(Value::Object(sanitized_object))
 }

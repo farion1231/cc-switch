@@ -400,6 +400,10 @@ export function ProviderForm({
     defaultSonnetModel,
     defaultOpusModel,
     handleModelChange,
+    unifiedMappingEnabled,
+    unifiedTargetModel,
+    handleUnifiedMappingToggle,
+    handleUnifiedTargetModelChange,
   } = useModelState({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: (config) => form.setValue("settingsConfig", config),
@@ -1952,6 +1956,10 @@ export function ProviderForm({
             defaultSonnetModel={defaultSonnetModel}
             defaultOpusModel={defaultOpusModel}
             onModelChange={handleModelChange}
+            unifiedMappingEnabled={unifiedMappingEnabled}
+            unifiedTargetModel={unifiedTargetModel}
+            onUnifiedMappingChange={handleUnifiedMappingToggle}
+            onUnifiedTargetModelChange={handleUnifiedTargetModelChange}
             speedTestEndpoints={speedTestEndpoints}
             apiFormat={localApiFormat}
             onApiFormatChange={handleApiFormatChange}
