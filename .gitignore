@@ -19,6 +19,9 @@ GEMINI.md
 vitest-report.json
 nul
 
+# Lock files
+*.lock
+
 # Flatpak build artifacts
 flatpak/cc-switch.deb
 flatpak-build/
