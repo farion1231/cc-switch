@@ -11,8 +11,8 @@ pub type StreamUsageParser = fn(&[Value]) -> Option<TokenUsage>;
 pub type ResponseUsageParser = fn(&Value) -> Option<TokenUsage>;
 
 /// 模型提取器类型别名
-/// 参数: (流式事件列表, 请求中的模型名称) -> 最终使用的模型名称
-pub type StreamModelExtractor = fn(&[Value], &str) -> String;
+/// 参数: (流式事件列表, 请求中的模型名称, 映射后的模型名称) -> 最终使用的模型名称
+pub type StreamModelExtractor = fn(&[Value], &str, &str) -> String;
 
 /// 各 API 的使用量解析配置
 #[derive(Clone, Copy)]
@@ -32,18 +32,19 @@ pub struct UsageParserConfig {
 // ============================================================================
 
 /// Claude 流式响应模型提取（优先使用 usage.model）
-fn claude_model_extractor(events: &[Value], request_model: &str) -> String {
+fn claude_model_extractor(events: &[Value], _request_model: &str, mapped_model: &str) -> String {
     // 首先尝试从解析的 usage 中获取模型
     if let Some(usage) = TokenUsage::from_claude_stream_events(events) {
         if let Some(model) = usage.model {
             return model;
         }
     }
-    request_model.to_string()
+    // 回退到 mapped_model（上游实际收到的模型）
+    mapped_model.to_string()
 }
 
 /// OpenAI Chat Completions 流式响应模型提取（优先使用 usage.model）
-fn openai_model_extractor(events: &[Value], request_model: &str) -> String {
+fn openai_model_extractor(events: &[Value], _request_model: &str, mapped_model: &str) -> String {
     // 首先尝试从解析的 usage 中获取模型
     if let Some(usage) = TokenUsage::from_openai_stream_events(events) {
         if let Some(model) = usage.model {
@@ -54,12 +55,12 @@ fn openai_model_extractor(events: &[Value], request_model: &str) -> String {
     events
         .iter()
         .find_map(|e| e.get("model")?.as_str())
-        .unwrap_or(request_model)
+        .unwrap_or(mapped_model)
         .to_string()
 }
 
 /// Codex 智能流式响应模型提取（自动检测格式）
-fn codex_auto_model_extractor(events: &[Value], request_model: &str) -> String {
+fn codex_auto_model_extractor(events: &[Value], _request_model: &str, mapped_model: &str) -> String {
     // 首先尝试从解析的 usage 中获取模型
     if let Some(usage) = TokenUsage::from_codex_stream_events_auto(events) {
         if let Some(model) = usage.model {
@@ -80,19 +81,20 @@ fn codex_auto_model_extractor(events: &[Value], request_model: &str) -> String {
             // 再回退：从 OpenAI 格式事件中提取
             events.iter().find_map(|e| e.get("model")?.as_str())
         })
-        .unwrap_or(request_model)
+        .unwrap_or(mapped_model)
         .to_string()
 }
 
 /// Gemini 流式响应模型提取（优先使用 usage.model）
-fn gemini_model_extractor(events: &[Value], request_model: &str) -> String {
+fn gemini_model_extractor(events: &[Value], _request_model: &str, mapped_model: &str) -> String {
     // 首先尝试从解析的 usage 中获取模型
     if let Some(usage) = TokenUsage::from_gemini_stream_chunks(events) {
         if let Some(model) = usage.model {
             return model;
         }
     }
-    request_model.to_string()
+    // 回退到 mapped_model（上游实际收到的模型）
+    mapped_model.to_string()
 }
 
 // ============================================================================
