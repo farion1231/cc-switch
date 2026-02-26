@@ -37,7 +37,8 @@
     "search": "検索",
     "reset": "リセット",
     "actions": "操作",
-    "deleting": "削除中..."
+    "deleting": "削除中...",
+    "auto": "自動"
   },
   "apiKeyInput": {
     "placeholder": "API Key を入力",
@@ -50,15 +51,7 @@
   },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
-    "writeCommonConfig": "共通設定を書き込む",
-    "editCommonConfig": "共通設定を編集",
-    "editCommonConfigTitle": "共通設定スニペットを編集",
-    "commonConfigHint": "「共通設定を書き込む」がオンのとき settings.json にマージされます",
     "fullSettingsHint": "Claude Code の settings.json 全文",
-    "extractFromCurrent": "編集内容から抽出",
-    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
-    "extractFailed": "抽出に失敗しました: {{error}}",
-    "saveFailed": "保存に失敗しました: {{error}}",
     "hideAttribution": "AI署名を非表示",
     "alwaysThinking": "拡張思考",
     "enableTeammates": "Teammates モード"
@@ -77,7 +70,9 @@
     "tabProvider": "プロバイダー",
     "tabUniversal": "統一プロバイダー",
     "noProviders": "まだプロバイダーがありません",
-    "noProvidersDescription": "右上の「プロバイダーを追加」を押して最初の API プロバイダーを登録してください",
+    "noProvidersDescription": "下の「現在の設定をインポート」ボタンで既存の設定を取り込むか、新しいプロバイダーを手動で追加してください",
+    "importCurrent": "現在の設定をインポート",
+    "importCurrentDescription": "現在使用中の設定をデフォルトプロバイダーとしてインポート",
     "currentlyUsing": "現在使用中",
     "enable": "有効化",
     "inUse": "使用中",
@@ -91,8 +86,8 @@
     "addOpenCodeProvider": "OpenCode プロバイダーを追加",
     "addToConfig": "追加",
     "removeFromConfig": "削除",
-    "setAsDefault": "有効化",
-    "isDefault": "デフォルト",
+    "setAsDefault": "デフォルトに設定",
+    "isDefault": "現在のデフォルト",
     "inConfig": "追加済み",
     "addProviderHint": "一覧にすばやく切り替えられるよう、ここに情報を入力してください。",
     "editClaudeProvider": "Claude Code プロバイダーを編集",
@@ -122,11 +117,7 @@
     "notes": "メモ",
     "notesPlaceholder": "例: 会社用アカウント",
     "configJson": "Config JSON",
-    "writeCommonConfig": "共通設定を書き込む",
-    "editCommonConfigButton": "共通設定を編集",
     "configJsonHint": "Claude Code の設定をすべて入力してください",
-    "editCommonConfigTitle": "共通設定スニペットを編集",
-    "editCommonConfigHint": "共通設定スニペットは、この機能をオンにしたすべてのプロバイダーへマージされます",
     "addProvider": "プロバイダーを追加",
     "sortUpdated": "並び順を更新しました",
     "usageSaved": "利用状況の設定を保存しました",
@@ -171,19 +162,31 @@
     "openclawModelsRegistered": "モデルが /model リストに登録されました",
     "openclawDefaultModelSet": "デフォルトモデルに設定しました",
     "openclawDefaultModelSetFailed": "デフォルトモデルの設定に失敗しました",
-    "openclawNoModels": "モデルが設定されていません"
+    "openclawNoModels": "モデルが設定されていません",
+    "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
     "deleteProviderMessage": "プロバイダー「{{name}}」を削除してもよろしいですか？この操作は元に戻せません。",
     "removeProvider": "プロバイダーを解除",
-    "removeProviderMessage": "プロバイダー「{{name}}」を設定から解除してもよろしいですか？\n\n解除後、このプロバイダーは無効になりますが、設定データは CC Switch に保持されます。いつでも再追加できます。"
+    "removeProviderMessage": "プロバイダー「{{name}}」を設定から解除してもよろしいですか？\n\n解除後、このプロバイダーは無効になりますが、設定データは CC Switch に保持されます。いつでも再追加できます。",
+    "proxy": {
+      "title": "ローカルプロキシの有効化",
+      "message": "ローカルプロキシは上級機能です。有効にする前に、その仕組みを理解していることをご確認ください。\n\n適切な設定方法については、関連ドキュメントまたはプロバイダーにご相談ください。",
+      "confirm": "理解しました、有効にする"
+    },
+    "usage": {
+      "title": "使用量クエリの設定",
+      "message": "使用量クエリにはカスタムスクリプトまたは API パラメータが必要です。プロバイダーから必要な情報を取得していることをご確認ください。\n\n設定方法が不明な場合は、プロバイダーのドキュメントを先にご確認ください。",
+      "confirm": "理解しました、設定する"
+    }
   },
   "settings": {
     "title": "設定",
     "general": "一般",
     "tabGeneral": "一般",
     "tabAdvanced": "詳細",
+    "tabProxy": "プロキシ",
     "advanced": {
       "configDir": {
         "title": "設定ディレクトリ",
@@ -192,6 +195,8 @@
       "proxy": {
         "title": "ローカルプロキシ",
         "description": "プロキシサービスの切り替え、ステータスとポート情報を表示",
+        "enableFeature": "メインページにプロキシ切り替えを表示",
+        "enableFeatureDescription": "有効にすると、メインページ上部にプロキシとフェイルオーバーの切り替えが表示されます",
         "running": "実行中",
         "stopped": "停止中"
       },
@@ -213,7 +218,15 @@
       },
       "data": {
         "title": "データ管理",
-        "description": "設定のインポート/エクスポートとバックアップ/復元"
+        "description": "ローカル設定データのインポートとエクスポート"
+      },
+      "backup": {
+        "title": "バックアップと復元",
+        "description": "自動バックアップの管理、データベーススナップショットの表示と復元"
+      },
+      "cloudSync": {
+        "title": "クラウド同期",
+        "description": "WebDAV でデバイス間のデータを同期"
       },
       "rectifier": {
         "title": "整流器",
@@ -275,6 +288,27 @@
     "selectFileFailed": "有効な SQL バックアップファイルを選択してください",
     "configCorrupted": "SQL ファイルが壊れているか形式が無効な可能性があります",
     "backupId": "バックアップ ID",
+    "backupManager": {
+      "title": "データベースバックアップ",
+      "description": "以前の状態に復元するための自動データベーススナップショット",
+      "empty": "バックアップはまだありません",
+      "restore": "復元",
+      "restoring": "復元中...",
+      "confirmTitle": "バックアップの復元を確認",
+      "confirmMessage": "このバックアップを復元すると現在のデータベースが上書きされます。安全バックアップが先に作成されます。",
+      "restoreSuccess": "復元成功！安全バックアップが作成されました",
+      "restoreFailed": "復元に失敗しました",
+      "safetyBackupId": "安全バックアップID",
+      "intervalLabel": "自動バックアップ間隔",
+      "retainLabel": "バックアップ保持数",
+      "intervalDisabled": "無効",
+      "intervalHours": "{{hours}} 時間",
+      "intervalDays": "{{days}} 日",
+      "rename": "名前変更",
+      "renameSuccess": "バックアップの名前を変更しました",
+      "renameFailed": "名前変更に失敗しました",
+      "namePlaceholder": "新しい名前を入力"
+    },
     "webdavSync": {
       "title": "WebDAV クラウド同期",
       "description": "WebDAV を使ってデバイス間でデータベースとスキル設定を同期します。",
@@ -448,6 +482,14 @@
     "oneClickInstall": "ワンクリックインストール",
     "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / OpenCode をインストール",
     "localEnvCheck": "ローカル環境チェック",
+    "envBadge": {
+      "wsl": "WSL",
+      "windows": "Win",
+      "macos": "macOS",
+      "linux": "Linux"
+    },
+    "wslShell": "Shell",
+    "wslShellFlag": "フラグ",
     "installCommandsCopied": "インストールコマンドをコピーしました",
     "installCommandsCopyFailed": "コピーに失敗しました。手動でコピーしてください。",
     "importFailedError": "設定のインポートに失敗しました: {{message}}",
@@ -497,7 +539,7 @@
   },
   "sessionManager": {
     "title": "セッション管理",
-    "subtitle": "Codex / Claude Code のセッションを管理",
+    "subtitle": "Claude Code / Codex / OpenCode / OpenClaw / Gemini CLI のセッションを管理",
     "searchPlaceholder": "内容・ディレクトリ・ID で検索",
     "searchSessions": "セッションを検索",
     "providerFilterAll": "すべて",
@@ -583,7 +625,10 @@
       "cubence": "Cubence は CC Switch の公式パートナーです。登録後チャージ時に \"CCSWITCH\" を入力すると、毎回 10% オフ",
       "aigocode": "AIGoCode は CC Switch の公式パートナーです。このリンクから登録すると、初回チャージ時に 10% のボーナスクレジットがもらえます！",
       "rightcode": "RightCode は CC Switch の公式パートナーです。このリンクから登録すると、毎回のチャージに 5% のボーナスクレジットがもらえます！",
-      "aicodemirror": "AICodeMirror は CC Switch の公式パートナーです。このリンクから登録すると20%オフ！"
+      "aicodemirror": "AICodeMirror は CC Switch の公式パートナーです。このリンクから登録すると20%オフ！",
+      "aicoding": "AI Coding は CC Switch ユーザー向けに特別割引を提供しています。初回チャージが 10% オフ！",
+      "crazyrouter": "CrazyRouter は CC Switch ユーザー向けに特別ボーナスを提供しています。初回チャージで 30% の追加クレジットがもらえます！",
+      "sssaicode": "SSAI Code は CC Switch ユーザー向けに特別ボーナスを提供しています。チャージごとに $10 の追加クレジットがもらえます！"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
@@ -613,6 +658,10 @@
     "apiFormatHint": "プロバイダー API の入力フォーマットを選択",
     "apiFormatAnthropic": "Anthropic Messages（ネイティブ）",
     "apiFormatOpenAIChat": "OpenAI Chat Completions（プロキシが必要）",
+    "authField": "認証フィールド",
+    "authFieldAuthToken": "Auth Token（デフォルト）",
+    "authFieldApiKey": "API Key",
+    "authFieldHint": "ほとんどのサードパーティプロバイダーは Auth Token を使用します。一部は API Key が必要です",
     "anthropicDefaultHaikuModel": "既定 Haiku モデル",
     "anthropicDefaultSonnetModel": "既定 Sonnet モデル",
     "anthropicDefaultOpusModel": "既定 Opus モデル",
@@ -684,33 +733,15 @@
     "authJsonHint": "Codex の auth.json 設定内容",
     "configToml": "config.toml (TOML)",
     "configTomlHint": "Codex の config.toml 設定内容",
-    "writeCommonConfig": "共通設定を書き込む",
-    "editCommonConfig": "共通設定を編集",
-    "editCommonConfigTitle": "Codex 共通設定スニペットを編集",
-    "commonConfigHint": "「共通設定を書き込む」がオンの場合、config.toml の末尾に追記されます",
-    "apiUrlLabel": "API リクエスト URL",
-    "extractFromCurrent": "編集内容から抽出",
-    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
-    "extractFailed": "抽出に失敗しました: {{error}}",
-    "saveFailed": "保存に失敗しました: {{error}}"
+    "apiUrlLabel": "API リクエスト URL"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
     "envFileHint": ".env 形式で Gemini の環境変数を設定",
     "configJson": "設定ファイル (config.json)",
     "configJsonHint": "Gemini 拡張パラメーターを JSON 形式で設定（任意）",
-    "writeCommonConfig": "共通設定を書き込む",
-    "editCommonConfig": "共通設定を編集",
-    "editCommonConfigTitle": "Gemini 共通設定スニペットを編集",
-    "commonConfigHint": "このスニペットは Gemini の .env に書き込みます（GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY は使用できません）",
-    "extractFromCurrent": "編集内容から抽出",
-    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
-    "extractFailed": "抽出に失敗しました: {{error}}",
-    "saveFailed": "保存に失敗しました: {{error}}",
     "extractedConfigInvalid": "抽出した設定のフォーマットが不正です",
     "invalidJsonFormat": "共通設定スニペットの形式が不正です（有効な JSON でなければなりません）",
-    "commonConfigInvalidKeys": "共通設定スニペットに GOOGLE_GEMINI_BASE_URL または GEMINI_API_KEY を含めることはできません（検出: {{keys}}）",
-    "commonConfigInvalidValues": "共通設定スニペットの値は文字列である必要があります",
     "noCommonConfigToApply": "共通設定スニペットが空、または適用できる項目がありません",
     "configMergeFailed": "設定のマージに失敗しました: {{error}}",
     "configReplaceFailed": "設定の置換に失敗しました: {{error}}"
@@ -1164,7 +1195,29 @@
     "editing": "{{filename}} を編集",
     "saveSuccess": "保存しました",
     "saveFailed": "保存に失敗しました",
-    "loadFailed": "読み込みに失敗しました"
+    "loadFailed": "読み込みに失敗しました",
+    "openDirectory": "ファイルマネージャーで開く",
+    "dailyMemory": {
+      "title": "デイリーメモリー",
+      "sectionTitle": "デイリーメモリー",
+      "cardTitle": "デイリーメモリーファイル",
+      "cardDescription": "デイリーメモリーの閲覧・管理",
+      "createToday": "メモリーを追加",
+      "empty": "デイリーメモリーファイルはまだありません",
+      "loadFailed": "デイリーメモリーファイルの読み込みに失敗しました",
+      "createFailed": "デイリーメモリーファイルの作成に失敗しました",
+      "deleteSuccess": "デイリーメモリーファイルを削除しました",
+      "deleteFailed": "デイリーメモリーファイルの削除に失敗しました",
+      "confirmDeleteTitle": "デイリーメモリーを削除",
+      "confirmDeleteMessage": "{{date}} のデイリーメモリーを削除しますか？この操作は取り消せません。",
+      "searchPlaceholder": "全文検索...",
+      "searchScopeHint": "すべてのデイリーメモリーを全文検索 ⌘F",
+      "searchCloseHint": "Escで閉じる",
+      "noSearchResults": "検索に一致するデイリーメモリーはありません。",
+      "searching": "検索中...",
+      "searchFailed": "検索に失敗しました",
+      "matchCount": "{{count}}件一致"
+    }
   },
   "openclaw": {
     "env": {
@@ -1202,7 +1255,8 @@
       "description": "openclaw.json の agents.defaults 設定を管理（デフォルトモデル、ランタイムパラメータなど）",
       "modelSection": "モデル設定",
       "primaryModel": "プライマリモデル",
-      "primaryModelHint": "形式: provider/model-id",
+      "primaryModelHint": "プロバイダ一覧の「デフォルトモデルに設定」ボタンで設定します",
+      "notSet": "未設定",
       "fallbackModels": "フォールバックモデル",
       "fallbackModelsHint": "カンマ区切り、優先度順",
       "runtimeSection": "ランタイムパラメータ",
@@ -1839,6 +1893,22 @@
       "unspecifiedLow": "未分類の低作業量タスクカテゴリ。他のカテゴリに該当せず作業量が小さいタスクに適用。デフォルトで Claude Sonnet 4.5 を使用。",
       "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 4.6 の max バリアントを使用。",
       "writing": "ライティングカテゴリ。ドキュメント、散文、技術文書に特化。デフォルトで Gemini 3 Flash 高速生成モデルを使用。"
+    },
+    "slimAgentDesc": {
+      "orchestrator": "オーケストレーター",
+      "oracle": "オラクル",
+      "librarian": "ライブラリアン",
+      "explorer": "エクスプローラー",
+      "designer": "デザイナー",
+      "fixer": "フィクサー"
+    },
+    "slimAgentTooltip": {
+      "orchestrator": "実行コードの作成、マルチエージェントワークフローの調整、エキスパートの召喚",
+      "oracle": "根本原因分析、アーキテクチャレビュー、デバッグガイダンス（読み取り専用）",
+      "librarian": "ドキュメント検索、GitHubコード検索（読み取り専用）",
+      "explorer": "正規表現検索、ASTパターンマッチング、ファイル検出（読み取り専用）",
+      "designer": "モダンなレスポンシブデザイン、CSS/Tailwindの専門知識",
+      "fixer": "コード実装、リファクタリング、テスト、検証"
     }
   },
   "openclawConfig": {

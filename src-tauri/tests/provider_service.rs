@@ -112,9 +112,12 @@ command = "say"
 
     let config_text =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    // With partial merge, only key fields (model, provider, model_providers) are
+    // merged into config.toml. The existing MCP section should be preserved.
+    // MCP sync from DB is handled separately (at startup or explicit sync).
     assert!(
-        config_text.contains("mcp_servers.echo-server"),
-        "config.toml should contain synced MCP servers"
+        config_text.contains("mcp_servers.legacy"),
+        "config.toml should preserve existing MCP servers after partial merge"
     );
 
     let current_id = state
@@ -142,11 +145,6 @@ command = "say"
     assert!(
         new_config_text.contains("mcp_servers.latest"),
         "provider config should contain original MCP servers"
-    );
-    // live 文件额外包含同步的 MCP 服务器
-    assert!(
-        config_text.contains("mcp_servers.echo-server"),
-        "live config should include synced MCP servers"
     );
 
     let legacy = providers
@@ -414,9 +412,19 @@ fn provider_service_switch_claude_updates_live_and_state() {
     let legacy_provider = providers
         .get("old-provider")
         .expect("legacy provider still exists");
+    // With partial merge backfill, only key fields are extracted from live config
     assert_eq!(
-        legacy_provider.settings_config, legacy_live,
-        "previous provider should receive backfilled live config"
+        legacy_provider
+            .settings_config
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+            .and_then(|key| key.as_str()),
+        Some("legacy-key"),
+        "previous provider should receive backfilled auth key"
+    );
+    assert!(
+        legacy_provider.settings_config.get("workspace").is_none(),
+        "backfill should NOT include non-key fields like workspace"
     );
 }
 

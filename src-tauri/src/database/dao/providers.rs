@@ -364,25 +364,26 @@ impl Database {
         &self,
         app_type: &str,
         provider_id: &str,
+        category: &str,
     ) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
         tx.execute(
-            "UPDATE providers SET is_current = 0 WHERE app_type = ?1 AND category = 'omo'",
-            params![app_type],
+            "UPDATE providers SET is_current = 0 WHERE app_type = ?1 AND category = ?2",
+            params![app_type, category],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         let updated = tx
             .execute(
-            "UPDATE providers SET is_current = 1 WHERE id = ?1 AND app_type = ?2 AND category = 'omo'",
-            params![provider_id, app_type],
-        )
+                "UPDATE providers SET is_current = 1 WHERE id = ?1 AND app_type = ?2 AND category = ?3",
+                params![provider_id, app_type, category],
+            )
             .map_err(|e| AppError::Database(e.to_string()))?;
         if updated != 1 {
             return Err(AppError::Database(format!(
-                "Failed to set OMO provider current: provider '{provider_id}' not found in app '{app_type}'"
+                "Failed to set {category} provider current: provider '{provider_id}' not found in app '{app_type}'"
             )));
         }
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
@@ -393,12 +394,13 @@ impl Database {
         &self,
         app_type: &str,
         provider_id: &str,
+        category: &str,
     ) -> Result<bool, AppError> {
         let conn = lock_conn!(self.conn);
         match conn.query_row(
             "SELECT is_current FROM providers
-             WHERE id = ?1 AND app_type = ?2 AND category = 'omo'",
-            params![provider_id, app_type],
+             WHERE id = ?1 AND app_type = ?2 AND category = ?3",
+            params![provider_id, app_type, category],
             |row| row.get(0),
         ) {
             Ok(is_current) => Ok(is_current),
@@ -411,25 +413,30 @@ impl Database {
         &self,
         app_type: &str,
         provider_id: &str,
+        category: &str,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
             "UPDATE providers SET is_current = 0
-             WHERE id = ?1 AND app_type = ?2 AND category = 'omo'",
-            params![provider_id, app_type],
+             WHERE id = ?1 AND app_type = ?2 AND category = ?3",
+            params![provider_id, app_type, category],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
-    pub fn get_current_omo_provider(&self, app_type: &str) -> Result<Option<Provider>, AppError> {
+    pub fn get_current_omo_provider(
+        &self,
+        app_type: &str,
+        category: &str,
+    ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let row_data: Result<OmoProviderRow, rusqlite::Error> = conn.query_row(
             "SELECT id, name, settings_config, category, created_at, sort_index, notes, meta
              FROM providers
-             WHERE app_type = ?1 AND category = 'omo' AND is_current = 1
+             WHERE app_type = ?1 AND category = ?2 AND is_current = 1
              LIMIT 1",
-            params![app_type],
+            params![app_type, category],
             |row| {
                 Ok((
                     row.get(0)?,
@@ -444,7 +451,7 @@ impl Database {
             },
         );
 
-        let (id, name, settings_config_str, category, created_at, sort_index, notes, meta_str) =
+        let (id, name, settings_config_str, _row_category, created_at, sort_index, notes, meta_str) =
             match row_data {
                 Ok(v) => v,
                 Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
@@ -453,7 +460,7 @@ impl Database {
 
         let settings_config = serde_json::from_str(&settings_config_str).map_err(|e| {
             AppError::Database(format!(
-                "Failed to parse OMO provider settings_config (provider_id={id}): {e}"
+                "Failed to parse {category} provider settings_config (provider_id={id}): {e}"
             ))
         })?;
         let meta: crate::provider::ProviderMeta = if meta_str.trim().is_empty() {
@@ -461,7 +468,7 @@ impl Database {
         } else {
             serde_json::from_str(&meta_str).map_err(|e| {
                 AppError::Database(format!(
-                    "Failed to parse OMO provider meta (provider_id={id}): {e}"
+                    "Failed to parse {category} provider meta (provider_id={id}): {e}"
                 ))
             })?
         };
@@ -471,7 +478,7 @@ impl Database {
             name,
             settings_config,
             website_url: None,
-            category,
+            category: Some(category.to_string()),
             created_at,
             sort_index,
             notes,

@@ -41,10 +41,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { useReadOmoLocalFile } from "@/lib/query/omo";
+import { useReadOmoLocalFile, useReadOmoSlimLocalFile } from "@/lib/query/omo";
 import {
   OMO_BUILTIN_AGENTS,
   OMO_BUILTIN_CATEGORIES,
+  OMO_SLIM_BUILTIN_AGENTS,
   type OmoAgentDef,
   type OmoCategoryDef,
 } from "@/types/omo";
@@ -69,12 +70,13 @@ interface OmoFormFieldsProps {
   >;
   agents: Record<string, Record<string, unknown>>;
   onAgentsChange: (agents: Record<string, Record<string, unknown>>) => void;
-  categories: Record<string, Record<string, unknown>>;
-  onCategoriesChange: (
+  categories?: Record<string, Record<string, unknown>>;
+  onCategoriesChange?: (
     categories: Record<string, Record<string, unknown>>,
   ) => void;
   otherFieldsStr: string;
   onOtherFieldsStrChange: (value: string) => void;
+  isSlim?: boolean;
 }
 
 export type CustomModelItem = {
@@ -121,6 +123,9 @@ function DeferredKeyInput({
 }
 
 const BUILTIN_AGENT_KEYS = new Set(OMO_BUILTIN_AGENTS.map((a) => a.key));
+const BUILTIN_AGENT_KEYS_SLIM = new Set(
+  OMO_SLIM_BUILTIN_AGENTS.map((a) => a.key),
+);
 const BUILTIN_CATEGORY_KEYS = new Set(OMO_BUILTIN_CATEGORIES.map((c) => c.key));
 const EMPTY_VARIANT_VALUE = "__cc_switch_omo_variant_empty__";
 
@@ -303,12 +308,20 @@ export function OmoFormFields({
   presetMetaMap: _presetMetaMap = {},
   agents,
   onAgentsChange,
-  categories,
+  categories = {},
   onCategoriesChange,
   otherFieldsStr,
   onOtherFieldsStrChange,
+  isSlim = false,
 }: OmoFormFieldsProps) {
   const { t } = useTranslation();
+
+  const builtinAgentDefs = isSlim
+    ? OMO_SLIM_BUILTIN_AGENTS
+    : OMO_BUILTIN_AGENTS;
+  const builtinAgentKeys = isSlim
+    ? BUILTIN_AGENT_KEYS_SLIM
+    : BUILTIN_AGENT_KEYS;
 
   const [mainAgentsOpen, setMainAgentsOpen] = useState(true);
   const [subAgentsOpen, setSubAgentsOpen] = useState(true);
@@ -329,7 +342,7 @@ export function OmoFormFields({
   >({});
 
   const [customAgents, setCustomAgents] = useState<CustomModelItem[]>(() =>
-    collectCustomModels(agents, BUILTIN_AGENT_KEYS),
+    collectCustomModels(agents, builtinAgentKeys),
   );
 
   const [customCategories, setCustomCategories] = useState<CustomModelItem[]>(
@@ -337,7 +350,7 @@ export function OmoFormFields({
   );
 
   useEffect(() => {
-    setCustomAgents(collectCustomModels(agents, BUILTIN_AGENT_KEYS));
+    setCustomAgents(collectCustomModels(agents, builtinAgentKeys));
   }, [agents]);
 
   useEffect(() => {
@@ -349,17 +362,18 @@ export function OmoFormFields({
       onAgentsChange(
         mergeCustomModelsIntoStore(
           agents,
-          BUILTIN_AGENT_KEYS,
+          builtinAgentKeys,
           customs,
           modelVariantsMap,
         ),
       );
     },
-    [agents, onAgentsChange, modelVariantsMap],
+    [agents, onAgentsChange, modelVariantsMap, builtinAgentKeys],
   );
 
   const syncCustomCategories = useCallback(
     (customs: CustomModelItem[]) => {
+      if (!onCategoriesChange) return;
       onCategoriesChange(
         mergeCustomModelsIntoStore(
           categories,
@@ -709,7 +723,7 @@ export function OmoFormFields({
     }
 
     const updatedAgents = { ...agents };
-    for (const agentDef of OMO_BUILTIN_AGENTS) {
+    for (const agentDef of builtinAgentDefs) {
       const recommendedValue = resolveRecommendedModel(agentDef.recommended);
       if (recommendedValue && !updatedAgents[agentDef.key]?.model) {
         updatedAgents[agentDef.key] = {
@@ -720,30 +734,35 @@ export function OmoFormFields({
     }
     onAgentsChange(updatedAgents);
 
-    const updatedCategories = { ...categories };
-    for (const catDef of OMO_BUILTIN_CATEGORIES) {
-      const recommendedValue = resolveRecommendedModel(catDef.recommended);
-      if (recommendedValue && !updatedCategories[catDef.key]?.model) {
-        updatedCategories[catDef.key] = {
-          ...updatedCategories[catDef.key],
-          model: recommendedValue,
-        };
+    if (!isSlim && onCategoriesChange) {
+      const updatedCategories = { ...categories };
+      for (const catDef of OMO_BUILTIN_CATEGORIES) {
+        const recommendedValue = resolveRecommendedModel(catDef.recommended);
+        if (recommendedValue && !updatedCategories[catDef.key]?.model) {
+          updatedCategories[catDef.key] = {
+            ...updatedCategories[catDef.key],
+            model: recommendedValue,
+          };
+        }
       }
+      onCategoriesChange(updatedCategories);
     }
-    onCategoriesChange(updatedCategories);
   };
 
   const configuredAgentCount = Object.keys(agents).length;
-  const configuredCategoryCount = Object.keys(categories).length;
-  const mainAgents = OMO_BUILTIN_AGENTS.filter((a) => a.group === "main");
-  const subAgents = OMO_BUILTIN_AGENTS.filter((a) => a.group === "sub");
+  const configuredCategoryCount = isSlim ? 0 : Object.keys(categories).length;
+  const mainAgents = builtinAgentDefs.filter((a) => a.group === "main");
+  const subAgents = builtinAgentDefs.filter((a) => a.group === "sub");
 
   const readLocalFile = useReadOmoLocalFile();
+  const readSlimLocalFile = useReadOmoSlimLocalFile();
   const [localFilePath, setLocalFilePath] = useState<string | null>(null);
 
   const handleImportFromLocal = useCallback(async () => {
     try {
-      const data = await readLocalFile.mutateAsync();
+      const data = isSlim
+        ? await readSlimLocalFile.mutateAsync()
+        : await readLocalFile.mutateAsync();
       const importedAgents =
         (data.agents as Record<string, Record<string, unknown>> | undefined) ||
         {};
@@ -753,16 +772,20 @@ export function OmoFormFields({
           | undefined) || {};
 
       onAgentsChange(importedAgents);
-      onCategoriesChange(importedCategories);
+      if (!isSlim && onCategoriesChange) {
+        onCategoriesChange(importedCategories);
+      }
       onOtherFieldsStrChange(
         data.otherFields ? JSON.stringify(data.otherFields, null, 2) : "",
       );
       setAgentAdvancedDrafts({});
       setCategoryAdvancedDrafts({});
-      setCustomAgents(collectCustomModels(importedAgents, BUILTIN_AGENT_KEYS));
-      setCustomCategories(
-        collectCustomModels(importedCategories, BUILTIN_CATEGORY_KEYS),
-      );
+      setCustomAgents(collectCustomModels(importedAgents, builtinAgentKeys));
+      if (!isSlim) {
+        setCustomCategories(
+          collectCustomModels(importedCategories, BUILTIN_CATEGORY_KEYS),
+        );
+      }
       setLocalFilePath(data.filePath);
       toast.success(
         t("omo.importLocalReplaceSuccess", {
@@ -792,7 +815,7 @@ export function OmoFormFields({
   ) => {
     const isAgent = scope === "agent";
     const store = isAgent ? agents : categories;
-    const setter = isAgent ? onAgentsChange : onCategoriesChange;
+    const setter = isAgent ? onAgentsChange : onCategoriesChange!;
     const drafts = isAgent ? agentAdvancedDrafts : categoryAdvancedDrafts;
     const expanded = isAgent ? expandedAgents : expandedCategories;
 
@@ -866,7 +889,7 @@ export function OmoFormFields({
   ) => {
     const isAgent = scope === "agent";
     const store = isAgent ? agents : categories;
-    const setter = isAgent ? onAgentsChange : onCategoriesChange;
+    const setter = isAgent ? onAgentsChange : onCategoriesChange!;
     const drafts = isAgent ? agentAdvancedDrafts : categoryAdvancedDrafts;
     const expanded = isAgent ? expandedAgents : expandedCategories;
     const customs = isAgent ? customAgents : customCategories;
@@ -1153,30 +1176,31 @@ export function OmoFormFields({
         ),
       })}
 
-      {renderModelSection({
-        title: t("omo.categories", { defaultValue: "Categories" }),
-        isOpen: categoriesOpen,
-        onToggle: () => setCategoriesOpen(!categoriesOpen),
-        badge: `${OMO_BUILTIN_CATEGORIES.length + customCategories.length}`,
-        action: renderCustomAddButton(() => addCustomModel("category")),
-        children: (
-          <>
-            {OMO_BUILTIN_CATEGORIES.map(renderCategoryRow)}
-            {customCategories.length > 0 && (
-              <>
-                {renderCustomDivider(
-                  t("omo.customCategories", {
-                    defaultValue: "Custom Categories",
-                  }),
-                )}
-                {customCategories.map((c, i) =>
-                  renderCustomModelRow("category", c, i),
-                )}
-              </>
-            )}
-          </>
-        ),
-      })}
+      {!isSlim &&
+        renderModelSection({
+          title: t("omo.categories", { defaultValue: "Categories" }),
+          isOpen: categoriesOpen,
+          onToggle: () => setCategoriesOpen(!categoriesOpen),
+          badge: `${OMO_BUILTIN_CATEGORIES.length + customCategories.length}`,
+          action: renderCustomAddButton(() => addCustomModel("category")),
+          children: (
+            <>
+              {OMO_BUILTIN_CATEGORIES.map(renderCategoryRow)}
+              {customCategories.length > 0 && (
+                <>
+                  {renderCustomDivider(
+                    t("omo.customCategories", {
+                      defaultValue: "Custom Categories",
+                    }),
+                  )}
+                  {customCategories.map((c, i) =>
+                    renderCustomModelRow("category", c, i),
+                  )}
+                </>
+              )}
+            </>
+          ),
+        })}
 
       {renderModelSection({
         title: t("omo.otherFieldsJson", {

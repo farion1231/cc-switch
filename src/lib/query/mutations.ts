@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
+import type { SwitchResult } from "@/lib/api/providers";
 import type { Provider, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
@@ -18,8 +19,12 @@ export const useAddProviderMutation = (appId: AppId) => {
       let id: string;
 
       if (appId === "opencode" || appId === "openclaw") {
-        if (providerInput.category === "omo") {
-          id = `omo-${generateUUID()}`;
+        if (
+          providerInput.category === "omo" ||
+          providerInput.category === "omo-slim"
+        ) {
+          const prefix = providerInput.category === "omo" ? "omo" : "omo-slim";
+          id = `${prefix}-${generateUUID()}`;
         } else {
           if (!providerInput.providerKey) {
             throw new Error(`Provider key is required for ${appId}`);
@@ -171,7 +176,7 @@ export const useSwitchProviderMutation = (appId: AppId) => {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: async (providerId: string) => {
+    mutationFn: async (providerId: string): Promise<SwitchResult> => {
       return await providersApi.switch(providerId, appId);
     },
     onSuccess: async () => {

@@ -17,7 +17,6 @@ const AgentsDefaultsPanel: React.FC = () => {
   const { data: agentsData, isLoading } = useOpenClawAgentsDefaults();
   const saveAgentsMutation = useSaveOpenClawAgentsDefaults();
   const [defaults, setDefaults] = useState<OpenClawAgentsDefaults | null>(null);
-  const [primaryModel, setPrimaryModel] = useState("");
   const [fallbacks, setFallbacks] = useState("");
 
   // Extra known fields from agents.defaults
@@ -26,13 +25,15 @@ const AgentsDefaultsPanel: React.FC = () => {
   const [contextTokens, setContextTokens] = useState("");
   const [maxConcurrent, setMaxConcurrent] = useState("");
 
+  // Primary model is read-only — set via the "Set as default model" button on provider cards
+  const primaryModel = agentsData?.model?.primary ?? "";
+
   useEffect(() => {
     // agentsData is undefined while loading, null when config section is absent
     if (agentsData === undefined) return;
     setDefaults(agentsData);
 
     if (agentsData) {
-      setPrimaryModel(agentsData.model?.primary ?? "");
       setFallbacks((agentsData.model?.fallbacks ?? []).join(", "));
 
       // Extract known extra fields
@@ -48,17 +49,21 @@ const AgentsDefaultsPanel: React.FC = () => {
       // Preserve all unknown fields from original data
       const updated: OpenClawAgentsDefaults = { ...defaults };
 
-      // Model configuration
+      // Model configuration — primary is read-only, preserve original value
       const fallbackList = fallbacks
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
 
-      if (primaryModel.trim()) {
+      const origPrimary = defaults?.model?.primary;
+      if (origPrimary) {
         updated.model = {
-          primary: primaryModel.trim(),
+          primary: origPrimary,
           ...(fallbackList.length > 0 ? { fallbacks: fallbackList } : {}),
         };
+      } else if (fallbackList.length > 0) {
+        // No primary set but user provided fallbacks — keep fallbacks only
+        updated.model = { primary: "", fallbacks: fallbackList };
       }
 
       // Optional fields
@@ -122,12 +127,9 @@ const AgentsDefaultsPanel: React.FC = () => {
             <Label className="mb-1.5 block">
               {t("openclaw.agents.primaryModel")}
             </Label>
-            <Input
-              value={primaryModel}
-              onChange={(e) => setPrimaryModel(e.target.value)}
-              placeholder="provider/model-id"
-              className="font-mono text-xs"
-            />
+            <div className="h-9 px-3 flex items-center rounded-md border border-input bg-muted/50 font-mono text-xs text-muted-foreground">
+              {primaryModel || t("openclaw.agents.notSet")}
+            </div>
             <p className="text-xs text-muted-foreground mt-1">
               {t("openclaw.agents.primaryModelHint")}
             </p>

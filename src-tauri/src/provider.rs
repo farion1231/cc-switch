@@ -235,6 +235,11 @@ pub struct ProviderMeta {
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// Claude 认证字段名（仅 Claude 供应商使用）
+    /// - "ANTHROPIC_AUTH_TOKEN" (默认): 大多数第三方/聚合供应商
+    /// - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
+    #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
+    pub api_key_field: Option<String>,
 }
 
 impl ProviderManager {

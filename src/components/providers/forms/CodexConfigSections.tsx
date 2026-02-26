@@ -78,10 +78,6 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
 interface CodexConfigSectionProps {
   value: string;
   onChange: (value: string) => void;
-  useCommonConfig: boolean;
-  onCommonConfigToggle: (checked: boolean) => void;
-  onEditCommonConfig: () => void;
-  commonConfigError?: string;
   configError?: string;
 }
 
@@ -91,10 +87,6 @@ interface CodexConfigSectionProps {
 export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   value,
   onChange,
-  useCommonConfig,
-  onCommonConfigToggle,
-  onEditCommonConfig,
-  commonConfigError,
   configError,
 }) => {
   const { t } = useTranslation();
@@ -117,40 +109,12 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <label
-          htmlFor="codexConfig"
-          className="block text-sm font-medium text-foreground"
-        >
-          {t("codexConfig.configToml")}
-        </label>
-
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={useCommonConfig}
-            onChange={(e) => onCommonConfigToggle(e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default  rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          {t("codexConfig.writeCommonConfig")}
-        </label>
-      </div>
-
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={onEditCommonConfig}
-          className="text-xs text-blue-500 dark:text-blue-400 hover:underline"
-        >
-          {t("codexConfig.editCommonConfig")}
-        </button>
-      </div>
-
-      {commonConfigError && (
-        <p className="text-xs text-red-500 dark:text-red-400 text-right">
-          {commonConfigError}
-        </p>
-      )}
+      <label
+        htmlFor="codexConfig"
+        className="block text-sm font-medium text-foreground"
+      >
+        {t("codexConfig.configToml")}
+      </label>
 
       <JsonEditor
         value={value}

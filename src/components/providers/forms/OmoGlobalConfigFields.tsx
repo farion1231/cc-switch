@@ -40,11 +40,18 @@ import {
   OMO_BACKGROUND_TASK_PLACEHOLDER,
   OMO_BROWSER_AUTOMATION_PLACEHOLDER,
   OMO_CLAUDE_CODE_PLACEHOLDER,
+  OMO_SLIM_DISABLEABLE_AGENTS,
+  OMO_SLIM_DISABLEABLE_MCPS,
+  OMO_SLIM_DISABLEABLE_HOOKS,
+  OMO_SLIM_DEFAULT_SCHEMA_URL,
 } from "@/types/omo";
 import {
   useOmoGlobalConfig,
   useSaveOmoGlobalConfig,
   useReadOmoLocalFile,
+  useOmoSlimGlobalConfig,
+  useSaveOmoSlimGlobalConfig,
+  useReadOmoSlimLocalFile,
 } from "@/lib/query/omo";
 
 interface PresetOption {
@@ -61,6 +68,7 @@ export interface OmoGlobalConfigFieldsRef {
 interface OmoGlobalConfigFieldsProps {
   onStateChange?: (config: OmoGlobalConfig) => void;
   hideSaveButtons?: boolean;
+  isSlim?: boolean;
 }
 
 type OmoAdvancedFieldKey =
@@ -113,6 +121,11 @@ const OMO_ADVANCED_JSON_FIELDS: ReadonlyArray<{
     minHeight: "180px",
   },
 ];
+
+const OMO_SLIM_ADVANCED_KEYS: ReadonlySet<OmoAdvancedFieldKey> = new Set([
+  "lspStr",
+  "experimentalStr",
+]);
 
 function TagListEditor({
   label,
@@ -310,12 +323,25 @@ function JsonTextareaField({
 export const OmoGlobalConfigFields = forwardRef<
   OmoGlobalConfigFieldsRef,
   OmoGlobalConfigFieldsProps
->(function OmoGlobalConfigFields({ onStateChange, hideSaveButtons }, ref) {
+>(function OmoGlobalConfigFields(
+  { onStateChange, hideSaveButtons, isSlim = false },
+  ref,
+) {
   const { t } = useTranslation();
-  const { data: config } = useOmoGlobalConfig();
-  const saveMutation = useSaveOmoGlobalConfig();
+  const { data: standardConfig } = useOmoGlobalConfig(!isSlim);
+  const { data: slimConfig } = useOmoSlimGlobalConfig(isSlim);
+  const config = isSlim ? slimConfig : standardConfig;
+  const standardSaveMutation = useSaveOmoGlobalConfig();
+  const slimSaveMutation = useSaveOmoSlimGlobalConfig();
+  const saveMutation = isSlim ? slimSaveMutation : standardSaveMutation;
+  const standardReadLocal = useReadOmoLocalFile();
+  const slimReadLocal = useReadOmoSlimLocalFile();
 
-  const [schemaUrl, setSchemaUrl] = useState(OMO_DEFAULT_SCHEMA_URL);
+  const defaultSchemaUrl = isSlim
+    ? OMO_SLIM_DEFAULT_SCHEMA_URL
+    : OMO_DEFAULT_SCHEMA_URL;
+
+  const [schemaUrl, setSchemaUrl] = useState(defaultSchemaUrl);
   const [sisyphusAgentStr, setSisyphusAgentStr] = useState("");
   const [disabledAgents, setDisabledAgents] = useState<string[]>([]);
   const [disabledMcps, setDisabledMcps] = useState<string[]>([]);
@@ -330,7 +356,7 @@ export const OmoGlobalConfigFields = forwardRef<
   const [loaded, setLoaded] = useState(false);
 
   const applyGlobalState = useCallback((global: OmoGlobalConfig) => {
-    setSchemaUrl(global.schemaUrl || OMO_DEFAULT_SCHEMA_URL);
+    setSchemaUrl(global.schemaUrl || defaultSchemaUrl);
     setSisyphusAgentStr(
       global.sisyphusAgent ? JSON.stringify(global.sisyphusAgent, null, 2) : "",
     );
@@ -545,7 +571,7 @@ export const OmoGlobalConfigFields = forwardRef<
       placeholder: t("omo.disabledAgentsPlaceholder", {
         defaultValue: "Disabled Agents",
       }),
-      presets: OMO_DISABLEABLE_AGENTS,
+      presets: isSlim ? OMO_SLIM_DISABLEABLE_AGENTS : OMO_DISABLEABLE_AGENTS,
     },
     {
       key: "mcps",
@@ -555,7 +581,7 @@ export const OmoGlobalConfigFields = forwardRef<
       placeholder: t("omo.disabledMcpsPlaceholder", {
         defaultValue: "Disabled MCPs",
       }),
-      presets: OMO_DISABLEABLE_MCPS,
+      presets: isSlim ? OMO_SLIM_DISABLEABLE_MCPS : OMO_DISABLEABLE_MCPS,
     },
     {
       key: "hooks",
@@ -565,21 +591,25 @@ export const OmoGlobalConfigFields = forwardRef<
       placeholder: t("omo.disabledHooksPlaceholder", {
         defaultValue: "Disabled Hooks",
       }),
-      presets: OMO_DISABLEABLE_HOOKS,
+      presets: isSlim ? OMO_SLIM_DISABLEABLE_HOOKS : OMO_DISABLEABLE_HOOKS,
     },
-    {
-      key: "skills",
-      label: t("omo.disabledSkills", { defaultValue: "Skills" }),
-      values: disabledSkills,
-      onChange: setDisabledSkills,
-      placeholder: t("omo.disabledSkillsPlaceholder", {
-        defaultValue: "Disabled Skills",
-      }),
-      presets: OMO_DISABLEABLE_SKILLS,
-    },
-  ] as const;
+    ...(!isSlim
+      ? [
+          {
+            key: "skills" as const,
+            label: t("omo.disabledSkills", { defaultValue: "Skills" }),
+            values: disabledSkills,
+            onChange: setDisabledSkills,
+            placeholder: t("omo.disabledSkillsPlaceholder", {
+              defaultValue: "Disabled Skills",
+            }),
+            presets: OMO_DISABLEABLE_SKILLS,
+          },
+        ]
+      : []),
+  ];
 
-  const readLocalFile = useReadOmoLocalFile();
+  const readLocalFile = isSlim ? slimReadLocal : standardReadLocal;
 
   const handleImportGlobalFromLocal = useCallback(async () => {
     try {
@@ -668,25 +698,27 @@ export const OmoGlobalConfigFields = forwardRef<
         <Input
           value={schemaUrl}
           onChange={(e) => setSchemaUrl(e.target.value)}
-          placeholder={OMO_DEFAULT_SCHEMA_URL}
+          placeholder={defaultSchemaUrl}
           className="text-sm h-8"
         />
       </div>
 
-      <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2">
-        <Label className="text-sm font-semibold">
-          {t("omo.sisyphusAgentConfig", {
-            defaultValue: "Sisyphus Agent",
-          })}
-        </Label>
-        <Textarea
-          value={sisyphusAgentStr}
-          onChange={(e) => setSisyphusAgentStr(e.target.value)}
-          placeholder={OMO_SISYPHUS_AGENT_PLACEHOLDER}
-          className="font-mono text-sm"
-          style={{ minHeight: "140px" }}
-        />
-      </div>
+      {!isSlim && (
+        <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2">
+          <Label className="text-sm font-semibold">
+            {t("omo.sisyphusAgentConfig", {
+              defaultValue: "Sisyphus Agent",
+            })}
+          </Label>
+          <Textarea
+            value={sisyphusAgentStr}
+            onChange={(e) => setSisyphusAgentStr(e.target.value)}
+            placeholder={OMO_SISYPHUS_AGENT_PLACEHOLDER}
+            className="font-mono text-sm"
+            style={{ minHeight: "140px" }}
+          />
+        </div>
+      )}
 
       <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-3">
         <div className="flex items-center gap-2">
@@ -715,7 +747,9 @@ export const OmoGlobalConfigFields = forwardRef<
         <Label className="text-sm font-semibold">
           {t("omo.advanced", { defaultValue: "Advanced Settings" })}
         </Label>
-        {OMO_ADVANCED_JSON_FIELDS.map((field) => (
+        {OMO_ADVANCED_JSON_FIELDS.filter(
+          (field) => !isSlim || OMO_SLIM_ADVANCED_KEYS.has(field.key),
+        ).map((field) => (
           <JsonTextareaField
             key={field.key}
             label={t(field.labelKey, { defaultValue: field.defaultLabel })}

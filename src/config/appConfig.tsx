@@ -23,6 +23,14 @@ export const APP_IDS: AppId[] = [
   "openclaw",
 ];
 
+/** App IDs shown in MCP & Skills panels (excludes OpenClaw) */
+export const MCP_SKILLS_APP_IDS: AppId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+];
+
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   claude: {
     label: "Claude",

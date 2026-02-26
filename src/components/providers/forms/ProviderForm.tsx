@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
@@ -7,16 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
-import { providersApi, type AppId } from "@/lib/api";
+import type { AppId } from "@/lib/api";
 import type {
   ProviderCategory,
   ProviderMeta,
   ProviderTestConfig,
   ProviderProxyConfig,
   ClaudeApiFormat,
-  OpenCodeModel,
-  OpenCodeProviderConfig,
-  OpenClawModel,
+  ClaudeApiKeyField,
 } from "@/types";
 import {
   providerPresets,
@@ -32,7 +30,6 @@ import {
 } from "@/config/geminiProviderPresets";
 import {
   opencodeProviderPresets,
-  OPENCODE_PRESET_MODEL_VARIANTS,
   type OpenCodeProviderPreset,
 } from "@/config/opencodeProviderPresets";
 import {
@@ -43,13 +40,16 @@ import {
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
-import { applyTemplateValues } from "@/utils/providerConfigUtils";
+import {
+  applyTemplateValues,
+  hasApiKeyField,
+} from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
-import { CommonConfigEditor } from "./CommonConfigEditor";
 import GeminiConfigEditor from "./GeminiConfigEditor";
 import JsonEditor from "@/components/JsonEditor";
+import { ClaudeQuickToggles, jsonMergePatch } from "./ClaudeQuickToggles";
 import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
@@ -57,11 +57,8 @@ import { ClaudeFormFields } from "./ClaudeFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { OmoFormFields } from "./OmoFormFields";
-import { type OmoGlobalConfigFieldsRef } from "./OmoGlobalConfigFields";
 import { OmoCommonConfigEditor } from "./OmoCommonConfigEditor";
-import * as configApi from "@/lib/api/config";
-import type { OmoGlobalConfig } from "@/types/omo";
-import { mergeOmoConfigPreview, parseOmoOtherFieldsObject } from "@/types/omo";
+import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
   ProviderAdvancedConfig,
   type PricingModelSourceOption,
@@ -74,121 +71,23 @@ import {
   useCodexConfigState,
   useApiKeyLink,
   useTemplateValues,
-  useCommonConfigSnippet,
-  useCodexCommonConfig,
   useSpeedTestEndpoints,
   useCodexTomlValidation,
   useGeminiConfigState,
-  useGeminiCommonConfig,
+  useOmoModelSource,
+  useOpencodeFormState,
+  useOmoDraftState,
+  useOpenclawFormState,
 } from "./hooks";
-import { useProvidersQuery } from "@/lib/query/queries";
-import { useOmoGlobalConfig } from "@/lib/query/omo";
-
-const CLAUDE_DEFAULT_CONFIG = JSON.stringify({ env: {} }, null, 2);
-const CODEX_DEFAULT_CONFIG = JSON.stringify({ auth: {}, config: "" }, null, 2);
-const GEMINI_DEFAULT_CONFIG = JSON.stringify(
-  {
-    env: {
-      GOOGLE_GEMINI_BASE_URL: "",
-      GEMINI_API_KEY: "",
-      GEMINI_MODEL: "gemini-3-pro-preview",
-    },
-  },
-  null,
-  2,
-);
-
-const OPENCODE_DEFAULT_NPM = "@ai-sdk/openai-compatible";
-const OPENCODE_DEFAULT_CONFIG = JSON.stringify(
-  {
-    npm: OPENCODE_DEFAULT_NPM,
-    options: {
-      baseURL: "",
-      apiKey: "",
-    },
-    models: {},
-  },
-  null,
-  2,
-);
-const OPENCODE_KNOWN_OPTION_KEYS = ["baseURL", "apiKey", "headers"] as const;
-const isKnownOpencodeOptionKey = (key: string) =>
-  OPENCODE_KNOWN_OPTION_KEYS.includes(
-    key as (typeof OPENCODE_KNOWN_OPTION_KEYS)[number],
-  );
-
-function parseOpencodeConfig(
-  settingsConfig?: Record<string, unknown>,
-): OpenCodeProviderConfig {
-  const normalize = (
-    parsed: Partial<OpenCodeProviderConfig>,
-  ): OpenCodeProviderConfig => ({
-    npm: parsed.npm || OPENCODE_DEFAULT_NPM,
-    options:
-      parsed.options && typeof parsed.options === "object"
-        ? (parsed.options as OpenCodeProviderConfig["options"])
-        : {},
-    models:
-      parsed.models && typeof parsed.models === "object"
-        ? (parsed.models as Record<string, OpenCodeModel>)
-        : {},
-  });
-
-  try {
-    const parsed = JSON.parse(
-      settingsConfig ? JSON.stringify(settingsConfig) : OPENCODE_DEFAULT_CONFIG,
-    ) as Partial<OpenCodeProviderConfig>;
-    return normalize(parsed);
-  } catch {
-    return {
-      npm: OPENCODE_DEFAULT_NPM,
-      options: {},
-      models: {},
-    };
-  }
-}
-
-function parseOpencodeConfigStrict(
-  settingsConfig?: Record<string, unknown>,
-): OpenCodeProviderConfig {
-  const parsed = JSON.parse(
-    settingsConfig ? JSON.stringify(settingsConfig) : OPENCODE_DEFAULT_CONFIG,
-  ) as Partial<OpenCodeProviderConfig>;
-  return {
-    npm: parsed.npm || OPENCODE_DEFAULT_NPM,
-    options:
-      parsed.options && typeof parsed.options === "object"
-        ? (parsed.options as OpenCodeProviderConfig["options"])
-        : {},
-    models:
-      parsed.models && typeof parsed.models === "object"
-        ? (parsed.models as Record<string, OpenCodeModel>)
-        : {},
-  };
-}
-
-function toOpencodeExtraOptions(
-  options: OpenCodeProviderConfig["options"],
-): Record<string, string> {
-  const extra: Record<string, string> = {};
-  for (const [k, v] of Object.entries(options || {})) {
-    if (!isKnownOpencodeOptionKey(k)) {
-      extra[k] = typeof v === "string" ? v : JSON.stringify(v);
-    }
-  }
-  return extra;
-}
-
-const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
-  {
-    baseUrl: "",
-    apiKey: "",
-    api: "openai-completions",
-    models: [],
-  },
-  null,
-  2,
-);
+import { useOmoGlobalConfig, useOmoSlimGlobalConfig } from "@/lib/query/omo";
+import {
+  CLAUDE_DEFAULT_CONFIG,
+  CODEX_DEFAULT_CONFIG,
+  GEMINI_DEFAULT_CONFIG,
+  OPENCODE_DEFAULT_CONFIG,
+  OPENCLAW_DEFAULT_CONFIG,
+  normalizePricingSource,
+} from "./helpers/opencodeFormUtils";
 
 type PresetEntry = {
   id: string;
@@ -220,41 +119,6 @@ interface ProviderFormProps {
   };
   showButtons?: boolean;
 }
-
-const normalizePricingSource = (value?: string): PricingModelSourceOption =>
-  value === "request" || value === "response" ? value : "inherit";
-
-function buildOmoProfilePreview(
-  agents: Record<string, Record<string, unknown>>,
-  categories: Record<string, Record<string, unknown>>,
-  otherFieldsStr: string,
-): Record<string, unknown> {
-  const profileOnly: Record<string, unknown> = {};
-  if (Object.keys(agents).length > 0) {
-    profileOnly.agents = agents;
-  }
-  if (Object.keys(categories).length > 0) {
-    profileOnly.categories = categories;
-  }
-  if (otherFieldsStr.trim()) {
-    try {
-      const other = parseOmoOtherFieldsObject(otherFieldsStr);
-      if (other) {
-        Object.assign(profileOnly, other);
-      }
-    } catch {}
-  }
-  return profileOnly;
-}
-
-const EMPTY_OMO_GLOBAL_CONFIG: OmoGlobalConfig = {
-  id: "global",
-  disabledAgents: [],
-  disabledMcps: [],
-  disabledHooks: [],
-  disabledSkills: [],
-  updatedAt: "",
-};
 
 export function ProviderForm({
   appId,
@@ -321,7 +185,15 @@ export function ProviderForm({
     initialCategory: initialData?.category,
   });
   const isOmoCategory = appId === "opencode" && category === "omo";
-  const { data: queriedOmoGlobalConfig } = useOmoGlobalConfig(isOmoCategory);
+  const isOmoSlimCategory = appId === "opencode" && category === "omo-slim";
+  const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
+  const { data: queriedStandardOmoGlobalConfig } =
+    useOmoGlobalConfig(isOmoCategory);
+  const { data: queriedSlimOmoGlobalConfig } =
+    useOmoSlimGlobalConfig(isOmoSlimCategory);
+  const queriedOmoGlobalConfig = isOmoSlimCategory
+    ? queriedSlimOmoGlobalConfig
+    : queriedStandardOmoGlobalConfig;
 
   useEffect(() => {
     setSelectedPresetId(initialData ? null : "custom");
@@ -372,6 +244,55 @@ export function ProviderForm({
     mode: "onSubmit",
   });
 
+  const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
+    if (appId !== "claude") return "anthropic";
+    return initialData?.meta?.apiFormat ?? "anthropic";
+  });
+
+  const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
+    setLocalApiFormat(format);
+  }, []);
+
+  const [localApiKeyField, setLocalApiKeyField] = useState<ClaudeApiKeyField>(
+    () => {
+      if (appId !== "claude") return "ANTHROPIC_AUTH_TOKEN";
+      if (initialData?.meta?.apiKeyField) return initialData.meta.apiKeyField;
+      try {
+        const config = initialData?.settingsConfig;
+        if (
+          config?.env &&
+          (config.env as Record<string, unknown>).ANTHROPIC_API_KEY !==
+            undefined
+        )
+          return "ANTHROPIC_API_KEY";
+      } catch {}
+      return "ANTHROPIC_AUTH_TOKEN";
+    },
+  );
+
+  const handleApiKeyFieldChange = useCallback(
+    (field: ClaudeApiKeyField) => {
+      setLocalApiKeyField(field);
+      try {
+        const config = JSON.parse(form.getValues("settingsConfig") || "{}") as {
+          env?: Record<string, unknown>;
+        };
+        const env = (config.env ?? {}) as Record<string, unknown>;
+        const oldField =
+          field === "ANTHROPIC_API_KEY"
+            ? "ANTHROPIC_AUTH_TOKEN"
+            : "ANTHROPIC_API_KEY";
+        if (oldField in env) {
+          env[field] = env[oldField];
+          delete env[oldField];
+          config.env = env;
+          form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+        }
+      } catch {}
+    },
+    [form],
+  );
+
   const {
     apiKey,
     handleApiKeyChange,
@@ -382,6 +303,7 @@ export function ProviderForm({
     selectedPresetId,
     category,
     appType: appId,
+    apiKeyField: appId === "claude" ? localApiKeyField : undefined,
   });
 
   const { baseUrl, handleClaudeBaseUrlChange } = useBaseUrlState({
@@ -408,15 +330,6 @@ export function ProviderForm({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: (config) => form.setValue("settingsConfig", config),
   });
-
-  const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
-    if (appId !== "claude") return "anthropic";
-    return initialData?.meta?.apiFormat ?? "anthropic";
-  });
-
-  const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
-    setLocalApiFormat(format);
-  }, []);
 
   const {
     codexAuth,
@@ -516,37 +429,6 @@ export function ProviderForm({
   });
 
   const {
-    useCommonConfig,
-    commonConfigSnippet,
-    commonConfigError,
-    handleCommonConfigToggle,
-    handleCommonConfigSnippetChange,
-    isExtracting: isClaudeExtracting,
-    handleExtract: handleClaudeExtract,
-  } = useCommonConfigSnippet({
-    settingsConfig: form.getValues("settingsConfig"),
-    onConfigChange: (config) => form.setValue("settingsConfig", config),
-    initialData: appId === "claude" ? initialData : undefined,
-    selectedPresetId: selectedPresetId ?? undefined,
-    enabled: appId === "claude",
-  });
-
-  const {
-    useCommonConfig: useCodexCommonConfigFlag,
-    commonConfigSnippet: codexCommonConfigSnippet,
-    commonConfigError: codexCommonConfigError,
-    handleCommonConfigToggle: handleCodexCommonConfigToggle,
-    handleCommonConfigSnippetChange: handleCodexCommonConfigSnippetChange,
-    isExtracting: isCodexExtracting,
-    handleExtract: handleCodexExtract,
-  } = useCodexCommonConfig({
-    codexConfig,
-    onConfigChange: handleCodexConfigChange,
-    initialData: appId === "codex" ? initialData : undefined,
-    selectedPresetId: selectedPresetId ?? undefined,
-  });
-
-  const {
     geminiEnv,
     geminiConfig,
     geminiApiKey,
@@ -561,7 +443,6 @@ export function ProviderForm({
     handleGeminiConfigChange,
     resetGeminiConfig,
     envStringToObj,
-    envObjToString,
   } = useGeminiConfigState({
     initialData: appId === "gemini" ? initialData : undefined,
   });
@@ -612,635 +493,44 @@ export function ProviderForm({
     [originalHandleGeminiModelChange, updateGeminiEnvField],
   );
 
+  // ── Extracted hooks: OpenCode / OMO / OpenClaw ─────────────────────
+
   const {
-    useCommonConfig: useGeminiCommonConfigFlag,
-    commonConfigSnippet: geminiCommonConfigSnippet,
-    commonConfigError: geminiCommonConfigError,
-    handleCommonConfigToggle: handleGeminiCommonConfigToggle,
-    handleCommonConfigSnippetChange: handleGeminiCommonConfigSnippetChange,
-    isExtracting: isGeminiExtracting,
-    handleExtract: handleGeminiExtract,
-  } = useGeminiCommonConfig({
-    envValue: geminiEnv,
-    onEnvChange: handleGeminiEnvChange,
-    envStringToObj,
-    envObjToString,
-    initialData: appId === "gemini" ? initialData : undefined,
-    selectedPresetId: selectedPresetId ?? undefined,
+    omoModelOptions,
+    omoModelVariantsMap,
+    omoPresetMetaMap,
+    existingOpencodeKeys,
+  } = useOmoModelSource({ isOmoCategory: isAnyOmoCategory, providerId });
+
+  const opencodeForm = useOpencodeFormState({
+    initialData,
+    appId,
+    providerId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
   });
-
-  const { data: opencodeProvidersData } = useProvidersQuery("opencode");
-  const existingOpencodeKeys = useMemo(() => {
-    if (!opencodeProvidersData?.providers) return [];
-    return Object.keys(opencodeProvidersData.providers).filter(
-      (k) => k !== providerId,
-    );
-  }, [opencodeProvidersData?.providers, providerId]);
-  const [enabledOpencodeProviderIds, setEnabledOpencodeProviderIds] = useState<
-    string[] | null
-  >(null);
-  const [omoLiveIdsLoadFailed, setOmoLiveIdsLoadFailed] = useState(false);
-  const lastOmoModelSourceWarningRef = useRef<string>("");
-
-  useEffect(() => {
-    let active = true;
-    if (!isOmoCategory) {
-      setEnabledOpencodeProviderIds(null);
-      setOmoLiveIdsLoadFailed(false);
-      return () => {
-        active = false;
-      };
-    }
-
-    setEnabledOpencodeProviderIds(null);
-    setOmoLiveIdsLoadFailed(false);
-
-    (async () => {
-      try {
-        const ids = await providersApi.getOpenCodeLiveProviderIds();
-        if (active) {
-          setEnabledOpencodeProviderIds(ids);
-        }
-      } catch (error) {
-        console.warn(
-          "[OMO_MODEL_SOURCE_LIVE_IDS_FAILED] failed to load live provider ids",
-          error,
-        );
-        if (active) {
-          setOmoLiveIdsLoadFailed(true);
-          setEnabledOpencodeProviderIds(null);
-        }
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, [isOmoCategory]);
-
-  const omoModelBuild = useMemo(() => {
-    const empty = {
-      options: [] as Array<{ value: string; label: string }>,
-      variantsMap: {} as Record<string, string[]>,
-      presetMetaMap: {} as Record<
-        string,
-        {
-          options?: Record<string, unknown>;
-          limit?: { context?: number; output?: number };
-        }
-      >,
-      parseFailedProviders: [] as string[],
-      usedFallbackSource: false,
-    };
-    if (!isOmoCategory) {
-      return empty;
-    }
-
-    const allProviders = opencodeProvidersData?.providers;
-    if (!allProviders) {
-      return empty;
-    }
-
-    const shouldFilterByLive = !omoLiveIdsLoadFailed;
-    if (shouldFilterByLive && enabledOpencodeProviderIds === null) {
-      return empty;
-    }
-    const liveSet =
-      shouldFilterByLive && enabledOpencodeProviderIds
-        ? new Set(enabledOpencodeProviderIds)
-        : null;
-
-    const dedupedOptions = new Map<string, string>();
-    const variantsMap: Record<string, string[]> = {};
-    const presetMetaMap: Record<
-      string,
-      {
-        options?: Record<string, unknown>;
-        limit?: { context?: number; output?: number };
-      }
-    > = {};
-    const parseFailedProviders: string[] = [];
-
-    for (const [providerKey, provider] of Object.entries(allProviders)) {
-      if (provider.category === "omo") {
-        continue;
-      }
-      if (liveSet && !liveSet.has(providerKey)) {
-        continue;
-      }
-
-      let parsedConfig: OpenCodeProviderConfig;
-      try {
-        parsedConfig = parseOpencodeConfigStrict(provider.settingsConfig);
-      } catch (error) {
-        parseFailedProviders.push(providerKey);
-        console.warn(
-          "[OMO_MODEL_SOURCE_PARSE_FAILED] failed to parse provider settings",
-          {
-            providerKey,
-            error,
-          },
-        );
-        continue;
-      }
-      for (const [modelId, model] of Object.entries(
-        parsedConfig.models || {},
-      )) {
-        const modelName =
-          typeof model.name === "string" && model.name.trim()
-            ? model.name
-            : modelId;
-        const providerDisplayName =
-          typeof provider.name === "string" && provider.name.trim()
-            ? provider.name
-            : providerKey;
-        const value = `${providerKey}/${modelId}`;
-        const label = `${providerDisplayName} / ${modelName} (${modelId})`;
-        if (!dedupedOptions.has(value)) {
-          dedupedOptions.set(value, label);
-        }
-
-        const rawVariants = model.variants;
-        if (
-          rawVariants &&
-          typeof rawVariants === "object" &&
-          !Array.isArray(rawVariants)
-        ) {
-          const variantKeys = Object.keys(rawVariants).filter(Boolean);
-          if (variantKeys.length > 0) {
-            variantsMap[value] = variantKeys;
-          }
-        }
-      }
-
-      // Preset fallback: for models without config-defined variants,
-      // check if the npm package has preset variant definitions.
-      // Also collect preset metadata (options, limit) for enrichment.
-      const presetModels = OPENCODE_PRESET_MODEL_VARIANTS[parsedConfig.npm];
-      if (presetModels) {
-        for (const modelId of Object.keys(parsedConfig.models || {})) {
-          const fullKey = `${providerKey}/${modelId}`;
-          const preset = presetModels.find((p) => p.id === modelId);
-          if (!preset) continue;
-
-          // Variant fallback
-          if (!variantsMap[fullKey] && preset.variants) {
-            const presetKeys = Object.keys(preset.variants).filter(Boolean);
-            if (presetKeys.length > 0) {
-              variantsMap[fullKey] = presetKeys;
-            }
-          }
-
-          // Collect preset metadata for model enrichment
-          const meta: (typeof presetMetaMap)[string] = {};
-          if (preset.options) meta.options = preset.options;
-          if (preset.contextLimit || preset.outputLimit) {
-            meta.limit = {};
-            if (preset.contextLimit) meta.limit.context = preset.contextLimit;
-            if (preset.outputLimit) meta.limit.output = preset.outputLimit;
-          }
-          if (Object.keys(meta).length > 0) {
-            presetMetaMap[fullKey] = meta;
-          }
-        }
-      }
-    }
-
-    return {
-      options: Array.from(dedupedOptions.entries())
-        .map(([value, label]) => ({ value, label }))
-        .sort((a, b) => a.label.localeCompare(b.label, "zh-CN")),
-      variantsMap,
-      presetMetaMap,
-      parseFailedProviders,
-      usedFallbackSource: omoLiveIdsLoadFailed,
-    };
-  }, [
-    isOmoCategory,
-    opencodeProvidersData?.providers,
-    enabledOpencodeProviderIds,
-    omoLiveIdsLoadFailed,
-  ]);
-  const omoModelOptions = omoModelBuild.options;
-  const omoModelVariantsMap = omoModelBuild.variantsMap;
-  const omoPresetMetaMap = omoModelBuild.presetMetaMap;
-
-  useEffect(() => {
-    if (!isOmoCategory) return;
-    const failed = omoModelBuild.parseFailedProviders;
-    const fallback = omoModelBuild.usedFallbackSource;
-    if (failed.length === 0 && !fallback) return;
-
-    const signature = `${fallback ? "fallback:" : ""}${failed
-      .slice()
-      .sort()
-      .join(",")}`;
-    if (lastOmoModelSourceWarningRef.current === signature) return;
-    lastOmoModelSourceWarningRef.current = signature;
-
-    if (failed.length > 0) {
-      toast.warning(
-        t("omo.modelSourcePartialWarning", {
-          count: failed.length,
-          defaultValue:
-            "Some provider model configs are invalid and were skipped.",
-        }),
-      );
-    }
-    if (fallback) {
-      toast.warning(
-        t("omo.modelSourceFallbackWarning", {
-          defaultValue:
-            "Failed to load live provider state. Falling back to configured providers.",
-        }),
-      );
-    }
-  }, [
-    isOmoCategory,
-    omoModelBuild.parseFailedProviders,
-    omoModelBuild.usedFallbackSource,
-    t,
-  ]);
 
   const initialOmoSettings =
-    appId === "opencode" && initialData?.category === "omo"
+    appId === "opencode" &&
+    (initialData?.category === "omo" || initialData?.category === "omo-slim")
       ? (initialData.settingsConfig as Record<string, unknown> | undefined)
       : undefined;
-  const initialOpencodeConfig =
-    appId === "opencode"
-      ? parseOpencodeConfig(initialData?.settingsConfig)
-      : null;
-  const initialOpencodeOptions = initialOpencodeConfig?.options || {};
 
-  const [opencodeProviderKey, setOpencodeProviderKey] = useState<string>(() => {
-    if (appId !== "opencode") return "";
-    return providerId || "";
+  const omoDraft = useOmoDraftState({
+    initialOmoSettings,
+    queriedOmoGlobalConfig,
+    isEditMode,
+    appId,
+    category,
   });
 
-  // OpenClaw: query existing providers for duplicate key checking
-  const { data: openclawProvidersData } = useProvidersQuery("openclaw");
-  const existingOpenclawKeys = useMemo(() => {
-    if (!openclawProvidersData?.providers) return [];
-    // Exclude current provider ID when in edit mode
-    return Object.keys(openclawProvidersData.providers).filter(
-      (k) => k !== providerId,
-    );
-  }, [openclawProvidersData?.providers, providerId]);
-
-  // OpenClaw Provider Key state
-  const [openclawProviderKey, setOpenclawProviderKey] = useState<string>(() => {
-    if (appId !== "openclaw") return "";
-    // In edit mode, use the existing provider ID as the key
-    return providerId || "";
+  const openclawForm = useOpenclawFormState({
+    initialData,
+    appId,
+    providerId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
   });
-
-  // OpenCode 配置状态
-  const [opencodeNpm, setOpencodeNpm] = useState<string>(() => {
-    if (appId !== "opencode") return OPENCODE_DEFAULT_NPM;
-    return initialOpencodeConfig?.npm || OPENCODE_DEFAULT_NPM;
-  });
-
-  const [opencodeApiKey, setOpencodeApiKey] = useState<string>(() => {
-    if (appId !== "opencode") return "";
-    const value = initialOpencodeOptions.apiKey;
-    return typeof value === "string" ? value : "";
-  });
-
-  const [opencodeBaseUrl, setOpencodeBaseUrl] = useState<string>(() => {
-    if (appId !== "opencode") return "";
-    const value = initialOpencodeOptions.baseURL;
-    return typeof value === "string" ? value : "";
-  });
-
-  const [opencodeModels, setOpencodeModels] = useState<
-    Record<string, OpenCodeModel>
-  >(() => {
-    if (appId !== "opencode") return {};
-    return initialOpencodeConfig?.models || {};
-  });
-
-  const [opencodeExtraOptions, setOpencodeExtraOptions] = useState<
-    Record<string, string>
-  >(() => {
-    if (appId !== "opencode") return {};
-    return toOpencodeExtraOptions(initialOpencodeOptions);
-  });
-
-  const [omoAgents, setOmoAgents] = useState<
-    Record<string, Record<string, unknown>>
-  >(
-    () =>
-      (initialOmoSettings?.agents as Record<string, Record<string, unknown>>) ||
-      {},
-  );
-  const [omoCategories, setOmoCategories] = useState<
-    Record<string, Record<string, unknown>>
-  >(
-    () =>
-      (initialOmoSettings?.categories as Record<
-        string,
-        Record<string, unknown>
-      >) || {},
-  );
-  const [omoOtherFieldsStr, setOmoOtherFieldsStr] = useState(() => {
-    const otherFields = initialOmoSettings?.otherFields;
-    return otherFields ? JSON.stringify(otherFields, null, 2) : "";
-  });
-
-  const [omoGlobalState, setOmoGlobalState] = useState<OmoGlobalConfig | null>(
-    null,
-  );
-
-  const [isOmoConfigModalOpen, setIsOmoConfigModalOpen] = useState(false);
-  const [useOmoCommonConfig, setUseOmoCommonConfig] = useState(() => {
-    const raw = initialOmoSettings?.useCommonConfig;
-    return typeof raw === "boolean" ? raw : true;
-  });
-  const [isOmoSaving, setIsOmoSaving] = useState(false);
-  const omoGlobalConfigRef = useRef<OmoGlobalConfigFieldsRef>(null);
-  const [omoFieldsKey, setOmoFieldsKey] = useState(0);
-  const effectiveOmoGlobalConfig =
-    omoGlobalState ?? queriedOmoGlobalConfig ?? EMPTY_OMO_GLOBAL_CONFIG;
-
-  const mergedOmoJsonPreview = useMemo(() => {
-    if (useOmoCommonConfig) {
-      const merged = mergeOmoConfigPreview(
-        effectiveOmoGlobalConfig,
-        omoAgents,
-        omoCategories,
-        omoOtherFieldsStr,
-      );
-      return JSON.stringify(merged, null, 2);
-    } else {
-      return JSON.stringify(
-        buildOmoProfilePreview(omoAgents, omoCategories, omoOtherFieldsStr),
-        null,
-        2,
-      );
-    }
-  }, [
-    useOmoCommonConfig,
-    effectiveOmoGlobalConfig,
-    omoAgents,
-    omoCategories,
-    omoOtherFieldsStr,
-  ]);
-
-  useEffect(() => {
-    if (appId !== "opencode" || category !== "omo" || isEditMode) return;
-    let active = true;
-    (async () => {
-      let next = false;
-      try {
-        const raw = await configApi.getCommonConfigSnippet("omo");
-        if (raw) {
-          const parsed = JSON.parse(raw) as Record<string, unknown>;
-          next = Object.keys(parsed).some(
-            (k) => k !== "id" && k !== "updatedAt",
-          );
-        }
-      } catch {}
-      if (active) setUseOmoCommonConfig(next);
-    })();
-    return () => {
-      active = false;
-    };
-  }, [appId, category, isEditMode]);
-
-  const handleOmoGlobalConfigSave = useCallback(async () => {
-    if (!omoGlobalConfigRef.current) return;
-    setIsOmoSaving(true);
-    try {
-      const config = omoGlobalConfigRef.current.buildCurrentConfigStrict();
-      await configApi.setCommonConfigSnippet("omo", JSON.stringify(config));
-      setIsOmoConfigModalOpen(false);
-      toast.success(
-        t("omo.globalConfigSaved", { defaultValue: "Global config saved" }),
-      );
-    } catch (err) {
-      toast.error(String(err));
-    } finally {
-      setIsOmoSaving(false);
-    }
-  }, [t]);
-
-  const handleOmoEditClick = useCallback(() => {
-    setOmoFieldsKey((k) => k + 1);
-    setIsOmoConfigModalOpen(true);
-  }, []);
-
-  const resetOmoDraftState = useCallback((useCommonConfig = true) => {
-    setOmoAgents({});
-    setOmoCategories({});
-    setOmoOtherFieldsStr("");
-    setUseOmoCommonConfig(useCommonConfig);
-  }, []);
-
-  // OpenClaw 配置状态
-  const [openclawBaseUrl, setOpenclawBaseUrl] = useState<string>(() => {
-    if (appId !== "openclaw") return "";
-    try {
-      const config = JSON.parse(
-        initialData?.settingsConfig
-          ? JSON.stringify(initialData.settingsConfig)
-          : OPENCLAW_DEFAULT_CONFIG,
-      );
-      return config.baseUrl || "";
-    } catch {
-      return "";
-    }
-  });
-
-  const [openclawApiKey, setOpenclawApiKey] = useState<string>(() => {
-    if (appId !== "openclaw") return "";
-    try {
-      const config = JSON.parse(
-        initialData?.settingsConfig
-          ? JSON.stringify(initialData.settingsConfig)
-          : OPENCLAW_DEFAULT_CONFIG,
-      );
-      return config.apiKey || "";
-    } catch {
-      return "";
-    }
-  });
-
-  const [openclawApi, setOpenclawApi] = useState<string>(() => {
-    if (appId !== "openclaw") return "openai-completions";
-    try {
-      const config = JSON.parse(
-        initialData?.settingsConfig
-          ? JSON.stringify(initialData.settingsConfig)
-          : OPENCLAW_DEFAULT_CONFIG,
-      );
-      return config.api || "openai-completions";
-    } catch {
-      return "openai-completions";
-    }
-  });
-
-  const [openclawModels, setOpenclawModels] = useState<OpenClawModel[]>(() => {
-    if (appId !== "openclaw") return [];
-    try {
-      const config = JSON.parse(
-        initialData?.settingsConfig
-          ? JSON.stringify(initialData.settingsConfig)
-          : OPENCLAW_DEFAULT_CONFIG,
-      );
-      return config.models || [];
-    } catch {
-      return [];
-    }
-  });
-
-  // OpenClaw handlers - sync state to form
-  const handleOpenclawBaseUrlChange = useCallback(
-    (baseUrl: string) => {
-      setOpenclawBaseUrl(baseUrl);
-      try {
-        const config = JSON.parse(
-          form.getValues("settingsConfig") || OPENCLAW_DEFAULT_CONFIG,
-        );
-        config.baseUrl = baseUrl.trim().replace(/\/+$/, "");
-        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
-      } catch {
-        // ignore
-      }
-    },
-    [form],
-  );
-
-  const handleOpenclawApiKeyChange = useCallback(
-    (apiKey: string) => {
-      setOpenclawApiKey(apiKey);
-      try {
-        const config = JSON.parse(
-          form.getValues("settingsConfig") || OPENCLAW_DEFAULT_CONFIG,
-        );
-        config.apiKey = apiKey;
-        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
-      } catch {
-        // ignore
-      }
-    },
-    [form],
-  );
-
-  const handleOpenclawApiChange = useCallback(
-    (api: string) => {
-      setOpenclawApi(api);
-      try {
-        const config = JSON.parse(
-          form.getValues("settingsConfig") || OPENCLAW_DEFAULT_CONFIG,
-        );
-        config.api = api;
-        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
-      } catch {
-        // ignore
-      }
-    },
-    [form],
-  );
-
-  const handleOpenclawModelsChange = useCallback(
-    (models: OpenClawModel[]) => {
-      setOpenclawModels(models);
-      try {
-        const config = JSON.parse(
-          form.getValues("settingsConfig") || OPENCLAW_DEFAULT_CONFIG,
-        );
-        config.models = models;
-        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
-      } catch {
-        // ignore
-      }
-    },
-    [form],
-  );
-
-  const updateOpencodeSettings = useCallback(
-    (updater: (config: Record<string, any>) => void) => {
-      try {
-        const config = JSON.parse(
-          form.getValues("settingsConfig") || OPENCODE_DEFAULT_CONFIG,
-        ) as Record<string, any>;
-        updater(config);
-        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
-      } catch {}
-    },
-    [form],
-  );
-
-  const handleOpencodeNpmChange = useCallback(
-    (npm: string) => {
-      setOpencodeNpm(npm);
-      updateOpencodeSettings((config) => {
-        config.npm = npm;
-      });
-    },
-    [updateOpencodeSettings],
-  );
-
-  const handleOpencodeApiKeyChange = useCallback(
-    (apiKey: string) => {
-      setOpencodeApiKey(apiKey);
-      updateOpencodeSettings((config) => {
-        if (!config.options) config.options = {};
-        config.options.apiKey = apiKey;
-      });
-    },
-    [updateOpencodeSettings],
-  );
-
-  const handleOpencodeBaseUrlChange = useCallback(
-    (baseUrl: string) => {
-      setOpencodeBaseUrl(baseUrl);
-      updateOpencodeSettings((config) => {
-        if (!config.options) config.options = {};
-        config.options.baseURL = baseUrl.trim().replace(/\/+$/, "");
-      });
-    },
-    [updateOpencodeSettings],
-  );
-
-  const handleOpencodeModelsChange = useCallback(
-    (models: Record<string, OpenCodeModel>) => {
-      setOpencodeModels(models);
-      updateOpencodeSettings((config) => {
-        config.models = models;
-      });
-    },
-    [updateOpencodeSettings],
-  );
-
-  const handleOpencodeExtraOptionsChange = useCallback(
-    (options: Record<string, string>) => {
-      setOpencodeExtraOptions(options);
-      updateOpencodeSettings((config) => {
-        if (!config.options) config.options = {};
-
-        for (const k of Object.keys(config.options)) {
-          if (!isKnownOpencodeOptionKey(k)) {
-            delete config.options[k];
-          }
-        }
-
-        for (const [k, v] of Object.entries(options)) {
-          const trimmedKey = k.trim();
-          if (trimmedKey && !trimmedKey.startsWith("option-")) {
-            try {
-              config.options[trimmedKey] = JSON.parse(v);
-            } catch {
-              config.options[trimmedKey] = v;
-            }
-          }
-        }
-      });
-    },
-    [updateOpencodeSettings],
-  );
-
-  const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
   const handleSubmit = (values: ProviderFormData) => {
     if (appId === "claude" && templateValueEntries.length > 0) {
@@ -1265,21 +555,24 @@ export function ProviderForm({
       return;
     }
 
-    if (appId === "opencode" && category !== "omo") {
+    if (appId === "opencode" && !isAnyOmoCategory) {
       const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-      if (!opencodeProviderKey.trim()) {
+      if (!opencodeForm.opencodeProviderKey.trim()) {
         toast.error(t("opencode.providerKeyRequired"));
         return;
       }
-      if (!keyPattern.test(opencodeProviderKey)) {
+      if (!keyPattern.test(opencodeForm.opencodeProviderKey)) {
         toast.error(t("opencode.providerKeyInvalid"));
         return;
       }
-      if (!isEditMode && existingOpencodeKeys.includes(opencodeProviderKey)) {
+      if (
+        !isEditMode &&
+        existingOpencodeKeys.includes(opencodeForm.opencodeProviderKey)
+      ) {
         toast.error(t("opencode.providerKeyDuplicate"));
         return;
       }
-      if (Object.keys(opencodeModels).length === 0) {
+      if (Object.keys(opencodeForm.opencodeModels).length === 0) {
         toast.error(t("opencode.modelsRequired"));
         return;
       }
@@ -1288,22 +581,28 @@ export function ProviderForm({
     // OpenClaw: validate provider key
     if (appId === "openclaw") {
       const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-      if (!openclawProviderKey.trim()) {
+      if (!openclawForm.openclawProviderKey.trim()) {
         toast.error(t("openclaw.providerKeyRequired"));
         return;
       }
-      if (!keyPattern.test(openclawProviderKey)) {
+      if (!keyPattern.test(openclawForm.openclawProviderKey)) {
         toast.error(t("openclaw.providerKeyInvalid"));
         return;
       }
-      if (!isEditMode && existingOpenclawKeys.includes(openclawProviderKey)) {
+      if (
+        !isEditMode &&
+        openclawForm.existingOpenclawKeys.includes(
+          openclawForm.openclawProviderKey,
+        )
+      ) {
         toast.error(t("openclaw.providerKeyDuplicate"));
         return;
       }
     }
 
     // 非官方供应商必填校验：端点和 API Key
-    if (category !== "official") {
+    // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
+    if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
         if (!baseUrl.trim()) {
           toast.error(
@@ -1383,18 +682,26 @@ export function ProviderForm({
       } catch (err) {
         settingsConfig = values.settingsConfig.trim();
       }
-    } else if (appId === "opencode" && category === "omo") {
+    } else if (
+      appId === "opencode" &&
+      (category === "omo" || category === "omo-slim")
+    ) {
       const omoConfig: Record<string, unknown> = {};
-      omoConfig.useCommonConfig = useOmoCommonConfig;
-      if (Object.keys(omoAgents).length > 0) {
-        omoConfig.agents = omoAgents;
+      omoConfig.useCommonConfig = omoDraft.useOmoCommonConfig;
+      if (Object.keys(omoDraft.omoAgents).length > 0) {
+        omoConfig.agents = omoDraft.omoAgents;
       }
-      if (Object.keys(omoCategories).length > 0) {
-        omoConfig.categories = omoCategories;
+      if (
+        category === "omo" &&
+        Object.keys(omoDraft.omoCategories).length > 0
+      ) {
+        omoConfig.categories = omoDraft.omoCategories;
       }
-      if (omoOtherFieldsStr.trim()) {
+      if (omoDraft.omoOtherFieldsStr.trim()) {
         try {
-          const otherFields = parseOmoOtherFieldsObject(omoOtherFieldsStr);
+          const otherFields = parseOmoOtherFieldsObject(
+            omoDraft.omoOtherFieldsStr,
+          );
           if (!otherFields) {
             toast.error(
               t("omo.jsonMustBeObject", {
@@ -1429,19 +736,20 @@ export function ProviderForm({
     };
 
     if (appId === "opencode") {
-      if (category === "omo") {
+      if (isAnyOmoCategory) {
         if (!isEditMode) {
-          payload.providerKey = `omo-${crypto.randomUUID().slice(0, 8)}`;
+          const prefix = category === "omo" ? "omo" : "omo-slim";
+          payload.providerKey = `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
         }
       } else {
-        payload.providerKey = opencodeProviderKey;
+        payload.providerKey = opencodeForm.opencodeProviderKey;
       }
     } else if (appId === "openclaw") {
-      payload.providerKey = openclawProviderKey;
+      payload.providerKey = openclawForm.openclawProviderKey;
     }
 
-    if (category === "omo" && !payload.presetCategory) {
-      payload.presetCategory = "omo";
+    if (isAnyOmoCategory && !payload.presetCategory) {
+      payload.presetCategory = category;
     }
 
     if (activePreset) {
@@ -1518,6 +826,10 @@ export function ProviderForm({
         appId === "claude" && category !== "official"
           ? localApiFormat
           : undefined,
+      apiKeyField:
+        appId === "claude" && category !== "official"
+          ? localApiKeyField
+          : undefined,
     };
 
     onSubmit(payload);
@@ -1540,7 +852,8 @@ export function ProviderForm({
     );
   }, [groupedPresets]);
 
-  const shouldShowSpeedTest = category !== "official";
+  const shouldShowSpeedTest =
+    category !== "official" && category !== "cloud_provider";
 
   const {
     shouldShowApiKeyLink: shouldShowClaudeApiKeyLink,
@@ -1632,21 +945,12 @@ export function ProviderForm({
         resetGeminiConfig({}, {});
       }
       if (appId === "opencode") {
-        setOpencodeProviderKey("");
-        setOpencodeNpm(OPENCODE_DEFAULT_NPM);
-        setOpencodeBaseUrl("");
-        setOpencodeApiKey("");
-        setOpencodeModels({});
-        setOpencodeExtraOptions({});
-        resetOmoDraftState();
+        opencodeForm.resetOpencodeState();
+        omoDraft.resetOmoDraftState();
       }
       // OpenClaw 自定义模式：重置为空配置
       if (appId === "openclaw") {
-        setOpenclawProviderKey("");
-        setOpenclawBaseUrl("");
-        setOpenclawApiKey("");
-        setOpenclawApi("openai-completions");
-        setOpenclawModels([]);
+        openclawForm.resetOpenclawState();
       }
       return;
     }
@@ -1701,10 +1005,10 @@ export function ProviderForm({
       const preset = entry.preset as OpenCodeProviderPreset;
       const config = preset.settingsConfig;
 
-      if (preset.category === "omo") {
-        resetOmoDraftState();
+      if (preset.category === "omo" || preset.category === "omo-slim") {
+        omoDraft.resetOmoDraftState();
         form.reset({
-          name: "OMO",
+          name: preset.category === "omo" ? "OMO" : "OMO Slim",
           websiteUrl: preset.websiteUrl ?? "",
           settingsConfig: JSON.stringify({}, null, 2),
           icon: preset.icon ?? "",
@@ -1713,13 +1017,7 @@ export function ProviderForm({
         return;
       }
 
-      setOpencodeProviderKey("");
-
-      setOpencodeNpm(config.npm || OPENCODE_DEFAULT_NPM);
-      setOpencodeBaseUrl(config.options?.baseURL || "");
-      setOpencodeApiKey(config.options?.apiKey || "");
-      setOpencodeModels(config.models || {});
-      setOpencodeExtraOptions(toOpencodeExtraOptions(config.options || {}));
+      opencodeForm.resetOpencodeState(config);
 
       form.reset({
         name: preset.name,
@@ -1745,14 +1043,7 @@ export function ProviderForm({
         suggestedDefaults: preset.suggestedDefaults,
       });
 
-      // Clear provider key (user must enter their own unique key)
-      setOpenclawProviderKey("");
-
-      // Update OpenClaw-specific states
-      setOpenclawBaseUrl(config.baseUrl || "");
-      setOpenclawApiKey(config.apiKey || "");
-      setOpenclawApi(config.api || "openai-completions");
-      setOpenclawModels(config.models || []);
+      openclawForm.resetOpenclawState(config);
 
       // Update form fields
       form.reset({
@@ -1775,6 +1066,12 @@ export function ProviderForm({
       setLocalApiFormat(preset.apiFormat);
     } else {
       setLocalApiFormat("anthropic");
+    }
+
+    if (preset.apiKeyField) {
+      setLocalApiKeyField(preset.apiKeyField);
+    } else {
+      setLocalApiKeyField("ANTHROPIC_AUTH_TOKEN");
     }
 
     form.reset({
@@ -1821,7 +1118,7 @@ export function ProviderForm({
         <BasicFormFields
           form={form}
           beforeNameSlot={
-            appId === "opencode" && category !== "omo" ? (
+            appId === "opencode" && !isAnyOmoCategory ? (
               <div className="space-y-2">
                 <Label htmlFor="opencode-key">
                   {t("opencode.providerKey")}
@@ -1829,41 +1126,52 @@ export function ProviderForm({
                 </Label>
                 <Input
                   id="opencode-key"
-                  value={opencodeProviderKey}
+                  value={opencodeForm.opencodeProviderKey}
                   onChange={(e) =>
-                    setOpencodeProviderKey(
+                    opencodeForm.setOpencodeProviderKey(
                       e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
                     )
                   }
                   placeholder={t("opencode.providerKeyPlaceholder")}
                   disabled={isEditMode}
                   className={
-                    (existingOpencodeKeys.includes(opencodeProviderKey) &&
+                    (existingOpencodeKeys.includes(
+                      opencodeForm.opencodeProviderKey,
+                    ) &&
                       !isEditMode) ||
-                    (opencodeProviderKey.trim() !== "" &&
-                      !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opencodeProviderKey))
+                    (opencodeForm.opencodeProviderKey.trim() !== "" &&
+                      !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                        opencodeForm.opencodeProviderKey,
+                      ))
                       ? "border-destructive"
                       : ""
                   }
                 />
-                {existingOpencodeKeys.includes(opencodeProviderKey) &&
+                {existingOpencodeKeys.includes(
+                  opencodeForm.opencodeProviderKey,
+                ) &&
                   !isEditMode && (
                     <p className="text-xs text-destructive">
                       {t("opencode.providerKeyDuplicate")}
                     </p>
                   )}
-                {opencodeProviderKey.trim() !== "" &&
-                  !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opencodeProviderKey) && (
+                {opencodeForm.opencodeProviderKey.trim() !== "" &&
+                  !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                    opencodeForm.opencodeProviderKey,
+                  ) && (
                     <p className="text-xs text-destructive">
                       {t("opencode.providerKeyInvalid")}
                     </p>
                   )}
                 {!(
-                  existingOpencodeKeys.includes(opencodeProviderKey) &&
-                  !isEditMode
+                  existingOpencodeKeys.includes(
+                    opencodeForm.opencodeProviderKey,
+                  ) && !isEditMode
                 ) &&
-                  (opencodeProviderKey.trim() === "" ||
-                    /^[a-z0-9]+(-[a-z0-9]+)*$/.test(opencodeProviderKey)) && (
+                  (opencodeForm.opencodeProviderKey.trim() === "" ||
+                    /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                      opencodeForm.opencodeProviderKey,
+                    )) && (
                     <p className="text-xs text-muted-foreground">
                       {t("opencode.providerKeyHint")}
                     </p>
@@ -1877,41 +1185,52 @@ export function ProviderForm({
                 </Label>
                 <Input
                   id="openclaw-key"
-                  value={openclawProviderKey}
+                  value={openclawForm.openclawProviderKey}
                   onChange={(e) =>
-                    setOpenclawProviderKey(
+                    openclawForm.setOpenclawProviderKey(
                       e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
                     )
                   }
                   placeholder={t("openclaw.providerKeyPlaceholder")}
                   disabled={isEditMode}
                   className={
-                    (existingOpenclawKeys.includes(openclawProviderKey) &&
+                    (openclawForm.existingOpenclawKeys.includes(
+                      openclawForm.openclawProviderKey,
+                    ) &&
                       !isEditMode) ||
-                    (openclawProviderKey.trim() !== "" &&
-                      !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(openclawProviderKey))
+                    (openclawForm.openclawProviderKey.trim() !== "" &&
+                      !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                        openclawForm.openclawProviderKey,
+                      ))
                       ? "border-destructive"
                       : ""
                   }
                 />
-                {existingOpenclawKeys.includes(openclawProviderKey) &&
+                {openclawForm.existingOpenclawKeys.includes(
+                  openclawForm.openclawProviderKey,
+                ) &&
                   !isEditMode && (
                     <p className="text-xs text-destructive">
                       {t("openclaw.providerKeyDuplicate")}
                     </p>
                   )}
-                {openclawProviderKey.trim() !== "" &&
-                  !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(openclawProviderKey) && (
+                {openclawForm.openclawProviderKey.trim() !== "" &&
+                  !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                    openclawForm.openclawProviderKey,
+                  ) && (
                     <p className="text-xs text-destructive">
                       {t("openclaw.providerKeyInvalid")}
                     </p>
                   )}
                 {!(
-                  existingOpenclawKeys.includes(openclawProviderKey) &&
-                  !isEditMode
+                  openclawForm.existingOpenclawKeys.includes(
+                    openclawForm.openclawProviderKey,
+                  ) && !isEditMode
                 ) &&
-                  (openclawProviderKey.trim() === "" ||
-                    /^[a-z0-9]+(-[a-z0-9]+)*$/.test(openclawProviderKey)) && (
+                  (openclawForm.openclawProviderKey.trim() === "" ||
+                    /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                      openclawForm.openclawProviderKey,
+                    )) && (
                     <p className="text-xs text-muted-foreground">
                       {t("openclaw.providerKeyHint")}
                     </p>
@@ -1924,10 +1243,13 @@ export function ProviderForm({
         {appId === "claude" && (
           <ClaudeFormFields
             providerId={providerId}
-            shouldShowApiKey={shouldShowApiKey(
-              form.getValues("settingsConfig"),
-              isEditMode,
-            )}
+            shouldShowApiKey={
+              hasApiKeyField(form.getValues("settingsConfig"), "claude") &&
+              shouldShowApiKey(
+                form.getValues("settingsConfig"),
+                isEditMode,
+              )
+            }
             apiKey={apiKey}
             onApiKeyChange={handleApiKeyChange}
             category={category}
@@ -1963,6 +1285,8 @@ export function ProviderForm({
             speedTestEndpoints={speedTestEndpoints}
             apiFormat={localApiFormat}
             onApiFormatChange={handleApiFormatChange}
+            apiKeyField={localApiKeyField}
+            onApiKeyFieldChange={handleApiKeyFieldChange}
           />
         )}
 
@@ -2022,56 +1346,62 @@ export function ProviderForm({
           />
         )}
 
-        {appId === "opencode" && category !== "omo" && (
+        {appId === "opencode" && !isAnyOmoCategory && (
           <OpenCodeFormFields
-            npm={opencodeNpm}
-            onNpmChange={handleOpencodeNpmChange}
-            apiKey={opencodeApiKey}
-            onApiKeyChange={handleOpencodeApiKeyChange}
+            npm={opencodeForm.opencodeNpm}
+            onNpmChange={opencodeForm.handleOpencodeNpmChange}
+            apiKey={opencodeForm.opencodeApiKey}
+            onApiKeyChange={opencodeForm.handleOpencodeApiKeyChange}
             category={category}
             shouldShowApiKeyLink={shouldShowOpencodeApiKeyLink}
             websiteUrl={opencodeWebsiteUrl}
             isPartner={isOpencodePartner}
             partnerPromotionKey={opencodePartnerPromotionKey}
-            baseUrl={opencodeBaseUrl}
-            onBaseUrlChange={handleOpencodeBaseUrlChange}
-            models={opencodeModels}
-            onModelsChange={handleOpencodeModelsChange}
-            extraOptions={opencodeExtraOptions}
-            onExtraOptionsChange={handleOpencodeExtraOptionsChange}
+            baseUrl={opencodeForm.opencodeBaseUrl}
+            onBaseUrlChange={opencodeForm.handleOpencodeBaseUrlChange}
+            models={opencodeForm.opencodeModels}
+            onModelsChange={opencodeForm.handleOpencodeModelsChange}
+            extraOptions={opencodeForm.opencodeExtraOptions}
+            onExtraOptionsChange={opencodeForm.handleOpencodeExtraOptionsChange}
           />
         )}
 
-        {appId === "opencode" && category === "omo" && (
-          <OmoFormFields
-            modelOptions={omoModelOptions}
-            modelVariantsMap={omoModelVariantsMap}
-            presetMetaMap={omoPresetMetaMap}
-            agents={omoAgents}
-            onAgentsChange={setOmoAgents}
-            categories={omoCategories}
-            onCategoriesChange={setOmoCategories}
-            otherFieldsStr={omoOtherFieldsStr}
-            onOtherFieldsStrChange={setOmoOtherFieldsStr}
-          />
-        )}
+        {appId === "opencode" &&
+          (category === "omo" || category === "omo-slim") && (
+            <OmoFormFields
+              modelOptions={omoModelOptions}
+              modelVariantsMap={omoModelVariantsMap}
+              presetMetaMap={omoPresetMetaMap}
+              agents={omoDraft.omoAgents}
+              onAgentsChange={omoDraft.setOmoAgents}
+              categories={
+                category === "omo" ? omoDraft.omoCategories : undefined
+              }
+              onCategoriesChange={
+                category === "omo" ? omoDraft.setOmoCategories : undefined
+              }
+              otherFieldsStr={omoDraft.omoOtherFieldsStr}
+              onOtherFieldsStrChange={omoDraft.setOmoOtherFieldsStr}
+              isSlim={category === "omo-slim"}
+            />
+          )}
 
         {/* OpenClaw 专属字段 */}
         {appId === "openclaw" && (
           <OpenClawFormFields
-            baseUrl={openclawBaseUrl}
-            onBaseUrlChange={handleOpenclawBaseUrlChange}
-            apiKey={openclawApiKey}
-            onApiKeyChange={handleOpenclawApiKeyChange}
+            baseUrl={openclawForm.openclawBaseUrl}
+            onBaseUrlChange={openclawForm.handleOpenclawBaseUrlChange}
+            apiKey={openclawForm.openclawApiKey}
+            onApiKeyChange={openclawForm.handleOpenclawApiKeyChange}
             category={category}
             shouldShowApiKeyLink={shouldShowOpenclawApiKeyLink}
             websiteUrl={openclawWebsiteUrl}
             isPartner={isOpenclawPartner}
             partnerPromotionKey={openclawPartnerPromotionKey}
-            api={openclawApi}
-            onApiChange={handleOpenclawApiChange}
-            models={openclawModels}
-            onModelsChange={handleOpenclawModelsChange}
+            api={openclawForm.openclawApi}
+            onApiChange={openclawForm.handleOpenclawApiChange}
+            models={openclawForm.openclawModels}
+            onModelsChange={openclawForm.handleOpenclawModelsChange}
           />
         )}
 
@@ -2083,15 +1413,8 @@ export function ProviderForm({
               configValue={codexConfig}
               onAuthChange={setCodexAuth}
               onConfigChange={handleCodexConfigChange}
-              useCommonConfig={useCodexCommonConfigFlag}
-              onCommonConfigToggle={handleCodexCommonConfigToggle}
-              commonConfigSnippet={codexCommonConfigSnippet}
-              onCommonConfigSnippetChange={handleCodexCommonConfigSnippetChange}
-              commonConfigError={codexCommonConfigError}
               authError={codexAuthError}
               configError={codexConfigError}
-              onExtract={handleCodexExtract}
-              isExtracting={isCodexExtracting}
             />
             {settingsConfigErrorField}
           </>
@@ -2102,35 +1425,30 @@ export function ProviderForm({
               configValue={geminiConfig}
               onEnvChange={handleGeminiEnvChange}
               onConfigChange={handleGeminiConfigChange}
-              useCommonConfig={useGeminiCommonConfigFlag}
-              onCommonConfigToggle={handleGeminiCommonConfigToggle}
-              commonConfigSnippet={geminiCommonConfigSnippet}
-              onCommonConfigSnippetChange={
-                handleGeminiCommonConfigSnippetChange
-              }
-              commonConfigError={geminiCommonConfigError}
               envError={envError}
               configError={geminiConfigError}
-              onExtract={handleGeminiExtract}
-              isExtracting={isGeminiExtracting}
             />
             {settingsConfigErrorField}
           </>
-        ) : appId === "opencode" && category === "omo" ? (
+        ) : appId === "opencode" &&
+          (category === "omo" || category === "omo-slim") ? (
           <OmoCommonConfigEditor
-            previewValue={mergedOmoJsonPreview}
-            useCommonConfig={useOmoCommonConfig}
-            onCommonConfigToggle={setUseOmoCommonConfig}
-            isModalOpen={isOmoConfigModalOpen}
-            onEditClick={handleOmoEditClick}
-            onModalClose={() => setIsOmoConfigModalOpen(false)}
-            onSave={handleOmoGlobalConfigSave}
-            isSaving={isOmoSaving}
-            onGlobalConfigStateChange={setOmoGlobalState}
-            globalConfigRef={omoGlobalConfigRef}
-            fieldsKey={omoFieldsKey}
+            previewValue={omoDraft.mergedOmoJsonPreview}
+            useCommonConfig={omoDraft.useOmoCommonConfig}
+            onCommonConfigToggle={omoDraft.setUseOmoCommonConfig}
+            isModalOpen={omoDraft.isOmoConfigModalOpen}
+            onEditClick={omoDraft.handleOmoEditClick}
+            onModalClose={() => omoDraft.setIsOmoConfigModalOpen(false)}
+            onSave={omoDraft.handleOmoGlobalConfigSave}
+            isSaving={omoDraft.isOmoSaving}
+            onGlobalConfigStateChange={omoDraft.setOmoGlobalState}
+            globalConfigRef={omoDraft.omoGlobalConfigRef}
+            fieldsKey={omoDraft.omoFieldsKey}
+            isSlim={category === "omo-slim"}
           />
-        ) : appId === "opencode" && category !== "omo" ? (
+        ) : appId === "opencode" &&
+          category !== "omo" &&
+          category !== "omo-slim" ? (
           <>
             <div className="space-y-2">
               <Label htmlFor="settingsConfig">{t("provider.configJson")}</Label>
@@ -2182,25 +1500,47 @@ export function ProviderForm({
           </>
         ) : (
           <>
-            <CommonConfigEditor
-              value={form.getValues("settingsConfig")}
-              onChange={(value) => form.setValue("settingsConfig", value)}
-              useCommonConfig={useCommonConfig}
-              onCommonConfigToggle={handleCommonConfigToggle}
-              commonConfigSnippet={commonConfigSnippet}
-              onCommonConfigSnippetChange={handleCommonConfigSnippetChange}
-              commonConfigError={commonConfigError}
-              onEditClick={() => setIsCommonConfigModalOpen(true)}
-              isModalOpen={isCommonConfigModalOpen}
-              onModalClose={() => setIsCommonConfigModalOpen(false)}
-              onExtract={handleClaudeExtract}
-              isExtracting={isClaudeExtracting}
-            />
+            <div className="space-y-2">
+              <Label htmlFor="settingsConfig">
+                {t("claudeConfig.configLabel")}
+              </Label>
+              <ClaudeQuickToggles
+                onPatchApplied={(patch) => {
+                  try {
+                    const cfg = JSON.parse(
+                      form.getValues("settingsConfig") || "{}",
+                    );
+                    jsonMergePatch(cfg, patch);
+                    form.setValue(
+                      "settingsConfig",
+                      JSON.stringify(cfg, null, 2),
+                    );
+                  } catch {
+                    // invalid JSON in editor — skip mirror
+                  }
+                }}
+              />
+              <JsonEditor
+                value={form.watch("settingsConfig")}
+                onChange={(value) => form.setValue("settingsConfig", value)}
+                placeholder={`{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "your-api-key-here"
+  }
+}`}
+                rows={14}
+                showValidation={true}
+                language="json"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("claudeConfig.fullSettingsHint")}
+              </p>
+            </div>
             {settingsConfigErrorField}
           </>
         )}
 
-        {category !== "omo" && (
+        {!isAnyOmoCategory && appId !== "opencode" && appId !== "openclaw" && (
           <ProviderAdvancedConfig
             testConfig={testConfig}
             proxyConfig={proxyConfig}

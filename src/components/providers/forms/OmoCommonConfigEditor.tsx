@@ -23,6 +23,7 @@ interface OmoCommonConfigEditorProps {
   onGlobalConfigStateChange: (config: OmoGlobalConfig) => void;
   globalConfigRef: React.RefObject<OmoGlobalConfigFieldsRef | null>;
   fieldsKey: number;
+  isSlim?: boolean;
 }
 
 export function OmoCommonConfigEditor({
@@ -37,6 +38,7 @@ export function OmoCommonConfigEditor({
   onGlobalConfigStateChange,
   globalConfigRef,
   fieldsKey,
+  isSlim = false,
 }: OmoCommonConfigEditorProps) {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -153,6 +155,7 @@ export function OmoCommonConfigEditor({
             ref={globalConfigRef as React.Ref<OmoGlobalConfigFieldsRef>}
             onStateChange={onGlobalConfigStateChange}
             hideSaveButtons
+            isSlim={isSlim}
           />
         </div>
       </FullScreenPanel>

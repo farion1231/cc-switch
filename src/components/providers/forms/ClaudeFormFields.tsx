@@ -11,7 +11,11 @@ import {
 } from "@/components/ui/select";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField } from "./shared";
-import type { ProviderCategory, ClaudeApiFormat } from "@/types";
+import type {
+  ProviderCategory,
+  ClaudeApiFormat,
+  ClaudeApiKeyField,
+} from "@/types";
 import type { TemplateValueConfig } from "@/config/claudeProviderPresets";
 
 interface EndpointCandidate {
@@ -75,6 +79,10 @@ interface ClaudeFormFieldsProps {
   // API Format (for third-party providers that use OpenAI Chat Completions format)
   apiFormat: ClaudeApiFormat;
   onApiFormatChange: (format: ClaudeApiFormat) => void;
+
+  // Auth Key Field (ANTHROPIC_AUTH_TOKEN vs ANTHROPIC_API_KEY)
+  apiKeyField: ClaudeApiKeyField;
+  onApiKeyFieldChange: (field: ClaudeApiKeyField) => void;
 }
 
 export function ClaudeFormFields({
@@ -113,6 +121,8 @@ export function ClaudeFormFields({
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
+  apiKeyField,
+  onApiKeyFieldChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -199,8 +209,8 @@ export function ClaudeFormFields({
         />
       )}
 
-      {/* API 格式选择（仅非官方供应商显示） */}
-      {shouldShowModelSelector && (
+      {/* API 格式选择（仅非官方、非云服务商显示） */}
+      {shouldShowModelSelector && category !== "cloud_provider" && (
         <div className="space-y-2">
           <FormLabel htmlFor="apiFormat">
             {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
@@ -229,7 +239,6 @@ export function ClaudeFormFields({
           </p>
         </div>
       )}
-
       {/* 统一模型映射 */}
       {shouldShowModelSelector && (
         <div className="space-y-3 border rounded-lg p-4 bg-muted/30">

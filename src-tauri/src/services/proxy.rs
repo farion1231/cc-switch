@@ -8,7 +8,7 @@ use crate::database::Database;
 use crate::provider::Provider;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::types::*;
-use crate::services::provider::write_live_snapshot;
+use crate::services::provider::write_live_partial;
 use serde_json::{json, Value};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -1266,7 +1266,7 @@ impl ProxyService {
             return Ok(false);
         };
 
-        write_live_snapshot(app_type, provider)
+        write_live_partial(app_type, provider)
             .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
 
         Ok(true)

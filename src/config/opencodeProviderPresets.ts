@@ -21,6 +21,7 @@ export const opencodeNpmPackages = [
   { value: "@ai-sdk/openai", label: "OpenAI" },
   { value: "@ai-sdk/openai-compatible", label: "OpenAI Compatible" },
   { value: "@ai-sdk/anthropic", label: "Anthropic" },
+  { value: "@ai-sdk/amazon-bedrock", label: "Amazon Bedrock" },
   { value: "@ai-sdk/google", label: "Google (Gemini)" },
 ] as const;
 
@@ -40,15 +41,15 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
 > = {
   "@ai-sdk/openai-compatible": [
     {
-      id: "MiniMax-M2.1",
-      name: "MiniMax M2.1",
+      id: "MiniMax-M2.5",
+      name: "MiniMax M2.5",
       contextLimit: 204800,
       outputLimit: 131072,
       modalities: { input: ["text"], output: ["text"] },
     },
     {
-      id: "glm-4.7",
-      name: "GLM 4.7",
+      id: "glm-5",
+      name: "GLM 5",
       contextLimit: 204800,
       outputLimit: 131072,
       modalities: { input: ["text"], output: ["text"] },
@@ -315,6 +316,50 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       },
     },
   ],
+  "@ai-sdk/amazon-bedrock": [
+    {
+      id: "global.anthropic.claude-opus-4-6-v1",
+      name: "Claude Opus 4.6",
+      contextLimit: 1000000,
+      outputLimit: 128000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+    },
+    {
+      id: "global.anthropic.claude-sonnet-4-6",
+      name: "Claude Sonnet 4.6",
+      contextLimit: 200000,
+      outputLimit: 64000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+    },
+    {
+      id: "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+      name: "Claude Haiku 4.5",
+      contextLimit: 200000,
+      outputLimit: 64000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+    },
+    {
+      id: "us.amazon.nova-pro-v1:0",
+      name: "Amazon Nova Pro",
+      contextLimit: 300000,
+      outputLimit: 5000,
+      modalities: { input: ["text", "image"], output: ["text"] },
+    },
+    {
+      id: "us.meta.llama4-maverick-17b-instruct-v1:0",
+      name: "Meta Llama 4 Maverick",
+      contextLimit: 131072,
+      outputLimit: 131072,
+      modalities: { input: ["text"], output: ["text"] },
+    },
+    {
+      id: "us.deepseek.r1-v1:0",
+      name: "DeepSeek R1",
+      contextLimit: 131072,
+      outputLimit: 131072,
+      modalities: { input: ["text"], output: ["text"] },
+    },
+  ],
   "@ai-sdk/anthropic": [
     {
       id: "claude-sonnet-4-5-20250929",
@@ -441,7 +486,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "glm-4.7": { name: "GLM-4.7" },
+        "glm-5": { name: "GLM-5" },
       },
     },
     category: "cn_official",
@@ -473,7 +518,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "glm-4.7": { name: "GLM-4.7" },
+        "glm-5": { name: "GLM-5" },
       },
     },
     category: "cn_official",
@@ -599,7 +644,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "ZhipuAI/GLM-4.7": { name: "GLM-4.7" },
+        "ZhipuAI/GLM-5": { name: "GLM-5" },
       },
     },
     category: "aggregator",
@@ -703,7 +748,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "MiniMax-M2.1": { name: "MiniMax M2.1" },
+        "MiniMax-M2.5": { name: "MiniMax M2.5" },
       },
     },
     category: "cn_official",
@@ -735,7 +780,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "MiniMax-M2.1": { name: "MiniMax M2.1" },
+        "MiniMax-M2.5": { name: "MiniMax M2.5" },
       },
     },
     category: "cn_official",
@@ -767,7 +812,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "doubao-seed-code-preview-latest": { name: "Doubao Seed Code Preview" },
+        "doubao-seed-2-0-code-preview-latest": {
+          name: "Doubao Seed Code Preview",
+        },
       },
     },
     category: "cn_official",
@@ -792,7 +839,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "Ling-1T": { name: "Ling 1T" },
+        "Ling-2.5-1T": { name: "Ling 2.5-1T" },
       },
     },
     category: "cn_official",
@@ -843,7 +890,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
@@ -870,7 +917,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
@@ -897,7 +944,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "anthropic/claude-sonnet-4.5": { name: "Claude Sonnet 4.5" },
+        "anthropic/claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
         "anthropic/claude-opus-4.6": { name: "Claude Opus 4.6" },
       },
     },
@@ -951,7 +998,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
@@ -979,7 +1026,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
@@ -1008,7 +1055,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
@@ -1069,7 +1116,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4.5": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4.6": { name: "Claude Opus 4.6" },
       },
     },
@@ -1086,7 +1133,141 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
-
+  {
+    name: "AICoding",
+    websiteUrl: "https://www.aicoding.sh",
+    apiKeyUrl: "https://www.aicoding.sh/i/CCSWITCH",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "AICoding",
+      options: {
+        baseURL: "https://api.aicoding.sh",
+        apiKey: "",
+      },
+      models: {
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "CrazyRouter",
+    websiteUrl: "https://www.crazyrouter.com",
+    apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "CrazyRouter",
+      options: {
+        baseURL: "https://crazyrouter.com",
+        apiKey: "",
+      },
+      models: {
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "crazyrouter",
+    icon: "crazyrouter",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SSSAiCode",
+    websiteUrl: "https://www.sssaicode.com",
+    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "SSSAiCode",
+      options: {
+        baseURL: "https://node-hk.sssaicode.com/api",
+        apiKey: "",
+      },
+      models: {
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sssaicode",
+    icon: "sssaicode",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "AWS Bedrock",
+    websiteUrl: "https://aws.amazon.com/bedrock/",
+    settingsConfig: {
+      npm: "@ai-sdk/amazon-bedrock",
+      name: "AWS Bedrock",
+      options: {
+        region: "${region}",
+        accessKeyId: "${accessKeyId}",
+        secretAccessKey: "${secretAccessKey}",
+      },
+      models: {
+        "global.anthropic.claude-opus-4-6-v1": { name: "Claude Opus 4.6" },
+        "global.anthropic.claude-sonnet-4-6": {
+          name: "Claude Sonnet 4.6",
+        },
+        "global.anthropic.claude-haiku-4-5-20251001-v1:0": {
+          name: "Claude Haiku 4.5",
+        },
+        "us.amazon.nova-pro-v1:0": { name: "Amazon Nova Pro" },
+        "us.meta.llama4-maverick-17b-instruct-v1:0": {
+          name: "Meta Llama 4 Maverick",
+        },
+        "us.deepseek.r1-v1:0": { name: "DeepSeek R1" },
+      },
+    },
+    category: "cloud_provider",
+    icon: "aws",
+    iconColor: "#FF9900",
+    templateValues: {
+      region: {
+        label: "AWS Region",
+        placeholder: "us-west-2",
+        defaultValue: "us-west-2",
+        editorValue: "us-west-2",
+      },
+      accessKeyId: {
+        label: "Access Key ID",
+        placeholder: "AKIA...",
+        editorValue: "",
+      },
+      secretAccessKey: {
+        label: "Secret Access Key",
+        placeholder: "your-secret-key",
+        editorValue: "",
+      },
+    },
+  },
   {
     name: "OpenAI Compatible",
     websiteUrl: "",
@@ -1127,6 +1308,19 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     category: "omo" as ProviderCategory,
     icon: "opencode",
     iconColor: "#8B5CF6",
+    isCustomTemplate: true,
+  },
+  {
+    name: "Oh My OpenCode Slim",
+    websiteUrl: "https://github.com/alvinunreal/oh-my-opencode-slim",
+    settingsConfig: {
+      npm: "",
+      options: {},
+      models: {},
+    },
+    category: "omo-slim" as ProviderCategory,
+    icon: "opencode",
+    iconColor: "#6366F1",
     isCustomTemplate: true,
   },
 ];

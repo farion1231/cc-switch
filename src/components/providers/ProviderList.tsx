@@ -15,7 +15,8 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
@@ -33,7 +34,12 @@ import {
   useAddToFailoverQueue,
   useRemoveFromFailoverQueue,
 } from "@/lib/query/failover";
-import { useCurrentOmoProviderId, useOmoProviderCount } from "@/lib/query/omo";
+import {
+  useCurrentOmoProviderId,
+  useOmoProviderCount,
+  useCurrentOmoSlimProviderId,
+  useOmoSlimProviderCount,
+} from "@/lib/query/omo";
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -47,6 +53,7 @@ interface ProviderListProps {
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
+  onDisableOmoSlim?: () => void;
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
@@ -68,6 +75,7 @@ export function ProviderList({
   onDelete,
   onRemoveFromConfig,
   onDisableOmo,
+  onDisableOmoSlim,
   onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
@@ -135,6 +143,8 @@ export function ProviderList({
   const isOpenCode = appId === "opencode";
   const { data: currentOmoId } = useCurrentOmoProviderId(isOpenCode);
   const { data: omoProviderCount } = useOmoProviderCount(isOpenCode);
+  const { data: currentOmoSlimId } = useCurrentOmoSlimProviderId(isOpenCode);
+  const { data: omoSlimProviderCount } = useOmoSlimProviderCount(isOpenCode);
 
   const getFailoverPriority = useCallback(
     (providerId: string): number | undefined => {
@@ -169,6 +179,23 @@ export function ProviderList({
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Import current live config as default provider
+  const queryClient = useQueryClient();
+  const importMutation = useMutation({
+    mutationFn: () => providersApi.importDefault(appId),
+    onSuccess: (imported) => {
+      if (imported) {
+        queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+        toast.success(t("provider.importCurrentDescription"));
+      } else {
+        toast.info(t("provider.noProviders"));
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -222,8 +249,17 @@ export function ProviderList({
     );
   }
 
+  // Only show import button for standard apps (not additive-mode apps like OpenCode/OpenClaw)
+  const showImportButton =
+    appId === "claude" || appId === "codex" || appId === "gemini";
+
   if (sortedProviders.length === 0) {
-    return <ProviderEmptyState onCreate={onCreate} />;
+    return (
+      <ProviderEmptyState
+        onCreate={onCreate}
+        onImport={showImportButton ? () => importMutation.mutate() : undefined}
+      />
+    );
   }
 
   const renderProviderList = () => (
@@ -239,13 +275,20 @@ export function ProviderList({
         <div className="space-y-3">
           {filteredProviders.map((provider) => {
             const isOmo = provider.category === "omo";
+            const isOmoSlim = provider.category === "omo-slim";
             const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
+            const isOmoSlimCurrent =
+              isOmoSlim && provider.id === (currentOmoSlimId || "");
             return (
               <SortableProviderCard
                 key={provider.id}
                 provider={provider}
                 isCurrent={
-                  isOmo ? isOmoCurrent : provider.id === currentProviderId
+                  isOmo
+                    ? isOmoCurrent
+                    : isOmoSlim
+                      ? isOmoSlimCurrent
+                      : provider.id === currentProviderId
                 }
                 appId={appId}
                 isInConfig={isProviderInConfig(provider.id)}
@@ -253,11 +296,18 @@ export function ProviderList({
                 isLastOmo={
                   isOmo && (omoProviderCount ?? 0) <= 1 && isOmoCurrent
                 }
+                isOmoSlim={isOmoSlim}
+                isLastOmoSlim={
+                  isOmoSlim &&
+                  (omoSlimProviderCount ?? 0) <= 1 &&
+                  isOmoSlimCurrent
+                }
                 onSwitch={onSwitch}
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onRemoveFromConfig={onRemoveFromConfig}
                 onDisableOmo={onDisableOmo}
+                onDisableOmoSlim={onDisableOmoSlim}
                 onDuplicate={onDuplicate}
                 onConfigureUsage={onConfigureUsage}
                 onOpenWebsite={onOpenWebsite}
@@ -371,11 +421,14 @@ interface SortableProviderCardProps {
   isInConfig: boolean;
   isOmo: boolean;
   isLastOmo: boolean;
+  isOmoSlim: boolean;
+  isLastOmoSlim: boolean;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
+  onDisableOmoSlim?: () => void;
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
@@ -401,11 +454,14 @@ function SortableProviderCard({
   isInConfig,
   isOmo,
   isLastOmo,
+  isOmoSlim,
+  isLastOmoSlim,
   onSwitch,
   onEdit,
   onDelete,
   onRemoveFromConfig,
   onDisableOmo,
+  onDisableOmoSlim,
   onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
@@ -445,11 +501,14 @@ function SortableProviderCard({
         isInConfig={isInConfig}
         isOmo={isOmo}
         isLastOmo={isLastOmo}
+        isOmoSlim={isOmoSlim}
+        isLastOmoSlim={isLastOmoSlim}
         onSwitch={onSwitch}
         onEdit={onEdit}
         onDelete={onDelete}
         onRemoveFromConfig={onRemoveFromConfig}
         onDisableOmo={onDisableOmo}
+        onDisableOmoSlim={onDisableOmoSlim}
         onDuplicate={onDuplicate}
         onConfigureUsage={
           onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined

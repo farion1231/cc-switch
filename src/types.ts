@@ -1,10 +1,12 @@
 export type ProviderCategory =
   | "official" // 官方
   | "cn_official" // 开源官方（原"国产官方"）
+  | "cloud_provider" // 云服务商（AWS Bedrock 等）
   | "aggregator" // 聚合网站
   | "third_party" // 第三方供应商
   | "custom" // 自定义
-  | "omo"; // Oh My OpenCode
+  | "omo" // Oh My OpenCode
+  | "omo-slim"; // Oh My OpenCode Slim
 
 export interface Provider {
   id: string;
@@ -144,6 +146,10 @@ export interface ProviderMeta {
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   apiFormat?: "anthropic" | "openai_chat";
+  // Claude 认证字段名（仅 Claude 供应商使用）
+  // - "ANTHROPIC_AUTH_TOKEN" (默认): 大多数第三方/聚合供应商
+  // - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
+  apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 }
 
 // Skill 同步方式
@@ -153,6 +159,11 @@ export type SkillSyncMethod = "auto" | "symlink" | "copy";
 // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
 export type ClaudeApiFormat = "anthropic" | "openai_chat";
+
+// Claude 认证字段类型
+// - "ANTHROPIC_AUTH_TOKEN": 大多数第三方/聚合供应商使用（默认）
+// - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
+export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
 // 主页面显示的应用配置
 export interface VisibleApps {
@@ -211,6 +222,12 @@ export interface Settings {
   launchOnStartup?: boolean;
   // 静默启动（程序启动时不显示主窗口）
   silentStartup?: boolean;
+  // 是否启用主页面本地代理功能（默认关闭）
+  enableLocalProxy?: boolean;
+  // User has confirmed the local proxy first-run notice
+  proxyConfirmed?: boolean;
+  // User has confirmed the usage query first-run notice
+  usageConfirmed?: boolean;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "ja";
 
@@ -243,6 +260,12 @@ export interface Settings {
 
   // ===== WebDAV v2 同步设置 =====
   webdavSync?: WebDavSyncSettings;
+
+  // ===== 备份策略设置 =====
+  // Auto-backup interval in hours (0=disabled, default 24)
+  backupIntervalHours?: number;
+  // Maximum backup files to retain (default 10)
+  backupRetainCount?: number;
 
   // ===== 终端设置 =====
   // 首选终端应用（可选，默认使用系统默认终端）
