@@ -1,0 +1,98 @@
+name: Bump Homebrew Cask
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bump-cask:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get release version
+        id: ver
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download release asset
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          ASSET="CC-Switch-v${VERSION}-macOS.tar.gz"
+          URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/${ASSET}"
+          echo "Downloading $URL"
+          
+          # 重试下载，最多等待 5 分钟（asset 可能还在上传中）
+          for i in {1..10}; do
+            if curl -L --fail -o "$ASSET" "$URL"; then
+              echo "Downloaded $(ls -lh "$ASSET")"
+              exit 0
+            fi
+            echo "Attempt $i failed, waiting 30s..."
+            sleep 30
+          done
+          echo "Failed to download asset after 10 attempts"
+          exit 1
+
+      - name: Compute sha256
+        id: sha
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          ASSET="CC-Switch-v${VERSION}-macOS.tar.gz"
+          SHA=$(sha256sum "$ASSET" | awk '{print $1}')
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "sha256=$SHA"
+
+      - name: Checkout tap repo
+        uses: actions/checkout@v4
+        with:
+          repository: farion1231/homebrew-ccswitch
+          token: ${{ secrets.TAP_REPO_TOKEN }}
+          path: tap
+          ref: main
+
+      - name: Update cask file
+        working-directory: tap
+        run: |
+          FILE="Casks/cc-switch.rb"
+          VERSION="${{ steps.ver.outputs.version }}"
+          SHA="${{ steps.sha.outputs.sha }}"
+
+          if [ ! -f "$FILE" ]; then
+            echo "Error: $FILE not found"
+            exit 1
+          fi
+
+          # 用 perl 替换，避免 sed -i 差异；用 \1/\2 做分组引用，bash 只负责注入 VERSION/SHA
+          perl -i -pe 's/^(\s*version\s+\")[^\"]+(\".*)$/\1'"$VERSION"'\2/' "$FILE"
+          perl -i -pe 's/^(\s*sha256\s+\")[^\"]+(\".*)$/\1'"$SHA"'\2/' "$FILE"
+
+          echo "Updated lines:"
+          grep -nE "^\s*(version|sha256)\s+" "$FILE"
+
+          # 验证更新是否成功
+          if ! grep -q "version \"${VERSION}\"" "$FILE"; then
+            echo "Error: version update failed"
+            exit 1
+          fi
+          if ! grep -q "sha256 \"${SHA}\"" "$FILE"; then
+            echo "Error: sha256 update failed"
+            exit 1
+          fi
+          echo "Verification passed!"
+
+      - name: Commit and push changes
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/cc-switch.rb
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "bump cc-switch to ${{ steps.ver.outputs.version }}"
+          git push origin main
