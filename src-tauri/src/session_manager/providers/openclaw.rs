@@ -7,7 +7,9 @@ use serde_json::Value;
 use crate::openclaw_config::get_openclaw_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{extract_text, parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::utils::{
+    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
+};
 
 const PROVIDER_ID: &str = "openclaw";
 
@@ -114,30 +116,22 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
-    let file = File::open(path).ok()?;
-    let reader = BufReader::new(file);
+    let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
 
     let mut session_id: Option<String> = None;
     let mut cwd: Option<String> = None;
     let mut created_at: Option<i64> = None;
-    let mut last_active_at: Option<i64> = None;
     let mut summary: Option<String> = None;
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let value: Value = match serde_json::from_str(&line) {
+    // Extract metadata and first message summary from head lines
+    for line in &head {
+        let value: Value = match serde_json::from_str(line) {
             Ok(parsed) => parsed,
             Err(_) => continue,
         };
 
-        if let Some(ts) = value.get("timestamp").and_then(parse_timestamp_to_ms) {
-            if created_at.is_none() {
-                created_at = Some(ts);
-            }
-            last_active_at = Some(ts);
+        if created_at.is_none() {
+            created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
 
         let event_type = value.get("type").and_then(Value::as_str).unwrap_or("");
@@ -161,25 +155,28 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
             continue;
         }
 
-        if event_type != "message" {
-            continue;
+        // OpenClaw summary is the first message content
+        if event_type == "message" && summary.is_none() {
+            if let Some(message) = value.get("message") {
+                let text = message.get("content").map(extract_text).unwrap_or_default();
+                if !text.trim().is_empty() {
+                    summary = Some(text);
+                }
+            }
         }
+    }
 
-        // Extract first message content for summary
-        if summary.is_some() {
-            continue;
-        }
-
-        let message = match value.get("message") {
-            Some(msg) => msg,
-            None => continue,
+    // Extract last_active_at from tail lines (reverse order)
+    let mut last_active_at: Option<i64> = None;
+    for line in tail.iter().rev() {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
         };
-
-        let text = message.get("content").map(extract_text).unwrap_or_default();
-        if text.trim().is_empty() {
-            continue;
+        if let Some(ts) = value.get("timestamp").and_then(parse_timestamp_to_ms) {
+            last_active_at = Some(ts);
+            break;
         }
-        summary = Some(text);
     }
 
     // Fall back to filename as session ID

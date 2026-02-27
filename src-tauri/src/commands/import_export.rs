@@ -123,6 +123,24 @@ pub async fn open_zip_file_dialog<R: tauri::Runtime>(
 
 // ─── Database backup management ─────────────────────────────
 
+/// Manually create a database backup
+#[tauri::command]
+pub async fn create_db_backup(state: State<'_, AppState>) -> Result<String, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || match db.backup_database_file()? {
+        Some(path) => Ok(path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default()),
+        None => Err(AppError::Config(
+            "Database file not found, backup skipped".to_string(),
+        )),
+    })
+    .await
+    .map_err(|e| format!("Backup failed: {e}"))?
+    .map_err(|e: AppError| e.to_string())
+}
+
 /// List all database backup files
 #[tauri::command]
 pub fn list_db_backups() -> Result<Vec<BackupEntry>, String> {
@@ -149,4 +167,10 @@ pub fn rename_db_backup(
     #[allow(non_snake_case)] newName: String,
 ) -> Result<String, String> {
     Database::rename_backup(&oldFilename, &newName).map_err(|e| e.to_string())
+}
+
+/// Delete a database backup file
+#[tauri::command]
+pub fn delete_db_backup(filename: String) -> Result<(), String> {
+    Database::delete_backup(&filename).map_err(|e| e.to_string())
 }

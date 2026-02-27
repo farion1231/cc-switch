@@ -57,6 +57,12 @@ export const useAddProviderMutation = (appId: AppId) => {
         await queryClient.invalidateQueries({
           queryKey: ["omo", "provider-count"],
         });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo-slim", "current-provider-id"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo-slim", "provider-count"],
+        });
       }
 
       try {
@@ -139,6 +145,12 @@ export const useDeleteProviderMutation = (appId: AppId) => {
         await queryClient.invalidateQueries({
           queryKey: ["omo", "provider-count"],
         });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo-slim", "current-provider-id"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo-slim", "provider-count"],
+        });
       }
 
       try {
@@ -189,6 +201,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         });
         await queryClient.invalidateQueries({
           queryKey: ["omo", "current-provider-id"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo-slim", "current-provider-id"],
         });
       }
       if (appId === "openclaw") {

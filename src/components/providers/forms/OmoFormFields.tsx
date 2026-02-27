@@ -722,14 +722,23 @@ export function OmoFormFields({
       return;
     }
 
+    let filledCount = 0;
+    let alreadySetCount = 0;
+    let unmatchedCount = 0;
+
     const updatedAgents = { ...agents };
     for (const agentDef of builtinAgentDefs) {
       const recommendedValue = resolveRecommendedModel(agentDef.recommended);
-      if (recommendedValue && !updatedAgents[agentDef.key]?.model) {
+      if (!recommendedValue) {
+        unmatchedCount++;
+      } else if (updatedAgents[agentDef.key]?.model) {
+        alreadySetCount++;
+      } else {
         updatedAgents[agentDef.key] = {
           ...updatedAgents[agentDef.key],
           model: recommendedValue,
         };
+        filledCount++;
       }
     }
     onAgentsChange(updatedAgents);
@@ -738,14 +747,49 @@ export function OmoFormFields({
       const updatedCategories = { ...categories };
       for (const catDef of OMO_BUILTIN_CATEGORIES) {
         const recommendedValue = resolveRecommendedModel(catDef.recommended);
-        if (recommendedValue && !updatedCategories[catDef.key]?.model) {
+        if (!recommendedValue) {
+          unmatchedCount++;
+        } else if (updatedCategories[catDef.key]?.model) {
+          alreadySetCount++;
+        } else {
           updatedCategories[catDef.key] = {
             ...updatedCategories[catDef.key],
             model: recommendedValue,
           };
+          filledCount++;
         }
       }
       onCategoriesChange(updatedCategories);
+    }
+
+    if (filledCount > 0 && unmatchedCount === 0) {
+      toast.success(
+        t("omo.fillRecommendedSuccess", {
+          defaultValue: "Filled {{count}} recommended models",
+          count: filledCount,
+        }),
+      );
+    } else if (filledCount > 0 && unmatchedCount > 0) {
+      toast.success(
+        t("omo.fillRecommendedPartial", {
+          defaultValue:
+            "Filled {{filled}} recommended models, {{unmatched}} unmatched",
+          filled: filledCount,
+          unmatched: unmatchedCount,
+        }),
+      );
+    } else if (alreadySetCount > 0 && unmatchedCount === 0) {
+      toast.info(
+        t("omo.fillRecommendedAllSet", {
+          defaultValue: "All slots already have models configured",
+        }),
+      );
+    } else {
+      toast.warning(
+        t("omo.fillRecommendedNoMatch", {
+          defaultValue: "Recommended models not found in configured providers",
+        }),
+      );
     }
   };
 

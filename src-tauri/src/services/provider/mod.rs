@@ -260,18 +260,6 @@ impl ProviderService {
                         state
                             .db
                             .is_omo_provider_current(app_type.as_str(), id, "omo")?;
-                    let omo_count = state
-                        .db
-                        .get_all_providers(app_type.as_str())?
-                        .values()
-                        .filter(|p| p.category.as_deref() == Some("omo"))
-                        .count();
-
-                    if omo_count <= 1 && was_current {
-                        return Err(AppError::Message(
-                            "无法删除当前启用的最后一个 OMO 配置，请先停用".to_string(),
-                        ));
-                    }
 
                     state.db.delete_provider(app_type.as_str(), id)?;
                     if was_current {
@@ -287,18 +275,6 @@ impl ProviderService {
                         state
                             .db
                             .is_omo_provider_current(app_type.as_str(), id, "omo-slim")?;
-                    let slim_count = state
-                        .db
-                        .get_all_providers(app_type.as_str())?
-                        .values()
-                        .filter(|p| p.category.as_deref() == Some("omo-slim"))
-                        .count();
-
-                    if slim_count <= 1 && was_current {
-                        return Err(AppError::Message(
-                            "无法删除当前启用的最后一个 OMO Slim 配置，请先停用".to_string(),
-                        ));
-                    }
 
                     state.db.delete_provider(app_type.as_str(), id)?;
                     if was_current {
@@ -513,6 +489,8 @@ impl ProviderService {
                 state,
                 &crate::services::omo::STANDARD,
             )?;
+            // OMO ↔ OMO Slim mutually exclusive: remove Slim config
+            let _ = crate::services::OmoService::delete_config_file(&crate::services::omo::SLIM);
             return Ok(SwitchResult::default());
         }
 
@@ -522,6 +500,9 @@ impl ProviderService {
                 .db
                 .set_omo_provider_current(app_type.as_str(), id, "omo-slim")?;
             crate::services::OmoService::write_config_to_file(state, &crate::services::omo::SLIM)?;
+            // OMO ↔ OMO Slim mutually exclusive: remove Standard config
+            let _ =
+                crate::services::OmoService::delete_config_file(&crate::services::omo::STANDARD);
             return Ok(SwitchResult::default());
         }
 

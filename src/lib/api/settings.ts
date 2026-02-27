@@ -223,6 +223,10 @@ export interface BackupEntry {
 }
 
 export const backupsApi = {
+  async createDbBackup(): Promise<string> {
+    return await invoke("create_db_backup");
+  },
+
   async listDbBackups(): Promise<BackupEntry[]> {
     return await invoke("list_db_backups");
   },
@@ -233,5 +237,9 @@ export const backupsApi = {
 
   async renameDbBackup(oldFilename: string, newName: string): Promise<string> {
     return await invoke("rename_db_backup", { oldFilename, newName });
+  },
+
+  async deleteDbBackup(filename: string): Promise<void> {
+    await invoke("delete_db_backup", { filename });
   },
 };
