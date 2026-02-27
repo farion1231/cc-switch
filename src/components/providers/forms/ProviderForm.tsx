@@ -229,6 +229,7 @@ export function ProviderForm({
       name: initialData?.name ?? "",
       websiteUrl: initialData?.websiteUrl ?? "",
       notes: initialData?.notes ?? "",
+      intentDescription: initialData?.meta?.intentDescription ?? "",
       settingsConfig: initialData?.settingsConfig
         ? JSON.stringify(initialData.settingsConfig, null, 2)
         : appId === "codex"
@@ -1004,6 +1005,10 @@ export function ProviderForm({
     const providerType =
       templatePreset?.providerType || initialData?.meta?.providerType;
 
+    // 从表单中提取意图路由描述（单独配置，优先于 notes）
+    const intentDescriptionFromForm =
+      (values as ProviderFormData).intentDescription?.trim() || undefined;
+
     payload.meta = {
       ...(baseMeta ?? {}),
       commonConfigEnabled:
@@ -1048,6 +1053,7 @@ export function ProviderForm({
         localApiKeyField !== "ANTHROPIC_AUTH_TOKEN"
           ? localApiKeyField
           : undefined,
+      intentDescription: intentDescriptionFromForm,
       isFullUrl:
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true

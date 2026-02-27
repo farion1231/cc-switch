@@ -21,6 +21,7 @@ import {
   KeyRound,
   Shield,
   Cpu,
+  Sparkles,
 } from "lucide-react";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -61,6 +62,7 @@ import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import {
   useDisableCurrentOmo,
@@ -1047,10 +1049,10 @@ function App() {
                     size="sm"
                     onClick={() => promptPanelRef.current?.openAdd()}
                     className="hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    {t("prompts.add")}
-                  </Button>
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  {t("prompts.add")}
+                </Button>
                 )}
                 {currentView === "mcp" && (
                   <>
@@ -1266,6 +1268,55 @@ function App() {
                         </motion.div>
                       </AnimatePresence>
                     </div>
+
+                    {activeApp === "claude" && settingsData?.enableLocalProxy && (
+                      <div
+                        className="flex items-center gap-1 px-1.5 h-8 rounded-lg bg-muted/50"
+                        title={t(
+                          "settings.advanced.proxy.enableClaudeIntentRoutingDescription",
+                        )}
+                      >
+                        <Sparkles
+                          className={cn(
+                            "h-4 w-4 transition-colors",
+                            settingsData?.enableClaudeIntentRouting
+                              ? "text-purple-500"
+                              : "text-muted-foreground",
+                          )}
+                        />
+                        <Switch
+                          checked={
+                            settingsData?.enableClaudeIntentRouting ?? false
+                          }
+                          onCheckedChange={async (checked) => {
+                            try {
+                              await settingsApi.save({
+                                ...(settingsData ?? {
+                                  showInTray: true,
+                                  minimizeToTrayOnClose: true,
+                                }),
+                                enableClaudeIntentRouting: checked,
+                              });
+                              await queryClient.invalidateQueries({
+                                queryKey: ["settings"],
+                              });
+                            } catch (error) {
+                              console.error(
+                                "[App] Failed to toggle Claude intent routing on main page",
+                                error,
+                              );
+                              toast.error(
+                                t("notifications.settingsSaveFailed", {
+                                  defaultValue: "保存设置失败: {{error}}",
+                                  error:
+                                    (error as Error)?.message ?? String(error),
+                                }),
+                              );
+                            }
+                          }}
+                        />
+                      </div>
+                    )}
 
                     <Button
                       onClick={() => setIsAddOpen(true)}

@@ -83,6 +83,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       minimizeToTrayOnClose: data.minimizeToTrayOnClose ?? true,
       enableClaudePluginIntegration:
         data.enableClaudePluginIntegration ?? false,
+      enableClaudeIntentRouting: data.enableClaudeIntentRouting ?? false,
       silentStartup: data.silentStartup ?? false,
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
@@ -141,6 +142,8 @@ export function useSettingsForm(): UseSettingsFormResult {
         minimizeToTrayOnClose: serverData.minimizeToTrayOnClose ?? true,
         enableClaudePluginIntegration:
           serverData.enableClaudePluginIntegration ?? false,
+        enableClaudeIntentRouting:
+          serverData.enableClaudeIntentRouting ?? false,
         silentStartup: serverData.silentStartup ?? false,
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
