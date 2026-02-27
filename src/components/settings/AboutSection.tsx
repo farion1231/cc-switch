@@ -39,6 +39,17 @@ interface ToolVersion {
   error: string | null;
   env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
   wsl_distro: string | null;
+  // 多环境版本信息
+  envs?: ToolEnvVersion[];
+}
+
+interface ToolEnvVersion {
+  env_type: "windows" | "wsl" | "macos" | "linux";
+  wsl_distro?: string;
+  version?: string;
+  error?: string;
+  wsl_shell?: string;
+  wsl_shell_flag?: string;
 }
 
 const TOOL_NAMES = ["claude", "codex", "gemini", "opencode"] as const;
@@ -450,7 +461,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               toolName === "opencode"
                 ? "OpenCode"
                 : toolName.charAt(0).toUpperCase() + toolName.slice(1);
-            const title = tool?.version || tool?.error || t("common.unknown");
+
+            // 多环境显示
+            const envs = tool?.envs || [];
+            const hasMultipleEnvs = envs.length > 1;
 
             return (
               <motion.div
@@ -465,61 +479,39 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                   <div className="flex items-center gap-2">
                     <Terminal className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm font-medium">{displayName}</span>
-                    {/* Environment Badge */}
-                    {tool?.env_type && ENV_BADGE_CONFIG[tool.env_type] && (
+                    {/* 环境标签 - 汇总显示，避免过多气泡挤出 */}
+                    {envs.some((env) => env.env_type === "windows") && (
                       <span
-                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG[tool.env_type].className}`}
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.windows.className}`}
                       >
-                        {t(ENV_BADGE_CONFIG[tool.env_type].labelKey)}
+                        {t(ENV_BADGE_CONFIG.windows.labelKey)}
                       </span>
                     )}
-                    {/* WSL Shell Selector */}
-                    {tool?.env_type === "wsl" && (
-                      <Select
-                        value={wslShellByTool[toolName]?.wslShell || "auto"}
-                        onValueChange={(v) =>
-                          handleToolShellChange(toolName, v)
-                        }
-                        disabled={isLoadingTools || loadingTools[toolName]}
+                    {envs.some((env) => env.env_type === "wsl") && (
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.wsl.className}`}
+                        title={envs
+                          .filter((env) => env.env_type === "wsl")
+                          .map((env) => env.wsl_distro)
+                          .filter(Boolean)
+                          .join(", ")}
                       >
-                        <SelectTrigger className="h-6 w-[70px] text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="auto">
-                            {t("common.auto")}
-                          </SelectItem>
-                          {WSL_SHELL_OPTIONS.map((shell) => (
-                            <SelectItem key={shell} value={shell}>
-                              {shell}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        WSL×{envs.filter((env) => env.env_type === "wsl").length}
+                      </span>
                     )}
-                    {/* WSL Shell Flag Selector */}
-                    {tool?.env_type === "wsl" && (
-                      <Select
-                        value={wslShellByTool[toolName]?.wslShellFlag || "auto"}
-                        onValueChange={(v) =>
-                          handleToolShellFlagChange(toolName, v)
-                        }
-                        disabled={isLoadingTools || loadingTools[toolName]}
+                    {envs.some((env) => env.env_type === "macos") && (
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.macos.className}`}
                       >
-                        <SelectTrigger className="h-6 w-[70px] text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="auto">
-                            {t("common.auto")}
-                          </SelectItem>
-                          {WSL_SHELL_FLAG_OPTIONS.map((flag) => (
-                            <SelectItem key={flag} value={flag}>
-                              {flag}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        {t(ENV_BADGE_CONFIG.macos.labelKey)}
+                      </span>
+                    )}
+                    {envs.some((env) => env.env_type === "linux") && (
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.linux.className}`}
+                      >
+                        {t(ENV_BADGE_CONFIG.linux.labelKey)}
+                      </span>
                     )}
                   </div>
                   {isLoadingTools || loadingTools[toolName] ? (
@@ -537,16 +529,89 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     <AlertCircle className="h-4 w-4 text-yellow-500" />
                   )}
                 </div>
-                <div
-                  className="text-xs font-mono text-muted-foreground truncate"
-                  title={title}
-                >
-                  {isLoadingTools
-                    ? t("common.loading")
-                    : tool?.version
-                      ? tool.version
-                      : tool?.error || t("common.notInstalled")}
-                </div>
+                {/* 多环境版本信息 */}
+                {hasMultipleEnvs ? (
+                  <div className="flex flex-col gap-1">
+                    {envs.map((env, envIndex) => (
+                      <div
+                        key={envIndex}
+                        className="flex items-center justify-between text-xs"
+                      >
+                        <span className="text-muted-foreground">
+                          {env.env_type === "wsl" && env.wsl_distro
+                            ? `WSL (${env.wsl_distro})`
+                            : env.env_type}
+                        </span>
+                        <span
+                          className={`font-mono truncate max-w-[150px] ${
+                            env.version ? "text-foreground" : "text-yellow-500"
+                          }`}
+                          title={env.version || env.error || ""}
+                        >
+                          {env.version || env.error || t("common.notInstalled")}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div
+                    className="text-xs font-mono text-muted-foreground truncate"
+                    title={tool?.version || tool?.error || t("common.unknown")}
+                  >
+                    {isLoadingTools
+                      ? t("common.loading")
+                      : tool?.version
+                        ? tool.version
+                        : tool?.error || t("common.notInstalled")}
+                  </div>
+                )}
+                {/* WSL Shell 选择器 - 显示在第一个 WSL 环境旁 */}
+                {envs.some((env) => env.env_type === "wsl") && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <Select
+                      value={wslShellByTool[toolName]?.wslShell || "auto"}
+                      onValueChange={(v) =>
+                        handleToolShellChange(toolName, v)
+                      }
+                      disabled={isLoadingTools || loadingTools[toolName]}
+                    >
+                      <SelectTrigger className="h-6 w-[70px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">
+                          {t("common.auto")}
+                        </SelectItem>
+                        {WSL_SHELL_OPTIONS.map((shell) => (
+                          <SelectItem key={shell} value={shell}>
+                            {shell}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={wslShellByTool[toolName]?.wslShellFlag || "auto"}
+                      onValueChange={(v) =>
+                        handleToolShellFlagChange(toolName, v)
+                      }
+                      disabled={isLoadingTools || loadingTools[toolName]}
+                    >
+                      <SelectTrigger className="h-6 w-[70px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">
+                          {t("common.auto")}
+                        </SelectItem>
+                        {WSL_SHELL_FLAG_OPTIONS.map((flag) => (
+                          <SelectItem key={flag} value={flag}>
+                            {flag}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </motion.div>
             );
           })}
