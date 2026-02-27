@@ -12,6 +12,7 @@
     "core:window:allow-set-skip-taskbar",
     "core:window:allow-start-dragging",
     "process:allow-restart",
-    "dialog:default"
+    "dialog:default",
+    "global-shortcut:default"
   ]
 }

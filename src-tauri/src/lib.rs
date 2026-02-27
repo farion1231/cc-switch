@@ -51,6 +51,7 @@ pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
@@ -186,6 +187,62 @@ fn macos_tray_icon() -> Option<Image<'static>> {
     }
 }
 
+/// 切换主窗口显示/隐藏
+pub fn toggle_main_window(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        log::warn!("toggle_main_window: 找不到主窗口");
+        return;
+    };
+    let visible = window.is_visible().unwrap_or(false);
+    if visible {
+        let _ = window.hide();
+        #[cfg(target_os = "windows")]
+        {
+            let _ = window.set_skip_taskbar(true);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            tray::apply_tray_policy(app, false);
+        }
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = window.set_skip_taskbar(false);
+        }
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        #[cfg(target_os = "macos")]
+        {
+            tray::apply_tray_policy(app, true);
+        }
+    }
+}
+
+/// 注册全局快捷键（内部使用）
+pub(crate) fn register_shortcut_inner(app: &tauri::AppHandle, shortcut_str: &str) -> Result<(), String> {
+    let shortcut = shortcut_str
+        .parse::<tauri_plugin_global_shortcut::Shortcut>()
+        .map_err(|e| format!("无效的快捷键格式 '{}': {}", shortcut_str, e))?;
+    let app_handle = app.clone();
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |_app, _scut, event| {
+            if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                toggle_main_window(&app_handle);
+            }
+        })
+        .map_err(|e| format!("注册快捷键失败: {}", e))?;
+    log::info!("全局快捷键已注册: {}", shortcut_str);
+    Ok(())
+}
+
+/// 注销所有全局快捷键
+pub(crate) fn unregister_all_shortcuts(app: &tauri::AppHandle) {
+    if let Err(e) = app.global_shortcut().unregister_all() {
+        log::warn!("注销全局快捷键失败: {}", e);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
@@ -252,6 +309,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
             app_store::refresh_app_config_dir_override(app.handle());
@@ -800,6 +858,13 @@ pub fn run() {
                 }
             }
 
+            // 全局快捷键：从 settings 读取并注册
+            if let Some(shortcut_str) = &settings.global_shortcut {
+                if let Err(e) = register_shortcut_inner(app.handle(), shortcut_str) {
+                    log::warn!("启动时注册全局快捷键失败: {}", e);
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -831,6 +896,8 @@ pub fn run() {
             commands::set_rectifier_config,
             commands::get_log_config,
             commands::set_log_config,
+            commands::register_global_shortcut,
+            commands::unregister_global_shortcut,
             commands::restart_app,
             commands::check_for_updates,
             commands::is_portable_mode,

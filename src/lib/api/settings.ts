@@ -203,6 +203,14 @@ export const settingsApi = {
   async setLogConfig(config: LogConfig): Promise<boolean> {
     return await invoke("set_log_config", { config });
   },
+
+  async registerGlobalShortcut(shortcut: string): Promise<boolean> {
+    return await invoke("register_global_shortcut", { shortcut });
+  },
+
+  async unregisterGlobalShortcut(): Promise<boolean> {
+    return await invoke("unregister_global_shortcut");
+  },
 };
 
 export interface RectifierConfig {

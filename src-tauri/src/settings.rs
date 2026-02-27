@@ -187,6 +187,11 @@ pub struct AppSettings {
     /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
     #[serde(default)]
     pub silent_startup: bool,
+
+    // ===== 全局快捷键 =====
+    /// 全局快捷键（用于切换主窗口显示/隐藏）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_shortcut: Option<String>,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
@@ -279,6 +284,7 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            global_shortcut: None,
             enable_local_proxy: false,
             proxy_confirmed: None,
             usage_confirmed: None,
