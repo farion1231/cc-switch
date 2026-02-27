@@ -60,10 +60,8 @@ export function useBaseUrlState({
     if (!codexConfig) return;
 
     const extracted = extractCodexBaseUrl(codexConfig) || "";
-    if (extracted !== codexBaseUrl) {
-      setCodexBaseUrl(extracted);
-    }
-  }, [appType, category, codexConfig, codexBaseUrl]);
+    setCodexBaseUrl((prev) => (prev === extracted ? prev : extracted));
+  }, [appType, category, codexConfig]);
 
   // 从Claude配置同步到 state（Gemini）
   useEffect(() => {
@@ -116,7 +114,7 @@ export function useBaseUrlState({
       const sanitized = url.trim();
       setCodexBaseUrl(sanitized);
 
-      if (!sanitized || !onCodexConfigChange) {
+      if (!onCodexConfigChange) {
         return;
       }
 
