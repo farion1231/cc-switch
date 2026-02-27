@@ -214,29 +214,29 @@ impl ProviderService {
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
 
         if is_current {
-            // 如果代理接管模式处于激活状态，并且代理服务正在运行：
-            // - 不写 Live 配置（否则会破坏接管）
-            // - 仅更新 Live 备份（保证关闭代理时能恢复到最新配置）
             let is_app_taken_over =
                 futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
                     .ok()
                     .flatten()
                     .is_some();
             let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
-            let should_skip_live_write = is_app_taken_over && is_proxy_running;
 
-            if should_skip_live_write {
+            // 如果代理接管模式处于激活状态，同步更新 Live 备份，
+            // 保证关闭代理时能恢复到最新配置。
+            if is_app_taken_over && is_proxy_running {
                 futures::executor::block_on(
                     state
                         .proxy_service
                         .update_live_backup_from_provider(app_type.as_str(), &provider),
                 )
                 .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-            } else {
-                write_live_partial(&app_type, &provider)?;
-                // Sync MCP
-                McpService::sync_all_enabled(state)?;
             }
+
+            // 识别到当前供应商正在被使用，始终执行 JSON 文件替换（写入 Live 配置），
+            // 确保保存操作立即生效，无需手动开关接管开关。
+            write_live_partial(&app_type, &provider)?;
+            // Sync MCP
+            McpService::sync_all_enabled(state)?;
         }
 
         Ok(true)
