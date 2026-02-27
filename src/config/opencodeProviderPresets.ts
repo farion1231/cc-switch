@@ -890,7 +890,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
@@ -917,7 +917,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
@@ -944,7 +944,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "anthropic/claude-sonnet-4.5": { name: "Claude Sonnet 4.5" },
+        "anthropic/claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
         "anthropic/claude-opus-4.6": { name: "Claude Opus 4.6" },
       },
     },
@@ -998,7 +998,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
@@ -1026,7 +1026,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
@@ -1055,7 +1055,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4-6": { name: "Claude Opus 4.6" },
       },
     },
@@ -1116,7 +1116,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "claude-sonnet-4.5": { name: "Claude Sonnet 4.5" },
+        "claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
         "claude-opus-4.6": { name: "Claude Opus 4.6" },
       },
     },
@@ -1133,7 +1133,93 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
-
+  {
+    name: "AICoding",
+    websiteUrl: "https://www.aicoding.sh",
+    apiKeyUrl: "https://www.aicoding.sh/i/CCSWITCH",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "AICoding",
+      options: {
+        baseURL: "https://api.aicoding.sh",
+        apiKey: "",
+      },
+      models: {
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "CrazyRouter",
+    websiteUrl: "https://www.crazyrouter.com",
+    apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "CrazyRouter",
+      options: {
+        baseURL: "https://crazyrouter.com",
+        apiKey: "",
+      },
+      models: {
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "crazyrouter",
+    icon: "crazyrouter",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SSSAiCode",
+    websiteUrl: "https://www.sssaicode.com",
+    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "SSSAiCode",
+      options: {
+        baseURL: "https://node-hk.sssaicode.com/api",
+        apiKey: "",
+      },
+      models: {
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sssaicode",
+    icon: "sssaicode",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
   {
     name: "AWS Bedrock",
     websiteUrl: "https://aws.amazon.com/bedrock/",

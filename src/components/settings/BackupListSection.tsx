@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Pencil, RotateCcw, Check, X } from "lucide-react";
+import { Pencil, RotateCcw, Check, X, Download, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -67,9 +67,20 @@ export function BackupListSection({
   onSettingsChange,
 }: BackupListSectionProps) {
   const { t } = useTranslation();
-  const { backups, isLoading, restore, isRestoring, rename, isRenaming } =
-    useBackupManager();
+  const {
+    backups,
+    isLoading,
+    create,
+    isCreating,
+    restore,
+    isRestoring,
+    rename,
+    isRenaming,
+    remove,
+    isDeleting,
+  } = useBackupManager();
   const [confirmFilename, setConfirmFilename] = useState<string | null>(null);
+  const [deleteFilename, setDeleteFilename] = useState<string | null>(null);
   const [editingFilename, setEditingFilename] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
 
@@ -108,6 +119,26 @@ export function BackupListSection({
   const handleCancelRename = () => {
     setEditingFilename(null);
     setEditValue("");
+  };
+
+  const handleDelete = async () => {
+    if (!deleteFilename) return;
+    try {
+      await remove(deleteFilename);
+      setDeleteFilename(null);
+      toast.success(
+        t("settings.backupManager.deleteSuccess", {
+          defaultValue: "Backup deleted",
+        }),
+      );
+    } catch (error) {
+      const detail =
+        extractErrorMessage(error) ||
+        t("settings.backupManager.deleteFailed", {
+          defaultValue: "Delete failed",
+        });
+      toast.error(detail);
+    }
   };
 
   const handleConfirmRename = async () => {
@@ -221,11 +252,45 @@ export function BackupListSection({
 
       {/* Backup list */}
       <div>
-        <h4 className="text-sm font-medium mb-2">
-          {t("settings.backupManager.title", {
-            defaultValue: "Database Backups",
-          })}
-        </h4>
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-sm font-medium">
+            {t("settings.backupManager.title", {
+              defaultValue: "Database Backups",
+            })}
+          </h4>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            disabled={isCreating || isRestoring}
+            onClick={async () => {
+              try {
+                await create();
+                toast.success(
+                  t("settings.backupManager.createSuccess", {
+                    defaultValue: "Backup created successfully",
+                  }),
+                );
+              } catch (error) {
+                const detail =
+                  extractErrorMessage(error) ||
+                  t("settings.backupManager.createFailed", {
+                    defaultValue: "Backup failed",
+                  });
+                toast.error(detail);
+              }
+            }}
+          >
+            <Download className="h-3 w-3 mr-1" />
+            {isCreating
+              ? t("settings.backupManager.creating", {
+                  defaultValue: "Backing up...",
+                })
+              : t("settings.backupManager.createBackup", {
+                  defaultValue: "Backup Now",
+                })}
+          </Button>
+        </div>
 
         {isLoading ? (
           <div className="text-sm text-muted-foreground py-2">Loading...</div>
@@ -298,7 +363,7 @@ export function BackupListSection({
                       size="icon"
                       className="h-7 w-7"
                       onClick={() => handleStartRename(backup.filename)}
-                      disabled={isRestoring || isRenaming}
+                      disabled={isRestoring || isRenaming || isDeleting}
                       title={t("settings.backupManager.rename", {
                         defaultValue: "Rename",
                       })}
@@ -307,9 +372,21 @@ export function BackupListSection({
                     </Button>
                     <Button
                       variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive hover:text-destructive"
+                      onClick={() => setDeleteFilename(backup.filename)}
+                      disabled={isRestoring || isDeleting}
+                      title={t("settings.backupManager.delete", {
+                        defaultValue: "Delete",
+                      })}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
                       size="sm"
                       className="h-7 px-2 text-xs"
-                      disabled={isRestoring}
+                      disabled={isRestoring || isDeleting}
                       onClick={() => setConfirmFilename(backup.filename)}
                     >
                       <RotateCcw className="h-3 w-3 mr-1" />
@@ -329,7 +406,7 @@ export function BackupListSection({
         )}
       </div>
 
-      {/* Confirmation Dialog */}
+      {/* Restore Confirmation Dialog */}
       <Dialog
         open={!!confirmFilename}
         onOpenChange={(open) => !open && setConfirmFilename(null)}
@@ -363,6 +440,50 @@ export function BackupListSection({
                   })
                 : t("settings.backupManager.restore", {
                     defaultValue: "Restore",
+                  })}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={!!deleteFilename}
+        onOpenChange={(open) => !open && setDeleteFilename(null)}
+      >
+        <DialogContent className="max-w-md" zIndex="alert">
+          <DialogHeader>
+            <DialogTitle>
+              {t("settings.backupManager.deleteConfirmTitle", {
+                defaultValue: "Confirm Delete",
+              })}
+            </DialogTitle>
+            <DialogDescription>
+              {t("settings.backupManager.deleteConfirmMessage", {
+                defaultValue:
+                  "This backup will be permanently deleted. This action cannot be undone.",
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteFilename(null)}
+              disabled={isDeleting}
+            >
+              {t("common.cancel", { defaultValue: "Cancel" })}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={isDeleting}
+            >
+              {isDeleting
+                ? t("settings.backupManager.deleting", {
+                    defaultValue: "Deleting...",
+                  })
+                : t("settings.backupManager.delete", {
+                    defaultValue: "Delete",
                   })}
             </Button>
           </DialogFooter>

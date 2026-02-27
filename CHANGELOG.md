@@ -7,9 +7,186 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [3.11.0] - 2026-02-26
+
+### Feature Release
+
+This release introduces **OpenClaw** as the fifth supported application, a full **Session Manager** for browsing conversation history across all apps, an independent **Backup Management** panel, **Oh My OpenCode (OMO)** integration, and 50+ other features, fixes, and improvements across 147 commits.
+
+**Stats**: 147 commits | 274 files changed | +32,179 insertions | -5,467 deletions
+
+### Added
+
+#### OpenClaw Support (New Application)
+
+- **OpenClaw Integration**: Full management support for OpenClaw as the fifth application in CC Switch, including provider switching, configuration panels (Env / Tools / Agents Defaults), Workspace file management (HEARTBEAT / BOOTSTRAP / BOOT), daily memory files, and additive overlay mode
+- **OpenClaw Provider Presets**: 13+ built-in provider presets with brand icon and complete i18n (zh/en/ja)
+- **OpenClaw Form Fields**: Dedicated provider form with providerKey input, model allowlist auto-registration, and default model button
+- **OpenClaw Config Panels**: Env editor, Tools editor, and Agents Defaults editor backed by JSON5 read/write (`openclaw_config.rs`)
+
+#### Session Manager
+
+- **Session Manager**: Browse and search conversation history for Claude Code, Codex, Gemini CLI, OpenCode, and OpenClaw with table-of-contents navigation and in-session search
+- **Session App Filter**: Auto-filter sessions by current app when entering the session page
+- **Session Performance**: Parallel directory scanning and head-tail JSONL reading for faster session list loading
+
+#### Backup Management
+
+- **Backup Panel**: Independent backup management panel with configurable backup policy (max count, auto-cleanup) and backup rename support
+- **Periodic Backup**: Hourly automatic backup timer during runtime
+- **Pre-Migration Backup**: Automatic backup before database schema migrations with backfill warning
+- **Delete Backup**: Delete individual backup files with confirmation dialog
+- **Backup Time Fix**: Use local time instead of UTC for backup file names
+
+#### Oh My OpenCode (OMO)
+
+- **OMO Integration**: Full Oh My OpenCode config file management with agent model selection, category configuration, and recommended model fill
+- **OMO Slim**: Lightweight oh-my-opencode-slim mode support with OmoVariant parameterization
+- **OMO Cross-Exclusion**: Enforce OMO ↔ OMO Slim mutual exclusion at the database level
+
+#### Workspace
+
+- **Daily Memory Search**: Full-text search across daily memory files with date-sorted display
+- **Clickable Paths**: Directory paths in workspace panels are now clickable; renamed “Today's Note” to “Add Memory”
+- **Workspace Files Panel**: Manage bootstrap markdown files for OpenClaw (HEARTBEAT / BOOTSTRAP / BOOT types)
+
+#### Provider Presets
+
+- **AWS Bedrock**: Support for AKSK and API Key authentication modes (Claude and OpenCode)
+- **SSAI Code**: Partner provider preset across all five apps
+- **CrazyRouter**: Partner provider preset with custom icon
+- **AICoding**: Partner provider preset with i18n promotion text
+- **Bailian**: Renamed from Qwen Coder with new icon; updated domestic model providers to latest versions
+
+#### Proxy & Network
+
+- **Thinking Budget Rectifier**: New rectifier for thinking budget parameters with dedicated module (`thinking_budget_rectifier.rs`)
+- **WebDAV Auto Sync**: Automatic periodic sync with large file protection mechanism
+
+#### UI & UX
+
+- **Theme Animation**: Circular reveal animation when toggling between light and dark themes
+- **Claude Quick Toggles**: Quick toggle switches in the Claude config JSON editor for common settings
+- **Dynamic Endpoint Hint**: Context-aware hint text in endpoint input based on API format selection
+- **AppSwitcher Auto Compact**: Automatically collapse to compact mode based on available width, with smooth transition animation
+- **App Transition**: Fade-in/fade-out animation when switching between OpenClaw and other apps
+- **Silent Startup Conditional**: Show silent startup option only when launch-on-startup is enabled
+
+#### Settings & Environment
+
+- **First-Run Confirmation**: Confirmation dialogs for proxy and usage features on first use
+- **Local Proxy Toggle**: `enableLocalProxy` setting to control proxy UI visibility on the home page
+- **Environment Check**: More granular local environment detection (installed CLI tool versions, Volta path detection)
+
+#### Usage & Pricing
+
+- **Usage Dashboard Enhancement**: Auto-refresh control, robust formatting, and request log table improvements
+- **New Model Pricing**: Added pricing data for claude-opus-4-6 and gpt-5.3-codex with incremental data seeding
+
+### Changed
+
+#### Architecture
+
+- **Partial Key-Field Merging (⚠️ Breaking)**: Provider switching now uses partial key-field merging instead of full config overwrite, preserving user's non-provider settings (plugins, MCP, permissions). The "Common Config Snippet" feature has been removed as it is no longer needed. Removes 6 frontend files and ~150 lines of backend dead code (#1098)
+- **Manual Import**: Replaced auto-import on startup with manual “Import Current Config” button in empty state, reducing ~47 lines of startup code
+- **OMO Variant Parameterization**: Eliminated ~250 lines of OMO/OMO Slim code duplication via `OmoVariant` struct with STANDARD/SLIM constants
+- **OMO Common Config Removal**: Removed the two-layer merge system for OMO common config (-1,733 lines across 21 files)
+
+#### Code Quality
+
+- **ProviderForm Decomposition**: Extracted ProviderForm.tsx from 2,227 lines to 1,526 lines by splitting into 5 focused modules (opencodeFormUtils, useOmoModelSource, useOpencodeFormState, useOmoDraftState, useOpenclawFormState)
+- **Shared MCP/Skills Components**: Extracted AppCountBar, AppToggleGroup, and ListItemRow shared components to eliminate duplication across MCP and Skills panels
+- **OpenClaw TanStack Query Migration**: Migrated Env, Tools, and AgentsDefaults panels from manual useState/useEffect to centralized TanStack Query hooks
+
+#### Settings Layout
+
+- **Proxy Tab**: Split Advanced tab into dedicated Proxy tab (local proxy, failover, rectifiers, global outbound proxy); moved pricing config to Usage dashboard as collapsible accordion. SettingsPage reduced from ~716 to ~426 lines with 5-tab layout: General | Proxy | Advanced | Usage | About
+- **Data Section Split**: Split data accordion into Import/Export and Cloud Sync sections for better discoverability
+
+#### Terminal & Config
+
+- **Unified Terminal Selection**: Consolidated terminal preference to global settings; added WezTerm support and terminal name mapping (iterm2 → iterm)
+- **OpenClaw Agents Panel**: Primary model field set to read-only; detailed model fields (context window, max tokens, reasoning, cost) moved to advanced options
+- **Claude Model Update**: Updated Claude model references from 4.5 to 4.6 across all provider presets
+
 ### Fixed
 
-- **Windows Home Dir Regression**: Prevent providers/settings “disappearing” after upgrading from v3.10.2 → v3.10.3 when `HOME` differs from the real user profile directory; restore default path resolution and auto-detect the v3.10.3 legacy database location.
+#### Critical
+
+- **Windows Home Dir Regression**: Restored default home directory resolution on Windows to prevent providers/settings “disappearing” when `HOME` env var differs from the real user profile directory (Git/MSYS environments); auto-detects v3.10.3 legacy database location
+- **Linux White Screen**: Disabled WebKitGTK hardware acceleration on AMD GPUs (Cezanne/Radeon Vega) to prevent EGL initialization failure causing blank screen on startup
+- **OpenAI Beta Parameter**: Stopped appending `?beta=true` to OpenAI Chat Completions endpoints, fixing request failures for Nvidia and other `apiFormat=”openai_chat”` providers
+- **Health Check Auth Mode**: Health check now respects provider's auth_mode setting instead of always using x-api-key header
+
+#### Provider & Preset
+
+- **OpenClaw /v1 Prefix**: Removed /v1 prefix from OpenClaw anthropic-messages presets to prevent double path (/v1/v1/messages) with Anthropic SDK auto-append
+- **Opus Pricing**: Corrected Opus pricing from $15/$75 to $5/$25 and upgraded model ID to claude-opus-4-6
+- **AIGoCode URLs**: Unified API base URL to https://api.aigocode.com across all apps; removed trailing /v1 suffix
+- **Zhipu GLM**: Removed outdated partner status from Claude, OpenCode, and OpenClaw presets
+- **API Key Visibility**: Restored API Key input field when creating new Claude providers (was incorrectly hidden for non-cloud_provider categories)
+
+#### OMO / OMO Slim
+
+- **OMO Slim Category Checks**: Added missing omo-slim category checks across add/form/mutation paths
+- **OMO Slim Cache Invalidation**: Invalidate OMO Slim query cache after provider mutations to prevent stale UI state
+- **OMO Recommended Models**: Synced agent/category recommended models with upstream sources; fixed provider/model format to pure model IDs
+- **OMO Fill Feedback**: Added toast feedback when “Fill Recommended” button silently fails
+- **OMO Last-Provider Restriction**: Removed last-provider deletion restriction for OMO/OMO Slim plugins
+- **OpenCode Model Validation**: Reject saving OpenCode providers without at least one configured model
+
+#### OpenClaw
+
+- **OpenClaw P0-P3 Fixes**: Fixed 25 missing i18n keys, replaced key={index} with stable crypto.randomUUID(), excluded openclaw from ProxyToggle/FailoverToggle, added deep link merge_additive_config(), unified serde(flatten) naming, added directory existence checks, removed dead code, added duplicate key validation
+- **OpenClaw Robustness**: Fixed EnvPanel visibleKeys using entry key names instead of array indices; added NaN guards; validated provider ID and model before import
+- **OpenClaw i18n Dedup**: Merged duplicate openclaw i18n keys to restore provider form translations
+
+#### Platform
+
+- **Window Flash**: Prevented window flicker on silent startup (Windows)
+- **Title Bar Theme**: Title bar now follows dark/light mode theme changes
+- **Skills Path Separator**: Fixed path separator matching for skill installation status on Windows (supports both `/` and `\`)
+- **WSL Conditional Compilation**: Added `#[cfg(target_os = “windows”)]` to WSL helper functions to eliminate dead_code warnings on non-Windows platforms
+
+#### UI
+
+- **Toolbar Clipping**: Removed toolbar height limit that was clipping AppSwitcher
+- **Update Badge**: Show update badge instead of green check when a newer version is available
+- **Session Button Visibility**: Only show Session Manager button for Claude and Codex apps
+- **Directory Spacing**: Added vertical spacing between directory setting sections
+- **Dark Mode Cards**: Unified SQL import/export card styling in dark mode
+- **OpenClaw Scroll**: Enabled scrolling for OpenClaw configuration panel content
+
+#### i18n & Localization
+
+- **Session Manager i18n**: Replaced hardcoded Chinese strings with i18n keys for relative time, role labels, and UI elements
+- **OpenClaw Default Model Label**: Renamed “Enable/Default” to “Set as Default / Current Default” with wider button
+- **Daily Memory Sort**: Sort daily memory files by filename date (YYYY-MM-DD.md) instead of modification time
+- **Backup Name i18n**: Use local time for backup file names
+
+#### Other
+
+- **Skill Doc URL**: Use actual branch from download_repo for documentation URL; switched from /tree/ to /blob/ pointing to SKILL.md
+- **OpenCode Install Detection**: Added install.sh priority paths (OPENCODE_INSTALL_DIR > XDG_BIN_DIR > ~/bin > ~/.opencode/bin) with path dedup and cross-platform executable candidates
+- **Provider Auto-Import**: Removed auto-import side effect from useProvidersQuery queryFn; users now trigger import manually via empty state button
+- **Manual Backup Validation**: Treat missing database file as error during manual backup to prevent false success toast
+
+### Performance
+
+- **Session Panel Loading**: Parallel directory scanning and head-tail JSONL reading for Codex, OpenClaw, and OpenCode session providers
+- **Query Cache Cleanup**: Removed unnecessary TanStack Query cache overhead for Tauri local IPC calls
+
+### Documentation
+
+- **Sponsors**: Added/updated SSSAiCode, Crazyrouter, AICoding, Right Code, and MiniMax sponsor entries across all README languages
+- **User Manual**: Added user manual documentation (#979)
+
+### Maintenance
+
+- **Pre-Release Cleanup**: Removed debug logs, fixed clippy warnings, added missing Japanese translations, and formatted code
+- **UI Exclusions**: Hidden MCP, Skills, proxy/pricing, stream check, and model test panels for OpenClaw where not applicable
 
 ---
 

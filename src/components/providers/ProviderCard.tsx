@@ -28,9 +28,7 @@ interface ProviderCardProps {
   appId: AppId;
   isInConfig?: boolean; // OpenCode: 是否已添加到 opencode.json
   isOmo?: boolean;
-  isLastOmo?: boolean;
   isOmoSlim?: boolean;
-  isLastOmoSlim?: boolean;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
@@ -94,9 +92,7 @@ export function ProviderCard({
   appId,
   isInConfig = true,
   isOmo = false,
-  isLastOmo = false,
   isOmoSlim = false,
-  isLastOmoSlim = false,
   onSwitch,
   onEdit,
   onDelete,
@@ -125,7 +121,6 @@ export function ProviderCard({
 
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
-  const isLastAnyOmo = isOmo ? isLastOmo : isLastOmoSlim;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
 
   const { data: health } = useProviderHealth(provider.id, appId);
@@ -390,7 +385,6 @@ export function ProviderCard({
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
               isOmo={isAnyOmo}
-              isLastOmo={isLastAnyOmo}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}

@@ -5,7 +5,7 @@
 use super::{lock_conn, Database};
 use crate::config::get_app_config_dir;
 use crate::error::AppError;
-use chrono::Utc;
+use chrono::{Local, Utc};
 use rusqlite::backup::Backup;
 use rusqlite::types::ValueRef;
 use rusqlite::Connection;
@@ -182,7 +182,7 @@ impl Database {
 
         fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
 
-        let base_id = format!("db_backup_{}", Utc::now().format("%Y%m%d_%H%M%S"));
+        let base_id = format!("db_backup_{}", Local::now().format("%Y%m%d_%H%M%S"));
         let mut backup_id = base_id.clone();
         let mut backup_path = backup_dir.join(format!("{backup_id}.db"));
         let mut counter = 1;
@@ -530,5 +530,30 @@ impl Database {
         fs::rename(&old_path, &new_path).map_err(|e| AppError::io(&old_path, e))?;
         log::info!("Renamed backup: {old_filename} -> {new_filename}");
         Ok(new_filename)
+    }
+
+    /// Delete a backup file permanently.
+    pub fn delete_backup(filename: &str) -> Result<(), AppError> {
+        // Validate filename (path traversal + .db suffix)
+        if filename.contains("..")
+            || filename.contains('/')
+            || filename.contains('\\')
+            || !filename.ends_with(".db")
+        {
+            return Err(AppError::InvalidInput(
+                "Invalid backup filename".to_string(),
+            ));
+        }
+
+        let backup_path = get_app_config_dir().join("backups").join(filename);
+        if !backup_path.exists() {
+            return Err(AppError::InvalidInput(format!(
+                "Backup file not found: {filename}"
+            )));
+        }
+
+        fs::remove_file(&backup_path).map_err(|e| AppError::io(&backup_path, e))?;
+        log::info!("Deleted backup: {filename}");
+        Ok(())
     }
 }

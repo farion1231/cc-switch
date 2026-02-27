@@ -1,5 +1,4 @@
 import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
-import type { OmoGlobalConfig } from "@/types/omo";
 import type { PricingModelSourceOption } from "../ProviderAdvancedConfig";
 
 // ── Default configs ──────────────────────────────────────────────────
@@ -51,15 +50,6 @@ export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
   null,
   2,
 );
-
-export const EMPTY_OMO_GLOBAL_CONFIG: OmoGlobalConfig = {
-  id: "global",
-  disabledAgents: [],
-  disabledMcps: [],
-  disabledHooks: [],
-  disabledSkills: [],
-  updatedAt: "",
-};
 
 // ── Pure functions ───────────────────────────────────────────────────
 

@@ -36,9 +36,7 @@ import {
 } from "@/lib/query/failover";
 import {
   useCurrentOmoProviderId,
-  useOmoProviderCount,
   useCurrentOmoSlimProviderId,
-  useOmoSlimProviderCount,
 } from "@/lib/query/omo";
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
@@ -142,9 +140,7 @@ export function ProviderList({
 
   const isOpenCode = appId === "opencode";
   const { data: currentOmoId } = useCurrentOmoProviderId(isOpenCode);
-  const { data: omoProviderCount } = useOmoProviderCount(isOpenCode);
   const { data: currentOmoSlimId } = useCurrentOmoSlimProviderId(isOpenCode);
-  const { data: omoSlimProviderCount } = useOmoSlimProviderCount(isOpenCode);
 
   const getFailoverPriority = useCallback(
     (providerId: string): number | undefined => {
@@ -183,7 +179,17 @@ export function ProviderList({
   // Import current live config as default provider
   const queryClient = useQueryClient();
   const importMutation = useMutation({
-    mutationFn: () => providersApi.importDefault(appId),
+    mutationFn: async (): Promise<boolean> => {
+      if (appId === "opencode") {
+        const count = await providersApi.importOpenCodeFromLive();
+        return count > 0;
+      }
+      if (appId === "openclaw") {
+        const count = await providersApi.importOpenClawFromLive();
+        return count > 0;
+      }
+      return providersApi.importDefault(appId);
+    },
     onSuccess: (imported) => {
       if (imported) {
         queryClient.invalidateQueries({ queryKey: ["providers", appId] });
@@ -249,15 +255,11 @@ export function ProviderList({
     );
   }
 
-  // Only show import button for standard apps (not additive-mode apps like OpenCode/OpenClaw)
-  const showImportButton =
-    appId === "claude" || appId === "codex" || appId === "gemini";
-
   if (sortedProviders.length === 0) {
     return (
       <ProviderEmptyState
         onCreate={onCreate}
-        onImport={showImportButton ? () => importMutation.mutate() : undefined}
+        onImport={() => importMutation.mutate()}
       />
     );
   }
@@ -293,15 +295,7 @@ export function ProviderList({
                 appId={appId}
                 isInConfig={isProviderInConfig(provider.id)}
                 isOmo={isOmo}
-                isLastOmo={
-                  isOmo && (omoProviderCount ?? 0) <= 1 && isOmoCurrent
-                }
                 isOmoSlim={isOmoSlim}
-                isLastOmoSlim={
-                  isOmoSlim &&
-                  (omoSlimProviderCount ?? 0) <= 1 &&
-                  isOmoSlimCurrent
-                }
                 onSwitch={onSwitch}
                 onEdit={onEdit}
                 onDelete={onDelete}
@@ -420,9 +414,7 @@ interface SortableProviderCardProps {
   appId: AppId;
   isInConfig: boolean;
   isOmo: boolean;
-  isLastOmo: boolean;
   isOmoSlim: boolean;
-  isLastOmoSlim: boolean;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
@@ -453,9 +445,7 @@ function SortableProviderCard({
   appId,
   isInConfig,
   isOmo,
-  isLastOmo,
   isOmoSlim,
-  isLastOmoSlim,
   onSwitch,
   onEdit,
   onDelete,
@@ -500,9 +490,7 @@ function SortableProviderCard({
         appId={appId}
         isInConfig={isInConfig}
         isOmo={isOmo}
-        isLastOmo={isLastOmo}
         isOmoSlim={isOmoSlim}
-        isLastOmoSlim={isLastOmoSlim}
         onSwitch={onSwitch}
         onEdit={onEdit}
         onDelete={onDelete}
