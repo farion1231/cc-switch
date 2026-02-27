@@ -20,6 +20,7 @@ import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
+import { useProvidersQuery } from "@/lib/query";
 import type { SettingsFormState } from "@/hooks/useSettings";
 
 interface ProxyTabContentProps {
@@ -40,6 +41,11 @@ export function ProxyTabContent({
     stopWithRestore,
     isPending: isProxyPending,
   } = useProxyStatus();
+
+  const { data: claudeProvidersData } = useProvidersQuery("claude", {
+    isProxyRunning: isRunning,
+  });
+  const claudeProviders = claudeProvidersData?.providers ?? {};
 
   const handleToggleProxy = async (checked: boolean) => {
     try {
@@ -125,6 +131,47 @@ export function ProxyTabContent({
                 onAutoSave({ enableLocalProxy: checked })
               }
             />
+            <div className="mt-3">
+              <ToggleRow
+                icon={<Zap className="h-4 w-4 text-amber-500" />}
+                title={t("settings.advanced.proxy.enableClaudeIntentRouting")}
+                description={t(
+                  "settings.advanced.proxy.enableClaudeIntentRoutingDescription",
+                )}
+                checked={settings?.enableClaudeIntentRouting ?? false}
+                onCheckedChange={(checked) =>
+                  onAutoSave({ enableClaudeIntentRouting: checked })
+                }
+              />
+              {settings?.enableClaudeIntentRouting && (
+                <div className="mt-3 space-y-1">
+                  <label className="text-sm font-medium">
+                    {t("settings.advanced.proxy.claudeRouterModelTitle")}
+                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.advanced.proxy.claudeRouterModelDescription")}
+                  </p>
+                  <select
+                    className="mt-1 w-full rounded-md border bg-background px-2 py-1 text-sm"
+                    value={settings.claudeRouterProviderId ?? ""}
+                    onChange={(e) =>
+                      void onAutoSave({
+                        claudeRouterProviderId: e.target.value || undefined,
+                      })
+                    }
+                  >
+                    <option value="">
+                      {t("settings.advanced.proxy.claudeRouterModelNone")}
+                    </option>
+                    {Object.values(claudeProviders).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
             <div className="mt-4">
               <ProxyPanel />
             </div>

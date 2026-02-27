@@ -214,6 +214,7 @@ export function ProviderForm({
       name: initialData?.name ?? "",
       websiteUrl: initialData?.websiteUrl ?? "",
       notes: initialData?.notes ?? "",
+      intentDescription: initialData?.meta?.intentDescription ?? "",
       settingsConfig: initialData?.settingsConfig
         ? JSON.stringify(initialData.settingsConfig, null, 2)
         : appId === "codex"
@@ -797,6 +798,11 @@ export function ProviderForm({
 
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+
+    // 从表单中提取意图路由描述（单独配置，优先于 notes）
+    const intentDescriptionFromForm =
+      (values as ProviderFormData).intentDescription?.trim() || undefined;
+
     payload.meta = {
       ...(baseMeta ?? {}),
       endpointAutoSelect,
@@ -817,6 +823,7 @@ export function ProviderForm({
         appId === "claude" && category !== "official"
           ? localApiKeyField
           : undefined,
+      intentDescription: intentDescriptionFromForm,
     };
 
     onSubmit(payload);
