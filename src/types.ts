@@ -150,6 +150,8 @@ export interface ProviderMeta {
   // - "ANTHROPIC_AUTH_TOKEN" (默认): 大多数第三方/聚合供应商
   // - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
   apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
+  // 是否将 base_url 视为完整 API 端点（代理直接使用此 URL，不拼接路径）
+  isFullUrl?: boolean;
 }
 
 // Skill 同步方式

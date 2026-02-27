@@ -749,15 +749,55 @@ impl RequestForwarder {
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
 
-        let effective_endpoint =
-            if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
-                "/v1/chat/completions"
+        // 检查 isFullUrl 模式：直接使用 base_url 作为完整 API 端点
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.is_full_url)
+            .unwrap_or(false);
+
+        let url = if is_full_url {
+            // 全链接模式：直接使用 base_url，将客户端 query 追加
+            let query = endpoint.split_once('?').map(|(_, q)| q);
+            match query {
+                Some(q) if !q.is_empty() => {
+                    if base_url.contains('?') {
+                        format!("{base_url}&{q}")
+                    } else {
+                        format!("{base_url}?{q}")
+                    }
+                }
+                _ => base_url.clone(),
+            }
+        } else {
+            // 正常模式：endpoint 可能带 query string，需拆分路径和参数
+            let effective_endpoint: String = if needs_transform && adapter.name() == "Claude" {
+                let (path, query) = match endpoint.split_once('?') {
+                    Some((p, q)) => (p, Some(q)),
+                    None => (endpoint, None),
+                };
+                if path == "/v1/messages" || path == "/claude/v1/messages" {
+                    // 转换到 chat/completions 时剥离 beta=true（Anthropic 专有参数）
+                    let filtered = query.map(|q| {
+                        q.split('&')
+                            .filter(|p| !p.starts_with("beta="))
+                            .collect::<Vec<_>>()
+                            .join("&")
+                    });
+                    match filtered.as_deref() {
+                        Some(q) if !q.is_empty() => format!("/v1/chat/completions?{q}"),
+                        _ => "/v1/chat/completions".to_string(),
+                    }
+                } else {
+                    endpoint.to_string()
+                }
             } else {
-                endpoint
+                endpoint.to_string()
             };
 
-        // 使用适配器构建 URL
-        let url = adapter.build_url(&base_url, effective_endpoint);
+            // 使用适配器构建 URL
+            adapter.build_url(&base_url, &effective_endpoint)
+        };
 
         // 应用模型映射（独立于格式转换）
         let (mapped_body, _original_model, _mapped_model) =

@@ -56,11 +56,18 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// - 现在 OpenRouter 已推出 Claude Code 兼容接口，默认不再启用该转换（逻辑保留以备回退）
 pub async fn handle_messages(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Claude, "Claude", "claude").await?;
+
+    // 提取完整路径+query（如 "/v1/messages?beta=true"），透传客户端 URI
+    let endpoint = uri
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or(uri.path());
 
     let is_stream = body
         .get("stream")
@@ -72,7 +79,7 @@ pub async fn handle_messages(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Claude,
-            "/v1/messages",
+            endpoint,
             body.clone(),
             headers,
             ctx.get_providers(),

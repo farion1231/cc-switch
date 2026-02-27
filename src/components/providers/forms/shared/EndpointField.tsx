@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Zap } from "lucide-react";
+import { Zap, Link2 } from "lucide-react";
 
 interface EndpointFieldProps {
   id: string;
@@ -13,6 +13,9 @@ interface EndpointFieldProps {
   showManageButton?: boolean;
   onManageClick?: () => void;
   manageButtonLabel?: string;
+  showFullUrlToggle?: boolean;
+  isFullUrl?: boolean;
+  onFullUrlChange?: (value: boolean) => void;
 }
 
 export function EndpointField({
@@ -25,6 +28,9 @@ export function EndpointField({
   showManageButton = true,
   onManageClick,
   manageButtonLabel,
+  showFullUrlToggle = false,
+  isFullUrl = false,
+  onFullUrlChange,
 }: EndpointFieldProps) {
   const { t } = useTranslation();
 
@@ -55,6 +61,35 @@ export function EndpointField({
         placeholder={placeholder}
         autoComplete="off"
       />
+      {showFullUrlToggle && onFullUrlChange && (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onFullUrlChange(!isFullUrl)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border transition-colors ${
+              isFullUrl
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+            }`}
+          >
+            <Link2 className="h-3.5 w-3.5" />
+            {isFullUrl
+              ? t("providerForm.fullUrlEnabled", {
+                  defaultValue: "完整 URL 模式",
+                })
+              : t("providerForm.fullUrlDisabled", {
+                  defaultValue: "标记为完整 URL",
+                })}
+          </button>
+          {isFullUrl && (
+            <span className="text-xs text-muted-foreground">
+              {t("providerForm.fullUrlHint", {
+                defaultValue: "代理将直接使用此 URL，不拼接路径",
+              })}
+            </span>
+          )}
+        </div>
+      )}
       {hint ? (
         <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
           <p className="text-xs text-amber-600 dark:text-amber-400">{hint}</p>
