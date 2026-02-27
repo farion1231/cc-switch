@@ -136,6 +136,7 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
         .and_then(parse_timestamp_to_ms);
 
     // Derive title from directory basename if no explicit title
+    let has_title = title.is_some();
     let display_title = title.or_else(|| {
         directory
             .as_deref()
@@ -147,8 +148,12 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
     let msg_dir = storage.join("message").join(&session_id);
     let source_path = msg_dir.to_string_lossy().to_string();
 
-    // Get summary from first user message
-    let summary = get_first_user_summary(storage, &session_id);
+    // Skip expensive I/O if title already available from session JSON
+    let summary = if has_title {
+        display_title.clone()
+    } else {
+        get_first_user_summary(storage, &session_id)
+    };
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),

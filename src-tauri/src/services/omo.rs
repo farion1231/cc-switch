@@ -1,5 +1,4 @@
 use crate::config::write_json_file;
-use crate::database::OmoGlobalConfig;
 use crate::error::AppError;
 use crate::opencode_config::get_opencode_dir;
 use crate::store::AppState;
@@ -13,12 +12,11 @@ pub struct OmoLocalFileData {
     pub agents: Option<Value>,
     pub categories: Option<Value>,
     pub other_fields: Option<Value>,
-    pub global: OmoGlobalConfig,
     pub file_path: String,
     pub last_modified: Option<String>,
 }
 
-type OmoProfileData = (Option<Value>, Option<Value>, Option<Value>, bool);
+type OmoProfileData = (Option<Value>, Option<Value>, Option<Value>);
 
 // ── Variant descriptor ─────────────────────────────────────────
 
@@ -28,9 +26,7 @@ pub struct OmoVariant {
     pub provider_prefix: &'static str,
     pub plugin_name: &'static str,
     pub plugin_prefix: &'static str,
-    pub known_keys: &'static [&'static str],
     pub has_categories: bool,
-    pub config_key: &'static str,
     pub label: &'static str,
     pub import_label: &'static str,
 }
@@ -41,23 +37,7 @@ pub const STANDARD: OmoVariant = OmoVariant {
     provider_prefix: "omo-",
     plugin_name: "oh-my-opencode@latest",
     plugin_prefix: "oh-my-opencode",
-    known_keys: &[
-        "$schema",
-        "agents",
-        "categories",
-        "sisyphus_agent",
-        "disabled_agents",
-        "disabled_mcps",
-        "disabled_hooks",
-        "disabled_skills",
-        "lsp",
-        "experimental",
-        "background_task",
-        "browser_automation_engine",
-        "claude_code",
-    ],
     has_categories: true,
-    config_key: "common_config_omo",
     label: "OMO",
     import_label: "Imported",
 };
@@ -68,18 +48,7 @@ pub const SLIM: OmoVariant = OmoVariant {
     provider_prefix: "omo-slim-",
     plugin_name: "oh-my-opencode-slim@latest",
     plugin_prefix: "oh-my-opencode-slim",
-    known_keys: &[
-        "$schema",
-        "agents",
-        "sisyphus_agent",
-        "disabled_agents",
-        "disabled_mcps",
-        "disabled_hooks",
-        "lsp",
-        "experimental",
-    ],
     has_categories: false,
-    config_key: "common_config_omo_slim",
     label: "OMO Slim",
     import_label: "Imported Slim",
 };
@@ -135,61 +104,11 @@ impl OmoService {
         other
     }
 
-    fn extract_string_array(val: &Value) -> Vec<String> {
-        val.as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn merge_global_from_obj(obj: &Map<String, Value>, global: &mut OmoGlobalConfig) {
-        if let Some(v) = obj.get("$schema") {
-            global.schema_url = v.as_str().map(|s| s.to_string());
-        }
-        for (key, target) in [
-            ("disabled_agents", &mut global.disabled_agents),
-            ("disabled_mcps", &mut global.disabled_mcps),
-            ("disabled_hooks", &mut global.disabled_hooks),
-            ("disabled_skills", &mut global.disabled_skills),
-        ] {
-            if let Some(v) = obj.get(key) {
-                *target = Self::extract_string_array(v);
-            }
-        }
-        for (key, target) in [
-            ("sisyphus_agent", &mut global.sisyphus_agent),
-            ("lsp", &mut global.lsp),
-            ("experimental", &mut global.experimental),
-            ("background_task", &mut global.background_task),
-            (
-                "browser_automation_engine",
-                &mut global.browser_automation_engine,
-            ),
-            ("claude_code", &mut global.claude_code),
-        ] {
-            if let Some(v) = obj.get(key) {
-                *target = Some(v.clone());
-            }
-        }
-    }
-
     // ── Merge helpers ──────────────────────────────────────
 
     fn insert_opt_value(result: &mut Map<String, Value>, key: &str, value: &Option<Value>) {
         if let Some(v) = value {
             result.insert(key.to_string(), v.clone());
-        }
-    }
-
-    fn insert_string_array(result: &mut Map<String, Value>, key: &str, values: &[String]) {
-        if !values.is_empty() {
-            result.insert(
-                key.to_string(),
-                serde_json::to_value(values).unwrap_or(Value::Array(vec![])),
-            );
         }
     }
 
@@ -214,9 +133,7 @@ impl OmoService {
     }
 
     pub fn write_config_to_file(state: &AppState, v: &OmoVariant) -> Result<(), AppError> {
-        let global = state.db.get_omo_global_config(v.config_key)?;
         let current_omo = state.db.get_current_omo_provider("opencode", v.category)?;
-
         let profile_data = current_omo.as_ref().map(|p| {
             let agents = p.settings_config.get("agents").cloned();
             let categories = if v.has_categories {
@@ -225,15 +142,10 @@ impl OmoService {
                 None
             };
             let other_fields = p.settings_config.get("otherFields").cloned();
-            let use_common_config = p
-                .settings_config
-                .get("useCommonConfig")
-                .and_then(|val| val.as_bool())
-                .unwrap_or(true);
-            (agents, categories, other_fields, use_common_config)
+            (agents, categories, other_fields)
         });
 
-        let merged = Self::merge_config(v, &global, profile_data.as_ref());
+        let merged = Self::build_config(v, profile_data.as_ref());
         let config_path = Self::config_path(v);
 
         if let Some(parent) = config_path.parent() {
@@ -241,56 +153,20 @@ impl OmoService {
         }
 
         write_json_file(&config_path, &merged)?;
-
         crate::opencode_config::add_plugin(v.plugin_name)?;
-
         log::info!("{} config written to {config_path:?}", v.label);
         Ok(())
     }
 
-    fn merge_config(
-        v: &OmoVariant,
-        global: &OmoGlobalConfig,
-        profile_data: Option<&OmoProfileData>,
-    ) -> Value {
+    fn build_config(v: &OmoVariant, profile_data: Option<&OmoProfileData>) -> Value {
         let mut result = Map::new();
-        let use_common_config = profile_data.map(|(_, _, _, uc)| *uc).unwrap_or(true);
-
-        if use_common_config {
-            if let Some(url) = &global.schema_url {
-                result.insert("$schema".to_string(), Value::String(url.clone()));
-            }
-
-            Self::insert_opt_value(&mut result, "sisyphus_agent", &global.sisyphus_agent);
-            Self::insert_string_array(&mut result, "disabled_agents", &global.disabled_agents);
-            Self::insert_string_array(&mut result, "disabled_mcps", &global.disabled_mcps);
-            Self::insert_string_array(&mut result, "disabled_hooks", &global.disabled_hooks);
-
-            if v.has_categories {
-                Self::insert_string_array(&mut result, "disabled_skills", &global.disabled_skills);
-                Self::insert_opt_value(&mut result, "background_task", &global.background_task);
-                Self::insert_opt_value(
-                    &mut result,
-                    "browser_automation_engine",
-                    &global.browser_automation_engine,
-                );
-                Self::insert_opt_value(&mut result, "claude_code", &global.claude_code);
-            }
-
-            Self::insert_opt_value(&mut result, "lsp", &global.lsp);
-            Self::insert_opt_value(&mut result, "experimental", &global.experimental);
-
-            Self::insert_object_entries(&mut result, global.other_fields.as_ref());
-        }
-
-        if let Some((agents, categories, other_fields, _)) = profile_data {
+        if let Some((agents, categories, other_fields)) = profile_data {
+            Self::insert_object_entries(&mut result, other_fields.as_ref());
             Self::insert_opt_value(&mut result, "agents", agents);
             if v.has_categories {
                 Self::insert_opt_value(&mut result, "categories", categories);
             }
-            Self::insert_object_entries(&mut result, other_fields.as_ref());
         }
-
         Value::Object(result)
     }
 
@@ -310,17 +186,11 @@ impl OmoService {
                 settings.insert("categories".to_string(), categories.clone());
             }
         }
-        settings.insert("useCommonConfig".to_string(), Value::Bool(true));
 
-        let other = Self::extract_other_fields_with_keys(&obj, v.known_keys);
+        let other = Self::extract_other_fields_with_keys(&obj, &["agents", "categories"]);
         if !other.is_empty() {
             settings.insert("otherFields".to_string(), Value::Object(other));
         }
-
-        let mut global = state.db.get_omo_global_config(v.config_key)?;
-        Self::merge_global_from_obj(&obj, &mut global);
-        global.updated_at = chrono::Utc::now().to_rfc3339();
-        state.db.save_omo_global_config(v.config_key, &global)?;
 
         let provider_id = format!("{}{}", v.provider_prefix, uuid::Uuid::new_v4());
         let name = format!(
@@ -384,22 +254,17 @@ impl OmoService {
             None
         };
 
-        let other = Self::extract_other_fields_with_keys(obj, v.known_keys);
+        let other = Self::extract_other_fields_with_keys(obj, &["agents", "categories"]);
         let other_fields = if other.is_empty() {
             None
         } else {
             Some(Value::Object(other))
         };
 
-        let mut global = OmoGlobalConfig::default();
-        Self::merge_global_from_obj(obj, &mut global);
-        global.other_fields = other_fields.clone();
-
         OmoLocalFileData {
             agents,
             categories,
             other_fields,
-            global,
             file_path,
             last_modified,
         }
@@ -482,26 +347,24 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_config_empty() {
-        let global = OmoGlobalConfig::default();
-        let merged = OmoService::merge_config(&STANDARD, &global, None);
+    fn test_build_config_empty() {
+        let merged = OmoService::build_config(&STANDARD, None);
         assert!(merged.is_object());
+        assert!(merged.as_object().unwrap().is_empty());
     }
 
     #[test]
-    fn test_merge_config_with_profile() {
-        let global = OmoGlobalConfig {
-            schema_url: Some("https://example.com/schema.json".to_string()),
-            disabled_agents: vec!["explore".to_string()],
-            ..Default::default()
-        };
+    fn test_build_config_with_profile() {
         let agents = Some(serde_json::json!({
             "sisyphus": { "model": "claude-opus-4-5" }
         }));
         let categories = None;
-        let other_fields = None;
-        let profile_data = (agents, categories, other_fields, true);
-        let merged = OmoService::merge_config(&STANDARD, &global, Some(&profile_data));
+        let other_fields = Some(serde_json::json!({
+            "$schema": "https://example.com/schema.json",
+            "disabled_agents": ["explore"]
+        }));
+        let profile_data = (agents, categories, other_fields);
+        let merged = OmoService::build_config(&STANDARD, Some(&profile_data));
         let obj = merged.as_object().unwrap();
 
         assert_eq!(obj["$schema"], "https://example.com/schema.json");
@@ -511,28 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_config_without_common_config() {
-        let global = OmoGlobalConfig {
-            schema_url: Some("https://example.com/schema.json".to_string()),
-            disabled_agents: vec!["explore".to_string()],
-            ..Default::default()
-        };
-        let agents = Some(serde_json::json!({
-            "sisyphus": { "model": "claude-opus-4-5" }
-        }));
-        let categories = None;
-        let other_fields = None;
-        let profile_data = (agents, categories, other_fields, false);
-        let merged = OmoService::merge_config(&STANDARD, &global, Some(&profile_data));
-        let obj = merged.as_object().unwrap();
-
-        assert!(!obj.contains_key("$schema"));
-        assert!(!obj.contains_key("disabled_agents"));
-        assert!(obj.contains_key("agents"));
-    }
-
-    #[test]
-    fn test_build_local_file_data_keeps_unknown_top_level_fields_in_global() {
+    fn test_build_local_file_data_keeps_all_non_agent_category_fields_in_other() {
         let obj = serde_json::json!({
             "$schema": "https://example.com/schema.json",
             "disabled_agents": ["oracle"],
@@ -555,64 +397,53 @@ mod tests {
             None,
         );
 
+        // All non-agents/categories fields should be in other_fields
+        let other = data.other_fields.unwrap();
+        let other_obj = other.as_object().unwrap();
         assert_eq!(
-            data.global.schema_url.as_deref(),
-            Some("https://example.com/schema.json")
+            other_obj.get("$schema").unwrap(),
+            "https://example.com/schema.json"
         );
-        assert_eq!(data.global.disabled_agents, vec!["oracle".to_string()]);
-
         assert_eq!(
-            data.other_fields,
-            Some(serde_json::json!({
-                "custom_top_level": { "enabled": true }
-            }))
+            other_obj.get("disabled_agents").unwrap(),
+            &serde_json::json!(["oracle"])
         );
-        assert_eq!(data.global.other_fields, data.other_fields);
+        assert_eq!(
+            other_obj.get("custom_top_level").unwrap(),
+            &serde_json::json!({"enabled": true})
+        );
+        // agents and categories should NOT be in other_fields
+        assert!(!other_obj.contains_key("agents"));
+        assert!(!other_obj.contains_key("categories"));
     }
 
     #[test]
-    fn test_merge_config_ignores_non_object_other_fields() {
-        let global = OmoGlobalConfig {
-            other_fields: Some(serde_json::json!(["global_non_object"])),
-            ..Default::default()
-        };
+    fn test_build_config_ignores_non_object_other_fields() {
         let agents = None;
         let categories = None;
         let other_fields = Some(serde_json::json!("profile_non_object"));
-        let profile_data = (agents, categories, other_fields, true);
+        let profile_data = (agents, categories, other_fields);
 
-        let merged = OmoService::merge_config(&STANDARD, &global, Some(&profile_data));
+        let merged = OmoService::build_config(&STANDARD, Some(&profile_data));
         let obj = merged.as_object().unwrap();
 
-        assert!(!obj.contains_key("0"));
-        assert!(!obj.contains_key("global_non_object"));
         assert!(!obj.contains_key("profile_non_object"));
     }
 
     #[test]
-    fn test_merge_config_slim_excludes_categories_and_extra_fields() {
-        let global = OmoGlobalConfig {
-            schema_url: Some("https://slim.schema".to_string()),
-            disabled_agents: vec!["oracle".to_string()],
-            disabled_skills: vec!["playwright".to_string()],
-            background_task: Some(serde_json::json!({"key": "val"})),
-            browser_automation_engine: Some(serde_json::json!({"provider": "pw"})),
-            claude_code: Some(serde_json::json!({"mcp": true})),
-            ..Default::default()
-        };
+    fn test_build_config_slim_excludes_categories() {
         let agents = Some(serde_json::json!({"orchestrator": {"model": "k2"}}));
         let categories = Some(serde_json::json!({"code": {"model": "gpt"}}));
-        let other_fields = None;
-        let profile_data = (agents, categories, other_fields, true);
+        let other_fields = Some(serde_json::json!({
+            "$schema": "https://slim.schema",
+            "disabled_agents": ["oracle"]
+        }));
+        let profile_data = (agents, categories, other_fields);
 
-        let merged = OmoService::merge_config(&SLIM, &global, Some(&profile_data));
+        let merged = OmoService::build_config(&SLIM, Some(&profile_data));
         let obj = merged.as_object().unwrap();
 
-        // Slim should NOT include these
-        assert!(!obj.contains_key("disabled_skills"));
-        assert!(!obj.contains_key("background_task"));
-        assert!(!obj.contains_key("browser_automation_engine"));
-        assert!(!obj.contains_key("claude_code"));
+        // Slim should NOT include categories
         assert!(!obj.contains_key("categories"));
 
         // Slim SHOULD include these

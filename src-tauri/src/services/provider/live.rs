@@ -357,7 +357,7 @@ fn json_merge_patch(target: &mut Value, patch: &Value) {
                 let entry = target_obj.entry(key.clone()).or_insert(json!({}));
                 json_merge_patch(entry, value);
                 // Clean up empty container objects
-                if entry.as_object().map_or(false, |o| o.is_empty()) {
+                if entry.as_object().is_some_and(|o| o.is_empty()) {
                     target_obj.remove(key);
                 }
             } else {

@@ -24,7 +24,6 @@ interface ProviderActionsProps {
   isTesting?: boolean;
   isProxyTakeover?: boolean;
   isOmo?: boolean;
-  isLastOmo?: boolean;
   onSwitch: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
@@ -49,7 +48,6 @@ export function ProviderActions({
   isTesting: _isTesting, // Hidden: stream check feature disabled
   isProxyTakeover = false,
   isOmo = false,
-  isLastOmo = false,
   onSwitch,
   onEdit,
   onDuplicate,
@@ -192,11 +190,7 @@ export function ProviderActions({
 
   const buttonState = getMainButtonState();
 
-  const canDelete = isOmo
-    ? !(isLastOmo && isCurrent)
-    : isAdditiveMode
-      ? true
-      : !isCurrent;
+  const canDelete = isOmo || isAdditiveMode ? true : !isCurrent;
 
   return (
     <div className="flex items-center gap-1.5">

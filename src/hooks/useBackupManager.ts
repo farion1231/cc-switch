@@ -13,6 +13,11 @@ export function useBackupManager() {
     queryFn: () => backupsApi.listDbBackups(),
   });
 
+  const createMutation = useMutation({
+    mutationFn: () => backupsApi.createDbBackup(),
+    onSuccess: () => refetch(),
+  });
+
   const restoreMutation = useMutation({
     mutationFn: (filename: string) => backupsApi.restoreDbBackup(filename),
     onSuccess: async () => {
@@ -34,12 +39,21 @@ export function useBackupManager() {
     onSuccess: () => refetch(),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (filename: string) => backupsApi.deleteDbBackup(filename),
+    onSuccess: () => refetch(),
+  });
+
   return {
     backups,
     isLoading,
+    create: createMutation.mutateAsync,
+    isCreating: createMutation.isPending,
     restore: restoreMutation.mutateAsync,
     isRestoring: restoreMutation.isPending,
     rename: renameMutation.mutateAsync,
     isRenaming: renameMutation.isPending,
+    remove: deleteMutation.mutateAsync,
+    isDeleting: deleteMutation.isPending,
   };
 }

@@ -36,19 +36,6 @@ pub async fn disable_current_omo(state: State<'_, AppState>) -> Result<(), Strin
     Ok(())
 }
 
-#[tauri::command]
-pub async fn get_omo_provider_count(state: State<'_, AppState>) -> Result<usize, String> {
-    let providers = state
-        .db
-        .get_all_providers("opencode")
-        .map_err(|e| e.to_string())?;
-    let count = providers
-        .values()
-        .filter(|p| p.category.as_deref() == Some("omo"))
-        .count();
-    Ok(count)
-}
-
 // ── OMO Slim commands ───────────────────────────────────────
 
 #[tauri::command]
@@ -83,17 +70,4 @@ pub async fn disable_current_omo_slim(state: State<'_, AppState>) -> Result<(), 
     }
     OmoService::delete_config_file(&SLIM).map_err(|e| e.to_string())?;
     Ok(())
-}
-
-#[tauri::command]
-pub async fn get_omo_slim_provider_count(state: State<'_, AppState>) -> Result<usize, String> {
-    let providers = state
-        .db
-        .get_all_providers("opencode")
-        .map_err(|e| e.to_string())?;
-    let count = providers
-        .values()
-        .filter(|p| p.category.as_deref() == Some("omo-slim"))
-        .count();
-    Ok(count)
 }

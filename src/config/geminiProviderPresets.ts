@@ -155,9 +155,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "aicoding",
-    endpointCandidates: [
-      "https://api.aicoding.sh",
-    ],
+    endpointCandidates: ["https://api.aicoding.sh"],
     icon: "aicoding",
     iconColor: "#000000",
   },
@@ -177,9 +175,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "crazyrouter",
-    endpointCandidates: [
-      "https://crazyrouter.com",
-    ],
+    endpointCandidates: ["https://crazyrouter.com"],
     icon: "crazyrouter",
     iconColor: "#000000",
   },

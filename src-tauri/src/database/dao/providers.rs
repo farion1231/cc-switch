@@ -375,6 +375,19 @@ impl Database {
             params![app_type, category],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        // OMO ↔ OMO Slim mutually exclusive: deactivate the opposite category
+        let opposite = match category {
+            "omo" => Some("omo-slim"),
+            "omo-slim" => Some("omo"),
+            _ => None,
+        };
+        if let Some(opp) = opposite {
+            tx.execute(
+                "UPDATE providers SET is_current = 0 WHERE app_type = ?1 AND category = ?2",
+                params![app_type, opp],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
         let updated = tx
             .execute(
                 "UPDATE providers SET is_current = 1 WHERE id = ?1 AND app_type = ?2 AND category = ?3",

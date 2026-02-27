@@ -38,31 +38,6 @@ impl Database {
         Ok(())
     }
 
-    // --- Config Snippets 辅助方法 ---
-
-    /// 获取通用配置片段
-    pub fn get_config_snippet(&self, app_type: &str) -> Result<Option<String>, AppError> {
-        self.get_setting(&format!("common_config_{app_type}"))
-    }
-
-    /// 设置通用配置片段
-    pub fn set_config_snippet(
-        &self,
-        app_type: &str,
-        snippet: Option<String>,
-    ) -> Result<(), AppError> {
-        let key = format!("common_config_{app_type}");
-        if let Some(value) = snippet {
-            self.set_setting(&key, &value)
-        } else {
-            // 如果为 None 则删除
-            let conn = lock_conn!(self.conn);
-            conn.execute("DELETE FROM settings WHERE key = ?1", params![key])
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            Ok(())
-        }
-    }
-
     // --- 全局出站代理 ---
 
     /// 全局代理 URL 的存储键名
