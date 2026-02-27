@@ -13,6 +13,7 @@ use super::{
         CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
     },
     handler_context::RequestContext,
+    intent_router::ClaudeIntentRouter,
     providers::{get_adapter, streaming::create_anthropic_sse_stream, transform},
     response_processor::{create_logged_passthrough_stream, process_response, SseUsageCollector},
     server::ProxyState,
@@ -62,6 +63,53 @@ pub async fn handle_messages(
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Claude, "Claude", "claude").await?;
 
+    // 默认使用原始请求体和 ProviderRouter 提供的供应商列表
+    let mut patched_body = body.clone();
+    let mut providers_for_request = ctx.get_providers();
+
+    // 从设备级设置读取 Claude 意图路由开关
+    let enable_intent_routing = crate::settings::get_settings().enable_claude_intent_routing;
+
+    // 是否允许将“当前供应商”切换为本次实际使用的供应商：
+    // - 普通请求/故障转移：true（行为保持不变）
+    // - 供应商级意图路由：false（仅本次请求使用该供应商，不修改用户在主页面选择的当前供应商）
+    let mut allow_switch_current = true;
+
+    if enable_intent_routing {
+        // 1️⃣ 先尝试跨供应商意图路由（在多个 API Key 之间选择）
+        // 会话级绑定：仅在新会话首轮请求时启用跨供应商路由，
+        // 后续轮次（同一 session_id）直接沿用当前供应商链。
+        match ClaudeIntentRouter::route_across_providers(&state.db, &body, &ctx.session_id).await {
+            Ok(Some((ordered_providers, new_body, chosen_model))) => {
+                log::info!(
+                    "[Claude] IntentRouter(供应商级) 选择模型: {} -> {} (provider={})",
+                    ctx.request_model,
+                    chosen_model,
+                    ordered_providers.first().map(|p| p.id.as_str()).unwrap_or("<none>"),
+                );
+                ctx.request_model = chosen_model;
+                patched_body = new_body;
+                providers_for_request = ordered_providers;
+                // 供应商级意图路由：不修改“当前供应商”，仅对本次请求生效
+                allow_switch_current = false;
+            }
+            Ok(None) | Err(_) => {
+                // 2️⃣ 回退到单供应商内部模型路由（当前 Provider 内部 Haiku/Sonnet/Opus 等）
+                if let Ok(Some((new_body, chosen_model))) =
+                    ClaudeIntentRouter::route(&ctx.provider, &body).await
+                {
+                    log::info!(
+                        "[Claude] IntentRouter(模型级) 选择模型: {} -> {}",
+                        ctx.request_model,
+                        chosen_model
+                    );
+                    ctx.request_model = chosen_model;
+                    patched_body = new_body;
+                }
+            }
+        }
+    }
+
     let is_stream = body
         .get("stream")
         .and_then(|s| s.as_bool())
@@ -73,9 +121,10 @@ pub async fn handle_messages(
         .forward_with_retry(
             &AppType::Claude,
             "/v1/messages",
-            body.clone(),
+            patched_body,
             headers,
-            ctx.get_providers(),
+            providers_for_request,
+            allow_switch_current,
         )
         .await
     {
@@ -288,6 +337,7 @@ pub async fn handle_chat_completions(
             body,
             headers,
             ctx.get_providers(),
+            true,
         )
         .await
     {
@@ -329,6 +379,7 @@ pub async fn handle_responses(
             body,
             headers,
             ctx.get_providers(),
+            true,
         )
         .await
     {
@@ -383,6 +434,7 @@ pub async fn handle_gemini(
             body,
             headers,
             ctx.get_providers(),
+            true,
         )
         .await
     {

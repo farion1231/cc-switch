@@ -142,6 +142,8 @@ export interface ProviderMeta {
   costMultiplier?: string;
   // 供应商计费模式来源
   pricingModelSource?: string;
+  // 意图路由描述（用于跨供应商/模型意图识别）
+  intentDescription?: string;
   // Claude API 格式（仅 Claude 供应商使用）
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
@@ -224,6 +226,10 @@ export interface Settings {
   silentStartup?: boolean;
   // 是否启用主页面本地代理功能（默认关闭）
   enableLocalProxy?: boolean;
+  // 是否启用 Claude CLI 意图路由（根据请求内容自动选择 Claude 模型）
+  enableClaudeIntentRouting?: boolean;
+  // Claude 路由专用供应商 ID（优先级高于当前供应商）
+  claudeRouterProviderId?: string;
   // User has confirmed the local proxy first-run notice
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice

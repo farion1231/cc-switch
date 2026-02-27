@@ -153,6 +153,22 @@ export function BasicFormFields({
             </FormItem>
           )}
         />
+        <FormField
+          control={form.control}
+          name="intentDescription"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t("provider.intentDescription")}</FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  placeholder={t("provider.intentDescriptionPlaceholder")}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
       </div>
 
       <FormField

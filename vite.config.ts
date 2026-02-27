@@ -20,6 +20,8 @@ export default defineConfig(({ command }) => ({
   server: {
     port: 3000,
     strictPort: true,
+    // 绑定到 127.0.0.1，避免某些环境下 WebView 无法解析 localhost
+    host: "127.0.0.1",
   },
   resolve: {
     alias: {

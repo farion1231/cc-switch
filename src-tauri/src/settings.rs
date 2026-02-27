@@ -190,6 +190,12 @@ pub struct AppSettings {
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
+    /// 是否启用 Claude CLI 意图路由（根据请求内容在已配置模型间自动选择）
+    #[serde(default)]
+    pub enable_claude_intent_routing: bool,
+    /// Claude 路由专用供应商 ID（优先级高于当前供应商）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_router_provider_id: Option<String>,
     /// User has confirmed the local proxy first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_confirmed: Option<bool>,
@@ -280,6 +286,8 @@ impl Default for AppSettings {
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,
+            enable_claude_intent_routing: false,
+            claude_router_provider_id: None,
             proxy_confirmed: None,
             usage_confirmed: None,
             language: None,

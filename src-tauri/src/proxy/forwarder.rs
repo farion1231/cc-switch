@@ -142,6 +142,7 @@ impl RequestForwarder {
         mut body: Value,
         headers: axum::http::HeaderMap,
         providers: Vec<Provider>,
+        allow_switch_current: bool,
     ) -> Result<ForwardResult, ForwardError> {
         // 获取适配器
         let adapter = get_adapter(app_type);
@@ -226,8 +227,8 @@ impl RequestForwarder {
                         let mut status = self.status.write().await;
                         status.success_requests += 1;
                         status.last_error = None;
-                        let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
+                        let should_switch = allow_switch_current
+                            && self.current_provider_id_at_start.as_str() != provider.id.as_str();
                         if should_switch {
                             status.failover_count += 1;
 
