@@ -69,9 +69,7 @@ pub fn get_claude_mcp_path() -> PathBuf {
     get_default_claude_mcp_path()
 }
 
-/// 获取 Claude Code 主配置文件路径
-pub fn get_claude_settings_path() -> PathBuf {
-    let dir = get_claude_config_dir();
+fn resolve_claude_settings_path_in_dir(dir: &Path) -> PathBuf {
     let settings = dir.join("settings.json");
     if settings.exists() {
         return settings;
@@ -83,6 +81,64 @@ pub fn get_claude_settings_path() -> PathBuf {
     }
     // 默认新建：回落到标准文件名 settings.json（不再生成 claude.json）
     settings
+}
+
+/// 获取 Claude Code 主配置文件路径
+pub fn get_claude_settings_path() -> PathBuf {
+    resolve_claude_settings_path_in_dir(&get_claude_config_dir())
+}
+
+/// 获取 Claude Code 主配置文件路径集合（主路径 + 可推导的附加路径）
+///
+/// 返回值保证：
+/// - 第一个路径始终是主路径（`get_claude_settings_path()` 对应目录）
+/// - 去重（Windows 下不区分大小写）
+pub fn get_claude_settings_paths() -> Vec<PathBuf> {
+    let primary_dir = get_claude_config_dir();
+    let mut dirs = vec![primary_dir.clone()];
+
+    #[cfg(windows)]
+    {
+        use crate::utils::wsl::{parse_wsl_unc_path, resolve_wsl_home_dir_unc};
+
+        // 当主目录是 \\wsl.localhost\<distro>\... 这类 UNC 路径时，
+        // 自动按系统中所有 WSL 发行版推导同后缀的多发行版目录。
+        if let Some((current_distro, suffix)) = parse_wsl_unc_path(&primary_dir) {
+            if let Some(distros) = crate::settings::get_wsl_distros() {
+                for distro in distros {
+                    let distro = distro.trim();
+                    if distro.is_empty() || distro.eq_ignore_ascii_case(&current_distro) {
+                        continue;
+                    }
+
+                    let mut dir = PathBuf::from(format!("\\\\wsl.localhost\\{distro}"));
+                    if !suffix.is_empty() {
+                        dir.push(&suffix);
+                    }
+                    dirs.push(dir);
+                }
+            }
+        }
+
+        // 当主目录不是 WSL UNC（例如 C:\Users\...\ .claude）时，
+        // 自动额外加入每个 WSL distro 的 ~/.claude。
+        if parse_wsl_unc_path(&primary_dir).is_none() {
+            if let Some(distros) = crate::settings::get_wsl_distros() {
+                for distro in distros {
+                    if let Some(mut home_unc) = resolve_wsl_home_dir_unc(&distro) {
+                        home_unc.push(".claude");
+                        dirs.push(home_unc);
+                    }
+                }
+            }
+        }
+    }
+
+    let raw_paths = dirs
+        .into_iter()
+        .map(|dir| resolve_claude_settings_path_in_dir(&dir))
+        .collect();
+    crate::utils::wsl::dedupe_paths(raw_paths)
 }
 
 /// 获取应用配置目录路径 (~/.cc-switch)
