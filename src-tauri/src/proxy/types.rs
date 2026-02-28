@@ -219,8 +219,16 @@ fn default_true() -> bool {
     true
 }
 
+fn default_false() -> bool {
+    false
+}
+
 fn default_log_level() -> String {
     "info".to_string()
+}
+
+fn default_custom_redaction_rules() -> Vec<CustomRedactionRule> {
+    Vec::new()
 }
 
 impl Default for RectifierConfig {
@@ -229,6 +237,79 @@ impl Default for RectifierConfig {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
+        }
+    }
+}
+
+/// 脱敏异常策略
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RedactionErrorStrategy {
+    /// 告警并跳过异常规则（默认）
+    WarnAndBypass,
+    /// 规则异常时中断请求
+    BlockRequest,
+}
+
+impl Default for RedactionErrorStrategy {
+    fn default() -> Self {
+        Self::WarnAndBypass
+    }
+}
+
+/// 自定义规则匹配方式
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RedactionMatchMethod {
+    /// 使用正则匹配
+    Regex,
+    /// 使用字符串包含匹配
+    StringMatch,
+}
+
+impl Default for RedactionMatchMethod {
+    fn default() -> Self {
+        Self::Regex
+    }
+}
+
+/// 自定义脱敏规则
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomRedactionRule {
+    /// 是否启用
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 匹配方式：regex / string_match
+    #[serde(default)]
+    pub match_method: RedactionMatchMethod,
+    /// 匹配模式（regex 时为正则，string_match 时为普通字符串）
+    pub pattern: String,
+}
+
+/// 出站请求脱敏配置
+///
+/// 存储在 settings 表中
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboundRedactionConfig {
+    /// 总开关
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    /// 规则异常策略
+    #[serde(default)]
+    pub on_error: RedactionErrorStrategy,
+    /// 自定义规则
+    #[serde(default = "default_custom_redaction_rules")]
+    pub custom_rules: Vec<CustomRedactionRule>,
+}
+
+impl Default for OutboundRedactionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            on_error: RedactionErrorStrategy::WarnAndBypass,
+            custom_rules: default_custom_redaction_rules(),
         }
     }
 }
@@ -395,5 +476,39 @@ mod tests {
         let parsed: LogConfig = serde_json::from_str(&json).unwrap();
         assert!(parsed.enabled);
         assert_eq!(parsed.level, "debug");
+    }
+
+    #[test]
+    fn test_outbound_redaction_config_default() {
+        let config = OutboundRedactionConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.on_error, RedactionErrorStrategy::WarnAndBypass);
+        assert!(config.custom_rules.is_empty());
+    }
+
+    #[test]
+    fn test_outbound_redaction_config_serde_default() {
+        let json = "{}";
+        let config: OutboundRedactionConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.on_error, RedactionErrorStrategy::WarnAndBypass);
+        assert_eq!(config.custom_rules.len(), 0);
+    }
+
+    #[test]
+    fn test_outbound_redaction_config_serde_custom() {
+        let json = r#"{
+            "enabled": true,
+            "onError": "block_request",
+            "customRules": [{"enabled":true,"matchMethod":"string_match","pattern":"abc"}]
+        }"#;
+        let config: OutboundRedactionConfig = serde_json::from_str(json).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.on_error, RedactionErrorStrategy::BlockRequest);
+        assert_eq!(config.custom_rules.len(), 1);
+        assert_eq!(
+            config.custom_rules[0].match_method,
+            RedactionMatchMethod::StringMatch
+        );
     }
 }

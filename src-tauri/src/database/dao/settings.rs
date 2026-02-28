@@ -187,6 +187,29 @@ impl Database {
         self.set_setting("rectifier_config", &json)
     }
 
+    // --- 出站脱敏配置 ---
+
+    /// 获取出站脱敏配置
+    pub fn get_outbound_redaction_config(
+        &self,
+    ) -> Result<crate::proxy::types::OutboundRedactionConfig, AppError> {
+        match self.get_setting("outbound_redaction_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析出站脱敏配置失败: {e}"))),
+            None => Ok(crate::proxy::types::OutboundRedactionConfig::default()),
+        }
+    }
+
+    /// 更新出站脱敏配置
+    pub fn set_outbound_redaction_config(
+        &self,
+        config: &crate::proxy::types::OutboundRedactionConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化出站脱敏配置失败: {e}")))?;
+        self.set_setting("outbound_redaction_config", &json)
+    }
+
     // --- 日志配置 ---
 
     /// 获取日志配置

@@ -196,6 +196,16 @@ export const settingsApi = {
     return await invoke("set_rectifier_config", { config });
   },
 
+  async getOutboundRedactionConfig(): Promise<OutboundRedactionConfig> {
+    return await invoke("get_outbound_redaction_config");
+  },
+
+  async setOutboundRedactionConfig(
+    config: OutboundRedactionConfig,
+  ): Promise<boolean> {
+    return await invoke("set_outbound_redaction_config", { config });
+  },
+
   async getLogConfig(): Promise<LogConfig> {
     return await invoke("get_log_config");
   },
@@ -209,6 +219,21 @@ export interface RectifierConfig {
   enabled: boolean;
   requestThinkingSignature: boolean;
   requestThinkingBudget: boolean;
+}
+
+export type RedactionErrorStrategy = "warn_and_bypass" | "block_request";
+export type RedactionMatchMethod = "regex" | "string_match";
+
+export interface CustomRedactionRule {
+  enabled: boolean;
+  matchMethod: RedactionMatchMethod;
+  pattern: string;
+}
+
+export interface OutboundRedactionConfig {
+  enabled: boolean;
+  onError: RedactionErrorStrategy;
+  customRules: CustomRedactionRule[];
 }
 
 export interface LogConfig {

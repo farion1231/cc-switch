@@ -833,6 +833,8 @@ pub fn run() {
             commands::save_settings,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
+            commands::get_outbound_redaction_config,
+            commands::set_outbound_redaction_config,
             commands::get_log_config,
             commands::set_log_config,
             commands::restart_app,
