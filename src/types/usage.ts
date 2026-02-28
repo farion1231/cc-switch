@@ -11,6 +11,7 @@ export interface RequestLog {
   requestId: string;
   providerId: string;
   providerName?: string;
+  providerType?: string;
   appType: string;
   model: string;
   requestModel?: string;
@@ -27,9 +28,10 @@ export interface RequestLog {
   isStreaming: boolean;
   latencyMs: number;
   firstTokenMs?: number;
-  durationMs?: number;
   statusCode: number;
   errorMessage?: string;
+  requestBody?: string;
+  responseBody?: string;
   createdAt: number;
 }
 
@@ -90,9 +92,12 @@ export interface ModelStats {
 
 export interface LogFilters {
   appType?: string;
+  providerType?: string;
   providerName?: string;
+  providerId?: string;
   model?: string;
   statusCode?: number;
+  statusFilter?: "success" | "error";
   startDate?: number;
   endDate?: number;
 }
@@ -107,7 +112,12 @@ export interface ProviderLimitStatus {
   monthlyExceeded: boolean;
 }
 
-export type TimeRange = "1d" | "7d" | "30d";
+export type TimeRange = "5m" | "10m" | "15m" | "30m" | "1h" | "5h" | "12h" | "1d" | "7d" | "30d" | "custom";
+
+export interface CustomTimeRange {
+  startDate: number;
+  endDate: number;
+}
 
 export interface StatsFilters {
   timeRange: TimeRange;

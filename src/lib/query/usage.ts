@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { usageApi } from "@/lib/api/usage";
 import type { LogFilters } from "@/types/usage";
 
@@ -7,6 +8,7 @@ const DEFAULT_REFETCH_INTERVAL_MS = 30000;
 type UsageQueryOptions = {
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
+  refetchOnWindowFocus?: boolean;
 };
 
 type RequestLogsTimeMode = "rolling" | "fixed";
@@ -17,7 +19,7 @@ type RequestLogsQueryArgs = {
   page?: number;
   pageSize?: number;
   rollingWindowSeconds?: number;
-  options?: UsageQueryOptions;
+  refreshCounter?: number; // 用于强制刷新
 };
 
 type RequestLogsKey = {
@@ -25,10 +27,13 @@ type RequestLogsKey = {
   rollingWindowSeconds?: number;
   appType?: string;
   providerName?: string;
+  providerId?: string;
   model?: string;
   statusCode?: number;
+  statusFilter?: "success" | "error";
   startDate?: number;
   endDate?: number;
+  refreshCounter?: number; // 用于强制刷新
 };
 
 // Query keys
@@ -46,15 +51,20 @@ export const usageKeys = {
       key.rollingWindowSeconds ?? 0,
       key.appType ?? "",
       key.providerName ?? "",
+      key.providerId ?? "",
       key.model ?? "",
       key.statusCode ?? -1,
+      key.statusFilter ?? "",
       key.startDate ?? 0,
       key.endDate ?? 0,
+      key.refreshCounter ?? 0,
       page,
       pageSize,
     ] as const,
   detail: (requestId: string) =>
     [...usageKeys.all, "detail", requestId] as const,
+  filters: (startDate?: number, endDate?: number) =>
+    [...usageKeys.all, "filters", startDate, endDate] as const,
   pricing: () => [...usageKeys.all, "pricing"] as const,
   limits: (providerId: string, appType: string) =>
     [...usageKeys.all, "limits", providerId, appType] as const,
@@ -86,7 +96,7 @@ export function useUsageTrends(days: number, options?: UsageQueryOptions) {
       const { startDate, endDate } = getWindow(days);
       return usageApi.getUsageTrends(startDate, endDate);
     },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
 }
@@ -104,7 +114,7 @@ export function useModelStats(options?: UsageQueryOptions) {
   return useQuery({
     queryKey: usageKeys.modelStats(),
     queryFn: usageApi.getModelStats,
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
 }
@@ -121,31 +131,56 @@ export function useRequestLogs({
   page = 0,
   pageSize = 20,
   rollingWindowSeconds = 24 * 60 * 60,
-  options,
+  refreshCounter = 0,
 }: RequestLogsQueryArgs) {
-  const key: RequestLogsKey = {
+  // 构建一个简单的查询键，确保 refreshCounter 变化时创建新查询
+  const queryKey = useMemo(() => {
+    const baseKey = [
+      "usage",
+      "logs",
+      timeMode,
+      rollingWindowSeconds,
+      filters.appType || "",
+      filters.providerId || "",
+      filters.model || "",
+      filters.statusFilter || "",
+      filters.startDate || 0,
+      filters.endDate || 0,
+      page,
+      pageSize,
+    ];
+    // 添加 refreshCounter 确保每次刷新都是新查询
+    return [...baseKey, refreshCounter] as const;
+  }, [
     timeMode,
-    rollingWindowSeconds:
-      timeMode === "rolling" ? rollingWindowSeconds : undefined,
-    appType: filters.appType,
-    providerName: filters.providerName,
-    model: filters.model,
-    statusCode: filters.statusCode,
-    startDate: timeMode === "fixed" ? filters.startDate : undefined,
-    endDate: timeMode === "fixed" ? filters.endDate : undefined,
-  };
+    rollingWindowSeconds,
+    filters.appType,
+    filters.providerId,
+    filters.model,
+    filters.statusFilter,
+    filters.startDate,
+    filters.endDate,
+    page,
+    pageSize,
+    refreshCounter,
+  ]);
 
   return useQuery({
-    queryKey: usageKeys.logs(key, page, pageSize),
-    queryFn: () => {
+    queryKey,
+    queryFn: async () => {
       const effectiveFilters =
         timeMode === "rolling"
           ? { ...filters, ...getRollingRange(rollingWindowSeconds) }
           : filters;
-      return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
+      const result = await usageApi.getRequestLogs(effectiveFilters, page, pageSize);
+      return result;
     },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
-    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    staleTime: 0,
+    gcTime: 1000 * 60 * 5,
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    refetchInterval: false,
+    networkMode: "always",
   });
 }
 
@@ -154,6 +189,14 @@ export function useRequestDetail(requestId: string) {
     queryKey: usageKeys.detail(requestId),
     queryFn: () => usageApi.getRequestDetail(requestId),
     enabled: !!requestId,
+  });
+}
+
+export function useAvailableFilters(startDate?: number, endDate?: number) {
+  return useQuery({
+    queryKey: usageKeys.filters(startDate, endDate),
+    queryFn: () => usageApi.getAvailableFilters(startDate, endDate),
+    staleTime: 0,
   });
 }
 
@@ -206,5 +249,25 @@ export function useDeleteModelPricing() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: usageKeys.pricing() });
     },
+  });
+}
+
+export function useDeleteRequestLogsByDate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ startDate, endDate }: { startDate: number; endDate: number }) =>
+      usageApi.deleteRequestLogsByDate(startDate, endDate),
+    onSuccess: () => {
+      // Invalidate all log queries to refresh the list
+      queryClient.invalidateQueries({ queryKey: ["usage", "logs"] });
+    },
+  });
+}
+
+export function useCountRequestLogsByDate() {
+  return useMutation({
+    mutationFn: ({ startDate, endDate }: { startDate: number; endDate: number }) =>
+      usageApi.countRequestLogsByDate(startDate, endDate),
   });
 }

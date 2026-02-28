@@ -57,6 +57,16 @@ pub fn get_request_detail(
     state.db.get_request_detail(&request_id)
 }
 
+/// 获取指定时间范围内所有可用的 Provider 和 Model 筛选选项
+#[tauri::command]
+pub fn get_available_filters(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+) -> Result<AvailableFilters, AppError> {
+    state.db.get_available_filters(start_date, end_date)
+}
+
 /// 获取模型定价列表
 #[tauri::command]
 pub fn get_model_pricing(state: State<'_, AppState>) -> Result<Vec<ModelPricingInfo>, AppError> {
@@ -164,6 +174,26 @@ pub fn delete_model_pricing(state: State<'_, AppState>, model_id: String) -> Res
 
     log::info!("已删除模型定价: {model_id}");
     Ok(())
+}
+
+/// 按日期范围删除请求日志
+#[tauri::command]
+pub fn delete_request_logs_by_date(
+    state: State<'_, AppState>,
+    start_date: i64,
+    end_date: i64,
+) -> Result<u64, AppError> {
+    state.db.delete_request_logs_by_date(start_date, end_date)
+}
+
+/// 获取指定日期范围内的日志数量（用于删除前确认）
+#[tauri::command]
+pub fn count_request_logs_by_date(
+    state: State<'_, AppState>,
+    start_date: i64,
+    end_date: i64,
+) -> Result<u64, AppError> {
+    state.db.count_request_logs_by_date(start_date, end_date)
 }
 
 /// 模型定价信息
