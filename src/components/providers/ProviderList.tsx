@@ -179,7 +179,17 @@ export function ProviderList({
   // Import current live config as default provider
   const queryClient = useQueryClient();
   const importMutation = useMutation({
-    mutationFn: () => providersApi.importDefault(appId),
+    mutationFn: async (): Promise<boolean> => {
+      if (appId === "opencode") {
+        const count = await providersApi.importOpenCodeFromLive();
+        return count > 0;
+      }
+      if (appId === "openclaw") {
+        const count = await providersApi.importOpenClawFromLive();
+        return count > 0;
+      }
+      return providersApi.importDefault(appId);
+    },
     onSuccess: (imported) => {
       if (imported) {
         queryClient.invalidateQueries({ queryKey: ["providers", appId] });
@@ -245,15 +255,11 @@ export function ProviderList({
     );
   }
 
-  // Only show import button for standard apps (not additive-mode apps like OpenCode/OpenClaw)
-  const showImportButton =
-    appId === "claude" || appId === "codex" || appId === "gemini";
-
   if (sortedProviders.length === 0) {
     return (
       <ProviderEmptyState
         onCreate={onCreate}
-        onImport={showImportButton ? () => importMutation.mutate() : undefined}
+        onImport={() => importMutation.mutate()}
       />
     );
   }

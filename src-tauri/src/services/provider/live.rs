@@ -1042,7 +1042,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
             let providers = state.db.get_all_providers(app_type.as_str())?;
             if let Some(provider) = providers.get(&current_id) {
-                write_live_partial(&app_type, provider)?;
+                write_live_snapshot(&app_type, provider)?;
             }
             // Note: get_effective_current_provider already validates existence,
             // so providers.get() should always succeed here

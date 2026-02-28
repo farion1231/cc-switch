@@ -1,6 +1,6 @@
 {
   "name": "cc-switch",
-  "version": "3.11.0",
+  "version": "3.11.1",
   "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
   "type": "module",
   "scripts": {

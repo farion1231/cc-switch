@@ -449,18 +449,7 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
             }
 
-            // 2. OpenCode 供应商导入（累加式模式，需特殊处理）
-            // OpenCode 与其他应用不同：配置文件中可同时存在多个供应商
-            // 需要遍历 provider 字段下的每个供应商并导入
-            match crate::services::provider::import_opencode_providers_from_live(&app_state) {
-                Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} OpenCode provider(s) from live config");
-                }
-                Ok(_) => log::debug!("○ No OpenCode providers found to import"),
-                Err(e) => log::warn!("○ Failed to import OpenCode providers: {e}"),
-            }
-
-            // 2.2 OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
+            // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
                 let has_omo = app_state
                     .db
@@ -509,17 +498,6 @@ pub fn run() {
                         }
                     }
                 }
-            }
-
-            // 2.4 OpenClaw 供应商导入（累加式模式，需特殊处理）
-            // OpenClaw 与 OpenCode 类似：配置文件中可同时存在多个供应商
-            // 需要遍历 models.providers 字段下的每个供应商并导入
-            match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
-                Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} OpenClaw provider(s) from live config");
-                }
-                Ok(_) => log::debug!("○ No OpenClaw providers found to import"),
-                Err(e) => log::warn!("○ Failed to import OpenClaw providers: {e}"),
             }
 
             // 3. 导入 MCP 服务器配置（表空时触发）
@@ -846,8 +824,12 @@ pub fn run() {
             commands::get_skills_migration_result,
             commands::get_app_config_path,
             commands::open_app_config_folder,
+            commands::get_claude_common_config_snippet,
+            commands::set_claude_common_config_snippet,
+            commands::get_common_config_snippet,
+            commands::set_common_config_snippet,
+            commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
-            commands::patch_claude_live_settings,
             commands::get_settings,
             commands::save_settings,
             commands::get_rectifier_config,

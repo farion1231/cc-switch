@@ -113,33 +113,17 @@ export function ThemeProvider({
       }
     };
 
-    // Determine current effective theme
+    // When "system", pass "system" so Tauri uses None (follows OS theme natively).
+    // This keeps the WebView's prefers-color-scheme in sync with the real OS theme,
+    // allowing effect #3's media query listener to fire on system theme changes.
     if (theme === "system") {
-      const isDark =
-        window.matchMedia &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches;
-      updateNativeTheme(isDark ? "dark" : "light");
+      updateNativeTheme("system");
     } else {
       updateNativeTheme(theme);
     }
 
-    // Listen to system theme changes for native window when in "system" mode
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleChange = () => {
-      if (theme === "system" && !isCancelled) {
-        updateNativeTheme(mediaQuery.matches ? "dark" : "light");
-      }
-    };
-
-    if (theme === "system") {
-      mediaQuery.addEventListener("change", handleChange);
-    }
-
     return () => {
       isCancelled = true;
-      if (theme === "system") {
-        mediaQuery.removeEventListener("change", handleChange);
-      }
     };
   }, [theme]);
 
