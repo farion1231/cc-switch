@@ -348,6 +348,47 @@ pub async fn handle_responses(
     process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
 }
 
+/// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
+pub async fn handle_responses_compact(
+    State(state): State<ProxyState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<axum::response::Response, ProxyError> {
+    let mut ctx =
+        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+
+    let is_stream = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let forwarder = ctx.create_forwarder(&state);
+    let result = match forwarder
+        .forward_with_retry(
+            &AppType::Codex,
+            "/responses/compact",
+            body,
+            headers,
+            ctx.get_providers(),
+        )
+        .await
+    {
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, is_stream, &err.error);
+            return Err(err.error);
+        }
+    };
+
+    ctx.provider = result.provider;
+    let response = result.response;
+
+    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+}
+
 // ============================================================================
 // Gemini API 处理器
 // ============================================================================
