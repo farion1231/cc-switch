@@ -75,6 +75,14 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
             onChange({ minimizeToTrayOnClose: value })
           }
         />
+
+        <ToggleRow
+          icon={<AppWindow className="h-4 w-4 text-amber-500" />}
+          title={t("settings.useAppWindowControls")}
+          description={t("settings.useAppWindowControlsDescription")}
+          checked={!!settings.useAppWindowControls}
+          onCheckedChange={(value) => onChange({ useAppWindowControls: value })}
+        />
       </div>
     </section>
   );
