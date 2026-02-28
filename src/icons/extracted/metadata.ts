@@ -373,6 +373,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["xiaomimimo", "xiaomi", "mimo"],
     defaultColor: "#000000",
   },
+  novita: {
+    name: "novita",
+    displayName: "Novita AI",
+    category: "ai-provider",
+    keywords: ["novita", "novita ai"],
+    defaultColor: "#000000",
+  },
   nvidia: {
     name: "nvidia",
     displayName: "NVIDIA",
