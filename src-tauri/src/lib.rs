@@ -162,6 +162,8 @@ async fn update_tray_menu(
             if let Some(tray) = app.tray_by_id("main") {
                 tray.set_menu(Some(new_menu))
                     .map_err(|e| format!("更新托盘菜单失败: {e}"))?;
+                #[cfg(target_os = "macos")]
+                tray::apply_alternate_menu_items(&app);
                 return Ok(true);
             }
             Ok(false)
@@ -664,6 +666,8 @@ pub fn run() {
             }
 
             let _tray = tray_builder.build(app)?;
+            #[cfg(target_os = "macos")]
+            tray::apply_alternate_menu_items(app.handle());
             crate::services::webdav_auto_sync::start_worker(
                 app_state.db.clone(),
                 app.handle().clone(),

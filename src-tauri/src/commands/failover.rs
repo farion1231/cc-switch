@@ -164,6 +164,8 @@ pub async fn set_auto_failover_enabled(
     if let Ok(new_menu) = crate::tray::create_tray_menu(&app, &state) {
         if let Some(tray) = app.tray_by_id("main") {
             let _ = tray.set_menu(Some(new_menu));
+            #[cfg(target_os = "macos")]
+            crate::tray::apply_alternate_menu_items(&app);
         }
     }
 
