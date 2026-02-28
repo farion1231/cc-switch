@@ -252,6 +252,26 @@
         "thinkingBudget": "Thinking Budget 整流",
         "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次"
       },
+      "outboundRedaction": {
+        "title": "出站信息脱敏",
+        "description": "请求发送到上游前在本地替换敏感信息",
+        "enabled": "启用出站脱敏",
+        "enabledDescription": "开启后仅按自定义规则在本地拦截并替换匹配内容",
+        "errorStrategy": "规则异常策略",
+        "errorStrategies": {
+          "warn_and_bypass": "告警并跳过异常规则（默认）",
+          "block_request": "中断请求"
+        },
+        "customRules": "自定义规则",
+        "customRulesDescription": "仅支持自定义规则，对请求体中的所有字符串值做匹配替换。命中后会按原始长度替换为 *。",
+        "matchMethods": {
+          "regex": "正则匹配",
+          "string_match": "字符串匹配"
+        },
+        "addRule": "新增规则",
+        "noCustomRules": "暂无自定义规则",
+        "patternPlaceholder": "值匹配模式（必填）"
+      },
       "logConfig": {
         "title": "日志管理",
         "description": "控制日志输出级别",

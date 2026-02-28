@@ -252,6 +252,26 @@
         "thinkingBudget": "Thinking Budget 整流",
         "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします"
       },
+      "outboundRedaction": {
+        "title": "送信前マスキング",
+        "description": "上流へ送信する前に機密情報をローカルで置換",
+        "enabled": "送信前マスキングを有効化",
+        "enabledDescription": "有効化すると、カスタムルールでローカル置換してから転送します。",
+        "errorStrategy": "ルールエラー時の動作",
+        "errorStrategies": {
+          "warn_and_bypass": "警告して問題ルールをスキップ（既定）",
+          "block_request": "リクエストを中断"
+        },
+        "customRules": "カスタムルール",
+        "customRulesDescription": "カスタムルールのみ対応。一致した文字列は同じ長さの * にローカルでマスクされます。",
+        "matchMethods": {
+          "regex": "正規表現",
+          "string_match": "文字列一致"
+        },
+        "addRule": "ルール追加",
+        "noCustomRules": "カスタムルールはありません",
+        "patternPlaceholder": "値の一致パターン（必須）"
+      },
       "logConfig": {
         "title": "ログ管理",
         "description": "ログ出力レベルを制御",

@@ -703,6 +703,7 @@ dependencies = [
 name = "cc-switch"
 version = "3.11.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "async-stream",
  "auto-launch",

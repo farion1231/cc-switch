@@ -252,6 +252,26 @@
         "thinkingBudget": "Thinking Budget Rectification",
         "thinkingBudgetDescription": "When an Anthropic-type provider returns budget_tokens constraint errors (such as at least 1024), automatically normalizes thinking to enabled, sets thinking budget to 32000, and raises max_tokens to 64000 if needed, then retries once"
       },
+      "outboundRedaction": {
+        "title": "Outbound Redaction",
+        "description": "Replace sensitive content locally before requests leave the proxy",
+        "enabled": "Enable Outbound Redaction",
+        "enabledDescription": "When enabled, only custom rules are applied locally before forwarding.",
+        "errorStrategy": "Rule Error Strategy",
+        "errorStrategies": {
+          "warn_and_bypass": "Warn and bypass bad rules (default)",
+          "block_request": "Block request"
+        },
+        "customRules": "Custom Rules",
+        "customRulesDescription": "Only custom rules are supported. All matched text is masked locally with * while keeping the same length.",
+        "matchMethods": {
+          "regex": "Regex",
+          "string_match": "String Match"
+        },
+        "addRule": "Add Rule",
+        "noCustomRules": "No custom rules yet",
+        "patternPlaceholder": "Value match pattern (required)"
+      },
       "logConfig": {
         "title": "Log Management",
         "description": "Control log output level",
