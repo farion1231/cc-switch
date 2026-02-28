@@ -233,6 +233,41 @@ pub fn normalize_thinking_type(body: Value) -> Value {
     body
 }
 
+/// 检查 provider 是否不支持 adaptive thinking type
+///
+/// 基于 base_url 检测不支持 adaptive 的 provider
+pub fn provider_needs_adaptive_normalization(base_url: &str) -> bool {
+    // 阿里百炼不支持 adaptive type
+    base_url.contains("dashscope.aliyuncs.com")
+        || base_url.contains("dashscope.cn")
+        || base_url.contains("aliyuncs.com")
+}
+
+/// 将 adaptive thinking type 转换为 enabled
+///
+/// 用于不支持 adaptive 类型的 provider（如阿里百炼）
+pub fn normalize_adaptive_to_enabled(body: Value) -> Value {
+    let mut body = body;
+
+    // 检查顶层 thinking.type
+    if let Some(thinking) = body.get_mut("thinking").and_then(|t| t.as_object_mut()) {
+        if let Some(type_field) = thinking.get("type") {
+            if type_field == "adaptive" {
+                thinking.insert("type".to_string(), serde_json::Value::String("enabled".to_string()));
+                // 如果有 budget_tokens，保留原值；否则设置默认值
+                if !thinking.contains_key("budget_tokens") {
+                    thinking.insert(
+                        "budget_tokens".to_string(),
+                        serde_json::Value::Number(1024.into()),
+                    );
+                }
+            }
+        }
+    }
+
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,5 +720,115 @@ mod tests {
 
         assert_eq!(result["thinking"]["type"], "unexpected");
         assert_eq!(result["thinking"]["budget_tokens"], 100);
+    }
+
+    // ==================== provider_needs_adaptive_normalization 测试 ====================
+
+    #[test]
+    fn test_provider_needs_adaptive_normalization_dashscope_aliyuncs() {
+        // 阿里百炼 Anthropic 兼容 API
+        assert!(provider_needs_adaptive_normalization(
+            "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+        ));
+        assert!(provider_needs_adaptive_normalization(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        ));
+    }
+
+    #[test]
+    fn test_provider_needs_adaptive_normalization_dashscope_cn() {
+        // 阿里百炼国内站
+        assert!(provider_needs_adaptive_normalization(
+            "https://dashscope.cn/api/v1"
+        ));
+    }
+
+    #[test]
+    fn test_provider_needs_adaptive_normalization_openai() {
+        // OpenAI 不需要 normalization
+        assert!(!provider_needs_adaptive_normalization(
+            "https://api.openai.com/v1"
+        ));
+        assert!(!provider_needs_adaptive_normalization(
+            "https://api.anthropic.com"
+        ));
+    }
+
+    // ==================== normalize_adaptive_to_enabled 测试 ====================
+
+    #[test]
+    fn test_normalize_adaptive_to_enabled_converts_type() {
+        let body = json!({
+            "model": "glm-5",
+            "thinking": { "type": "adaptive" }
+        });
+
+        let result = normalize_adaptive_to_enabled(body);
+
+        assert_eq!(result["thinking"]["type"], "enabled");
+    }
+
+    #[test]
+    fn test_normalize_adaptive_to_enabled_preserves_budget_tokens() {
+        let body = json!({
+            "model": "glm-5",
+            "thinking": { "type": "adaptive", "budget_tokens": 8000 }
+        });
+
+        let result = normalize_adaptive_to_enabled(body);
+
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 8000);
+    }
+
+    #[test]
+    fn test_normalize_adaptive_to_enabled_adds_default_budget() {
+        let body = json!({
+            "model": "glm-5",
+            "thinking": { "type": "adaptive" }
+        });
+
+        let result = normalize_adaptive_to_enabled(body);
+
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 1024);
+    }
+
+    #[test]
+    fn test_normalize_adaptive_to_enabled_no_thinking() {
+        let body = json!({
+            "model": "glm-5"
+        });
+
+        let result = normalize_adaptive_to_enabled(body);
+
+        assert!(result.get("thinking").is_none());
+    }
+
+    #[test]
+    fn test_normalize_adaptive_to_enabled_enabled_type_unchanged() {
+        let body = json!({
+            "model": "glm-5",
+            "thinking": { "type": "enabled", "budget_tokens": 4096 }
+        });
+
+        let result = normalize_adaptive_to_enabled(body);
+
+        // enabled 类型不应被改变
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 4096);
+    }
+
+    #[test]
+    fn test_normalize_adaptive_to_enabled_disabled_type_unchanged() {
+        let body = json!({
+            "model": "glm-5",
+            "thinking": { "type": "disabled" }
+        });
+
+        let result = normalize_adaptive_to_enabled(body);
+
+        // disabled 类型不应被改变
+        assert_eq!(result["thinking"]["type"], "disabled");
     }
 }
