@@ -13,7 +13,7 @@ use super::{
         CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
     },
     handler_context::RequestContext,
-    providers::{get_adapter, streaming::create_anthropic_sse_stream, transform},
+    providers::{get_adapter, streaming::create_anthropic_sse_stream},
     response_processor::{create_logged_passthrough_stream, process_response, SseUsageCollector},
     server::ProxyState,
     types::*,
@@ -116,8 +116,17 @@ async fn handle_claude_transform(
     is_stream: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
+    let content_type = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let is_upstream_sse = content_type
+        .to_ascii_lowercase()
+        .contains("text/event-stream");
 
-    if is_stream {
+    if is_stream && is_upstream_sse {
         // 流式响应转换 (OpenAI SSE → Anthropic SSE)
         let stream = response.bytes_stream();
         let sse_stream = create_anthropic_sse_stream(stream);
@@ -186,6 +195,13 @@ async fn handle_claude_transform(
         return Ok((headers, body).into_response());
     }
 
+    if is_stream && !is_upstream_sse {
+        log::warn!(
+            "[Claude] 请求了流式响应，但上游返回非 SSE，降级为 JSON 响应转换: content-type={}",
+            content_type
+        );
+    }
+
     // 非流式响应转换 (OpenAI → Anthropic)
     let response_headers = response.headers().clone();
 
@@ -201,7 +217,8 @@ async fn handle_claude_transform(
         ProxyError::TransformError(format!("Failed to parse OpenAI response: {e}"))
     })?;
 
-    let anthropic_response = transform::openai_to_anthropic(openai_response).map_err(|e| {
+    let adapter = get_adapter(&AppType::Claude);
+    let anthropic_response = adapter.transform_response(openai_response).map_err(|e| {
         log::error!("[Claude] 转换响应失败: {e}");
         e
     })?;

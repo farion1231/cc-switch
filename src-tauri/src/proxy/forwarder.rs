@@ -749,15 +749,19 @@ impl RequestForwarder {
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
 
+        log::info!(
+            "[{}] needs_transform={} api_format={:?}",
+            adapter.name(),
+            needs_transform,
+            provider.meta.as_ref().and_then(|m| m.api_format.as_deref())
+        );
+
         let effective_endpoint =
             if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
                 "/v1/chat/completions"
             } else {
                 endpoint
             };
-
-        // 使用适配器构建 URL
-        let url = adapter.build_url(&base_url, effective_endpoint);
 
         // 应用模型映射（独立于格式转换）
         let (mapped_body, _original_model, _mapped_model) =
@@ -772,6 +776,34 @@ impl RequestForwarder {
         } else {
             mapped_body
         };
+
+        // 根据转换后的请求体形状决定是否切换到 Responses API
+        // 当请求是 Chat Completions 端点，但 payload 已是 Responses 风格（input 且无 messages）
+        // 则自动路由到 /v1/responses；否则保持原端点。
+        let routed_endpoint = if effective_endpoint == "/v1/chat/completions"
+            && request_body.get("input").is_some()
+            && request_body.get("messages").is_none()
+        {
+            log::info!(
+                "[{}] Routing to /v1/responses (input={:?}, messages={:?})",
+                adapter.name(),
+                request_body.get("input").is_some(),
+                request_body.get("messages").is_some()
+            );
+            "/v1/responses"
+        } else {
+            log::info!(
+                "[{}] Keeping endpoint {} (input={:?}, messages={:?})",
+                adapter.name(),
+                effective_endpoint,
+                request_body.get("input").is_some(),
+                request_body.get("messages").is_some()
+            );
+            effective_endpoint
+        };
+
+        // 使用适配器构建 URL
+        let url = adapter.build_url(&base_url, routed_endpoint);
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段

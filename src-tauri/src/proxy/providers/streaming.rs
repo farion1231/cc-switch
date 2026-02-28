@@ -6,6 +6,8 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use serde_json::Value;
+use std::collections::HashMap;
 
 /// OpenAI 流式响应数据结构
 #[derive(Debug, Deserialize)]
@@ -15,6 +17,8 @@ struct OpenAIStreamChunk {
     choices: Vec<StreamChoice>,
     #[serde(default)]
     usage: Option<Usage>,
+    #[serde(flatten)]
+    _extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -22,16 +26,22 @@ struct StreamChoice {
     delta: Delta,
     #[serde(default)]
     finish_reason: Option<String>,
+    #[serde(flatten)]
+    _extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct Delta {
     #[serde(default)]
     content: Option<String>,
     #[serde(default)]
-    reasoning: Option<String>, // OpenRouter 的推理内容
+    reasoning: Option<String>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<DeltaToolCall>>,
+    #[serde(flatten)]
+    _extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -103,6 +113,228 @@ pub fn create_anthropic_sse_stream(
                                     continue;
                                 }
 
+                                if let Ok(raw) = serde_json::from_str::<Value>(data) {
+                                    let event_type = raw.get("type").and_then(|v| v.as_str()).unwrap_or_default();
+                                    if event_type.starts_with("response.") {
+                                        match event_type {
+                                            "response.created" => {
+                                                if !has_sent_message_start {
+                                                    let response = raw.get("response").unwrap_or(&raw);
+                                                    if message_id.is_none() {
+                                                        message_id = response.get("id").and_then(|v| v.as_str()).map(ToString::to_string);
+                                                    }
+                                                    if current_model.is_none() {
+                                                        current_model = response.get("model").and_then(|v| v.as_str()).map(ToString::to_string);
+                                                    }
+
+                                                    let event = json!({
+                                                        "type": "message_start",
+                                                        "message": {
+                                                            "id": message_id.clone().unwrap_or_default(),
+                                                            "type": "message",
+                                                            "role": "assistant",
+                                                            "model": current_model.clone().unwrap_or_default(),
+                                                            "usage": {
+                                                                "input_tokens": 0,
+                                                                "output_tokens": 0
+                                                            }
+                                                        }
+                                                    });
+                                                    let sse_data = format!("event: message_start\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                    has_sent_message_start = true;
+                                                }
+                                            }
+                                            "response.reasoning_text.delta" => {
+                                                if !has_sent_message_start {
+                                                    let response = raw.get("response").unwrap_or(&raw);
+                                                    let event = json!({
+                                                        "type": "message_start",
+                                                        "message": {
+                                                            "id": response.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
+                                                            "type": "message",
+                                                            "role": "assistant",
+                                                            "model": response.get("model").and_then(|v| v.as_str()).unwrap_or_default(),
+                                                            "usage": {
+                                                                "input_tokens": 0,
+                                                                "output_tokens": 0
+                                                            }
+                                                        }
+                                                    });
+                                                    let sse_data = format!("event: message_start\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                    has_sent_message_start = true;
+                                                }
+
+                                                if current_block_type.as_deref() != Some("thinking") {
+                                                    if current_block_type.is_some() {
+                                                        let event = json!({
+                                                            "type": "content_block_stop",
+                                                            "index": content_index
+                                                        });
+                                                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                            serde_json::to_string(&event).unwrap_or_default());
+                                                        yield Ok(Bytes::from(sse_data));
+                                                        content_index += 1;
+                                                    }
+
+                                                    let event = json!({
+                                                        "type": "content_block_start",
+                                                        "index": content_index,
+                                                        "content_block": {
+                                                            "type": "thinking",
+                                                            "thinking": ""
+                                                        }
+                                                    });
+                                                    let sse_data = format!("event: content_block_start\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                    current_block_type = Some("thinking".to_string());
+                                                }
+
+                                                if let Some(delta) = raw.get("delta").and_then(|v| v.as_str()) {
+                                                    let event = json!({
+                                                        "type": "content_block_delta",
+                                                        "index": content_index,
+                                                        "delta": {
+                                                            "type": "thinking_delta",
+                                                            "thinking": delta
+                                                        }
+                                                    });
+                                                    let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                }
+                                            }
+                                            "response.output_text.delta" => {
+                                                if !has_sent_message_start {
+                                                    let response = raw.get("response").unwrap_or(&raw);
+                                                    let event = json!({
+                                                        "type": "message_start",
+                                                        "message": {
+                                                            "id": response.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
+                                                            "type": "message",
+                                                            "role": "assistant",
+                                                            "model": response.get("model").and_then(|v| v.as_str()).unwrap_or_default(),
+                                                            "usage": {
+                                                                "input_tokens": 0,
+                                                                "output_tokens": 0
+                                                            }
+                                                        }
+                                                    });
+                                                    let sse_data = format!("event: message_start\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                    has_sent_message_start = true;
+                                                }
+
+                                                if current_block_type.as_deref() != Some("text") {
+                                                    if current_block_type.is_some() {
+                                                        let event = json!({
+                                                            "type": "content_block_stop",
+                                                            "index": content_index
+                                                        });
+                                                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                            serde_json::to_string(&event).unwrap_or_default());
+                                                        yield Ok(Bytes::from(sse_data));
+                                                        content_index += 1;
+                                                    }
+
+                                                    let event = json!({
+                                                        "type": "content_block_start",
+                                                        "index": content_index,
+                                                        "content_block": {
+                                                            "type": "text",
+                                                            "text": ""
+                                                        }
+                                                    });
+                                                    let sse_data = format!("event: content_block_start\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                    current_block_type = Some("text".to_string());
+                                                }
+
+                                                if let Some(delta) = raw.get("delta").and_then(|v| v.as_str()) {
+                                                    let event = json!({
+                                                        "type": "content_block_delta",
+                                                        "index": content_index,
+                                                        "delta": {
+                                                            "type": "text_delta",
+                                                            "text": delta
+                                                        }
+                                                    });
+                                                    let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                }
+                                            }
+                                            "response.completed" => {
+                                                if current_block_type.is_some() {
+                                                    let event = json!({
+                                                        "type": "content_block_stop",
+                                                        "index": content_index
+                                                    });
+                                                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                    current_block_type = None;
+                                                }
+
+                                                let usage = raw
+                                                    .get("response")
+                                                    .and_then(|r| r.get("usage"))
+                                                    .and_then(|u| {
+                                                        let input = u.get("input_tokens")?.as_u64()?;
+                                                        let output = u.get("output_tokens")?.as_u64()?;
+                                                        Some(json!({
+                                                            "input_tokens": input,
+                                                            "output_tokens": output
+                                                        }))
+                                                    });
+
+                                                let event = json!({
+                                                    "type": "message_delta",
+                                                    "delta": {
+                                                        "stop_reason": "end_turn",
+                                                        "stop_sequence": null
+                                                    },
+                                                    "usage": usage
+                                                });
+                                                let sse_data = format!("event: message_delta\ndata: {}\n\n",
+                                                    serde_json::to_string(&event).unwrap_or_default());
+                                                yield Ok(Bytes::from(sse_data));
+
+                                                let event = json!({"type": "message_stop"});
+                                                let sse_data = format!("event: message_stop\ndata: {}\n\n",
+                                                    serde_json::to_string(&event).unwrap_or_default());
+                                                yield Ok(Bytes::from(sse_data));
+                                            }
+                                            "response.failed" => {
+                                                let message = raw
+                                                    .get("error")
+                                                    .and_then(|e| e.get("message"))
+                                                    .and_then(|m| m.as_str())
+                                                    .unwrap_or("Response failed");
+                                                let error_event = json!({
+                                                    "type": "error",
+                                                    "error": {
+                                                        "type": "api_error",
+                                                        "message": message
+                                                    }
+                                                });
+                                                let sse_data = format!("event: error\ndata: {}\n\n",
+                                                    serde_json::to_string(&error_event).unwrap_or_default());
+                                                yield Ok(Bytes::from(sse_data));
+                                            }
+                                            _ => {}
+                                        }
+
+                                        continue;
+                                    }
+                                }
+
                                 if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(data) {
                                     log::debug!("[Claude/OpenRouter] <<< SSE chunk received");
 
@@ -134,8 +366,11 @@ pub fn create_anthropic_sse_stream(
                                             has_sent_message_start = true;
                                         }
 
-                                        // 处理 reasoning（thinking）
-                                        if let Some(reasoning) = &choice.delta.reasoning {
+                                        // 处理 reasoning（thinking）- 支持 reasoning 和 reasoning_content 字段
+                                        let reasoning_text = choice.delta.reasoning.as_ref()
+                                            .or(choice.delta.reasoning_content.as_ref());
+
+                                        if let Some(reasoning) = reasoning_text {
                                             if current_block_type.is_none() {
                                                 let event = json!({
                                                     "type": "content_block_start",
