@@ -231,7 +231,7 @@ impl RequestForwarder {
                         if should_switch {
                             status.failover_count += 1;
 
-                            // 异步触发供应商切换，更新 UI/托盘，并把“当前供应商”同步为实际使用的 provider
+                            // 异步触发供应商切换，更新 UI/托盘，并把"当前供应商"同步为实际使用的 provider
                             let fm = self.failover_manager.clone();
                             let ah = self.app_handle.clone();
                             let pid = provider.id.clone();
@@ -749,15 +749,8 @@ impl RequestForwarder {
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
 
-        let effective_endpoint =
-            if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
-                "/v1/chat/completions"
-            } else {
-                endpoint
-            };
-
-        // 使用适配器构建 URL
-        let url = adapter.build_url(&base_url, effective_endpoint);
+        // 使用适配器构建 URL（适配器内部会根据 api_format 调整 endpoint）
+        let url = adapter.build_url(&base_url, endpoint, provider);
 
         // 应用模型映射（独立于格式转换）
         let (mapped_body, _original_model, _mapped_model) =

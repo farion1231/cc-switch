@@ -244,18 +244,19 @@ impl ProviderAdapter for ClaudeAdapter {
             .map(|key| AuthInfo::new(key, strategy))
     }
 
-    fn build_url(&self, base_url: &str, endpoint: &str) -> String {
-        // NOTE:
-        // 过去 OpenRouter 只有 OpenAI Chat Completions 兼容接口，需要把 Claude 的 `/v1/messages`
-        // 映射到 `/v1/chat/completions`，并做 Anthropic ↔ OpenAI 的格式转换。
-        //
-        // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
-        // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
+    fn build_url(&self, base_url: &str, endpoint: &str, provider: &Provider) -> String {
+        // 根据 api_format 决定实际的 endpoint
+        // 当 apiFormat="openai_chat" 时，需要将 /v1/messages 映射到 /v1/chat/completions
+        let actual_endpoint = if self.get_api_format(provider) == "openai_chat" && endpoint.contains("/v1/messages") {
+            "/v1/chat/completions"
+        } else {
+            endpoint
+        };
 
         let mut base = format!(
             "{}/{}",
             base_url.trim_end_matches('/'),
-            endpoint.trim_start_matches('/')
+            actual_endpoint.trim_start_matches('/')
         );
 
         // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
@@ -264,13 +265,10 @@ impl ProviderAdapter for ClaudeAdapter {
         }
 
         // 为 Claude 原生 /v1/messages 端点添加 ?beta=true 参数
-        // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
-        // 注意：不要为 OpenAI Chat Completions (/v1/chat/completions) 添加此参数
-        //       当 apiFormat="openai_chat" 时，请求会转发到 /v1/chat/completions，
-        //       但该端点是 OpenAI 标准，不支持 ?beta=true 参数
-        if endpoint.contains("/v1/messages")
-            && !endpoint.contains("/v1/chat/completions")
-            && !endpoint.contains('?')
+        // 注意：OpenAI Chat Completions (/v1/chat/completions) 不支持此参数
+        if actual_endpoint.contains("/v1/messages")
+            && !actual_endpoint.contains("/v1/chat/completions")
+            && !actual_endpoint.contains('?')
         {
             format!("{base}?beta=true")
         } else {
@@ -487,41 +485,86 @@ mod tests {
     #[test]
     fn test_build_url_anthropic() {
         let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+            }
+        }));
         // /v1/messages 端点会自动添加 ?beta=true 参数
-        let url = adapter.build_url("https://api.anthropic.com", "/v1/messages");
+        let url = adapter.build_url("https://api.anthropic.com", "/v1/messages", &provider);
         assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
     }
 
     #[test]
     fn test_build_url_openrouter() {
         let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api"
+            }
+        }));
         // /v1/messages 端点会自动添加 ?beta=true 参数
-        let url = adapter.build_url("https://openrouter.ai/api", "/v1/messages");
+        let url = adapter.build_url("https://openrouter.ai/api", "/v1/messages", &provider);
         assert_eq!(url, "https://openrouter.ai/api/v1/messages?beta=true");
     }
 
     #[test]
     fn test_build_url_no_beta_for_other_endpoints() {
         let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+            }
+        }));
         // 非 /v1/messages 端点不添加 ?beta=true
-        let url = adapter.build_url("https://api.anthropic.com", "/v1/complete");
+        let url = adapter.build_url("https://api.anthropic.com", "/v1/complete", &provider);
         assert_eq!(url, "https://api.anthropic.com/v1/complete");
     }
 
     #[test]
     fn test_build_url_preserve_existing_query() {
         let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+            }
+        }));
         // 已有查询参数时不重复添加
-        let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar");
+        let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar", &provider);
         assert_eq!(url, "https://api.anthropic.com/v1/messages?foo=bar");
     }
 
     #[test]
     fn test_build_url_no_beta_for_openai_chat_completions() {
         let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://integrate.api.nvidia.com"
+            }
+        }));
         // OpenAI Chat Completions 端点不添加 ?beta=true
         // 这是 Nvidia 等 apiFormat="openai_chat" 供应商使用的端点
-        let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/chat/completions");
+        let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/chat/completions", &provider);
+        assert_eq!(url, "https://integrate.api.nvidia.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_build_url_openai_chat_format_maps_endpoint() {
+        let adapter = ClaudeAdapter::new();
+        // 使用 meta.apiFormat="openai_chat" 的 provider
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://integrate.api.nvidia.com"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        // 当 apiFormat="openai_chat" 时，/v1/messages 应该映射到 /v1/chat/completions
+        let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/messages", &provider);
         assert_eq!(url, "https://integrate.api.nvidia.com/v1/chat/completions");
     }
 
