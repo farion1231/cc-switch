@@ -3,13 +3,17 @@
 //! 提供代理服务器的启动、停止和配置管理
 
 use crate::app_config::AppType;
-use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
+use crate::config::{
+    atomic_write, delete_file, get_claude_settings_path, get_claude_settings_paths, read_json_file,
+    write_json_file, write_text_file,
+};
 use crate::database::Database;
 use crate::provider::Provider;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::types::*;
 use crate::services::provider::write_live_snapshot;
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -40,6 +44,60 @@ pub struct ProxyService {
 }
 
 impl ProxyService {
+    fn for_each_claude_settings_path<F>(mut op: F) -> Result<(), String>
+    where
+        F: FnMut(usize, &Path) -> Result<(), String>,
+    {
+        let mut paths = get_claude_settings_paths();
+        if paths.is_empty() {
+            paths.push(get_claude_settings_path());
+        }
+
+        for (idx, path) in paths.iter().enumerate() {
+            if let Err(err) = op(idx, path) {
+                if idx == 0 {
+                    return Err(err);
+                }
+                log::warn!(
+                    "Claude multi-path write skipped for secondary path {}: {}",
+                    path.display(),
+                    err
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn codex_live_paths() -> Vec<(PathBuf, PathBuf)> {
+        use crate::codex_config::{get_codex_auth_path, get_codex_config_dir};
+
+        let auth_primary = get_codex_auth_path();
+        let primary_dir = auth_primary
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(get_codex_config_dir);
+
+        crate::utils::wsl::expand_wsl_dirs(&primary_dir, &[".codex"])
+            .into_iter()
+            .map(|dir| (dir.join("auth.json"), dir.join("config.toml")))
+            .collect()
+    }
+
+    fn gemini_env_paths() -> Vec<PathBuf> {
+        use crate::gemini_config::{get_gemini_env_path, get_gemini_dir};
+
+        let env_primary = get_gemini_env_path();
+        let primary_dir = env_primary
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(get_gemini_dir);
+
+        crate::utils::wsl::expand_wsl_dirs(&primary_dir, &[".gemini"])
+            .into_iter()
+            .map(|dir| dir.join(".env"))
+            .collect()
+    }
+
     pub fn new(db: Arc<Database>) -> Self {
         Self {
             db,
@@ -1221,18 +1279,63 @@ impl ProxyService {
 
     pub fn detect_takeover_in_live_config_for_app(&self, app_type: &AppType) -> bool {
         match app_type {
-            AppType::Claude => match self.read_claude_live() {
-                Ok(config) => Self::is_claude_live_taken_over(&config),
-                Err(_) => false,
-            },
-            AppType::Codex => match self.read_codex_live() {
-                Ok(config) => Self::is_codex_live_taken_over(&config),
-                Err(_) => false,
-            },
-            AppType::Gemini => match self.read_gemini_live() {
-                Ok(config) => Self::is_gemini_live_taken_over(&config),
-                Err(_) => false,
-            },
+            AppType::Claude => {
+                let mut paths = get_claude_settings_paths();
+                if paths.is_empty() {
+                    paths.push(get_claude_settings_path());
+                }
+                for path in paths {
+                    if !path.exists() {
+                        continue;
+                    }
+                    if let Ok(config) = read_json_file::<Value>(&path) {
+                        if Self::is_claude_live_taken_over(&config) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            AppType::Codex => {
+                let mut pairs = Self::codex_live_paths();
+                if pairs.is_empty() {
+                    use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+                    pairs.push((get_codex_auth_path(), get_codex_config_path()));
+                }
+                for (auth_path, _config_path) in pairs {
+                    if !auth_path.exists() {
+                        continue;
+                    }
+                    if let Ok(auth) = read_json_file::<Value>(&auth_path) {
+                        if Self::is_codex_live_taken_over(&json!({ "auth": auth })) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            AppType::Gemini => {
+                use crate::gemini_config::{env_to_json, parse_env_file};
+
+                let mut paths = Self::gemini_env_paths();
+                if paths.is_empty() {
+                    paths.push(crate::gemini_config::get_gemini_env_path());
+                }
+
+                for env_path in paths {
+                    if !env_path.exists() {
+                        continue;
+                    }
+                    if let Ok(content) = std::fs::read_to_string(&env_path) {
+                        let env_map = parse_env_file(&content);
+                        let config = env_to_json(&env_map);
+                        if Self::is_gemini_live_taken_over(&config) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy takeover
                 false
@@ -1462,24 +1565,11 @@ impl ProxyService {
     /// 用于兜底处理：当数据库备份缺失但 Live 文件已经写成代理占位符时，
     /// 启动流程可以据此触发恢复逻辑。
     pub fn detect_takeover_in_live_configs(&self) -> bool {
-        if let Ok(config) = self.read_claude_live() {
-            if Self::is_claude_live_taken_over(&config) {
+        for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+            if self.detect_takeover_in_live_config_for_app(&app) {
                 return true;
             }
         }
-
-        if let Ok(config) = self.read_codex_live() {
-            if Self::is_codex_live_taken_over(&config) {
-                return true;
-            }
-        }
-
-        if let Ok(config) = self.read_gemini_live() {
-            if Self::is_gemini_live_taken_over(&config) {
-                return true;
-            }
-        }
-
         false
     }
 
@@ -1660,7 +1750,15 @@ impl ProxyService {
     }
 
     fn read_claude_live(&self) -> Result<Value, String> {
-        let path = get_claude_settings_path();
+        let mut paths = get_claude_settings_paths();
+        if paths.is_empty() {
+            paths.push(get_claude_settings_path());
+        }
+        let path = paths
+            .iter()
+            .find(|p| p.exists())
+            .cloned()
+            .unwrap_or_else(get_claude_settings_path);
         if !path.exists() {
             return Err("Claude 配置文件不存在".to_string());
         }
@@ -1691,25 +1789,34 @@ impl ProxyService {
     }
 
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {
-        let path = get_claude_settings_path();
         let settings = crate::services::provider::sanitize_claude_settings_for_live(config);
-        write_json_file(&path, &settings).map_err(|e| format!("写入 Claude 配置失败: {e}"))
+        Self::for_each_claude_settings_path(|_idx, path| {
+            write_json_file(path, &settings)
+                .map_err(|e| format!("写入 Claude 配置失败 ({}): {e}", path.display()))
+        })
     }
 
     fn read_codex_live(&self) -> Result<Value, String> {
-        use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+        let mut pairs = Self::codex_live_paths();
+        if pairs.is_empty() {
+            use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+            pairs.push((get_codex_auth_path(), get_codex_config_path()));
+        }
 
-        let auth_path = get_codex_auth_path();
+        let (auth_path, config_path) = pairs
+            .iter()
+            .find(|(auth_path, _)| auth_path.exists())
+            .unwrap_or(&pairs[0]);
+
         if !auth_path.exists() {
-            return Err("Codex auth.json 不存在".to_string());
+            return Err(format!("Codex auth.json 不存在: {}", auth_path.display()));
         }
 
         let auth: Value =
-            read_json_file(&auth_path).map_err(|e| format!("读取 Codex auth 失败: {e}"))?;
+            read_json_file(auth_path).map_err(|e| format!("读取 Codex auth 失败: {e}"))?;
 
-        let config_path = get_codex_config_path();
         let config_str = if config_path.exists() {
-            std::fs::read_to_string(&config_path)
+            std::fs::read_to_string(config_path)
                 .map_err(|e| format!("读取 Codex config 失败: {e}"))?
         } else {
             String::new()
@@ -1722,49 +1829,141 @@ impl ProxyService {
     }
 
     fn write_codex_live(&self, config: &Value) -> Result<(), String> {
-        use crate::codex_config::{
-            get_codex_auth_path, get_codex_config_path, write_codex_live_atomic,
-        };
-
         let auth = config.get("auth");
         let config_str = config.get("config").and_then(|v| v.as_str());
 
-        match (auth, config_str) {
-            (Some(auth), Some(cfg)) => write_codex_live_atomic(auth, Some(cfg))
-                .map_err(|e| format!("写入 Codex 配置失败: {e}"))?,
-            (Some(auth), None) => {
-                let auth_path = get_codex_auth_path();
-                write_json_file(&auth_path, auth)
-                    .map_err(|e| format!("写入 Codex auth 失败: {e}"))?;
+        let mut pairs = Self::codex_live_paths();
+        if pairs.is_empty() {
+            use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+            pairs.push((get_codex_auth_path(), get_codex_config_path()));
+        }
+
+        for (idx, (auth_path, config_path)) in pairs.iter().enumerate() {
+            let write_one = || -> Result<(), String> {
+                if let Some(parent) = auth_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("创建 Codex 配置目录失败 ({}): {e}", parent.display()))?;
+                }
+
+                // 读取旧内容用于回滚
+                let old_auth = if auth_path.exists() {
+                    Some(std::fs::read(auth_path).map_err(|e| {
+                        format!("读取 Codex auth 用于回滚失败 ({}): {e}", auth_path.display())
+                    })?)
+                } else {
+                    None
+                };
+
+                // 先校验 TOML（仅当提供 config 字段且非空）
+                if let Some(cfg) = config_str {
+                    if !cfg.trim().is_empty() {
+                        toml::from_str::<toml::Table>(cfg).map_err(|e| {
+                            format!("Codex config.toml 语法错误 ({}): {e}", config_path.display())
+                        })?;
+                    }
+                }
+
+                // 先写 auth（如果提供）
+                let mut wrote_auth = false;
+                if let Some(auth) = auth {
+                    write_json_file(auth_path, auth).map_err(|e| {
+                        format!("写入 Codex auth 失败 ({}): {e}", auth_path.display())
+                    })?;
+                    wrote_auth = true;
+                }
+
+                // 再写 config（仅当提供 config 字段时才写入；保持与原逻辑一致）
+                if let Some(cfg) = config_str {
+                    if let Err(e) = write_text_file(config_path, cfg)
+                        .map_err(|e| format!("写入 Codex config 失败 ({}): {e}", config_path.display()))
+                    {
+                        // 回滚 auth（仅当本次确实写过 auth 时才回滚）
+                        if wrote_auth {
+                            if let Some(bytes) = old_auth {
+                                let _ = atomic_write(auth_path, &bytes);
+                            } else {
+                                let _ = delete_file(auth_path);
+                            }
+                        }
+                        return Err(e);
+                    }
+                }
+
+                Ok(())
+            };
+
+            if let Err(err) = write_one() {
+                if idx == 0 {
+                    return Err(err);
+                }
+                log::warn!(
+                    "Codex multi-path write skipped for secondary path {}: {}",
+                    auth_path.display(),
+                    err
+                );
             }
-            (None, Some(cfg)) => {
-                let config_path = get_codex_config_path();
-                crate::config::write_text_file(&config_path, cfg)
-                    .map_err(|e| format!("写入 Codex config 失败: {e}"))?;
-            }
-            (None, None) => {}
         }
 
         Ok(())
     }
 
     fn read_gemini_live(&self) -> Result<Value, String> {
-        use crate::gemini_config::{env_to_json, get_gemini_env_path, read_gemini_env};
+        use crate::gemini_config::{env_to_json, parse_env_file};
 
-        let env_path = get_gemini_env_path();
+        let mut paths = Self::gemini_env_paths();
+        if paths.is_empty() {
+            paths.push(crate::gemini_config::get_gemini_env_path());
+        }
+
+        let env_path = paths
+            .iter()
+            .find(|p| p.exists())
+            .cloned()
+            .unwrap_or_else(crate::gemini_config::get_gemini_env_path);
+
         if !env_path.exists() {
             return Err("Gemini .env 文件不存在".to_string());
         }
 
-        let env_map = read_gemini_env().map_err(|e| format!("读取 Gemini env 失败: {e}"))?;
+        let content = std::fs::read_to_string(&env_path)
+            .map_err(|e| format!("读取 Gemini env 失败 ({}): {e}", env_path.display()))?;
+        let env_map = parse_env_file(&content);
         Ok(env_to_json(&env_map))
     }
 
     fn write_gemini_live(&self, config: &Value) -> Result<(), String> {
-        use crate::gemini_config::{json_to_env, write_gemini_env_atomic};
+        use crate::gemini_config::{json_to_env, serialize_env_file};
 
         let env_map = json_to_env(config).map_err(|e| format!("转换 Gemini 配置失败: {e}"))?;
-        write_gemini_env_atomic(&env_map).map_err(|e| format!("写入 Gemini env 失败: {e}"))?;
+        let content = serialize_env_file(&env_map);
+
+        let mut paths = Self::gemini_env_paths();
+        if paths.is_empty() {
+            paths.push(crate::gemini_config::get_gemini_env_path());
+        }
+
+        for (idx, env_path) in paths.iter().enumerate() {
+            let write_one = || -> Result<(), String> {
+                if let Some(parent) = env_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        format!("创建 Gemini 配置目录失败 ({}): {e}", parent.display())
+                    })?;
+                }
+                write_text_file(env_path, &content)
+                    .map_err(|e| format!("写入 Gemini env 失败 ({}): {e}", env_path.display()))
+            };
+
+            if let Err(err) = write_one() {
+                if idx == 0 {
+                    return Err(err);
+                }
+                log::warn!(
+                    "Gemini multi-path write skipped for secondary path {}: {}",
+                    env_path.display(),
+                    err
+                );
+            }
+        }
         Ok(())
     }
 

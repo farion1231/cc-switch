@@ -40,6 +40,17 @@ interface ToolVersion {
   error: string | null;
   env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
   wsl_distro: string | null;
+  // 多环境版本信息
+  envs?: ToolEnvVersion[];
+}
+
+interface ToolEnvVersion {
+  env_type: "windows" | "wsl" | "macos" | "linux";
+  wsl_distro?: string;
+  version?: string;
+  error?: string;
+  wsl_shell?: string;
+  wsl_shell_flag?: string;
 }
 
 const TOOL_NAMES = ["claude", "codex", "gemini", "opencode"] as const;
@@ -424,12 +435,204 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         )}
       </motion.div>
 
-      {!isWindows() && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between px-1">
-            <h3 className="text-sm font-medium">
-              {t("settings.localEnvCheck")}
-            </h3>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between px-1">
+          <h3 className="text-sm font-medium">{t("settings.localEnvCheck")}</h3>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 text-xs"
+            onClick={() => loadAllToolVersions()}
+            disabled={isLoadingTools}
+          >
+            <RefreshCw
+              className={
+                isLoadingTools ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"
+              }
+            />
+            {isLoadingTools ? t("common.refreshing") : t("common.refresh")}
+          </Button>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 px-1">
+          {TOOL_NAMES.map((toolName, index) => {
+            const tool = toolVersions.find((item) => item.name === toolName);
+            // Special case for OpenCode (capital C), others use capitalize
+            const displayName =
+              toolName === "opencode"
+                ? "OpenCode"
+                : toolName.charAt(0).toUpperCase() + toolName.slice(1);
+
+            // 多环境显示
+            const envs = tool?.envs || [];
+            const hasMultipleEnvs = envs.length > 1;
+
+            return (
+              <motion.div
+                key={toolName}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.15 + index * 0.05 }}
+                whileHover={{ scale: 1.02 }}
+                className="flex flex-col gap-2 rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-4 shadow-sm transition-colors hover:border-primary/30"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Terminal className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">{displayName}</span>
+                    {/* 环境标签 - 汇总显示，避免过多气泡挤出 */}
+                    {envs.some((env) => env.env_type === "windows") && (
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.windows.className}`}
+                      >
+                        {t(ENV_BADGE_CONFIG.windows.labelKey)}
+                      </span>
+                    )}
+                    {envs.some((env) => env.env_type === "wsl") && (
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.wsl.className}`}
+                        title={envs
+                          .filter((env) => env.env_type === "wsl")
+                          .map((env) => env.wsl_distro)
+                          .filter(Boolean)
+                          .join(", ")}
+                      >
+                        WSL×{envs.filter((env) => env.env_type === "wsl").length}
+                      </span>
+                    )}
+                    {envs.some((env) => env.env_type === "macos") && (
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.macos.className}`}
+                      >
+                        {t(ENV_BADGE_CONFIG.macos.labelKey)}
+                      </span>
+                    )}
+                    {envs.some((env) => env.env_type === "linux") && (
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.linux.className}`}
+                      >
+                        {t(ENV_BADGE_CONFIG.linux.labelKey)}
+                      </span>
+                    )}
+                  </div>
+                  {isLoadingTools || loadingTools[toolName] ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : tool?.version ? (
+                    tool.latest_version &&
+                    tool.version !== tool.latest_version ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20">
+                        {tool.latest_version}
+                      </span>
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                    )
+                  ) : (
+                    <AlertCircle className="h-4 w-4 text-yellow-500" />
+                  )}
+                </div>
+                {/* 多环境版本信息 */}
+                {hasMultipleEnvs ? (
+                  <div className="flex flex-col gap-1">
+                    {envs.map((env, envIndex) => (
+                      <div
+                        key={envIndex}
+                        className="flex items-center justify-between text-xs"
+                      >
+                        <span className="text-muted-foreground">
+                          {env.env_type === "wsl" && env.wsl_distro
+                            ? `WSL (${env.wsl_distro})`
+                            : env.env_type}
+                        </span>
+                        <span
+                          className={`font-mono truncate max-w-[150px] ${
+                            env.version ? "text-foreground" : "text-yellow-500"
+                          }`}
+                          title={env.version || env.error || ""}
+                        >
+                          {env.version || env.error || t("common.notInstalled")}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div
+                    className="text-xs font-mono text-muted-foreground truncate"
+                    title={tool?.version || tool?.error || t("common.unknown")}
+                  >
+                    {isLoadingTools
+                      ? t("common.loading")
+                      : tool?.version
+                        ? tool.version
+                        : tool?.error || t("common.notInstalled")}
+                  </div>
+                )}
+                {/* WSL Shell 选择器 - 显示在第一个 WSL 环境旁 */}
+                {envs.some((env) => env.env_type === "wsl") && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <Select
+                      value={wslShellByTool[toolName]?.wslShell || "auto"}
+                      onValueChange={(v) =>
+                        handleToolShellChange(toolName, v)
+                      }
+                      disabled={isLoadingTools || loadingTools[toolName]}
+                    >
+                      <SelectTrigger className="h-6 w-[70px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">
+                          {t("common.auto")}
+                        </SelectItem>
+                        {WSL_SHELL_OPTIONS.map((shell) => (
+                          <SelectItem key={shell} value={shell}>
+                            {shell}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={wslShellByTool[toolName]?.wslShellFlag || "auto"}
+                      onValueChange={(v) =>
+                        handleToolShellFlagChange(toolName, v)
+                      }
+                      disabled={isLoadingTools || loadingTools[toolName]}
+                    >
+                      <SelectTrigger className="h-6 w-[70px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">
+                          {t("common.auto")}
+                        </SelectItem>
+                        {WSL_SHELL_FLAG_OPTIONS.map((flag) => (
+                          <SelectItem key={flag} value={flag}>
+                            {flag}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </motion.div>
+            );
+          })}
+        </div>
+      </div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.3 }}
+        className="space-y-3"
+      >
+        <h3 className="text-sm font-medium px-1">
+          {t("settings.oneClickInstall")}
+        </h3>
+        <div className="rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-4 space-y-3 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              {t("settings.oneClickInstallHint")}
+            </p>
             <Button
               size="sm"
               variant="outline"
@@ -558,7 +761,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             })}
           </div>
         </div>
-      )}
+      </motion.div>
 
       {!isWindows() && (
         <motion.div

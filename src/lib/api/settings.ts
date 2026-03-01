@@ -183,6 +183,14 @@ export const settingsApi = {
       error: string | null;
       env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
       wsl_distro: string | null;
+      envs?: Array<{
+        env_type: "windows" | "wsl" | "macos" | "linux";
+        wsl_distro?: string;
+        version?: string;
+        error?: string;
+        wsl_shell?: string;
+        wsl_shell_flag?: string;
+      }>;
     }>
   > {
     return await invoke("get_tool_versions", { tools, wslShellByTool });

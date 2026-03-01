@@ -1,0 +1,2014 @@
+From 4d81aaddb92f0b80214aa002861d7d0e4ff35405 Mon Sep 17 00:00:00 2001
+From: Bowen Han <fancycode@gmail.com>
+Date: Fri, 27 Feb 2026 15:53:48 -0800
+Subject: [PATCH] ## Support WSL + Windows dual-env config sync & show WSL
+ versions in About page
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+### Background
+
+On Windows, it's common to run Claude / Codex / Gemini / OpenCode / OpenClaw inside WSL. Before this PR, switching a provider only wrote config to the Windows side. The WSL-side config was not updated, so CLI tools running inside WSL still used the old provider settings.
+
+### What changed
+
+**Write config to both Windows and WSL at the same time**
+
+- When switching a provider, cc-switch now writes to the Windows config path and all installed WSL distros' config paths simultaneously
+- Works for all 5 app types: Claude, Codex, Gemini, OpenCode, OpenClaw
+- If the primary (Windows) write fails, it returns an error as usual. If a secondary (WSL) write fails, it only logs a warning and continues
+- Handles both UNC paths (`\\wsl.localhost\<distro>\...`) and auto-resolved `~/<app-dir>` paths inside each distro
+
+**Show per-environment versions in About page**
+
+- Detects and shows the installed version for each tool in Windows local env and each WSL distro
+- When multiple environments are found, displays them as a list with distro names (e.g. `WSL (Ubuntu-22.04)`)
+- Environment badges in the header summarize all envs in one line (`Windows`, `WSL×N`) to avoid badge overflow
+
+**Refactor: remove duplicated WSL utility code**
+
+- Added `utils/wsl.rs` as a shared module for all WSL helper functions (`decode_wsl_output`, `parse_wsl_unc_path`, `resolve_wsl_home_dir_unc`, `get_all_wsl_distros`, `dedupe_paths`). These were previously copied across 4 different files
+- Merged 5 identical `get_*_wsl_distros` functions in settings.rs into one `get_wsl_distros`
+- Collapsed `launch_terminal_with_env` from 5 copy-pasted match arms (one per app type) into a single generic implementation
+
+### Testing
+
+- Tested on Windows + WSL (Ubuntu-22.04): switching Claude provider correctly updates `~/.claude/settings.json` inside WSL
+- On machines without WSL, behavior is unchanged
+- `cargo check` passes with no new warnings
+---
+ src-tauri/src/commands/misc.rs           | 234 +++---
+ src-tauri/src/config.rs                  |  62 +-
+ src-tauri/src/lib.rs                     |   1 +
+ src-tauri/src/services/provider/live.rs  | 862 +++++++++++++++--------
+ src-tauri/src/settings.rs                |  13 +-
+ src-tauri/src/utils/mod.rs               |   1 +
+ src-tauri/src/utils/wsl.rs               | 200 ++++++
+ src/components/settings/AboutSection.tsx | 183 +++--
+ src/lib/api/settings.ts                  |   8 +
+ 9 files changed, 1124 insertions(+), 440 deletions(-)
+ create mode 100644 src-tauri/src/utils/mod.rs
+ create mode 100644 src-tauri/src/utils/wsl.rs
+
+diff --git a/src-tauri/src/commands/misc.rs b/src-tauri/src/commands/misc.rs
+index b4dd12d9..01f6aeea 100644
+--- a/src-tauri/src/commands/misc.rs
++++ b/src-tauri/src/commands/misc.rs
+@@ -80,7 +80,7 @@ pub async fn get_skills_migration_result() -> Result<Option<SkillsMigrationPaylo
+     Ok(crate::init_status::take_skills_migration_result())
+ }
+ 
+-#[derive(serde::Serialize)]
++#[derive(serde::Serialize, Clone)]
+ pub struct ToolVersion {
+     name: String,
+     version: Option<String>,
+@@ -90,6 +90,31 @@ pub struct ToolVersion {
+     env_type: String,
+     /// 当 env_type 为 "wsl" 时，返回该工具绑定的 WSL distro（用于按 distro 探测 shells）
+     wsl_distro: Option<String>,
++    /// 多环境版本信息（Windows + WSL 同时支持）
++    #[serde(default)]
++    envs: Vec<ToolEnvVersion>,
++}
++
++/// 单个环境的版本信息
++#[derive(serde::Serialize, Clone)]
++pub struct ToolEnvVersion {
++    /// 环境类型: "windows", "wsl", "macos", "linux"
++    pub env_type: String,
++    /// WSL 发行版名称（仅当 env_type 为 "wsl" 时有效）
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub wsl_distro: Option<String>,
++    /// 版本号
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub version: Option<String>,
++    /// 错误信息（如果获取版本失败）
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub error: Option<String>,
++    /// 用户偏好的 shell（仅 WSL 有效）
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub wsl_shell: Option<String>,
++    /// 用户偏好的 shell flag（仅 WSL 有效）
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub wsl_shell_flag: Option<String>,
+ }
+ 
+ const VALID_TOOLS: [&str; 4] = ["claude", "codex", "gemini", "opencode"];
+@@ -103,31 +128,6 @@ pub struct WslShellPreferenceInput {
+     pub wsl_shell_flag: Option<String>,
+ }
+ 
+-// Keep platform-specific env detection in one place to avoid repeating cfg blocks.
+-#[cfg(target_os = "windows")]
+-fn tool_env_type_and_wsl_distro(tool: &str) -> (String, Option<String>) {
+-    if let Some(distro) = wsl_distro_for_tool(tool) {
+-        ("wsl".to_string(), Some(distro))
+-    } else {
+-        ("windows".to_string(), None)
+-    }
+-}
+-
+-#[cfg(target_os = "macos")]
+-fn tool_env_type_and_wsl_distro(_tool: &str) -> (String, Option<String>) {
+-    ("macos".to_string(), None)
+-}
+-
+-#[cfg(target_os = "linux")]
+-fn tool_env_type_and_wsl_distro(_tool: &str) -> (String, Option<String>) {
+-    ("linux".to_string(), None)
+-}
+-
+-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+-fn tool_env_type_and_wsl_distro(_tool: &str) -> (String, Option<String>) {
+-    ("unknown".to_string(), None)
+-}
+-
+ #[tauri::command]
+ pub async fn get_tool_versions(
+     tools: Option<Vec<String>>,
+@@ -146,43 +146,137 @@ pub async fn get_tool_versions(
+     let mut results = Vec::new();
+ 
+     for tool in requested {
+-        let pref = wsl_shell_by_tool.as_ref().and_then(|m| m.get(tool));
+-        let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
+-        let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
+-
+-        results.push(get_single_tool_version_impl(tool, tool_wsl_shell, tool_wsl_shell_flag).await);
++        results.push(
++            get_single_tool_version_impl(tool, wsl_shell_by_tool.as_ref())
++                .await,
++        );
+     }
+ 
+     Ok(results)
+ }
+ 
+ /// 获取单个工具的版本信息（内部实现）
++/// 在 Windows 上同时检测 Windows 本地和 WSL 环境
+ async fn get_single_tool_version_impl(
+     tool: &str,
+-    wsl_shell: Option<&str>,
+-    wsl_shell_flag: Option<&str>,
++    wsl_shell_by_tool: Option<&HashMap<String, WslShellPreferenceInput>>,
+ ) -> ToolVersion {
+     debug_assert!(
+         VALID_TOOLS.contains(&tool),
+         "unexpected tool name in get_single_tool_version_impl: {tool}"
+     );
+ 
+-    // 判断该工具的运行环境 & WSL distro（如有）
+-    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
+-
+     // 使用全局 HTTP 客户端（已包含代理配置）
+     let client = crate::proxy::http_client::get();
+ 
+-    // 1. 获取本地版本
+-    let (local_version, local_error) = if let Some(distro) = wsl_distro.as_deref() {
+-        try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
+-    } else {
+-        let direct_result = try_get_version(tool);
+-        if direct_result.0.is_some() {
+-            direct_result
++    // 获取该工具的用户 WSL 偏好设置
++    let pref = wsl_shell_by_tool.and_then(|m| m.get(tool));
++    let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
++    let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
++
++    // 收集多环境版本信息
++    let mut envs: Vec<ToolEnvVersion> = Vec::new();
++
++    #[cfg(target_os = "windows")]
++    {
++        // Windows: 检测本地版本
++        let (windows_version, windows_error) = {
++            let direct_result = try_get_version(tool);
++            if direct_result.0.is_some() {
++                direct_result
++            } else {
++                scan_cli_version(tool)
++            }
++        };
++
++        if windows_version.is_some() || windows_error.is_some() {
++            envs.push(ToolEnvVersion {
++                env_type: "windows".to_string(),
++                wsl_distro: None,
++                version: windows_version,
++                error: windows_error,
++                wsl_shell: None,
++                wsl_shell_flag: None,
++            });
++        }
++
++        // 检测 WSL 环境中的版本
++        let wsl_distros = crate::utils::wsl::get_all_wsl_distros();
++        for distro in wsl_distros {
++            let (wsl_version, wsl_error) = try_get_version_wsl(
++                tool,
++                &distro,
++                tool_wsl_shell,
++                tool_wsl_shell_flag,
++            );
++            // 只添加有版本或错误信息的环境
++            if wsl_version.is_some() || wsl_error.is_some() {
++                envs.push(ToolEnvVersion {
++                    env_type: "wsl".to_string(),
++                    wsl_distro: Some(distro),
++                    version: wsl_version,
++                    error: wsl_error,
++                    wsl_shell: tool_wsl_shell.map(|s| s.to_string()),
++                    wsl_shell_flag: tool_wsl_shell_flag.map(|s| s.to_string()),
++                });
++            }
++        }
++    }
++
++    #[cfg(not(target_os = "windows"))]
++    {
++        // 非 Windows 平台：检测本地版本
++        let (local_version, local_error) = {
++            let direct_result = try_get_version(tool);
++            if direct_result.0.is_some() {
++                direct_result
++            } else {
++                scan_cli_version(tool)
++            }
++        };
++
++        let env_type = if cfg!(target_os = "macos") {
++            "macos"
++        } else if cfg!(target_os = "linux") {
++            "linux"
+         } else {
+-            scan_cli_version(tool)
++            "unknown"
++        };
++
++        if local_version.is_some() || local_error.is_some() {
++            envs.push(ToolEnvVersion {
++                env_type: env_type.to_string(),
++                wsl_distro: None,
++                version: local_version,
++                error: local_error,
++                wsl_shell: None,
++                wsl_shell_flag: None,
++            });
+         }
++    }
++
++    // 确定主要环境类型（优先 Windows，其次第一个有版本的环境）
++    let (env_type, wsl_distro) = if let Some(first) = envs.first() {
++        (first.env_type.clone(), first.wsl_distro.clone())
++    } else {
++        let default_env_type = if cfg!(target_os = "windows") {
++            "windows"
++        } else if cfg!(target_os = "macos") {
++            "macos"
++        } else if cfg!(target_os = "linux") {
++            "linux"
++        } else {
++            "unknown"
++        };
++        (default_env_type.to_string(), None)
++    };
++
++    // 获取版本号和错误信息（优先使用第一个有效的）
++    let version = envs.iter().find_map(|e| e.version.clone());
++    let error = if version.is_none() {
++        envs.iter().find_map(|e| e.error.clone())
++    } else {
++        None
+     };
+ 
+     // 2. 获取远程最新版本
+@@ -196,11 +290,12 @@ async fn get_single_tool_version_impl(
+ 
+     ToolVersion {
+         name: tool.to_string(),
+-        version: local_version,
++        version,
+         latest_version,
+-        error: local_error,
++        error,
+         env_type,
+         wsl_distro,
++        envs,
+     }
+ }
+ 
+@@ -657,44 +752,6 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
+     (None, Some("not installed or not executable".to_string()))
+ }
+ 
+-#[cfg(target_os = "windows")]
+-fn wsl_distro_for_tool(tool: &str) -> Option<String> {
+-    let override_dir = match tool {
+-        "claude" => crate::settings::get_claude_override_dir(),
+-        "codex" => crate::settings::get_codex_override_dir(),
+-        "gemini" => crate::settings::get_gemini_override_dir(),
+-        "opencode" => crate::settings::get_opencode_override_dir(),
+-        _ => None,
+-    }?;
+-
+-    wsl_distro_from_path(&override_dir)
+-}
+-
+-/// 从 UNC 路径中提取 WSL 发行版名称
+-/// 支持 `\\wsl$\Ubuntu\...` 和 `\\wsl.localhost\Ubuntu\...` 两种格式
+-#[cfg(target_os = "windows")]
+-fn wsl_distro_from_path(path: &Path) -> Option<String> {
+-    use std::path::{Component, Prefix};
+-    let Some(Component::Prefix(prefix)) = path.components().next() else {
+-        return None;
+-    };
+-    match prefix.kind() {
+-        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+-            let server_name = server.to_string_lossy();
+-            if server_name.eq_ignore_ascii_case("wsl$")
+-                || server_name.eq_ignore_ascii_case("wsl.localhost")
+-            {
+-                let distro = share.to_string_lossy().to_string();
+-                if !distro.is_empty() {
+-                    return Some(distro);
+-                }
+-            }
+-            None
+-        }
+-        _ => None,
+-    }
+-}
+-
+ /// 打开指定提供商的终端
+ ///
+ /// 根据提供商配置的环境变量启动一个带有该提供商特定设置的终端
+@@ -721,7 +778,7 @@ pub async fn open_provider_terminal(
+     let env_vars = extract_env_vars_from_config(config, &app_type);
+ 
+     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
+-    launch_terminal_with_env(env_vars, &providerId).map_err(|e| format!("启动终端失败: {e}"))?;
++    launch_terminal_with_env(env_vars, &providerId, &app_type).map_err(|e| format!("启动终端失败: {e}"))?;
+ 
+     Ok(true)
+ }
+@@ -776,20 +833,21 @@ fn extract_env_vars_from_config(
+     env_vars
+ }
+ 
+-/// 创建临时配置文件并启动 claude 终端
++/// 创建临时配置文件并启动 claude/codex 终端
+ /// 使用 --settings 参数传入提供商特定的 API 配置
+ fn launch_terminal_with_env(
+     env_vars: Vec<(String, String)>,
+     provider_id: &str,
++    app_type: &AppType,
+ ) -> Result<(), String> {
+     let temp_dir = std::env::temp_dir();
+     let config_file = temp_dir.join(format!(
+-        "claude_{}_{}.json",
++        "{}_{}_{}.json",
++        app_type.as_str(),
+         provider_id,
+         std::process::id()
+     ));
+ 
+-    // 创建并写入配置文件
+     write_claude_config(&config_file, &env_vars)?;
+ 
+     #[cfg(target_os = "macos")]
+diff --git a/src-tauri/src/config.rs b/src-tauri/src/config.rs
+index 11a3c075..da6d59fb 100644
+--- a/src-tauri/src/config.rs
++++ b/src-tauri/src/config.rs
+@@ -69,9 +69,7 @@ pub fn get_claude_mcp_path() -> PathBuf {
+     get_default_claude_mcp_path()
+ }
+ 
+-/// 获取 Claude Code 主配置文件路径
+-pub fn get_claude_settings_path() -> PathBuf {
+-    let dir = get_claude_config_dir();
++fn resolve_claude_settings_path_in_dir(dir: &Path) -> PathBuf {
+     let settings = dir.join("settings.json");
+     if settings.exists() {
+         return settings;
+@@ -85,6 +83,64 @@ pub fn get_claude_settings_path() -> PathBuf {
+     settings
+ }
+ 
++/// 获取 Claude Code 主配置文件路径
++pub fn get_claude_settings_path() -> PathBuf {
++    resolve_claude_settings_path_in_dir(&get_claude_config_dir())
++}
++
++/// 获取 Claude Code 主配置文件路径集合（主路径 + 可推导的附加路径）
++///
++/// 返回值保证：
++/// - 第一个路径始终是主路径（`get_claude_settings_path()` 对应目录）
++/// - 去重（Windows 下不区分大小写）
++pub fn get_claude_settings_paths() -> Vec<PathBuf> {
++    let primary_dir = get_claude_config_dir();
++    let mut dirs = vec![primary_dir.clone()];
++
++    #[cfg(windows)]
++    {
++        use crate::utils::wsl::{parse_wsl_unc_path, resolve_wsl_home_dir_unc};
++
++        // 当主目录是 \\wsl.localhost\<distro>\... 这类 UNC 路径时，
++        // 自动按系统中所有 WSL 发行版推导同后缀的多发行版目录。
++        if let Some((current_distro, suffix)) = parse_wsl_unc_path(&primary_dir) {
++            if let Some(distros) = crate::settings::get_wsl_distros() {
++                for distro in distros {
++                    let distro = distro.trim();
++                    if distro.is_empty() || distro.eq_ignore_ascii_case(&current_distro) {
++                        continue;
++                    }
++
++                    let mut dir = PathBuf::from(format!("\\\\wsl.localhost\\{distro}"));
++                    if !suffix.is_empty() {
++                        dir.push(&suffix);
++                    }
++                    dirs.push(dir);
++                }
++            }
++        }
++
++        // 当主目录不是 WSL UNC（例如 C:\Users\...\ .claude）时，
++        // 自动额外加入每个 WSL distro 的 ~/.claude。
++        if parse_wsl_unc_path(&primary_dir).is_none() {
++            if let Some(distros) = crate::settings::get_wsl_distros() {
++                for distro in distros {
++                    if let Some(mut home_unc) = resolve_wsl_home_dir_unc(&distro) {
++                        home_unc.push(".claude");
++                        dirs.push(home_unc);
++                    }
++                }
++            }
++        }
++    }
++
++    let raw_paths = dirs
++        .into_iter()
++        .map(|dir| resolve_claude_settings_path_in_dir(&dir))
++        .collect();
++    crate::utils::wsl::dedupe_paths(raw_paths)
++}
++
+ /// 获取应用配置目录路径 (~/.cc-switch)
+ pub fn get_app_config_dir() -> PathBuf {
+     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 1ba9229d..3a1cfa64 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -27,6 +27,7 @@ mod settings;
+ mod store;
+ mod tray;
+ mod usage_script;
++mod utils;
+ 
+ pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
+ pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
+diff --git a/src-tauri/src/services/provider/live.rs b/src-tauri/src/services/provider/live.rs
+index 0f815c96..a4ae85f0 100644
+--- a/src-tauri/src/services/provider/live.rs
++++ b/src-tauri/src/services/provider/live.rs
+@@ -3,19 +3,23 @@
+ //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
+ 
+ use std::collections::HashMap;
++use std::path::{Path, PathBuf};
+ 
+ use serde_json::{json, Value};
+ 
+ use crate::app_config::AppType;
+-use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+-use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
++use crate::codex_config::get_codex_auth_path;
++use crate::config::{
++    delete_file, get_claude_settings_path, get_claude_settings_paths, read_json_file,
++    write_json_file,
++};
+ use crate::error::AppError;
+ use crate::provider::Provider;
+ use crate::services::mcp::McpService;
+ use crate::store::AppState;
+ 
+ use super::gemini_auth::{
+-    detect_gemini_auth_type, ensure_google_oauth_security_flag, GeminiAuthType,
++    detect_gemini_auth_type, GeminiAuthType,
+ };
+ use super::normalize_claude_models_in_value;
+ 
+@@ -31,6 +35,333 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
+     v
+ }
+ 
++fn for_each_claude_settings_path<F>(mut op: F) -> Result<(), AppError>
++where
++    F: FnMut(usize, &Path) -> Result<(), AppError>,
++{
++    
++    let mut paths = get_claude_settings_paths();
++    log::debug!("Claude settings paths: {:?}", paths);
++    if paths.is_empty() {
++        paths.push(get_claude_settings_path());
++    }
++
++    for (idx, path) in paths.iter().enumerate() {
++        if let Err(err) = op(idx, path) {
++            if idx == 0 {
++                return Err(err);
++            }
++            log::warn!(
++                "Claude multi-path write skipped for secondary path {}: {}",
++                path.display(),
++                err
++            );
++        }
++    }
++    Ok(())
++}
++
++fn expand_wsl_dirs(
++    primary_dir: &Path,
++    default_subdir: &[&str],
++) -> Vec<PathBuf> {
++    let mut dirs = vec![primary_dir.to_path_buf()];
++
++    #[cfg(target_os = "windows")]
++    {
++        use crate::utils::wsl::{parse_wsl_unc_path, resolve_wsl_home_dir_unc};
++
++        if let Some((current_distro, suffix)) = parse_wsl_unc_path(primary_dir) {
++            if let Some(distros) = crate::settings::get_wsl_distros() {
++                for distro in distros {
++                    let distro = distro.trim();
++                    if distro.is_empty() || distro.eq_ignore_ascii_case(&current_distro) {
++                        continue;
++                    }
++                    let mut dir = PathBuf::from(format!("\\\\wsl.localhost\\{distro}"));
++                    if !suffix.is_empty() {
++                        dir.push(&suffix);
++                    }
++                    dirs.push(dir);
++                }
++            }
++        } else if let Some(distros) = crate::settings::get_wsl_distros() {
++            for distro in distros {
++                if let Some(mut home_unc) = resolve_wsl_home_dir_unc(&distro) {
++                    for segment in default_subdir {
++                        home_unc.push(segment);
++                    }
++                    dirs.push(home_unc);
++                }
++            }
++        }
++    }
++
++    crate::utils::wsl::dedupe_paths(dirs)
++}
++
++
++fn for_each_codex_live_path<F>(mut op: F) -> Result<(), AppError>
++where
++    F: FnMut(usize, &Path, &Path) -> Result<(), AppError>,
++{
++    let auth_primary = get_codex_auth_path();
++    let primary_dir = auth_primary
++        .parent()
++        .map(Path::to_path_buf)
++        .unwrap_or_else(crate::codex_config::get_codex_config_dir);
++
++    let dirs = expand_wsl_dirs(&primary_dir, &[".codex"]);
++    log::debug!("Codex live config dirs: {:?}", dirs);
++    for (idx, dir) in dirs.iter().enumerate() {
++        let auth_path = dir.join("auth.json");
++        let config_path = dir.join("config.toml");
++        if let Err(err) = op(idx, &auth_path, &config_path) {
++            if idx == 0 {
++                return Err(err);
++            }
++            log::warn!(
++                "Codex multi-path write skipped for secondary path {}: {}",
++                dir.display(),
++                err
++            );
++        }
++    }
++    Ok(())
++}
++
++fn for_each_gemini_live_path<F>(mut op: F) -> Result<(), AppError>
++where
++    F: FnMut(usize, &Path, &Path) -> Result<(), AppError>,
++{
++    let env_primary = crate::gemini_config::get_gemini_env_path();
++    let primary_dir = env_primary
++        .parent()
++        .map(Path::to_path_buf)
++        .unwrap_or_else(crate::gemini_config::get_gemini_dir);
++
++    let dirs = expand_wsl_dirs(&primary_dir, &[".gemini"]);
++
++    for (idx, dir) in dirs.iter().enumerate() {
++        let env_path = dir.join(".env");
++        let settings_path = dir.join("settings.json");
++        if let Err(err) = op(idx, &env_path, &settings_path) {
++            if idx == 0 {
++                return Err(err);
++            }
++            log::warn!(
++                "Gemini multi-path write skipped for secondary path {}: {}",
++                dir.display(),
++                err
++            );
++        }
++    }
++    Ok(())
++}
++
++fn for_each_opencode_config_path<F>(mut op: F) -> Result<(), AppError>
++where
++    F: FnMut(usize, &Path) -> Result<(), AppError>,
++{
++    let primary_path = crate::opencode_config::get_opencode_config_path();
++    let primary_dir = primary_path
++        .parent()
++        .map(Path::to_path_buf)
++        .unwrap_or_else(crate::opencode_config::get_opencode_dir);
++
++    let dirs = expand_wsl_dirs(&primary_dir, &[".config", "opencode"]);
++
++    for (idx, dir) in dirs.iter().enumerate() {
++        let path = dir.join("opencode.json");
++        if let Err(err) = op(idx, &path) {
++            if idx == 0 {
++                return Err(err);
++            }
++            log::warn!(
++                "OpenCode multi-path write skipped for secondary path {}: {}",
++                path.display(),
++                err
++            );
++        }
++    }
++    Ok(())
++}
++
++fn for_each_openclaw_config_path<F>(mut op: F) -> Result<(), AppError>
++where
++    F: FnMut(usize, &Path) -> Result<(), AppError>,
++{
++    let primary_path = crate::openclaw_config::get_openclaw_config_path();
++    let primary_dir = primary_path
++        .parent()
++        .map(Path::to_path_buf)
++        .unwrap_or_else(crate::openclaw_config::get_openclaw_dir);
++
++    let dirs = expand_wsl_dirs(&primary_dir, &[".openclaw"]);
++
++    for (idx, dir) in dirs.iter().enumerate() {
++        let path = dir.join("openclaw.json");
++        if let Err(err) = op(idx, &path) {
++            if idx == 0 {
++                return Err(err);
++            }
++            log::warn!(
++                "OpenClaw multi-path write skipped for secondary path {}: {}",
++                path.display(),
++                err
++            );
++        }
++    }
++    Ok(())
++}
++
++fn write_gemini_env_at(env_path: &Path, env_map: &HashMap<String, String>) -> Result<(), AppError> {
++    if let Some(parent) = env_path.parent() {
++        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
++    }
++    let content = crate::gemini_config::serialize_env_file(env_map);
++    crate::config::write_text_file(env_path, &content)
++}
++
++fn set_gemini_selected_type_at(
++    settings_path: &Path,
++    auth_type: &GeminiAuthType,
++) -> Result<(), AppError> {
++    let selected_type = match auth_type {
++        GeminiAuthType::GoogleOfficial => "oauth-personal",
++        GeminiAuthType::Packycode | GeminiAuthType::Generic => "gemini-api-key",
++    };
++
++    let mut settings_content = if settings_path.exists() {
++        read_json_file::<Value>(settings_path).unwrap_or_else(|_| json!({}))
++    } else {
++        json!({})
++    };
++
++    if let Some(obj) = settings_content.as_object_mut() {
++        let security = obj
++            .entry("security")
++            .or_insert_with(|| serde_json::json!({}));
++
++        if let Some(security_obj) = security.as_object_mut() {
++            let auth = security_obj
++                .entry("auth")
++                .or_insert_with(|| serde_json::json!({}));
++
++            if let Some(auth_obj) = auth.as_object_mut() {
++                auth_obj.insert(
++                    "selectedType".to_string(),
++                    Value::String(selected_type.to_string()),
++                );
++            }
++        }
++    }
++
++    write_json_file(settings_path, &settings_content)
++}
++
++fn upsert_opencode_provider_at(path: &Path, provider_id: &str, config: Value) -> Result<(), AppError> {
++    let mut full_config = if path.exists() {
++        read_json_file::<Value>(path)
++            .unwrap_or_else(|_| json!({ "$schema": "https://opencode.ai/config.json" }))
++    } else {
++        json!({ "$schema": "https://opencode.ai/config.json" })
++    };
++
++    if full_config.get("provider").is_none() {
++        full_config["provider"] = json!({});
++    }
++
++    if let Some(providers) = full_config
++        .get_mut("provider")
++        .and_then(|v| v.as_object_mut())
++    {
++        providers.insert(provider_id.to_string(), config);
++    }
++
++    write_json_file(path, &full_config)
++}
++
++fn remove_opencode_provider_at(path: &Path, provider_id: &str) -> Result<(), AppError> {
++    let mut config = if path.exists() {
++        read_json_file::<Value>(path)
++            .unwrap_or_else(|_| json!({ "$schema": "https://opencode.ai/config.json" }))
++    } else {
++        return Ok(());
++    };
++
++    if let Some(providers) = config.get_mut("provider").and_then(|v| v.as_object_mut()) {
++        providers.remove(provider_id);
++    }
++
++    write_json_file(path, &config)
++}
++
++fn upsert_openclaw_provider_at(path: &Path, provider_id: &str, provider_config: Value) -> Result<(), AppError> {
++    let mut full_config = if path.exists() {
++        read_json_file::<Value>(path).unwrap_or_else(|_| {
++            json!({
++                "models": {
++                    "mode": "merge",
++                    "providers": {}
++                }
++            })
++        })
++    } else {
++        json!({
++            "models": {
++                "mode": "merge",
++                "providers": {}
++            }
++        })
++    };
++
++    if full_config.get("models").is_none() {
++        full_config["models"] = json!({
++            "mode": "merge",
++            "providers": {}
++        });
++    }
++
++    if full_config["models"].get("providers").is_none() {
++        full_config["models"]["providers"] = json!({});
++    }
++
++    if let Some(providers) = full_config["models"]
++        .get_mut("providers")
++        .and_then(|v| v.as_object_mut())
++    {
++        providers.insert(provider_id.to_string(), provider_config);
++    }
++
++    write_json_file(path, &full_config)
++}
++
++fn remove_openclaw_provider_at(path: &Path, provider_id: &str) -> Result<(), AppError> {
++    let mut config = if path.exists() {
++        read_json_file::<Value>(path).unwrap_or_else(|_| {
++            json!({
++                "models": {
++                    "mode": "merge",
++                    "providers": {}
++                }
++            })
++        })
++    } else {
++        return Ok(());
++    };
++
++    if let Some(providers) = config
++        .get_mut("models")
++        .and_then(|m| m.get_mut("providers"))
++        .and_then(|v| v.as_object_mut())
++    {
++        providers.remove(provider_id);
++    }
++
++    write_json_file(path, &config)
++}
++
+ /// Live configuration snapshot for backup/restore
+ #[derive(Clone)]
+ #[allow(dead_code)]
+@@ -53,51 +384,52 @@ impl LiveSnapshot {
+     pub(crate) fn restore(&self) -> Result<(), AppError> {
+         match self {
+             LiveSnapshot::Claude { settings } => {
+-                let path = get_claude_settings_path();
+-                if let Some(value) = settings {
+-                    write_json_file(&path, value)?;
+-                } else if path.exists() {
+-                    delete_file(&path)?;
+-                }
++                for_each_claude_settings_path(|_, path| {
++                    if let Some(value) = settings {
++                        write_json_file(path, value)?;
++                    } else if path.exists() {
++                        delete_file(path)?;
++                    }
++                    Ok(())
++                })?;
+             }
+             LiveSnapshot::Codex { auth, config } => {
+-                let auth_path = get_codex_auth_path();
+-                let config_path = get_codex_config_path();
+-                if let Some(value) = auth {
+-                    write_json_file(&auth_path, value)?;
+-                } else if auth_path.exists() {
+-                    delete_file(&auth_path)?;
+-                }
++                for_each_codex_live_path(|_, auth_path, config_path| {
++                    if let Some(value) = auth {
++                        write_json_file(auth_path, value)?;
++                    } else if auth_path.exists() {
++                        delete_file(auth_path)?;
++                    }
+ 
+-                if let Some(text) = config {
+-                    crate::config::write_text_file(&config_path, text)?;
+-                } else if config_path.exists() {
+-                    delete_file(&config_path)?;
+-                }
++                    if let Some(text) = config {
++                        crate::config::write_text_file(config_path, text)?;
++                    } else if config_path.exists() {
++                        delete_file(config_path)?;
++                    }
++                    Ok(())
++                })?;
+             }
+             LiveSnapshot::Gemini { env, .. } => {
+-                use crate::gemini_config::{
+-                    get_gemini_env_path, get_gemini_settings_path, write_gemini_env_atomic,
+-                };
+-                let path = get_gemini_env_path();
+-                if let Some(env_map) = env {
+-                    write_gemini_env_atomic(env_map)?;
+-                } else if path.exists() {
+-                    delete_file(&path)?;
+-                }
+-
+-                let settings_path = get_gemini_settings_path();
+-                match self {
+-                    LiveSnapshot::Gemini {
+-                        config: Some(cfg), ..
+-                    } => {
+-                        write_json_file(&settings_path, cfg)?;
++                for_each_gemini_live_path(|_, env_path, settings_path| {
++                    if let Some(env_map) = env {
++                        write_gemini_env_at(env_path, env_map)?;
++                    } else if env_path.exists() {
++                        delete_file(env_path)?;
+                     }
+-                    LiveSnapshot::Gemini { config: None, .. } if settings_path.exists() => {
+-                        delete_file(&settings_path)?;
++
++                    match self {
++                        LiveSnapshot::Gemini {
++                            config: Some(cfg), ..
++                        } => {
++                            write_json_file(settings_path, cfg)?;
++                        }
++                        LiveSnapshot::Gemini { config: None, .. } if settings_path.exists() => {
++                            delete_file(settings_path)?;
++                        }
++                        _ => {}
+                     }
+-                    _ => {}
+-                }
++                    Ok(())
++                })?;
+             }
+         }
+         Ok(())
+@@ -108,9 +440,8 @@ impl LiveSnapshot {
+ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+     match app_type {
+         AppType::Claude => {
+-            let path = get_claude_settings_path();
+             let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+-            write_json_file(&path, &settings)?;
++            for_each_claude_settings_path(|_, path| write_json_file(path, &settings))?;
+         }
+         AppType::Codex => {
+             let obj = provider
+@@ -124,18 +455,16 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
+                 AppError::Config("Codex 供应商配置缺少 'config' 字段或不是字符串".to_string())
+             })?;
+ 
+-            let auth_path = get_codex_auth_path();
+-            write_json_file(&auth_path, auth)?;
+-            let config_path = get_codex_config_path();
+-            std::fs::write(&config_path, config_str).map_err(|e| AppError::io(&config_path, e))?;
++            for_each_codex_live_path(|_, auth_path, config_path| {
++                write_json_file(auth_path, auth)?;
++                std::fs::write(config_path, config_str).map_err(|e| AppError::io(config_path, e))
++            })?;
+         }
+         AppType::Gemini => {
+             // Delegate to write_gemini_live which handles env file writing correctly
+             write_gemini_live(provider)?;
+         }
+         AppType::OpenCode => {
+-            // OpenCode uses additive mode - write provider to config
+-            use crate::opencode_config;
+             use crate::provider::OpenCodeProviderConfig;
+ 
+             // Defensive check: if settings_config is a full config structure, extract provider fragment
+@@ -164,7 +493,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
+ 
+             match opencode_config_result {
+                 Ok(config) => {
+-                    opencode_config::set_typed_provider(&provider.id, &config)?;
++                    let value = serde_json::to_value(&config)
++                        .map_err(|e| AppError::JsonSerialize { source: e })?;
++                    for_each_opencode_config_path(|_, path| {
++                        upsert_opencode_provider_at(path, &provider.id, value.clone())
++                    })?;
+                     log::info!("OpenCode provider '{}' written to live config", provider.id);
+                 }
+                 Err(e) => {
+@@ -177,7 +510,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
+                     if config_to_write.get("npm").is_some()
+                         || config_to_write.get("options").is_some()
+                     {
+-                        opencode_config::set_provider(&provider.id, config_to_write)?;
++                        for_each_opencode_config_path(|_, path| {
++                            upsert_opencode_provider_at(path, &provider.id, config_to_write.clone())
++                        })?;
+                         log::info!(
+                             "OpenCode provider '{}' written as raw JSON to live config",
+                             provider.id
+@@ -192,8 +527,6 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
+             }
+         }
+         AppType::OpenClaw => {
+-            // OpenClaw uses additive mode - write provider to config
+-            use crate::openclaw_config;
+             use crate::openclaw_config::OpenClawProviderConfig;
+ 
+             // Convert settings_config to OpenClawProviderConfig
+@@ -202,7 +535,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
+ 
+             match openclaw_config_result {
+                 Ok(config) => {
+-                    openclaw_config::set_typed_provider(&provider.id, &config)?;
++                    let value = serde_json::to_value(&config)
++                        .map_err(|e| AppError::JsonSerialize { source: e })?;
++                    for_each_openclaw_config_path(|_, path| {
++                        upsert_openclaw_provider_at(path, &provider.id, value.clone())
++                    })?;
+                     log::info!("OpenClaw provider '{}' written to live config", provider.id);
+                 }
+                 Err(e) => {
+@@ -216,10 +553,13 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
+                         || provider.settings_config.get("api").is_some()
+                         || provider.settings_config.get("models").is_some()
+                     {
+-                        openclaw_config::set_provider(
+-                            &provider.id,
+-                            provider.settings_config.clone(),
+-                        )?;
++                        for_each_openclaw_config_path(|_, path| {
++                            upsert_openclaw_provider_at(
++                                path,
++                                &provider.id,
++                                provider.settings_config.clone(),
++                            )
++                        })?;
+                         log::info!(
+                             "OpenClaw provider '{}' written as raw JSON to live config",
+                             provider.id
+@@ -331,15 +671,16 @@ pub(crate) fn write_live_partial(app_type: &AppType, provider: &Provider) -> Res
+ /// Used for user-level preferences (attribution, thinking, etc.) that are
+ /// independent of the active provider.
+ pub fn patch_claude_live(patch: Value) -> Result<(), AppError> {
+-    let path = get_claude_settings_path();
+-    let mut live = if path.exists() {
+-        read_json_file(&path).unwrap_or_else(|_| json!({}))
+-    } else {
+-        json!({})
+-    };
+-    json_merge_patch(&mut live, &patch);
+-    let settings = sanitize_claude_settings_for_live(&live);
+-    write_json_file(&path, &settings)?;
++    for_each_claude_settings_path(|_, path| {
++        let mut live = if path.exists() {
++            read_json_file(path).unwrap_or_else(|_| json!({}))
++        } else {
++            json!({})
++        };
++        json_merge_patch(&mut live, &patch);
++        let settings = sanitize_claude_settings_for_live(&live);
++        write_json_file(path, &settings)
++    })?;
+     Ok(())
+ }
+ 
+@@ -369,56 +710,56 @@ fn json_merge_patch(target: &mut Value, patch: &Value) {
+ 
+ /// Claude: merge only key env and top-level fields into live settings.json
+ fn write_claude_live_partial(provider: &Provider) -> Result<(), AppError> {
+-    let path = get_claude_settings_path();
+-
+-    // 1. Read existing live config (start from empty if file doesn't exist)
+-    let mut live = if path.exists() {
+-        read_json_file(&path).unwrap_or_else(|_| json!({}))
+-    } else {
+-        json!({})
+-    };
+-
+-    // 2. Ensure live.env exists as an object
+-    if !live.get("env").is_some_and(|v| v.is_object()) {
+-        live.as_object_mut()
+-            .unwrap()
+-            .insert("env".into(), json!({}));
+-    }
++    for_each_claude_settings_path(|_, path| {
++        // 1. Read existing live config (start from empty if file doesn't exist)
++        let mut live = if path.exists() {
++            read_json_file(path).unwrap_or_else(|_| json!({}))
++        } else {
++            json!({})
++        };
+ 
+-    // 3. Clear key env fields from live, then write from provider
+-    let live_env = live.get_mut("env").unwrap().as_object_mut().unwrap();
+-    for key in CLAUDE_KEY_ENV_FIELDS {
+-        live_env.remove(*key);
+-    }
++        // 2. Ensure live.env exists as an object
++        if !live.get("env").is_some_and(|v| v.is_object()) {
++            live.as_object_mut()
++                .unwrap()
++                .insert("env".into(), json!({}));
++        }
+ 
+-    if let Some(provider_env) = provider
+-        .settings_config
+-        .get("env")
+-        .and_then(|v| v.as_object())
+-    {
++        // 3. Clear key env fields from live, then write from provider
++        let live_env = live.get_mut("env").unwrap().as_object_mut().unwrap();
+         for key in CLAUDE_KEY_ENV_FIELDS {
+-            if let Some(value) = provider_env.get(*key) {
+-                live_env.insert(key.to_string(), value.clone());
++            live_env.remove(*key);
++        }
++
++        if let Some(provider_env) = provider
++            .settings_config
++            .get("env")
++            .and_then(|v| v.as_object())
++        {
++            for key in CLAUDE_KEY_ENV_FIELDS {
++                if let Some(value) = provider_env.get(*key) {
++                    live_env.insert(key.to_string(), value.clone());
++                }
+             }
+         }
+-    }
+ 
+-    // 4. Handle top-level legacy key fields
+-    let live_obj = live.as_object_mut().unwrap();
+-    for key in CLAUDE_KEY_TOP_LEVEL {
+-        live_obj.remove(*key);
+-    }
+-    if let Some(provider_obj) = provider.settings_config.as_object() {
++        // 4. Handle top-level legacy key fields
++        let live_obj = live.as_object_mut().unwrap();
+         for key in CLAUDE_KEY_TOP_LEVEL {
+-            if let Some(value) = provider_obj.get(*key) {
+-                live_obj.insert(key.to_string(), value.clone());
++            live_obj.remove(*key);
++        }
++        if let Some(provider_obj) = provider.settings_config.as_object() {
++            for key in CLAUDE_KEY_TOP_LEVEL {
++                if let Some(value) = provider_obj.get(*key) {
++                    live_obj.insert(key.to_string(), value.clone());
++                }
+             }
+         }
+-    }
+ 
+-    // 5. Sanitize and write
+-    let settings = sanitize_claude_settings_for_live(&live);
+-    write_json_file(&path, &settings)?;
++        // 5. Sanitize and write
++        let settings = sanitize_claude_settings_for_live(&live);
++        write_json_file(path, &settings)
++    })?;
+     Ok(())
+ }
+ 
+@@ -436,132 +777,114 @@ fn write_codex_live_partial(provider: &Provider) -> Result<(), AppError> {
+ 
+     let provider_config_str = obj.get("config").and_then(|v| v.as_str()).unwrap_or("");
+ 
+-    // Read existing config.toml (or start from empty)
+-    let config_path = get_codex_config_path();
+-    let existing_toml = if config_path.exists() {
+-        std::fs::read_to_string(&config_path).unwrap_or_default()
+-    } else {
+-        String::new()
+-    };
++    for_each_codex_live_path(|_, auth_path, config_path| {
++        let existing_toml = if config_path.exists() {
++            std::fs::read_to_string(config_path).unwrap_or_default()
++        } else {
++            String::new()
++        };
+ 
+-    // Parse both existing and provider TOML
+-    let mut live_doc = existing_toml
+-        .parse::<toml_edit::DocumentMut>()
+-        .unwrap_or_else(|_| toml_edit::DocumentMut::new());
++        let mut live_doc = existing_toml
++            .parse::<toml_edit::DocumentMut>()
++            .unwrap_or_else(|_| toml_edit::DocumentMut::new());
+ 
+-    // Remove key fields from live doc
+-    let live_root = live_doc.as_table_mut();
+-    for key in CODEX_KEY_TOP_LEVEL {
+-        live_root.remove(key);
+-    }
+-    live_root.remove("model_providers");
++        let live_root = live_doc.as_table_mut();
++        for key in CODEX_KEY_TOP_LEVEL {
++            live_root.remove(key);
++        }
++        live_root.remove("model_providers");
+ 
+-    // Parse provider TOML and extract key fields
+-    if !provider_config_str.is_empty() {
+-        if let Ok(provider_doc) = provider_config_str.parse::<toml_edit::DocumentMut>() {
+-            let provider_root = provider_doc.as_table();
++        if !provider_config_str.is_empty() {
++            if let Ok(provider_doc) = provider_config_str.parse::<toml_edit::DocumentMut>() {
++                let provider_root = provider_doc.as_table();
+ 
+-            // Copy key top-level fields from provider
+-            for key in CODEX_KEY_TOP_LEVEL {
+-                if let Some(item) = provider_root.get(key) {
+-                    live_root.insert(key, item.clone());
++                for key in CODEX_KEY_TOP_LEVEL {
++                    if let Some(item) = provider_root.get(key) {
++                        live_root.insert(key, item.clone());
++                    }
+                 }
+-            }
+ 
+-            // Copy model_providers table from provider
+-            if let Some(mp) = provider_root.get("model_providers") {
+-                live_root.insert("model_providers", mp.clone());
++                if let Some(mp) = provider_root.get("model_providers") {
++                    live_root.insert("model_providers", mp.clone());
++                }
+             }
+         }
+-    }
+ 
+-    // Write using atomic write
+-    crate::codex_config::write_codex_live_atomic(auth, Some(&live_doc.to_string()))?;
++        write_json_file(auth_path, auth)?;
++        crate::config::write_text_file(config_path, &live_doc.to_string())
++    })?;
+     Ok(())
+ }
+ 
+ /// Gemini: merge only key env fields, preserve settings.json (MCP etc.)
+ fn write_gemini_live_partial(provider: &Provider) -> Result<(), AppError> {
+-    use crate::gemini_config::{get_gemini_env_path, read_gemini_env, write_gemini_env_atomic};
+-
+     let auth_type = detect_gemini_auth_type(provider);
+ 
+-    // 1. Read existing env from live .env file
+-    let mut env_map = if get_gemini_env_path().exists() {
+-        read_gemini_env().unwrap_or_default()
+-    } else {
+-        HashMap::new()
+-    };
+-
+-    // 2. Remove key fields from existing env
+-    for key in GEMINI_KEY_ENV_FIELDS {
+-        env_map.remove(*key);
+-    }
++    for_each_gemini_live_path(|_, env_path, settings_path| {
++        let mut env_map = if env_path.exists() {
++            std::fs::read_to_string(env_path)
++                .ok()
++                .map(|content| crate::gemini_config::parse_env_file(&content))
++                .unwrap_or_default()
++        } else {
++            HashMap::new()
++        };
+ 
+-    // 3. Extract key fields from provider and merge
+-    if let Some(provider_env) = provider
+-        .settings_config
+-        .get("env")
+-        .and_then(|v| v.as_object())
+-    {
+         for key in GEMINI_KEY_ENV_FIELDS {
+-            if let Some(value) = provider_env.get(*key).and_then(|v| v.as_str()) {
+-                if !value.is_empty() {
+-                    env_map.insert(key.to_string(), value.to_string());
++            env_map.remove(*key);
++        }
++
++        if let Some(provider_env) = provider
++            .settings_config
++            .get("env")
++            .and_then(|v| v.as_object())
++        {
++            for key in GEMINI_KEY_ENV_FIELDS {
++                if let Some(value) = provider_env.get(*key).and_then(|v| v.as_str()) {
++                    if !value.is_empty() {
++                        env_map.insert(key.to_string(), value.to_string());
++                    }
+                 }
+             }
+         }
+-    }
+ 
+-    // 4. Handle auth type specific behavior
+-    match auth_type {
+-        GeminiAuthType::GoogleOfficial => {
+-            // Google official uses OAuth, clear all env
+-            env_map.clear();
+-            write_gemini_env_atomic(&env_map)?;
+-        }
+-        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
+-            // Validate and write env
+-            crate::gemini_config::validate_gemini_settings_strict(&provider.settings_config)?;
+-            write_gemini_env_atomic(&env_map)?;
++        match auth_type {
++            GeminiAuthType::GoogleOfficial => {
++                env_map.clear();
++                write_gemini_env_at(env_path, &env_map)?;
++            }
++            GeminiAuthType::Packycode | GeminiAuthType::Generic => {
++                crate::gemini_config::validate_gemini_settings_strict(&provider.settings_config)?;
++                write_gemini_env_at(env_path, &env_map)?;
++            }
+         }
+-    }
+-
+-    // 5. Handle settings.json (same as write_gemini_live — preserve existing MCP etc.)
+-    use crate::gemini_config::get_gemini_settings_path;
+-    let settings_path = get_gemini_settings_path();
+ 
+-    if let Some(config_value) = provider.settings_config.get("config") {
+-        if config_value.is_object() {
+-            let mut merged = if settings_path.exists() {
+-                read_json_file::<Value>(&settings_path).unwrap_or_else(|_| json!({}))
+-            } else {
+-                json!({})
+-            };
+-            if let (Some(merged_obj), Some(config_obj)) =
+-                (merged.as_object_mut(), config_value.as_object())
+-            {
+-                for (k, v) in config_obj {
+-                    merged_obj.insert(k.clone(), v.clone());
++        if let Some(config_value) = provider.settings_config.get("config") {
++            if config_value.is_object() {
++                let mut merged = if settings_path.exists() {
++                    read_json_file::<Value>(settings_path).unwrap_or_else(|_| json!({}))
++                } else {
++                    json!({})
++                };
++                if let (Some(merged_obj), Some(config_obj)) =
++                    (merged.as_object_mut(), config_value.as_object())
++                {
++                    for (k, v) in config_obj {
++                        merged_obj.insert(k.clone(), v.clone());
++                    }
+                 }
++                write_json_file(settings_path, &merged)?;
++            } else if !config_value.is_null() {
++                return Err(AppError::localized(
++                    "gemini.validation.invalid_config",
++                    "Gemini 配置格式错误: config 必须是对象或 null",
++                    "Gemini config invalid: config must be an object or null",
++                ));
+             }
+-            write_json_file(&settings_path, &merged)?;
+-        } else if !config_value.is_null() {
+-            return Err(AppError::localized(
+-                "gemini.validation.invalid_config",
+-                "Gemini 配置格式错误: config 必须是对象或 null",
+-                "Gemini config invalid: config must be an object or null",
+-            ));
+         }
+-    }
+ 
+-    // 6. Set security flag based on auth type
+-    match auth_type {
+-        GeminiAuthType::GoogleOfficial => ensure_google_oauth_security_flag(provider)?,
+-        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
+-            crate::gemini_config::write_packycode_settings()?;
+-        }
+-    }
++        set_gemini_selected_type_at(settings_path, &auth_type)
++    })?;
+ 
+     Ok(())
+ }
+@@ -935,87 +1258,64 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
+ 
+ /// Write Gemini live configuration with authentication handling
+ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
+-    use crate::gemini_config::{
+-        get_gemini_settings_path, json_to_env, validate_gemini_settings_strict,
+-        write_gemini_env_atomic,
+-    };
++    use crate::gemini_config::{json_to_env, validate_gemini_settings_strict};
+ 
+     // One-time auth type detection to avoid repeated detection
+     let auth_type = detect_gemini_auth_type(provider);
+ 
+-    let mut env_map = json_to_env(&provider.settings_config)?;
++    let env_map = json_to_env(&provider.settings_config)?;
+ 
+-    // Prepare config to write to ~/.gemini/settings.json
+-    // Behavior:
+-    // - config is object: use it (merge with existing to preserve mcpServers etc.)
+-    // - config is null or absent: preserve existing file content
+-    let settings_path = get_gemini_settings_path();
+-    let mut config_to_write: Option<Value> = None;
++    for_each_gemini_live_path(|_, env_path, settings_path| {
++        let mut local_env_map = env_map.clone();
+ 
+-    if let Some(config_value) = provider.settings_config.get("config") {
+-        if config_value.is_object() {
+-            // Merge with existing settings to preserve mcpServers and other fields
+-            let mut merged = if settings_path.exists() {
+-                read_json_file::<Value>(&settings_path).unwrap_or_else(|_| json!({}))
+-            } else {
+-                json!({})
+-            };
++        let mut config_to_write: Option<Value> = None;
+ 
+-            // Merge provider config into existing settings
+-            if let (Some(merged_obj), Some(config_obj)) =
+-                (merged.as_object_mut(), config_value.as_object())
+-            {
+-                for (k, v) in config_obj {
+-                    merged_obj.insert(k.clone(), v.clone());
++        if let Some(config_value) = provider.settings_config.get("config") {
++            if config_value.is_object() {
++                let mut merged = if settings_path.exists() {
++                    read_json_file::<Value>(settings_path).unwrap_or_else(|_| json!({}))
++                } else {
++                    json!({})
++                };
++
++                if let (Some(merged_obj), Some(config_obj)) =
++                    (merged.as_object_mut(), config_value.as_object())
++                {
++                    for (k, v) in config_obj {
++                        merged_obj.insert(k.clone(), v.clone());
++                    }
+                 }
++                config_to_write = Some(merged);
++            } else if !config_value.is_null() {
++                return Err(AppError::localized(
++                    "gemini.validation.invalid_config",
++                    "Gemini 配置格式错误: config 必须是对象或 null",
++                    "Gemini config invalid: config must be an object or null",
++                ));
+             }
+-            config_to_write = Some(merged);
+-        } else if !config_value.is_null() {
+-            return Err(AppError::localized(
+-                "gemini.validation.invalid_config",
+-                "Gemini 配置格式错误: config 必须是对象或 null",
+-                "Gemini config invalid: config must be an object or null",
+-            ));
+         }
+-        // config is null: don't modify existing settings.json (preserve mcpServers etc.)
+-    }
+ 
+-    // If no config specified or config is null, preserve existing file
+-    if config_to_write.is_none() && settings_path.exists() {
+-        config_to_write = Some(read_json_file(&settings_path)?);
+-    }
+-
+-    match auth_type {
+-        GeminiAuthType::GoogleOfficial => {
+-            // Google official uses OAuth, clear env
+-            env_map.clear();
+-            write_gemini_env_atomic(&env_map)?;
+-        }
+-        GeminiAuthType::Packycode => {
+-            // PackyCode provider, uses API Key (strict validation on switch)
+-            validate_gemini_settings_strict(&provider.settings_config)?;
+-            write_gemini_env_atomic(&env_map)?;
+-        }
+-        GeminiAuthType::Generic => {
+-            // Generic provider, uses API Key (strict validation on switch)
+-            validate_gemini_settings_strict(&provider.settings_config)?;
+-            write_gemini_env_atomic(&env_map)?;
++        if config_to_write.is_none() && settings_path.exists() {
++            config_to_write = Some(read_json_file(settings_path)?);
+         }
+-    }
+ 
+-    if let Some(config_value) = config_to_write {
+-        write_json_file(&settings_path, &config_value)?;
+-    }
++        match auth_type {
++            GeminiAuthType::GoogleOfficial => {
++                local_env_map.clear();
++                write_gemini_env_at(env_path, &local_env_map)?;
++            }
++            GeminiAuthType::Packycode | GeminiAuthType::Generic => {
++                validate_gemini_settings_strict(&provider.settings_config)?;
++                write_gemini_env_at(env_path, &local_env_map)?;
++            }
++        }
+ 
+-    // Set security.auth.selectedType based on auth type
+-    // - Google Official: OAuth mode
+-    // - All others: API Key mode
+-    match auth_type {
+-        GeminiAuthType::GoogleOfficial => ensure_google_oauth_security_flag(provider)?,
+-        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
+-            crate::gemini_config::write_packycode_settings()?;
++        if let Some(config_value) = config_to_write {
++            write_json_file(settings_path, &config_value)?;
+         }
+-    }
++
++        set_gemini_selected_type_at(settings_path, &auth_type)
++    })?;
+ 
+     Ok(())
+ }
+@@ -1025,15 +1325,7 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
+ /// This is specific to OpenCode's additive mode - removing a provider
+ /// from the opencode.json file.
+ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+-    use crate::opencode_config;
+-
+-    // Check if OpenCode config directory exists
+-    if !opencode_config::get_opencode_dir().exists() {
+-        log::debug!("OpenCode config directory doesn't exist, skipping removal of '{provider_id}'");
+-        return Ok(());
+-    }
+-
+-    opencode_config::remove_provider(provider_id)?;
++    for_each_opencode_config_path(|_, path| remove_opencode_provider_at(path, provider_id))?;
+     log::info!("OpenCode provider '{provider_id}' removed from live config");
+ 
+     Ok(())
+@@ -1162,15 +1454,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
+ /// This removes a specific provider from ~/.openclaw/openclaw.json
+ /// without affecting other providers in the file.
+ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+-    use crate::openclaw_config;
+-
+-    // Check if OpenClaw config directory exists
+-    if !openclaw_config::get_openclaw_dir().exists() {
+-        log::debug!("OpenClaw config directory doesn't exist, skipping removal of '{provider_id}'");
+-        return Ok(());
+-    }
+-
+-    openclaw_config::remove_provider(provider_id)?;
++    for_each_openclaw_config_path(|_, path| remove_openclaw_provider_at(path, provider_id))?;
+     log::info!("OpenClaw provider '{provider_id}' removed from live config");
+ 
+     Ok(())
+diff --git a/src-tauri/src/settings.rs b/src-tauri/src/settings.rs
+index 8ee07e60..dfa6955d 100644
+--- a/src-tauri/src/settings.rs
++++ b/src-tauri/src/settings.rs
+@@ -1,6 +1,5 @@
+ use serde::{Deserialize, Serialize};
+ use std::fs;
+-use std::io::Write;
+ use std::path::PathBuf;
+ use std::sync::{OnceLock, RwLock};
+ 
+@@ -518,6 +517,18 @@ pub fn get_claude_override_dir() -> Option<PathBuf> {
+         .map(|p| resolve_override_path(p))
+ }
+ 
++/// 获取所有已安装的 WSL 发行版列表。
++/// 返回 `None` 表示 WSL 不可用或未安装任何发行版。
++pub fn get_wsl_distros() -> Option<Vec<String>> {
++    #[cfg(target_os = "windows")]
++    {
++        let distros = crate::utils::wsl::get_all_wsl_distros();
++        if distros.is_empty() { None } else { Some(distros) }
++    }
++    #[cfg(not(target_os = "windows"))]
++    None
++}
++
+ pub fn get_codex_override_dir() -> Option<PathBuf> {
+     let settings = settings_store().read().ok()?;
+     settings
+diff --git a/src-tauri/src/utils/mod.rs b/src-tauri/src/utils/mod.rs
+new file mode 100644
+index 00000000..8ec4bc3d
+--- /dev/null
++++ b/src-tauri/src/utils/mod.rs
+@@ -0,0 +1 @@
++pub mod wsl;
+diff --git a/src-tauri/src/utils/wsl.rs b/src-tauri/src/utils/wsl.rs
+new file mode 100644
+index 00000000..ac2e7761
+--- /dev/null
++++ b/src-tauri/src/utils/wsl.rs
+@@ -0,0 +1,200 @@
++//! Shared WSL utilities used across multiple modules.
++//!
++//! Centralises the repeated helper code that each module previously copied:
++//! - `decode_wsl_output`
++//! - `parse_wsl_unc_path`
++//! - `resolve_wsl_home_dir_unc`
++//! - `is_valid_wsl_distro_name`
++//! - `get_all_wsl_distros`
++//! - `dedupe_paths`
++
++use std::path::PathBuf;
++
++#[cfg(target_os = "windows")]
++use std::path::Path;
++
++#[cfg(target_os = "windows")]
++use std::os::windows::process::CommandExt;
++
++/// Suppress console window for spawned processes on Windows.
++#[cfg(target_os = "windows")]
++const CREATE_NO_WINDOW: u32 = 0x0800_0000;
++
++// ─── Encoding helpers ──────────────────────────────────────────────────────
++
++/// Decode bytes from `wsl.exe` output, which can be either UTF-8 or UTF-16LE.
++///
++/// `wsl.exe` on some Windows environments emits UTF-16LE (each ASCII character
++/// is stored as a 2-byte pair with the high byte being `\0`).  Try UTF-8 first
++/// and only fall back to UTF-16LE when NUL bytes are present.
++#[cfg(target_os = "windows")]
++pub fn decode_wsl_output(bytes: &[u8]) -> String {
++    // UTF-8 that contains no embedded NULs is unambiguously correct.
++    if let Ok(s) = String::from_utf8(bytes.to_vec()) {
++        if !s.contains('\0') {
++            return s;
++        }
++    }
++
++    // Fall back to UTF-16LE.
++    if bytes.len() >= 2 {
++        let mut u16_buf = Vec::with_capacity(bytes.len() / 2);
++        for chunk in bytes.chunks_exact(2) {
++            u16_buf.push(u16::from_le_bytes([chunk[0], chunk[1]]));
++        }
++        if let Ok(s) = String::from_utf16(&u16_buf) {
++            return s;
++        }
++    }
++
++    String::from_utf8_lossy(bytes).into_owned()
++}
++
++// ─── Distro name validation ─────────────────────────────────────────────────
++
++/// Returns `true` when `name` is a valid WSL distro identifier.
++///
++/// Allowed characters: ASCII alphanumeric, `-`, `_`, `.`; max length 64.
++#[cfg(target_os = "windows")]
++pub fn is_valid_wsl_distro_name(name: &str) -> bool {
++    !name.is_empty()
++        && name.len() <= 64
++        && name
++            .chars()
++            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
++}
++
++// ─── Distro enumeration ─────────────────────────────────────────────────────
++
++/// Return all installed WSL distros, excluding docker-desktop entries and
++/// entries with invalid names.  Returns an empty `Vec` when WSL is not
++/// available.
++#[cfg(target_os = "windows")]
++pub fn get_all_wsl_distros() -> Vec<String> {
++    use std::process::Command;
++
++    let output = match Command::new("wsl.exe")
++        .args(["--list", "--quiet"])
++        .creation_flags(CREATE_NO_WINDOW)
++        .output()
++    {
++        Ok(o) => o,
++        Err(_) => return Vec::new(),
++    };
++
++    let text = decode_wsl_output(&output.stdout);
++    text.lines()
++        .map(|line| {
++            line.trim()
++                .trim_matches('\u{feff}') // BOM
++                .trim_matches('\0')
++                .replace('\0', "")
++        })
++        .filter(|line| !line.is_empty())
++        .filter(|line| !line.starts_with('*'))
++        .filter(|line| is_valid_wsl_distro_name(line))
++        .filter(|line| !line.to_ascii_lowercase().contains("docker"))
++        .collect()
++}
++
++// ─── UNC path helpers ───────────────────────────────────────────────────────
++
++/// Parse a `\\wsl$\<distro>\…` or `\\wsl.localhost\<distro>\…` UNC path.
++///
++/// Returns `(distro_name, suffix)` where `suffix` is the path portion after
++/// the distro component (may be empty).
++#[cfg(target_os = "windows")]
++pub fn parse_wsl_unc_path(path: &Path) -> Option<(String, String)> {
++    let s = path.to_string_lossy();
++    for prefix in ["\\\\wsl$\\", "\\\\wsl.localhost\\"] {
++        if let Some(rest) = s.strip_prefix(prefix) {
++            let mut parts = rest.split('\\');
++            let distro = parts.next()?.trim().to_string();
++            if distro.is_empty() {
++                return None;
++            }
++            let suffix = parts.collect::<Vec<_>>().join("\\");
++            return Some((distro, suffix));
++        }
++    }
++    None
++}
++
++/// Resolve a WSL distro's home directory as a Windows UNC (`\\wsl.localhost\…`)
++/// path.  Returns `None` when the distro is unavailable or the query fails.
++#[cfg(target_os = "windows")]
++pub fn resolve_wsl_home_dir_unc(distro: &str) -> Option<PathBuf> {
++    use std::process::Command;
++
++    let distro = distro.trim();
++    if distro.is_empty() {
++        return None;
++    }
++
++    let output = Command::new("wsl.exe")
++        .args(["-d", distro, "--", "sh", "-lc", "printf %s \"$HOME\""])
++        .creation_flags(CREATE_NO_WINDOW)
++        .output()
++        .ok()?;
++
++    if !output.status.success() {
++        return None;
++    }
++
++    let home_raw = decode_wsl_output(&output.stdout)
++        .replace('\0', "")
++        .trim()
++        .to_string();
++
++    if home_raw.is_empty() || !home_raw.starts_with('/') {
++        return None;
++    }
++
++    let mut unc = PathBuf::from(format!("\\\\wsl.localhost\\{distro}"));
++    for segment in home_raw.trim_start_matches('/').split('/') {
++        if !segment.is_empty() {
++            unc.push(segment);
++        }
++    }
++    Some(unc)
++}
++
++// ─── Path utilities ─────────────────────────────────────────────────────────
++
++/// Deduplicate a `Vec<PathBuf>`, preserving order.
++///
++/// On Windows the comparison is **case-insensitive** (Windows paths are
++/// case-insensitive by default).
++pub fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
++    let mut seen = std::collections::HashSet::new();
++    let mut out = Vec::new();
++    for path in paths {
++        #[cfg(target_os = "windows")]
++        let key = path.to_string_lossy().to_lowercase();
++        #[cfg(not(target_os = "windows"))]
++        let key = path.to_string_lossy().to_string();
++        if seen.insert(key) {
++            out.push(path);
++        }
++    }
++    out
++}
++
++// ─── Tests ──────────────────────────────────────────────────────────────────
++
++#[cfg(test)]
++mod tests {
++    #[cfg(target_os = "windows")]
++    use super::*;
++
++    #[cfg(target_os = "windows")]
++    #[test]
++    fn test_is_valid_wsl_distro_name() {
++        assert!(is_valid_wsl_distro_name("Ubuntu"));
++        assert!(is_valid_wsl_distro_name("Ubuntu-22.04"));
++        assert!(is_valid_wsl_distro_name("my_distro"));
++        assert!(!is_valid_wsl_distro_name(""));
++        assert!(!is_valid_wsl_distro_name("distro with spaces"));
++        assert!(!is_valid_wsl_distro_name(&"a".repeat(65)));
++    }
++}
+diff --git a/src/components/settings/AboutSection.tsx b/src/components/settings/AboutSection.tsx
+index 343ba52e..78b0013e 100644
+--- a/src/components/settings/AboutSection.tsx
++++ b/src/components/settings/AboutSection.tsx
+@@ -39,6 +39,17 @@ interface ToolVersion {
+   error: string | null;
+   env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
+   wsl_distro: string | null;
++  // 多环境版本信息
++  envs?: ToolEnvVersion[];
++}
++
++interface ToolEnvVersion {
++  env_type: "windows" | "wsl" | "macos" | "linux";
++  wsl_distro?: string;
++  version?: string;
++  error?: string;
++  wsl_shell?: string;
++  wsl_shell_flag?: string;
+ }
+ 
+ const TOOL_NAMES = ["claude", "codex", "gemini", "opencode"] as const;
+@@ -450,7 +461,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
+               toolName === "opencode"
+                 ? "OpenCode"
+                 : toolName.charAt(0).toUpperCase() + toolName.slice(1);
+-            const title = tool?.version || tool?.error || t("common.unknown");
++
++            // 多环境显示
++            const envs = tool?.envs || [];
++            const hasMultipleEnvs = envs.length > 1;
+ 
+             return (
+               <motion.div
+@@ -465,61 +479,39 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
+                   <div className="flex items-center gap-2">
+                     <Terminal className="h-4 w-4 text-muted-foreground" />
+                     <span className="text-sm font-medium">{displayName}</span>
+-                    {/* Environment Badge */}
+-                    {tool?.env_type && ENV_BADGE_CONFIG[tool.env_type] && (
++                    {/* 环境标签 - 汇总显示，避免过多气泡挤出 */}
++                    {envs.some((env) => env.env_type === "windows") && (
+                       <span
+-                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG[tool.env_type].className}`}
++                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.windows.className}`}
+                       >
+-                        {t(ENV_BADGE_CONFIG[tool.env_type].labelKey)}
++                        {t(ENV_BADGE_CONFIG.windows.labelKey)}
+                       </span>
+                     )}
+-                    {/* WSL Shell Selector */}
+-                    {tool?.env_type === "wsl" && (
+-                      <Select
+-                        value={wslShellByTool[toolName]?.wslShell || "auto"}
+-                        onValueChange={(v) =>
+-                          handleToolShellChange(toolName, v)
+-                        }
+-                        disabled={isLoadingTools || loadingTools[toolName]}
++                    {envs.some((env) => env.env_type === "wsl") && (
++                      <span
++                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.wsl.className}`}
++                        title={envs
++                          .filter((env) => env.env_type === "wsl")
++                          .map((env) => env.wsl_distro)
++                          .filter(Boolean)
++                          .join(", ")}
+                       >
+-                        <SelectTrigger className="h-6 w-[70px] text-xs">
+-                          <SelectValue />
+-                        </SelectTrigger>
+-                        <SelectContent>
+-                          <SelectItem value="auto">
+-                            {t("common.auto")}
+-                          </SelectItem>
+-                          {WSL_SHELL_OPTIONS.map((shell) => (
+-                            <SelectItem key={shell} value={shell}>
+-                              {shell}
+-                            </SelectItem>
+-                          ))}
+-                        </SelectContent>
+-                      </Select>
++                        WSL×{envs.filter((env) => env.env_type === "wsl").length}
++                      </span>
+                     )}
+-                    {/* WSL Shell Flag Selector */}
+-                    {tool?.env_type === "wsl" && (
+-                      <Select
+-                        value={wslShellByTool[toolName]?.wslShellFlag || "auto"}
+-                        onValueChange={(v) =>
+-                          handleToolShellFlagChange(toolName, v)
+-                        }
+-                        disabled={isLoadingTools || loadingTools[toolName]}
++                    {envs.some((env) => env.env_type === "macos") && (
++                      <span
++                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.macos.className}`}
+                       >
+-                        <SelectTrigger className="h-6 w-[70px] text-xs">
+-                          <SelectValue />
+-                        </SelectTrigger>
+-                        <SelectContent>
+-                          <SelectItem value="auto">
+-                            {t("common.auto")}
+-                          </SelectItem>
+-                          {WSL_SHELL_FLAG_OPTIONS.map((flag) => (
+-                            <SelectItem key={flag} value={flag}>
+-                              {flag}
+-                            </SelectItem>
+-                          ))}
+-                        </SelectContent>
+-                      </Select>
++                        {t(ENV_BADGE_CONFIG.macos.labelKey)}
++                      </span>
++                    )}
++                    {envs.some((env) => env.env_type === "linux") && (
++                      <span
++                        className={`text-[9px] px-1.5 py-0.5 rounded-full border ${ENV_BADGE_CONFIG.linux.className}`}
++                      >
++                        {t(ENV_BADGE_CONFIG.linux.labelKey)}
++                      </span>
+                     )}
+                   </div>
+                   {isLoadingTools || loadingTools[toolName] ? (
+@@ -537,16 +529,89 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
+                     <AlertCircle className="h-4 w-4 text-yellow-500" />
+                   )}
+                 </div>
+-                <div
+-                  className="text-xs font-mono text-muted-foreground truncate"
+-                  title={title}
+-                >
+-                  {isLoadingTools
+-                    ? t("common.loading")
+-                    : tool?.version
+-                      ? tool.version
+-                      : tool?.error || t("common.notInstalled")}
+-                </div>
++                {/* 多环境版本信息 */}
++                {hasMultipleEnvs ? (
++                  <div className="flex flex-col gap-1">
++                    {envs.map((env, envIndex) => (
++                      <div
++                        key={envIndex}
++                        className="flex items-center justify-between text-xs"
++                      >
++                        <span className="text-muted-foreground">
++                          {env.env_type === "wsl" && env.wsl_distro
++                            ? `WSL (${env.wsl_distro})`
++                            : env.env_type}
++                        </span>
++                        <span
++                          className={`font-mono truncate max-w-[150px] ${
++                            env.version ? "text-foreground" : "text-yellow-500"
++                          }`}
++                          title={env.version || env.error || ""}
++                        >
++                          {env.version || env.error || t("common.notInstalled")}
++                        </span>
++                      </div>
++                    ))}
++                  </div>
++                ) : (
++                  <div
++                    className="text-xs font-mono text-muted-foreground truncate"
++                    title={tool?.version || tool?.error || t("common.unknown")}
++                  >
++                    {isLoadingTools
++                      ? t("common.loading")
++                      : tool?.version
++                        ? tool.version
++                        : tool?.error || t("common.notInstalled")}
++                  </div>
++                )}
++                {/* WSL Shell 选择器 - 显示在第一个 WSL 环境旁 */}
++                {envs.some((env) => env.env_type === "wsl") && (
++                  <div className="flex items-center gap-2 mt-1">
++                    <Select
++                      value={wslShellByTool[toolName]?.wslShell || "auto"}
++                      onValueChange={(v) =>
++                        handleToolShellChange(toolName, v)
++                      }
++                      disabled={isLoadingTools || loadingTools[toolName]}
++                    >
++                      <SelectTrigger className="h-6 w-[70px] text-xs">
++                        <SelectValue />
++                      </SelectTrigger>
++                      <SelectContent>
++                        <SelectItem value="auto">
++                          {t("common.auto")}
++                        </SelectItem>
++                        {WSL_SHELL_OPTIONS.map((shell) => (
++                          <SelectItem key={shell} value={shell}>
++                            {shell}
++                          </SelectItem>
++                        ))}
++                      </SelectContent>
++                    </Select>
++                    <Select
++                      value={wslShellByTool[toolName]?.wslShellFlag || "auto"}
++                      onValueChange={(v) =>
++                        handleToolShellFlagChange(toolName, v)
++                      }
++                      disabled={isLoadingTools || loadingTools[toolName]}
++                    >
++                      <SelectTrigger className="h-6 w-[70px] text-xs">
++                        <SelectValue />
++                      </SelectTrigger>
++                      <SelectContent>
++                        <SelectItem value="auto">
++                          {t("common.auto")}
++                        </SelectItem>
++                        {WSL_SHELL_FLAG_OPTIONS.map((flag) => (
++                          <SelectItem key={flag} value={flag}>
++                            {flag}
++                          </SelectItem>
++                        ))}
++                      </SelectContent>
++                    </Select>
++                  </div>
++                )}
+               </motion.div>
+             );
+           })}
+diff --git a/src/lib/api/settings.ts b/src/lib/api/settings.ts
+index e02e2a18..16c04279 100644
+--- a/src/lib/api/settings.ts
++++ b/src/lib/api/settings.ts
+@@ -183,6 +183,14 @@ export const settingsApi = {
+       error: string | null;
+       env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
+       wsl_distro: string | null;
++      envs?: Array<{
++        env_type: "windows" | "wsl" | "macos" | "linux";
++        wsl_distro?: string;
++        version?: string;
++        error?: string;
++        wsl_shell?: string;
++        wsl_shell_flag?: string;
++      }>;
+     }>
+   > {
+     return await invoke("get_tool_versions", { tools, wslShellByTool });
+-- 
+2.51.2.vfs.0.0
+

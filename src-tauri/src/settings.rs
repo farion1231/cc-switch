@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
@@ -516,6 +515,18 @@ pub fn get_claude_override_dir() -> Option<PathBuf> {
         .claude_config_dir
         .as_ref()
         .map(|p| resolve_override_path(p))
+}
+
+/// 获取所有已安装的 WSL 发行版列表。
+/// 返回 `None` 表示 WSL 不可用或未安装任何发行版。
+pub fn get_wsl_distros() -> Option<Vec<String>> {
+    #[cfg(target_os = "windows")]
+    {
+        let distros = crate::utils::wsl::get_all_wsl_distros();
+        if distros.is_empty() { None } else { Some(distros) }
+    }
+    #[cfg(not(target_os = "windows"))]
+    None
 }
 
 pub fn get_codex_override_dir() -> Option<PathBuf> {
