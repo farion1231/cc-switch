@@ -3,7 +3,7 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{json, Value};
 
@@ -61,46 +61,6 @@ where
     Ok(())
 }
 
-fn expand_wsl_dirs(
-    primary_dir: &Path,
-    default_subdir: &[&str],
-) -> Vec<PathBuf> {
-    let mut dirs = vec![primary_dir.to_path_buf()];
-
-    #[cfg(target_os = "windows")]
-    {
-        use crate::utils::wsl::{parse_wsl_unc_path, resolve_wsl_home_dir_unc};
-
-        if let Some((current_distro, suffix)) = parse_wsl_unc_path(primary_dir) {
-            if let Some(distros) = crate::settings::get_wsl_distros() {
-                for distro in distros {
-                    let distro = distro.trim();
-                    if distro.is_empty() || distro.eq_ignore_ascii_case(&current_distro) {
-                        continue;
-                    }
-                    let mut dir = PathBuf::from(format!("\\\\wsl.localhost\\{distro}"));
-                    if !suffix.is_empty() {
-                        dir.push(&suffix);
-                    }
-                    dirs.push(dir);
-                }
-            }
-        } else if let Some(distros) = crate::settings::get_wsl_distros() {
-            for distro in distros {
-                if let Some(mut home_unc) = resolve_wsl_home_dir_unc(&distro) {
-                    for segment in default_subdir {
-                        home_unc.push(segment);
-                    }
-                    dirs.push(home_unc);
-                }
-            }
-        }
-    }
-
-    crate::utils::wsl::dedupe_paths(dirs)
-}
-
-
 fn for_each_codex_live_path<F>(mut op: F) -> Result<(), AppError>
 where
     F: FnMut(usize, &Path, &Path) -> Result<(), AppError>,
@@ -111,7 +71,7 @@ where
         .map(Path::to_path_buf)
         .unwrap_or_else(crate::codex_config::get_codex_config_dir);
 
-    let dirs = expand_wsl_dirs(&primary_dir, &[".codex"]);
+    let dirs = crate::utils::wsl::expand_wsl_dirs(&primary_dir, &[".codex"]);
     log::debug!("Codex live config dirs: {:?}", dirs);
     for (idx, dir) in dirs.iter().enumerate() {
         let auth_path = dir.join("auth.json");
@@ -140,7 +100,7 @@ where
         .map(Path::to_path_buf)
         .unwrap_or_else(crate::gemini_config::get_gemini_dir);
 
-    let dirs = expand_wsl_dirs(&primary_dir, &[".gemini"]);
+    let dirs = crate::utils::wsl::expand_wsl_dirs(&primary_dir, &[".gemini"]);
 
     for (idx, dir) in dirs.iter().enumerate() {
         let env_path = dir.join(".env");
@@ -169,7 +129,7 @@ where
         .map(Path::to_path_buf)
         .unwrap_or_else(crate::opencode_config::get_opencode_dir);
 
-    let dirs = expand_wsl_dirs(&primary_dir, &[".config", "opencode"]);
+    let dirs = crate::utils::wsl::expand_wsl_dirs(&primary_dir, &[".config", "opencode"]);
 
     for (idx, dir) in dirs.iter().enumerate() {
         let path = dir.join("opencode.json");
@@ -197,7 +157,7 @@ where
         .map(Path::to_path_buf)
         .unwrap_or_else(crate::openclaw_config::get_openclaw_dir);
 
-    let dirs = expand_wsl_dirs(&primary_dir, &[".openclaw"]);
+    let dirs = crate::utils::wsl::expand_wsl_dirs(&primary_dir, &[".openclaw"]);
 
     for (idx, dir) in dirs.iter().enumerate() {
         let path = dir.join("openclaw.json");
