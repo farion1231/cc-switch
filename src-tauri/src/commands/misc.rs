@@ -133,40 +133,25 @@ pub async fn get_tool_versions(
     tools: Option<Vec<String>>,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
 ) -> Result<Vec<ToolVersion>, String> {
-    // Windows: completely disable tool version detection to prevent
-    // accidentally launching apps (e.g. Claude Code) via protocol handlers.
-    #[cfg(target_os = "windows")]
-    {
-        let _ = (tools, wsl_shell_by_tool);
-        return Ok(Vec::new());
+    let requested: Vec<&str> = if let Some(tools) = tools.as_ref() {
+        let set: std::collections::HashSet<&str> = tools.iter().map(|s| s.as_str()).collect();
+        VALID_TOOLS
+            .iter()
+            .copied()
+            .filter(|t| set.contains(t))
+            .collect()
+    } else {
+        VALID_TOOLS.to_vec()
+    };
+    let mut results = Vec::new();
+
+    for tool in requested {
+        results.push(
+            get_single_tool_version_impl(tool, wsl_shell_by_tool.as_ref()).await,
+        );
     }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        let requested: Vec<&str> = if let Some(tools) = tools.as_ref() {
-            let set: std::collections::HashSet<&str> = tools.iter().map(|s| s.as_str()).collect();
-            VALID_TOOLS
-                .iter()
-                .copied()
-                .filter(|t| set.contains(t))
-                .collect()
-        } else {
-            VALID_TOOLS.to_vec()
-        };
-        let mut results = Vec::new();
-
-        for tool in requested {
-            let pref = wsl_shell_by_tool.as_ref().and_then(|m| m.get(tool));
-            let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
-            let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
-
-            results.push(
-                get_single_tool_version_impl(tool, tool_wsl_shell, tool_wsl_shell_flag).await,
-            );
-        }
-
-        Ok(results)
-    }
+    Ok(results)
 }
 
 /// 获取单个工具的版本信息（内部实现）
