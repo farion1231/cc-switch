@@ -184,6 +184,7 @@ export interface WebDavSyncSettings {
   password?: string;
   remoteRoot?: string;
   profile?: string;
+  providerPreset?: "jianguoyun" | "nextcloud" | "synology" | "custom" | string;
   status?: WebDavSyncStatus;
 }
 
