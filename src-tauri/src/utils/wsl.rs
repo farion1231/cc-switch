@@ -8,10 +8,7 @@
 //! - `get_all_wsl_distros`
 //! - `dedupe_paths`
 
-use std::path::PathBuf;
-
-#[cfg(target_os = "windows")]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -178,6 +175,45 @@ pub fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// Expand a primary config directory into a set of directories that includes:
+/// - the primary directory itself
+/// - on Windows, additional WSL UNC directories inferred from known distros
+///
+/// This is used to support Windows + WSL dual-environment config sync.
+pub(crate) fn expand_wsl_dirs(primary_dir: &Path, default_subdir: &[&str]) -> Vec<PathBuf> {
+    let mut dirs = vec![primary_dir.to_path_buf()];
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some((current_distro, suffix)) = parse_wsl_unc_path(primary_dir) {
+            if let Some(distros) = crate::settings::get_wsl_distros() {
+                for distro in distros {
+                    let distro = distro.trim();
+                    if distro.is_empty() || distro.eq_ignore_ascii_case(&current_distro) {
+                        continue;
+                    }
+                    let mut dir = PathBuf::from(format!("\\\\wsl.localhost\\{distro}"));
+                    if !suffix.is_empty() {
+                        dir.push(&suffix);
+                    }
+                    dirs.push(dir);
+                }
+            }
+        } else if let Some(distros) = crate::settings::get_wsl_distros() {
+            for distro in distros {
+                if let Some(mut home_unc) = resolve_wsl_home_dir_unc(&distro) {
+                    for segment in default_subdir {
+                        home_unc.push(segment);
+                    }
+                    dirs.push(home_unc);
+                }
+            }
+        }
+    }
+
+    dedupe_paths(dirs)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
