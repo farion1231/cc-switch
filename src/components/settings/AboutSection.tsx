@@ -761,7 +761,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             })}
           </div>
         </div>
-      )}
+      </motion.div>
 
       {!isWindows() && (
         <motion.div
