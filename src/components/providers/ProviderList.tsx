@@ -6,6 +6,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -25,7 +26,7 @@ import {
   useOpenClawLiveProviderIds,
   useOpenClawDefaultModel,
 } from "@/hooks/useOpenClaw";
-// import { useStreamCheck } from "@/hooks/useStreamCheck"; // 测试功能已隐藏
+import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 import {
@@ -38,9 +39,9 @@ import {
   useCurrentOmoProviderId,
   useCurrentOmoSlimProviderId,
 } from "@/lib/query/omo";
-import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { extractProviderCurrentModel } from "@/utils/providerModelUtils";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -141,6 +142,115 @@ export function ProviderList({
   const isOpenCode = appId === "opencode";
   const { data: currentOmoId } = useCurrentOmoProviderId(isOpenCode);
   const { data: currentOmoSlimId } = useCurrentOmoSlimProviderId(isOpenCode);
+  const { checkProvider, isChecking } = useStreamCheck(appId);
+  const supportsStreamCheck =
+    appId === "claude" || appId === "codex" || appId === "gemini";
+  const supportsAutoModelFetch = supportsStreamCheck;
+
+  const [autoDetectedModels, setAutoDetectedModels] = useState<
+    Record<string, string>
+  >({});
+  const [loadingModelIds, setLoadingModelIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const attemptedModelFetchRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    attemptedModelFetchRef.current.clear();
+    setAutoDetectedModels({});
+    setLoadingModelIds(new Set());
+  }, [appId]);
+
+  useEffect(() => {
+    const providerIds = new Set(sortedProviders.map((provider) => provider.id));
+    setAutoDetectedModels((prev) =>
+      Object.fromEntries(
+        Object.entries(prev).filter(([providerId]) =>
+          providerIds.has(providerId),
+        ),
+      ),
+    );
+    setLoadingModelIds((prev) => {
+      const next = new Set<string>();
+      prev.forEach((providerId) => {
+        if (providerIds.has(providerId)) {
+          next.add(providerId);
+        }
+      });
+      return next;
+    });
+  }, [sortedProviders]);
+
+  const fetchModelForProvider = useCallback(
+    async (provider: Provider, force: boolean = false) => {
+      if (!supportsAutoModelFetch) return;
+      if (extractProviderCurrentModel(provider, appId)) return;
+      if (!force && attemptedModelFetchRef.current.has(provider.id)) return;
+
+      attemptedModelFetchRef.current.add(provider.id);
+      setLoadingModelIds((prev) => {
+        const next = new Set(prev);
+        next.add(provider.id);
+        return next;
+      });
+
+      try {
+        const models = await providersApi.fetchAvailableModels(
+          provider.id,
+          appId,
+        );
+        const firstModel = models.find((item) => item.trim().length > 0);
+        if (firstModel) {
+          setAutoDetectedModels((prev) => ({
+            ...prev,
+            [provider.id]: firstModel,
+          }));
+        }
+      } catch (error) {
+        console.warn(
+          `[ProviderList] Failed to auto fetch model for provider ${provider.id}:`,
+          error,
+        );
+      } finally {
+        setLoadingModelIds((prev) => {
+          const next = new Set(prev);
+          next.delete(provider.id);
+          return next;
+        });
+      }
+    },
+    [appId, supportsAutoModelFetch],
+  );
+
+  useEffect(() => {
+    if (!supportsAutoModelFetch) return;
+    sortedProviders.forEach((provider) => {
+      const localModel = extractProviderCurrentModel(provider, appId);
+      if (localModel) return;
+      if (autoDetectedModels[provider.id]) return;
+      if (loadingModelIds.has(provider.id)) return;
+      if (attemptedModelFetchRef.current.has(provider.id)) return;
+      void fetchModelForProvider(provider);
+    });
+  }, [
+    appId,
+    autoDetectedModels,
+    fetchModelForProvider,
+    loadingModelIds,
+    sortedProviders,
+    supportsAutoModelFetch,
+  ]);
+
+  const getProviderModel = useCallback(
+    (provider: Provider): string => {
+      return (
+        extractProviderCurrentModel(provider, appId) ||
+        autoDetectedModels[provider.id] ||
+        ""
+      );
+    },
+    [appId, autoDetectedModels],
+  );
 
   const getFailoverPriority = useCallback(
     (providerId: string): number | undefined => {
@@ -306,7 +416,18 @@ export function ProviderList({
                 onConfigureUsage={onConfigureUsage}
                 onOpenWebsite={onOpenWebsite}
                 onOpenTerminal={onOpenTerminal}
-                isTesting={false} // isChecking(provider.id) - 测试功能已隐藏
+                onTest={
+                  supportsStreamCheck
+                    ? (targetProvider) =>
+                        void checkProvider(
+                          targetProvider.id,
+                          targetProvider.name,
+                        )
+                    : undefined
+                }
+                isTesting={
+                  supportsStreamCheck ? isChecking(provider.id) : false
+                }
                 isProxyRunning={isProxyRunning}
                 isProxyTakeover={isProxyTakeover}
                 isAutoFailoverEnabled={isFailoverModeActive}
@@ -320,6 +441,14 @@ export function ProviderList({
                 isDefaultModel={isProviderDefaultModel(provider.id)}
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
+                }
+                currentModel={getProviderModel(provider)}
+                isModelLoading={loadingModelIds.has(provider.id)}
+                onAutoDetectModel={
+                  supportsAutoModelFetch
+                    ? (targetProvider) =>
+                        void fetchModelForProvider(targetProvider, true)
+                    : undefined
                 }
               />
             );
@@ -437,6 +566,9 @@ interface SortableProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  currentModel?: string;
+  isModelLoading?: boolean;
+  onAutoDetectModel?: (provider: Provider) => void;
 }
 
 function SortableProviderCard({
@@ -467,6 +599,9 @@ function SortableProviderCard({
   activeProviderId,
   isDefaultModel,
   onSetAsDefault,
+  currentModel,
+  isModelLoading,
+  onAutoDetectModel,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -520,6 +655,9 @@ function SortableProviderCard({
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}
+        currentModel={currentModel}
+        isModelLoading={isModelLoading}
+        onAutoDetectModel={onAutoDetectModel}
       />
     </div>
   );
