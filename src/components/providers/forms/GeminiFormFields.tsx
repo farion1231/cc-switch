@@ -69,6 +69,8 @@ export function GeminiFormFields({
   // 检测是否为 Google 官方（使用 OAuth）
   const isGoogleOfficial =
     partnerPromotionKey?.toLowerCase() === "google-official";
+  const isGoogleVertexFast =
+    partnerPromotionKey?.toLowerCase() === "google-vertex-fast";
 
   return (
     <>
@@ -100,6 +102,19 @@ export function GeminiFormFields({
           value={apiKey}
           onChange={onApiKeyChange}
           category={category}
+          disabled={isGoogleVertexFast ? false : undefined}
+          placeholder={
+            isGoogleVertexFast
+              ? {
+                  official: t("providerForm.apiKeyAutoFill", {
+                    defaultValue: "输入 API Key，将自动填充到配置",
+                  }),
+                  thirdParty: t("providerForm.apiKeyAutoFill", {
+                    defaultValue: "输入 API Key，将自动填充到配置",
+                  }),
+                }
+              : undefined
+          }
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
           isPartner={isPartner}

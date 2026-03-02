@@ -1,3 +1,4 @@
+bun.lock
 node_modules/
 dist/
 release/

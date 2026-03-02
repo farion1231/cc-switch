@@ -50,6 +50,27 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#4285F4",
   },
   {
+    name: "google-vertex-fast",
+    websiteUrl:
+      "https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference",
+    apiKeyUrl: "https://console.cloud.google.com/apis/credentials",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://aiplatform.googleapis.com/v1",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://aiplatform.googleapis.com/v1",
+    model: "gemini-3.1-pro-preview",
+    description: "Google Vertex 官方 Fast 模式",
+    category: "official",
+    partnerPromotionKey: "google-vertex-fast",
+    endpointCandidates: ["https://aiplatform.googleapis.com/v1"],
+    icon: "gemini",
+    iconColor: "#4285F4",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
     apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
