@@ -18,6 +18,7 @@ use tokio::sync::RwLock;
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 const CODEX_DEFAULT_BASE_URL: &str = "https://api.openai.com";
 const CODEX_PROXY_DUMMY_KEY: &str = "sk-cc-switch-proxy";
+const CODEX_PRESERVED_FEATURE_FLAGS: [&str; 1] = ["multi_agent"];
 #[cfg(target_os = "macos")]
 const CODEX_PROXY_ENV_BLOCK_BEGIN: &str = "# >>> CC Switch Codex Proxy (managed) >>>";
 #[cfg(target_os = "macos")]
@@ -381,6 +382,10 @@ impl ProxyService {
             .db
             .get_all_providers("codex")
             .map_err(|e| format!("读取 Codex Provider 列表失败: {e}"))?;
+        let live_codex_config = self
+            .read_codex_live()
+            .ok()
+            .and_then(|cfg| cfg.get("config").and_then(|v| v.as_str()).map(str::to_string));
 
         if providers.is_empty() {
             return Err("未配置 Codex Provider，请先在供应商管理中添加账号".to_string());
@@ -408,6 +413,24 @@ impl ProxyService {
             if existing_base_url.is_none() {
                 Self::set_codex_base_url(&mut settings, &endpoint);
                 changed = true;
+            }
+
+            if let Some(source_toml) = live_codex_config.as_deref() {
+                let target_toml = settings
+                    .get("config")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let merged_toml =
+                    Self::sync_codex_preserved_feature_flags_from_source(target_toml, source_toml);
+                if merged_toml != target_toml {
+                    if !settings.is_object() {
+                        settings = json!({});
+                    }
+                    if let Some(root) = settings.as_object_mut() {
+                        root.insert("config".to_string(), json!(merged_toml));
+                        changed = true;
+                    }
+                }
             }
 
             if Self::sync_codex_auth_openai_api_key(&mut settings) {
@@ -1492,8 +1515,22 @@ impl ProxyService {
             }
             AppType::Codex => {
                 if let Ok(Some(backup)) = self.db.get_live_backup("codex").await {
-                    let config: Value = serde_json::from_str(&backup.original_config)
+                    let mut config: Value = serde_json::from_str(&backup.original_config)
                         .map_err(|e| format!("解析 Codex 备份失败: {e}"))?;
+                    if let Some(source_toml) = self
+                        .read_codex_live()
+                        .ok()
+                        .and_then(|v| {
+                            v.get("config")
+                                .and_then(|cfg| cfg.as_str())
+                                .map(str::to_string)
+                        })
+                    {
+                        Self::sync_codex_preserved_feature_flags_in_json(
+                            &mut config,
+                            source_toml.as_str(),
+                        );
+                    }
                     self.write_codex_live(&config)?;
                     log::info!("Codex Live 配置已恢复");
                 }
@@ -1550,8 +1587,24 @@ impl ProxyService {
             .await
             .map_err(|e| format!("获取 {app_type_str} Live 备份失败: {e}"))?;
         if let Some(backup) = backup {
-            let config: Value = serde_json::from_str(&backup.original_config)
+            let mut config: Value = serde_json::from_str(&backup.original_config)
                 .map_err(|e| format!("解析 {app_type_str} 备份失败: {e}"))?;
+            if matches!(app_type, AppType::Codex) {
+                if let Some(source_toml) = self
+                    .read_codex_live()
+                    .ok()
+                    .and_then(|v| {
+                        v.get("config")
+                            .and_then(|cfg| cfg.as_str())
+                            .map(str::to_string)
+                    })
+                {
+                    Self::sync_codex_preserved_feature_flags_in_json(
+                        &mut config,
+                        source_toml.as_str(),
+                    );
+                }
+            }
             self.write_live_config_for_app(app_type, &config)?;
             log::info!("{app_type_str} Live 配置已从备份恢复");
             return Ok(());
@@ -1918,8 +1971,24 @@ impl ProxyService {
                     .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?
             }
             "codex" => {
-                // Codex: settings_config 包含 {"auth": ..., "config": ...}，直接使用
-                serde_json::to_string(&provider.settings_config)
+                // Codex: settings_config 包含 {"auth": ..., "config": ...}
+                // 在接管状态下保留 live 中用户显式开启的 feature flags，避免重启恢复时被旧备份覆盖。
+                let mut backup_settings = provider.settings_config.clone();
+                if let Some(source_toml) = self
+                    .read_codex_live()
+                    .ok()
+                    .and_then(|v| {
+                        v.get("config")
+                            .and_then(|cfg| cfg.as_str())
+                            .map(str::to_string)
+                    })
+                {
+                    Self::sync_codex_preserved_feature_flags_in_json(
+                        &mut backup_settings,
+                        source_toml.as_str(),
+                    );
+                }
+                serde_json::to_string(&backup_settings)
                     .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?
             }
             "gemini" => {
@@ -2040,6 +2109,67 @@ impl ProxyService {
         doc["base_url"] = toml_edit::value(new_url);
 
         doc.to_string()
+    }
+
+    fn is_toml_feature_flag_true(toml_str: &str, feature_name: &str) -> bool {
+        if toml_str.trim().is_empty() {
+            return false;
+        }
+        let parsed = match toml::from_str::<toml::Value>(toml_str) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        parsed
+            .get("features")
+            .and_then(|v| v.get(feature_name))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    fn ensure_toml_feature_flag_true(toml_str: &str, feature_name: &str) -> String {
+        use toml_edit::DocumentMut;
+
+        let mut doc = if toml_str.trim().is_empty() {
+            DocumentMut::new()
+        } else {
+            match toml_str.parse::<DocumentMut>() {
+                Ok(doc) => doc,
+                Err(_) => return toml_str.to_string(),
+            }
+        };
+
+        if doc.get("features").is_none() {
+            doc["features"] = toml_edit::table();
+        }
+        if let Some(features) = doc.get_mut("features").and_then(|v| v.as_table_mut()) {
+            features[feature_name] = toml_edit::value(true);
+        }
+        doc.to_string()
+    }
+
+    fn sync_codex_preserved_feature_flags_from_source(
+        target_toml: &str,
+        source_toml: &str,
+    ) -> String {
+        let mut output = target_toml.to_string();
+        for feature_name in CODEX_PRESERVED_FEATURE_FLAGS {
+            if Self::is_toml_feature_flag_true(source_toml, feature_name) {
+                output = Self::ensure_toml_feature_flag_true(&output, feature_name);
+            }
+        }
+        output
+    }
+
+    fn sync_codex_preserved_feature_flags_in_json(config: &mut Value, source_toml: &str) {
+        let target_toml = config.get("config").and_then(|v| v.as_str()).unwrap_or("");
+        let merged = Self::sync_codex_preserved_feature_flags_from_source(target_toml, source_toml);
+
+        if !config.is_object() {
+            *config = json!({});
+        }
+        if let Some(root) = config.as_object_mut() {
+            root.insert("config".to_string(), json!(merged));
+        }
     }
 
     fn read_claude_live(&self) -> Result<Value, String> {
@@ -2401,6 +2531,50 @@ model = "gpt-5.1-codex"
         assert_eq!(base_url, new_url);
     }
 
+    #[test]
+    fn sync_codex_preserved_feature_flags_from_source_copies_multi_agent_when_enabled() {
+        let target = r#"
+model = "gpt-5.3-codex"
+"#;
+
+        let source = r#"
+[features]
+multi_agent = true
+"#;
+
+        let merged = ProxyService::sync_codex_preserved_feature_flags_from_source(target, source);
+        let parsed: toml::Value = toml::from_str(&merged).expect("merged should be valid TOML");
+        assert_eq!(
+            parsed
+                .get("features")
+                .and_then(|v| v.get("multi_agent"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn sync_codex_preserved_feature_flags_from_source_does_not_copy_false_flag() {
+        let target = r#"
+model = "gpt-5.3-codex"
+"#;
+
+        let source = r#"
+[features]
+multi_agent = false
+"#;
+
+        let merged = ProxyService::sync_codex_preserved_feature_flags_from_source(target, source);
+        let parsed: toml::Value = toml::from_str(&merged).expect("merged should be valid TOML");
+        assert!(
+            parsed
+                .get("features")
+                .and_then(|v| v.get("multi_agent"))
+                .is_none(),
+            "false feature flag in source should not force-write target"
+        );
+    }
+
     #[tokio::test]
     #[serial]
     async fn sync_claude_token_does_not_add_anthropic_api_key() {
@@ -2573,6 +2747,70 @@ model = "gpt-5.1-codex"
             .expect("backup exists");
         let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
         assert_eq!(backup.original_config, expected);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_live_backup_from_provider_preserves_multi_agent_from_codex_live() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        write_json_file(
+            &crate::codex_config::get_codex_auth_path(),
+            &json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": "live-token"
+            }),
+        )
+        .expect("write codex auth");
+        crate::config::write_text_file(
+            &crate::codex_config::get_codex_config_path(),
+            "model = \"gpt-5.3-codex\"\n[features]\nmulti_agent = true\n",
+        )
+        .expect("write codex config");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "codex-p1".to_string(),
+            "Codex P1".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "provider-token"
+                },
+                "config": "model = \"gpt-5.3-codex\"\n"
+            }),
+            None,
+        );
+
+        service
+            .update_live_backup_from_provider("codex", &provider)
+            .await
+            .expect("update codex live backup");
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("read backup")
+            .expect("backup exists");
+        let backup_json: serde_json::Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+        let backup_config = backup_json
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("backup config should be string");
+        let parsed: toml::Value =
+            toml::from_str(backup_config).expect("backup config should be valid TOML");
+        assert_eq!(
+            parsed
+                .get("features")
+                .and_then(|v| v.get("multi_agent"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 
     #[test]
