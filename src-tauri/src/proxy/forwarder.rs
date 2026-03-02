@@ -756,8 +756,8 @@ impl RequestForwarder {
                 endpoint
             };
 
-        // 使用适配器构建 URL
-        let url = adapter.build_url(&base_url, effective_endpoint);
+        // 使用适配器构建 URL（支持传入 provider 配置）
+        let url = adapter.build_url_with_provider(Some(provider), &base_url, effective_endpoint);
 
         // 应用模型映射（独立于格式转换）
         let (mapped_body, _original_model, _mapped_model) =
@@ -840,10 +840,8 @@ impl RequestForwarder {
         // 参考 CCH: undici 在连接提前关闭时会对不完整的 gzip 流抛出错误
         request = request.header("accept-encoding", "identity");
 
-        // 使用适配器添加认证头
-        if let Some(auth) = adapter.extract_auth(provider) {
-            request = adapter.add_auth_headers(request, &auth);
-        }
+        // 使用适配器添加认证头（异步版本，支持动态获取 token）
+        request = adapter.add_auth_headers_async(provider, request).await?;
 
         // anthropic-version 统一处理（仅 Claude）：优先使用客户端的版本号，否则使用默认值
         // 注意：只设置一次，避免重复

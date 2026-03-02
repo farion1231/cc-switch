@@ -5,6 +5,7 @@
 use super::auth::AuthInfo;
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use futures::future::BoxFuture;
 use reqwest::RequestBuilder;
 use serde_json::Value;
 
@@ -74,6 +75,27 @@ pub trait ProviderAdapter: Send + Sync {
     /// 完整的请求 URL
     fn build_url(&self, base_url: &str, endpoint: &str) -> String;
 
+    /// 构建请求 URL（支持传入 Provider 配置）
+    ///
+    /// 默认实现调用 `build_url`，供应商可以重写此方法以支持更复杂的 URL 构建逻辑。
+    /// 例如 Vertex AI 需要根据 provider 配置中的区域、模型类型等动态构建 URL。
+    ///
+    /// # Arguments
+    /// * `provider` - Provider 配置
+    /// * `base_url` - 基础 URL
+    /// * `endpoint` - 请求端点（如 `/v1/messages`）
+    ///
+    /// # Returns
+    /// 完整的请求 URL
+    fn build_url_with_provider(
+        &self,
+        _provider: Option<&Provider>,
+        base_url: &str,
+        endpoint: &str,
+    ) -> String {
+        self.build_url(base_url, endpoint)
+    }
+
     /// 添加认证头到请求
     ///
     /// # Arguments
@@ -83,6 +105,31 @@ pub trait ProviderAdapter: Send + Sync {
     /// # Returns
     /// 添加了认证头的 RequestBuilder
     fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder;
+
+    /// 添加认证头到请求（异步版本，支持动态获取 token）
+    ///
+    /// 默认实现调用同步的 `add_auth_headers` 方法。
+    /// 供应商可以重写此方法以支持异步认证（如 Vertex 服务账号 token 获取）。
+    ///
+    /// # Arguments
+    /// * `provider` - Provider 配置
+    /// * `request` - reqwest RequestBuilder
+    ///
+    /// # Returns
+    /// 添加了认证头的 RequestBuilder
+    fn add_auth_headers_async<'a>(
+        &'a self,
+        provider: &'a Provider,
+        request: RequestBuilder,
+    ) -> BoxFuture<'a, Result<RequestBuilder, ProxyError>> {
+        Box::pin(async move {
+            if let Some(auth) = self.extract_auth(provider) {
+                Ok(self.add_auth_headers(request, &auth))
+            } else {
+                Ok(request)
+            }
+        })
+    }
 
     /// 是否需要格式转换
     ///

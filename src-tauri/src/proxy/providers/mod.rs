@@ -8,6 +8,7 @@
 //! - `claude`: Claude (Anthropic) 适配器
 //! - `codex`: Codex (OpenAI) 适配器
 //! - `gemini`: Gemini (Google) 适配器
+//! - `vertex`: Vertex AI (Google Cloud) 适配器
 //! - `models`: API 数据模型
 //! - `transform`: 格式转换
 
@@ -16,6 +17,7 @@ mod auth;
 mod claude;
 mod codex;
 mod gemini;
+mod vertex;
 pub mod models;
 pub mod streaming;
 pub mod transform;
@@ -30,6 +32,7 @@ pub use auth::{AuthInfo, AuthStrategy};
 pub use claude::ClaudeAdapter;
 pub use codex::CodexAdapter;
 pub use gemini::GeminiAdapter;
+pub use vertex::VertexAdapter;
 
 /// 供应商类型枚举
 ///
@@ -50,6 +53,8 @@ pub enum ProviderType {
     GeminiCli,
     /// OpenRouter（已支持 Claude Code 兼容接口，默认透传；保留旧转换逻辑备用）
     OpenRouter,
+    /// Vertex AI (Google Cloud Platform)
+    Vertex,
 }
 
 impl ProviderType {
@@ -75,6 +80,7 @@ impl ProviderType {
                 "https://generativelanguage.googleapis.com"
             }
             ProviderType::OpenRouter => "https://openrouter.ai/api",
+            ProviderType::Vertex => "https://aiplatform.googleapis.com",
         }
     }
 
@@ -152,6 +158,7 @@ impl ProviderType {
             ProviderType::Gemini => "gemini",
             ProviderType::GeminiCli => "gemini_cli",
             ProviderType::OpenRouter => "openrouter",
+            ProviderType::Vertex => "vertex",
         }
     }
 }
@@ -173,6 +180,7 @@ impl std::str::FromStr for ProviderType {
             "gemini" => Ok(ProviderType::Gemini),
             "gemini_cli" | "gemini-cli" => Ok(ProviderType::GeminiCli),
             "openrouter" => Ok(ProviderType::OpenRouter),
+            "vertex" => Ok(ProviderType::Vertex),
             _ => Err(format!("Invalid provider type: {s}")),
         }
     }
@@ -204,6 +212,7 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
         }
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
+        ProviderType::Vertex => Box::new(VertexAdapter::new()),
     }
 }
 
