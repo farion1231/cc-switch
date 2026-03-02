@@ -118,6 +118,10 @@ export const providersApi = {
   async importOpenClawFromLive(): Promise<number> {
     return await invoke("import_openclaw_providers_from_live");
   },
+
+  exportAliases: async (): Promise<string> => {
+    return await invoke("export_provider_aliases");
+  },
 };
 
 // ============================================================================

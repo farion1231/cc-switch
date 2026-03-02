@@ -296,6 +296,20 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     // MCP sync
     McpService::sync_all_enabled(state)?;
 
+    // Sync all Claude instance directories (for multi-instance support)
+    match state.db.get_all_providers(AppType::Claude.as_str()) {
+        Ok(providers) => {
+            let pairs: Vec<(&str, serde_json::Value)> = providers
+                .iter()
+                .map(|(id, p)| (id.as_str(), super::instance::sanitize_for_instance(&p.settings_config)))
+                .collect();
+            if let Err(e) = super::instance::sync_all_instances(&pairs) {
+                log::warn!("Failed to sync instance directories: {e}");
+            }
+        }
+        Err(e) => log::warn!("Failed to fetch Claude providers for instance sync: {e}"),
+    }
+
     // Skill sync
     for app_type in AppType::all() {
         if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {

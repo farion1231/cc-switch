@@ -1033,6 +1033,8 @@ pub fn run() {
             commands::delete_daily_memory_file,
             commands::search_daily_memory_files,
             commands::open_workspace_directory,
+            // Shell alias export
+            commands::export_provider_aliases,
         ]);
 
     let app = builder

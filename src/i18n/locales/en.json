@@ -136,6 +136,10 @@
     "usageSaveFailed": "Failed to save usage query configuration",
     "geminiConfig": "Gemini Configuration",
     "geminiConfigHint": "Use .env format to configure Gemini",
+    "exportAliases": "Export Aliases",
+    "exportAliasesTitle": "Shell Aliases",
+    "exportAliasesDesc": "Add the following to ~/.zshrc or ~/.bashrc to launch Claude with different providers:",
+    "exportAliasesCopied": "Copied to clipboard",
     "form": {
       "gemini": {
         "model": "Model",
