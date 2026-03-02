@@ -123,6 +123,15 @@ impl ProviderType {
             }
             AppType::Codex => ProviderType::Codex,
             AppType::Gemini => {
+                // 检测是否为 Vertex AI 模式
+                if let Some(env) = provider.settings_config.get("env") {
+                    if env.get("VERTEX_AUTH_MODE").is_some()
+                        || env.get("VERTEX_REGION").is_some()
+                        || env.get("VERTEX_API_KEY").is_some()
+                    {
+                        return ProviderType::Vertex;
+                    }
+                }
                 // 检测是否为 CLI 模式（OAuth）
                 let adapter = GeminiAdapter::new();
                 if let Some(auth) = adapter.extract_auth(provider) {
@@ -204,7 +213,6 @@ pub fn get_adapter(app_type: &AppType) -> Box<dyn ProviderAdapter> {
 }
 
 /// 根据 ProviderType 获取对应的适配器
-#[allow(dead_code)]
 pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn ProviderAdapter> {
     match provider_type {
         ProviderType::Claude | ProviderType::ClaudeAuth | ProviderType::OpenRouter => {

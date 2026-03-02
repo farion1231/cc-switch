@@ -133,10 +133,19 @@ impl VertexAdapter {
         // 优先从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
             if let Some(key) = env.get("VERTEX_API_KEY").and_then(|v| v.as_str()) {
-                return Some(key.to_string());
+                if !key.is_empty() {
+                    return Some(key.to_string());
+                }
+            }
+            if let Some(key) = env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
+                if !key.is_empty() {
+                    return Some(key.to_string());
+                }
             }
             if let Some(key) = env.get("GOOGLE_API_KEY").and_then(|v| v.as_str()) {
-                return Some(key.to_string());
+                if !key.is_empty() {
+                    return Some(key.to_string());
+                }
             }
         }
 

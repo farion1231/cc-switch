@@ -54,7 +54,7 @@ import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { CodexFormFields } from "./CodexFormFields";
-import { GeminiFormFields } from "./GeminiFormFields";
+import { GeminiFormFields, type VertexAuthMode } from "./GeminiFormFields";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
@@ -134,8 +134,47 @@ export function ProviderForm({
   const { t } = useTranslation();
   const isEditMode = Boolean(initialData);
 
+  // 编辑模式下匹配对应的预设
+  const getInitialPresetId = useCallback(() => {
+    if (!initialData) return "custom";
+
+    // Gemini/Vertex 预设匹配
+    if (appId === "gemini") {
+      const env = (initialData.settingsConfig?.env as any) ?? {};
+
+      // 检测 Vertex AI
+      if (env.VERTEX_AUTH_MODE || env.VERTEX_REGION || env.VERTEX_API_KEY) {
+        const vertexPreset = geminiProviderPresets.find(
+          (p) => p.partnerPromotionKey === "google-vertex"
+        );
+        return vertexPreset ? `gemini-${geminiProviderPresets.indexOf(vertexPreset)}` : null;
+      }
+
+      // 检测 Google Official (OAuth)
+      if (!env.GEMINI_API_KEY && !env.GOOGLE_GEMINI_BASE_URL) {
+        const officialPreset = geminiProviderPresets.find(
+          (p) => p.partnerPromotionKey === "google-official"
+        );
+        return officialPreset ? `gemini-${geminiProviderPresets.indexOf(officialPreset)}` : null;
+      }
+
+      // 根据 base URL 匹配其他预设
+      if (env.GOOGLE_GEMINI_BASE_URL) {
+        const baseUrl = env.GOOGLE_GEMINI_BASE_URL as string;
+        const matchedPreset = geminiProviderPresets.find(
+          (p) => p.baseURL && baseUrl.includes(p.baseURL)
+        );
+        if (matchedPreset) {
+          return `gemini-${geminiProviderPresets.indexOf(matchedPreset)}`;
+        }
+      }
+    }
+
+    return null; // 自定义
+  }, [initialData, appId]);
+
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
-    initialData ? null : "custom",
+    getInitialPresetId,
   );
   const [activePreset, setActivePreset] = useState<{
     id: string;
@@ -189,7 +228,10 @@ export function ProviderForm({
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
 
   useEffect(() => {
-    setSelectedPresetId(initialData ? null : "custom");
+    // 编辑模式下保持匹配的预设，新建模式下重置为 custom
+    if (!initialData) {
+      setSelectedPresetId("custom");
+    }
     setActivePreset(null);
 
     if (!initialData) {
@@ -427,6 +469,73 @@ export function ProviderForm({
     initialData: appId === "gemini" ? initialData : undefined,
   });
 
+  // Vertex state
+  const [vertexAuthMode, setVertexAuthMode] = useState<VertexAuthMode>(() => {
+    if (appId === "gemini" && initialData) {
+      const env = (initialData.settingsConfig?.env as any) ?? {};
+      return env.VERTEX_AUTH_MODE === "service-account"
+        ? "service-account"
+        : "api-key";
+    }
+    return "api-key";
+  });
+  const [vertexRegion, setVertexRegion] = useState(() => {
+    if (appId === "gemini" && initialData) {
+      const env = (initialData.settingsConfig?.env as any) ?? {};
+      return env.VERTEX_REGION || "global";
+    }
+    return "global";
+  });
+  const [vertexServiceAccountJson, setVertexServiceAccountJson] = useState(
+    () => {
+      if (appId === "gemini" && initialData) {
+        const env = (initialData.settingsConfig?.env as any) ?? {};
+        return env.VERTEX_API_KEY || "";
+      }
+      return "";
+    },
+  );
+
+  // 切换 Vertex 授权模式时同步更新 geminiEnv
+  const handleVertexAuthModeChange = useCallback(
+    (mode: VertexAuthMode) => {
+      setVertexAuthMode(mode);
+      const envObj = envStringToObj(geminiEnv);
+      envObj.VERTEX_AUTH_MODE = mode;
+      if (mode === "api-key") {
+        // 切到 API Key 模式：移除 VERTEX_API_KEY，保留 GEMINI_API_KEY
+        delete envObj.VERTEX_API_KEY;
+      } else {
+        // 切到服务账号模式：移除 GEMINI_API_KEY
+        delete envObj.GEMINI_API_KEY;
+      }
+      handleGeminiEnvChange(envObjToString(envObj));
+    },
+    [geminiEnv, envStringToObj, envObjToString, handleGeminiEnvChange],
+  );
+
+  // 切换 Vertex Region 时同步更新 geminiEnv
+  const handleVertexRegionChange = useCallback(
+    (region: string) => {
+      setVertexRegion(region);
+      const envObj = envStringToObj(geminiEnv);
+      envObj.VERTEX_REGION = region;
+      handleGeminiEnvChange(envObjToString(envObj));
+    },
+    [geminiEnv, envStringToObj, envObjToString, handleGeminiEnvChange],
+  );
+
+  // 切换 Vertex 服务账号 JSON 时同步更新 geminiEnv
+  const handleVertexServiceAccountJsonChange = useCallback(
+    (json: string) => {
+      setVertexServiceAccountJson(json);
+      const envObj = envStringToObj(geminiEnv);
+      envObj.VERTEX_API_KEY = json;
+      handleGeminiEnvChange(envObjToString(envObj));
+    },
+    [geminiEnv, envStringToObj, envObjToString, handleGeminiEnvChange],
+  );
+
   const updateGeminiEnvField = useCallback(
     (
       key: "GEMINI_API_KEY" | "GOOGLE_GEMINI_BASE_URL" | "GEMINI_MODEL",
@@ -655,6 +764,51 @@ export function ProviderForm({
       }
     }
 
+    // Vertex 校验
+    if (
+      appId === "gemini" &&
+      geminiPartnerPromotionKey === "google-vertex"
+    ) {
+      if (vertexAuthMode === "api-key") {
+        if (!geminiApiKey.trim()) {
+          toast.error(
+            t("providerForm.apiKeyRequired", {
+              defaultValue: "请填写 Vertex API Key",
+            }),
+          );
+          return;
+        }
+      } else {
+        if (!vertexServiceAccountJson.trim()) {
+          toast.error(
+            t("provider.form.vertex.saRequired", {
+              defaultValue: "请上传或粘贴服务账号 JSON",
+            }),
+          );
+          return;
+        }
+        try {
+          const sa = JSON.parse(vertexServiceAccountJson);
+          if (sa.type !== "service_account") {
+            toast.error(
+              t("provider.form.vertex.invalidSaType", {
+                defaultValue:
+                  "服务账号 JSON 的 type 字段必须为 service_account",
+              }),
+            );
+            return;
+          }
+        } catch {
+          toast.error(
+            t("provider.form.vertex.invalidJson", {
+              defaultValue: "服务账号 JSON 格式无效",
+            }),
+          );
+          return;
+        }
+      }
+    }
+
     let settingsConfig: string;
 
     if (appId === "codex") {
@@ -670,13 +824,29 @@ export function ProviderForm({
       }
     } else if (appId === "gemini") {
       try {
-        const envObj = envStringToObj(geminiEnv);
-        const configObj = geminiConfig.trim() ? JSON.parse(geminiConfig) : {};
-        const combined = {
-          env: envObj,
-          config: configObj,
-        };
-        settingsConfig = JSON.stringify(combined);
+        if (geminiPartnerPromotionKey === "google-vertex") {
+          // Vertex AI 模式
+          const env: Record<string, string> = {
+            VERTEX_AUTH_MODE: vertexAuthMode,
+            VERTEX_REGION: vertexRegion.trim() || "global",
+          };
+          if (vertexAuthMode === "api-key") {
+            env.GEMINI_API_KEY = geminiApiKey.trim();
+          } else {
+            env.VERTEX_API_KEY = vertexServiceAccountJson.trim();
+          }
+          settingsConfig = JSON.stringify({ env });
+        } else {
+          const envObj = envStringToObj(geminiEnv);
+          const configObj = geminiConfig.trim()
+            ? JSON.parse(geminiConfig)
+            : {};
+          const combined = {
+            env: envObj,
+            config: configObj,
+          };
+          settingsConfig = JSON.stringify(combined);
+        }
       } catch (err) {
         settingsConfig = values.settingsConfig.trim();
       }
@@ -983,6 +1153,21 @@ export function ProviderForm({
       const config = (preset.settingsConfig as any)?.config ?? {};
 
       resetGeminiConfig(env, config);
+
+      // Vertex preset: 初始化 auth mode、region、service account
+      if (preset.partnerPromotionKey === "google-vertex") {
+        setVertexAuthMode(
+          env.VERTEX_AUTH_MODE === "service-account"
+            ? "service-account"
+            : "api-key",
+        );
+        setVertexRegion(env.VERTEX_REGION || "global");
+        setVertexServiceAccountJson(env.VERTEX_API_KEY || "");
+      } else {
+        setVertexAuthMode("api-key");
+        setVertexRegion("global");
+        setVertexServiceAccountJson("");
+      }
 
       form.reset({
         name: preset.name,
@@ -1322,6 +1507,12 @@ export function ProviderForm({
             model={geminiModel}
             onModelChange={handleGeminiModelChange}
             speedTestEndpoints={speedTestEndpoints}
+            vertexAuthMode={vertexAuthMode}
+            onVertexAuthModeChange={handleVertexAuthModeChange}
+            vertexRegion={vertexRegion}
+            onVertexRegionChange={handleVertexRegionChange}
+            vertexServiceAccountJson={vertexServiceAccountJson}
+            onVertexServiceAccountJsonChange={handleVertexServiceAccountJsonChange}
           />
         )}
 

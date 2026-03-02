@@ -7,7 +7,7 @@ use super::{
     error::*,
     failover_switch::FailoverSwitchManager,
     provider_router::ProviderRouter,
-    providers::{get_adapter, ProviderAdapter, ProviderType},
+    providers::{get_adapter_for_provider_type, ProviderAdapter, ProviderType},
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
@@ -143,8 +143,6 @@ impl RequestForwarder {
         headers: axum::http::HeaderMap,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
-        // 获取适配器
-        let adapter = get_adapter(app_type);
         let app_type_str = app_type.as_str();
 
         if providers.is_empty() {
@@ -167,6 +165,10 @@ impl RequestForwarder {
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
+            // 根据 provider 配置动态选择适配器（如 Vertex vs Gemini）
+            let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
+            let per_provider_adapter = get_adapter_for_provider_type(&provider_type);
+            let adapter = per_provider_adapter.as_ref();
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
             // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
             let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
@@ -196,7 +198,7 @@ impl RequestForwarder {
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self
-                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                .forward(provider, endpoint, &body, &headers, adapter)
                 .await
             {
                 Ok(response) => {
@@ -318,7 +320,7 @@ impl RequestForwarder {
 
                                 // 使用同一供应商重试（不计入熔断器）
                                 match self
-                                    .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                                    .forward(provider, endpoint, &body, &headers, adapter)
                                     .await
                                 {
                                     Ok(response) => {
@@ -509,7 +511,7 @@ impl RequestForwarder {
 
                             // 使用同一供应商重试（不计入熔断器）
                             match self
-                                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                                .forward(provider, endpoint, &body, &headers, adapter)
                                 .await
                             {
                                 Ok(response) => {
@@ -745,7 +747,7 @@ impl RequestForwarder {
     ) -> Result<Response, ProxyError> {
         // 使用适配器提取 base_url
         let base_url = adapter.extract_base_url(provider)?;
-
+ println!("====={base_url}");
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
 
@@ -758,7 +760,7 @@ impl RequestForwarder {
 
         // 使用适配器构建 URL（支持传入 provider 配置）
         let url = adapter.build_url_with_provider(Some(provider), &base_url, effective_endpoint);
-
+        println!("====={url}");
         // 应用模型映射（独立于格式转换）
         let (mapped_body, _original_model, _mapped_model) =
             super::model_mapper::apply_model_mapping(body.clone(), provider);

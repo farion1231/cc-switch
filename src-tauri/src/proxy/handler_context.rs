@@ -169,10 +169,14 @@ impl RequestContext {
             .map(|pq| pq.as_str())
             .unwrap_or(uri.path());
 
-        self.request_model = endpoint
-            .split('/')
-            .find(|s| s.starts_with("models/"))
-            .and_then(|s| s.strip_prefix("models/"))
+        // URI 格式: /v1beta/models/gemini-pro:generateContent
+        // split('/') => ["", "v1beta", "models", "gemini-pro:generateContent"]
+        // 找到 "models" 段后取下一个段，再去掉 :suffix
+        let parts: Vec<&str> = endpoint.split('/').collect();
+        self.request_model = parts
+            .iter()
+            .position(|s| *s == "models")
+            .and_then(|i| parts.get(i + 1))
             .map(|s| s.split(':').next().unwrap_or(s))
             .unwrap_or("unknown")
             .to_string();
