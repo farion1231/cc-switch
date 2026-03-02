@@ -2111,22 +2111,21 @@ impl ProxyService {
         doc.to_string()
     }
 
-    fn is_toml_feature_flag_true(toml_str: &str, feature_name: &str) -> bool {
+    fn read_toml_feature_flag_bool(toml_str: &str, feature_name: &str) -> Option<bool> {
         if toml_str.trim().is_empty() {
-            return false;
+            return None;
         }
         let parsed = match toml::from_str::<toml::Value>(toml_str) {
             Ok(v) => v,
-            Err(_) => return false,
+            Err(_) => return None,
         };
         parsed
             .get("features")
             .and_then(|v| v.get(feature_name))
             .and_then(|v| v.as_bool())
-            .unwrap_or(false)
     }
 
-    fn ensure_toml_feature_flag_true(toml_str: &str, feature_name: &str) -> String {
+    fn set_toml_feature_flag_bool(toml_str: &str, feature_name: &str, value: bool) -> String {
         use toml_edit::DocumentMut;
 
         let mut doc = if toml_str.trim().is_empty() {
@@ -2142,7 +2141,7 @@ impl ProxyService {
             doc["features"] = toml_edit::table();
         }
         if let Some(features) = doc.get_mut("features").and_then(|v| v.as_table_mut()) {
-            features[feature_name] = toml_edit::value(true);
+            features[feature_name] = toml_edit::value(value);
         }
         doc.to_string()
     }
@@ -2153,8 +2152,8 @@ impl ProxyService {
     ) -> String {
         let mut output = target_toml.to_string();
         for feature_name in CODEX_PRESERVED_FEATURE_FLAGS {
-            if Self::is_toml_feature_flag_true(source_toml, feature_name) {
-                output = Self::ensure_toml_feature_flag_true(&output, feature_name);
+            if let Some(value) = Self::read_toml_feature_flag_bool(source_toml, feature_name) {
+                output = Self::set_toml_feature_flag_bool(&output, feature_name, value);
             }
         }
         output
@@ -2554,7 +2553,7 @@ multi_agent = true
     }
 
     #[test]
-    fn sync_codex_preserved_feature_flags_from_source_does_not_copy_false_flag() {
+    fn sync_codex_preserved_feature_flags_from_source_copies_multi_agent_when_disabled() {
         let target = r#"
 model = "gpt-5.3-codex"
 "#;
@@ -2566,12 +2565,12 @@ multi_agent = false
 
         let merged = ProxyService::sync_codex_preserved_feature_flags_from_source(target, source);
         let parsed: toml::Value = toml::from_str(&merged).expect("merged should be valid TOML");
-        assert!(
+        assert_eq!(
             parsed
                 .get("features")
                 .and_then(|v| v.get("multi_agent"))
-                .is_none(),
-            "false feature flag in source should not force-write target"
+                .and_then(|v| v.as_bool()),
+            Some(false)
         );
     }
 
