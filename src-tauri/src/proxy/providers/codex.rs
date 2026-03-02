@@ -47,6 +47,16 @@ impl CodexAdapter {
             if let Some(key) = auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) {
                 return Some(key.to_string());
             }
+
+            if let Some(token) = auth
+                .get("tokens")
+                .and_then(|v| v.get("access_token"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+            {
+                return Some(token.to_string());
+            }
         }
 
         // 3. 尝试直接获取
@@ -237,6 +247,21 @@ mod tests {
 
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-env-key-12345678");
+    }
+
+    #[test]
+    fn test_extract_auth_from_oauth_access_token() {
+        let adapter = CodexAdapter::new();
+        let provider = create_provider(json!({
+            "auth": {
+                "tokens": {
+                    "access_token": "eyJ-test-access-token"
+                }
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "eyJ-test-access-token");
     }
 
     #[test]

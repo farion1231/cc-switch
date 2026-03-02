@@ -16,6 +16,14 @@ use tokio::sync::RwLock;
 
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
+const CODEX_DEFAULT_BASE_URL: &str = "https://api.openai.com";
+const CODEX_PROXY_DUMMY_KEY: &str = "sk-cc-switch-proxy";
+#[cfg(target_os = "macos")]
+const CODEX_PROXY_ENV_BLOCK_BEGIN: &str = "# >>> CC Switch Codex Proxy (managed) >>>";
+#[cfg(target_os = "macos")]
+const CODEX_PROXY_ENV_BLOCK_END: &str = "# <<< CC Switch Codex Proxy (managed) <<<";
+#[cfg(target_os = "macos")]
+const CODEX_PROXY_ENV_LAUNCH_AGENT_LABEL: &str = "com.ccswitch.codex-proxy-env";
 
 /// 代理接管模式下需要从 Claude Live 配置中移除的“模型覆盖”字段。
 ///
@@ -232,6 +240,10 @@ impl ProxyService {
         let app_type_str = app.as_str();
 
         if enabled {
+            if app == AppType::Codex {
+                self.prepare_codex_takeover_prerequisites().await?;
+            }
+
             // 1) 代理服务未运行则自动启动
             if !self.is_running().await {
                 self.start().await?;
@@ -360,6 +372,377 @@ impl ProxyService {
                 let _ = self.stop().await;
             }
         }
+
+        Ok(())
+    }
+
+    async fn prepare_codex_takeover_prerequisites(&self) -> Result<(), String> {
+        let mut providers = self
+            .db
+            .get_all_providers("codex")
+            .map_err(|e| format!("读取 Codex Provider 列表失败: {e}"))?;
+
+        if providers.is_empty() {
+            return Err("未配置 Codex Provider，请先在供应商管理中添加账号".to_string());
+        }
+
+        let mut healthy_candidates = Vec::new();
+        let mut all_provider_ids = Vec::new();
+
+        for (provider_id, provider) in &mut providers {
+            all_provider_ids.push(provider_id.clone());
+            let mut settings = provider.settings_config.clone();
+            let mut changed = false;
+
+            let existing_base_url = Self::extract_codex_base_url(&settings);
+            let endpoint = Self::codex_provider_first_endpoint(provider)
+                .or_else(|| existing_base_url.clone())
+                .unwrap_or_else(|| CODEX_DEFAULT_BASE_URL.to_string());
+
+            if Self::codex_provider_first_endpoint(provider).is_none() {
+                self.db
+                    .add_custom_endpoint("codex", provider_id, &endpoint)
+                    .map_err(|e| format!("补全 Codex Provider 端点失败 ({provider_id}): {e}"))?;
+            }
+
+            if existing_base_url.is_none() {
+                Self::set_codex_base_url(&mut settings, &endpoint);
+                changed = true;
+            }
+
+            if Self::sync_codex_auth_openai_api_key(&mut settings) {
+                changed = true;
+            }
+
+            if changed {
+                self.db
+                    .update_provider_settings_config("codex", provider_id, &settings)
+                    .map_err(|e| format!("更新 Codex Provider 配置失败 ({provider_id}): {e}"))?;
+            }
+
+            let has_base_url = Self::extract_codex_base_url(&settings).is_some();
+            let has_auth = Self::extract_codex_api_token(&settings).is_some();
+            if has_base_url && has_auth {
+                healthy_candidates.push(provider_id.clone());
+            }
+        }
+
+        if healthy_candidates.is_empty() {
+            return Err(
+                "Codex Provider 自检失败：未找到同时具备 base_url 和可用认证信息的账号".to_string(),
+            );
+        }
+
+        let current_id = crate::settings::get_effective_current_provider(&self.db, &AppType::Codex)
+            .map_err(|e| format!("获取 Codex 当前供应商失败: {e}"))?;
+        let current_is_healthy = current_id
+            .as_ref()
+            .map(|id| healthy_candidates.iter().any(|candidate| candidate == id))
+            .unwrap_or(false);
+
+        if !current_is_healthy {
+            let next_provider = &healthy_candidates[0];
+            self.db
+                .set_current_provider("codex", next_provider)
+                .map_err(|e| format!("切换 Codex 当前供应商失败: {e}"))?;
+            crate::settings::set_current_provider(&AppType::Codex, Some(next_provider))
+                .map_err(|e| format!("写入 Codex 当前供应商到本地设置失败: {e}"))?;
+            log::info!("Codex 当前供应商已自动切换为 {next_provider}");
+        }
+
+        self.db
+            .clear_provider_health_for_app("codex")
+            .await
+            .map_err(|e| format!("重置 Codex 健康状态失败: {e}"))?;
+        for provider_id in &all_provider_ids {
+            if let Err(e) = self
+                .reset_provider_circuit_breaker(provider_id, "codex")
+                .await
+            {
+                log::warn!("重置 Codex 熔断器失败 ({provider_id}): {e}");
+            }
+        }
+
+        self.ensure_codex_proxy_environment().await?;
+        Ok(())
+    }
+
+    fn normalize_codex_url(input: &str) -> Option<String> {
+        let normalized = input.trim().trim_end_matches('/').to_string();
+        if normalized.is_empty() {
+            return None;
+        }
+        Some(normalized)
+    }
+
+    fn extract_codex_base_url(settings: &Value) -> Option<String> {
+        if let Some(url) = settings.get("base_url").and_then(|v| v.as_str()) {
+            return Self::normalize_codex_url(url);
+        }
+        if let Some(url) = settings.get("baseURL").and_then(|v| v.as_str()) {
+            return Self::normalize_codex_url(url);
+        }
+
+        if let Some(config) = settings.get("config") {
+            if let Some(url) = config.get("base_url").and_then(|v| v.as_str()) {
+                return Self::normalize_codex_url(url);
+            }
+
+            if let Some(config_str) = config.as_str() {
+                if let Some(start) = config_str.find("base_url = \"") {
+                    let rest = &config_str[start + 12..];
+                    if let Some(end) = rest.find('"') {
+                        return Self::normalize_codex_url(&rest[..end]);
+                    }
+                }
+                if let Some(start) = config_str.find("base_url = '") {
+                    let rest = &config_str[start + 12..];
+                    if let Some(end) = rest.find('\'') {
+                        return Self::normalize_codex_url(&rest[..end]);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn set_codex_base_url(settings: &mut Value, base_url: &str) {
+        let normalized = Self::normalize_codex_url(base_url)
+            .unwrap_or_else(|| CODEX_DEFAULT_BASE_URL.to_string());
+
+        if let Some(config_str) = settings.get("config").and_then(|v| v.as_str()) {
+            let updated = Self::update_toml_base_url(config_str, &normalized);
+            if let Some(root) = settings.as_object_mut() {
+                root.insert("config".to_string(), json!(updated));
+                return;
+            }
+        }
+
+        if !settings.is_object() {
+            *settings = json!({});
+        }
+        if let Some(root) = settings.as_object_mut() {
+            root.insert("base_url".to_string(), json!(normalized));
+        }
+    }
+
+    fn extract_codex_api_token(settings: &Value) -> Option<String> {
+        let from_env = settings
+            .get("env")
+            .and_then(|v| v.get("OPENAI_API_KEY"))
+            .and_then(|v| v.as_str());
+        if let Some(token) = from_env
+            .map(str::trim)
+            .filter(|v| !v.is_empty() && *v != PROXY_TOKEN_PLACEHOLDER)
+        {
+            return Some(token.to_string());
+        }
+
+        let from_auth = settings
+            .get("auth")
+            .and_then(|v| v.get("OPENAI_API_KEY"))
+            .and_then(|v| v.as_str());
+        if let Some(token) = from_auth
+            .map(str::trim)
+            .filter(|v| !v.is_empty() && *v != PROXY_TOKEN_PLACEHOLDER)
+        {
+            return Some(token.to_string());
+        }
+
+        let access_token = settings
+            .get("auth")
+            .and_then(|v| v.get("tokens"))
+            .and_then(|v| v.get("access_token"))
+            .and_then(|v| v.as_str());
+        access_token
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string)
+    }
+
+    fn sync_codex_auth_openai_api_key(settings: &mut Value) -> bool {
+        let has_api_key = settings
+            .get("auth")
+            .and_then(|v| v.get("OPENAI_API_KEY"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty() && *v != PROXY_TOKEN_PLACEHOLDER)
+            .is_some();
+
+        if has_api_key {
+            return false;
+        }
+
+        let Some(access_token) = settings
+            .get("auth")
+            .and_then(|v| v.get("tokens"))
+            .and_then(|v| v.get("access_token"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string)
+        else {
+            return false;
+        };
+
+        if !settings.is_object() {
+            *settings = json!({});
+        }
+
+        if let Some(root) = settings.as_object_mut() {
+            if !root.get("auth").map(|v| v.is_object()).unwrap_or(false) {
+                root.insert("auth".to_string(), json!({}));
+            }
+
+            if let Some(auth_obj) = root.get_mut("auth").and_then(|v| v.as_object_mut()) {
+                auth_obj.insert("OPENAI_API_KEY".to_string(), json!(access_token));
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn codex_provider_first_endpoint(provider: &Provider) -> Option<String> {
+        let mut entries = Vec::new();
+        if let Some(meta) = &provider.meta {
+            for endpoint in meta.custom_endpoints.values() {
+                if let Some(url) = Self::normalize_codex_url(&endpoint.url) {
+                    entries.push((endpoint.added_at, url));
+                }
+            }
+        }
+
+        entries.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        entries.first().map(|(_, url)| url.clone())
+    }
+
+    async fn ensure_codex_proxy_environment(&self) -> Result<(), String> {
+        let (_, codex_base_url) = self.build_proxy_urls().await?;
+        #[cfg(target_os = "macos")]
+        {
+            Self::ensure_codex_proxy_env_for_macos(&codex_base_url, CODEX_PROXY_DUMMY_KEY)?;
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = codex_base_url;
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn ensure_codex_proxy_env_for_macos(base_url: &str, api_key: &str) -> Result<(), String> {
+        use std::fs;
+        use std::path::PathBuf;
+        use std::process::Command;
+
+        fn run_command(command: &str, args: &[&str]) -> Result<(), String> {
+            let status = Command::new(command)
+                .args(args)
+                .status()
+                .map_err(|e| format!("执行命令失败: {command} {} ({e})", args.join(" ")))?;
+
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "命令执行失败: {command} {} (exit: {status})",
+                    args.join(" ")
+                ))
+            }
+        }
+
+        fn upsert_managed_zshrc_block(base_url: &str, api_key: &str) -> Result<(), String> {
+            let home = crate::config::get_home_dir();
+            let zshrc_path = home.join(".zshrc");
+            let content = fs::read_to_string(&zshrc_path).unwrap_or_default();
+
+            let mut output_lines = Vec::new();
+            let mut in_managed_block = false;
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed == CODEX_PROXY_ENV_BLOCK_BEGIN {
+                    in_managed_block = true;
+                    continue;
+                }
+                if trimmed == CODEX_PROXY_ENV_BLOCK_END {
+                    in_managed_block = false;
+                    continue;
+                }
+                if !in_managed_block {
+                    output_lines.push(line.to_string());
+                }
+            }
+
+            let mut output = output_lines.join("\n");
+            if !output.is_empty() && !output.ends_with('\n') {
+                output.push('\n');
+            }
+            if !output.is_empty() {
+                output.push('\n');
+            }
+
+            output.push_str(CODEX_PROXY_ENV_BLOCK_BEGIN);
+            output.push('\n');
+            output.push_str(&format!("export OPENAI_BASE_URL=\"{base_url}\""));
+            output.push('\n');
+            output.push_str(&format!("export OPENAI_API_KEY=\"{api_key}\""));
+            output.push('\n');
+            output.push_str(CODEX_PROXY_ENV_BLOCK_END);
+            output.push('\n');
+
+            fs::write(&zshrc_path, output)
+                .map_err(|e| format!("写入 ~/.zshrc 失败 ({}): {e}", zshrc_path.display()))?;
+            Ok(())
+        }
+
+        fn ensure_launch_agent(base_url: &str, api_key: &str) -> Result<PathBuf, String> {
+            let home = crate::config::get_home_dir();
+            let launch_agents_dir = home.join("Library").join("LaunchAgents");
+            fs::create_dir_all(&launch_agents_dir)
+                .map_err(|e| format!("创建 LaunchAgents 目录失败: {e}"))?;
+
+            let plist_path =
+                launch_agents_dir.join(format!("{CODEX_PROXY_ENV_LAUNCH_AGENT_LABEL}.plist"));
+            let command = format!(
+                "/bin/launchctl setenv OPENAI_BASE_URL {base_url}; /bin/launchctl setenv OPENAI_API_KEY {api_key}"
+            );
+            let plist_content = format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-lc</string>
+    <string>{}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+"#,
+                CODEX_PROXY_ENV_LAUNCH_AGENT_LABEL, command
+            );
+
+            fs::write(&plist_path, plist_content)
+                .map_err(|e| format!("写入 LaunchAgent 失败 ({}): {e}", plist_path.display()))?;
+            Ok(plist_path)
+        }
+
+        upsert_managed_zshrc_block(base_url, api_key)?;
+        let plist_path = ensure_launch_agent(base_url, api_key)?;
+
+        run_command("launchctl", &["setenv", "OPENAI_BASE_URL", base_url])?;
+        run_command("launchctl", &["setenv", "OPENAI_API_KEY", api_key])?;
+
+        let plist_path_str = plist_path.to_string_lossy().to_string();
+        let _ = Command::new("launchctl")
+            .args(["unload", plist_path_str.as_str()])
+            .status();
+        run_command("launchctl", &["load", plist_path_str.as_str()])?;
 
         Ok(())
     }
@@ -2190,5 +2573,115 @@ model = "gpt-5.1-codex"
             .expect("backup exists");
         let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
         assert_eq!(backup.original_config, expected);
+    }
+
+    #[test]
+    fn sync_codex_auth_openai_api_key_backfills_from_access_token() {
+        let mut settings = json!({
+            "auth": {
+                "tokens": {
+                    "access_token": "eyJ.test.access-token"
+                }
+            }
+        });
+
+        let changed = ProxyService::sync_codex_auth_openai_api_key(&mut settings);
+        assert!(
+            changed,
+            "expected access token to be copied into OPENAI_API_KEY"
+        );
+        assert_eq!(
+            settings
+                .get("auth")
+                .and_then(|v| v.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("eyJ.test.access-token")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn prepare_codex_takeover_prerequisites_autofixes_provider_and_switches_current() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let broken = Provider::with_id(
+            "broken".to_string(),
+            "Broken".to_string(),
+            json!({
+                "auth": {}
+            }),
+            None,
+        );
+        let healthy = Provider::with_id(
+            "healthy".to_string(),
+            "Healthy".to_string(),
+            json!({
+                "auth": {
+                    "tokens": {
+                        "access_token": "eyJ-healthy-token"
+                    }
+                },
+                "config": "model = \"gpt-5.3-codex\"\n"
+            }),
+            None,
+        );
+
+        db.save_provider("codex", &broken)
+            .expect("save broken provider");
+        db.save_provider("codex", &healthy)
+            .expect("save healthy provider");
+        db.set_current_provider("codex", "broken")
+            .expect("set current provider");
+        db.update_provider_health("broken", "codex", false, Some("boom".to_string()))
+            .await
+            .expect("seed provider health");
+
+        service
+            .prepare_codex_takeover_prerequisites()
+            .await
+            .expect("prepare codex prerequisites");
+
+        let current = crate::settings::get_effective_current_provider(&db, &AppType::Codex)
+            .expect("read effective current provider");
+        assert_eq!(current.as_deref(), Some("healthy"));
+
+        let updated = db
+            .get_provider_by_id("healthy", "codex")
+            .expect("read provider")
+            .expect("provider exists");
+        assert_eq!(
+            updated
+                .settings_config
+                .get("auth")
+                .and_then(|v| v.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("eyJ-healthy-token")
+        );
+        assert!(
+            ProxyService::extract_codex_base_url(&updated.settings_config).is_some(),
+            "base_url should be auto-filled"
+        );
+        let endpoint_count = db
+            .get_all_providers("codex")
+            .expect("read providers with endpoints")
+            .get("healthy")
+            .and_then(|p| p.meta.as_ref())
+            .as_ref()
+            .map(|m| m.custom_endpoints.len())
+            .unwrap_or(0);
+        assert!(
+            endpoint_count > 0,
+            "provider_endpoints should be auto-filled for codex provider"
+        );
+
+        let health = db
+            .get_provider_health("broken", "codex")
+            .await
+            .expect("read health after reset");
+        assert_eq!(health.consecutive_failures, 0);
     }
 }
