@@ -62,10 +62,7 @@ pub async fn handle_messages(
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Claude, "Claude", "claude").await?;
 
-    let is_stream = body
-        .get("stream")
-        .and_then(|s| s.as_bool())
-        .unwrap_or(false);
+    let is_stream = request_expects_streaming(&headers, &body);
 
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
@@ -102,7 +99,7 @@ pub async fn handle_messages(
     }
 
     // 通用响应处理（透传模式）
-    process_response(response, &ctx, &state, &CLAUDE_PARSER_CONFIG).await
+    process_response(response, &ctx, &state, &CLAUDE_PARSER_CONFIG, is_stream).await
 }
 
 /// Claude 格式转换处理（独有逻辑）
@@ -275,10 +272,7 @@ pub async fn handle_chat_completions(
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
 
-    let is_stream = body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let is_stream = request_expects_streaming(&headers, &body);
 
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
@@ -304,7 +298,7 @@ pub async fn handle_chat_completions(
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &OPENAI_PARSER_CONFIG).await
+    process_response(response, &ctx, &state, &OPENAI_PARSER_CONFIG, is_stream).await
 }
 
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
@@ -316,10 +310,7 @@ pub async fn handle_responses(
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
 
-    let is_stream = body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let is_stream = request_expects_streaming(&headers, &body);
 
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
@@ -345,7 +336,7 @@ pub async fn handle_responses(
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG, is_stream).await
 }
 
 // ============================================================================
@@ -370,10 +361,7 @@ pub async fn handle_gemini(
         .map(|pq| pq.as_str())
         .unwrap_or(uri.path());
 
-    let is_stream = body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let is_stream = request_expects_streaming(&headers, &body);
 
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
@@ -399,7 +387,25 @@ pub async fn handle_gemini(
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &GEMINI_PARSER_CONFIG).await
+    process_response(response, &ctx, &state, &GEMINI_PARSER_CONFIG, is_stream).await
+}
+
+#[inline]
+fn request_expects_streaming(headers: &axum::http::HeaderMap, body: &Value) -> bool {
+    let body_stream = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if body_stream {
+        return true;
+    }
+
+    headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|accept| accept.contains("text/event-stream"))
+        .unwrap_or(false)
 }
 
 // ============================================================================
