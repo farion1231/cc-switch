@@ -49,6 +49,7 @@ interface ProviderCardProps {
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
   onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
+  circuitFailureThreshold?: number;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
@@ -113,6 +114,7 @@ export function ProviderCard({
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
+  circuitFailureThreshold = 4,
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
@@ -280,6 +282,8 @@ export function ProviderCard({
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
                   consecutiveFailures={health.consecutive_failures}
+                  failureThreshold={circuitFailureThreshold}
+                  lastError={health.last_error}
                 />
               )}
 
