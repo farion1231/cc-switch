@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use serde_json::Value;
 use tauri::State;
 
 use crate::app_config::AppType;
@@ -8,6 +9,7 @@ use crate::services::{
     EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
 };
 use crate::store::AppState;
+use std::collections::HashSet;
 use std::str::FromStr;
 
 #[tauri::command]
@@ -342,6 +344,170 @@ pub fn import_opencode_providers_from_live(state: State<'_, AppState>) -> Result
 pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
     crate::opencode_config::get_providers()
         .map(|providers| providers.keys().cloned().collect())
+        .map_err(|e| e.to_string())
+}
+
+fn extract_model_id(item: &Value) -> Option<String> {
+    let raw = item
+        .get("id")
+        .and_then(|v| v.as_str())
+        .or_else(|| item.get("name").and_then(|v| v.as_str()))?;
+
+    let normalized = raw
+        .strip_prefix("models/")
+        .unwrap_or(raw)
+        .trim()
+        .to_string();
+
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn extract_models_from_payload(payload: &Value) -> Vec<String> {
+    let mut output: Vec<String> = Vec::new();
+
+    if let Some(data) = payload.get("data").and_then(|v| v.as_array()) {
+        output.extend(data.iter().filter_map(extract_model_id));
+    }
+
+    if let Some(models) = payload.get("models").and_then(|v| v.as_array()) {
+        output.extend(models.iter().filter_map(extract_model_id));
+    }
+
+    if let Some(items) = payload.as_array() {
+        output.extend(items.iter().filter_map(extract_model_id));
+    }
+
+    let mut seen = HashSet::new();
+    output.retain(|model| seen.insert(model.clone()));
+    output
+}
+
+fn build_model_endpoint_candidates(app_type: &AppType, base_url: &str) -> Vec<String> {
+    let base = base_url.trim_end_matches('/');
+    let mut candidates = Vec::new();
+
+    match app_type {
+        AppType::Claude => {
+            if base.ends_with("/v1") || base.contains("/v1/") {
+                candidates.push(format!("{base}/models"));
+            } else {
+                candidates.push(format!("{base}/v1/models"));
+                candidates.push(format!("{base}/models"));
+            }
+        }
+        AppType::Codex => {
+            if base.ends_with("/v1") || base.contains("/v1/") {
+                candidates.push(format!("{base}/models"));
+            } else {
+                candidates.push(format!("{base}/v1/models"));
+                candidates.push(format!("{base}/models"));
+            }
+        }
+        AppType::Gemini => {
+            if base.contains("/v1beta") || base.contains("/v1/") {
+                candidates.push(format!("{base}/models"));
+            } else {
+                candidates.push(format!("{base}/v1beta/models"));
+                candidates.push(format!("{base}/models"));
+            }
+        }
+        AppType::OpenCode | AppType::OpenClaw => {}
+    }
+
+    let mut seen = HashSet::new();
+    candidates.retain(|url| seen.insert(url.clone()));
+    candidates
+}
+
+#[allow(clippy::collapsible_if)]
+async fn fetch_provider_models_internal(
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<Vec<String>, AppError> {
+    if matches!(app_type, AppType::OpenCode | AppType::OpenClaw) {
+        return Ok(Vec::new());
+    }
+
+    let adapter = crate::proxy::providers::get_adapter(app_type);
+    let auth = adapter
+        .extract_auth(provider)
+        .ok_or_else(|| AppError::Message("未检测到 API Key，无法自动获取模型".to_string()))?;
+    let base_url = adapter
+        .extract_base_url(provider)
+        .map_err(|e| AppError::Message(format!("提取 API 地址失败: {e}")))?;
+
+    let candidates = build_model_endpoint_candidates(app_type, &base_url);
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let proxy_config = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.proxy_config.as_ref());
+    let client = crate::proxy::http_client::get_for_provider(proxy_config);
+    let timeout = std::time::Duration::from_secs(12);
+
+    for url in candidates {
+        let mut request = adapter
+            .add_auth_headers(client.get(&url), &auth)
+            .header("accept", "application/json")
+            .timeout(timeout);
+
+        if matches!(app_type, AppType::Claude)
+            && matches!(
+                auth.strategy,
+                crate::proxy::providers::AuthStrategy::Anthropic
+            )
+        {
+            request = request.header("anthropic-version", "2023-06-01");
+        }
+
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(_) => continue,
+        };
+
+        if !response.status().is_success() {
+            continue;
+        }
+
+        let payload: Value = match response.json().await {
+            Ok(payload) => payload,
+            Err(_) => continue,
+        };
+
+        let models = extract_models_from_payload(&payload);
+        if !models.is_empty() {
+            return Ok(models);
+        }
+    }
+
+    Ok(Vec::new())
+}
+
+#[tauri::command]
+pub async fn fetch_provider_models(
+    state: State<'_, AppState>,
+    app: String,
+    #[allow(non_snake_case)] providerId: String,
+) -> Result<Vec<String>, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let providers = state
+        .db
+        .get_all_providers(app_type.as_str())
+        .map_err(|e| e.to_string())?;
+
+    let provider = providers
+        .get(&providerId)
+        .ok_or_else(|| format!("Provider not found: {providerId}"))?;
+
+    fetch_provider_models_internal(&app_type, provider)
+        .await
         .map_err(|e| e.to_string())
 }
 

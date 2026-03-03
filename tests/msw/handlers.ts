@@ -48,6 +48,8 @@ export const handlers = [
     return success(getCurrentProviderId(app));
   }),
 
+  http.post(`${TAURI_ENDPOINT}/fetch_provider_models`, () => success([])),
+
   http.post(
     `${TAURI_ENDPOINT}/update_providers_sort_order`,
     async ({ request }) => {

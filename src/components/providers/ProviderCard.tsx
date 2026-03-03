@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useRef } from "react";
-import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
+import { GripVertical, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
   DraggableAttributes,
@@ -52,6 +52,9 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  currentModel?: string;
+  isModelLoading?: boolean;
+  onAutoDetectModel?: (provider: Provider) => void;
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -116,6 +119,9 @@ export function ProviderCard({
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
+  currentModel,
+  isModelLoading = false,
+  onAutoDetectModel,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -318,6 +324,44 @@ export function ProviderCard({
                 <span className="truncate">{displayUrl}</span>
               </button>
             )}
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">
+                {t("provider.currentModel", { defaultValue: "当前模型" })}:
+              </span>
+              <span
+                className={cn(
+                  "max-w-[220px] truncate",
+                  currentModel ? "text-foreground" : "text-muted-foreground",
+                )}
+                title={currentModel}
+              >
+                {currentModel ||
+                  t("provider.currentModelUnknown", {
+                    defaultValue: "未检测到",
+                  })}
+              </span>
+              {onAutoDetectModel && !currentModel && (
+                <button
+                  type="button"
+                  onClick={() => onAutoDetectModel(provider)}
+                  disabled={isModelLoading}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors",
+                    "text-blue-500 hover:bg-blue-500/10 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
+                    isModelLoading && "cursor-not-allowed opacity-70",
+                  )}
+                  title={t("provider.autoFetchModel", {
+                    defaultValue: "自动获取",
+                  })}
+                >
+                  {isModelLoading ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : null}
+                  {t("provider.autoFetchModel", { defaultValue: "自动获取" })}
+                </button>
+              )}
+            </div>
           </div>
         </div>
 

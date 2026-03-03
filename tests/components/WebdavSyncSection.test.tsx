@@ -192,6 +192,18 @@ describe("WebdavSyncSection", () => {
     expect(settingsApiMock.webdavSyncSaveSettings).not.toHaveBeenCalled();
   });
 
+  it("uses persisted preset instead of URL heuristic when provided", () => {
+    renderSection({
+      ...baseConfig,
+      baseUrl: "http://nas.local:5005/webdav/",
+      providerPreset: "custom",
+    });
+
+    expect(
+      (screen.getByTestId("webdav-preset-select") as HTMLSelectElement).value,
+    ).toBe("custom");
+  });
+
   it("saves settings and auto tests connection", async () => {
     renderSection(baseConfig);
 
@@ -220,6 +232,28 @@ describe("WebdavSyncSection", () => {
     expect(toastSuccessMock).toHaveBeenCalledWith(
       "settings.webdavSync.saveAndTestSuccess",
     );
+  });
+
+  it("persists selected preset when saving", async () => {
+    renderSection({
+      ...baseConfig,
+      baseUrl: "http://nas.local:5005/webdav/",
+      providerPreset: "synology",
+    });
+
+    fireEvent.change(screen.getByTestId("webdav-preset-select"), {
+      target: { value: "custom" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "settings.webdavSync.save" }));
+
+    await waitFor(() => {
+      expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerPreset: "custom",
+        }),
+        false,
+      );
+    });
   });
 
   it("saves auto sync as true after toggle", async () => {

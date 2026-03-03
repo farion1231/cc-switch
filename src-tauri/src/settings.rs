@@ -88,6 +88,14 @@ fn default_profile() -> String {
     "default".to_string()
 }
 
+fn normalize_webdav_provider_preset(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    match trimmed {
+        "jianguoyun" | "nextcloud" | "synology" | "custom" => Some(trimmed.to_string()),
+        _ => None,
+    }
+}
+
 /// WebDAV v2 同步设置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -106,6 +114,8 @@ pub struct WebDavSyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_preset: Option<String>,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -120,6 +130,7 @@ impl Default for WebDavSyncSettings {
             password: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            provider_preset: None,
             status: WebDavSyncStatus::default(),
         }
     }
@@ -149,6 +160,10 @@ impl WebDavSyncSettings {
         self.username = self.username.trim().to_string();
         self.remote_root = self.remote_root.trim().to_string();
         self.profile = self.profile.trim().to_string();
+        self.provider_preset = self
+            .provider_preset
+            .as_deref()
+            .and_then(normalize_webdav_provider_preset);
         if self.remote_root.is_empty() {
             self.remote_root = default_remote_root();
         }

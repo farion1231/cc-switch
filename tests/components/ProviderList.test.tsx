@@ -224,25 +224,29 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    // Verify sort order
-    expect(providerCardRenderSpy).toHaveBeenCalledTimes(2);
-    expect(providerCardRenderSpy.mock.calls[0][0].provider.id).toBe("b");
-    expect(providerCardRenderSpy.mock.calls[1][0].provider.id).toBe("a");
+    // Verify sort order (component may re-render due side effects)
+    expect(providerCardRenderSpy).toHaveBeenCalled();
+    const renderIds = providerCardRenderSpy.mock.calls.map(
+      (call) => call[0].provider.id,
+    );
+    expect(renderIds.slice(0, 2)).toEqual(["b", "a"]);
+
+    const latestCallFor = (providerId: string) =>
+      [...providerCardRenderSpy.mock.calls]
+        .reverse()
+        .find((call) => call[0].provider.id === providerId)?.[0];
+
+    const latestB = latestCallFor("b");
+    const latestA = latestCallFor("a");
+    expect(latestB).toBeDefined();
+    expect(latestA).toBeDefined();
 
     // Verify current provider marker
-    expect(providerCardRenderSpy.mock.calls[0][0].isCurrent).toBe(true);
+    expect(latestB?.isCurrent).toBe(true);
 
     // Drag attributes from useSortable
-    expect(
-      providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-      "data-dnd-id"
-      ],
-    ).toBe("b");
-    expect(
-      providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-      "data-dnd-id"
-      ],
-    ).toBe("a");
+    expect(latestB?.dragHandleProps?.attributes?.["data-dnd-id"]).toBe("b");
+    expect(latestA?.dragHandleProps?.attributes?.["data-dnd-id"]).toBe("a");
 
     // Trigger action buttons
     fireEvent.click(screen.getByTestId("switch-b"));

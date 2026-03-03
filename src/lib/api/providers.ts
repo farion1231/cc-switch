@@ -112,6 +112,16 @@ export const providersApi = {
   },
 
   /**
+   * 自动获取供应商可用模型列表（用于模型字段自动填充）
+   */
+  async fetchAvailableModels(
+    providerId: string,
+    appId: AppId,
+  ): Promise<string[]> {
+    return await invoke("fetch_provider_models", { providerId, app: appId });
+  },
+
+  /**
    * 从 OpenClaw live 配置导入供应商到数据库
    * OpenClaw 特有功能：由于累加模式，用户可能已在 openclaw.json 中配置供应商
    */

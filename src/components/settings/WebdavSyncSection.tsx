@@ -75,6 +75,8 @@ const WEBDAV_PRESETS: WebDavPreset[] = [
   },
 ];
 
+const WEBDAV_PRESET_ID_SET = new Set(WEBDAV_PRESETS.map((preset) => preset.id));
+
 /** Match a URL to one of the preset providers, or "custom". */
 function detectPreset(url: string): string {
   if (!url) return "custom";
@@ -84,6 +86,17 @@ function detectPreset(url: string): string {
     }
   }
   return "custom";
+}
+
+function normalizePresetId(presetId?: string | null): string | null {
+  if (!presetId) return null;
+  return WEBDAV_PRESET_ID_SET.has(presetId) ? presetId : null;
+}
+
+function resolvePresetId(config?: WebDavSyncSettings): string {
+  return (
+    normalizePresetId(config?.providerPreset) ?? detectPreset(config?.baseUrl ?? "")
+  );
 }
 
 /** Format an RFC 3339 date string for display; falls back to raw string. */
@@ -167,9 +180,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
   }));
 
   // Preset selector — derived from initial URL, updated on user selection
-  const [presetId, setPresetId] = useState(() =>
-    detectPreset(config?.baseUrl ?? ""),
-  );
+  const [presetId, setPresetId] = useState(() => resolvePresetId(config));
 
   const activePreset = WEBDAV_PRESETS.find((p) => p.id === presetId);
 
@@ -201,7 +212,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
       autoSync: config.autoSync ?? false,
     });
     setPasswordTouched(false);
-    setPresetId(detectPreset(config.baseUrl ?? ""));
+    setPresetId(resolvePresetId(config));
   }, [config, dirty]);
 
   const updateField = useCallback((field: keyof typeof form, value: string) => {
@@ -219,15 +230,15 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
 
   const handlePresetChange = useCallback((id: string) => {
     setPresetId(id);
+    setDirty(true);
+    setJustSaved(false);
+    if (justSavedTimerRef.current) {
+      clearTimeout(justSavedTimerRef.current);
+      justSavedTimerRef.current = null;
+    }
     const preset = WEBDAV_PRESETS.find((p) => p.id === id);
     if (preset?.baseUrl) {
       setForm((prev) => ({ ...prev, baseUrl: preset.baseUrl }));
-      setDirty(true);
-      setJustSaved(false);
-      if (justSavedTimerRef.current) {
-        clearTimeout(justSavedTimerRef.current);
-        justSavedTimerRef.current = null;
-      }
     }
   }, []);
 
@@ -261,8 +272,9 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
       remoteRoot: form.remoteRoot.trim() || "cc-switch-sync",
       profile: form.profile.trim() || "default",
       autoSync: form.autoSync,
+      providerPreset: normalizePresetId(presetId) ?? "custom",
     };
-  }, [form]);
+  }, [form, presetId]);
 
   // ─── Handlers ───────────────────────────────────────────
 
