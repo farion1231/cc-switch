@@ -560,6 +560,59 @@ pub fn run() {
                 }
             }
 
+            // 5. Auto-extract common config snippets from live files (when snippet is missing)
+            for app_type in crate::app_config::AppType::all() {
+                // Skip if snippet already exists
+                if app_state
+                    .db
+                    .get_config_snippet(app_type.as_str())
+                    .ok()
+                    .flatten()
+                    .is_some()
+                {
+                    continue;
+                }
+
+                // Try to read the live config file for this app type
+                let settings =
+                    match crate::services::provider::ProviderService::read_live_settings(
+                        app_type.clone(),
+                    ) {
+                        Ok(s) => s,
+                        Err(_) => continue, // No live config file, skip silently
+                    };
+
+                // Extract common config (strip provider-specific fields)
+                match crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
+                    app_type.clone(),
+                    &settings,
+                ) {
+                    Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
+                        match app_state
+                            .db
+                            .set_config_snippet(app_type.as_str(), Some(snippet))
+                        {
+                            Ok(()) => log::info!(
+                                "✓ Auto-extracted common config snippet for {}",
+                                app_type.as_str()
+                            ),
+                            Err(e) => log::warn!(
+                                "✗ Failed to save config snippet for {}: {e}",
+                                app_type.as_str()
+                            ),
+                        }
+                    }
+                    Ok(_) => log::debug!(
+                        "○ Live config for {} has no extractable common fields",
+                        app_type.as_str()
+                    ),
+                    Err(e) => log::warn!(
+                        "✗ Failed to extract config snippet for {}: {e}",
+                        app_type.as_str()
+                    ),
+                }
+            }
+
             // 迁移旧的 app_config_dir 配置到 Store
             if let Err(e) = app_store::migrate_app_config_dir_from_settings(app.handle()) {
                 log::warn!("迁移 app_config_dir 失败: {e}");

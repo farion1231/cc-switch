@@ -101,7 +101,7 @@ Modern AI-powered coding relies on CLI tools like Claude Code, Codex, Gemini CLI
 
 ## Features
 
-[Full Changelog](CHANGELOG.md) | [Release Notes](docs/release-note-v3.11.1-en.md)
+[Full Changelog](CHANGELOG.md) | [Release Notes](docs/release-notes/v3.11.1-en.md)
 
 ### Provider Management
 
@@ -188,6 +188,10 @@ Add an official provider from the preset list. After switching to it, run the Lo
 - **Skills**: `~/.cc-switch/skills/` (symlinked to corresponding apps by default)
 
 </details>
+
+## Documentation
+
+For detailed guides on every feature, check out the **[User Manual](docs/user-manual/en/README.md)** — covering provider management, MCP/Prompts/Skills, proxy & failover, and more.
 
 ## Quick Start
 

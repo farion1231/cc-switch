@@ -653,7 +653,7 @@ This beta release introduces the **Local API Proxy** feature, along with Skills 
 
 ### Stats
 
-- 51 commits since v3.7.1; 207 files changed; +17,297 / -6,870 lines. See [release-note-v3.8.0](docs/release-note-v3.8.0-en.md) for details.
+- 51 commits since v3.7.1; 207 files changed; +17,297 / -6,870 lines. See [release-note-v3.8.0](docs/release-notes/v3.8.0-en.md) for details.
 
 ---
 
