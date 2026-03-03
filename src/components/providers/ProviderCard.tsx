@@ -422,7 +422,7 @@ export function ProviderCard({
         </div>
       </div>
 
-      {isExpanded && hasMultiplePlans && (
+      {(appId === "codex" || (isExpanded && hasMultiplePlans)) && (
         <div className="mt-4 pt-4 border-t border-border-default">
           {appId === "codex" ? (
             <CodexQuotaPanel providerId={provider.id} />

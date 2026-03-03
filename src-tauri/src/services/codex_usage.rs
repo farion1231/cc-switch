@@ -288,43 +288,62 @@ impl CodexUsageService {
     }
 
     fn parse_usage(account_id: String, json: &Value) -> CodexUsageState {
-        let primary = json.get("primary_window").or_else(|| json.get("primary"));
-        let secondary = json.get("secondary_window").or_else(|| json.get("secondary"));
+        let rate_limit = json.get("rate_limit").unwrap_or(json);
+        let primary = rate_limit
+            .get("primary_window")
+            .or_else(|| json.get("primary_window"))
+            .or_else(|| json.get("primary"));
+        let secondary = rate_limit
+            .get("secondary_window")
+            .or_else(|| json.get("secondary_window"))
+            .or_else(|| json.get("secondary"));
         let credits = json.get("credits");
         let now_ms = Self::now_ms();
+        let primary_used_percent = Self::f64_opt(primary.and_then(|v| v.get("used_percent")))
+            .or_else(|| {
+                Self::f64_opt(primary.and_then(|v| v.get("remaining_percent")))
+                    .map(|remaining| (100.0 - remaining).clamp(0.0, 100.0))
+            })
+            .or_else(|| Self::f64_opt(json.get("primary_used_percent")));
+        let secondary_used_percent = Self::f64_opt(secondary.and_then(|v| v.get("used_percent")))
+            .or_else(|| {
+                Self::f64_opt(secondary.and_then(|v| v.get("remaining_percent")))
+                    .map(|remaining| (100.0 - remaining).clamp(0.0, 100.0))
+            })
+            .or_else(|| Self::f64_opt(json.get("secondary_used_percent")));
 
         CodexUsageState {
             account_id,
-            allowed: Self::bool_opt(json.get("allowed")),
-            limit_reached: Self::bool_opt(json.get("limit_reached")),
-            primary_used_percent: Self::f64_opt(
-                primary
-                    .and_then(|v| v.get("used_percent"))
-                    .or_else(|| json.get("primary_used_percent")),
-            ),
+            allowed: Self::bool_opt(rate_limit.get("allowed"))
+                .or_else(|| Self::bool_opt(json.get("allowed"))),
+            limit_reached: Self::bool_opt(rate_limit.get("limit_reached"))
+                .or_else(|| Self::bool_opt(json.get("limit_reached"))),
+            primary_used_percent,
             primary_reset_at: Self::i64_opt(
                 primary
-                    .and_then(|v| v.get("resets_at"))
+                    .and_then(|v| v.get("reset_at").or_else(|| v.get("resets_at")))
                     .or_else(|| json.get("primary_reset_at")),
             ),
             primary_reset_after_seconds: Self::i64_opt(
                 primary
-                    .and_then(|v| v.get("resets_in_seconds"))
+                    .and_then(|v| {
+                        v.get("reset_after_seconds")
+                            .or_else(|| v.get("resets_in_seconds"))
+                    })
                     .or_else(|| json.get("primary_reset_after_seconds")),
             ),
-            secondary_used_percent: Self::f64_opt(
-                secondary
-                    .and_then(|v| v.get("used_percent"))
-                    .or_else(|| json.get("secondary_used_percent")),
-            ),
+            secondary_used_percent,
             secondary_reset_at: Self::i64_opt(
                 secondary
-                    .and_then(|v| v.get("resets_at"))
+                    .and_then(|v| v.get("reset_at").or_else(|| v.get("resets_at")))
                     .or_else(|| json.get("secondary_reset_at")),
             ),
             secondary_reset_after_seconds: Self::i64_opt(
                 secondary
-                    .and_then(|v| v.get("resets_in_seconds"))
+                    .and_then(|v| {
+                        v.get("reset_after_seconds")
+                            .or_else(|| v.get("resets_in_seconds"))
+                    })
                     .or_else(|| json.get("secondary_reset_after_seconds")),
             ),
             credits_has_credits: Self::bool_opt(
@@ -423,12 +442,20 @@ impl CodexUsageService {
         provider_id: Option<String>,
     ) -> Result<RefreshResult, AppError> {
         let mut accounts: Vec<CodexAccount> = Vec::new();
-            if let Some(pid) = provider_id {
+        if let Some(pid) = provider_id {
             if let Some(acc) = db.get_codex_account_by_provider(&pid)? {
                 accounts.push(acc);
+            } else {
+                return Err(AppError::Config(format!(
+                    "Codex provider 未绑定账号，无法刷新用量: {}",
+                    pid
+                )));
             }
         } else {
             accounts = db.list_codex_accounts(true)?;
+        }
+        if accounts.is_empty() {
+            return Err(AppError::Config("没有可刷新的 Codex 账号".to_string()));
         }
 
         let mut success_accounts = 0usize;

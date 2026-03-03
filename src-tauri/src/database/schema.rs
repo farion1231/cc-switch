@@ -264,8 +264,7 @@ impl Database {
             provider_id TEXT PRIMARY KEY,
             account_id TEXT NOT NULL,
             auto_bound INTEGER NOT NULL DEFAULT 1,
-            updated_at INTEGER NOT NULL,
-            FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+            updated_at INTEGER NOT NULL
         )",
             [],
         )
@@ -438,6 +437,11 @@ impl Database {
                         log::info!("迁移数据库从 v5 到 v6（Codex 账号主仓 + usage 状态）");
                         Self::migrate_v5_to_v6(conn)?;
                         Self::set_user_version(conn, 6)?;
+                    }
+                    6 => {
+                        log::info!("迁移数据库从 v6 到 v7（修复 Codex 绑定表外键不兼容）");
+                        Self::migrate_v6_to_v7(conn)?;
+                        Self::set_user_version(conn, 7)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1056,6 +1060,37 @@ impl Database {
             [],
         )?;
         log::info!("v5 -> v6 迁移完成：已添加 Codex 主仓与 usage 状态表");
+        Ok(())
+    }
+
+    /// v6 -> v7 迁移：修复 codex_provider_bindings 外键不兼容
+    fn migrate_v6_to_v7(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "codex_provider_bindings")? {
+            return Ok(());
+        }
+
+        conn.execute(
+            "ALTER TABLE codex_provider_bindings RENAME TO codex_provider_bindings_old",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE codex_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            auto_bound INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT OR REPLACE INTO codex_provider_bindings(provider_id, account_id, auto_bound, updated_at)
+             SELECT provider_id, account_id, auto_bound, updated_at
+             FROM codex_provider_bindings_old",
+            [],
+        )?;
+        conn.execute("DROP TABLE codex_provider_bindings_old", [])?;
+
+        log::info!("v6 -> v7 迁移完成：已重建 codex_provider_bindings");
         Ok(())
     }
 

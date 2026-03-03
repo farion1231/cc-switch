@@ -1,5 +1,8 @@
-import { Clock, RefreshCw, AlertCircle } from "lucide-react";
+import { useMemo, useState, type MouseEvent } from "react";
+import { Clock3, RefreshCw, AlertCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { codexApi } from "@/lib/api";
 import { useCodexUsageStateQuery } from "@/lib/query/queries";
 
@@ -8,8 +11,30 @@ interface CodexQuotaPanelProps {
   inline?: boolean;
 }
 
+function clampPercent(v?: number): number {
+  if (typeof v !== "number" || Number.isNaN(v)) return 0;
+  return Math.max(0, Math.min(100, v));
+}
+
+function remainingPercent(usedPercent?: number): number {
+  return 100 - clampPercent(usedPercent);
+}
+
+function calcResetSeconds(resetAfterSeconds?: number, resetAtEpochSeconds?: number): number | undefined {
+  if (typeof resetAfterSeconds === "number" && resetAfterSeconds > 0) {
+    return resetAfterSeconds;
+  }
+  if (typeof resetAtEpochSeconds === "number" && resetAtEpochSeconds > 0) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const delta = resetAtEpochSeconds - nowSec;
+    return delta > 0 ? delta : 0;
+  }
+  return undefined;
+}
+
 function formatDuration(seconds?: number): string {
-  if (!seconds || seconds <= 0) return "0m";
+  if (seconds === undefined) return "--";
+  if (seconds <= 0) return "0m";
   const h = Math.floor(seconds / 3600);
   const m = Math.ceil((seconds % 3600) / 60);
   if (h > 0) return `${h}h ${m}m`;
@@ -22,34 +47,126 @@ function formatResetAt(epochSeconds?: number): string {
   return d.toLocaleString();
 }
 
+function formatLastUpdated(tsMs?: number): string {
+  if (!tsMs) return "--";
+  const diffMs = Date.now() - tsMs;
+  if (diffMs < 60_000) return "刚刚";
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 60) return `${mins} 分钟前`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  return `${days} 天前`;
+}
+
+interface WindowRowProps {
+  label: string;
+  remainingPct: number;
+  resetIn?: number;
+  colorClass?: string;
+}
+
+function WindowRow({ label, remainingPct, resetIn, colorClass = "bg-emerald-500" }: WindowRowProps) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span className="font-medium">{label}</span>
+        <span>{`${remainingPct.toFixed(0)}% left`} • {`resets ${formatDuration(resetIn)}`}</span>
+      </div>
+      <div className="h-2 w-full rounded bg-muted overflow-hidden">
+        <div
+          className={`h-full transition-all ${colorClass}`}
+          style={{ width: `${remainingPct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function CodexQuotaPanel({
   providerId,
   inline = false,
 }: CodexQuotaPanelProps) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+
   const { data, isFetching, refetch } = useCodexUsageStateQuery(providerId, {
     enabled: !!providerId,
     refetchIntervalMs: 60000,
   });
 
   const usage = data?.usage;
-  const pct = Math.max(
-    usage?.primaryUsedPercent ?? 0,
-    usage?.secondaryUsedPercent ?? 0,
-  );
-  const status = data?.available
-    ? t("usage.available", { defaultValue: "可用" })
-    : t("usage.cooling", { defaultValue: "冷却中" });
-  const cooldown = formatDuration(data?.cooldownSeconds);
-  const balance =
-    usage?.creditsUnlimited === true
-      ? t("usage.unlimited", { defaultValue: "无限" })
-      : usage?.creditsBalance?.toFixed(2) ?? "--";
-  const resetAt = formatResetAt(
-    usage?.primaryResetAt ?? usage?.secondaryResetAt ?? undefined,
-  );
+
+  const {
+    primaryRemaining,
+    secondaryRemaining,
+    combinedRemaining,
+    primaryResetIn,
+    secondaryResetIn,
+    balance,
+    status,
+  } = useMemo(() => {
+    const primaryRemaining = remainingPercent(usage?.primaryUsedPercent);
+    const secondaryRemaining = remainingPercent(usage?.secondaryUsedPercent);
+    const combinedRemaining = Math.min(primaryRemaining, secondaryRemaining);
+
+    const primaryResetIn = calcResetSeconds(
+      usage?.primaryResetAfterSeconds,
+      usage?.primaryResetAt,
+    );
+    const secondaryResetIn = calcResetSeconds(
+      usage?.secondaryResetAfterSeconds,
+      usage?.secondaryResetAt,
+    );
+
+    const balance =
+      usage?.creditsUnlimited === true
+        ? t("usage.unlimited", { defaultValue: "无限" })
+        : usage?.creditsBalance?.toFixed(2) ?? "--";
+
+    const status = data?.available
+      ? t("usage.available", { defaultValue: "可用" })
+      : t("usage.cooling", { defaultValue: "冷却中" });
+
+    return {
+      primaryRemaining,
+      secondaryRemaining,
+      combinedRemaining,
+      primaryResetIn,
+      secondaryResetIn,
+      balance,
+      status,
+    };
+  }, [data?.available, t, usage]);
 
   if (!data) return null;
+
+  const loading = isFetching || isManualRefreshing;
+
+  const handleRefresh = async (stopPropagation = false, e?: MouseEvent) => {
+    if (stopPropagation && e) {
+      e.stopPropagation();
+    }
+    if (loading) return;
+
+    setIsManualRefreshing(true);
+    try {
+      const result = await codexApi.refreshUsageNow(providerId);
+      if (result.refreshedAccounts === 0) {
+        toast.warning("该账号未绑定可刷新用量的 Codex 登录态");
+      }
+      await queryClient.invalidateQueries({
+        queryKey: ["codex-usage-state", providerId],
+      });
+      await refetch();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(`刷新用量失败: ${message}`);
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  };
 
   if (inline) {
     return (
@@ -57,22 +174,20 @@ export default function CodexQuotaPanel({
         <span className={data.available ? "text-emerald-600" : "text-amber-600"}>
           {status}
         </span>
-        <span>{pct.toFixed(0)}%</span>
+        <span>{combinedRemaining.toFixed(0)}%</span>
         {!data.available && (
           <span className="inline-flex items-center gap-1">
-            <Clock size={12} />
-            {cooldown}
+            <Clock3 size={12} />
+            {formatDuration(data.cooldownSeconds ?? primaryResetIn ?? secondaryResetIn)}
           </span>
         )}
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            void codexApi.refreshUsageNow(providerId).then(() => refetch());
-          }}
+          onClick={(e) => void handleRefresh(true, e)}
           className="p-1 rounded hover:bg-muted"
-          title={t("usage.refreshUsage")}
+          title={t("usage.refreshUsage", { defaultValue: "刷新用量" })}
+          disabled={loading}
         >
-          <RefreshCw size={12} className={isFetching ? "animate-spin" : ""} />
+          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
     );
@@ -80,16 +195,24 @@ export default function CodexQuotaPanel({
 
   return (
     <div className="mt-3 rounded-xl border border-border-default bg-card px-4 py-3 shadow-sm">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-medium">
-          {t("usage.codexQuotaTitle", { defaultValue: "Codex 额度" })}
-        </span>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium">
+            {t("usage.codexQuotaTitle", { defaultValue: "Codex 额度" })}
+          </span>
+          <span
+            className={`text-xs ${data.available ? "text-emerald-600" : "text-amber-600"}`}
+          >
+            {status}
+          </span>
+        </div>
         <button
-          onClick={() => void codexApi.refreshUsageNow(providerId).then(() => refetch())}
+          onClick={() => void handleRefresh()}
           className="p-1 rounded hover:bg-muted"
-          title={t("usage.refreshUsage")}
+          title={t("usage.refreshUsage", { defaultValue: "刷新用量" })}
+          disabled={loading}
         >
-          <RefreshCw size={12} className={isFetching ? "animate-spin" : ""} />
+          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
 
@@ -100,26 +223,31 @@ export default function CodexQuotaPanel({
         </div>
       )}
 
-      <div className="space-y-2">
-        <div className="h-2 w-full rounded bg-muted overflow-hidden">
-          <div
-            className="h-full bg-blue-500 transition-all"
-            style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-          />
-        </div>
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>{status}</span>
-          {!data.available && (
-            <span>
-              {t("usage.codexQuotaResetIn", { defaultValue: "恢复" })}: {cooldown}
-            </span>
-          )}
-        </div>
+      <div className="space-y-3">
+        <WindowRow
+          label="5h Limit (5h)"
+          remainingPct={primaryRemaining}
+          resetIn={primaryResetIn}
+          colorClass="bg-emerald-500"
+        />
+
+        <WindowRow
+          label="Weekly Limit (7d)"
+          remainingPct={secondaryRemaining}
+          resetIn={secondaryResetIn}
+          colorClass="bg-emerald-500"
+        />
+
         <div className="text-xs text-muted-foreground">
-          {t("usage.balance", { defaultValue: "余额" })}: {balance}
+          Credits: {balance}
         </div>
+
         <div className="text-xs text-muted-foreground">
-          {t("usage.codexQuotaResetAt", { defaultValue: "恢复时间" })}: {resetAt}
+          Last updated: {formatLastUpdated(usage?.lastRefreshAt)}
+        </div>
+
+        <div className="text-xs text-muted-foreground">
+          Primary reset at: {formatResetAt(usage?.primaryResetAt)} · Secondary reset at: {formatResetAt(usage?.secondaryResetAt)}
         </div>
       </div>
     </div>
