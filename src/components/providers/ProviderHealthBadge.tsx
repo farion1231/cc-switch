@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 
 interface ProviderHealthBadgeProps {
   consecutiveFailures: number;
+  failureThreshold?: number;
+  lastError?: string | null;
   className?: string;
 }
 
@@ -13,9 +15,35 @@ interface ProviderHealthBadgeProps {
  */
 export function ProviderHealthBadge({
   consecutiveFailures,
+  failureThreshold = 4,
+  lastError,
   className,
 }: ProviderHealthBadgeProps) {
   const { t } = useTranslation();
+  const normalizedThreshold = Math.max(1, failureThreshold);
+
+  const getErrorHint = () => {
+    if (!lastError) return null;
+    const error = lastError.toLowerCase();
+    if (error.includes("401") || error.includes("invalid_api_key")) {
+      return t("health.authErrorHint", {
+        defaultValue: "可能是认证问题（401）",
+      });
+    }
+    if (
+      error.includes("429") ||
+      error.includes("usage_limit_reached") ||
+      error.includes("rate limit")
+    ) {
+      return t("health.rateLimitHint", {
+        defaultValue: "可能是额度/速率限制（429）",
+      });
+    }
+    return t("health.lastErrorHint", {
+      defaultValue: `最近错误: ${lastError}`,
+      error: lastError,
+    });
+  };
 
   // 根据失败次数计算状态
   const getStatus = () => {
@@ -29,7 +57,7 @@ export function ProviderHealthBadge({
         bgColor: "bg-green-500/10",
         textColor: "text-green-600 dark:text-green-400",
       };
-    } else if (consecutiveFailures < 5) {
+    } else if (consecutiveFailures < normalizedThreshold) {
       return {
         labelKey: "health.degraded",
         labelFallback: "降级",
@@ -54,6 +82,12 @@ export function ProviderHealthBadge({
   const label = t(statusConfig.labelKey, {
     defaultValue: statusConfig.labelFallback,
   });
+  const baseTitle = t("health.consecutiveFailures", {
+    count: consecutiveFailures,
+    defaultValue: `连续失败 ${consecutiveFailures} 次`,
+  });
+  const errorHint = getErrorHint();
+  const title = errorHint ? `${baseTitle}\n${errorHint}` : baseTitle;
 
   return (
     <div
@@ -63,10 +97,7 @@ export function ProviderHealthBadge({
         statusConfig.textColor,
         className,
       )}
-      title={t("health.consecutiveFailures", {
-        count: consecutiveFailures,
-        defaultValue: `连续失败 ${consecutiveFailures} 次`,
-      })}
+      title={title}
     >
       <div className={cn("w-2 h-2 rounded-full", statusConfig.color)} />
       <span>{label}</span>

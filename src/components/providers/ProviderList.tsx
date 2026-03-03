@@ -34,6 +34,7 @@ import {
   useAddToFailoverQueue,
   useRemoveFromFailoverQueue,
 } from "@/lib/query/failover";
+import { useAppProxyConfig } from "@/lib/query/proxy";
 import {
   useCurrentOmoProviderId,
   useCurrentOmoSlimProviderId,
@@ -132,6 +133,7 @@ export function ProviderList({
   // 故障转移相关
   const { data: isAutoFailoverEnabled } = useAutoFailoverEnabled(appId);
   const { data: failoverQueue } = useFailoverQueue(appId);
+  const { data: appProxyConfig } = useAppProxyConfig(appId);
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
 
@@ -316,6 +318,9 @@ export function ProviderList({
                   handleToggleFailover(provider.id, enabled)
                 }
                 activeProviderId={activeProviderId}
+                circuitFailureThreshold={
+                  appProxyConfig?.circuitFailureThreshold ?? 4
+                }
                 // OpenClaw: default model
                 isDefaultModel={isProviderDefaultModel(provider.id)}
                 onSetAsDefault={
@@ -434,6 +439,7 @@ interface SortableProviderCardProps {
   isInFailoverQueue: boolean;
   onToggleFailover: (enabled: boolean) => void;
   activeProviderId?: string;
+  circuitFailureThreshold: number;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
@@ -465,6 +471,7 @@ function SortableProviderCard({
   isInFailoverQueue,
   onToggleFailover,
   activeProviderId,
+  circuitFailureThreshold,
   isDefaultModel,
   onSetAsDefault,
 }: SortableProviderCardProps) {
@@ -517,6 +524,7 @@ function SortableProviderCard({
         isInFailoverQueue={isInFailoverQueue}
         onToggleFailover={onToggleFailover}
         activeProviderId={activeProviderId}
+        circuitFailureThreshold={circuitFailureThreshold}
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}

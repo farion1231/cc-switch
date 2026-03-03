@@ -25,6 +25,7 @@ import {
   useSetProxyTakeoverForApp,
   useGlobalProxyConfig,
   useUpdateGlobalProxyConfig,
+  useAppProxyConfig,
 } from "@/lib/query/proxy";
 import type { ProxyStatus } from "@/types/proxy";
 import { useTranslation } from "react-i18next";
@@ -692,6 +693,7 @@ function ProviderQueueItem({
 }: ProviderQueueItemProps) {
   const { t } = useTranslation();
   const { data: health } = useProviderHealth(provider.id, appType);
+  const { data: appProxyConfig } = useAppProxyConfig(appType);
 
   return (
     <div
@@ -723,6 +725,8 @@ function ProviderQueueItem({
       {/* 健康徽章 */}
       <ProviderHealthBadge
         consecutiveFailures={health?.consecutive_failures ?? 0}
+        failureThreshold={appProxyConfig?.circuitFailureThreshold ?? 4}
+        lastError={health?.last_error}
       />
     </div>
   );
