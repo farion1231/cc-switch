@@ -143,7 +143,8 @@ pub(crate) fn ensure_instance_dir_with_paths(
         }
     }
 
-    // Also symlink ~/.claude.json (auth file that lives next to the config dir)
+    // Also symlink ~/.claude.json (global user state: preferences, OAuth session,
+    // MCP configs, per-project state, caches — lives next to the config dir)
     if let Some(home_dir) = claude_dir.parent() {
         let dot_claude_json = home_dir.join(".claude.json");
         if dot_claude_json.exists() {
