@@ -388,17 +388,7 @@ impl RequestForwarder {
                                             "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
                                         );
 
-                                        // 区分错误类型：Provider 问题记录失败，客户端问题仅释放 permit
-                                        let is_provider_error = match &retry_err {
-                                            ProxyError::Timeout(_)
-                                            | ProxyError::ForwardFailed(_) => true,
-                                            ProxyError::UpstreamError { status, .. } => {
-                                                *status >= 500
-                                            }
-                                            _ => false,
-                                        };
-
-                                        if is_provider_error {
+                                        if should_count_provider_failure(&retry_err) {
                                             // Provider 问题：记录失败到熔断器
                                             let _ = self
                                                 .router
@@ -571,15 +561,7 @@ impl RequestForwarder {
                                         "[{app_type_str}] [RECT-012] budget 整流重试仍失败: {retry_err}"
                                     );
 
-                                    let is_provider_error = match &retry_err {
-                                        ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => {
-                                            true
-                                        }
-                                        ProxyError::UpstreamError { status, .. } => *status >= 500,
-                                        _ => false,
-                                    };
-
-                                    if is_provider_error {
+                                    if should_count_provider_failure(&retry_err) {
                                         let _ = self
                                             .router
                                             .record_result(
@@ -639,17 +621,27 @@ impl RequestForwarder {
                         });
                     }
 
-                    // 失败：记录失败并更新熔断器
-                    let _ = self
-                        .router
-                        .record_result(
-                            &provider.id,
-                            app_type_str,
-                            used_half_open_permit,
-                            false,
-                            Some(e.to_string()),
-                        )
-                        .await;
+                    // 失败：仅在 Provider 级问题时计入熔断器，避免请求参数类错误污染健康度
+                    if should_count_provider_failure(&e) {
+                        let _ = self
+                            .router
+                            .record_result(
+                                &provider.id,
+                                app_type_str,
+                                used_half_open_permit,
+                                false,
+                                Some(e.to_string()),
+                            )
+                            .await;
+                    } else {
+                        self.router
+                            .release_permit_neutral(
+                                &provider.id,
+                                app_type_str,
+                                used_half_open_permit,
+                            )
+                            .await;
+                    }
 
                     // 分类错误
                     let category = self.categorize_proxy_error(&e);
@@ -925,5 +917,60 @@ fn extract_error_message(error: &ProxyError) -> Option<String> {
     match error {
         ProxyError::UpstreamError { body, .. } => body.clone(),
         _ => Some(error.to_string()),
+    }
+}
+
+/// 判断错误是否应计入 Provider 熔断器统计。
+///
+/// 原则：
+/// - Provider 网络/上游可用性问题：计入（用于故障转移）
+/// - 客户端请求参数/协议问题：不计入（避免误熔断）
+fn should_count_provider_failure(error: &ProxyError) -> bool {
+    match error {
+        ProxyError::Timeout(_)
+        | ProxyError::ForwardFailed(_)
+        | ProxyError::StreamIdleTimeout(_)
+        | ProxyError::ConfigError(_)
+        | ProxyError::AuthError(_) => true,
+        ProxyError::UpstreamError { status, .. } => {
+            *status >= 500 || *status == 401 || *status == 403 || *status == 429
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_count_provider_failure;
+    use crate::proxy::ProxyError;
+
+    #[test]
+    fn should_count_timeout_as_provider_failure() {
+        assert!(should_count_provider_failure(&ProxyError::Timeout(
+            "timeout".to_string()
+        )));
+    }
+
+    #[test]
+    fn should_count_429_as_provider_failure() {
+        assert!(should_count_provider_failure(&ProxyError::UpstreamError {
+            status: 429,
+            body: Some("rate limit".to_string()),
+        }));
+    }
+
+    #[test]
+    fn should_not_count_400_as_provider_failure() {
+        assert!(!should_count_provider_failure(&ProxyError::UpstreamError {
+            status: 400,
+            body: Some("bad request".to_string()),
+        }));
+    }
+
+    #[test]
+    fn should_not_count_transform_error_as_provider_failure() {
+        assert!(!should_count_provider_failure(&ProxyError::TransformError(
+            "invalid payload".to_string()
+        )));
     }
 }

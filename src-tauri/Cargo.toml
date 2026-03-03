@@ -44,7 +44,7 @@ async-stream = "0.3"
 bytes = "1.5"
 axum = "0.7"
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors"] }
+tower-http = { version = "0.5", features = ["cors", "decompression-full"] }
 hyper = { version = "1.0", features = ["full"] }
 regex = "1.10"
 rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }

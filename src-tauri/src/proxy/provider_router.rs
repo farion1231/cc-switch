@@ -7,7 +7,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -33,7 +33,7 @@ impl ProviderRouter {
     ///
     /// 返回按优先级排序的可用供应商列表：
     /// - 故障转移关闭时：仅返回当前供应商
-    /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
+    /// - 故障转移开启时：优先使用故障转移队列；若队列供应商当前均不可用，自动回退到非队列供应商
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
         let mut total_providers = 0usize;
@@ -60,12 +60,14 @@ impl ProviderRouter {
                 .map(|item| item.provider_id)
                 .collect();
 
-            total_providers = ordered_ids.len();
+            let mut queued_provider_ids = HashSet::new();
 
             for provider_id in ordered_ids {
+                queued_provider_ids.insert(provider_id.clone());
                 let Some(provider) = all_providers.get(&provider_id).cloned() else {
                     continue;
                 };
+                total_providers += 1;
 
                 let circuit_key = format!("{app_type}:{}", provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
@@ -74,6 +76,36 @@ impl ProviderRouter {
                     result.push(provider);
                 } else {
                     circuit_open_count += 1;
+                }
+            }
+
+            // 队列中的 Provider 均不可用时，自动回退到非队列 Provider，避免误判“全熔断”
+            if result.is_empty() {
+                let mut fallback_providers: Vec<Provider> = all_providers
+                    .iter()
+                    .filter(|(id, _)| !queued_provider_ids.contains(*id))
+                    .map(|(_, provider)| provider.clone())
+                    .collect();
+
+                fallback_providers.sort_by_key(|p| p.sort_index.unwrap_or(usize::MAX));
+
+                if !fallback_providers.is_empty() {
+                    log::warn!(
+                        "[{app_type}] [FO-006] 故障转移队列当前不可用，回退到 {} 个非队列供应商",
+                        fallback_providers.len()
+                    );
+                }
+
+                for provider in fallback_providers {
+                    total_providers += 1;
+                    let circuit_key = format!("{app_type}:{}", provider.id);
+                    let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+
+                    if breaker.is_available().await {
+                        result.push(provider);
+                    } else {
+                        circuit_open_count += 1;
+                    }
                 }
             }
         } else {
@@ -403,6 +435,44 @@ mod tests {
 
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_failover_enabled_fallbacks_to_non_queue_provider_when_queue_unavailable() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        // 仅将 b 放入故障转移队列
+        db.add_to_failover_queue("claude", "b").unwrap();
+
+        // 打开自动故障转移并将失败阈值设置为 1，方便快速触发熔断
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        config.circuit_failure_threshold = 1;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 触发 b 熔断
+        router
+            .record_result("b", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        // 队列里的 b 不可用时，应自动回退到非队列的 a
+        let providers = router.select_providers("claude").await.unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "a");
     }
 
     #[tokio::test]
