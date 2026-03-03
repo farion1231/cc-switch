@@ -240,6 +240,28 @@ impl ProxyServer {
             .route("/v1/responses", post(handlers::handle_responses))
             .route("/v1/v1/responses", post(handlers::handle_responses))
             .route("/codex/v1/responses", post(handlers::handle_responses))
+            // Codex remote compact task endpoint
+            .route(
+                "/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/v1/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/v1/v1/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/codex/v1/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            // OpenAI Models API (Codex App/IDE 在启动时会探测可用模型)
+            .route("/models", get(handlers::handle_models))
+            .route("/v1/models", get(handlers::handle_models))
+            .route("/v1/v1/models", get(handlers::handle_models))
+            .route("/codex/v1/models", get(handlers::handle_models))
             // Gemini API (支持带前缀和不带前缀)
             .route("/v1beta/*path", post(handlers::handle_gemini))
             .route("/gemini/v1beta/*path", post(handlers::handle_gemini))
