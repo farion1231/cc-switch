@@ -120,9 +120,11 @@ export interface CodexUsageState {
   allowed?: boolean;
   limitReached?: boolean;
   primaryUsedPercent?: number;
+  primaryLimitWindowSeconds?: number;
   primaryResetAt?: number;
   primaryResetAfterSeconds?: number;
   secondaryUsedPercent?: number;
+  secondaryLimitWindowSeconds?: number;
   secondaryResetAt?: number;
   secondaryResetAfterSeconds?: number;
   creditsHasCredits?: boolean;

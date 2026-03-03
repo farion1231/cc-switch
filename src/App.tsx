@@ -686,9 +686,15 @@ function App() {
       await queryClient.refetchQueries({
         queryKey: ["codex-usage-state"],
       });
-      toast.success(
-        `Codex 用量已刷新：${result.successAccounts}/${result.refreshedAccounts}`,
-      );
+      if (result.failedAccounts > 0) {
+        toast.warning(
+          `Codex 用量刷新完成：成功 ${result.successAccounts}，失败 ${result.failedAccounts}`,
+        );
+      } else {
+        toast.success(
+          `Codex 用量已刷新：${result.successAccounts}/${result.refreshedAccounts}`,
+        );
+      }
     } catch (error) {
       const detail = extractErrorMessage(error);
       toast.error(`刷新 Codex 用量失败${detail ? `: ${detail}` : ""}`);

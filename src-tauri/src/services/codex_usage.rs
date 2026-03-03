@@ -319,6 +319,11 @@ impl CodexUsageService {
             limit_reached: Self::bool_opt(rate_limit.get("limit_reached"))
                 .or_else(|| Self::bool_opt(json.get("limit_reached"))),
             primary_used_percent,
+            primary_limit_window_seconds: Self::i64_opt(
+                primary
+                    .and_then(|v| v.get("limit_window_seconds"))
+                    .or_else(|| json.get("primary_limit_window_seconds")),
+            ),
             primary_reset_at: Self::i64_opt(
                 primary
                     .and_then(|v| v.get("reset_at").or_else(|| v.get("resets_at")))
@@ -333,6 +338,11 @@ impl CodexUsageService {
                     .or_else(|| json.get("primary_reset_after_seconds")),
             ),
             secondary_used_percent,
+            secondary_limit_window_seconds: Self::i64_opt(
+                secondary
+                    .and_then(|v| v.get("limit_window_seconds"))
+                    .or_else(|| json.get("secondary_limit_window_seconds")),
+            ),
             secondary_reset_at: Self::i64_opt(
                 secondary
                     .and_then(|v| v.get("reset_at").or_else(|| v.get("resets_at")))
@@ -416,7 +426,11 @@ impl CodexUsageService {
                         ..Default::default()
                     };
                     db.upsert_codex_usage_state(&usage)?;
-                    return Ok(());
+                    return Err(AppError::Config(format!(
+                        "usage refresh failed for account {}: HTTP {}",
+                        account.id,
+                        status.as_u16()
+                    )));
                 }
                 let json: Value = serde_json::from_str(&body).map_err(|e| {
                     AppError::Config(format!("解析 usage 响应失败 account={} : {e}", account.id))
@@ -432,6 +446,10 @@ impl CodexUsageService {
                     ..Default::default()
                 };
                 db.upsert_codex_usage_state(&usage)?;
+                return Err(AppError::Config(format!(
+                    "usage refresh request failed for account {}: {}",
+                    account.id, e
+                )));
             }
         }
         Ok(())

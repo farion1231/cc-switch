@@ -83,6 +83,17 @@ function WindowRow({ label, remainingPct, resetIn, colorClass = "bg-emerald-500"
   );
 }
 
+function formatWindowLabel(seconds?: number, fallback = "Window"): string {
+  if (!seconds || seconds <= 0) return fallback;
+  if (seconds % 86400 === 0) {
+    const days = Math.round(seconds / 86400);
+    if (days === 7) return "Weekly Limit (7d)";
+    return `${days}d Limit (${days}d)`;
+  }
+  const hours = Math.round(seconds / 3600);
+  return `${hours}h Limit (${hours}h)`;
+}
+
 export default function CodexQuotaPanel({
   providerId,
   inline = false,
@@ -106,6 +117,8 @@ export default function CodexQuotaPanel({
     secondaryResetIn,
     balance,
     status,
+    primaryLabel,
+    secondaryLabel,
   } = useMemo(() => {
     const primaryRemaining = remainingPercent(usage?.primaryUsedPercent);
     const secondaryRemaining = remainingPercent(usage?.secondaryUsedPercent);
@@ -137,6 +150,14 @@ export default function CodexQuotaPanel({
       secondaryResetIn,
       balance,
       status,
+      primaryLabel: formatWindowLabel(
+        usage?.primaryLimitWindowSeconds,
+        "Primary Limit",
+      ),
+      secondaryLabel: formatWindowLabel(
+        usage?.secondaryLimitWindowSeconds,
+        "Secondary Limit",
+      ),
     };
   }, [data?.available, t, usage]);
 
@@ -155,6 +176,12 @@ export default function CodexQuotaPanel({
       const result = await codexApi.refreshUsageNow(providerId);
       if (result.refreshedAccounts === 0) {
         toast.warning("该账号未绑定可刷新用量的 Codex 登录态");
+      } else if (result.failedAccounts > 0) {
+        toast.warning(
+          `刷新完成：成功 ${result.successAccounts}，失败 ${result.failedAccounts}`,
+        );
+      } else {
+        toast.success(`刷新完成：${result.successAccounts}/${result.refreshedAccounts}`);
       }
       await queryClient.invalidateQueries({
         queryKey: ["codex-usage-state", providerId],
@@ -225,14 +252,14 @@ export default function CodexQuotaPanel({
 
       <div className="space-y-3">
         <WindowRow
-          label="5h Limit (5h)"
+          label={primaryLabel}
           remainingPct={primaryRemaining}
           resetIn={primaryResetIn}
           colorClass="bg-emerald-500"
         />
 
         <WindowRow
-          label="Weekly Limit (7d)"
+          label={secondaryLabel}
           remainingPct={secondaryRemaining}
           resetIn={secondaryResetIn}
           colorClass="bg-emerald-500"

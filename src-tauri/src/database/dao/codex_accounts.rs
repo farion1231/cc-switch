@@ -217,17 +217,19 @@ impl Database {
         let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT INTO codex_usage_state (
-                account_id,allowed,limit_reached,primary_used_percent,primary_reset_at,primary_reset_after_seconds,
-                secondary_used_percent,secondary_reset_at,secondary_reset_after_seconds,
+                account_id,allowed,limit_reached,primary_used_percent,primary_limit_window_seconds,primary_reset_at,primary_reset_after_seconds,
+                secondary_used_percent,secondary_limit_window_seconds,secondary_reset_at,secondary_reset_after_seconds,
                 credits_has_credits,credits_balance,credits_unlimited,last_refresh_at,last_error
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
              ON CONFLICT(account_id) DO UPDATE SET
                 allowed=excluded.allowed,
                 limit_reached=excluded.limit_reached,
                 primary_used_percent=excluded.primary_used_percent,
+                primary_limit_window_seconds=excluded.primary_limit_window_seconds,
                 primary_reset_at=excluded.primary_reset_at,
                 primary_reset_after_seconds=excluded.primary_reset_after_seconds,
                 secondary_used_percent=excluded.secondary_used_percent,
+                secondary_limit_window_seconds=excluded.secondary_limit_window_seconds,
                 secondary_reset_at=excluded.secondary_reset_at,
                 secondary_reset_after_seconds=excluded.secondary_reset_after_seconds,
                 credits_has_credits=excluded.credits_has_credits,
@@ -240,9 +242,11 @@ impl Database {
                 usage.allowed.map(|v| if v { 1 } else { 0 }),
                 usage.limit_reached.map(|v| if v { 1 } else { 0 }),
                 usage.primary_used_percent,
+                usage.primary_limit_window_seconds,
                 usage.primary_reset_at,
                 usage.primary_reset_after_seconds,
                 usage.secondary_used_percent,
+                usage.secondary_limit_window_seconds,
                 usage.secondary_reset_at,
                 usage.secondary_reset_after_seconds,
                 usage.credits_has_credits.map(|v| if v { 1 } else { 0 }),
@@ -263,8 +267,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT account_id,allowed,limit_reached,primary_used_percent,primary_reset_at,primary_reset_after_seconds,
-                        secondary_used_percent,secondary_reset_at,secondary_reset_after_seconds,
+                "SELECT account_id,allowed,limit_reached,primary_used_percent,primary_limit_window_seconds,primary_reset_at,primary_reset_after_seconds,
+                        secondary_used_percent,secondary_limit_window_seconds,secondary_reset_at,secondary_reset_after_seconds,
                         credits_has_credits,credits_balance,credits_unlimited,last_refresh_at,last_error
                  FROM codex_usage_state WHERE account_id = ?1 LIMIT 1",
             )
@@ -284,26 +288,32 @@ impl Database {
                     .map_err(|e| AppError::Database(e.to_string()))?
                     .map(|v| v == 1),
                 primary_used_percent: row.get(3).map_err(|e| AppError::Database(e.to_string()))?,
-                primary_reset_at: row.get(4).map_err(|e| AppError::Database(e.to_string()))?,
-                primary_reset_after_seconds: row
-                    .get(5)
+                primary_limit_window_seconds: row
+                    .get(4)
                     .map_err(|e| AppError::Database(e.to_string()))?,
-                secondary_used_percent: row.get(6).map_err(|e| AppError::Database(e.to_string()))?,
-                secondary_reset_at: row.get(7).map_err(|e| AppError::Database(e.to_string()))?,
+                primary_reset_at: row.get(5).map_err(|e| AppError::Database(e.to_string()))?,
                 secondary_reset_after_seconds: row
+                    .get(10)
+                    .map_err(|e| AppError::Database(e.to_string()))?,
+                primary_reset_after_seconds: row
+                    .get(6)
+                    .map_err(|e| AppError::Database(e.to_string()))?,
+                secondary_used_percent: row.get(7).map_err(|e| AppError::Database(e.to_string()))?,
+                secondary_limit_window_seconds: row
                     .get(8)
                     .map_err(|e| AppError::Database(e.to_string()))?,
+                secondary_reset_at: row.get(9).map_err(|e| AppError::Database(e.to_string()))?,
                 credits_has_credits: row
-                    .get::<_, Option<i64>>(9)
-                    .map_err(|e| AppError::Database(e.to_string()))?
-                    .map(|v| v == 1),
-                credits_balance: row.get(10).map_err(|e| AppError::Database(e.to_string()))?,
-                credits_unlimited: row
                     .get::<_, Option<i64>>(11)
                     .map_err(|e| AppError::Database(e.to_string()))?
                     .map(|v| v == 1),
-                last_refresh_at: row.get(12).map_err(|e| AppError::Database(e.to_string()))?,
-                last_error: row.get(13).map_err(|e| AppError::Database(e.to_string()))?,
+                credits_balance: row.get(12).map_err(|e| AppError::Database(e.to_string()))?,
+                credits_unlimited: row
+                    .get::<_, Option<i64>>(13)
+                    .map_err(|e| AppError::Database(e.to_string()))?
+                    .map(|v| v == 1),
+                last_refresh_at: row.get(14).map_err(|e| AppError::Database(e.to_string()))?,
+                last_error: row.get(15).map_err(|e| AppError::Database(e.to_string()))?,
             }))
         } else {
             Ok(None)

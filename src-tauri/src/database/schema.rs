@@ -277,9 +277,11 @@ impl Database {
             allowed INTEGER,
             limit_reached INTEGER,
             primary_used_percent REAL,
+            primary_limit_window_seconds INTEGER,
             primary_reset_at INTEGER,
             primary_reset_after_seconds INTEGER,
             secondary_used_percent REAL,
+            secondary_limit_window_seconds INTEGER,
             secondary_reset_at INTEGER,
             secondary_reset_after_seconds INTEGER,
             credits_has_credits INTEGER,
@@ -442,6 +444,11 @@ impl Database {
                         log::info!("迁移数据库从 v6 到 v7（修复 Codex 绑定表外键不兼容）");
                         Self::migrate_v6_to_v7(conn)?;
                         Self::set_user_version(conn, 7)?;
+                    }
+                    7 => {
+                        log::info!("迁移数据库从 v7 到 v8（扩展 Codex usage 窗口字段）");
+                        Self::migrate_v7_to_v8(conn)?;
+                        Self::set_user_version(conn, 8)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1038,9 +1045,11 @@ impl Database {
             allowed INTEGER,
             limit_reached INTEGER,
             primary_used_percent REAL,
+            primary_limit_window_seconds INTEGER,
             primary_reset_at INTEGER,
             primary_reset_after_seconds INTEGER,
             secondary_used_percent REAL,
+            secondary_limit_window_seconds INTEGER,
             secondary_reset_at INTEGER,
             secondary_reset_after_seconds INTEGER,
             credits_has_credits INTEGER,
@@ -1091,6 +1100,27 @@ impl Database {
         conn.execute("DROP TABLE codex_provider_bindings_old", [])?;
 
         log::info!("v6 -> v7 迁移完成：已重建 codex_provider_bindings");
+        Ok(())
+    }
+
+    /// v7 -> v8 迁移：扩展 codex_usage_state 的窗口总时长字段
+    fn migrate_v7_to_v8(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "codex_usage_state")? {
+            return Ok(());
+        }
+        Self::add_column_if_missing(
+            conn,
+            "codex_usage_state",
+            "primary_limit_window_seconds",
+            "INTEGER",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "codex_usage_state",
+            "secondary_limit_window_seconds",
+            "INTEGER",
+        )?;
+        log::info!("v7 -> v8 迁移完成：已扩展 codex_usage_state 窗口总时长字段");
         Ok(())
     }
 
