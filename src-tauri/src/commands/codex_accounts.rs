@@ -1,4 +1,6 @@
-use crate::codex_account::{CodexAccount, CodexUsageView, ImportResult, LoginSession, RefreshResult};
+use crate::codex_account::{
+    CodexAccount, CodexUsageView, ImportResult, LoginSession, RefreshResult,
+};
 use crate::services::CodexUsageService;
 use crate::store::AppState;
 use tauri::State;

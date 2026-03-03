@@ -15,6 +15,12 @@ export const settingsSchema = z.object({
   skipClaudeOnboarding: z.boolean().optional(),
   launchOnStartup: z.boolean().optional(),
   enableLocalProxy: z.boolean().optional(),
+  guardianEnabled: z.boolean().optional(),
+  guardianIntervalSeconds: z.number().int().positive().optional(),
+  legacyStartupMigrated: z.boolean().optional(),
+  startupItemsMode: z
+    .enum(["autoLaunch", "legacyLaunchAgent"])
+    .optional(),
   language: z.enum(["en", "zh", "ja"]).optional(),
 
   // 设备级目录覆盖

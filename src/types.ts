@@ -221,6 +221,7 @@ export interface ProviderMeta {
 
 // Skill 同步方式
 export type SkillSyncMethod = "auto" | "symlink" | "copy";
+export type StartupItemsMode = "autoLaunch" | "legacyLaunchAgent";
 
 // Claude API 格式类型
 // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
@@ -286,6 +287,14 @@ export interface Settings {
   silentStartup?: boolean;
   // 是否启用主页面本地代理功能（默认关闭）
   enableLocalProxy?: boolean;
+  // 是否启用 Guardian（代理健康守护与自愈）
+  guardianEnabled?: boolean;
+  // Guardian 巡检间隔（秒）
+  guardianIntervalSeconds?: number;
+  // 是否已完成旧版启动项迁移
+  legacyStartupMigrated?: boolean;
+  // 启动项模式（新自动启动 / 旧 LaunchAgent）
+  startupItemsMode?: StartupItemsMode;
   // User has confirmed the local proxy first-run notice
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice

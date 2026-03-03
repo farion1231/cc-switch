@@ -24,7 +24,7 @@ const CODEX_PROXY_ENV_BLOCK_BEGIN: &str = "# >>> CC Switch Codex Proxy (managed)
 #[cfg(target_os = "macos")]
 const CODEX_PROXY_ENV_BLOCK_END: &str = "# <<< CC Switch Codex Proxy (managed) <<<";
 #[cfg(target_os = "macos")]
-const CODEX_PROXY_ENV_LAUNCH_AGENT_LABEL: &str = "com.ccswitch.codex-proxy-env";
+const LEGACY_CODEX_PROXY_ENV_LAUNCH_AGENT_LABEL: &str = "com.ccswitch.codex-proxy-env";
 
 /// 代理接管模式下需要从 Claude Live 配置中移除的“模型覆盖”字段。
 ///
@@ -362,6 +362,12 @@ impl ProxyService {
             .await
             .map_err(|e| format!("清除 {app_type_str} 健康状态失败: {e}"))?;
 
+        if app == AppType::Codex {
+            if let Err(e) = self.clear_codex_proxy_environment().await {
+                log::warn!("清理 Codex 代理环境变量失败: {e}");
+            }
+        }
+
         // 5) 若无其它接管，更新旧标志，并停止代理服务
         // 检查是否还有其它 app 的 enabled = true
         let any_enabled = self
@@ -376,6 +382,10 @@ impl ProxyService {
             if self.is_running().await {
                 // 此时没有任何 app 处于接管状态，停止服务即可
                 let _ = self.stop().await;
+            }
+
+            if let Err(e) = self.clear_codex_proxy_environment().await {
+                log::warn!("清理 Codex 代理环境变量失败: {e}");
             }
         }
 
@@ -661,7 +671,6 @@ impl ProxyService {
     #[cfg(target_os = "macos")]
     fn ensure_codex_proxy_env_for_macos(base_url: &str, api_key: &str) -> Result<(), String> {
         use std::fs;
-        use std::path::PathBuf;
         use std::process::Command;
 
         fn run_command(command: &str, args: &[&str]) -> Result<(), String> {
@@ -724,55 +733,117 @@ impl ProxyService {
             Ok(())
         }
 
-        fn ensure_launch_agent(base_url: &str, api_key: &str) -> Result<PathBuf, String> {
+        fn cleanup_legacy_launch_agent() -> Result<(), String> {
             let home = crate::config::get_home_dir();
             let launch_agents_dir = home.join("Library").join("LaunchAgents");
-            fs::create_dir_all(&launch_agents_dir)
-                .map_err(|e| format!("创建 LaunchAgents 目录失败: {e}"))?;
-
-            let plist_path =
-                launch_agents_dir.join(format!("{CODEX_PROXY_ENV_LAUNCH_AGENT_LABEL}.plist"));
-            let command = format!(
-                "/bin/launchctl setenv OPENAI_BASE_URL {base_url}; /bin/launchctl setenv OPENAI_API_KEY {api_key}"
-            );
-            let plist_content = format!(
-                r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>{}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/sh</string>
-    <string>-lc</string>
-    <string>{}</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-</dict>
-</plist>
-"#,
-                CODEX_PROXY_ENV_LAUNCH_AGENT_LABEL, command
-            );
-
-            fs::write(&plist_path, plist_content)
-                .map_err(|e| format!("写入 LaunchAgent 失败 ({}): {e}", plist_path.display()))?;
-            Ok(plist_path)
+            let plist_path = launch_agents_dir
+                .join(format!("{LEGACY_CODEX_PROXY_ENV_LAUNCH_AGENT_LABEL}.plist"));
+            let plist_path_str = plist_path.to_string_lossy().to_string();
+            let _ = Command::new("launchctl")
+                .args(["unload", plist_path_str.as_str()])
+                .status();
+            let _ = Command::new("launchctl")
+                .args(["remove", LEGACY_CODEX_PROXY_ENV_LAUNCH_AGENT_LABEL])
+                .status();
+            if plist_path.exists() {
+                fs::remove_file(&plist_path).map_err(|e| {
+                    format!("删除旧 LaunchAgent 失败 ({}): {e}", plist_path.display())
+                })?;
+            }
+            Ok(())
         }
 
         upsert_managed_zshrc_block(base_url, api_key)?;
-        let plist_path = ensure_launch_agent(base_url, api_key)?;
+        cleanup_legacy_launch_agent()?;
 
         run_command("launchctl", &["setenv", "OPENAI_BASE_URL", base_url])?;
         run_command("launchctl", &["setenv", "OPENAI_API_KEY", api_key])?;
 
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn clear_codex_proxy_env_for_macos() -> Result<(), String> {
+        use std::fs;
+        use std::process::Command;
+
+        fn run_command(command: &str, args: &[&str]) -> Result<(), String> {
+            let status = Command::new(command)
+                .args(args)
+                .status()
+                .map_err(|e| format!("执行命令失败: {command} {} ({e})", args.join(" ")))?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "命令执行失败: {command} {} (exit: {status})",
+                    args.join(" ")
+                ))
+            }
+        }
+
+        let home = crate::config::get_home_dir();
+        let zshrc_path = home.join(".zshrc");
+        if zshrc_path.exists() {
+            let content = fs::read_to_string(&zshrc_path).unwrap_or_default();
+            let mut output_lines = Vec::new();
+            let mut in_managed_block = false;
+            let mut removed = false;
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed == CODEX_PROXY_ENV_BLOCK_BEGIN {
+                    in_managed_block = true;
+                    removed = true;
+                    continue;
+                }
+                if trimmed == CODEX_PROXY_ENV_BLOCK_END {
+                    in_managed_block = false;
+                    continue;
+                }
+                if !in_managed_block {
+                    output_lines.push(line.to_string());
+                }
+            }
+            if removed {
+                let mut output = output_lines.join("\n");
+                if !output.is_empty() && !output.ends_with('\n') {
+                    output.push('\n');
+                }
+                fs::write(&zshrc_path, output)
+                    .map_err(|e| format!("更新 ~/.zshrc 失败 ({}): {e}", zshrc_path.display()))?;
+            }
+        }
+
+        let _ = run_command("launchctl", &["unsetenv", "OPENAI_BASE_URL"]);
+        let _ = run_command("launchctl", &["unsetenv", "OPENAI_API_KEY"]);
+
+        let launch_agents_dir = home.join("Library").join("LaunchAgents");
+        let plist_path =
+            launch_agents_dir.join(format!("{LEGACY_CODEX_PROXY_ENV_LAUNCH_AGENT_LABEL}.plist"));
         let plist_path_str = plist_path.to_string_lossy().to_string();
         let _ = Command::new("launchctl")
             .args(["unload", plist_path_str.as_str()])
             .status();
-        run_command("launchctl", &["load", plist_path_str.as_str()])?;
+        let _ = Command::new("launchctl")
+            .args(["remove", LEGACY_CODEX_PROXY_ENV_LAUNCH_AGENT_LABEL])
+            .status();
+        if plist_path.exists() {
+            let _ = fs::remove_file(plist_path);
+        }
 
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn clear_codex_proxy_env_for_macos() -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn clear_codex_proxy_environment(&self) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        {
+            Self::clear_codex_proxy_env_for_macos()?;
+        }
         Ok(())
     }
 
@@ -1107,6 +1178,10 @@ impl ProxyService {
             .clear_all_provider_health()
             .await
             .map_err(|e| format!("重置健康状态失败: {e}"))?;
+
+        if let Err(e) = self.clear_codex_proxy_environment().await {
+            log::warn!("清理 Codex 代理环境变量失败: {e}");
+        }
 
         // 注意：不清除故障转移队列和开关状态，保留供下次开启代理时使用
         log::info!("代理已停止，Live 配置已恢复");

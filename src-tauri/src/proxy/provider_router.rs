@@ -30,11 +30,19 @@ pub struct ProviderRouter {
 }
 
 impl ProviderRouter {
-    fn codex_quota_cooldown_remaining_secs(&self, provider_id: &str, app_type: &str) -> Option<u64> {
+    fn codex_quota_cooldown_remaining_secs(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Option<u64> {
         if app_type != "codex" {
             return None;
         }
-        let account = self.db.get_codex_account_by_provider(provider_id).ok().flatten()?;
+        let account = self
+            .db
+            .get_codex_account_by_provider(provider_id)
+            .ok()
+            .flatten()?;
         let usage = self.db.get_codex_usage_state(&account.id).ok().flatten()?;
         if usage.allowed == Some(true) && usage.limit_reached == Some(false) {
             return None;

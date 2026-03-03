@@ -298,7 +298,9 @@ impl Database {
                 primary_reset_after_seconds: row
                     .get(6)
                     .map_err(|e| AppError::Database(e.to_string()))?,
-                secondary_used_percent: row.get(7).map_err(|e| AppError::Database(e.to_string()))?,
+                secondary_used_percent: row
+                    .get(7)
+                    .map_err(|e| AppError::Database(e.to_string()))?,
                 secondary_limit_window_seconds: row
                     .get(8)
                     .map_err(|e| AppError::Database(e.to_string()))?,

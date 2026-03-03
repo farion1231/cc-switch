@@ -18,6 +18,17 @@ export interface WebDavSyncResult {
   status: string;
 }
 
+const isUnknownCommandError = (error: unknown): boolean => {
+  const text = (
+    error instanceof Error ? error.message : String(error ?? "")
+  ).toLowerCase();
+  return (
+    text.includes("unknown command") ||
+    text.includes("not found") ||
+    text.includes("not registered")
+  );
+};
+
 export const settingsApi = {
   async get(): Promise<Settings> {
     return await invoke("get_settings");
@@ -203,6 +214,49 @@ export const settingsApi = {
   async setLogConfig(config: LogConfig): Promise<boolean> {
     return await invoke("set_log_config", { config });
   },
+
+  async getGuardianStatus(): Promise<GuardianStatus> {
+    return await invoke("get_guardian_status");
+  },
+
+  async setGuardianEnabled(enabled: boolean): Promise<GuardianStatus> {
+    return await invoke("set_guardian_enabled", { enabled });
+  },
+
+  async runGuardianOnce(): Promise<GuardianStatus> {
+    return await invoke("run_guardian_once");
+  },
+
+  async runGuardianDiagnostic(): Promise<GuardianStatus> {
+    try {
+      return await invoke("run_guardian_diagnostic");
+    } catch (error) {
+      if (!isUnknownCommandError(error)) {
+        throw error;
+      }
+      return await invoke("run_guardian_once");
+    }
+  },
+
+  async migrateLegacyStartupItems(): Promise<LegacyStartupMigrationResult> {
+    return await invoke("migrate_legacy_startup_items");
+  },
+
+  async rollbackLegacyMigration(): Promise<LegacyStartupRollbackResult> {
+    return await invoke("rollback_legacy_migration");
+  },
+
+  async rollbackLegacyMigrationWithBackupId(
+    backupId?: string | null,
+  ): Promise<LegacyStartupRollbackResult> {
+    return await invoke("rollback_legacy_migration_with_backup_id", {
+      backupId: backupId ?? null,
+    });
+  },
+
+  async getGuardianMigrationStatus(): Promise<GuardianMigrationStatus> {
+    return await invoke("get_guardian_migration_status");
+  },
 };
 
 export interface RectifierConfig {
@@ -214,6 +268,69 @@ export interface RectifierConfig {
 export interface LogConfig {
   enabled: boolean;
   level: "error" | "warn" | "info" | "debug" | "trace";
+}
+
+export interface GuardianErrorBreakdown {
+  auth_401: number;
+  quota_429: number;
+  upstream_5xx: number;
+}
+
+export interface GuardianCheckStatus {
+  ok: boolean;
+  message: string;
+  repaired?: number;
+  checkedAt?: string | null;
+  details?: unknown;
+}
+
+export interface GuardianChecks {
+  proxyHealth?: GuardianCheckStatus;
+  authNormalize?: GuardianCheckStatus;
+  breakerRecovery?: GuardianCheckStatus;
+  webkitContamination?: GuardianCheckStatus;
+}
+
+export interface GuardianStatus {
+  enabled?: boolean;
+  intervalSeconds?: number;
+  workerStarted?: boolean;
+  runInProgress?: boolean;
+  runCount?: number;
+  lastRunAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastError?: string | null;
+  lastDurationMs?: number | null;
+  lastRunSource?: string | null;
+  checks?: GuardianChecks;
+  errors?: Partial<GuardianErrorBreakdown> | null;
+  errorBreakdown?: Partial<GuardianErrorBreakdown> | null;
+}
+
+export interface LegacyStartupMigrationResult {
+  migrated?: boolean;
+  skipped?: boolean;
+  alreadyMigrated?: boolean;
+  backupPath?: string | null;
+  backupId?: string | null;
+  removedLaunchAgents?: string[];
+  removedScripts?: string[];
+  message?: string;
+}
+
+export interface LegacyStartupRollbackResult {
+  rolledBack?: boolean;
+  backupPath?: string | null;
+  backupId?: string | null;
+  restoredLaunchAgents?: string[];
+  restoredScripts?: string[];
+  message?: string;
+}
+
+export interface GuardianMigrationStatus {
+  status?: string;
+  message?: string;
+  backupId?: string | null;
 }
 
 export interface BackupEntry {

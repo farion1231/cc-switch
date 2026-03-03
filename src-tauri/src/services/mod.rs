@@ -1,7 +1,9 @@
-pub mod config;
 pub mod codex_usage;
+pub mod config;
 pub mod env_checker;
 pub mod env_manager;
+pub mod guardian;
+pub mod legacy_startup_migration;
 pub mod mcp;
 pub mod omo;
 pub mod prompt;
@@ -15,8 +17,13 @@ pub mod webdav;
 pub mod webdav_auto_sync;
 pub mod webdav_sync;
 
-pub use config::ConfigService;
 pub use codex_usage::CodexUsageService;
+pub use config::ConfigService;
+pub use guardian::{GuardianService, GuardianStatus};
+#[allow(unused_imports)]
+pub use legacy_startup_migration::{
+    GuardianMigrationStatus, LegacyStartupMigrationResult, LegacyStartupRollbackResult,
+};
 pub use mcp::McpService;
 pub use omo::OmoService;
 pub use prompt::PromptService;

@@ -28,8 +28,8 @@ impl CodexUsageService {
         let normalized = payload.replace('-', "+").replace('_', "/");
         let pad_len = (4 - normalized.len() % 4) % 4;
         let padded = format!("{}{}", normalized, "=".repeat(pad_len));
-        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, padded)
-            .ok()?;
+        let bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, padded).ok()?;
         serde_json::from_slice::<Value>(&bytes).ok()
     }
 
@@ -38,8 +38,7 @@ impl CodexUsageService {
     }
 
     fn is_usage_poller_enabled(db: &Database) -> bool {
-        db
-            .get_setting(USAGE_POLLER_ENABLED_KEY)
+        db.get_setting(USAGE_POLLER_ENABLED_KEY)
             .ok()
             .flatten()
             .map(|v| v == "true" || v == "1")
@@ -47,8 +46,7 @@ impl CodexUsageService {
     }
 
     fn is_import_done(db: &Database) -> bool {
-        db
-            .get_setting(SWITCHER_IMPORT_DONE_KEY)
+        db.get_setting(SWITCHER_IMPORT_DONE_KEY)
             .ok()
             .flatten()
             .map(|v| v == "true" || v == "1")
@@ -90,7 +88,10 @@ impl CodexUsageService {
                 }
                 Some(CodexAccount {
                     id,
-                    email: item.get("email").and_then(Value::as_str).map(str::to_string),
+                    email: item
+                        .get("email")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
                     display_name: item.get("name").and_then(Value::as_str).map(str::to_string),
                     account_id,
                     plan_type: item
@@ -111,7 +112,10 @@ impl CodexUsageService {
                     last_used_at: item.get("last_used_at").and_then(Value::as_i64),
                     source: "codex_switcher_import".to_string(),
                     is_active: true,
-                    created_at: item.get("created_at").and_then(Value::as_i64).unwrap_or(now),
+                    created_at: item
+                        .get("created_at")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(now),
                     updated_at: now,
                 })
             })
@@ -402,10 +406,9 @@ impl CodexUsageService {
             .timeout(std::time::Duration::from_secs(20))
             .build()
             .map_err(|e| AppError::Message(e.to_string()))?;
-        let mut req = client.get(USAGE_ENDPOINT).header(
-            "authorization",
-            format!("Bearer {}", account.access_token),
-        );
+        let mut req = client
+            .get(USAGE_ENDPOINT)
+            .header("authorization", format!("Bearer {}", account.access_token));
         req = req
             .header("chatgpt-account-id", &account.account_id)
             .header("user-agent", "codex-cli/1.0.0");
@@ -530,7 +533,8 @@ impl CodexUsageService {
             log::info!("codex usage poller disabled by settings");
             return;
         }
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
         let _ = Self::refresh_usage_now(&db, None).await;
         loop {
             interval.tick().await;
@@ -597,7 +601,10 @@ impl CodexUsageService {
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-            email: payload.get("email").and_then(Value::as_str).map(str::to_string),
+            email: payload
+                .get("email")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             display_name: payload
                 .get("display_name")
                 .or_else(|| payload.get("displayName"))
@@ -660,7 +667,9 @@ impl CodexUsageService {
             .unwrap_or_default()
             .to_string();
         if access_token.is_empty() {
-            return Err(AppError::Config("Provider tokens.access_token 为空".to_string()));
+            return Err(AppError::Config(
+                "Provider tokens.access_token 为空".to_string(),
+            ));
         }
 
         let token_payload = Self::decode_jwt_payload(&access_token).unwrap_or(Value::Null);

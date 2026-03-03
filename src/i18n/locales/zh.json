@@ -278,6 +278,55 @@
           "debug": "详细信息，包含 SSE 流和请求/响应详情",
           "trace": "全部日志，最详细"
         }
+      },
+      "guardian": {
+        "title": "Guardian 状态",
+        "description": "代理健康与自愈控制",
+        "enabled": "启用 Guardian",
+        "enabledDescription": "保持周期巡检与自愈功能开启",
+        "proxyHealth": "代理健康",
+        "lastSelfHealAt": "最近自愈",
+        "intervalSeconds": "巡检间隔",
+        "errorBreakdown": "错误分类",
+        "refreshAll": "刷新全部",
+        "refreshing": "刷新中...",
+        "refreshDone": "Guardian 状态已刷新",
+        "refreshFailed": "刷新 Guardian 状态失败",
+        "runDiagnostic": "运行诊断",
+        "runningDiagnostic": "诊断中...",
+        "diagnosticSuccess": "诊断完成",
+        "diagnosticFailed": "诊断失败",
+        "loadFailed": "加载 Guardian 状态失败",
+        "toggleFailed": "更新 Guardian 失败",
+        "migrationStatus": "迁移状态",
+        "startupMode": "启动项模式",
+        "lastMigrationMessage": "最近迁移结果",
+        "backupId": "备份 ID",
+        "migrateLegacy": "迁移旧版启动项",
+        "migratingLegacy": "迁移中...",
+        "migrateSuccess": "旧版启动项迁移完成",
+        "migrateSkipped": "已完成迁移",
+        "migrateFailed": "迁移失败",
+        "rollbackLegacy": "回滚旧版迁移",
+        "rollingBackLegacy": "回滚中...",
+        "rollbackSuccess": "旧版迁移已回滚",
+        "rollbackFailed": "回滚失败",
+        "never": "从未",
+        "health": {
+          "healthy": "健康",
+          "unhealthy": "异常",
+          "unknown": "未知"
+        },
+        "migration": {
+          "pending": "待迁移",
+          "running": "进行中",
+          "migrated": "已迁移",
+          "failed": "失败"
+        },
+        "startupModeValues": {
+          "autoLaunch": "自动启动",
+          "legacyLaunchAgent": "旧版 LaunchAgent"
+        }
       }
     },
     "language": "界面语言",

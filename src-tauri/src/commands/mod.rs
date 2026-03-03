@@ -1,11 +1,12 @@
 #![allow(non_snake_case)]
 
-mod config;
 mod codex_accounts;
+mod config;
 mod deeplink;
 mod env;
 mod failover;
 mod global_proxy;
+mod guardian;
 mod import_export;
 mod mcp;
 mod misc;
@@ -24,12 +25,13 @@ mod usage;
 mod webdav_sync;
 mod workspace;
 
-pub use config::*;
 pub use codex_accounts::*;
+pub use config::*;
 pub use deeplink::*;
 pub use env::*;
 pub use failover::*;
 pub use global_proxy::*;
+pub use guardian::*;
 pub use import_export::*;
 pub use mcp::*;
 pub use misc::*;

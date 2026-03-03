@@ -278,6 +278,55 @@
           "debug": "Detailed info including SSE stream and request/response",
           "trace": "All logs, most verbose"
         }
+      },
+      "guardian": {
+        "title": "Guardian Status",
+        "description": "Proxy health and self-heal controls",
+        "enabled": "Enable Guardian",
+        "enabledDescription": "Keep periodic checks and auto-heal active",
+        "proxyHealth": "Proxy Health",
+        "lastSelfHealAt": "Last Self-Heal",
+        "intervalSeconds": "Interval",
+        "errorBreakdown": "Error Breakdown",
+        "refreshAll": "Refresh All",
+        "refreshing": "Refreshing...",
+        "refreshDone": "Guardian status refreshed",
+        "refreshFailed": "Failed to refresh Guardian status",
+        "runDiagnostic": "Run Diagnostic",
+        "runningDiagnostic": "Running...",
+        "diagnosticSuccess": "Diagnostic completed",
+        "diagnosticFailed": "Diagnostic failed",
+        "loadFailed": "Failed to load Guardian status",
+        "toggleFailed": "Failed to update Guardian",
+        "migrationStatus": "Migration",
+        "startupMode": "Startup Mode",
+        "lastMigrationMessage": "Last Migration",
+        "backupId": "Backup ID",
+        "migrateLegacy": "Migrate Legacy Items",
+        "migratingLegacy": "Migrating...",
+        "migrateSuccess": "Legacy items migrated",
+        "migrateSkipped": "Already migrated",
+        "migrateFailed": "Migration failed",
+        "rollbackLegacy": "Rollback Legacy",
+        "rollingBackLegacy": "Rolling back...",
+        "rollbackSuccess": "Legacy rollback completed",
+        "rollbackFailed": "Rollback failed",
+        "never": "Never",
+        "health": {
+          "healthy": "Healthy",
+          "unhealthy": "Unhealthy",
+          "unknown": "Unknown"
+        },
+        "migration": {
+          "pending": "Pending",
+          "running": "Running",
+          "migrated": "Migrated",
+          "failed": "Failed"
+        },
+        "startupModeValues": {
+          "autoLaunch": "Auto Launch",
+          "legacyLaunchAgent": "Legacy LaunchAgent"
+        }
       }
     },
     "language": "Language",
