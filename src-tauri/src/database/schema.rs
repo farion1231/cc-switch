@@ -6,6 +6,47 @@ use super::{lock_conn, Database, SCHEMA_VERSION};
 use crate::error::AppError;
 use rusqlite::Connection;
 
+#[derive(Clone, Copy)]
+struct MigrationStep {
+    from: i32,
+    to: i32,
+    label: &'static str,
+    runner: fn(&Connection) -> Result<(), AppError>,
+}
+
+const MIGRATION_STEPS: [MigrationStep; 5] = [
+    MigrationStep {
+        from: 0,
+        to: 1,
+        label: "补齐缺失列并设置版本",
+        runner: Database::migrate_v0_to_v1,
+    },
+    MigrationStep {
+        from: 1,
+        to: 2,
+        label: "添加使用统计表和完整字段，重构 skills 表",
+        runner: Database::migrate_v1_to_v2,
+    },
+    MigrationStep {
+        from: 2,
+        to: 3,
+        label: "Skills 统一管理架构",
+        runner: Database::migrate_v2_to_v3,
+    },
+    MigrationStep {
+        from: 3,
+        to: 4,
+        label: "OpenCode 支持",
+        runner: Database::migrate_v3_to_v4,
+    },
+    MigrationStep {
+        from: 4,
+        to: 5,
+        label: "计费模式支持",
+        runner: Database::migrate_v4_to_v5,
+    },
+];
+
 impl Database {
     /// 创建所有数据库表
     pub(crate) fn create_tables(&self) -> Result<(), AppError> {
@@ -330,42 +371,25 @@ impl Database {
             )));
         }
 
+        Self::validate_migration_steps()?;
+
         let result = (|| {
             while version < SCHEMA_VERSION {
-                match version {
-                    0 => {
-                        log::info!("检测到 user_version=0，迁移到 1（补齐缺失列并设置版本）");
-                        Self::migrate_v0_to_v1(conn)?;
-                        Self::set_user_version(conn, 1)?;
-                    }
-                    1 => {
-                        log::info!(
-                            "迁移数据库从 v1 到 v2（添加使用统计表和完整字段，重构 skills 表）"
-                        );
-                        Self::migrate_v1_to_v2(conn)?;
-                        Self::set_user_version(conn, 2)?;
-                    }
-                    2 => {
-                        log::info!("迁移数据库从 v2 到 v3（Skills 统一管理架构）");
-                        Self::migrate_v2_to_v3(conn)?;
-                        Self::set_user_version(conn, 3)?;
-                    }
-                    3 => {
-                        log::info!("迁移数据库从 v3 到 v4（OpenCode 支持）");
-                        Self::migrate_v3_to_v4(conn)?;
-                        Self::set_user_version(conn, 4)?;
-                    }
-                    4 => {
-                        log::info!("迁移数据库从 v4 到 v5（计费模式支持）");
-                        Self::migrate_v4_to_v5(conn)?;
-                        Self::set_user_version(conn, 5)?;
-                    }
-                    _ => {
-                        return Err(AppError::Database(format!(
-                            "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
-                        )));
-                    }
-                }
+                let step = Self::get_migration_step(version).ok_or_else(|| {
+                    AppError::Database(format!(
+                        "缺少数据库迁移步骤：v{version} -> v{}，无法迁移到 {SCHEMA_VERSION}",
+                        version + 1
+                    ))
+                })?;
+
+                log::info!(
+                    "[DB MIGRATION] v{} -> v{}（{}）",
+                    step.from,
+                    step.to,
+                    step.label
+                );
+                (step.runner)(conn)?;
+                Self::set_user_version(conn, step.to)?;
                 version = Self::get_user_version(conn)?;
             }
             Ok(())
@@ -383,6 +407,75 @@ impl Database {
                 Err(e)
             }
         }
+    }
+
+    fn get_migration_step(version: i32) -> Option<&'static MigrationStep> {
+        MIGRATION_STEPS.iter().find(|step| step.from == version)
+    }
+
+    fn validate_migration_steps() -> Result<(), AppError> {
+        if MIGRATION_STEPS.is_empty() {
+            return Err(AppError::Database(
+                "迁移步骤配置为空，无法执行数据库迁移".to_string(),
+            ));
+        }
+
+        if MIGRATION_STEPS[0].from != 0 {
+            return Err(AppError::Database(format!(
+                "迁移步骤起点错误：期望从 v0 开始，实际从 v{} 开始",
+                MIGRATION_STEPS[0].from
+            )));
+        }
+
+        let mut seen_from = std::collections::HashSet::new();
+        for step in &MIGRATION_STEPS {
+            if !seen_from.insert(step.from) {
+                return Err(AppError::Database(format!(
+                    "迁移步骤配置重复：存在多个 v{} -> * 步骤",
+                    step.from
+                )));
+            }
+
+            if step.to != step.from + 1 {
+                return Err(AppError::Database(format!(
+                    "迁移步骤不连续：v{} -> v{}，期望 v{} -> v{}",
+                    step.from,
+                    step.to,
+                    step.from,
+                    step.from + 1
+                )));
+            }
+        }
+
+        for window in MIGRATION_STEPS.windows(2) {
+            if window[0].to != window[1].from {
+                return Err(AppError::Database(format!(
+                    "迁移步骤链断裂：v{} -> v{} 后接 v{} -> v{}",
+                    window[0].from,
+                    window[0].to,
+                    window[1].from,
+                    window[1].to
+                )));
+            }
+        }
+
+        let last = MIGRATION_STEPS[MIGRATION_STEPS.len() - 1];
+        if last.to != SCHEMA_VERSION {
+            return Err(AppError::Database(format!(
+                "迁移步骤终点错误：期望到 v{SCHEMA_VERSION}，实际到 v{}",
+                last.to
+            )));
+        }
+
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn migration_step_pairs_for_test() -> Vec<(i32, i32)> {
+        MIGRATION_STEPS
+            .iter()
+            .map(|step| (step.from, step.to))
+            .collect()
     }
 
     /// v0 -> v1 迁移：补齐所有缺失列
