@@ -49,6 +49,11 @@ pub struct ProxyService {
 }
 
 impl ProxyService {
+    fn is_proxy_managed_token(token: &str) -> bool {
+        let trimmed = token.trim();
+        trimmed.is_empty() || trimmed == PROXY_TOKEN_PLACEHOLDER || trimmed == CODEX_PROXY_DUMMY_KEY
+    }
+
     pub fn new(db: Arc<Database>) -> Self {
         Self {
             db,
@@ -382,10 +387,11 @@ impl ProxyService {
             .db
             .get_all_providers("codex")
             .map_err(|e| format!("读取 Codex Provider 列表失败: {e}"))?;
-        let live_codex_config = self
-            .read_codex_live()
-            .ok()
-            .and_then(|cfg| cfg.get("config").and_then(|v| v.as_str()).map(str::to_string));
+        let live_codex_config = self.read_codex_live().ok().and_then(|cfg| {
+            cfg.get("config")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
 
         if providers.is_empty() {
             return Err("未配置 Codex Provider，请先在供应商管理中添加账号".to_string());
@@ -557,7 +563,7 @@ impl ProxyService {
             .and_then(|v| v.as_str());
         if let Some(token) = from_env
             .map(str::trim)
-            .filter(|v| !v.is_empty() && *v != PROXY_TOKEN_PLACEHOLDER)
+            .filter(|v| !Self::is_proxy_managed_token(v))
         {
             return Some(token.to_string());
         }
@@ -568,7 +574,7 @@ impl ProxyService {
             .and_then(|v| v.as_str());
         if let Some(token) = from_auth
             .map(str::trim)
-            .filter(|v| !v.is_empty() && *v != PROXY_TOKEN_PLACEHOLDER)
+            .filter(|v| !Self::is_proxy_managed_token(v))
         {
             return Some(token.to_string());
         }
@@ -590,7 +596,7 @@ impl ProxyService {
             .and_then(|v| v.get("OPENAI_API_KEY"))
             .and_then(|v| v.as_str())
             .map(str::trim)
-            .filter(|v| !v.is_empty() && *v != PROXY_TOKEN_PLACEHOLDER)
+            .filter(|v| !Self::is_proxy_managed_token(v))
             .is_some();
 
         if has_api_key {
@@ -908,7 +914,7 @@ impl ProxyService {
                             .and_then(|v| v.get("OPENAI_API_KEY"))
                             .and_then(|v| v.as_str())
                             .map(|s| s.trim())
-                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
+                            .filter(|s| !Self::is_proxy_managed_token(s))
                         {
                             if let Some(auth_obj) = provider
                                 .settings_config
@@ -1517,15 +1523,11 @@ impl ProxyService {
                 if let Ok(Some(backup)) = self.db.get_live_backup("codex").await {
                     let mut config: Value = serde_json::from_str(&backup.original_config)
                         .map_err(|e| format!("解析 Codex 备份失败: {e}"))?;
-                    if let Some(source_toml) = self
-                        .read_codex_live()
-                        .ok()
-                        .and_then(|v| {
-                            v.get("config")
-                                .and_then(|cfg| cfg.as_str())
-                                .map(str::to_string)
-                        })
-                    {
+                    if let Some(source_toml) = self.read_codex_live().ok().and_then(|v| {
+                        v.get("config")
+                            .and_then(|cfg| cfg.as_str())
+                            .map(str::to_string)
+                    }) {
                         Self::sync_codex_preserved_feature_flags_in_json(
                             &mut config,
                             source_toml.as_str(),
@@ -1590,15 +1592,11 @@ impl ProxyService {
             let mut config: Value = serde_json::from_str(&backup.original_config)
                 .map_err(|e| format!("解析 {app_type_str} 备份失败: {e}"))?;
             if matches!(app_type, AppType::Codex) {
-                if let Some(source_toml) = self
-                    .read_codex_live()
-                    .ok()
-                    .and_then(|v| {
-                        v.get("config")
-                            .and_then(|cfg| cfg.as_str())
-                            .map(str::to_string)
-                    })
-                {
+                if let Some(source_toml) = self.read_codex_live().ok().and_then(|v| {
+                    v.get("config")
+                        .and_then(|cfg| cfg.as_str())
+                        .map(str::to_string)
+                }) {
                     Self::sync_codex_preserved_feature_flags_in_json(
                         &mut config,
                         source_toml.as_str(),
@@ -1974,15 +1972,11 @@ impl ProxyService {
                 // Codex: settings_config 包含 {"auth": ..., "config": ...}
                 // 在接管状态下保留 live 中用户显式开启的 feature flags，避免重启恢复时被旧备份覆盖。
                 let mut backup_settings = provider.settings_config.clone();
-                if let Some(source_toml) = self
-                    .read_codex_live()
-                    .ok()
-                    .and_then(|v| {
-                        v.get("config")
-                            .and_then(|cfg| cfg.as_str())
-                            .map(str::to_string)
-                    })
-                {
+                if let Some(source_toml) = self.read_codex_live().ok().and_then(|v| {
+                    v.get("config")
+                        .and_then(|cfg| cfg.as_str())
+                        .map(str::to_string)
+                }) {
                     Self::sync_codex_preserved_feature_flags_in_json(
                         &mut backup_settings,
                         source_toml.as_str(),
