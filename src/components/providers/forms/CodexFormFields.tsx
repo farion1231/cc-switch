@@ -1,4 +1,6 @@
 import { useTranslation } from "react-i18next";
+import { KeyRound } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField } from "./shared";
 import type { ProviderCategory } from "@/types";
@@ -35,6 +37,9 @@ interface CodexFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+  onQuickBindAuth?: () => void;
+  quickBindLoading?: boolean;
+  canQuickBind?: boolean;
 }
 
 export function CodexFormFields({
@@ -58,6 +63,9 @@ export function CodexFormFields({
   modelName = "",
   onModelNameChange,
   speedTestEndpoints,
+  onQuickBindAuth,
+  quickBindLoading = false,
+  canQuickBind = false,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -83,6 +91,29 @@ export function CodexFormFields({
           }),
         }}
       />
+
+      {onQuickBindAuth && (
+        <div className="space-y-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onQuickBindAuth}
+            disabled={!canQuickBind || quickBindLoading}
+            className="w-full sm:w-auto"
+          >
+            <KeyRound className="h-4 w-4 mr-2" />
+            {t("provider.codexBindLogin", {
+              defaultValue: "一键绑定当前登录态",
+            })}
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            {t("provider.codexBindLoginHint", {
+              defaultValue:
+                "从该 Provider 已保存的 ChatGPT 登录信息自动绑定账号，用于额度轮询与调度。",
+            })}
+          </p>
+        </div>
+      )}
 
       {/* Codex Base URL 输入框 */}
       {shouldShowSpeedTest && (

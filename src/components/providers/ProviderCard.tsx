@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
+import CodexQuotaPanel from "@/components/providers/CodexQuotaPanel";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import { useProviderHealth } from "@/lib/query/failover";
@@ -345,15 +346,21 @@ export function ProviderCard({
                   </span>
                 </div>
               ) : (
-                <UsageFooter
-                  provider={provider}
-                  providerId={provider.id}
-                  appId={appId}
-                  usageEnabled={usageEnabled}
-                  isCurrent={isCurrent}
-                  isInConfig={isInConfig}
-                  inline={true}
-                />
+                <>
+                  {appId === "codex" ? (
+                    <CodexQuotaPanel providerId={provider.id} inline />
+                  ) : (
+                    <UsageFooter
+                      provider={provider}
+                      providerId={provider.id}
+                      appId={appId}
+                      usageEnabled={usageEnabled}
+                      isCurrent={isCurrent}
+                      isInConfig={isInConfig}
+                      inline={true}
+                    />
+                  )}
+                </>
               )}
               {hasMultiplePlans && (
                 <button
@@ -417,15 +424,19 @@ export function ProviderCard({
 
       {isExpanded && hasMultiplePlans && (
         <div className="mt-4 pt-4 border-t border-border-default">
-          <UsageFooter
-            provider={provider}
-            providerId={provider.id}
-            appId={appId}
-            usageEnabled={usageEnabled}
-            isCurrent={isCurrent}
-            isInConfig={isInConfig}
-            inline={false}
-          />
+          {appId === "codex" ? (
+            <CodexQuotaPanel providerId={provider.id} />
+          ) : (
+            <UsageFooter
+              provider={provider}
+              providerId={provider.id}
+              appId={appId}
+              usageEnabled={usageEnabled}
+              isCurrent={isCurrent}
+              isInConfig={isInConfig}
+              inline={false}
+            />
+          )}
         </div>
       )}
     </div>

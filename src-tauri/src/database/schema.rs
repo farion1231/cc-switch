@@ -230,6 +230,70 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 13. Codex 账号主表（统一认证仓）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_accounts (
+            id TEXT PRIMARY KEY,
+            email TEXT,
+            display_name TEXT,
+            account_id TEXT NOT NULL,
+            plan_type TEXT,
+            auth_mode TEXT NOT NULL,
+            access_token TEXT NOT NULL,
+            refresh_token TEXT,
+            id_token TEXT,
+            last_refresh_at INTEGER,
+            last_used_at INTEGER,
+            source TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_codex_accounts_active ON codex_accounts(is_active)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 14. Codex Provider -> Account 绑定关系
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            auto_bound INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 15. Codex usage 缓存态（供调度与 UI 使用）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_usage_state (
+            account_id TEXT PRIMARY KEY,
+            allowed INTEGER,
+            limit_reached INTEGER,
+            primary_used_percent REAL,
+            primary_reset_at INTEGER,
+            primary_reset_after_seconds INTEGER,
+            secondary_used_percent REAL,
+            secondary_reset_at INTEGER,
+            secondary_reset_after_seconds INTEGER,
+            credits_has_credits INTEGER,
+            credits_balance REAL,
+            credits_unlimited INTEGER,
+            last_refresh_at INTEGER,
+            last_error TEXT,
+            FOREIGN KEY (account_id) REFERENCES codex_accounts(id) ON DELETE CASCADE
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 注意：circuit_breaker_config 已合并到 proxy_config 表中
 
         // 16. Proxy Live Backup 表 (Live 配置备份)
@@ -306,6 +370,16 @@ impl Database {
             [],
         );
 
+        // codex usage 轮询默认值
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('codex_switcher_import_done', 'false')",
+            [],
+        );
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('codex_usage_poller_enabled', 'true')",
+            [],
+        );
+
         Ok(())
     }
 
@@ -359,6 +433,11 @@ impl Database {
                         log::info!("迁移数据库从 v4 到 v5（计费模式支持）");
                         Self::migrate_v4_to_v5(conn)?;
                         Self::set_user_version(conn, 5)?;
+                    }
+                    5 => {
+                        log::info!("迁移数据库从 v5 到 v6（Codex 账号主仓 + usage 状态）");
+                        Self::migrate_v5_to_v6(conn)?;
+                        Self::set_user_version(conn, 6)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -911,6 +990,72 @@ impl Database {
         }
 
         log::info!("v4 -> v5 迁移完成：已添加计费模式与请求模型字段");
+        Ok(())
+    }
+
+    /// v5 -> v6 迁移：Codex 账号主仓与 usage 状态
+    fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_accounts (
+            id TEXT PRIMARY KEY,
+            email TEXT,
+            display_name TEXT,
+            account_id TEXT NOT NULL,
+            plan_type TEXT,
+            auth_mode TEXT NOT NULL,
+            access_token TEXT NOT NULL,
+            refresh_token TEXT,
+            id_token TEXT,
+            last_refresh_at INTEGER,
+            last_used_at INTEGER,
+            source TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_codex_accounts_active ON codex_accounts(is_active)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            auto_bound INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_usage_state (
+            account_id TEXT PRIMARY KEY,
+            allowed INTEGER,
+            limit_reached INTEGER,
+            primary_used_percent REAL,
+            primary_reset_at INTEGER,
+            primary_reset_after_seconds INTEGER,
+            secondary_used_percent REAL,
+            secondary_reset_at INTEGER,
+            secondary_reset_after_seconds INTEGER,
+            credits_has_credits INTEGER,
+            credits_balance REAL,
+            credits_unlimited INTEGER,
+            last_refresh_at INTEGER,
+            last_error TEXT
+        )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('codex_switcher_import_done', 'false')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('codex_usage_poller_enabled', 'true')",
+            [],
+        )?;
+        log::info!("v5 -> v6 迁移完成：已添加 Codex 主仓与 usage 状态表");
         Ok(())
     }
 

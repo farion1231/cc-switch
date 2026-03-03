@@ -90,6 +90,75 @@ export interface UsageResult {
   error?: string;
 }
 
+export interface CodexAccount {
+  id: string;
+  email?: string;
+  displayName?: string;
+  accountId: string;
+  planType?: string;
+  authMode: string;
+  accessToken: string;
+  refreshToken?: string;
+  idToken?: string;
+  lastRefreshAt?: number;
+  lastUsedAt?: number;
+  source: string;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CodexProviderBinding {
+  providerId: string;
+  accountId: string;
+  autoBound: boolean;
+  updatedAt: number;
+}
+
+export interface CodexUsageState {
+  accountId: string;
+  allowed?: boolean;
+  limitReached?: boolean;
+  primaryUsedPercent?: number;
+  primaryResetAt?: number;
+  primaryResetAfterSeconds?: number;
+  secondaryUsedPercent?: number;
+  secondaryResetAt?: number;
+  secondaryResetAfterSeconds?: number;
+  creditsHasCredits?: boolean;
+  creditsBalance?: number;
+  creditsUnlimited?: boolean;
+  lastRefreshAt?: number;
+  lastError?: string;
+}
+
+export interface CodexUsageView {
+  providerId: string;
+  account?: CodexAccount;
+  binding?: CodexProviderBinding;
+  usage?: CodexUsageState;
+  available: boolean;
+  cooldownSeconds?: number;
+}
+
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+  bindingsUpdated: number;
+}
+
+export interface RefreshResult {
+  refreshedAccounts: number;
+  successAccounts: number;
+  failedAccounts: number;
+}
+
+export interface LoginSession {
+  sessionId: string;
+  providerId: string;
+  authUrl: string;
+}
+
 // 供应商单独的模型测试配置
 export interface ProviderTestConfig {
   // 是否启用单独配置（false 时使用全局配置）

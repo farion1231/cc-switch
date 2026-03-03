@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
-import type { AppId } from "@/lib/api";
+import { codexApi, type AppId } from "@/lib/api";
 import type {
   ProviderCategory,
   ProviderMeta,
@@ -147,6 +147,7 @@ export function ProviderForm({
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
   const [isCodexEndpointModalOpen, setIsCodexEndpointModalOpen] =
     useState(false);
+  const [quickBindLoading, setQuickBindLoading] = useState(false);
 
   const [draftCustomEndpoints, setDraftCustomEndpoints] = useState<string[]>(
     () => {
@@ -828,6 +829,30 @@ export function ProviderForm({
     onSubmit(payload);
   };
 
+  const handleQuickBindCodexAuth = useCallback(async () => {
+    if (!providerId) return;
+    try {
+      setQuickBindLoading(true);
+      await codexApi.bindProviderAuth(providerId);
+      await codexApi.refreshUsageNow(providerId);
+      toast.success(
+        t("provider.codexBindLoginSuccess", {
+          defaultValue: "已绑定账号登录态",
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(
+        t("provider.codexBindLoginFailed", {
+          defaultValue: "绑定失败: {{error}}",
+          error: message,
+        }),
+      );
+    } finally {
+      setQuickBindLoading(false);
+    }
+  }, [providerId, t]);
+
   const groupedPresets = useMemo(() => {
     return presetEntries.reduce<Record<string, PresetEntry[]>>((acc, entry) => {
       const category = entry.preset.category ?? "others";
@@ -1293,6 +1318,9 @@ export function ProviderForm({
             modelName={codexModelName}
             onModelNameChange={handleCodexModelNameChange}
             speedTestEndpoints={speedTestEndpoints}
+            onQuickBindAuth={handleQuickBindCodexAuth}
+            quickBindLoading={quickBindLoading}
+            canQuickBind={Boolean(providerId)}
           />
         )}
 

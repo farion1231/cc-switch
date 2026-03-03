@@ -3,6 +3,7 @@ mod app_store;
 mod auto_launch;
 mod claude_mcp;
 mod claude_plugin;
+mod codex_account;
 mod codex_config;
 mod commands;
 mod config;
@@ -30,6 +31,10 @@ mod usage_script;
 
 pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
+pub use codex_account::{
+    CodexAccount, CodexProviderBinding, CodexUsageState, CodexUsageView, ImportResult,
+    LoginSession, RefreshResult,
+};
 pub use commands::open_provider_terminal;
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
@@ -671,6 +676,14 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // Codex 账号自动导入（一次）+ usage 轮询器（60s）
+            {
+                let db_for_codex = app.state::<AppState>().db.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::services::CodexUsageService::maybe_import_and_start(db_for_codex).await;
+                });
+            }
+
             // 从数据库加载日志配置并应用
             {
                 let db = &app.state::<AppState>().db;
@@ -853,6 +866,14 @@ pub fn run() {
             // usage query
             commands::queryProviderUsage,
             commands::testUsageScript,
+            // codex accounts / quota
+            commands::codex_list_accounts,
+            commands::codex_start_login,
+            commands::codex_complete_login,
+            commands::codex_import_from_switcher_once,
+            commands::codex_get_usage_state,
+            commands::codex_refresh_usage_now,
+            commands::codex_bind_provider_auth,
             // New MCP via config.json (SSOT)
             commands::get_mcp_config,
             commands::upsert_mcp_server_in_config,

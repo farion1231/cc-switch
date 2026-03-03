@@ -30,6 +30,35 @@ pub struct ProviderRouter {
 }
 
 impl ProviderRouter {
+    fn codex_quota_cooldown_remaining_secs(&self, provider_id: &str, app_type: &str) -> Option<u64> {
+        if app_type != "codex" {
+            return None;
+        }
+        let account = self.db.get_codex_account_by_provider(provider_id).ok().flatten()?;
+        let usage = self.db.get_codex_usage_state(&account.id).ok().flatten()?;
+        if usage.allowed == Some(true) && usage.limit_reached == Some(false) {
+            return None;
+        }
+        let from_secs = usage
+            .primary_reset_after_seconds
+            .unwrap_or(0)
+            .max(usage.secondary_reset_after_seconds.unwrap_or(0));
+        if from_secs > 0 {
+            return Some(from_secs as u64);
+        }
+        let now = Utc::now().timestamp();
+        let from_reset_at = (usage.primary_reset_at.unwrap_or(0) - now)
+            .max(usage.secondary_reset_at.unwrap_or(0) - now);
+        if from_reset_at > 0 {
+            return Some(from_reset_at as u64);
+        }
+        // 有限额但缺少明确 reset 信息时给 60s 短冷却，防止请求风暴
+        if usage.limit_reached == Some(true) {
+            return Some(60);
+        }
+        None
+    }
+
     /// 创建新的供应商路由器
     pub fn new(db: Arc<Database>) -> Self {
         Self {
@@ -79,6 +108,17 @@ impl ProviderRouter {
                     continue;
                 };
                 total_providers += 1;
+                if let Some(remaining) =
+                    self.codex_quota_cooldown_remaining_secs(&provider.id, app_type)
+                {
+                    cooldown_count += 1;
+                    log::debug!(
+                        "[{app_type}] Provider {} 额度窗口受限，剩余 {} 秒",
+                        provider.name,
+                        remaining
+                    );
+                    continue;
+                }
                 if let Some(remaining) = self
                     .provider_cooldown_remaining_secs(&provider.id, app_type)
                     .await
@@ -121,6 +161,17 @@ impl ProviderRouter {
 
                 for provider in fallback_providers {
                     total_providers += 1;
+                    if let Some(remaining) =
+                        self.codex_quota_cooldown_remaining_secs(&provider.id, app_type)
+                    {
+                        cooldown_count += 1;
+                        log::debug!(
+                            "[{app_type}] 回退 Provider {} 额度窗口受限，剩余 {} 秒",
+                            provider.name,
+                            remaining
+                        );
+                        continue;
+                    }
                     if let Some(remaining) = self
                         .provider_cooldown_remaining_secs(&provider.id, app_type)
                         .await
