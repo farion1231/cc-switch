@@ -8,7 +8,7 @@ use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
     server::ProxyState,
-    types::{AppProxyConfig, RectifierConfig},
+    types::{AppProxyConfig, OutboundRedactionConfig, RectifierConfig},
     ProxyError,
 };
 use axum::http::HeaderMap;
@@ -59,6 +59,8 @@ pub struct RequestContext {
     pub session_id: String,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
+    /// 出站脱敏配置
+    pub outbound_redaction_config: OutboundRedactionConfig,
 }
 
 impl RequestContext {
@@ -93,6 +95,13 @@ impl RequestContext {
 
         // 从数据库读取整流器配置
         let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
+        let outbound_redaction_config = match state.db.get_outbound_redaction_config() {
+            Ok(config) => config,
+            Err(e) => {
+                log::warn!("读取出站脱敏配置失败，已回退到默认配置: {e}");
+                OutboundRedactionConfig::default()
+            }
+        };
 
         let current_provider_id =
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
@@ -156,6 +165,7 @@ impl RequestContext {
             app_type,
             session_id,
             rectifier_config,
+            outbound_redaction_config,
         })
     }
 
@@ -216,6 +226,7 @@ impl RequestContext {
             first_byte_timeout,
             idle_timeout,
             self.rectifier_config.clone(),
+            self.outbound_redaction_config.clone(),
         )
     }
 

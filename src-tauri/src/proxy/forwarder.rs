@@ -6,13 +6,14 @@ use super::{
     body_filter::filter_private_params_with_whitelist,
     error::*,
     failover_switch::FailoverSwitchManager,
+    outbound_redactor::redact_outbound_payload,
     provider_router::ProviderRouter,
     providers::{get_adapter, ProviderAdapter, ProviderType},
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{ProxyStatus, RectifierConfig},
+    types::{OutboundRedactionConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
 use crate::{app_config::AppType, provider::Provider};
@@ -97,6 +98,8 @@ pub struct RequestForwarder {
     current_provider_id_at_start: String,
     /// 整流器配置
     rectifier_config: RectifierConfig,
+    /// 出站脱敏配置
+    outbound_redaction_config: OutboundRedactionConfig,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
 }
@@ -114,6 +117,7 @@ impl RequestForwarder {
         _streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
+        outbound_redaction_config: OutboundRedactionConfig,
     ) -> Self {
         Self {
             router,
@@ -123,6 +127,7 @@ impl RequestForwarder {
             app_handle,
             current_provider_id_at_start,
             rectifier_config,
+            outbound_redaction_config,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
         }
     }
@@ -776,6 +781,15 @@ impl RequestForwarder {
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+        let redaction_result =
+            redact_outbound_payload(filtered_body, &self.outbound_redaction_config)
+                .map_err(|e| ProxyError::InvalidRequest(format!("出站脱敏失败: {e}")))?;
+        let redacted_body = redaction_result.body;
+        if self.outbound_redaction_config.enabled {
+            for warning in &redaction_result.warnings {
+                log::warn!("[{}] [REDACT] {warning}", adapter.name());
+            }
+        }
 
         // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
         let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
@@ -857,21 +871,32 @@ impl RequestForwarder {
 
         // 输出请求信息日志
         let tag = adapter.name();
-        let request_model = filtered_body
+        let request_model = redacted_body
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
         log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
-        if let Ok(body_str) = serde_json::to_string(&filtered_body) {
-            log::debug!(
-                "[{tag}] >>> 请求体内容 ({}字节): {}",
-                body_str.len(),
-                body_str
-            );
+        if log::log_enabled!(log::Level::Debug) {
+            if self.outbound_redaction_config.enabled {
+                if let Ok(body_str) = serde_json::to_string(&redacted_body) {
+                    log::debug!(
+                        "[{tag}] [REDACT] 出站脱敏统计: total={}, rules={}, bytes={}",
+                        redaction_result.stats.total_replacements,
+                        redaction_result.stats.to_log_summary(),
+                        body_str.len()
+                    );
+                }
+            } else if let Ok(body_str) = serde_json::to_string(&redacted_body) {
+                log::debug!(
+                    "[{tag}] >>> 请求体内容 ({}字节): {}",
+                    body_str.len(),
+                    body_str
+                );
+            }
         }
 
         // 发送请求
-        let response = request.json(&filtered_body).send().await.map_err(|e| {
+        let response = request.json(&redacted_body).send().await.map_err(|e| {
             if e.is_timeout() {
                 ProxyError::Timeout(format!("请求超时: {e}"))
             } else if e.is_connect() {
