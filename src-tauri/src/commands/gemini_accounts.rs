@@ -12,8 +12,11 @@ pub fn gemini_list_accounts(state: State<'_, AppState>) -> Result<Vec<GeminiAcco
 }
 
 #[tauri::command]
-pub fn gemini_start_cli_login(provider_id: String) -> Result<GeminiLoginSession, String> {
-    GeminiUsageService::start_cli_login(provider_id).map_err(|e| e.to_string())
+pub fn gemini_start_cli_login(
+    state: State<'_, AppState>,
+    provider_id: String,
+) -> Result<GeminiLoginSession, String> {
+    GeminiUsageService::start_cli_login(&state.db, provider_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

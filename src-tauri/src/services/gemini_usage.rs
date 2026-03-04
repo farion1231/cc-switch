@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use tokio::sync::oneshot;
 use url::form_urlencoded;
 
@@ -218,6 +218,7 @@ impl GeminiUsageService {
     }
 
     async fn run_oauth_callback_server(
+        db: Arc<Database>,
         session_id: String,
         callback_addr: SocketAddr,
         state: String,
@@ -309,25 +310,60 @@ impl GeminiUsageService {
         }
         .await;
 
-        if let Ok(mut sessions) = CLI_LOGIN_SESSIONS.lock() {
-            if let Some(runtime) = sessions.get_mut(&session_id) {
-                if runtime.status == STATUS_CANCELLED || runtime.status == STATUS_EXPIRED {
-                    runtime.updated_at_ms = Self::now_ms();
-                    return;
-                }
-                match finalize_result {
-                    Ok((oauth_value, userinfo_value)) => {
-                        runtime.oauth_value = Some(oauth_value);
-                        runtime.accounts_value = Some(userinfo_value);
-                        runtime.status = STATUS_AUTHORIZED.to_string();
-                        runtime.message = Some("Gemini 授权完成，可点击保存完成绑定。".to_string());
+        let now_ms = Self::now_ms();
+        match finalize_result {
+            Ok((oauth_value, userinfo_value)) => {
+                let runtime_snapshot = {
+                    let mut sessions = match CLI_LOGIN_SESSIONS.lock() {
+                        Ok(v) => v,
+                        Err(_) => return,
+                    };
+                    let Some(runtime) = sessions.get_mut(&session_id) else {
+                        return;
+                    };
+                    if runtime.status == STATUS_CANCELLED || runtime.status == STATUS_EXPIRED {
+                        runtime.updated_at_ms = now_ms;
+                        return;
                     }
-                    Err(err) => {
+                    runtime.oauth_value = Some(oauth_value.clone());
+                    runtime.accounts_value = Some(userinfo_value.clone());
+                    (runtime.provider_id.clone(), runtime.isolated_home.clone())
+                };
+
+                let persist_result = Self::persist_login_result(
+                    &db,
+                    &runtime_snapshot.0,
+                    &runtime_snapshot.1,
+                    &oauth_value,
+                    &userinfo_value,
+                );
+
+                if let Ok(mut sessions) = CLI_LOGIN_SESSIONS.lock() {
+                    if let Some(runtime) = sessions.get_mut(&session_id) {
+                        match persist_result {
+                            Ok(_) => {
+                                runtime.status = STATUS_AUTHORIZED.to_string();
+                                runtime.message =
+                                    Some("Gemini 授权并自动绑定完成。".to_string());
+                            }
+                            Err(err) => {
+                                runtime.status = STATUS_FAILED.to_string();
+                                runtime.message =
+                                    Some(format!("Gemini 自动绑定失败: {}", err));
+                            }
+                        }
+                        runtime.updated_at_ms = now_ms;
+                    }
+                }
+            }
+            Err(err) => {
+                if let Ok(mut sessions) = CLI_LOGIN_SESSIONS.lock() {
+                    if let Some(runtime) = sessions.get_mut(&session_id) {
                         runtime.status = STATUS_FAILED.to_string();
                         runtime.message = Some(format!("Gemini 授权失败: {}", err));
+                        runtime.updated_at_ms = now_ms;
                     }
                 }
-                runtime.updated_at_ms = Self::now_ms();
             }
         }
     }
@@ -382,7 +418,10 @@ impl GeminiUsageService {
         }
     }
 
-    pub fn start_cli_login(provider_id: String) -> Result<GeminiLoginSession, AppError> {
+    pub fn start_cli_login(
+        db: &Arc<Database>,
+        provider_id: String,
+    ) -> Result<GeminiLoginSession, AppError> {
         if provider_id.trim().is_empty() {
             return Err(AppError::Config("provider_id 不能为空".to_string()));
         }
@@ -437,8 +476,10 @@ impl GeminiUsageService {
         drop(sessions);
 
         let session_id_for_task = session_id.clone();
+        let db_for_task = db.clone();
         tauri::async_runtime::spawn(async move {
             Self::run_oauth_callback_server(
+                db_for_task,
                 session_id_for_task,
                 callback_addr,
                 state,
@@ -460,6 +501,66 @@ impl GeminiUsageService {
             instructions:
                 "浏览器完成 Gemini 授权后将自动回调并完成会话，无需手工拷贝文件。".to_string(),
         })
+    }
+
+    fn persist_login_result(
+        db: &Database,
+        provider_id: &str,
+        isolated_home: &Path,
+        oauth_value: &Value,
+        accounts_value: &Value,
+    ) -> Result<GeminiAccount, AppError> {
+        let (oauth_path, accounts_path) = Self::session_cred_paths(isolated_home);
+        let account = Self::build_account_from_files(
+            provider_id,
+            &oauth_path,
+            oauth_value,
+            accounts_value,
+        )?;
+
+        if !oauth_path.exists() {
+            if let Some(dir) = oauth_path.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| AppError::io(dir, e))?;
+            }
+            let text = serde_json::to_string_pretty(oauth_value)
+                .map_err(|e| AppError::Config(format!("序列化 oauth 数据失败: {e}")))?;
+            std::fs::write(&oauth_path, text).map_err(|e| AppError::io(&oauth_path, e))?;
+        }
+        if !accounts_path.exists() {
+            if let Some(dir) = accounts_path.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| AppError::io(dir, e))?;
+            }
+            let text = serde_json::to_string_pretty(accounts_value)
+                .map_err(|e| AppError::Config(format!("序列化 account 数据失败: {e}")))?;
+            std::fs::write(&accounts_path, text).map_err(|e| AppError::io(&accounts_path, e))?;
+        }
+
+        let api_key_payload =
+            Self::build_provider_api_key_payload(&account, oauth_value, accounts_value);
+
+        db.upsert_gemini_account(&account)?;
+        db.upsert_gemini_provider_binding(&GeminiProviderBinding {
+            provider_id: provider_id.to_string(),
+            account_id: account.id.clone(),
+            auto_bound: false,
+            updated_at: Self::now_ms(),
+        })?;
+        Self::update_provider_api_key(db, provider_id, &api_key_payload)?;
+
+        let usage = db
+            .get_gemini_usage_state(&account.id)?
+            .unwrap_or(GeminiUsageState {
+                account_id: account.id.clone(),
+                cooldown_until: None,
+                last_error: None,
+                last_refresh_at: None,
+            });
+        db.upsert_gemini_usage_state(&GeminiUsageState {
+            last_refresh_at: Some(Self::now_ms()),
+            ..usage
+        })?;
+
+        Ok(account)
     }
 
     pub fn get_cli_login_status(session_id: &str) -> Result<GeminiLoginStatus, AppError> {
@@ -754,54 +855,13 @@ impl GeminiUsageService {
             Some(v) => v,
             None => Self::read_json(&accounts_path)?,
         };
-        let account = Self::build_account_from_files(
+        let account = Self::persist_login_result(
+            db,
             &provider_id,
-            &oauth_path,
+            &isolated_home,
             &oauth_value,
             &accounts_value,
         )?;
-
-        if !oauth_path.exists() {
-            if let Some(dir) = oauth_path.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| AppError::io(dir, e))?;
-            }
-            let text = serde_json::to_string_pretty(&oauth_value)
-                .map_err(|e| AppError::Config(format!("序列化 oauth 数据失败: {e}")))?;
-            std::fs::write(&oauth_path, text).map_err(|e| AppError::io(&oauth_path, e))?;
-        }
-        if !accounts_path.exists() {
-            if let Some(dir) = accounts_path.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| AppError::io(dir, e))?;
-            }
-            let text = serde_json::to_string_pretty(&accounts_value)
-                .map_err(|e| AppError::Config(format!("序列化 account 数据失败: {e}")))?;
-            std::fs::write(&accounts_path, text).map_err(|e| AppError::io(&accounts_path, e))?;
-        }
-
-        let api_key_payload =
-            Self::build_provider_api_key_payload(&account, &oauth_value, &accounts_value);
-
-        db.upsert_gemini_account(&account)?;
-        db.upsert_gemini_provider_binding(&GeminiProviderBinding {
-            provider_id: provider_id.clone(),
-            account_id: account.id.clone(),
-            auto_bound: false,
-            updated_at: Self::now_ms(),
-        })?;
-        Self::update_provider_api_key(db, &provider_id, &api_key_payload)?;
-
-        let usage = db
-            .get_gemini_usage_state(&account.id)?
-            .unwrap_or(GeminiUsageState {
-                account_id: account.id.clone(),
-                cooldown_until: None,
-                last_error: None,
-                last_refresh_at: None,
-            });
-        db.upsert_gemini_usage_state(&GeminiUsageState {
-            last_refresh_at: Some(Self::now_ms()),
-            ..usage
-        })?;
 
         if let Ok(mut sessions) = CLI_LOGIN_SESSIONS.lock() {
             sessions.remove(session_id);
