@@ -8,6 +8,7 @@ use crate::gemini_account::{
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
+use regex::Regex;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -18,8 +19,6 @@ use tokio::sync::oneshot;
 use url::form_urlencoded;
 
 const CLI_LOGIN_TTL_SECONDS: i64 = 30 * 60;
-const GOOGLE_OAUTH_CLIENT_ID: &str =
-    "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
 const GOOGLE_OAUTH_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_OAUTH_USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v1/userinfo?alt=json";
@@ -75,9 +74,62 @@ impl GeminiUsageService {
             .to_string()
     }
 
-    fn build_google_auth_url(redirect_uri: &str, state: &str, code_challenge: &str) -> String {
+    fn parse_oauth_credential_file(path: &Path) -> Option<(String, String)> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let id_re = Regex::new(r"OAUTH_CLIENT_ID\s*=\s*'([^']+)'").ok()?;
+        let secret_re = Regex::new(r"OAUTH_CLIENT_SECRET\s*=\s*'([^']+)'").ok()?;
+        let client_id = id_re
+            .captures(&text)
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().trim().to_string())?;
+        let client_secret = secret_re
+            .captures(&text)
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().trim().to_string())?;
+        if client_id.is_empty() || client_secret.is_empty() {
+            return None;
+        }
+        Some((client_id, client_secret))
+    }
+
+    fn resolve_oauth_client_credentials() -> Result<(String, String), AppError> {
+        let env_client_id = std::env::var("CCSWITCH_GEMINI_CLIENT_ID")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let env_client_secret = std::env::var("CCSWITCH_GEMINI_CLIENT_SECRET")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        if let (Some(client_id), Some(client_secret)) = (env_client_id, env_client_secret) {
+            return Ok((client_id, client_secret));
+        }
+
+        let home_dir = dirs::home_dir()
+            .ok_or_else(|| AppError::Config("无法定位 Home 目录".to_string()))?;
+        let candidates = [
+            home_dir.join(".volta/tools/image/packages/@google/gemini-cli/lib/node_modules/@google/gemini-cli/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js"),
+            home_dir.join(".npm-global/lib/node_modules/@google/gemini-cli/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js"),
+            home_dir.join(".local/share/pnpm/global/5/node_modules/@google/gemini-cli/node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js"),
+        ];
+        for candidate in candidates {
+            if let Some(credentials) = Self::parse_oauth_credential_file(&candidate) {
+                return Ok(credentials);
+            }
+        }
+        Err(AppError::Config(
+            "无法自动解析 Gemini OAuth client 凭据。请设置环境变量 CCSWITCH_GEMINI_CLIENT_ID / CCSWITCH_GEMINI_CLIENT_SECRET".to_string(),
+        ))
+    }
+
+    fn build_google_auth_url(
+        client_id: &str,
+        redirect_uri: &str,
+        state: &str,
+        code_challenge: &str,
+    ) -> String {
         let mut serializer = form_urlencoded::Serializer::new(String::new());
-        serializer.append_pair("client_id", GOOGLE_OAUTH_CLIENT_ID);
+        serializer.append_pair("client_id", client_id);
         serializer.append_pair("redirect_uri", redirect_uri);
         serializer.append_pair("response_type", "code");
         serializer.append_pair("scope", GOOGLE_OAUTH_SCOPE);
@@ -108,13 +160,16 @@ impl GeminiUsageService {
         code: &str,
         redirect_uri: &str,
         code_verifier: &str,
+        client_id: &str,
+        client_secret: &str,
     ) -> Result<Value, AppError> {
-        let params = [
-            ("code", code),
-            ("client_id", GOOGLE_OAUTH_CLIENT_ID),
-            ("redirect_uri", redirect_uri),
-            ("code_verifier", code_verifier),
-            ("grant_type", "authorization_code"),
+        let params = vec![
+            ("code", code.to_string()),
+            ("client_id", client_id.to_string()),
+            ("client_secret", client_secret.to_string()),
+            ("redirect_uri", redirect_uri.to_string()),
+            ("code_verifier", code_verifier.to_string()),
+            ("grant_type", "authorization_code".to_string()),
         ];
         let client = reqwest::Client::new();
         let resp = client
@@ -168,6 +223,8 @@ impl GeminiUsageService {
         state: String,
         redirect_uri: String,
         code_verifier: String,
+        oauth_client_id: String,
+        oauth_client_secret: String,
     ) {
         let (result_tx, result_rx) = oneshot::channel::<Result<String, String>>();
         let result_tx_shared = std::sync::Arc::new(std::sync::Mutex::new(Some(result_tx)));
@@ -237,8 +294,14 @@ impl GeminiUsageService {
 
         let finalize_result = async {
             let code = code_result.map_err(AppError::Config)?;
-            let oauth_value =
-                Self::exchange_google_oauth_code(&code, &redirect_uri, &code_verifier).await?;
+            let oauth_value = Self::exchange_google_oauth_code(
+                &code,
+                &redirect_uri,
+                &code_verifier,
+                &oauth_client_id,
+                &oauth_client_secret,
+            )
+            .await?;
             let access_token = Self::find_string(&oauth_value, &["access_token"])
                 .ok_or_else(|| AppError::Config("Gemini token 响应缺少 access_token".to_string()))?;
             let userinfo_value = Self::fetch_google_userinfo(&access_token).await?;
@@ -351,7 +414,9 @@ impl GeminiUsageService {
         let redirect_uri = format!("http://127.0.0.1:{}/oauth2callback", callback_addr.port());
         let code_verifier = Self::generate_pkce_verifier();
         let code_challenge = Self::pkce_challenge(&code_verifier);
-        let auth_url = Self::build_google_auth_url(&redirect_uri, &state, &code_challenge);
+        let (oauth_client_id, oauth_client_secret) = Self::resolve_oauth_client_credentials()?;
+        let auth_url =
+            Self::build_google_auth_url(&oauth_client_id, &redirect_uri, &state, &code_challenge);
 
         let runtime = GeminiLoginRuntime {
             provider_id: provider_id.clone(),
@@ -379,6 +444,8 @@ impl GeminiUsageService {
                 state,
                 redirect_uri,
                 code_verifier,
+                oauth_client_id,
+                oauth_client_secret,
             )
             .await;
         });
