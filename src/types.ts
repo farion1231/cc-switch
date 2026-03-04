@@ -215,6 +215,8 @@ export interface Settings {
   silentStartup?: boolean;
   // 是否启用主页面本地代理功能（默认关闭）
   enableLocalProxy?: boolean;
+  captureSystemPrompt?: boolean;
+  debugCaptureOutputDir?: string;
   // User has confirmed the local proxy first-run notice
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice

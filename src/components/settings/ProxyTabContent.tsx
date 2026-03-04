@@ -102,8 +102,16 @@ export function ProxyTabContent({
           <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
             <ProxyPanel
               enableLocalProxy={settings?.enableLocalProxy ?? false}
+              captureSystemPrompt={settings?.captureSystemPrompt ?? false}
+              debugCaptureOutputDir={settings?.debugCaptureOutputDir}
               onEnableLocalProxyChange={(checked) =>
                 onAutoSave({ enableLocalProxy: checked })
+              }
+              onCaptureSystemPromptChange={(checked) =>
+                onAutoSave({ captureSystemPrompt: checked })
+              }
+              onDebugCaptureOutputDirChange={(path) =>
+                onAutoSave({ debugCaptureOutputDir: path })
               }
               onToggleProxy={handleToggleProxy}
               isProxyPending={isProxyPending}

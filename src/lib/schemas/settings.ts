@@ -15,6 +15,8 @@ export const settingsSchema = z.object({
   skipClaudeOnboarding: z.boolean().optional(),
   launchOnStartup: z.boolean().optional(),
   enableLocalProxy: z.boolean().optional(),
+  captureSystemPrompt: z.boolean().optional(),
+  debugCaptureOutputDir: directorySchema.nullable().optional(),
   language: z.enum(["en", "zh", "ja"]).optional(),
 
   // 设备级目录覆盖

@@ -135,6 +135,9 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpencodeDir = sanitizeDir(
           mergedSettings.opencodeConfigDir,
         );
+        const sanitizedDebugCaptureOutputDir = sanitizeDir(
+          mergedSettings.debugCaptureOutputDir,
+        );
         const { webdavSync: _ignoredWebdavSync, ...restSettings } =
           mergedSettings;
 
@@ -144,6 +147,7 @@ export function useSettings(): UseSettingsResult {
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
+          debugCaptureOutputDir: sanitizedDebugCaptureOutputDir,
           language: mergedSettings.language,
         };
 
@@ -248,6 +252,9 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpencodeDir = sanitizeDir(
           mergedSettings.opencodeConfigDir,
         );
+        const sanitizedDebugCaptureOutputDir = sanitizeDir(
+          mergedSettings.debugCaptureOutputDir,
+        );
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -262,6 +269,7 @@ export function useSettings(): UseSettingsResult {
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
+          debugCaptureOutputDir: sanitizedDebugCaptureOutputDir,
           language: mergedSettings.language,
         };
 

@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
+#[cfg(unix)]
+use std::io::Write;
 
 use crate::app_config::AppType;
 use crate::error::AppError;
@@ -190,6 +191,10 @@ pub struct AppSettings {
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
+    #[serde(default)]
+    pub capture_system_prompt: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_capture_output_dir: Option<String>,
     /// User has confirmed the local proxy first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_confirmed: Option<bool>,
@@ -283,6 +288,8 @@ impl Default for AppSettings {
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,
+            capture_system_prompt: false,
+            debug_capture_output_dir: None,
             proxy_confirmed: None,
             usage_confirmed: None,
             stream_check_confirmed: None,
@@ -349,6 +356,13 @@ impl AppSettings {
 
         self.openclaw_config_dir = self
             .openclaw_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.debug_capture_output_dir = self
+            .debug_capture_output_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -550,6 +564,14 @@ pub fn get_openclaw_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
         .openclaw_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn get_debug_capture_output_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .debug_capture_output_dir
         .as_ref()
         .map(|p| resolve_override_path(p))
 }

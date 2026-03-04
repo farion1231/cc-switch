@@ -5,6 +5,9 @@ import {
   TrendingUp,
   Server,
   ListOrdered,
+  FileText,
+  FolderOpen,
+  RotateCcw,
   Save,
   Loader2,
   Zap,
@@ -17,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { toast } from "sonner";
+import { settingsApi } from "@/lib/api";
 import { useFailoverQueue } from "@/lib/query/failover";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { useProviderHealth } from "@/lib/query/failover";
@@ -32,14 +36,22 @@ import { AnimatePresence, motion } from "framer-motion";
 
 interface ProxyPanelProps {
   enableLocalProxy: boolean;
+  captureSystemPrompt: boolean;
+  debugCaptureOutputDir?: string;
   onEnableLocalProxyChange: (checked: boolean) => void;
+  onCaptureSystemPromptChange: (checked: boolean) => void;
+  onDebugCaptureOutputDirChange: (path?: string) => void;
   onToggleProxy: (checked: boolean) => Promise<void>;
   isProxyPending: boolean;
 }
 
 export function ProxyPanel({
   enableLocalProxy,
+  captureSystemPrompt,
+  debugCaptureOutputDir,
   onEnableLocalProxyChange,
+  onCaptureSystemPromptChange,
+  onDebugCaptureOutputDirChange,
   onToggleProxy,
   isProxyPending,
 }: ProxyPanelProps) {
@@ -57,6 +69,7 @@ export function ProxyPanel({
   // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
   const [listenPort, setListenPort] = useState("15721");
+  const [captureOutputDirInput, setCaptureOutputDirInput] = useState("");
 
   // 同步全局配置到本地状态
   useEffect(() => {
@@ -65,6 +78,10 @@ export function ProxyPanel({
       setListenPort(String(globalConfig.listenPort));
     }
   }, [globalConfig]);
+
+  useEffect(() => {
+    setCaptureOutputDirInput(debugCaptureOutputDir ?? "");
+  }, [debugCaptureOutputDir]);
 
   // 获取所有三个应用类型的故障转移队列
   // 启用自动故障转移后，将按队列优先级（P1→P2→...）选择供应商
@@ -197,6 +214,43 @@ export function ProxyPanel({
     return `http://${host}:${port}`;
   };
 
+  const handleSaveCaptureOutputDir = () => {
+    const next = captureOutputDirInput.trim();
+    onDebugCaptureOutputDirChange(next.length > 0 ? next : undefined);
+    toast.success(
+      t("proxy.captureOutputDir.saved", {
+        defaultValue: "MindTrace 输出目录已保存",
+      }),
+      { closeButton: true },
+    );
+  };
+
+  const handleBrowseCaptureOutputDir = async () => {
+    try {
+      const selected = await settingsApi.selectConfigDirectory(
+        captureOutputDirInput.trim() || undefined,
+      );
+      if (!selected) {
+        return;
+      }
+      setCaptureOutputDirInput(selected);
+      onDebugCaptureOutputDirChange(selected);
+      toast.success(
+        t("proxy.captureOutputDir.saved", {
+          defaultValue: "MindTrace 输出目录已保存",
+        }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      console.error("Pick capture output dir failed:", error);
+      toast.error(
+        t("proxy.captureOutputDir.pickFailed", {
+          defaultValue: "选择输出目录失败",
+        }),
+      );
+    }
+  };
+
   return (
     <>
       <section className="space-y-4">
@@ -209,7 +263,76 @@ export function ProxyPanel({
           onCheckedChange={onEnableLocalProxyChange}
         />
 
-        {/* [2] Proxy service toggle — always visible */}
+        <ToggleRow
+          icon={<FileText className="h-4 w-4 text-amber-500" />}
+          title={t("proxy.captureSystemPrompt.title", {
+            defaultValue: "获取系统提示词（拦截并保存底层 System Prompt）",
+          })}
+          description={t("proxy.captureSystemPrompt.description", {
+            defaultValue:
+              "仅在本地代理接管时生效，保存后的内容可在会话管理中查看",
+          })}
+          checked={captureSystemPrompt}
+          onCheckedChange={onCaptureSystemPromptChange}
+        />
+
+        <div className="rounded-xl border border-border bg-card/50 p-4 space-y-3">
+          <div className="space-y-1">
+            <Label className="text-sm font-medium">
+              {t("proxy.captureOutputDir.title", {
+                defaultValue: "MindTrace 输出目录",
+              })}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t("proxy.captureOutputDir.description", {
+                defaultValue: "为空时默认写入 C:\\Users\\Public\\CCSwitchMindTrace",
+              })}
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              value={captureOutputDirInput}
+              onChange={(e) => setCaptureOutputDirInput(e.target.value)}
+              placeholder={t("proxy.captureOutputDir.placeholder", {
+                defaultValue: "例如: D:\\CCSwitch\\debug-capture",
+              })}
+              className="flex-1"
+            />
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleBrowseCaptureOutputDir()}
+              >
+                <FolderOpen className="mr-1.5 h-4 w-4" />
+                {t("common.browse", { defaultValue: "浏览" })}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setCaptureOutputDirInput("");
+                  onDebugCaptureOutputDirChange(undefined);
+                }}
+              >
+                <RotateCcw className="mr-1.5 h-4 w-4" />
+                {t("common.reset", { defaultValue: "默认" })}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleSaveCaptureOutputDir}
+              >
+                <Save className="mr-1.5 h-4 w-4" />
+                {t("common.save", { defaultValue: "保存" })}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* [2] Proxy service toggle – always visible */}
         <div className="flex items-center justify-between rounded-xl border border-border bg-card/50 p-4 transition-colors hover:bg-muted/50">
           <div className="flex items-center gap-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-background ring-1 ring-border">

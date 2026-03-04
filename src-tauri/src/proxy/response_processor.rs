@@ -3,6 +3,7 @@
 //! 统一处理流式和非流式 API 响应
 
 use super::{
+    debug_capture_store,
     handler_config::UsageParserConfig,
     handler_context::{RequestContext, StreamingTimeoutConfig},
     server::ProxyState,
@@ -22,6 +23,14 @@ use std::{
     time::Duration,
 };
 use tokio::sync::Mutex;
+
+const MAX_CAPTURED_RESPONSE_PREVIEW_LEN: usize = 4_000_000;
+const MAX_CAPTURED_LLM_TO_AGENT_LEN: usize = 1_000_000;
+
+#[inline]
+fn is_debug_capture_enabled() -> bool {
+    crate::settings::get_settings().capture_system_prompt
+}
 
 // ============================================================================
 // 公共接口
@@ -172,6 +181,19 @@ pub async fn handle_non_streaming(
         );
     }
 
+    let response_preview = String::from_utf8_lossy(&body_bytes).to_string();
+    if is_debug_capture_enabled() {
+        spawn_append_response_debug_capture_file(
+            ctx.app_type_str.to_string(),
+            ctx.session_id.clone(),
+            ctx.provider.id.clone(),
+            ctx.request_model.clone(),
+            false,
+            status.as_u16(),
+            response_preview,
+        );
+    }
+
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
     for (key, value) in response_headers.iter() {
@@ -294,6 +316,21 @@ fn create_usage_collector(
     let session_id = ctx.session_id.clone();
 
     SseUsageCollector::new(start_time, move |events, first_token_ms| {
+        let stream_model = model_extractor(&events, &request_model);
+        let stream_preview = serde_json::to_string_pretty(&Value::Array(events.clone()))
+            .unwrap_or_else(|_| Value::Array(events.clone()).to_string());
+        if is_debug_capture_enabled() {
+            spawn_append_response_debug_capture_file(
+                app_type_str.to_string(),
+                session_id.clone(),
+                provider_id.clone(),
+                stream_model,
+                true,
+                status_code,
+                stream_preview,
+            );
+        }
+
         if let Some(usage) = stream_parser(&events) {
             let model = model_extractor(&events, &request_model);
             let latency_ms = start_time.elapsed().as_millis() as u64;
@@ -550,6 +587,247 @@ pub fn create_logged_passthrough_stream(
     }
 }
 
+fn truncate_utf8_for_debug(text: &mut String, max_bytes: usize) {
+    if text.len() <= max_bytes {
+        return;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+}
+
+fn append_response_debug_capture_file(
+    app_type: &str,
+    session_id: &str,
+    provider_id: &str,
+    model: &str,
+    is_streaming: bool,
+    status_code: u16,
+    response_preview: &str,
+) -> Result<(), std::io::Error> {
+    let mut preview = response_preview.to_string();
+    if preview.len() > MAX_CAPTURED_RESPONSE_PREVIEW_LEN {
+        truncate_utf8_for_debug(&mut preview, MAX_CAPTURED_RESPONSE_PREVIEW_LEN);
+    }
+    let mut llm_to_agent = extract_llm_to_agent_text(&preview).unwrap_or_default();
+    if llm_to_agent.len() > MAX_CAPTURED_LLM_TO_AGENT_LEN {
+        truncate_utf8_for_debug(&mut llm_to_agent, MAX_CAPTURED_LLM_TO_AGENT_LEN);
+    }
+
+    let session_file = debug_capture_store::capture_session_path(app_type, session_id);
+    let index_file = debug_capture_store::capture_index_path();
+
+    let entry = format!(
+        "\n===== CC SWITCH MINDTRACE LOG =====\n\
+timestamp: {}\n\
+direction: RESPONSE\n\
+app_type: {}\n\
+session_id: {}\n\
+provider_id: {}\n\
+model: {}\n\
+streaming: {}\n\
+status_code: {}\n\
+log_file: {}\n\
+index_file: {}\n\
+\n\
+[llm_to_agent]\n{}\n\
+\n\
+[response]\n{}\n\
+===== END =====\n",
+        chrono::Utc::now().to_rfc3339(),
+        app_type,
+        session_id,
+        provider_id,
+        model,
+        is_streaming,
+        status_code,
+        session_file.display(),
+        index_file.display(),
+        llm_to_agent,
+        preview
+    );
+
+    debug_capture_store::append_session_debug_entry(app_type, session_id, model, "RESPONSE", &entry)
+}
+
+fn extract_llm_to_agent_text(response_preview: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(response_preview).ok()?;
+    let mut fragments = Vec::new();
+    collect_llm_response_fragments(&value, &mut fragments);
+
+    let mut seen = std::collections::HashSet::new();
+    let mut unique = Vec::new();
+    for fragment in fragments {
+        let trimmed = fragment.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            unique.push(trimmed.to_string());
+        }
+    }
+
+    if unique.is_empty() {
+        None
+    } else {
+        Some(unique.join("\n"))
+    }
+}
+
+fn collect_llm_response_fragments(value: &Value, fragments: &mut Vec<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_llm_response_fragments(item, fragments);
+            }
+        }
+        Value::Object(map) => {
+            let role = map
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let event_type = map
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+
+            if role == "assistant" {
+                if let Some(content) = map.get("content") {
+                    collect_llm_text_like(content, fragments);
+                }
+                if let Some(text) = map.get("text").and_then(Value::as_str) {
+                    push_llm_text(text, fragments);
+                }
+            }
+
+            if event_type.contains("delta") || event_type.contains("content") {
+                if let Some(delta) = map.get("delta") {
+                    collect_llm_text_like(delta, fragments);
+                }
+                if let Some(text) = map.get("text").and_then(Value::as_str) {
+                    push_llm_text(text, fragments);
+                }
+            }
+
+            if let Some(choices) = map.get("choices") {
+                collect_llm_response_fragments(choices, fragments);
+            }
+            if let Some(message) = map.get("message") {
+                collect_llm_response_fragments(message, fragments);
+            }
+            if let Some(output) = map.get("output") {
+                collect_llm_response_fragments(output, fragments);
+            }
+            if let Some(data) = map.get("data") {
+                collect_llm_response_fragments(data, fragments);
+            }
+            if let Some(content) = map.get("content") {
+                collect_llm_text_like(content, fragments);
+            }
+            if let Some(parts) = map.get("parts") {
+                collect_llm_text_like(parts, fragments);
+            }
+            if let Some(delta) = map.get("delta") {
+                collect_llm_text_like(delta, fragments);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_llm_text_like(value: &Value, fragments: &mut Vec<String>) {
+    match value {
+        Value::String(text) => push_llm_text(text, fragments),
+        Value::Array(items) => {
+            for item in items {
+                collect_llm_text_like(item, fragments);
+            }
+        }
+        Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                push_llm_text(text, fragments);
+            }
+            if let Some(text) = map.get("output_text").and_then(Value::as_str) {
+                push_llm_text(text, fragments);
+            }
+            if let Some(content) = map.get("content") {
+                collect_llm_text_like(content, fragments);
+            }
+            if let Some(parts) = map.get("parts") {
+                collect_llm_text_like(parts, fragments);
+            }
+            if let Some(delta) = map.get("delta") {
+                collect_llm_text_like(delta, fragments);
+            }
+            if let Some(message) = map.get("message") {
+                collect_llm_text_like(message, fragments);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_llm_text(text: &str, fragments: &mut Vec<String>) {
+    let trimmed = text.trim();
+    if !trimmed.is_empty() {
+        fragments.push(trimmed.to_string());
+    }
+}
+
+fn spawn_append_response_debug_capture_file(
+    app_type: String,
+    session_id: String,
+    provider_id: String,
+    model: String,
+    is_streaming: bool,
+    status_code: u16,
+    response_preview: String,
+) {
+    if !is_debug_capture_enabled() {
+        return;
+    }
+
+    tokio::spawn(async move {
+        let app_type_for_log = app_type.clone();
+        let session_id_for_log = session_id.clone();
+
+        let join_result = tokio::task::spawn_blocking(move || {
+            append_response_debug_capture_file(
+                &app_type,
+                &session_id,
+                &provider_id,
+                &model,
+                is_streaming,
+                status_code,
+                &response_preview,
+            )
+        })
+        .await;
+
+        match join_result {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                log::warn!(
+                    "[{app_type_for_log}] Failed to append response debug file for session {}: {}",
+                    session_id_for_log,
+                    err
+                );
+            }
+            Err(err) => {
+                log::warn!(
+                    "[{app_type_for_log}] Failed to join response debug file task for session {}: {}",
+                    session_id_for_log,
+                    err
+                );
+            }
+        }
+    });
+}
+
 fn format_headers(headers: &HeaderMap) -> String {
     headers
         .iter()
@@ -740,5 +1018,65 @@ mod tests {
             Decimal::from_str("1.5").unwrap()
         );
         Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn manual_write_response_debug_file() {
+        let enable = std::env::var("CC_SWITCH_WRITE_DEBUG_FILE").unwrap_or_default();
+        assert_eq!(
+            enable, "1",
+            "set CC_SWITCH_WRITE_DEBUG_FILE=1 to run this manual response debug file test"
+        );
+
+        let session_id = std::env::var("CC_SWITCH_SEED_SESSION_ID")
+            .unwrap_or_else(|_| "manual-response-debug-session".to_string());
+
+        let response_preview = serde_json::json!({
+            "id": "resp_manual_1",
+            "type": "response",
+            "model": "demo/manual-model",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "这是一条用于验证 llm_to_agent 的响应文本。"
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        append_response_debug_capture_file(
+            "codex",
+            &session_id,
+            "manual-provider",
+            "demo/manual-model",
+            false,
+            200,
+            &response_preview,
+        )
+        .expect("write response debug capture file");
+
+        let path = debug_capture_store::capture_session_path("codex", &session_id);
+        let file_content =
+            std::fs::read_to_string(&path).expect("read response debug capture file from session path");
+        assert!(file_content.contains("direction: RESPONSE"));
+        assert!(file_content.contains("[llm_to_agent]"));
+        assert!(file_content.contains("验证 llm_to_agent"));
+
+        let index_path = debug_capture_store::capture_index_path();
+        let index_content =
+            std::fs::read_to_string(&index_path).expect("read response debug capture index file");
+        assert!(index_content.contains(&session_id));
+        assert!(index_content.contains(path.file_name().and_then(|n| n.to_str()).unwrap_or("")));
+
+        println!("response_debug_capture_file_path={}", path.display());
+        println!("response_debug_capture_index_path={}", index_path.display());
+        println!("response_debug_session_id={session_id}");
     }
 }
