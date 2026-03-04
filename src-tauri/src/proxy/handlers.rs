@@ -577,7 +577,7 @@ fn append_debug_capture_file(
     let index_file = debug_capture_store::capture_index_path();
 
     let entry = format!(
-        "\n===== CC SWITCH INTERCEPT DEBUG =====\n\
+        "\n===== CC SWITCH MINDTRACE LOG =====\n\
 timestamp: {}\n\
 direction: REQUEST\n\
 app_type: {}\n\
@@ -630,7 +630,7 @@ fn append_debug_response_file(
     let index_file = debug_capture_store::capture_index_path();
 
     let entry = format!(
-        "\n===== CC SWITCH INTERCEPT DEBUG =====\n\
+        "\n===== CC SWITCH MINDTRACE LOG =====\n\
 timestamp: {}\n\
 direction: RESPONSE\n\
 app_type: {}\n\
@@ -1231,7 +1231,7 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn manual_write_interceptor_debug_file() {
+    fn manual_write_mindtrace_debug_file() {
         let enable = std::env::var("CC_SWITCH_WRITE_DEBUG_FILE").unwrap_or_default();
         assert_eq!(
             enable, "1",
@@ -1271,7 +1271,7 @@ mod tests {
         let path = debug_capture_store::capture_session_path("claude", &session_id);
         let file_content =
             std::fs::read_to_string(&path).expect("read debug capture file from session path");
-        assert!(file_content.contains("CC SWITCH INTERCEPT DEBUG"));
+        assert!(file_content.contains("CC SWITCH MINDTRACE LOG"));
         assert!(file_content.contains("MANUAL_DEBUG_SYSTEM_PROMPT"));
         assert!(file_content.contains("[user_to_agent]"));
 

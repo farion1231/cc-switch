@@ -63,12 +63,11 @@ export const getRoleTone = (role: string) => {
 };
 
 export const getRoleLabel = (role: string, t: (key: string) => string) => {
-  void t;
   const normalized = role.toLowerCase();
-  if (normalized === "assistant") return "Agent/LLM Generated";
-  if (normalized === "user") return "User -> Agent";
-  if (normalized === "system") return "System";
-  if (normalized === "tool") return "Tool";
+  if (normalized === "assistant") return "AI";
+  if (normalized === "user") return t("sessionManager.roleUser");
+  if (normalized === "system") return t("sessionManager.roleSystem");
+  if (normalized === "tool") return t("sessionManager.roleTool");
   return role;
 };
 

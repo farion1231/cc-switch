@@ -69,6 +69,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
     Ok(messages)
 }
+
 fn parse_session(path: &Path) -> Option<SessionMeta> {
     if is_agent_session(path) {
         return None;

@@ -54,6 +54,7 @@ impl ProxyServer {
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
         // 创建故障转移切换管理器
         let failover_manager = Arc::new(FailoverSwitchManager::new(db.clone()));
+
         let state = ProxyState {
             db,
             config: Arc::new(RwLock::new(config.clone())),

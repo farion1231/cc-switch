@@ -1094,9 +1094,18 @@ pub fn run() {
 
     app.run(|app_handle, event| {
         // 处理退出请求（所有平台）
-        if let RunEvent::ExitRequested { api, .. } = &event {
-            log::info!("收到退出请求，开始清理...");
-            // 阻止立即退出，执行清理
+        if let RunEvent::ExitRequested { api, code, .. } = &event {
+            // code 为 None 表示运行时自动触发（如隐藏窗口的 WebView 被回收导致无存活窗口），
+            // 此时应仅阻止退出、保持托盘后台运行；
+            // code 为 Some(_) 表示用户主动调用 app.exit() 退出（如托盘菜单"退出"），
+            // 此时执行清理后退出。
+            if code.is_none() {
+                log::info!("运行时触发退出请求（无存活窗口），阻止退出以保持托盘后台运行");
+                api.prevent_exit();
+                return;
+            }
+
+            log::info!("收到用户主动退出请求 (code={code:?})，开始清理...");
             api.prevent_exit();
 
             let app_handle = app_handle.clone();

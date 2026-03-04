@@ -219,7 +219,7 @@ export function ProxyPanel({
     onDebugCaptureOutputDirChange(next.length > 0 ? next : undefined);
     toast.success(
       t("proxy.captureOutputDir.saved", {
-        defaultValue: "拦截日志输出目录已保存",
+        defaultValue: "MindTrace 输出目录已保存",
       }),
       { closeButton: true },
     );
@@ -237,7 +237,7 @@ export function ProxyPanel({
       onDebugCaptureOutputDirChange(selected);
       toast.success(
         t("proxy.captureOutputDir.saved", {
-          defaultValue: "拦截日志输出目录已保存",
+          defaultValue: "MindTrace 输出目录已保存",
         }),
         { closeButton: true },
       );
@@ -280,13 +280,12 @@ export function ProxyPanel({
           <div className="space-y-1">
             <Label className="text-sm font-medium">
               {t("proxy.captureOutputDir.title", {
-                defaultValue: "拦截日志输出目录",
+                defaultValue: "MindTrace 输出目录",
               })}
             </Label>
             <p className="text-xs text-muted-foreground">
               {t("proxy.captureOutputDir.description", {
-                defaultValue:
-                  "为空时默认写入 C:\\Users\\Public\\cc_switch_interceptor_debug",
+                defaultValue: "为空时默认写入 C:\\Users\\Public\\CCSwitchMindTrace",
               })}
             </p>
           </div>

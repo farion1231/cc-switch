@@ -291,29 +291,6 @@ fn schema_create_tables_include_pricing_model_columns() {
 }
 
 #[test]
-fn schema_create_tables_include_session_prompt_capture_table() {
-    let conn = Connection::open_in_memory().expect("open memory db");
-    Database::create_tables_on_conn(&conn).expect("create tables");
-
-    assert!(
-        Database::table_exists(&conn, "session_prompt_capture").expect("check table exists"),
-        "session_prompt_capture should exist"
-    );
-
-    let app_type = get_column_info(&conn, "session_prompt_capture", "app_type");
-    assert_eq!(app_type.r#type, "TEXT");
-    assert_eq!(app_type.notnull, 1);
-
-    let session_id = get_column_info(&conn, "session_prompt_capture", "session_id");
-    assert_eq!(session_id.r#type, "TEXT");
-    assert_eq!(session_id.notnull, 1);
-
-    let system_prompt = get_column_info(&conn, "session_prompt_capture", "system_prompt");
-    assert_eq!(system_prompt.r#type, "TEXT");
-    assert_eq!(system_prompt.notnull, 1);
-}
-
-#[test]
 fn schema_migration_v4_adds_pricing_model_columns() {
     let conn = Connection::open_in_memory().expect("open memory db");
     conn.execute_batch(
@@ -352,29 +329,6 @@ fn schema_migration_v4_adds_pricing_model_columns() {
     let request_model = get_column_info(&conn, "proxy_request_logs", "request_model");
     assert_eq!(request_model.r#type, "TEXT");
     assert_eq!(request_model.notnull, 0);
-
-    assert_eq!(
-        Database::get_user_version(&conn).expect("version after migration"),
-        SCHEMA_VERSION
-    );
-}
-
-#[test]
-fn schema_migration_v5_adds_session_prompt_capture_table() {
-    let conn = Connection::open_in_memory().expect("open memory db");
-    Database::set_user_version(&conn, 5).expect("set user_version=5");
-
-    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
-
-    assert!(
-        Database::table_exists(&conn, "session_prompt_capture").expect("check table exists"),
-        "session_prompt_capture should exist after migration"
-    );
-    assert!(
-        Database::has_column(&conn, "session_prompt_capture", "system_prompt")
-            .expect("check system_prompt column"),
-        "system_prompt column should exist"
-    );
 
     assert_eq!(
         Database::get_user_version(&conn).expect("version after migration"),

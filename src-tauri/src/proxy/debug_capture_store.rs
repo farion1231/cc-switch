@@ -10,7 +10,7 @@ const INDEX_FILE_NAME: &str = "index.json";
 const SESSION_DIR_NAME: &str = "sessions";
 
 #[cfg(target_os = "windows")]
-const PUBLIC_CAPTURE_ROOT: &str = r"C:\Users\Public\cc_switch_interceptor_debug";
+const PUBLIC_CAPTURE_ROOT: &str = r"C:\Users\Public\CCSwitchMindTrace";
 
 static INDEX_WRITE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -57,7 +57,7 @@ pub(crate) fn capture_root_dir() -> PathBuf {
 
     #[cfg(not(target_os = "windows"))]
     {
-        crate::config::get_app_config_dir().join("cc_switch_interceptor_debug")
+        crate::config::get_app_config_dir().join("cc_switch_mindtrace")
     }
 }
 

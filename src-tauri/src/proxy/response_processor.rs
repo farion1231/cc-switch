@@ -611,7 +611,7 @@ fn append_response_debug_capture_file(
     let index_file = debug_capture_store::capture_index_path();
 
     let entry = format!(
-        "\n===== CC SWITCH INTERCEPT DEBUG =====\n\
+        "\n===== CC SWITCH MINDTRACE LOG =====\n\
 timestamp: {}\n\
 direction: RESPONSE\n\
 app_type: {}\n\
