@@ -27,6 +27,11 @@ use tokio::sync::Mutex;
 const MAX_CAPTURED_RESPONSE_PREVIEW_LEN: usize = 4_000_000;
 const MAX_CAPTURED_LLM_TO_AGENT_LEN: usize = 1_000_000;
 
+#[inline]
+fn is_debug_capture_enabled() -> bool {
+    crate::settings::get_settings().capture_system_prompt
+}
+
 // ============================================================================
 // 公共接口
 // ============================================================================
@@ -177,15 +182,17 @@ pub async fn handle_non_streaming(
     }
 
     let response_preview = String::from_utf8_lossy(&body_bytes).to_string();
-    spawn_append_response_debug_capture_file(
-        ctx.app_type_str.to_string(),
-        ctx.session_id.clone(),
-        ctx.provider.id.clone(),
-        ctx.request_model.clone(),
-        false,
-        status.as_u16(),
-        response_preview,
-    );
+    if is_debug_capture_enabled() {
+        spawn_append_response_debug_capture_file(
+            ctx.app_type_str.to_string(),
+            ctx.session_id.clone(),
+            ctx.provider.id.clone(),
+            ctx.request_model.clone(),
+            false,
+            status.as_u16(),
+            response_preview,
+        );
+    }
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
@@ -312,15 +319,17 @@ fn create_usage_collector(
         let stream_model = model_extractor(&events, &request_model);
         let stream_preview = serde_json::to_string_pretty(&Value::Array(events.clone()))
             .unwrap_or_else(|_| Value::Array(events.clone()).to_string());
-        spawn_append_response_debug_capture_file(
-            app_type_str.to_string(),
-            session_id.clone(),
-            provider_id.clone(),
-            stream_model,
-            true,
-            status_code,
-            stream_preview,
-        );
+        if is_debug_capture_enabled() {
+            spawn_append_response_debug_capture_file(
+                app_type_str.to_string(),
+                session_id.clone(),
+                provider_id.clone(),
+                stream_model,
+                true,
+                status_code,
+                stream_preview,
+            );
+        }
 
         if let Some(usage) = stream_parser(&events) {
             let model = model_extractor(&events, &request_model);
@@ -778,6 +787,10 @@ fn spawn_append_response_debug_capture_file(
     status_code: u16,
     response_preview: String,
 ) {
+    if !is_debug_capture_enabled() {
+        return;
+    }
+
     tokio::spawn(async move {
         let app_type_for_log = app_type.clone();
         let session_id_for_log = session_id.clone();

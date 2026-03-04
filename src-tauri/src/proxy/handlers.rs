@@ -460,6 +460,11 @@ const MAX_CAPTURED_DEBUG_DIRECTIVES_LEN: usize = 1_000_000;
 const MAX_CAPTURED_DEBUG_BODY_LEN: usize = 4_000_000;
 const RECENT_MESSAGES_LIMIT: usize = 6;
 
+#[inline]
+fn is_debug_capture_enabled() -> bool {
+    crate::settings::get_settings().capture_system_prompt
+}
+
 fn maybe_capture_system_prompt(
     _state: &ProxyState,
     app_type: &str,
@@ -467,7 +472,7 @@ fn maybe_capture_system_prompt(
     model: &str,
     body: &Value,
 ) {
-    if !crate::settings::get_settings().capture_system_prompt {
+    if !is_debug_capture_enabled() {
         return;
     }
 
@@ -668,6 +673,10 @@ fn spawn_append_debug_response_file(
     status_code: u16,
     response_preview: String,
 ) {
+    if !is_debug_capture_enabled() {
+        return;
+    }
+
     tauri::async_runtime::spawn(async move {
         let app_type_for_log = app_type.clone();
         let session_id_for_log = session_id.clone();
@@ -1286,6 +1295,5 @@ mod tests {
         println!("debug_session_id={session_id}");
     }
 }
-
 
 
