@@ -195,6 +195,11 @@
       "title": "Configure Usage Query",
       "message": "Usage query requires a custom script or API parameters. Please make sure you have obtained the necessary information from your provider.\n\nIf unsure how to configure, please consult your provider's documentation first.",
       "confirm": "I understand, configure"
+    },
+    "streamCheck": {
+      "title": "Model Health Check",
+      "message": "Health check tests provider connectivity by sending a direct API request. The following may cause check failures:\n\n• Official providers (uses OAuth login, no standalone API Key)\n• Some relay services (verify requests come from Claude Code CLI)\n• AWS Bedrock (uses IAM signature authentication)\n\nA failed check does not mean the provider is unusable — it only means it cannot be verified via a standalone request. Please refer to actual behavior within the application.",
+      "confirm": "I understand, proceed"
     }
   },
   "settings": {
@@ -719,8 +724,7 @@
     "pleaseAddEndpoint": "Please add an endpoint first",
     "testUnavailable": "Speed test unavailable",
     "noResult": "No result returned",
-    "testFailed": "Speed test failed: {{error}}",
-    "status": "Status: {{code}}"
+    "testFailed": "Speed test failed: {{error}}"
   },
   "providerAdvanced": {
     "testConfig": "Model Test Config",
@@ -1292,11 +1296,14 @@
       "title": "Agents Config",
       "description": "Manage agents.defaults in openclaw.json (default model, runtime parameters, etc.)",
       "modelSection": "Model Configuration",
-      "primaryModel": "Primary Model",
-      "primaryModelHint": "Set via the \"Set as Default Model\" button in the provider list",
+      "primaryModel": "Default Model",
+      "primaryModelHint": "Select from models of configured providers",
       "notSet": "Not set",
       "fallbackModels": "Fallback Models",
-      "fallbackModelsHint": "Comma-separated, ordered by priority",
+      "fallbackModelsHint": "When the primary model is unavailable, fallbacks are tried in order",
+      "addFallback": "Add fallback model",
+      "noModels": "No configured provider models. Please add an OpenClaw provider first.",
+      "notInList": "{{value}} (not configured)",
       "runtimeSection": "Runtime Parameters",
       "workspace": "Workspace Path",
       "timeout": "Timeout (seconds)",

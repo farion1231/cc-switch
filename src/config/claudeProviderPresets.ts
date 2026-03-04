@@ -133,6 +133,19 @@ export const providerPresets: ProviderPreset[] = [
     icon: "bailian",
     iconColor: "#624AFF",
   },
+{
+    name: "Bailian For Coding",
+    websiteUrl: "https://bailian.console.aliyun.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "cn_official",
+    icon: "bailian",
+    iconColor: "#624AFF",
+  },
   {
     name: "Kimi",
     websiteUrl: "https://platform.moonshot.cn/console",
@@ -550,6 +563,25 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "openrouter",
     iconColor: "#6566F1",
+  },
+  {
+    name: "Novita AI",
+    websiteUrl: "https://novita.ai",
+    apiKeyUrl: "https://novita.ai",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.novita.ai/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "zai-org/glm-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/glm-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/glm-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/glm-5",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.novita.ai/anthropic"],
+    icon: "novita",
+    iconColor: "#000000",
   },
   {
     name: "Nvidia",

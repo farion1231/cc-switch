@@ -195,6 +195,11 @@
       "title": "使用量クエリの設定",
       "message": "使用量クエリにはカスタムスクリプトまたは API パラメータが必要です。プロバイダーから必要な情報を取得していることをご確認ください。\n\n設定方法が不明な場合は、プロバイダーのドキュメントを先にご確認ください。",
       "confirm": "理解しました、設定する"
+    },
+    "streamCheck": {
+      "title": "モデルヘルスチェック",
+      "message": "ヘルスチェックは API リクエストを直接送信してプロバイダーの接続性をテストします。以下の場合、チェックが失敗する可能性があります：\n\n• 公式プロバイダー（OAuth ログイン使用、独立した API キーなし）\n• 一部の中継サービス（リクエストが Claude Code CLI からのものか検証）\n• AWS Bedrock（IAM 署名認証を使用）\n\nチェック失敗はプロバイダーが使用不能であることを意味しません。独立したリクエストでの検証ができないことを示すだけです。アプリ内の実際の動作を基準にしてください。",
+      "confirm": "理解しました、続行する"
     }
   },
   "settings": {
@@ -719,8 +724,7 @@
     "pleaseAddEndpoint": "まずエンドポイントを追加してください",
     "testUnavailable": "速度テストを実行できません",
     "noResult": "結果がありません",
-    "testFailed": "速度テストに失敗しました: {{error}}",
-    "status": "ステータス: {{code}}"
+    "testFailed": "速度テストに失敗しました: {{error}}"
   },
   "providerAdvanced": {
     "testConfig": "モデルテスト設定",
@@ -1292,11 +1296,14 @@
       "title": "Agents 設定",
       "description": "openclaw.json の agents.defaults 設定を管理（デフォルトモデル、ランタイムパラメータなど）",
       "modelSection": "モデル設定",
-      "primaryModel": "プライマリモデル",
-      "primaryModelHint": "プロバイダ一覧の「デフォルトモデルに設定」ボタンで設定します",
+      "primaryModel": "デフォルトモデル",
+      "primaryModelHint": "設定済みプロバイダのモデルから選択してください",
       "notSet": "未設定",
       "fallbackModels": "フォールバックモデル",
-      "fallbackModelsHint": "カンマ区切り、優先度順",
+      "fallbackModelsHint": "プライマリモデルが利用不可の場合、優先度順にフォールバックが試行されます",
+      "addFallback": "フォールバックモデルを追加",
+      "noModels": "設定済みのプロバイダモデルがありません。先に OpenClaw プロバイダを追加してください。",
+      "notInList": "{{value}} (未設定)",
       "runtimeSection": "ランタイムパラメータ",
       "workspace": "ワークスペースパス",
       "timeout": "タイムアウト（秒）",

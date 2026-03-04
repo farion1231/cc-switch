@@ -1,7 +1,8 @@
 // 供应商配置处理工具函数
 
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
-import { normalizeQuotes } from "@/utils/textNormalization";
+import { normalizeQuotes, normalizeTomlText } from "@/utils/textNormalization";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
 const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
@@ -359,76 +360,52 @@ export interface UpdateTomlCommonConfigResult {
   error?: string;
 }
 
-// 保存之前的通用配置片段，用于替换操作
-let previousCommonSnippet = "";
-
-// 将通用配置片段写入/移除 TOML 配置
+// Write/remove common config snippet to/from TOML config (structural merge)
 export const updateTomlCommonConfigSnippet = (
   tomlString: string,
   snippetString: string,
   enabled: boolean,
 ): UpdateTomlCommonConfigResult => {
   if (!snippetString.trim()) {
-    // 如果片段为空，直接返回原始配置
-    return {
-      updatedConfig: tomlString,
-    };
+    return { updatedConfig: tomlString };
   }
 
-  if (enabled) {
-    // 添加通用配置
-    // 先移除旧的通用配置（如果有）
-    let updatedConfig = tomlString;
-    if (previousCommonSnippet && tomlString.includes(previousCommonSnippet)) {
-      updatedConfig = tomlString.replace(previousCommonSnippet, "");
+  try {
+    const config = parseToml(normalizeTomlText(tomlString || ""));
+    const snippet = parseToml(normalizeTomlText(snippetString));
+
+    if (enabled) {
+      const merged = deepMerge(
+        deepClone(config) as Record<string, any>,
+        deepClone(snippet) as Record<string, any>,
+      );
+      return { updatedConfig: stringifyToml(merged) };
+    } else {
+      const result = deepClone(config) as Record<string, any>;
+      deepRemove(result, snippet as Record<string, any>);
+      return { updatedConfig: stringifyToml(result) };
     }
-
-    // 在文件末尾添加新的通用配置
-    // 确保有适当的换行
-    const needsNewline = updatedConfig && !updatedConfig.endsWith("\n");
-    updatedConfig =
-      updatedConfig + (needsNewline ? "\n\n" : "\n") + snippetString;
-
-    // 保存当前通用配置片段
-    previousCommonSnippet = snippetString;
-
-    return {
-      updatedConfig: updatedConfig.trim() + "\n",
-    };
-  } else {
-    // 移除通用配置
-    if (tomlString.includes(snippetString)) {
-      const updatedConfig = tomlString.replace(snippetString, "");
-      // 清理多余的空行
-      const cleaned = updatedConfig.replace(/\n{3,}/g, "\n\n").trim();
-
-      // 清空保存的状态
-      previousCommonSnippet = "";
-
-      return {
-        updatedConfig: cleaned ? cleaned + "\n" : "",
-      };
-    }
-    return {
-      updatedConfig: tomlString,
-    };
+  } catch (e) {
+    return { updatedConfig: tomlString, error: String(e) };
   }
 };
 
-// 检查 TOML 配置是否已包含通用配置片段
+// Check if TOML config already contains the common config snippet (structural subset check)
 export const hasTomlCommonConfigSnippet = (
   tomlString: string,
   snippetString: string,
 ): boolean => {
   if (!snippetString.trim()) return false;
 
-  // 简单检查配置是否包含片段内容
-  // 去除空白字符后比较，避免格式差异影响
-  const normalizeWhitespace = (str: string) => str.replace(/\s+/g, " ").trim();
-
-  return normalizeWhitespace(tomlString).includes(
-    normalizeWhitespace(snippetString),
-  );
+  try {
+    const config = parseToml(normalizeTomlText(tomlString || ""));
+    const snippet = parseToml(normalizeTomlText(snippetString));
+    return isSubset(config, snippet);
+  } catch {
+    // Fallback to text-based matching if TOML parsing fails
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+    return norm(tomlString).includes(norm(snippetString));
+  }
 };
 
 // ========== Codex base_url utils ==========

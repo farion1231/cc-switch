@@ -219,6 +219,8 @@ export interface Settings {
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice
   usageConfirmed?: boolean;
+  // User has confirmed the stream check first-run notice
+  streamCheckConfirmed?: boolean;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "ja";
 

@@ -237,6 +237,23 @@ impl ProxyServer {
             .route("/v1/responses", post(handlers::handle_responses))
             .route("/v1/v1/responses", post(handlers::handle_responses))
             .route("/codex/v1/responses", post(handlers::handle_responses))
+            // OpenAI Responses Compact API (Codex CLI 远程压缩，透传)
+            .route(
+                "/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/v1/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/v1/v1/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/codex/v1/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
             // Gemini API (支持带前缀和不带前缀)
             .route("/v1beta/*path", post(handlers::handle_gemini))
             .route("/gemini/v1beta/*path", post(handlers::handle_gemini))
