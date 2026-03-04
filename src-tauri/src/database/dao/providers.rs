@@ -279,6 +279,13 @@ impl Database {
 
     pub fn delete_provider(&self, app_type: &str, id: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        if app_type == "codex" {
+            conn.execute(
+                "DELETE FROM codex_provider_bindings WHERE provider_id = ?1",
+                params![id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
         conn.execute(
             "DELETE FROM providers WHERE id = ?1 AND app_type = ?2",
             params![id, app_type],

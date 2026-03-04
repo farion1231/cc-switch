@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
-import type { AppId } from "@/lib/api";
+import { codexApi, settingsApi, type AppId } from "@/lib/api";
 import type {
+  CodexDeviceLoginStatus,
   ProviderCategory,
   ProviderMeta,
   ProviderTestConfig,
@@ -132,6 +134,7 @@ export function ProviderForm({
   showButtons = true,
 }: ProviderFormProps) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const isEditMode = Boolean(initialData);
 
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
@@ -147,6 +150,18 @@ export function ProviderForm({
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
   const [isCodexEndpointModalOpen, setIsCodexEndpointModalOpen] =
     useState(false);
+  const [quickBindLoading, setQuickBindLoading] = useState(false);
+  const [deviceLoginStarting, setDeviceLoginStarting] = useState(false);
+  const [deviceLoginCancelling, setDeviceLoginCancelling] = useState(false);
+  const [deviceLoginSession, setDeviceLoginSession] = useState<{
+    sessionId: string;
+    verificationUrl: string;
+    userCode: string;
+    remainingSeconds: number;
+    status: CodexDeviceLoginStatus;
+    error?: string;
+  } | null>(null);
+  const pollingInFlightRef = useRef(false);
 
   const [draftCustomEndpoints, setDraftCustomEndpoints] = useState<string[]>(
     () => {
@@ -828,6 +843,299 @@ export function ProviderForm({
     onSubmit(payload);
   };
 
+  const handleQuickBindCodexAuth = useCallback(async () => {
+    if (!providerId) return;
+    try {
+      setQuickBindLoading(true);
+      await codexApi.bindProviderAuth(providerId);
+      await codexApi.refreshUsageNow(providerId);
+      toast.success(
+        t("provider.codexBindLoginSuccess", {
+          defaultValue: "已绑定账号登录态",
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(
+        t("provider.codexBindLoginFailed", {
+          defaultValue: "绑定失败: {{error}}",
+          error: message,
+        }),
+      );
+    } finally {
+      setQuickBindLoading(false);
+    }
+  }, [providerId, t]);
+
+  const getDeviceLoginErrorText = useCallback(
+    (status: CodexDeviceLoginStatus, rawError?: string) => {
+      if (rawError?.trim()) return rawError.trim();
+      if (status === "expired") {
+        return t("provider.codexDeviceLoginErrorExpired", {
+          defaultValue: "授权码已过期，请重新发起登录。",
+        });
+      }
+      if (status === "cancelled") {
+        return t("provider.codexDeviceLoginErrorCancelled", {
+          defaultValue: "登录流程已取消。",
+        });
+      }
+      return t("provider.codexDeviceLoginErrorUnknown", {
+        defaultValue: "登录失败，请重试。",
+      });
+    },
+    [t],
+  );
+
+  const getDeviceLoginStatusText = useCallback(
+    (status: CodexDeviceLoginStatus) => {
+      if (status === "authorized") {
+        return t("provider.codexDeviceLoginStatusAuthorized", {
+          defaultValue: "已授权，正在完成绑定…",
+        });
+      }
+      if (status === "expired") {
+        return t("provider.codexDeviceLoginStatusExpired", {
+          defaultValue: "已过期",
+        });
+      }
+      if (status === "cancelled") {
+        return t("provider.codexDeviceLoginStatusCancelled", {
+          defaultValue: "已取消",
+        });
+      }
+      if (status === "failed") {
+        return t("provider.codexDeviceLoginStatusError", {
+          defaultValue: "登录失败",
+        });
+      }
+      return t("provider.codexDeviceLoginStatusPending", {
+        defaultValue: "等待授权",
+      });
+    },
+    [t],
+  );
+
+  const handleStartDeviceLogin = useCallback(async () => {
+    if (!providerId || deviceLoginStarting) return;
+    try {
+      setDeviceLoginStarting(true);
+      const session = await codexApi.startDeviceLogin(providerId);
+      setDeviceLoginSession({
+        sessionId: session.sessionId,
+        verificationUrl: session.verificationUrl,
+        userCode: session.userCode,
+        remainingSeconds: Math.max(
+          0,
+          Math.floor((session.expiresAtMs - Date.now()) / 1000),
+        ),
+        status: "pending",
+      });
+      try {
+        await settingsApi.openExternal(session.verificationUrl);
+      } catch {
+        window.open(session.verificationUrl, "_blank", "noopener,noreferrer");
+      }
+      toast.success(
+        t("provider.codexDeviceLoginStarted", {
+          defaultValue: "已打开验证页面，请输入授权码完成登录。",
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(
+        t("provider.codexDeviceLoginStartFailed", {
+          defaultValue: "发起登录失败：{{error}}",
+          error: message,
+        }),
+      );
+    } finally {
+      setDeviceLoginStarting(false);
+    }
+  }, [deviceLoginStarting, providerId, t]);
+
+  const handleCancelDeviceLogin = useCallback(async () => {
+    if (!deviceLoginSession || deviceLoginCancelling) return;
+    try {
+      setDeviceLoginCancelling(true);
+      await codexApi.cancelDeviceLogin(deviceLoginSession.sessionId);
+      setDeviceLoginSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "cancelled",
+              error: getDeviceLoginErrorText("cancelled"),
+            }
+          : prev,
+      );
+      toast.message(
+        t("provider.codexDeviceLoginCancelled", {
+          defaultValue: "已取消登录流程",
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(
+        t("provider.codexDeviceLoginCancelFailed", {
+          defaultValue: "取消失败：{{error}}",
+          error: message,
+        }),
+      );
+    } finally {
+      setDeviceLoginCancelling(false);
+    }
+  }, [deviceLoginCancelling, deviceLoginSession, getDeviceLoginErrorText, t]);
+
+  const handleCopyDeviceCode = useCallback(async () => {
+    if (!deviceLoginSession?.userCode) return;
+    try {
+      await navigator.clipboard.writeText(deviceLoginSession.userCode);
+      toast.success(
+        t("provider.codexDeviceLoginCodeCopied", {
+          defaultValue: "授权码已复制",
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(
+        t("provider.codexDeviceLoginCodeCopyFailed", {
+          defaultValue: "复制失败：{{error}}",
+          error: message,
+        }),
+      );
+    }
+  }, [deviceLoginSession?.userCode, t]);
+
+  useEffect(() => {
+    if (!deviceLoginSession?.sessionId) return;
+    if (
+      deviceLoginSession.status === "authorized" ||
+      deviceLoginSession.status === "failed" ||
+      deviceLoginSession.status === "expired" ||
+      deviceLoginSession.status === "cancelled"
+    ) {
+      return;
+    }
+
+    const timer = window.setInterval(async () => {
+      if (pollingInFlightRef.current) return;
+      pollingInFlightRef.current = true;
+      try {
+        const statusView = await codexApi.getDeviceLoginStatus(
+          deviceLoginSession.sessionId,
+        );
+        const normalizedStatus = statusView.status;
+
+        if (normalizedStatus === "authorized") {
+          await codexApi.finalizeDeviceLogin(deviceLoginSession.sessionId);
+          await codexApi.refreshUsageNow(providerId);
+          await queryClient.invalidateQueries({
+            queryKey: ["codex-usage-state", providerId],
+          });
+          setDeviceLoginSession(null);
+          toast.success(
+            t("provider.codexDeviceLoginSuccess", {
+              defaultValue: "登录成功并完成绑定",
+            }),
+          );
+          return;
+        }
+
+        if (
+          normalizedStatus === "failed" ||
+          normalizedStatus === "expired" ||
+          normalizedStatus === "cancelled"
+        ) {
+          const errorText = getDeviceLoginErrorText(
+            normalizedStatus,
+            statusView.message,
+          );
+          setDeviceLoginSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: normalizedStatus,
+                  error: errorText,
+                  remainingSeconds: Math.max(
+                    0,
+                    statusView.remainingSeconds ?? prev.remainingSeconds,
+                  ),
+                }
+              : prev,
+          );
+          return;
+        }
+
+        setDeviceLoginSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "pending",
+                remainingSeconds: Math.max(
+                  0,
+                  statusView.remainingSeconds ?? prev.remainingSeconds,
+                ),
+                error: undefined,
+              }
+            : prev,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setDeviceLoginSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "failed",
+                error: t("provider.codexDeviceLoginPollFailed", {
+                  defaultValue: "轮询状态失败：{{error}}",
+                  error: message,
+                }),
+              }
+            : prev,
+        );
+      } finally {
+        pollingInFlightRef.current = false;
+      }
+    }, 2000);
+
+    return () => window.clearInterval(timer);
+  }, [
+    deviceLoginSession?.sessionId,
+    deviceLoginSession?.status,
+    providerId,
+    queryClient,
+    t,
+    getDeviceLoginErrorText,
+  ]);
+
+  useEffect(() => {
+    if (!deviceLoginSession) return;
+    const ticker = window.setInterval(() => {
+      setDeviceLoginSession((prev) => {
+        if (!prev) return prev;
+        if (
+          prev.status === "authorized" ||
+          prev.status === "failed" ||
+          prev.status === "expired" ||
+          prev.status === "cancelled"
+        ) {
+          return prev;
+        }
+        const nextSeconds = Math.max(0, prev.remainingSeconds - 1);
+        if (nextSeconds === 0) {
+          return {
+            ...prev,
+            remainingSeconds: 0,
+            status: "expired",
+            error: getDeviceLoginErrorText("expired"),
+          };
+        }
+        return { ...prev, remainingSeconds: nextSeconds };
+      });
+    }, 1000);
+    return () => window.clearInterval(ticker);
+  }, [deviceLoginSession, getDeviceLoginErrorText]);
+
   const groupedPresets = useMemo(() => {
     return presetEntries.reduce<Record<string, PresetEntry[]>>((acc, entry) => {
       const category = entry.preset.category ?? "others";
@@ -1293,6 +1601,27 @@ export function ProviderForm({
             modelName={codexModelName}
             onModelNameChange={handleCodexModelNameChange}
             speedTestEndpoints={speedTestEndpoints}
+            onQuickBindAuth={handleQuickBindCodexAuth}
+            quickBindLoading={quickBindLoading}
+            canQuickBind={Boolean(providerId)}
+            onStartDeviceLogin={handleStartDeviceLogin}
+            deviceLoginLoading={deviceLoginStarting}
+            deviceLoginPanel={
+              deviceLoginSession
+                ? {
+                    userCode: deviceLoginSession.userCode,
+                    verificationUrl: deviceLoginSession.verificationUrl,
+                    remainingSeconds: deviceLoginSession.remainingSeconds,
+                    statusText: getDeviceLoginStatusText(deviceLoginSession.status),
+                    errorText: deviceLoginSession.error,
+                    isPolling: deviceLoginSession.status === "pending",
+                    isFinished: deviceLoginSession.status !== "pending",
+                  }
+                : null
+            }
+            onCopyDeviceCode={handleCopyDeviceCode}
+            onCancelDeviceLogin={handleCancelDeviceLogin}
+            deviceLoginCancelLoading={deviceLoginCancelling}
           />
         )}
 

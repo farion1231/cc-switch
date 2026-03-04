@@ -90,6 +90,105 @@ export interface UsageResult {
   error?: string;
 }
 
+export interface CodexAccount {
+  id: string;
+  email?: string;
+  displayName?: string;
+  accountId: string;
+  planType?: string;
+  authMode: string;
+  accessToken: string;
+  refreshToken?: string;
+  idToken?: string;
+  lastRefreshAt?: number;
+  lastUsedAt?: number;
+  source: string;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CodexProviderBinding {
+  providerId: string;
+  accountId: string;
+  autoBound: boolean;
+  updatedAt: number;
+}
+
+export interface CodexUsageState {
+  accountId: string;
+  allowed?: boolean;
+  limitReached?: boolean;
+  primaryUsedPercent?: number;
+  primaryLimitWindowSeconds?: number;
+  primaryResetAt?: number;
+  primaryResetAfterSeconds?: number;
+  secondaryUsedPercent?: number;
+  secondaryLimitWindowSeconds?: number;
+  secondaryResetAt?: number;
+  secondaryResetAfterSeconds?: number;
+  creditsHasCredits?: boolean;
+  creditsBalance?: number;
+  creditsUnlimited?: boolean;
+  lastRefreshAt?: number;
+  lastError?: string;
+}
+
+export interface CodexUsageView {
+  providerId: string;
+  account?: CodexAccount;
+  binding?: CodexProviderBinding;
+  usage?: CodexUsageState;
+  available: boolean;
+  cooldownSeconds?: number;
+}
+
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+  bindingsUpdated: number;
+}
+
+export interface RefreshResult {
+  refreshedAccounts: number;
+  successAccounts: number;
+  failedAccounts: number;
+}
+
+export interface LoginSession {
+  sessionId: string;
+  providerId: string;
+  authUrl: string;
+}
+
+export interface CodexDeviceLoginSession {
+  sessionId: string;
+  providerId: string;
+  verificationUrl: string;
+  userCode: string;
+  expiresAtMs: number;
+  openedBrowser: boolean;
+}
+
+export type CodexDeviceLoginStatus =
+  | "pending"
+  | "authorized"
+  | "expired"
+  | "cancelled"
+  | "failed";
+
+export interface CodexDeviceLoginStatusView {
+  sessionId: string;
+  providerId: string;
+  verificationUrl?: string;
+  userCode?: string;
+  status: CodexDeviceLoginStatus;
+  message?: string;
+  remainingSeconds: number;
+  expiresAtMs: number;
+  updatedAtMs: number;
+}
+
 // 供应商单独的模型测试配置
 export interface ProviderTestConfig {
   // 是否启用单独配置（false 时使用全局配置）
@@ -150,6 +249,7 @@ export interface ProviderMeta {
 
 // Skill 同步方式
 export type SkillSyncMethod = "auto" | "symlink" | "copy";
+export type StartupItemsMode = "autoLaunch" | "legacyLaunchAgent";
 
 // Claude API 格式类型
 // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
@@ -215,6 +315,14 @@ export interface Settings {
   silentStartup?: boolean;
   // 是否启用主页面本地代理功能（默认关闭）
   enableLocalProxy?: boolean;
+  // 是否启用 Guardian（代理健康守护与自愈）
+  guardianEnabled?: boolean;
+  // Guardian 巡检间隔（秒）
+  guardianIntervalSeconds?: number;
+  // 是否已完成旧版启动项迁移
+  legacyStartupMigrated?: boolean;
+  // 启动项模式（新自动启动 / 旧 LaunchAgent）
+  startupItemsMode?: StartupItemsMode;
   // User has confirmed the local proxy first-run notice
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice

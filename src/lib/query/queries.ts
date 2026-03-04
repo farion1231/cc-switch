@@ -7,6 +7,7 @@ import {
   providersApi,
   settingsApi,
   usageApi,
+  codexApi,
   sessionsApi,
   type AppId,
 } from "@/lib/api";
@@ -14,6 +15,7 @@ import type {
   Provider,
   Settings,
   UsageResult,
+  CodexUsageView,
   SessionMeta,
   SessionMessage,
 } from "@/types";
@@ -131,6 +133,21 @@ export const useUsageQuery = (
     ...query,
     lastQueriedAt: query.dataUpdatedAt || null,
   };
+};
+
+export const useCodexUsageStateQuery = (
+  providerId: string,
+  options?: { enabled?: boolean; refetchIntervalMs?: number },
+) => {
+  const { enabled = true, refetchIntervalMs = 60000 } = options || {};
+  return useQuery<CodexUsageView>({
+    queryKey: ["codex-usage-state", providerId],
+    queryFn: async () => codexApi.getUsageState(providerId),
+    enabled: enabled && !!providerId,
+    refetchInterval: refetchIntervalMs,
+    refetchIntervalInBackground: true,
+    staleTime: 30_000,
+  });
 };
 
 export const useSessionsQuery = () => {

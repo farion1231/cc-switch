@@ -193,8 +193,11 @@ pub async fn process_response(
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
+    request_expects_streaming: bool,
 ) -> Result<Response, ProxyError> {
-    if is_sse_response(&response) {
+    // 某些上游会返回 SSE 事件流但缺少 text/event-stream 头，不能仅依赖 content-type。
+    // 优先尊重请求端的 stream 意图，避免把长连接流错误当作非流式一次性读取。
+    if request_expects_streaming || is_sse_response(&response) {
         Ok(handle_streaming(response, ctx, state, parser_config).await)
     } else {
         handle_non_streaming(response, ctx, state, parser_config).await

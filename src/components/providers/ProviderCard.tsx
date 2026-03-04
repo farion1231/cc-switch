@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
+import CodexQuotaPanel from "@/components/providers/CodexQuotaPanel";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import { useProviderHealth } from "@/lib/query/failover";
@@ -49,6 +50,7 @@ interface ProviderCardProps {
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
   onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
+  circuitFailureThreshold?: number;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
@@ -113,6 +115,7 @@ export function ProviderCard({
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
+  circuitFailureThreshold = 4,
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
@@ -280,6 +283,8 @@ export function ProviderCard({
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
                   consecutiveFailures={health.consecutive_failures}
+                  failureThreshold={circuitFailureThreshold}
+                  lastError={health.last_error}
                 />
               )}
 
@@ -341,15 +346,21 @@ export function ProviderCard({
                   </span>
                 </div>
               ) : (
-                <UsageFooter
-                  provider={provider}
-                  providerId={provider.id}
-                  appId={appId}
-                  usageEnabled={usageEnabled}
-                  isCurrent={isCurrent}
-                  isInConfig={isInConfig}
-                  inline={true}
-                />
+                <>
+                  {appId === "codex" ? (
+                    <CodexQuotaPanel providerId={provider.id} inline />
+                  ) : (
+                    <UsageFooter
+                      provider={provider}
+                      providerId={provider.id}
+                      appId={appId}
+                      usageEnabled={usageEnabled}
+                      isCurrent={isCurrent}
+                      isInConfig={isInConfig}
+                      inline={true}
+                    />
+                  )}
+                </>
               )}
               {hasMultiplePlans && (
                 <button
@@ -411,17 +422,21 @@ export function ProviderCard({
         </div>
       </div>
 
-      {isExpanded && hasMultiplePlans && (
+      {(appId === "codex" || (isExpanded && hasMultiplePlans)) && (
         <div className="mt-4 pt-4 border-t border-border-default">
-          <UsageFooter
-            provider={provider}
-            providerId={provider.id}
-            appId={appId}
-            usageEnabled={usageEnabled}
-            isCurrent={isCurrent}
-            isInConfig={isInConfig}
-            inline={false}
-          />
+          {appId === "codex" ? (
+            <CodexQuotaPanel providerId={provider.id} />
+          ) : (
+            <UsageFooter
+              provider={provider}
+              providerId={provider.id}
+              appId={appId}
+              usageEnabled={usageEnabled}
+              isCurrent={isCurrent}
+              isInConfig={isInConfig}
+              inline={false}
+            />
+          )}
         </div>
       )}
     </div>

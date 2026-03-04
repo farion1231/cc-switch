@@ -230,6 +230,71 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 13. Codex 账号主表（统一认证仓）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_accounts (
+            id TEXT PRIMARY KEY,
+            email TEXT,
+            display_name TEXT,
+            account_id TEXT NOT NULL,
+            plan_type TEXT,
+            auth_mode TEXT NOT NULL,
+            access_token TEXT NOT NULL,
+            refresh_token TEXT,
+            id_token TEXT,
+            last_refresh_at INTEGER,
+            last_used_at INTEGER,
+            source TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_codex_accounts_active ON codex_accounts(is_active)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 14. Codex Provider -> Account 绑定关系
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            auto_bound INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 15. Codex usage 缓存态（供调度与 UI 使用）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_usage_state (
+            account_id TEXT PRIMARY KEY,
+            allowed INTEGER,
+            limit_reached INTEGER,
+            primary_used_percent REAL,
+            primary_limit_window_seconds INTEGER,
+            primary_reset_at INTEGER,
+            primary_reset_after_seconds INTEGER,
+            secondary_used_percent REAL,
+            secondary_limit_window_seconds INTEGER,
+            secondary_reset_at INTEGER,
+            secondary_reset_after_seconds INTEGER,
+            credits_has_credits INTEGER,
+            credits_balance REAL,
+            credits_unlimited INTEGER,
+            last_refresh_at INTEGER,
+            last_error TEXT,
+            FOREIGN KEY (account_id) REFERENCES codex_accounts(id) ON DELETE CASCADE
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 注意：circuit_breaker_config 已合并到 proxy_config 表中
 
         // 16. Proxy Live Backup 表 (Live 配置备份)
@@ -306,6 +371,18 @@ impl Database {
             [],
         );
 
+        // codex usage 轮询默认值
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('codex_switcher_import_done', 'false')",
+            [],
+        );
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('codex_usage_poller_enabled', 'true')",
+            [],
+        );
+
+        Self::ensure_codex_provider_bindings_integrity(conn)?;
+
         Ok(())
     }
 
@@ -360,6 +437,21 @@ impl Database {
                         Self::migrate_v4_to_v5(conn)?;
                         Self::set_user_version(conn, 5)?;
                     }
+                    5 => {
+                        log::info!("迁移数据库从 v5 到 v6（Codex 账号主仓 + usage 状态）");
+                        Self::migrate_v5_to_v6(conn)?;
+                        Self::set_user_version(conn, 6)?;
+                    }
+                    6 => {
+                        log::info!("迁移数据库从 v6 到 v7（修复 Codex 绑定表外键不兼容）");
+                        Self::migrate_v6_to_v7(conn)?;
+                        Self::set_user_version(conn, 7)?;
+                    }
+                    7 => {
+                        log::info!("迁移数据库从 v7 到 v8（扩展 Codex usage 窗口字段）");
+                        Self::migrate_v7_to_v8(conn)?;
+                        Self::set_user_version(conn, 8)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -368,6 +460,7 @@ impl Database {
                 }
                 version = Self::get_user_version(conn)?;
             }
+            Self::ensure_codex_provider_bindings_integrity(conn)?;
             Ok(())
         })();
 
@@ -914,6 +1007,126 @@ impl Database {
         Ok(())
     }
 
+    /// v5 -> v6 迁移：Codex 账号主仓与 usage 状态
+    fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_accounts (
+            id TEXT PRIMARY KEY,
+            email TEXT,
+            display_name TEXT,
+            account_id TEXT NOT NULL,
+            plan_type TEXT,
+            auth_mode TEXT NOT NULL,
+            access_token TEXT NOT NULL,
+            refresh_token TEXT,
+            id_token TEXT,
+            last_refresh_at INTEGER,
+            last_used_at INTEGER,
+            source TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_codex_accounts_active ON codex_accounts(is_active)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            auto_bound INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_usage_state (
+            account_id TEXT PRIMARY KEY,
+            allowed INTEGER,
+            limit_reached INTEGER,
+            primary_used_percent REAL,
+            primary_limit_window_seconds INTEGER,
+            primary_reset_at INTEGER,
+            primary_reset_after_seconds INTEGER,
+            secondary_used_percent REAL,
+            secondary_limit_window_seconds INTEGER,
+            secondary_reset_at INTEGER,
+            secondary_reset_after_seconds INTEGER,
+            credits_has_credits INTEGER,
+            credits_balance REAL,
+            credits_unlimited INTEGER,
+            last_refresh_at INTEGER,
+            last_error TEXT
+        )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('codex_switcher_import_done', 'false')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('codex_usage_poller_enabled', 'true')",
+            [],
+        )?;
+        log::info!("v5 -> v6 迁移完成：已添加 Codex 主仓与 usage 状态表");
+        Ok(())
+    }
+
+    /// v6 -> v7 迁移：修复 codex_provider_bindings 外键不兼容
+    fn migrate_v6_to_v7(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "codex_provider_bindings")? {
+            return Ok(());
+        }
+
+        conn.execute(
+            "ALTER TABLE codex_provider_bindings RENAME TO codex_provider_bindings_old",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE codex_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            auto_bound INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT OR REPLACE INTO codex_provider_bindings(provider_id, account_id, auto_bound, updated_at)
+             SELECT provider_id, account_id, auto_bound, updated_at
+             FROM codex_provider_bindings_old",
+            [],
+        )?;
+        conn.execute("DROP TABLE codex_provider_bindings_old", [])?;
+
+        log::info!("v6 -> v7 迁移完成：已重建 codex_provider_bindings");
+        Ok(())
+    }
+
+    /// v7 -> v8 迁移：扩展 codex_usage_state 的窗口总时长字段
+    fn migrate_v7_to_v8(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "codex_usage_state")? {
+            return Ok(());
+        }
+        Self::add_column_if_missing(
+            conn,
+            "codex_usage_state",
+            "primary_limit_window_seconds",
+            "INTEGER",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "codex_usage_state",
+            "secondary_limit_window_seconds",
+            "INTEGER",
+        )?;
+        log::info!("v7 -> v8 迁移完成：已扩展 codex_usage_state 窗口总时长字段");
+        Ok(())
+    }
+
     /// 插入默认模型定价数据
     /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
@@ -1284,6 +1497,114 @@ impl Database {
     fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
         // 每次启动都执行 INSERT OR IGNORE，增量追加新模型，已有数据不覆盖
         Self::seed_model_pricing(conn)
+    }
+
+    fn codex_provider_bindings_expected_columns() -> [&'static str; 4] {
+        ["provider_id", "account_id", "auto_bound", "updated_at"]
+    }
+
+    fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>, AppError> {
+        Self::validate_identifier(table, "表名")?;
+        let sql = format!("PRAGMA table_info(\"{table}\");");
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| AppError::Database(format!("读取表结构失败: {e}")))?;
+        let mut rows = stmt
+            .query([])
+            .map_err(|e| AppError::Database(format!("查询表结构失败: {e}")))?;
+        let mut columns = Vec::new();
+        while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+            columns.push(
+                row.get::<_, String>(1)
+                    .map_err(|e| AppError::Database(format!("读取列名失败: {e}")))?,
+            );
+        }
+        Ok(columns)
+    }
+
+    fn recreate_codex_provider_bindings_table(conn: &Connection) -> Result<(), AppError> {
+        let backup_table = "codex_provider_bindings_rebuild_old";
+        let _ = conn.execute(&format!("DROP TABLE IF EXISTS {backup_table}"), []);
+
+        conn.execute(
+            "ALTER TABLE codex_provider_bindings RENAME TO codex_provider_bindings_rebuild_old",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE codex_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            auto_bound INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )?;
+
+        let has_provider_id = Self::has_column(conn, backup_table, "provider_id")?;
+        let has_account_id = Self::has_column(conn, backup_table, "account_id")?;
+        if has_provider_id && has_account_id {
+            let auto_bound_expr = if Self::has_column(conn, backup_table, "auto_bound")? {
+                "COALESCE(auto_bound, 1)"
+            } else {
+                "1"
+            };
+            let updated_at_expr = if Self::has_column(conn, backup_table, "updated_at")? {
+                "COALESCE(updated_at, CAST(strftime('%s', 'now') AS INTEGER))"
+            } else {
+                "CAST(strftime('%s', 'now') AS INTEGER)"
+            };
+            let insert_sql = format!(
+                "INSERT OR REPLACE INTO codex_provider_bindings(provider_id, account_id, auto_bound, updated_at)
+                 SELECT provider_id, account_id, {auto_bound_expr}, {updated_at_expr}
+                 FROM {backup_table}
+                 WHERE provider_id IS NOT NULL AND account_id IS NOT NULL"
+            );
+            conn.execute(&insert_sql, [])?;
+        } else {
+            log::warn!(
+                "codex_provider_bindings 重建时缺少关键列（provider_id/account_id），跳过数据迁移"
+            );
+        }
+
+        conn.execute("DROP TABLE codex_provider_bindings_rebuild_old", [])?;
+        Ok(())
+    }
+
+    fn ensure_codex_provider_bindings_integrity(conn: &Connection) -> Result<(), AppError> {
+        let expected: std::collections::HashSet<String> = Self::codex_provider_bindings_expected_columns()
+            .into_iter()
+            .map(ToString::to_string)
+            .collect();
+
+        if !Self::table_exists(conn, "codex_provider_bindings")? {
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS codex_provider_bindings (
+                provider_id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                auto_bound INTEGER NOT NULL DEFAULT 1,
+                updated_at INTEGER NOT NULL
+            )",
+                [],
+            )?;
+            return Ok(());
+        }
+
+        let actual_columns = Self::table_columns(conn, "codex_provider_bindings")?;
+        let actual: std::collections::HashSet<String> =
+            actual_columns.iter().map(|v| v.to_ascii_lowercase()).collect();
+
+        if actual == expected {
+            return Ok(());
+        }
+
+        log::warn!(
+            "检测到 codex_provider_bindings 列集合不一致，准备重建。actual={:?}, expected={:?}",
+            actual_columns,
+            Self::codex_provider_bindings_expected_columns()
+        );
+        Self::recreate_codex_provider_bindings_table(conn)?;
+        log::info!("codex_provider_bindings 列集合已修复并完成幂等重建");
+        Ok(())
     }
 
     // --- 辅助方法 ---

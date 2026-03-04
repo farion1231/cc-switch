@@ -8,6 +8,22 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::services::skill::SyncMethod;
 
+fn default_guardian_enabled() -> bool {
+    true
+}
+
+fn default_guardian_interval_seconds() -> u64 {
+    60
+}
+
+fn default_legacy_startup_migrated() -> bool {
+    false
+}
+
+fn default_startup_items_mode() -> StartupItemsMode {
+    StartupItemsMode::default()
+}
+
 /// 自定义端点配置（历史兼容，实际存储在 provider.meta.custom_endpoints）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +76,19 @@ impl VisibleApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => self.openclaw,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StartupItemsMode {
+    AutoLaunch,
+    LegacyLaunchAgent,
+}
+
+impl Default for StartupItemsMode {
+    fn default() -> Self {
+        Self::AutoLaunch
     }
 }
 
@@ -187,6 +216,18 @@ pub struct AppSettings {
     /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
     #[serde(default)]
     pub silent_startup: bool,
+    /// 是否启用 Guardian 周期巡检
+    #[serde(default = "default_guardian_enabled")]
+    pub guardian_enabled: bool,
+    /// Guardian 巡检间隔（秒）
+    #[serde(default = "default_guardian_interval_seconds")]
+    pub guardian_interval_seconds: u64,
+    /// 是否已完成旧版启动项迁移
+    #[serde(default = "default_legacy_startup_migrated")]
+    pub legacy_startup_migrated: bool,
+    /// 启动项模式：自动启动（新）/Legacy LaunchAgent（旧）
+    #[serde(default = "default_startup_items_mode")]
+    pub startup_items_mode: StartupItemsMode,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
@@ -279,6 +320,10 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            guardian_enabled: default_guardian_enabled(),
+            guardian_interval_seconds: default_guardian_interval_seconds(),
+            legacy_startup_migrated: default_legacy_startup_migrated(),
+            startup_items_mode: default_startup_items_mode(),
             enable_local_proxy: false,
             proxy_confirmed: None,
             usage_confirmed: None,
@@ -631,6 +676,33 @@ pub fn get_skill_sync_method() -> SyncMethod {
             e.into_inner()
         })
         .skill_sync_method
+}
+
+pub fn guardian_enabled() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .guardian_enabled
+}
+
+pub fn guardian_interval_seconds() -> u64 {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .guardian_interval_seconds
+        .clamp(30, 3600)
+}
+
+pub fn set_guardian_enabled(enabled: bool) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        current.guardian_enabled = enabled;
+    })
 }
 
 // ===== 备份策略管理函数 =====

@@ -256,6 +256,23 @@ impl RequestForwarder {
                     });
                 }
                 Err(e) => {
+                    if let ProxyError::UpstreamError { status: 429, body } = &e {
+                        let cooldown_secs = parse_rate_limit_cooldown_seconds(body).unwrap_or(60);
+                        self.router
+                            .set_provider_cooldown_for_secs(
+                                &provider.id,
+                                app_type_str,
+                                cooldown_secs,
+                                "upstream 429 rate limit",
+                            )
+                            .await;
+                        log::warn!(
+                            "[{app_type_str}] Provider {} 触发 429，冷却 {} 秒后再试",
+                            provider.name,
+                            cooldown_secs
+                        );
+                    }
+
                     // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
@@ -388,17 +405,7 @@ impl RequestForwarder {
                                             "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
                                         );
 
-                                        // 区分错误类型：Provider 问题记录失败，客户端问题仅释放 permit
-                                        let is_provider_error = match &retry_err {
-                                            ProxyError::Timeout(_)
-                                            | ProxyError::ForwardFailed(_) => true,
-                                            ProxyError::UpstreamError { status, .. } => {
-                                                *status >= 500
-                                            }
-                                            _ => false,
-                                        };
-
-                                        if is_provider_error {
+                                        if should_count_provider_failure(&retry_err) {
                                             // Provider 问题：记录失败到熔断器
                                             let _ = self
                                                 .router
@@ -571,15 +578,7 @@ impl RequestForwarder {
                                         "[{app_type_str}] [RECT-012] budget 整流重试仍失败: {retry_err}"
                                     );
 
-                                    let is_provider_error = match &retry_err {
-                                        ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => {
-                                            true
-                                        }
-                                        ProxyError::UpstreamError { status, .. } => *status >= 500,
-                                        _ => false,
-                                    };
-
-                                    if is_provider_error {
+                                    if should_count_provider_failure(&retry_err) {
                                         let _ = self
                                             .router
                                             .record_result(
@@ -639,17 +638,27 @@ impl RequestForwarder {
                         });
                     }
 
-                    // 失败：记录失败并更新熔断器
-                    let _ = self
-                        .router
-                        .record_result(
-                            &provider.id,
-                            app_type_str,
-                            used_half_open_permit,
-                            false,
-                            Some(e.to_string()),
-                        )
-                        .await;
+                    // 失败：仅在 Provider 级问题时计入熔断器，避免请求参数类错误污染健康度
+                    if should_count_provider_failure(&e) {
+                        let _ = self
+                            .router
+                            .record_result(
+                                &provider.id,
+                                app_type_str,
+                                used_half_open_permit,
+                                false,
+                                Some(e.to_string()),
+                            )
+                            .await;
+                    } else {
+                        self.router
+                            .release_permit_neutral(
+                                &provider.id,
+                                app_type_str,
+                                used_half_open_permit,
+                            )
+                            .await;
+                    }
 
                     // 分类错误
                     let category = self.categorize_proxy_error(&e);
@@ -925,5 +934,138 @@ fn extract_error_message(error: &ProxyError) -> Option<String> {
     match error {
         ProxyError::UpstreamError { body, .. } => body.clone(),
         _ => Some(error.to_string()),
+    }
+}
+
+fn parse_unix_from_iso8601(value: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.timestamp())
+}
+
+fn parse_rate_limit_cooldown_seconds(body: &Option<String>) -> Option<u64> {
+    let body_str = body.as_ref()?;
+    let json: Value = serde_json::from_str(body_str).ok()?;
+    let now = chrono::Utc::now().timestamp();
+
+    let mut candidates: Vec<i64> = Vec::new();
+
+    if let Some(v) = json
+        .pointer("/error/reset_after_seconds")
+        .and_then(|v| v.as_i64())
+    {
+        candidates.push(v.max(0));
+    }
+    if let Some(v) = json
+        .pointer("/error/resets_in_seconds")
+        .and_then(|v| v.as_i64())
+    {
+        candidates.push(v.max(0));
+    }
+    if let Some(v) = json
+        .pointer("/error/resets_at")
+        .and_then(|v| v.as_i64())
+        .map(|ts| ts - now)
+    {
+        candidates.push(v.max(0));
+    }
+
+    for window in ["primary_window", "secondary_window"] {
+        if let Some(v) = json
+            .pointer(&format!("/rate_limit/{window}/reset_after_seconds"))
+            .and_then(|v| v.as_i64())
+        {
+            candidates.push(v.max(0));
+        }
+
+        if let Some(ts) = json
+            .pointer(&format!("/rate_limit/{window}/reset_at"))
+            .and_then(|v| v.as_i64())
+        {
+            candidates.push((ts - now).max(0));
+        } else if let Some(ts_iso) = json
+            .pointer(&format!("/rate_limit/{window}/reset_at"))
+            .and_then(|v| v.as_str())
+            .and_then(parse_unix_from_iso8601)
+        {
+            candidates.push((ts_iso - now).max(0));
+        }
+    }
+
+    candidates.into_iter().max().map(|v| v as u64)
+}
+
+/// 判断错误是否应计入 Provider 熔断器统计。
+///
+/// 原则：
+/// - Provider 网络/上游可用性问题：计入（用于故障转移）
+/// - 客户端请求参数/协议问题：不计入（避免误熔断）
+fn should_count_provider_failure(error: &ProxyError) -> bool {
+    match error {
+        ProxyError::Timeout(_)
+        | ProxyError::ForwardFailed(_)
+        | ProxyError::StreamIdleTimeout(_)
+        | ProxyError::ConfigError(_)
+        | ProxyError::AuthError(_) => true,
+        ProxyError::UpstreamError { status, .. } => {
+            *status >= 500 || *status == 401 || *status == 403
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_rate_limit_cooldown_seconds, should_count_provider_failure};
+    use crate::proxy::ProxyError;
+
+    #[test]
+    fn should_count_timeout_as_provider_failure() {
+        assert!(should_count_provider_failure(&ProxyError::Timeout(
+            "timeout".to_string()
+        )));
+    }
+
+    #[test]
+    fn should_count_429_as_provider_failure() {
+        assert!(!should_count_provider_failure(&ProxyError::UpstreamError {
+            status: 429,
+            body: Some("rate limit".to_string()),
+        }));
+    }
+
+    #[test]
+    fn parse_cooldown_from_usage_limit_payload() {
+        let body = Some(
+            r#"{"error":{"type":"usage_limit_reached","resets_at":1772675893,"resets_in_seconds":173883}}"#
+                .to_string(),
+        );
+        let secs = parse_rate_limit_cooldown_seconds(&body).unwrap();
+        assert!(secs >= 173883);
+    }
+
+    #[test]
+    fn parse_cooldown_from_wham_windows() {
+        let body = Some(
+            r#"{"rate_limit":{"primary_window":{"reset_after_seconds":120},"secondary_window":{"reset_after_seconds":360}}}"#
+                .to_string(),
+        );
+        let secs = parse_rate_limit_cooldown_seconds(&body).unwrap();
+        assert_eq!(secs, 360);
+    }
+
+    #[test]
+    fn should_not_count_400_as_provider_failure() {
+        assert!(!should_count_provider_failure(&ProxyError::UpstreamError {
+            status: 400,
+            body: Some("bad request".to_string()),
+        }));
+    }
+
+    #[test]
+    fn should_not_count_transform_error_as_provider_failure() {
+        assert!(!should_count_provider_failure(&ProxyError::TransformError(
+            "invalid payload".to_string()
+        )));
     }
 }

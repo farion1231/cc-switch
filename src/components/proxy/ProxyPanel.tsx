@@ -25,6 +25,7 @@ import {
   useSetProxyTakeoverForApp,
   useGlobalProxyConfig,
   useUpdateGlobalProxyConfig,
+  useAppProxyConfig,
 } from "@/lib/query/proxy";
 import type { ProxyStatus } from "@/types/proxy";
 import { useTranslation } from "react-i18next";
@@ -75,12 +76,19 @@ export function ProxyPanel({
   const handleTakeoverChange = async (appType: string, enabled: boolean) => {
     try {
       await setTakeoverForApp.mutateAsync({ appType, enabled });
-      toast.success(
-        enabled
-          ? t("proxy.takeover.enabled", {
+      const enabledMessage =
+        appType === "codex"
+          ? t("proxy.takeover.codexEnabled", {
+              app: appType,
+              defaultValue: `${appType} 接管已启用（端点与认证已自动校验）`,
+            })
+          : t("proxy.takeover.enabled", {
               app: appType,
               defaultValue: `${appType} 接管已启用`,
-            })
+            });
+      toast.success(
+        enabled
+          ? enabledMessage
           : t("proxy.takeover.disabled", {
               app: appType,
               defaultValue: `${appType} 接管已关闭`,
@@ -88,10 +96,15 @@ export function ProxyPanel({
         { closeButton: true },
       );
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
       toast.error(
         t("proxy.takeover.failed", {
           defaultValue: "切换接管状态失败",
         }),
+        {
+          description: detail || undefined,
+          closeButton: true,
+        },
       );
     }
   };
@@ -680,6 +693,7 @@ function ProviderQueueItem({
 }: ProviderQueueItemProps) {
   const { t } = useTranslation();
   const { data: health } = useProviderHealth(provider.id, appType);
+  const { data: appProxyConfig } = useAppProxyConfig(appType);
 
   return (
     <div
@@ -711,6 +725,8 @@ function ProviderQueueItem({
       {/* 健康徽章 */}
       <ProviderHealthBadge
         consecutiveFailures={health?.consecutive_failures ?? 0}
+        failureThreshold={appProxyConfig?.circuitFailureThreshold ?? 4}
+        lastError={health?.last_error}
       />
     </div>
   );

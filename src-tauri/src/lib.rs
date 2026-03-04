@@ -3,6 +3,7 @@ mod app_store;
 mod auto_launch;
 mod claude_mcp;
 mod claude_plugin;
+mod codex_account;
 mod codex_config;
 mod commands;
 mod config;
@@ -29,6 +30,10 @@ mod tray;
 mod usage_script;
 
 pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
+pub use codex_account::{
+    CodexAccount, CodexProviderBinding, CodexUsageState, CodexUsageView, DeviceLoginSession,
+    DeviceLoginState, DeviceLoginStatus, ImportResult, LoginSession, RefreshResult,
+};
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
 pub use commands::open_provider_terminal;
 pub use commands::*;
@@ -394,6 +399,40 @@ pub fn run() {
             // 设置 AppHandle 用于代理故障转移时的 UI 更新
             app_state.proxy_service.set_app_handle(app.handle().clone());
 
+            // 旧版启动项迁移（首次运行）：
+            // - 备份并清理 legacy LaunchAgents labels / legacy scripts
+            // - 成功后设置 legacyStartupMigrated=true
+            match crate::services::legacy_startup_migration::migrate_legacy_startup_items_if_needed()
+            {
+                Ok(result) => {
+                    if result.migrated {
+                        log::info!(
+                            "✓ Legacy startup migration done: launch_agents={}, scripts={}",
+                            result.removed_launch_agents.len(),
+                            result.removed_scripts.len()
+                        );
+                    } else if result.skipped {
+                        log::debug!("○ Legacy startup migration skipped (already migrated)");
+                    }
+                }
+                Err(err) => {
+                    log::warn!("✗ Legacy startup migration failed: {err}");
+                }
+            }
+
+            // 启动 Guardian：
+            // - 启动时先巡检一次
+            // - 再进入周期巡检循环（由 guardianEnabled 控制）
+            {
+                let guardian = app_state.guardian_service.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = guardian.run_once("startup").await {
+                        log::warn!("[Guardian] startup run failed: {err}");
+                    }
+                    guardian.start_worker();
+                });
+            }
+
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
             // ============================================================
@@ -724,6 +763,14 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // Codex 账号自动导入（一次）+ usage 轮询器（60s）
+            {
+                let db_for_codex = app.state::<AppState>().db.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::services::CodexUsageService::maybe_import_and_start(db_for_codex).await;
+                });
+            }
+
             // 从数据库加载日志配置并应用
             {
                 let db = &app.state::<AppState>().db;
@@ -888,6 +935,15 @@ pub fn run() {
             commands::set_rectifier_config,
             commands::get_log_config,
             commands::set_log_config,
+            // Guardian service
+            commands::get_guardian_status,
+            commands::set_guardian_enabled,
+            commands::run_guardian_once,
+            commands::run_guardian_diagnostic,
+            commands::get_guardian_migration_status,
+            commands::migrate_legacy_startup_items,
+            commands::rollback_legacy_migration,
+            commands::rollback_legacy_migration_with_backup_id,
             commands::restart_app,
             commands::check_for_updates,
             commands::is_portable_mode,
@@ -906,6 +962,18 @@ pub fn run() {
             // usage query
             commands::queryProviderUsage,
             commands::testUsageScript,
+            // codex accounts / quota
+            commands::codex_list_accounts,
+            commands::codex_start_login,
+            commands::codex_complete_login,
+            commands::codex_start_device_login,
+            commands::codex_get_device_login_status,
+            commands::codex_cancel_device_login,
+            commands::codex_finalize_device_login,
+            commands::codex_import_from_switcher_once,
+            commands::codex_get_usage_state,
+            commands::codex_refresh_usage_now,
+            commands::codex_bind_provider_auth,
             // New MCP via config.json (SSOT)
             commands::get_mcp_config,
             commands::upsert_mcp_server_in_config,

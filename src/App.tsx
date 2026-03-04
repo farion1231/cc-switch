@@ -27,6 +27,7 @@ import type { EnvConflict } from "@/types/env";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
+  codexApi,
   settingsApi,
   type AppId,
   type ProviderSwitchEvent,
@@ -197,6 +198,8 @@ function App() {
   } | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
+  const [isRefreshingCodexUsageAll, setIsRefreshingCodexUsageAll] =
+    useState(false);
 
   const effectiveEditingProvider = useLastValidValue(editingProvider);
   const effectiveUsageProvider = useLastValidValue(usageProvider);
@@ -672,6 +675,34 @@ function App() {
     }
   };
 
+  const handleRefreshAllCodexUsage = async () => {
+    if (isRefreshingCodexUsageAll) return;
+    setIsRefreshingCodexUsageAll(true);
+    try {
+      const result = await codexApi.refreshUsageNow();
+      await queryClient.invalidateQueries({
+        queryKey: ["codex-usage-state"],
+      });
+      await queryClient.refetchQueries({
+        queryKey: ["codex-usage-state"],
+      });
+      if (result.failedAccounts > 0) {
+        toast.warning(
+          `Codex 用量刷新完成：成功 ${result.successAccounts}，失败 ${result.failedAccounts}`,
+        );
+      } else {
+        toast.success(
+          `Codex 用量已刷新：${result.successAccounts}/${result.refreshedAccounts}`,
+        );
+      }
+    } catch (error) {
+      const detail = extractErrorMessage(error);
+      toast.error(`刷新 Codex 用量失败${detail ? `: ${detail}` : ""}`);
+    } finally {
+      setIsRefreshingCodexUsageAll(false);
+    }
+  };
+
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
@@ -965,6 +996,25 @@ function App() {
           </div>
 
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
+            {currentView === "providers" && activeApp === "codex" && (
+              <div style={{ WebkitAppRegion: "no-drag" } as any}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleRefreshAllCodexUsage}
+                  disabled={isRefreshingCodexUsageAll}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <RefreshCw
+                    className={cn(
+                      "w-4 h-4 mr-2",
+                      isRefreshingCodexUsageAll && "animate-spin",
+                    )}
+                  />
+                  Refresh All
+                </Button>
+              </div>
+            )}
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&

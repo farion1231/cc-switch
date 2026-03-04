@@ -7,10 +7,17 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
-use std::collections::HashMap;
+use chrono::Utc;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+#[derive(Debug, Clone)]
+struct ProviderCooldown {
+    until_unix: i64,
+    reason: String,
+}
 
 /// 供应商路由器
 pub struct ProviderRouter {
@@ -18,14 +25,54 @@ pub struct ProviderRouter {
     db: Arc<Database>,
     /// 熔断器管理器 - key 格式: "app_type:provider_id"
     circuit_breakers: Arc<RwLock<HashMap<String, Arc<CircuitBreaker>>>>,
+    /// Provider 冷却表 - key 格式: "app_type:provider_id"
+    provider_cooldowns: Arc<RwLock<HashMap<String, ProviderCooldown>>>,
 }
 
 impl ProviderRouter {
+    fn codex_quota_cooldown_remaining_secs(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Option<u64> {
+        if app_type != "codex" {
+            return None;
+        }
+        let account = self
+            .db
+            .get_codex_account_by_provider(provider_id)
+            .ok()
+            .flatten()?;
+        let usage = self.db.get_codex_usage_state(&account.id).ok().flatten()?;
+        if usage.allowed == Some(true) && usage.limit_reached == Some(false) {
+            return None;
+        }
+        let from_secs = usage
+            .primary_reset_after_seconds
+            .unwrap_or(0)
+            .max(usage.secondary_reset_after_seconds.unwrap_or(0));
+        if from_secs > 0 {
+            return Some(from_secs as u64);
+        }
+        let now = Utc::now().timestamp();
+        let from_reset_at = (usage.primary_reset_at.unwrap_or(0) - now)
+            .max(usage.secondary_reset_at.unwrap_or(0) - now);
+        if from_reset_at > 0 {
+            return Some(from_reset_at as u64);
+        }
+        // 有限额但缺少明确 reset 信息时给 60s 短冷却，防止请求风暴
+        if usage.limit_reached == Some(true) {
+            return Some(60);
+        }
+        None
+    }
+
     /// 创建新的供应商路由器
     pub fn new(db: Arc<Database>) -> Self {
         Self {
             db,
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            provider_cooldowns: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -33,11 +80,12 @@ impl ProviderRouter {
     ///
     /// 返回按优先级排序的可用供应商列表：
     /// - 故障转移关闭时：仅返回当前供应商
-    /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
+    /// - 故障转移开启时：优先使用故障转移队列；若队列供应商当前均不可用，自动回退到非队列供应商
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
         let mut total_providers = 0usize;
         let mut circuit_open_count = 0usize;
+        let mut cooldown_count = 0usize;
 
         // 检查该应用的自动故障转移开关是否开启（从 proxy_config 表读取）
         let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
@@ -60,12 +108,37 @@ impl ProviderRouter {
                 .map(|item| item.provider_id)
                 .collect();
 
-            total_providers = ordered_ids.len();
+            let mut queued_provider_ids = HashSet::new();
 
             for provider_id in ordered_ids {
+                queued_provider_ids.insert(provider_id.clone());
                 let Some(provider) = all_providers.get(&provider_id).cloned() else {
                     continue;
                 };
+                total_providers += 1;
+                if let Some(remaining) =
+                    self.codex_quota_cooldown_remaining_secs(&provider.id, app_type)
+                {
+                    cooldown_count += 1;
+                    log::debug!(
+                        "[{app_type}] Provider {} 额度窗口受限，剩余 {} 秒",
+                        provider.name,
+                        remaining
+                    );
+                    continue;
+                }
+                if let Some(remaining) = self
+                    .provider_cooldown_remaining_secs(&provider.id, app_type)
+                    .await
+                {
+                    cooldown_count += 1;
+                    log::debug!(
+                        "[{app_type}] Provider {} 处于冷却中，剩余 {} 秒",
+                        provider.name,
+                        remaining
+                    );
+                    continue;
+                }
 
                 let circuit_key = format!("{app_type}:{}", provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
@@ -74,6 +147,59 @@ impl ProviderRouter {
                     result.push(provider);
                 } else {
                     circuit_open_count += 1;
+                }
+            }
+
+            // 队列中的 Provider 均不可用时，自动回退到非队列 Provider，避免误判“全熔断”
+            if result.is_empty() {
+                let mut fallback_providers: Vec<Provider> = all_providers
+                    .iter()
+                    .filter(|(id, _)| !queued_provider_ids.contains(*id))
+                    .map(|(_, provider)| provider.clone())
+                    .collect();
+
+                fallback_providers.sort_by_key(|p| p.sort_index.unwrap_or(usize::MAX));
+
+                if !fallback_providers.is_empty() {
+                    log::warn!(
+                        "[{app_type}] [FO-006] 故障转移队列当前不可用，回退到 {} 个非队列供应商",
+                        fallback_providers.len()
+                    );
+                }
+
+                for provider in fallback_providers {
+                    total_providers += 1;
+                    if let Some(remaining) =
+                        self.codex_quota_cooldown_remaining_secs(&provider.id, app_type)
+                    {
+                        cooldown_count += 1;
+                        log::debug!(
+                            "[{app_type}] 回退 Provider {} 额度窗口受限，剩余 {} 秒",
+                            provider.name,
+                            remaining
+                        );
+                        continue;
+                    }
+                    if let Some(remaining) = self
+                        .provider_cooldown_remaining_secs(&provider.id, app_type)
+                        .await
+                    {
+                        cooldown_count += 1;
+                        log::debug!(
+                            "[{app_type}] 回退 Provider {} 处于冷却中，剩余 {} 秒",
+                            provider.name,
+                            remaining
+                        );
+                        continue;
+                    }
+                    let circuit_key = format!("{app_type}:{}", provider.id);
+                    let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+
+                    if breaker.is_available().await {
+                        result.push(provider);
+                    } else {
+                        circuit_open_count += 1;
+                    }
                 }
             }
         } else {
@@ -96,7 +222,10 @@ impl ProviderRouter {
         }
 
         if result.is_empty() {
-            if total_providers > 0 && circuit_open_count == total_providers {
+            if total_providers > 0
+                && (circuit_open_count + cooldown_count == total_providers)
+                && (circuit_open_count > 0 || cooldown_count > 0)
+            {
                 log::warn!("[{app_type}] [FO-004] 所有供应商均已熔断");
                 return Err(AppError::AllProvidersCircuitOpen);
             } else {
@@ -142,6 +271,7 @@ impl ProviderRouter {
         let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
         if success {
+            self.clear_provider_cooldown(provider_id, app_type).await;
             breaker.record_success(used_half_open_permit).await;
         } else {
             breaker.record_failure(used_half_open_permit).await;
@@ -255,6 +385,72 @@ impl ProviderRouter {
         breakers.insert(key.to_string(), breaker.clone());
 
         breaker
+    }
+
+    /// 设置 Provider 冷却到指定 Unix 时间（秒）
+    pub async fn set_provider_cooldown_until(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        until_unix: i64,
+        reason: impl Into<String>,
+    ) {
+        let now = Utc::now().timestamp();
+        if until_unix <= now {
+            self.clear_provider_cooldown(provider_id, app_type).await;
+            return;
+        }
+
+        let key = format!("{app_type}:{provider_id}");
+        let mut map = self.provider_cooldowns.write().await;
+        map.insert(
+            key,
+            ProviderCooldown {
+                until_unix,
+                reason: reason.into(),
+            },
+        );
+    }
+
+    /// 设置 Provider 冷却一段秒数
+    pub async fn set_provider_cooldown_for_secs(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        cooldown_secs: u64,
+        reason: impl Into<String>,
+    ) {
+        let until_unix = Utc::now().timestamp() + cooldown_secs as i64;
+        self.set_provider_cooldown_until(provider_id, app_type, until_unix, reason)
+            .await;
+    }
+
+    /// 清理 Provider 冷却状态
+    pub async fn clear_provider_cooldown(&self, provider_id: &str, app_type: &str) {
+        let key = format!("{app_type}:{provider_id}");
+        let mut map = self.provider_cooldowns.write().await;
+        map.remove(&key);
+    }
+
+    /// 获取剩余冷却秒数（若已过期会自动清理并返回 None）
+    async fn provider_cooldown_remaining_secs(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Option<u64> {
+        let key = format!("{app_type}:{provider_id}");
+        let now = Utc::now().timestamp();
+
+        let mut map = self.provider_cooldowns.write().await;
+        if let Some(cooldown) = map.get(&key) {
+            if cooldown.until_unix > now {
+                let remaining = (cooldown.until_unix - now) as u64;
+                let _reason = &cooldown.reason;
+                return Some(remaining);
+            }
+            map.remove(&key);
+        }
+        None
     }
 }
 
@@ -403,6 +599,44 @@ mod tests {
 
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_failover_enabled_fallbacks_to_non_queue_provider_when_queue_unavailable() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        // 仅将 b 放入故障转移队列
+        db.add_to_failover_queue("claude", "b").unwrap();
+
+        // 打开自动故障转移并将失败阈值设置为 1，方便快速触发熔断
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        config.circuit_failure_threshold = 1;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 触发 b 熔断
+        router
+            .record_result("b", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        // 队列里的 b 不可用时，应自动回退到非队列的 a
+        let providers = router.select_providers("claude").await.unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "a");
     }
 
     #[tokio::test]

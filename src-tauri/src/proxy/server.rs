@@ -16,7 +16,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::{
+    cors::{Any, CorsLayer},
+    decompression::RequestDecompressionLayer,
+};
 
 /// 代理服务器状态（共享）
 #[derive(Clone)]
@@ -237,9 +240,33 @@ impl ProxyServer {
             .route("/v1/responses", post(handlers::handle_responses))
             .route("/v1/v1/responses", post(handlers::handle_responses))
             .route("/codex/v1/responses", post(handlers::handle_responses))
+            // Codex remote compact task endpoint
+            .route(
+                "/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/v1/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/v1/v1/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/codex/v1/responses/compact",
+                post(handlers::handle_responses_compact),
+            )
+            // OpenAI Models API (Codex App/IDE 在启动时会探测可用模型)
+            .route("/models", get(handlers::handle_models))
+            .route("/v1/models", get(handlers::handle_models))
+            .route("/v1/v1/models", get(handlers::handle_models))
+            .route("/codex/v1/models", get(handlers::handle_models))
             // Gemini API (支持带前缀和不带前缀)
             .route("/v1beta/*path", post(handlers::handle_gemini))
             .route("/gemini/v1beta/*path", post(handlers::handle_gemini))
+            // 支持客户端请求体压缩（Codex App / IDE 可能启用 gzip/br/deflate/zstd）
+            .layer(RequestDecompressionLayer::new())
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
             .layer(cors)

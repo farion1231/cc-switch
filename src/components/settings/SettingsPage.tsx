@@ -8,6 +8,7 @@ import {
   Cloud,
   ScrollText,
   HardDriveDownload,
+  ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -42,6 +43,7 @@ import { ProxyTabContent } from "@/components/settings/ProxyTabContent";
 // import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
+import { GuardianStatusCard } from "@/components/settings/GuardianStatusCard";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
 import { useTranslation } from "react-i18next";
@@ -381,6 +383,40 @@ export function SettingsPage({
                         </AccordionTrigger>
                         <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
                           <WebdavSyncSection config={settings?.webdavSync} />
+                        </AccordionContent>
+                      </AccordionItem>
+
+                      <AccordionItem
+                        value="guardian"
+                        className="rounded-xl glass-card overflow-hidden"
+                      >
+                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                          <div className="flex items-center gap-3">
+                            <ShieldCheck className="h-5 w-5 text-emerald-500" />
+                            <div className="text-left">
+                              <h3 className="text-base font-semibold">
+                                {t("settings.advanced.guardian.title")}
+                              </h3>
+                              <p className="text-sm text-muted-foreground font-normal">
+                                {t("settings.advanced.guardian.description")}
+                              </p>
+                            </div>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                          <GuardianStatusCard
+                            enabled={settings.guardianEnabled ?? false}
+                            guardianIntervalSeconds={
+                              settings.guardianIntervalSeconds
+                            }
+                            legacyStartupMigrated={
+                              settings.legacyStartupMigrated
+                            }
+                            startupItemsMode={settings.startupItemsMode}
+                            onToggleEnabled={(enabled) =>
+                              handleAutoSave({ guardianEnabled: enabled })
+                            }
+                          />
                         </AccordionContent>
                       </AccordionItem>
 
