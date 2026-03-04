@@ -24,3 +24,7 @@ flatpak/cc-switch.deb
 flatpak-build/
 flatpak-repo/
 .worktrees/
+.pnpm-store/
+
+Dockerfile
+docker-compose.yml

@@ -114,6 +114,7 @@ impl Database {
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
+            upstream_url TEXT,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
             max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
             streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
@@ -241,6 +242,12 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 尝试添加 upstream_url 列到 proxy_config 表
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN upstream_url TEXT",
+            [],
+        );
+
         // 尝试添加 live_takeover_active 列到 proxy_config 表
         let _ = conn.execute(
             "ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0",
@@ -359,6 +366,11 @@ impl Database {
                         log::info!("迁移数据库从 v4 到 v5（计费模式支持）");
                         Self::migrate_v4_to_v5(conn)?;
                         Self::set_user_version(conn, 5)?;
+                    }
+                    5 => {
+                        log::info!("迁移数据库从 v5 到 v6（新增 upstream_url 用于写回配置）");
+                        Self::migrate_v5_to_v6(conn)?;
+                        Self::set_user_version(conn, 6)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -680,6 +692,7 @@ impl Database {
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
+            upstream_url TEXT,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
             max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
             streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
@@ -911,6 +924,15 @@ impl Database {
         }
 
         log::info!("v4 -> v5 迁移完成：已添加计费模式与请求模型字段");
+        Ok(())
+    }
+
+    /// v5 -> v6 迁移：新增 upstream_url（用于写回 Live 配置的上游地址）
+    fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_config")? {
+            Self::add_column_if_missing(conn, "proxy_config", "upstream_url", "TEXT")?;
+        }
+        log::info!("v5 -> v6 迁移完成：已添加 upstream_url");
         Ok(())
     }
 

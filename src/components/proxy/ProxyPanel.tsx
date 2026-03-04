@@ -38,15 +38,17 @@ export function ProxyPanel() {
   const { data: globalConfig } = useGlobalProxyConfig();
   const updateGlobalConfig = useUpdateGlobalProxyConfig();
 
-  // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
+  // 监听地址/端口/Upstream URL 的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
   const [listenPort, setListenPort] = useState("15721");
+  const [upstreamUrl, setUpstreamUrl] = useState("");
 
   // 同步全局配置到本地状态
   useEffect(() => {
     if (globalConfig) {
       setListenAddress(globalConfig.listenAddress);
       setListenPort(String(globalConfig.listenPort));
+      setUpstreamUrl(globalConfig.upstreamUrl ?? "");
     }
   }, [globalConfig]);
 
@@ -143,11 +145,78 @@ export function ProxyPanel() {
       );
       return;
     }
+
+    // upstreamUrl 校验：仅允许 http/https origin（scheme + host + port），不允许 path/query/fragment
+    const upstreamTrimmed = upstreamUrl.trim();
+    let upstreamUrlToSave: string | null = null;
+    if (upstreamTrimmed.length > 0) {
+      let url: URL;
+      try {
+        url = new URL(upstreamTrimmed);
+      } catch {
+        toast.error(
+          t("proxy.settings.invalidUpstreamUrl", {
+            defaultValue: "Upstream URL 无效，请输入 http(s)://host:port",
+          }),
+        );
+        return;
+      }
+
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        toast.error(
+          t("proxy.settings.invalidUpstreamUrl", {
+            defaultValue: "Upstream URL 仅支持 http/https",
+          }),
+        );
+        return;
+      }
+
+      if (!url.hostname) {
+        toast.error(
+          t("proxy.settings.invalidUpstreamUrl", {
+            defaultValue: "Upstream URL 必须包含 host",
+          }),
+        );
+        return;
+      }
+
+      if (!url.port) {
+        toast.error(
+          t("proxy.settings.invalidUpstreamUrl", {
+            defaultValue: "Upstream URL 必须包含 port（1024-65535）",
+          }),
+        );
+        return;
+      }
+      const uPort = parseInt(url.port);
+      if (isNaN(uPort) || uPort < 1024 || uPort > 65535) {
+        toast.error(
+          t("proxy.settings.invalidUpstreamUrl", {
+            defaultValue: "Upstream URL 端口必须在 1024-65535 范围内",
+          }),
+        );
+        return;
+      }
+
+      if (url.pathname !== "/" || url.search || url.hash) {
+        toast.error(
+          t("proxy.settings.invalidUpstreamUrl", {
+            defaultValue:
+              "Upstream URL 只允许 origin（不允许包含 path/query/fragment）",
+          }),
+        );
+        return;
+      }
+
+      upstreamUrlToSave = `${url.protocol}//${url.host}`;
+    }
+
     try {
       await updateGlobalConfig.mutateAsync({
         ...globalConfig,
         listenAddress: addressTrimmed,
         listenPort: port,
+        upstreamUrl: upstreamUrlToSave,
       });
       toast.success(
         t("proxy.settings.configSaved", { defaultValue: "代理配置已保存" }),
@@ -470,6 +539,31 @@ export function ProxyPanel() {
                   <p className="text-xs text-muted-foreground">
                     {t("proxy.settings.fields.listenPort.description", {
                       defaultValue: "代理服务器监听的端口号（1024 ~ 65535）",
+                    })}
+                  </p>
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="upstream-url">
+                    {t("proxy.settings.fields.upstreamUrl.label", {
+                      defaultValue: "Upstream URL",
+                    })}
+                  </Label>
+                  <Input
+                    id="upstream-url"
+                    value={upstreamUrl}
+                    onChange={(e) => setUpstreamUrl(e.target.value)}
+                    placeholder={t(
+                      "proxy.settings.fields.upstreamUrl.placeholder",
+                      {
+                        defaultValue: "http://127.0.0.1:15721",
+                      },
+                    )}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t("proxy.settings.fields.upstreamUrl.description", {
+                      defaultValue:
+                        "写回到各应用配置的代理地址（仅支持 http/https origin；留空则使用监听地址/端口）。如果指向其他端口，请在该地址上运行转发/调试代理并转发到本应用监听端口。",
                     })}
                   </p>
                 </div>

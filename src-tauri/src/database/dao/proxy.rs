@@ -19,7 +19,7 @@ impl Database {
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
-                "SELECT proxy_enabled, listen_address, listen_port, enable_logging
+                "SELECT proxy_enabled, listen_address, listen_port, enable_logging, upstream_url
                  FROM proxy_config WHERE app_type = 'claude'",
                 [],
                 |row| {
@@ -28,6 +28,7 @@ impl Database {
                         listen_address: row.get(1)?,
                         listen_port: row.get::<_, i32>(2)? as u16,
                         enable_logging: row.get::<_, i32>(3)? != 0,
+                        upstream_url: row.get(4)?,
                     })
                 },
             )
@@ -44,6 +45,7 @@ impl Database {
                     listen_address: "127.0.0.1".to_string(),
                     listen_port: 15721,
                     enable_logging: true,
+                    upstream_url: None,
                 })
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -63,12 +65,14 @@ impl Database {
                 listen_address = ?2,
                 listen_port = ?3,
                 enable_logging = ?4,
+                upstream_url = ?5,
                 updated_at = datetime('now')",
             rusqlite::params![
                 if config.proxy_enabled { 1 } else { 0 },
                 config.listen_address,
                 config.listen_port as i32,
                 if config.enable_logging { 1 } else { 0 },
+                config.upstream_url,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
