@@ -189,6 +189,98 @@ export interface CodexDeviceLoginStatusView {
   updatedAtMs: number;
 }
 
+export type GeminiLoginStatus =
+  | "pending"
+  | "authorized"
+  | "expired"
+  | "cancelled"
+  | "failed";
+
+export interface GeminiLoginSession {
+  sessionId: string;
+  providerId: string;
+  authUrl?: string;
+  expectedFilesDir?: string;
+  userCode?: string;
+  message?: string;
+  instructions?: string;
+  startedAtMs?: number;
+  expiresAtMs: number;
+  openedBrowser?: boolean;
+  // Backward-compatible aliases
+  verificationUrl?: string;
+  credentialDir?: string;
+}
+
+export interface GeminiLoginStatusView {
+  sessionId: string;
+  providerId: string;
+  authUrl?: string;
+  expectedFilesDir?: string;
+  userCode?: string;
+  status: GeminiLoginStatus;
+  message?: string;
+  remainingSeconds: number;
+  expiresAtMs: number;
+  updatedAtMs?: number;
+  // Backward-compatible aliases
+  verificationUrl?: string;
+  credentialDir?: string;
+}
+
+export interface GeminiAccount {
+  id: string;
+  email?: string;
+  displayName?: string;
+  googleAccountId?: string;
+  accountId?: string;
+  planType?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  tokenType?: string;
+  expiryDate?: number;
+  source: string;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface GeminiProviderBinding {
+  providerId: string;
+  accountId: string;
+  autoBound: boolean;
+  updatedAt: number;
+}
+
+export interface GeminiUsageState {
+  accountId: string;
+  cooldownUntil?: number;
+  lastRefreshAt?: number;
+  lastError?: string;
+}
+
+export interface GeminiUsageView {
+  providerId: string;
+  account?: GeminiAccount;
+  binding?: GeminiProviderBinding;
+  usage?: GeminiUsageState;
+  available: boolean;
+  cooldownSeconds?: number;
+  updatedAtMs?: number;
+  error?: string;
+}
+
+export interface GeminiPoolStatus {
+  totalAccounts: number;
+  activeAccounts: number;
+  boundProviders: number;
+  providersWithAvailableAccount: number;
+  providersInCooldown: number;
+  providersWithError: number;
+  updatedAtMs?: number;
+  message?: string;
+}
+
 // 供应商单独的模型测试配置
 export interface ProviderTestConfig {
   // 是否启用单独配置（false 时使用全局配置）

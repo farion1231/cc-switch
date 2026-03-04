@@ -12,6 +12,7 @@ import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import CodexQuotaPanel from "@/components/providers/CodexQuotaPanel";
+import GeminiQuotaPanel from "@/components/providers/GeminiQuotaPanel";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import { useProviderHealth } from "@/lib/query/failover";
@@ -147,6 +148,7 @@ export function ProviderCard({
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
+  const supportsNativeQuotaPanel = appId === "codex" || appId === "gemini";
 
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw）：使用 isInConfig 代替 isCurrent
@@ -157,11 +159,11 @@ export function ProviderCard({
     : 0;
 
   const { data: usage } = useUsageQuery(provider.id, appId, {
-    enabled: usageEnabled,
+    enabled: usageEnabled && !supportsNativeQuotaPanel,
     autoQueryInterval,
   });
 
-  const hasMultiplePlans =
+  const hasMultiplePlans = !supportsNativeQuotaPanel &&
     usage?.success && usage.data && usage.data.length > 1;
 
   const [isExpanded, setIsExpanded] = useState(false);
@@ -349,6 +351,8 @@ export function ProviderCard({
                 <>
                   {appId === "codex" ? (
                     <CodexQuotaPanel providerId={provider.id} inline />
+                  ) : appId === "gemini" ? (
+                    <GeminiQuotaPanel providerId={provider.id} inline />
                   ) : (
                     <UsageFooter
                       provider={provider}
@@ -422,10 +426,12 @@ export function ProviderCard({
         </div>
       </div>
 
-      {(appId === "codex" || (isExpanded && hasMultiplePlans)) && (
+      {(supportsNativeQuotaPanel || (isExpanded && hasMultiplePlans)) && (
         <div className="mt-4 pt-4 border-t border-border-default">
           {appId === "codex" ? (
             <CodexQuotaPanel providerId={provider.id} />
+          ) : appId === "gemini" ? (
+            <GeminiQuotaPanel providerId={provider.id} />
           ) : (
             <UsageFooter
               provider={provider}

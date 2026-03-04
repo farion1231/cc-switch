@@ -28,6 +28,7 @@ import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
   codexApi,
+  geminiApi,
   settingsApi,
   type AppId,
   type ProviderSwitchEvent,
@@ -199,6 +200,8 @@ function App() {
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
   const [isRefreshingCodexUsageAll, setIsRefreshingCodexUsageAll] =
+    useState(false);
+  const [isRefreshingGeminiUsageAll, setIsRefreshingGeminiUsageAll] =
     useState(false);
 
   const effectiveEditingProvider = useLastValidValue(editingProvider);
@@ -703,6 +706,34 @@ function App() {
     }
   };
 
+  const handleRefreshAllGeminiUsage = async () => {
+    if (isRefreshingGeminiUsageAll) return;
+    setIsRefreshingGeminiUsageAll(true);
+    try {
+      const result = await geminiApi.refreshUsageNow();
+      await queryClient.invalidateQueries({
+        queryKey: ["gemini-usage-state"],
+      });
+      await queryClient.refetchQueries({
+        queryKey: ["gemini-usage-state"],
+      });
+      if (result.failedAccounts > 0) {
+        toast.warning(
+          `Gemini 用量刷新完成：成功 ${result.successAccounts}，失败 ${result.failedAccounts}`,
+        );
+      } else {
+        toast.success(
+          `Gemini 用量已刷新：${result.successAccounts}/${result.refreshedAccounts}`,
+        );
+      }
+    } catch (error) {
+      const detail = extractErrorMessage(error);
+      toast.error(`刷新 Gemini 用量失败${detail ? `: ${detail}` : ""}`);
+    } finally {
+      setIsRefreshingGeminiUsageAll(false);
+    }
+  };
+
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
@@ -996,22 +1027,35 @@ function App() {
           </div>
 
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
-            {currentView === "providers" && activeApp === "codex" && (
+            {currentView === "providers" &&
+              (activeApp === "codex" || activeApp === "gemini") && (
               <div style={{ WebkitAppRegion: "no-drag" } as any}>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={handleRefreshAllCodexUsage}
-                  disabled={isRefreshingCodexUsageAll}
+                  onClick={
+                    activeApp === "codex"
+                      ? handleRefreshAllCodexUsage
+                      : handleRefreshAllGeminiUsage
+                  }
+                  disabled={
+                    activeApp === "codex"
+                      ? isRefreshingCodexUsageAll
+                      : isRefreshingGeminiUsageAll
+                  }
                   className="hover:bg-black/5 dark:hover:bg-white/5"
                 >
                   <RefreshCw
                     className={cn(
                       "w-4 h-4 mr-2",
-                      isRefreshingCodexUsageAll && "animate-spin",
+                      (activeApp === "codex"
+                        ? isRefreshingCodexUsageAll
+                        : isRefreshingGeminiUsageAll) && "animate-spin",
                     )}
                   />
-                  Refresh All
+                  {activeApp === "codex"
+                    ? "Codex Refresh All"
+                    : "Gemini Refresh All"}
                 </Button>
               </div>
             )}

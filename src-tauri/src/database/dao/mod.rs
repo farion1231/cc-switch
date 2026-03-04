@@ -4,6 +4,7 @@
 
 pub mod codex_accounts;
 pub mod failover;
+pub mod gemini_accounts;
 pub mod mcp;
 pub mod prompts;
 pub mod providers;

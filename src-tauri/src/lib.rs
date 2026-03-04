@@ -10,6 +10,7 @@ mod config;
 mod database;
 mod deeplink;
 mod error;
+mod gemini_account;
 mod gemini_config;
 mod gemini_mcp;
 mod init_status;
@@ -34,6 +35,10 @@ pub use codex_account::{
     CodexAccount, CodexProviderBinding, CodexUsageState, CodexUsageView, DeviceLoginSession,
     DeviceLoginState, DeviceLoginStatus, ImportResult, LoginSession, RefreshResult,
 };
+pub use gemini_account::{
+    GeminiAccount, GeminiLoginSession, GeminiLoginStatus, GeminiPoolStatus, GeminiProviderBinding,
+    GeminiUsageState, GeminiUsageView,
+};
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
 pub use commands::open_provider_terminal;
 pub use commands::*;
@@ -49,8 +54,8 @@ pub use mcp::{
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
-    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
-    SkillService, SpeedtestService,
+    ConfigService, EndpointLatency, GeminiUsageService, McpService, PromptService,
+    ProviderService, ProxyService, SkillService, SpeedtestService,
 };
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
@@ -921,6 +926,15 @@ pub fn run() {
             commands::codex_get_usage_state,
             commands::codex_refresh_usage_now,
             commands::codex_bind_provider_auth,
+            // gemini accounts / quota
+            commands::gemini_list_accounts,
+            commands::gemini_start_cli_login,
+            commands::gemini_get_cli_login_status,
+            commands::gemini_cancel_cli_login,
+            commands::gemini_finalize_cli_login,
+            commands::gemini_get_usage_state,
+            commands::gemini_refresh_usage_now,
+            commands::gemini_pool_status,
             // New MCP via config.json (SSOT)
             commands::get_mcp_config,
             commands::upsert_mcp_server_in_config,

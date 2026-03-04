@@ -8,6 +8,7 @@ import {
   settingsApi,
   usageApi,
   codexApi,
+  geminiApi,
   sessionsApi,
   type AppId,
 } from "@/lib/api";
@@ -16,6 +17,7 @@ import type {
   Settings,
   UsageResult,
   CodexUsageView,
+  GeminiUsageView,
   SessionMeta,
   SessionMessage,
 } from "@/types";
@@ -143,6 +145,21 @@ export const useCodexUsageStateQuery = (
   return useQuery<CodexUsageView>({
     queryKey: ["codex-usage-state", providerId],
     queryFn: async () => codexApi.getUsageState(providerId),
+    enabled: enabled && !!providerId,
+    refetchInterval: refetchIntervalMs,
+    refetchIntervalInBackground: true,
+    staleTime: 30_000,
+  });
+};
+
+export const useGeminiUsageStateQuery = (
+  providerId: string,
+  options?: { enabled?: boolean; refetchIntervalMs?: number },
+) => {
+  const { enabled = true, refetchIntervalMs = 60000 } = options || {};
+  return useQuery<GeminiUsageView>({
+    queryKey: ["gemini-usage-state", providerId],
+    queryFn: async () => geminiApi.getUsageState(providerId),
     enabled: enabled && !!providerId,
     refetchInterval: refetchIntervalMs,
     refetchIntervalInBackground: true,

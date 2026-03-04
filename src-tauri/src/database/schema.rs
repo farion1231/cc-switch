@@ -295,9 +295,59 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 16. Gemini 账号主表（统一认证仓）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS gemini_accounts (
+            id TEXT PRIMARY KEY,
+            email TEXT,
+            display_name TEXT,
+            google_account_id TEXT NOT NULL,
+            access_token TEXT,
+            refresh_token TEXT,
+            token_type TEXT,
+            expiry_date INTEGER,
+            source TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_gemini_accounts_active ON gemini_accounts(is_active)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 17. Gemini Provider -> Account 绑定关系
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS gemini_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            auto_bound INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 18. Gemini usage 缓存态（仅冷却/错误最小字段）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS gemini_usage_state (
+            account_id TEXT PRIMARY KEY,
+            cooldown_until INTEGER,
+            last_error TEXT,
+            last_refresh_at INTEGER,
+            FOREIGN KEY (account_id) REFERENCES gemini_accounts(id) ON DELETE CASCADE
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 注意：circuit_breaker_config 已合并到 proxy_config 表中
 
-        // 16. Proxy Live Backup 表 (Live 配置备份)
+        // 19. Proxy Live Backup 表 (Live 配置备份)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS proxy_live_backup (
             app_type TEXT PRIMARY KEY, original_config TEXT NOT NULL, backed_up_at TEXT NOT NULL
@@ -382,6 +432,7 @@ impl Database {
         );
 
         Self::ensure_codex_provider_bindings_integrity(conn)?;
+        Self::ensure_gemini_provider_bindings_integrity(conn)?;
 
         Ok(())
     }
@@ -452,6 +503,11 @@ impl Database {
                         Self::migrate_v7_to_v8(conn)?;
                         Self::set_user_version(conn, 8)?;
                     }
+                    8 => {
+                        log::info!("迁移数据库从 v8 到 v9（Gemini account pool 最小闭环）");
+                        Self::migrate_v8_to_v9(conn)?;
+                        Self::set_user_version(conn, 9)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -461,6 +517,7 @@ impl Database {
                 version = Self::get_user_version(conn)?;
             }
             Self::ensure_codex_provider_bindings_integrity(conn)?;
+            Self::ensure_gemini_provider_bindings_integrity(conn)?;
             Ok(())
         })();
 
@@ -1127,6 +1184,52 @@ impl Database {
         Ok(())
     }
 
+    /// v8 -> v9 迁移：新增 Gemini account pool 相关表
+    fn migrate_v8_to_v9(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS gemini_accounts (
+            id TEXT PRIMARY KEY,
+            email TEXT,
+            display_name TEXT,
+            google_account_id TEXT NOT NULL,
+            access_token TEXT,
+            refresh_token TEXT,
+            token_type TEXT,
+            expiry_date INTEGER,
+            source TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_gemini_accounts_active ON gemini_accounts(is_active)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS gemini_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            auto_bound INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS gemini_usage_state (
+            account_id TEXT PRIMARY KEY,
+            cooldown_until INTEGER,
+            last_error TEXT,
+            last_refresh_at INTEGER
+        )",
+            [],
+        )?;
+        Self::ensure_gemini_provider_bindings_integrity(conn)?;
+        log::info!("v8 -> v9 迁移完成：已添加 Gemini 主仓、绑定表与 usage 状态表");
+        Ok(())
+    }
+
     /// 插入默认模型定价数据
     /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
@@ -1503,6 +1606,10 @@ impl Database {
         ["provider_id", "account_id", "auto_bound", "updated_at"]
     }
 
+    fn gemini_provider_bindings_expected_columns() -> [&'static str; 4] {
+        ["provider_id", "account_id", "auto_bound", "updated_at"]
+    }
+
     fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>, AppError> {
         Self::validate_identifier(table, "表名")?;
         let sql = format!("PRAGMA table_info(\"{table}\");");
@@ -1604,6 +1711,91 @@ impl Database {
         );
         Self::recreate_codex_provider_bindings_table(conn)?;
         log::info!("codex_provider_bindings 列集合已修复并完成幂等重建");
+        Ok(())
+    }
+
+    fn recreate_gemini_provider_bindings_table(conn: &Connection) -> Result<(), AppError> {
+        let backup_table = "gemini_provider_bindings_rebuild_old";
+        let _ = conn.execute(&format!("DROP TABLE IF EXISTS {backup_table}"), []);
+
+        conn.execute(
+            "ALTER TABLE gemini_provider_bindings RENAME TO gemini_provider_bindings_rebuild_old",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE gemini_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            auto_bound INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL
+        )",
+            [],
+        )?;
+
+        let has_provider_id = Self::has_column(conn, backup_table, "provider_id")?;
+        let has_account_id = Self::has_column(conn, backup_table, "account_id")?;
+        if has_provider_id && has_account_id {
+            let auto_bound_expr = if Self::has_column(conn, backup_table, "auto_bound")? {
+                "COALESCE(auto_bound, 1)"
+            } else {
+                "1"
+            };
+            let updated_at_expr = if Self::has_column(conn, backup_table, "updated_at")? {
+                "COALESCE(updated_at, CAST(strftime('%s', 'now') AS INTEGER))"
+            } else {
+                "CAST(strftime('%s', 'now') AS INTEGER)"
+            };
+            let insert_sql = format!(
+                "INSERT OR REPLACE INTO gemini_provider_bindings(provider_id, account_id, auto_bound, updated_at)
+                 SELECT provider_id, account_id, {auto_bound_expr}, {updated_at_expr}
+                 FROM {backup_table}
+                 WHERE provider_id IS NOT NULL AND account_id IS NOT NULL"
+            );
+            conn.execute(&insert_sql, [])?;
+        } else {
+            log::warn!(
+                "gemini_provider_bindings 重建时缺少关键列（provider_id/account_id），跳过数据迁移"
+            );
+        }
+
+        conn.execute("DROP TABLE gemini_provider_bindings_rebuild_old", [])?;
+        Ok(())
+    }
+
+    fn ensure_gemini_provider_bindings_integrity(conn: &Connection) -> Result<(), AppError> {
+        let expected: std::collections::HashSet<String> = Self::gemini_provider_bindings_expected_columns()
+            .into_iter()
+            .map(ToString::to_string)
+            .collect();
+
+        if !Self::table_exists(conn, "gemini_provider_bindings")? {
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS gemini_provider_bindings (
+                provider_id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                auto_bound INTEGER NOT NULL DEFAULT 1,
+                updated_at INTEGER NOT NULL
+            )",
+                [],
+            )?;
+            return Ok(());
+        }
+
+        let actual_columns = Self::table_columns(conn, "gemini_provider_bindings")?;
+        let actual: std::collections::HashSet<String> =
+            actual_columns.iter().map(|v| v.to_ascii_lowercase()).collect();
+
+        if actual == expected {
+            return Ok(());
+        }
+
+        log::warn!(
+            "检测到 gemini_provider_bindings 列集合不一致，准备重建。actual={:?}, expected={:?}",
+            actual_columns,
+            Self::gemini_provider_bindings_expected_columns()
+        );
+        Self::recreate_gemini_provider_bindings_table(conn)?;
+        log::info!("gemini_provider_bindings 列集合已修复并完成幂等重建");
         Ok(())
     }
 

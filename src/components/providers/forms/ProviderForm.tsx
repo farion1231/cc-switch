@@ -8,9 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
-import { codexApi, settingsApi, type AppId } from "@/lib/api";
+import { codexApi, geminiApi, settingsApi, type AppId } from "@/lib/api";
 import type {
   CodexDeviceLoginStatus,
+  GeminiLoginStatus,
   ProviderCategory,
   ProviderMeta,
   ProviderTestConfig,
@@ -161,7 +162,20 @@ export function ProviderForm({
     status: CodexDeviceLoginStatus;
     error?: string;
   } | null>(null);
+  const [geminiLoginStarting, setGeminiLoginStarting] = useState(false);
+  const [geminiLoginCancelling, setGeminiLoginCancelling] = useState(false);
+  const [geminiLoginSession, setGeminiLoginSession] = useState<{
+    sessionId: string;
+    authUrl?: string;
+    expectedFilesDir?: string;
+    userCode?: string;
+    message?: string;
+    remainingSeconds: number;
+    status: GeminiLoginStatus;
+    error?: string;
+  } | null>(null);
   const pollingInFlightRef = useRef(false);
+  const geminiPollingInFlightRef = useRef(false);
 
   const [draftCustomEndpoints, setDraftCustomEndpoints] = useState<string[]>(
     () => {
@@ -1136,6 +1150,302 @@ export function ProviderForm({
     return () => window.clearInterval(ticker);
   }, [deviceLoginSession, getDeviceLoginErrorText]);
 
+  const getGeminiLoginErrorText = useCallback(
+    (status: GeminiLoginStatus, rawError?: string) => {
+      if (rawError?.trim()) return rawError.trim();
+      if (status === "expired") {
+        return t("provider.geminiLoginErrorExpired", {
+          defaultValue: "Gemini 登录链接已过期，请重新发起登录。",
+        });
+      }
+      if (status === "cancelled") {
+        return t("provider.geminiLoginErrorCancelled", {
+          defaultValue: "Gemini 登录流程已取消。",
+        });
+      }
+      return t("provider.geminiLoginErrorUnknown", {
+        defaultValue: "Gemini 登录失败，请重试。",
+      });
+    },
+    [t],
+  );
+
+  const getGeminiLoginStatusText = useCallback(
+    (status: GeminiLoginStatus) => {
+      if (status === "authorized") {
+        return t("provider.geminiLoginStatusAuthorized", {
+          defaultValue: "已导入，正在完成绑定…",
+        });
+      }
+      if (status === "expired") {
+        return t("provider.geminiLoginStatusExpired", {
+          defaultValue: "已过期",
+        });
+      }
+      if (status === "cancelled") {
+        return t("provider.geminiLoginStatusCancelled", {
+          defaultValue: "已取消",
+        });
+      }
+      if (status === "failed") {
+        return t("provider.geminiLoginStatusError", {
+          defaultValue: "登录失败",
+        });
+      }
+      return t("provider.geminiLoginStatusPending", {
+        defaultValue: "等待导入",
+      });
+    },
+    [t],
+  );
+
+  const handleStartGeminiCliLogin = useCallback(async () => {
+    if (!providerId || geminiLoginStarting) return;
+    try {
+      setGeminiLoginStarting(true);
+      const session = await geminiApi.startCliLogin(providerId);
+      setGeminiLoginSession({
+        sessionId: session.sessionId,
+        authUrl: session.authUrl ?? session.verificationUrl,
+        expectedFilesDir:
+          session.expectedFilesDir ?? session.credentialDir,
+        userCode: session.userCode,
+        message: session.message ?? session.instructions,
+        remainingSeconds: Math.max(
+          0,
+          Math.floor((session.expiresAtMs - Date.now()) / 1000),
+        ),
+        status: "pending",
+      });
+      toast.success(
+        t("provider.geminiLoginStarted", {
+          defaultValue:
+            "Gemini 登录会话已创建。请按面板提示导入 oauth_creds.json 与 google_accounts.json。",
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(
+        t("provider.geminiLoginStartFailed", {
+          defaultValue: "创建 Gemini 登录会话失败：{{error}}",
+          error: message,
+        }),
+      );
+    } finally {
+      setGeminiLoginStarting(false);
+    }
+  }, [geminiLoginStarting, providerId, t]);
+
+  const handleCancelGeminiCliLogin = useCallback(async () => {
+    if (!geminiLoginSession || geminiLoginCancelling) return;
+    try {
+      setGeminiLoginCancelling(true);
+      await geminiApi.cancelCliLogin(geminiLoginSession.sessionId);
+      setGeminiLoginSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "cancelled",
+              error: getGeminiLoginErrorText("cancelled"),
+            }
+          : prev,
+      );
+      toast.message(
+        t("provider.geminiLoginCancelled", {
+          defaultValue: "已取消 Gemini 登录流程",
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(
+        t("provider.geminiLoginCancelFailed", {
+          defaultValue: "取消 Gemini 登录失败：{{error}}",
+          error: message,
+        }),
+      );
+    } finally {
+      setGeminiLoginCancelling(false);
+    }
+  }, [
+    geminiLoginCancelling,
+    geminiLoginSession,
+    getGeminiLoginErrorText,
+    t,
+  ]);
+
+  const handleCopyGeminiLoginUrl = useCallback(async () => {
+    if (!geminiLoginSession?.authUrl) return;
+    try {
+      await navigator.clipboard.writeText(geminiLoginSession.authUrl);
+      toast.success(
+        t("provider.geminiLoginUrlCopied", {
+          defaultValue: "Gemini 会话信息已复制",
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(
+        t("provider.geminiLoginUrlCopyFailed", {
+          defaultValue: "复制 Gemini 会话信息失败：{{error}}",
+          error: message,
+        }),
+      );
+    }
+  }, [geminiLoginSession?.authUrl, t]);
+
+  useEffect(() => {
+    if (!geminiLoginSession?.sessionId) return;
+    if (
+      geminiLoginSession.status === "authorized" ||
+      geminiLoginSession.status === "failed" ||
+      geminiLoginSession.status === "expired" ||
+      geminiLoginSession.status === "cancelled"
+    ) {
+      return;
+    }
+
+    const timer = window.setInterval(async () => {
+      if (geminiPollingInFlightRef.current) return;
+      geminiPollingInFlightRef.current = true;
+      try {
+        const statusView = await geminiApi.getCliLoginStatus(
+          geminiLoginSession.sessionId,
+        );
+        const normalizedStatus = statusView.status;
+
+        if (normalizedStatus === "authorized") {
+          await geminiApi.finalizeCliLogin(geminiLoginSession.sessionId);
+          await geminiApi.refreshUsageNow(providerId);
+          await queryClient.invalidateQueries({
+            queryKey: ["gemini-usage-state"],
+          });
+          await queryClient.refetchQueries({
+            queryKey: ["gemini-usage-state", providerId],
+          });
+          setGeminiLoginSession(null);
+          toast.success(
+            t("provider.geminiLoginSuccess", {
+              defaultValue: "Gemini 登录成功并完成绑定",
+            }),
+          );
+          return;
+        }
+
+        if (
+          normalizedStatus === "failed" ||
+          normalizedStatus === "expired" ||
+          normalizedStatus === "cancelled"
+        ) {
+          const errorText = getGeminiLoginErrorText(
+            normalizedStatus,
+            statusView.message,
+          );
+          setGeminiLoginSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: normalizedStatus,
+                  authUrl:
+                    statusView.authUrl ??
+                    statusView.verificationUrl ??
+                    prev.authUrl,
+                  userCode: statusView.userCode ?? prev.userCode,
+                  expectedFilesDir:
+                    statusView.expectedFilesDir ??
+                    statusView.credentialDir ??
+                    prev.expectedFilesDir,
+                  message: statusView.message ?? prev.message,
+                  error: errorText,
+                  remainingSeconds: Math.max(
+                    0,
+                    statusView.remainingSeconds ?? prev.remainingSeconds,
+                  ),
+                }
+              : prev,
+          );
+          return;
+        }
+
+        setGeminiLoginSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "pending",
+                authUrl:
+                  statusView.authUrl ??
+                  statusView.verificationUrl ??
+                  prev.authUrl,
+                userCode: statusView.userCode ?? prev.userCode,
+                expectedFilesDir:
+                  statusView.expectedFilesDir ??
+                  statusView.credentialDir ??
+                  prev.expectedFilesDir,
+                message: statusView.message ?? prev.message,
+                remainingSeconds: Math.max(
+                  0,
+                  statusView.remainingSeconds ?? prev.remainingSeconds,
+                ),
+                error: undefined,
+              }
+            : prev,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setGeminiLoginSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "failed",
+                error: t("provider.geminiLoginPollFailed", {
+                  defaultValue: "轮询 Gemini 登录状态失败：{{error}}",
+                  error: message,
+                }),
+              }
+            : prev,
+        );
+      } finally {
+        geminiPollingInFlightRef.current = false;
+      }
+    }, 2000);
+
+    return () => window.clearInterval(timer);
+  }, [
+    geminiLoginSession?.sessionId,
+    geminiLoginSession?.status,
+    providerId,
+    queryClient,
+    t,
+    getGeminiLoginErrorText,
+  ]);
+
+  useEffect(() => {
+    if (!geminiLoginSession) return;
+    const ticker = window.setInterval(() => {
+      setGeminiLoginSession((prev) => {
+        if (!prev) return prev;
+        if (
+          prev.status === "authorized" ||
+          prev.status === "failed" ||
+          prev.status === "expired" ||
+          prev.status === "cancelled"
+        ) {
+          return prev;
+        }
+        const nextSeconds = Math.max(0, prev.remainingSeconds - 1);
+        if (nextSeconds === 0) {
+          return {
+            ...prev,
+            remainingSeconds: 0,
+            status: "expired",
+            error: getGeminiLoginErrorText("expired"),
+          };
+        }
+        return { ...prev, remainingSeconds: nextSeconds };
+      });
+    }, 1000);
+    return () => window.clearInterval(ticker);
+  }, [geminiLoginSession, getGeminiLoginErrorText]);
+
   const groupedPresets = useMemo(() => {
     return presetEntries.reduce<Record<string, PresetEntry[]>>((acc, entry) => {
       const category = entry.preset.category ?? "others";
@@ -1651,6 +1961,29 @@ export function ProviderForm({
             model={geminiModel}
             onModelChange={handleGeminiModelChange}
             speedTestEndpoints={speedTestEndpoints}
+            onStartCliLogin={handleStartGeminiCliLogin}
+            cliLoginLoading={geminiLoginStarting}
+            canStartCliLogin={Boolean(providerId)}
+            cliLoginPanel={
+              geminiLoginSession
+                ? {
+                    authUrl: geminiLoginSession.authUrl,
+                    expectedFilesDir: geminiLoginSession.expectedFilesDir,
+                    userCode: geminiLoginSession.userCode,
+                    message: geminiLoginSession.message,
+                    remainingSeconds: geminiLoginSession.remainingSeconds,
+                    statusText: getGeminiLoginStatusText(
+                      geminiLoginSession.status,
+                    ),
+                    errorText: geminiLoginSession.error,
+                    isPolling: geminiLoginSession.status === "pending",
+                    isFinished: geminiLoginSession.status !== "pending",
+                  }
+                : null
+            }
+            onCopyCliLoginUrl={handleCopyGeminiLoginUrl}
+            onCancelCliLogin={handleCancelGeminiCliLogin}
+            cliLoginCancelLoading={geminiLoginCancelling}
           />
         )}
 

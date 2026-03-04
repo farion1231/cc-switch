@@ -67,6 +67,25 @@ impl ProviderRouter {
         None
     }
 
+    fn gemini_quota_cooldown_remaining_secs(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Option<u64> {
+        if app_type != "gemini" {
+            return None;
+        }
+        let account = self
+            .db
+            .get_gemini_account_by_provider(provider_id)
+            .ok()
+            .flatten()?;
+        let usage = self.db.get_gemini_usage_state(&account.id).ok().flatten()?;
+        let cooldown_until = usage.cooldown_until?;
+        let now = Utc::now().timestamp();
+        (cooldown_until > now).then_some((cooldown_until - now) as u64)
+    }
+
     /// 创建新的供应商路由器
     pub fn new(db: Arc<Database>) -> Self {
         Self {
@@ -116,8 +135,10 @@ impl ProviderRouter {
                     continue;
                 };
                 total_providers += 1;
-                if let Some(remaining) =
-                    self.codex_quota_cooldown_remaining_secs(&provider.id, app_type)
+                let quota_cooldown = self
+                    .codex_quota_cooldown_remaining_secs(&provider.id, app_type)
+                    .or_else(|| self.gemini_quota_cooldown_remaining_secs(&provider.id, app_type));
+                if let Some(remaining) = quota_cooldown
                 {
                     cooldown_count += 1;
                     log::debug!(
@@ -169,8 +190,12 @@ impl ProviderRouter {
 
                 for provider in fallback_providers {
                     total_providers += 1;
-                    if let Some(remaining) =
-                        self.codex_quota_cooldown_remaining_secs(&provider.id, app_type)
+                    let quota_cooldown = self
+                        .codex_quota_cooldown_remaining_secs(&provider.id, app_type)
+                        .or_else(|| {
+                            self.gemini_quota_cooldown_remaining_secs(&provider.id, app_type)
+                        });
+                    if let Some(remaining) = quota_cooldown
                     {
                         cooldown_count += 1;
                         log::debug!(
