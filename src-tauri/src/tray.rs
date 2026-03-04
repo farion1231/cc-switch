@@ -417,6 +417,34 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     log::info!("处理托盘菜单事件: {event_id}");
 
     match event_id {
+        "toggle_main" => {
+            if let Some(window) = app.get_webview_window("main") {
+                let visible = window.is_visible().unwrap_or(false);
+                if visible {
+                    let _ = window.hide();
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = window.set_skip_taskbar(true);
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        apply_tray_policy(app, false);
+                    }
+                } else {
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = window.set_skip_taskbar(false);
+                    }
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    #[cfg(target_os = "macos")]
+                    {
+                        apply_tray_policy(app, true);
+                    }
+                }
+            }
+        }
         "show_main" => {
             if let Some(window) = app.get_webview_window("main") {
                 #[cfg(target_os = "windows")]
