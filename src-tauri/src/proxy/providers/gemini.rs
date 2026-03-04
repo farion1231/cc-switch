@@ -213,7 +213,13 @@ impl ProviderAdapter for GeminiAdapter {
                 url = url.replace(&duplicate, pattern);
             }
         }
-
+        if base_url.contains("aiplatform.googleapis.com")
+            && !url.contains("/publishers/google/models")
+        {
+            url = url
+                .replace("/models", "/publishers/google/models")
+                .replace("v1beta", "v1");
+        }
         url
     }
 

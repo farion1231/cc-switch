@@ -50,6 +50,29 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#4285F4",
   },
   {
+    name: "Vertex AI",
+    websiteUrl:
+      "https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference",
+    apiKeyUrl: "https://console.cloud.google.com/apis/credentials",
+    settingsConfig: {
+      env: {
+        VERTEX_AUTH_MODE: "api-key",
+        GEMINI_API_KEY: "",
+        VERTEX_REGION: "global",
+      },
+    },
+    description: "Google Vertex AI，支持 API Key 和服务账号两种授权模式",
+    category: "cloud_provider",
+    partnerPromotionKey: "google-vertex",
+    theme: {
+      icon: "gemini",
+      backgroundColor: "#4285F4",
+      textColor: "#FFFFFF",
+    },
+    icon: "gemini",
+    iconColor: "#4285F4",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
     apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
