@@ -1399,6 +1399,24 @@ export function ProviderForm({
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const retryable =
+          message.includes("授权回调尚未完成") ||
+          message.includes("oauth_creds.json") ||
+          message.includes("google_accounts.json") ||
+          message.includes("No such file or directory");
+        if (retryable) {
+          setGeminiLoginSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: "pending",
+                  error: undefined,
+                  message: "授权处理中，正在继续重试…",
+                }
+              : prev,
+          );
+          return;
+        }
         setGeminiLoginSession((prev) =>
           prev
             ? {

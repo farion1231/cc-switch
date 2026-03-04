@@ -581,8 +581,12 @@ impl GeminiUsageService {
         })
         .unwrap_or_default();
 
-        let oauth_text =
-            std::fs::read_to_string(oauth_path).map_err(|e| AppError::io(oauth_path, e))?;
+        let oauth_text = if oauth_path.exists() {
+            std::fs::read_to_string(oauth_path).map_err(|e| AppError::io(oauth_path, e))?
+        } else {
+            serde_json::to_string(oauth_value)
+                .map_err(|e| AppError::Config(format!("序列化 oauth 数据失败: {e}")))?
+        };
         if google_account_id.is_empty() {
             let mut hasher = Sha256::new();
             hasher.update(oauth_text.as_bytes());
@@ -734,6 +738,14 @@ impl GeminiUsageService {
         };
 
         let (oauth_path, accounts_path) = Self::session_cred_paths(&isolated_home);
+        if oauth_from_runtime.is_none()
+            && accounts_from_runtime.is_none()
+            && (!oauth_path.exists() || !accounts_path.exists())
+        {
+            return Err(AppError::Config(
+                "授权回调尚未完成，请稍后自动重试。".to_string(),
+            ));
+        }
         let oauth_value = match oauth_from_runtime {
             Some(v) => v,
             None => Self::read_json(&oauth_path)?,
