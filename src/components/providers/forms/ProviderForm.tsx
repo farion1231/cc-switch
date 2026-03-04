@@ -1174,7 +1174,7 @@ export function ProviderForm({
     (status: GeminiLoginStatus) => {
       if (status === "authorized") {
         return t("provider.geminiLoginStatusAuthorized", {
-          defaultValue: "已导入，正在完成绑定…",
+          defaultValue: "已授权，正在完成绑定…",
         });
       }
       if (status === "expired") {
@@ -1193,7 +1193,7 @@ export function ProviderForm({
         });
       }
       return t("provider.geminiLoginStatusPending", {
-        defaultValue: "等待导入",
+        defaultValue: "等待授权",
       });
     },
     [t],
@@ -1217,10 +1217,18 @@ export function ProviderForm({
         ),
         status: "pending",
       });
+      if (session.authUrl ?? session.verificationUrl) {
+        const authUrl = session.authUrl ?? session.verificationUrl!;
+        try {
+          await settingsApi.openExternal(authUrl);
+        } catch {
+          window.open(authUrl, "_blank", "noopener,noreferrer");
+        }
+      }
       toast.success(
         t("provider.geminiLoginStarted", {
           defaultValue:
-            "Gemini 登录会话已创建。请按面板提示导入 oauth_creds.json 与 google_accounts.json。",
+            "已打开 Gemini 授权页面，完成授权后将自动回调绑定。",
         }),
       );
     } catch (error) {

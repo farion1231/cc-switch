@@ -97,7 +97,7 @@ export function GeminiFormFields({
 
   return (
     <>
-      {/* 官方登录：文件凭据导入流程 */}
+      {/* 官方登录：OAuth 授权流程 */}
       {category === "official" && (
         <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
           <div className="flex gap-3">
@@ -105,13 +105,13 @@ export function GeminiFormFields({
             <div className="space-y-1">
               <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
                 {t("provider.form.gemini.fileLoginTitle", {
-                  defaultValue: "文件凭据导入登录",
+                  defaultValue: "Gemini OAuth 登录",
                 })}
               </p>
               <p className="text-sm text-blue-700 dark:text-blue-300">
                 {t("provider.form.gemini.fileLoginHint", {
                   defaultValue:
-                    "点击后按面板提示将 oauth_creds.json 与 google_accounts.json 放入隔离目录，等待状态变为已授权后完成绑定。",
+                    "点击后会自动打开 Gemini 授权页，完成后回到 CC Switch 自动完成绑定。",
                 })}
               </p>
               {isGoogleOfficial && (
@@ -146,11 +146,8 @@ export function GeminiFormFields({
                     authUrl: {cliLoginPanel.authUrl ?? "--"}
                   </div>
                   <div className="text-xs text-muted-foreground break-all">
-                    expectedFilesDir: {cliLoginPanel.expectedFilesDir ?? "--"}
+                    sessionDir: {cliLoginPanel.expectedFilesDir ?? "--"}
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    请将 `oauth_creds.json` 和 `google_accounts.json` 放入上方隔离目录后继续轮询。
-                  </p>
                   {cliLoginPanel.message && (
                     <p className="text-xs text-muted-foreground break-all">
                       {cliLoginPanel.message}
@@ -184,7 +181,7 @@ export function GeminiFormFields({
                       })}
                     </span>
                     {cliLoginPanel.isPolling && !cliLoginPanel.isFinished && (
-                      <span>正在检查导入状态...</span>
+                      <span>正在检查授权状态...</span>
                     )}
                   </div>
                   {cliLoginPanel.errorText && (

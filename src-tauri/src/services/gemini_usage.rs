@@ -5,14 +5,25 @@ use crate::gemini_account::{
     GeminiAccount, GeminiLoginSession, GeminiLoginStatus, GeminiPoolStatus, GeminiProviderBinding,
     GeminiUsageState, GeminiUsageView,
 };
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
+use tokio::sync::oneshot;
+use url::form_urlencoded;
 
 const CLI_LOGIN_TTL_SECONDS: i64 = 30 * 60;
+const GOOGLE_OAUTH_CLIENT_ID: &str =
+    "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
+const GOOGLE_OAUTH_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const GOOGLE_OAUTH_USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v1/userinfo?alt=json";
+const GOOGLE_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
 const STATUS_PENDING: &str = "pending";
 const STATUS_AUTHORIZED: &str = "authorized";
 const STATUS_FAILED: &str = "failed";
@@ -30,6 +41,9 @@ struct GeminiLoginRuntime {
     status: String,
     message: Option<String>,
     isolated_home: PathBuf,
+    auth_url: Option<String>,
+    oauth_value: Option<Value>,
+    accounts_value: Option<Value>,
 }
 
 pub struct GeminiUsageService;
@@ -61,9 +75,202 @@ impl GeminiUsageService {
             .to_string()
     }
 
+    fn build_google_auth_url(redirect_uri: &str, state: &str, code_challenge: &str) -> String {
+        let mut serializer = form_urlencoded::Serializer::new(String::new());
+        serializer.append_pair("client_id", GOOGLE_OAUTH_CLIENT_ID);
+        serializer.append_pair("redirect_uri", redirect_uri);
+        serializer.append_pair("response_type", "code");
+        serializer.append_pair("scope", GOOGLE_OAUTH_SCOPE);
+        serializer.append_pair("access_type", "offline");
+        serializer.append_pair("prompt", "consent");
+        serializer.append_pair("state", state);
+        serializer.append_pair("code_challenge", code_challenge);
+        serializer.append_pair("code_challenge_method", "S256");
+        format!("{}?{}", GOOGLE_OAUTH_AUTH_URL, serializer.finish())
+    }
+
+    fn generate_pkce_verifier() -> String {
+        let raw = format!(
+            "{}-{}-{}",
+            uuid::Uuid::new_v4(),
+            Self::now_ms(),
+            uuid::Uuid::new_v4()
+        );
+        URL_SAFE_NO_PAD.encode(raw)
+    }
+
+    fn pkce_challenge(verifier: &str) -> String {
+        let digest = Sha256::digest(verifier.as_bytes());
+        URL_SAFE_NO_PAD.encode(digest)
+    }
+
+    async fn exchange_google_oauth_code(
+        code: &str,
+        redirect_uri: &str,
+        code_verifier: &str,
+    ) -> Result<Value, AppError> {
+        let params = [
+            ("code", code),
+            ("client_id", GOOGLE_OAUTH_CLIENT_ID),
+            ("redirect_uri", redirect_uri),
+            ("code_verifier", code_verifier),
+            ("grant_type", "authorization_code"),
+        ];
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(GOOGLE_OAUTH_TOKEN_URL)
+            .form(&params)
+            .send()
+            .await
+            .map_err(|e| AppError::Config(format!("Gemini token 交换失败: {e}")))?;
+
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Config(format!("Gemini token 响应读取失败: {e}")))?;
+        if !status.is_success() {
+            return Err(AppError::Config(format!(
+                "Gemini token 交换失败 ({}): {}",
+                status, body
+            )));
+        }
+        serde_json::from_str::<Value>(&body)
+            .map_err(|e| AppError::Config(format!("Gemini token 响应解析失败: {e}")))
+    }
+
+    async fn fetch_google_userinfo(access_token: &str) -> Result<Value, AppError> {
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(GOOGLE_OAUTH_USERINFO_URL)
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .map_err(|e| AppError::Config(format!("Gemini 用户信息请求失败: {e}")))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Config(format!("Gemini 用户信息读取失败: {e}")))?;
+        if !status.is_success() {
+            return Err(AppError::Config(format!(
+                "Gemini 用户信息请求失败 ({}): {}",
+                status, body
+            )));
+        }
+        serde_json::from_str::<Value>(&body)
+            .map_err(|e| AppError::Config(format!("Gemini 用户信息解析失败: {e}")))
+    }
+
+    async fn run_oauth_callback_server(
+        session_id: String,
+        callback_addr: SocketAddr,
+        state: String,
+        redirect_uri: String,
+        code_verifier: String,
+    ) {
+        let (result_tx, result_rx) = oneshot::channel::<Result<String, String>>();
+        let result_tx_shared = std::sync::Arc::new(std::sync::Mutex::new(Some(result_tx)));
+
+        let state_for_handler = state.clone();
+        let tx_for_handler = result_tx_shared.clone();
+        let app = axum::Router::new().route(
+            "/oauth2callback",
+            axum::routing::get(
+                move |axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>| {
+                    let tx_for_handler = tx_for_handler.clone();
+                    let expected_state = state_for_handler.clone();
+                    async move {
+                        let result = if let Some(err) = params.get("error") {
+                            Err(format!("授权失败: {err}"))
+                        } else if params.get("state").map(String::as_str) != Some(expected_state.as_str()) {
+                            Err("回调 state 不匹配，请重试".to_string())
+                        } else if let Some(code) = params.get("code") {
+                            Ok(code.clone())
+                        } else {
+                            Err("回调中缺少 code 参数".to_string())
+                        };
+                        if let Ok(mut guard) = tx_for_handler.lock() {
+                            if let Some(sender) = guard.take() {
+                                let _ = sender.send(result.clone());
+                            }
+                        }
+                        let html = match result {
+                            Ok(_) => "<html><body><h3>Gemini 授权成功</h3><p>可以返回 CC Switch 完成绑定。</p></body></html>",
+                            Err(_) => "<html><body><h3>Gemini 授权失败</h3><p>请返回 CC Switch 重新发起登录。</p></body></html>",
+                        };
+                        axum::response::Html(html.to_string())
+                    }
+                },
+            ),
+        );
+
+        let listener = match tokio::net::TcpListener::bind(callback_addr).await {
+            Ok(v) => v,
+            Err(err) => {
+                if let Ok(mut sessions) = CLI_LOGIN_SESSIONS.lock() {
+                    if let Some(runtime) = sessions.get_mut(&session_id) {
+                        runtime.status = STATUS_FAILED.to_string();
+                        runtime.message = Some(format!("Gemini 登录回调端口绑定失败: {err}"));
+                        runtime.updated_at_ms = Self::now_ms();
+                    }
+                }
+                return;
+            }
+        };
+
+        let server_handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let code_result = match tokio::time::timeout(
+            std::time::Duration::from_secs(CLI_LOGIN_TTL_SECONDS as u64),
+            result_rx,
+        )
+        .await
+        {
+            Ok(Ok(v)) => v,
+            Ok(Err(_)) => Err("授权回调通道异常".to_string()),
+            Err(_) => Err("授权超时，请重新发起 Gemini 登录".to_string()),
+        };
+        server_handle.abort();
+
+        let finalize_result = async {
+            let code = code_result.map_err(AppError::Config)?;
+            let oauth_value =
+                Self::exchange_google_oauth_code(&code, &redirect_uri, &code_verifier).await?;
+            let access_token = Self::find_string(&oauth_value, &["access_token"])
+                .ok_or_else(|| AppError::Config("Gemini token 响应缺少 access_token".to_string()))?;
+            let userinfo_value = Self::fetch_google_userinfo(&access_token).await?;
+            Ok::<(Value, Value), AppError>((oauth_value, userinfo_value))
+        }
+        .await;
+
+        if let Ok(mut sessions) = CLI_LOGIN_SESSIONS.lock() {
+            if let Some(runtime) = sessions.get_mut(&session_id) {
+                if runtime.status == STATUS_CANCELLED || runtime.status == STATUS_EXPIRED {
+                    runtime.updated_at_ms = Self::now_ms();
+                    return;
+                }
+                match finalize_result {
+                    Ok((oauth_value, userinfo_value)) => {
+                        runtime.oauth_value = Some(oauth_value);
+                        runtime.accounts_value = Some(userinfo_value);
+                        runtime.status = STATUS_AUTHORIZED.to_string();
+                        runtime.message = Some("Gemini 授权完成，可点击保存完成绑定。".to_string());
+                    }
+                    Err(err) => {
+                        runtime.status = STATUS_FAILED.to_string();
+                        runtime.message = Some(format!("Gemini 授权失败: {}", err));
+                    }
+                }
+                runtime.updated_at_ms = Self::now_ms();
+            }
+        }
+    }
+
     fn update_login_runtime(runtime: &mut GeminiLoginRuntime) {
         let now_ms = Self::now_ms();
-        let files_dir = Self::expected_files_dir(&runtime.isolated_home);
 
         if runtime.status == STATUS_CANCELLED || runtime.status == STATUS_EXPIRED {
             runtime.updated_at_ms = now_ms;
@@ -77,28 +284,22 @@ impl GeminiUsageService {
             return;
         }
 
-        let (oauth_path, accounts_path) = Self::session_cred_paths(&runtime.isolated_home);
-        if !oauth_path.exists() || !accounts_path.exists() {
-            runtime.status = STATUS_PENDING.to_string();
-            runtime.message = Some(format!(
-                "等待凭据文件就绪：请将 oauth_creds.json 与 google_accounts.json 放入 {files_dir}"
-            ));
+        if runtime.status == STATUS_AUTHORIZED || runtime.status == STATUS_FAILED {
             runtime.updated_at_ms = now_ms;
             return;
         }
 
-        match (
-            Self::read_json(&oauth_path),
-            Self::read_json(&accounts_path),
-        ) {
-            (Ok(_), Ok(_)) => {
-                runtime.status = STATUS_AUTHORIZED.to_string();
-                runtime.message = Some("凭据文件已就绪，可执行 finalize。".to_string());
-            }
-            (Err(err), _) | (_, Err(err)) => {
-                runtime.status = STATUS_FAILED.to_string();
-                runtime.message = Some(format!("凭据文件解析失败: {err}"));
-            }
+        let (oauth_path, accounts_path) = Self::session_cred_paths(&runtime.isolated_home);
+        if runtime.oauth_value.is_none() && oauth_path.exists() {
+            runtime.oauth_value = Self::read_json(&oauth_path).ok();
+        }
+        if runtime.accounts_value.is_none() && accounts_path.exists() {
+            runtime.accounts_value = Self::read_json(&accounts_path).ok();
+        }
+
+        if runtime.oauth_value.is_some() && runtime.accounts_value.is_some() {
+            runtime.status = STATUS_AUTHORIZED.to_string();
+            runtime.message = Some("Gemini 授权完成，可执行 finalize。".to_string());
         }
         runtime.updated_at_ms = now_ms;
     }
@@ -113,7 +314,7 @@ impl GeminiUsageService {
             expires_at_ms: runtime.expires_at_ms,
             remaining_seconds,
             expected_files_dir: Some(Self::expected_files_dir(&runtime.isolated_home)),
-            auth_url: Some("https://codeassist.google.com/".to_string()),
+            auth_url: runtime.auth_url.clone(),
             message: runtime.message.clone(),
         }
     }
@@ -136,22 +337,51 @@ impl GeminiUsageService {
         let gemini_home = Self::session_gemini_dir(&isolated_home);
         std::fs::create_dir_all(&gemini_home).map_err(|e| AppError::io(gemini_home.clone(), e))?;
 
+        let callback_addr: SocketAddr = "127.0.0.1:0"
+            .parse()
+            .map_err(|e| AppError::Config(format!("构造 Gemini 回调地址失败: {e}")))?;
+        let callback_listener = std::net::TcpListener::bind(callback_addr)
+            .map_err(|e| AppError::Config(format!("Gemini 回调端口申请失败: {e}")))?;
+        let callback_addr = callback_listener
+            .local_addr()
+            .map_err(|e| AppError::Config(format!("读取 Gemini 回调端口失败: {e}")))?;
+        drop(callback_listener);
+
+        let state = uuid::Uuid::new_v4().to_string();
+        let redirect_uri = format!("http://127.0.0.1:{}/oauth2callback", callback_addr.port());
+        let code_verifier = Self::generate_pkce_verifier();
+        let code_challenge = Self::pkce_challenge(&code_verifier);
+        let auth_url = Self::build_google_auth_url(&redirect_uri, &state, &code_challenge);
+
         let runtime = GeminiLoginRuntime {
             provider_id: provider_id.clone(),
             updated_at_ms: now_ms,
             expires_at_ms: now_ms + CLI_LOGIN_TTL_SECONDS * 1000,
             status: STATUS_PENDING.to_string(),
-            message: Some(format!(
-                "会话已创建，请将 oauth_creds.json 与 google_accounts.json 放入 {}",
-                gemini_home.display()
-            )),
+            message: Some("Gemini 授权会话已创建，等待浏览器回调。".to_string()),
             isolated_home: isolated_home.clone(),
+            auth_url: Some(auth_url.clone()),
+            oauth_value: None,
+            accounts_value: None,
         };
 
         let mut sessions = CLI_LOGIN_SESSIONS
             .lock()
             .map_err(|_| AppError::Config("gemini login session lock 失败".to_string()))?;
         sessions.insert(session_id.clone(), runtime);
+        drop(sessions);
+
+        let session_id_for_task = session_id.clone();
+        tauri::async_runtime::spawn(async move {
+            Self::run_oauth_callback_server(
+                session_id_for_task,
+                callback_addr,
+                state,
+                redirect_uri,
+                code_verifier,
+            )
+            .await;
+        });
 
         Ok(GeminiLoginSession {
             session_id,
@@ -159,8 +389,9 @@ impl GeminiUsageService {
             started_at_ms: now_ms,
             expires_at_ms: now_ms + CLI_LOGIN_TTL_SECONDS * 1000,
             expected_files_dir: Self::expected_files_dir(&isolated_home),
-            auth_url: Some("https://codeassist.google.com/".to_string()),
-            instructions: "请在浏览器完成 Gemini 登录后，将 oauth_creds.json 与 google_accounts.json 复制到会话隔离目录下的 home/.gemini/ 中，再调用 finalize。".to_string(),
+            auth_url: Some(auth_url),
+            instructions:
+                "浏览器完成 Gemini 授权后将自动回调并完成会话，无需手工拷贝文件。".to_string(),
         })
     }
 
@@ -407,7 +638,7 @@ impl GeminiUsageService {
     }
 
     pub fn finalize_cli_login(db: &Database, session_id: &str) -> Result<GeminiAccount, AppError> {
-        let (provider_id, isolated_home) = {
+        let (provider_id, isolated_home, oauth_from_runtime, accounts_from_runtime) = {
             let mut sessions = CLI_LOGIN_SESSIONS
                 .lock()
                 .map_err(|_| AppError::Config("gemini login session lock 失败".to_string()))?;
@@ -427,31 +658,47 @@ impl GeminiUsageService {
                     runtime.status
                 )));
             }
-            (runtime.provider_id.clone(), runtime.isolated_home.clone())
+            (
+                runtime.provider_id.clone(),
+                runtime.isolated_home.clone(),
+                runtime.oauth_value.clone(),
+                runtime.accounts_value.clone(),
+            )
         };
 
         let (oauth_path, accounts_path) = Self::session_cred_paths(&isolated_home);
-        if !oauth_path.exists() {
-            return Err(AppError::Config(format!(
-                "缺少 oauth_creds.json: {}",
-                oauth_path.display()
-            )));
-        }
-        if !accounts_path.exists() {
-            return Err(AppError::Config(format!(
-                "缺少 google_accounts.json: {}",
-                accounts_path.display()
-            )));
-        }
-
-        let oauth_value = Self::read_json(&oauth_path)?;
-        let accounts_value = Self::read_json(&accounts_path)?;
+        let oauth_value = match oauth_from_runtime {
+            Some(v) => v,
+            None => Self::read_json(&oauth_path)?,
+        };
+        let accounts_value = match accounts_from_runtime {
+            Some(v) => v,
+            None => Self::read_json(&accounts_path)?,
+        };
         let account = Self::build_account_from_files(
             &provider_id,
             &oauth_path,
             &oauth_value,
             &accounts_value,
         )?;
+
+        if !oauth_path.exists() {
+            if let Some(dir) = oauth_path.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| AppError::io(dir, e))?;
+            }
+            let text = serde_json::to_string_pretty(&oauth_value)
+                .map_err(|e| AppError::Config(format!("序列化 oauth 数据失败: {e}")))?;
+            std::fs::write(&oauth_path, text).map_err(|e| AppError::io(&oauth_path, e))?;
+        }
+        if !accounts_path.exists() {
+            if let Some(dir) = accounts_path.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| AppError::io(dir, e))?;
+            }
+            let text = serde_json::to_string_pretty(&accounts_value)
+                .map_err(|e| AppError::Config(format!("序列化 account 数据失败: {e}")))?;
+            std::fs::write(&accounts_path, text).map_err(|e| AppError::io(&accounts_path, e))?;
+        }
+
         let api_key_payload =
             Self::build_provider_api_key_payload(&account, &oauth_value, &accounts_value);
 
@@ -478,11 +725,7 @@ impl GeminiUsageService {
         })?;
 
         if let Ok(mut sessions) = CLI_LOGIN_SESSIONS.lock() {
-            if let Some(runtime) = sessions.get_mut(session_id) {
-                runtime.status = STATUS_AUTHORIZED.to_string();
-                runtime.updated_at_ms = Self::now_ms();
-                runtime.message = Some("账号已落库并绑定到 provider。".to_string());
-            }
+            sessions.remove(session_id);
         }
 
         Ok(account)
