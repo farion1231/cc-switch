@@ -1,22 +1,72 @@
 use crate::codex_account::{
-    CodexAccount, CodexProviderBinding, CodexUsageState, CodexUsageView, ImportResult,
-    LoginSession, RefreshResult,
+    CodexAccount, CodexProviderBinding, CodexUsageState, CodexUsageView, DeviceLoginSession,
+    DeviceLoginState, DeviceLoginStatus, ImportResult, LoginSession, RefreshResult,
 };
 use crate::database::Database;
 use crate::error::AppError;
 use chrono::Utc;
+use regex::Regex;
+use serde_json::json;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, LazyLock, Mutex};
 use tokio::sync::RwLock;
 
 const SWITCHER_IMPORT_DONE_KEY: &str = "codex_switcher_import_done";
 const USAGE_POLLER_ENABLED_KEY: &str = "codex_usage_poller_enabled";
 const USAGE_ENDPOINT: &str = "https://chatgpt.com/backend-api/wham/usage";
 const POLL_INTERVAL_SECS: u64 = 60;
+const DEVICE_LOGIN_TTL_SECONDS: i64 = 15 * 60;
 
 static LOGIN_SESSIONS: LazyLock<RwLock<std::collections::HashMap<String, String>>> =
     LazyLock::new(|| RwLock::new(std::collections::HashMap::new()));
+static DEVICE_LOGIN_SESSIONS: LazyLock<Mutex<HashMap<String, DeviceLoginRuntime>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static URL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"https?://[^\s]+").expect("valid url regex"));
+static CODE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)\b").expect("valid code regex")
+});
+static LABELED_CODE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:user[\s_-]*code|device[\s_-]*code|code)\s*[:=]\s*([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)")
+        .expect("valid labeled code regex")
+});
+
+#[derive(Debug, Clone, Default)]
+struct DeviceAuthParsedOutput {
+    verification_url: Option<String>,
+    user_code: Option<String>,
+    expires_in_seconds: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedAuthTokens {
+    access_token: String,
+    refresh_token: Option<String>,
+    id_token: Option<String>,
+    account_id: String,
+    auth_mode: String,
+    email: Option<String>,
+    plan_type: Option<String>,
+}
+
+struct DeviceLoginRuntime {
+    provider_id: String,
+    created_at_ms: i64,
+    expires_at_ms: i64,
+    updated_at_ms: i64,
+    verification_url: Option<String>,
+    user_code: Option<String>,
+    status: DeviceLoginState,
+    output: Arc<Mutex<String>>,
+    parse_error: Arc<Mutex<Option<String>>>,
+    child: Option<Child>,
+    isolated_home: PathBuf,
+}
 
 pub struct CodexUsageService;
 
@@ -35,6 +85,216 @@ impl CodexUsageService {
 
     fn now_ms() -> i64 {
         Utc::now().timestamp_millis()
+    }
+
+    fn parse_device_auth_output_line(
+        line: &str,
+        mut parsed: DeviceAuthParsedOutput,
+    ) -> DeviceAuthParsedOutput {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return parsed;
+        }
+
+        if trimmed.starts_with('{') {
+            if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+                if parsed.verification_url.is_none() {
+                    parsed.verification_url = v
+                        .get("verification_url")
+                        .or_else(|| v.get("verification_uri"))
+                        .or_else(|| v.get("verificationUri"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
+                if parsed.user_code.is_none() {
+                    parsed.user_code = v
+                        .get("user_code")
+                        .or_else(|| v.get("userCode"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
+                if parsed.expires_in_seconds.is_none() {
+                    parsed.expires_in_seconds = v
+                        .get("expires_in")
+                        .or_else(|| v.get("expiresIn"))
+                        .and_then(Value::as_i64);
+                }
+            }
+        }
+
+        if parsed.verification_url.is_none() {
+            if let Some(m) = URL_RE.find(trimmed) {
+                parsed.verification_url = Some(m.as_str().trim_end_matches('.').to_string());
+            }
+        }
+
+        if parsed.user_code.is_none() {
+            if let Some(caps) = LABELED_CODE_RE.captures(trimmed) {
+                parsed.user_code = caps.get(1).map(|m| m.as_str().to_string());
+            } else if let Some(caps) = CODE_RE.captures(trimmed) {
+                parsed.user_code = caps.get(1).map(|m| m.as_str().to_string());
+            }
+        }
+
+        if parsed.expires_in_seconds.is_none()
+            && trimmed.contains("15")
+            && (trimmed.contains("minute") || trimmed.contains("min") || trimmed.contains("分钟"))
+        {
+            parsed.expires_in_seconds = Some(DEVICE_LOGIN_TTL_SECONDS);
+        }
+
+        parsed
+    }
+
+    fn parse_device_auth_output(output: &str) -> DeviceAuthParsedOutput {
+        output
+            .lines()
+            .fold(DeviceAuthParsedOutput::default(), |parsed, line| {
+                Self::parse_device_auth_output_line(line, parsed)
+            })
+    }
+
+    fn parse_auth_tokens_from_json(auth: &Value) -> Option<ParsedAuthTokens> {
+        let root_mode = auth
+            .get("auth_mode")
+            .and_then(Value::as_str)
+            .unwrap_or("chatgpt");
+        let normalized_mode = match root_mode {
+            "api_key" => "apikey",
+            other => other,
+        }
+        .to_string();
+
+        let tokens = auth.get("tokens").unwrap_or(auth);
+        let access_token = tokens
+            .get("access_token")
+            .and_then(Value::as_str)
+            .or_else(|| auth.get("access_token").and_then(Value::as_str))
+            .or_else(|| auth.get("OPENAI_API_KEY").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|v| !v.is_empty())?
+            .to_string();
+
+        let token_payload = Self::decode_jwt_payload(&access_token).unwrap_or(Value::Null);
+        let account_id = tokens
+            .get("account_id")
+            .and_then(Value::as_str)
+            .or_else(|| auth.get("account_id").and_then(Value::as_str))
+            .or_else(|| {
+                token_payload
+                    .get("https://api.openai.com/auth")
+                    .and_then(|v| v.get("chatgpt_account_id"))
+                    .and_then(Value::as_str)
+            })
+            .unwrap_or_default()
+            .to_string();
+        if account_id.is_empty() {
+            return None;
+        }
+
+        Some(ParsedAuthTokens {
+            access_token,
+            refresh_token: tokens
+                .get("refresh_token")
+                .or_else(|| auth.get("refresh_token"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            id_token: tokens
+                .get("id_token")
+                .or_else(|| auth.get("id_token"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            account_id,
+            auth_mode: normalized_mode,
+            email: token_payload
+                .get("https://api.openai.com/profile")
+                .and_then(|v| v.get("email"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            plan_type: token_payload
+                .get("https://api.openai.com/auth")
+                .and_then(|v| v.get("chatgpt_plan_type"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        })
+    }
+
+    fn update_device_runtime(runtime: &mut DeviceLoginRuntime) {
+        let now_ms = Self::now_ms();
+
+        let output_snapshot = runtime
+            .output
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default();
+        let parsed = Self::parse_device_auth_output(&output_snapshot);
+        if runtime.verification_url.is_none() {
+            runtime.verification_url = parsed.verification_url;
+        }
+        if runtime.user_code.is_none() {
+            runtime.user_code = parsed.user_code;
+        }
+
+        if runtime.status == DeviceLoginState::Pending {
+            if let Some(child) = runtime.child.as_mut() {
+                match child.try_wait() {
+                    Ok(Some(exit_status)) => {
+                        runtime.child = None;
+                        runtime.status = if exit_status.success() {
+                            DeviceLoginState::Authorized
+                        } else {
+                            if let Ok(mut err) = runtime.parse_error.lock() {
+                                if err.is_none() {
+                                    *err = Some(format!(
+                                        "codex login exited with status {exit_status}"
+                                    ));
+                                }
+                            }
+                            DeviceLoginState::Failed
+                        };
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        runtime.child = None;
+                        runtime.status = DeviceLoginState::Failed;
+                        if let Ok(mut err) = runtime.parse_error.lock() {
+                            *err = Some(format!("读取登录进程状态失败: {e}"));
+                        }
+                    }
+                }
+            }
+        }
+
+        if runtime.status == DeviceLoginState::Pending && now_ms > runtime.expires_at_ms {
+            runtime.status = DeviceLoginState::Expired;
+            if let Some(mut child) = runtime.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+
+        runtime.updated_at_ms = now_ms;
+    }
+
+    fn runtime_to_status(session_id: &str, runtime: &DeviceLoginRuntime) -> DeviceLoginStatus {
+        let remaining_seconds = ((runtime.expires_at_ms - Self::now_ms()) / 1000).max(0);
+        let message = runtime
+            .parse_error
+            .lock()
+            .ok()
+            .and_then(|v| v.clone());
+
+        DeviceLoginStatus {
+            session_id: session_id.to_string(),
+            provider_id: runtime.provider_id.clone(),
+            status: runtime.status.clone(),
+            verification_url: runtime.verification_url.clone(),
+            user_code: runtime.user_code.clone(),
+            expires_at_ms: runtime.expires_at_ms,
+            updated_at_ms: runtime.updated_at_ms,
+            remaining_seconds,
+            message,
+        }
     }
 
     fn is_usage_poller_enabled(db: &Database) -> bool {
@@ -551,6 +811,276 @@ impl CodexUsageService {
         tokio::spawn(Self::start_usage_poller(db));
     }
 
+    pub async fn start_device_login(provider_id: String) -> Result<DeviceLoginSession, AppError> {
+        if provider_id.trim().is_empty() {
+            return Err(AppError::Config("provider_id 不能为空".to_string()));
+        }
+
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let now_ms = Self::now_ms();
+        let runtime_root = dirs::home_dir()
+            .ok_or_else(|| AppError::Config("无法定位 Home 目录".to_string()))?
+            .join(".cc-switch")
+            .join("runtime")
+            .join("codex-login")
+            .join(&session_id);
+        let isolated_home = runtime_root.join("home");
+        let codex_home = isolated_home.join(".codex");
+        std::fs::create_dir_all(&codex_home)
+            .map_err(|e| AppError::io(codex_home.clone(), e))?;
+
+        let mut cmd = Command::new("codex");
+        cmd.args(["login", "--device-auth"])
+            .current_dir(&isolated_home)
+            .env("HOME", &isolated_home)
+            .env_remove("OPENAI_BASE_URL")
+            .env_remove("OPENAI_API_KEY")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| AppError::Config(format!("启动 codex login 失败: {e}")))?;
+
+        let output = Arc::new(Mutex::new(String::new()));
+        let parse_error = Arc::new(Mutex::new(None));
+
+        if let Some(stdout) = child.stdout.take() {
+            let output_ref = output.clone();
+            std::thread::spawn(move || {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines().map_while(Result::ok) {
+                    if let Ok(mut out) = output_ref.lock() {
+                        out.push_str(&line);
+                        out.push('\n');
+                    }
+                }
+            });
+        }
+
+        if let Some(stderr) = child.stderr.take() {
+            let output_ref = output.clone();
+            std::thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines().map_while(Result::ok) {
+                    if let Ok(mut out) = output_ref.lock() {
+                        out.push_str(&line);
+                        out.push('\n');
+                    }
+                }
+            });
+        }
+
+        let mut parsed = DeviceAuthParsedOutput::default();
+        for _ in 0..30 {
+            let snapshot = output.lock().map(|v| v.clone()).unwrap_or_default();
+            parsed = Self::parse_device_auth_output(&snapshot);
+            if parsed.verification_url.is_some() && parsed.user_code.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        let expires_in = parsed.expires_in_seconds.unwrap_or(DEVICE_LOGIN_TTL_SECONDS);
+        let expires_at_ms = now_ms + expires_in * 1000;
+        let verification_url = parsed
+            .verification_url
+            .unwrap_or_else(|| "https://auth.openai.com/codex/device".to_string());
+        let user_code = parsed.user_code.unwrap_or_default();
+        if user_code.is_empty() {
+            if let Ok(mut err) = parse_error.lock() {
+                *err = Some("未从 codex 输出中解析到授权码，请重试。".to_string());
+            }
+        }
+
+        let runtime = DeviceLoginRuntime {
+            provider_id: provider_id.clone(),
+            created_at_ms: now_ms,
+            expires_at_ms,
+            updated_at_ms: now_ms,
+            verification_url: Some(verification_url.clone()),
+            user_code: if user_code.is_empty() {
+                None
+            } else {
+                Some(user_code.clone())
+            },
+            status: DeviceLoginState::Pending,
+            output,
+            parse_error,
+            child: Some(child),
+            isolated_home,
+        };
+        let mut sessions = DEVICE_LOGIN_SESSIONS
+            .lock()
+            .map_err(|_| AppError::Config("device login session lock 失败".to_string()))?;
+        sessions.insert(session_id.clone(), runtime);
+
+        Ok(DeviceLoginSession {
+            session_id,
+            provider_id,
+            verification_url,
+            user_code,
+            expires_at_ms,
+            opened_browser: false,
+        })
+    }
+
+    pub fn get_device_login_status(session_id: &str) -> Result<DeviceLoginStatus, AppError> {
+        let mut sessions = DEVICE_LOGIN_SESSIONS
+            .lock()
+            .map_err(|_| AppError::Config("device login session lock 失败".to_string()))?;
+        let runtime = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| AppError::Config("登录会话不存在或已过期".to_string()))?;
+        Self::update_device_runtime(runtime);
+        Ok(Self::runtime_to_status(session_id, runtime))
+    }
+
+    pub fn cancel_device_login(session_id: &str) -> Result<bool, AppError> {
+        let mut sessions = DEVICE_LOGIN_SESSIONS
+            .lock()
+            .map_err(|_| AppError::Config("device login session lock 失败".to_string()))?;
+        let runtime = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| AppError::Config("登录会话不存在或已过期".to_string()))?;
+
+        if let Some(mut child) = runtime.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        runtime.status = DeviceLoginState::Cancelled;
+        runtime.updated_at_ms = Self::now_ms();
+        Ok(true)
+    }
+
+    fn update_provider_auth_from_tokens(
+        db: &Database,
+        provider_id: &str,
+        parsed: &ParsedAuthTokens,
+    ) -> Result<(), AppError> {
+        let mut provider = db
+            .get_provider_by_id(provider_id, "codex")?
+            .ok_or_else(|| AppError::Config(format!("Codex provider not found: {provider_id}")))?;
+
+        if !provider.settings_config.is_object() {
+            provider.settings_config = json!({});
+        }
+        let root = provider
+            .settings_config
+            .as_object_mut()
+            .ok_or_else(|| AppError::Config("settings_config 不是对象".to_string()))?;
+
+        let auth_entry = root.entry("auth".to_string()).or_insert_with(|| json!({}));
+        if !auth_entry.is_object() {
+            *auth_entry = json!({});
+        }
+        let auth_obj = auth_entry
+            .as_object_mut()
+            .ok_or_else(|| AppError::Config("auth 配置不是对象".to_string()))?;
+
+        auth_obj.insert("auth_mode".to_string(), json!(parsed.auth_mode));
+        auth_obj.insert(
+            "OPENAI_API_KEY".to_string(),
+            json!(parsed.access_token.clone()),
+        );
+        auth_obj.insert("account_id".to_string(), json!(parsed.account_id.clone()));
+
+        let token_entry = auth_obj
+            .entry("tokens".to_string())
+            .or_insert_with(|| json!({}));
+        if !token_entry.is_object() {
+            *token_entry = json!({});
+        }
+        let token_obj = token_entry
+            .as_object_mut()
+            .ok_or_else(|| AppError::Config("auth.tokens 不是对象".to_string()))?;
+        token_obj.insert(
+            "access_token".to_string(),
+            json!(parsed.access_token.clone()),
+        );
+        token_obj.insert("account_id".to_string(), json!(parsed.account_id.clone()));
+        if let Some(v) = &parsed.refresh_token {
+            token_obj.insert("refresh_token".to_string(), json!(v));
+        }
+        if let Some(v) = &parsed.id_token {
+            token_obj.insert("id_token".to_string(), json!(v));
+        }
+
+        db.update_provider_settings_config("codex", provider_id, &provider.settings_config)?;
+        Ok(())
+    }
+
+    pub fn finalize_device_login(db: &Database, session_id: &str) -> Result<CodexAccount, AppError> {
+        let (provider_id, isolated_home) = {
+            let mut sessions = DEVICE_LOGIN_SESSIONS
+                .lock()
+                .map_err(|_| AppError::Config("device login session lock 失败".to_string()))?;
+            let runtime = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| AppError::Config("登录会话不存在或已过期".to_string()))?;
+            Self::update_device_runtime(runtime);
+            if runtime.status != DeviceLoginState::Authorized {
+                return Err(AppError::Config(format!(
+                    "登录尚未完成授权，当前状态: {:?}",
+                    runtime.status
+                )));
+            }
+            (runtime.provider_id.clone(), runtime.isolated_home.clone())
+        };
+
+        let auth_path = isolated_home.join(".codex").join("auth.json");
+        if !auth_path.exists() {
+            return Err(AppError::Config(format!(
+                "未找到隔离登录 auth.json: {}",
+                auth_path.display()
+            )));
+        }
+        let auth_text =
+            std::fs::read_to_string(&auth_path).map_err(|e| AppError::io(auth_path.clone(), e))?;
+        let auth_value: Value = serde_json::from_str(&auth_text)
+            .map_err(|e| AppError::Config(format!("解析 auth.json 失败: {e}")))?;
+        let parsed = Self::parse_auth_tokens_from_json(&auth_value).ok_or_else(|| {
+            AppError::Config("auth.json 中缺少有效 chatgpt token/account_id".to_string())
+        })?;
+
+        let now = Self::now_ms();
+        let account = CodexAccount {
+            id: provider_id.clone(),
+            email: parsed.email.clone(),
+            display_name: Some(provider_id.clone()),
+            account_id: parsed.account_id.clone(),
+            plan_type: parsed.plan_type.clone(),
+            auth_mode: parsed.auth_mode.clone(),
+            access_token: parsed.access_token.clone(),
+            refresh_token: parsed.refresh_token.clone(),
+            id_token: parsed.id_token.clone(),
+            last_refresh_at: Some(now),
+            last_used_at: Some(now),
+            source: "cc_login".to_string(),
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+        };
+        db.upsert_codex_account(&account)?;
+        db.upsert_codex_provider_binding(&CodexProviderBinding {
+            provider_id: provider_id.clone(),
+            account_id: account.id.clone(),
+            auto_bound: false,
+            updated_at: now,
+        })?;
+        Self::update_provider_auth_from_tokens(db, &provider_id, &parsed)?;
+
+        if let Ok(mut sessions) = DEVICE_LOGIN_SESSIONS.lock() {
+            if let Some(mut runtime) = sessions.remove(session_id) {
+                if let Some(mut child) = runtime.child.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+        Ok(account)
+    }
+
+    #[deprecated(note = "Use start_device_login instead")]
     pub async fn start_login(provider_id: String) -> Result<LoginSession, AppError> {
         let session_id = uuid::Uuid::new_v4().to_string();
         LOGIN_SESSIONS
@@ -564,6 +1094,7 @@ impl CodexUsageService {
         })
     }
 
+    #[deprecated(note = "Use finalize_device_login instead")]
     pub async fn complete_login(
         db: &Database,
         session_id: String,
@@ -731,5 +1262,49 @@ impl CodexUsageService {
             updated_at: now,
         })?;
         Ok(account)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CodexUsageService;
+    use serde_json::json;
+
+    #[test]
+    fn parse_device_output_extracts_url_and_code() {
+        let output = r#"
+Welcome to Codex
+1. Open this link in your browser and sign in
+   https://auth.openai.com/codex/device
+2. Enter this one-time code (expires in 15 minutes)
+   CLOH-PJSVD
+"#;
+        let parsed = CodexUsageService::parse_device_auth_output(output);
+        assert_eq!(
+            parsed.verification_url.as_deref(),
+            Some("https://auth.openai.com/codex/device")
+        );
+        assert_eq!(parsed.user_code.as_deref(), Some("CLOH-PJSVD"));
+        assert_eq!(parsed.expires_in_seconds, Some(15 * 60));
+    }
+
+    #[test]
+    fn parse_auth_tokens_supports_legacy_api_key_variant() {
+        let auth = json!({
+            "auth_mode": "api_key",
+            "OPENAI_API_KEY": "eyJhbGciOiJIUzI1NiJ9.eyJmb28iOiJiYXIifQ.sig",
+            "tokens": {
+                "access_token": "eyJhbGciOiJIUzI1NiJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiacc-1In19.sig",
+                "account_id": "acc-1",
+                "refresh_token": "rt-1",
+                "id_token": "id-1"
+            }
+        });
+        let parsed = CodexUsageService::parse_auth_tokens_from_json(&auth)
+            .expect("should parse auth tokens from legacy variant");
+        assert_eq!(parsed.account_id, "acc-1");
+        assert_eq!(parsed.auth_mode, "apikey");
+        assert_eq!(parsed.refresh_token.as_deref(), Some("rt-1"));
+        assert_eq!(parsed.id_token.as_deref(), Some("id-1"));
     }
 }

@@ -161,6 +161,34 @@ export interface LoginSession {
   authUrl: string;
 }
 
+export interface CodexDeviceLoginSession {
+  sessionId: string;
+  providerId: string;
+  verificationUrl: string;
+  userCode: string;
+  expiresAtMs: number;
+  openedBrowser: boolean;
+}
+
+export type CodexDeviceLoginStatus =
+  | "pending"
+  | "authorized"
+  | "expired"
+  | "cancelled"
+  | "failed";
+
+export interface CodexDeviceLoginStatusView {
+  sessionId: string;
+  providerId: string;
+  verificationUrl?: string;
+  userCode?: string;
+  status: CodexDeviceLoginStatus;
+  message?: string;
+  remainingSeconds: number;
+  expiresAtMs: number;
+  updatedAtMs: number;
+}
+
 // 供应商单独的模型测试配置
 export interface ProviderTestConfig {
   // 是否启用单独配置（false 时使用全局配置）

@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { KeyRound } from "lucide-react";
+import { KeyRound, LogIn, Copy, XCircle, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField } from "./shared";
@@ -40,6 +40,20 @@ interface CodexFormFieldsProps {
   onQuickBindAuth?: () => void;
   quickBindLoading?: boolean;
   canQuickBind?: boolean;
+  onStartDeviceLogin?: () => void;
+  deviceLoginLoading?: boolean;
+  deviceLoginPanel?: {
+    userCode: string;
+    verificationUrl: string;
+    remainingSeconds: number;
+    statusText: string;
+    errorText?: string;
+    isPolling: boolean;
+    isFinished: boolean;
+  } | null;
+  onCopyDeviceCode?: () => void;
+  onCancelDeviceLogin?: () => void;
+  deviceLoginCancelLoading?: boolean;
 }
 
 export function CodexFormFields({
@@ -66,6 +80,12 @@ export function CodexFormFields({
   onQuickBindAuth,
   quickBindLoading = false,
   canQuickBind = false,
+  onStartDeviceLogin,
+  deviceLoginLoading = false,
+  deviceLoginPanel,
+  onCopyDeviceCode,
+  onCancelDeviceLogin,
+  deviceLoginCancelLoading = false,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -92,7 +112,107 @@ export function CodexFormFields({
         }}
       />
 
-      {onQuickBindAuth && (
+      {category === "official" && onStartDeviceLogin && (
+        <div className="space-y-2 rounded-lg border border-border-default/80 bg-muted/20 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              onClick={onStartDeviceLogin}
+              disabled={!canQuickBind || deviceLoginLoading}
+              className="w-full sm:w-auto"
+            >
+              <LogIn className="h-4 w-4 mr-2" />
+              {t("provider.codexDeviceLogin", {
+                defaultValue: "Login with ChatGPT",
+              })}
+            </Button>
+            {onQuickBindAuth && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onQuickBindAuth}
+                disabled={!canQuickBind || quickBindLoading}
+                className="w-full sm:w-auto"
+              >
+                <KeyRound className="h-4 w-4 mr-2" />
+                {t("provider.codexBindLogin", {
+                  defaultValue: "一键绑定当前登录态",
+                })}
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t("provider.codexDeviceLoginHint", {
+              defaultValue:
+                "点击后将自动打开 ChatGPT 验证页面，请输入授权码并等待授权完成。",
+            })}
+          </p>
+          {deviceLoginPanel && (
+            <div className="space-y-2 rounded-md border border-border-default bg-background px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium">
+                  {t("provider.codexDeviceLoginPanelTitle", {
+                    defaultValue: "授权状态",
+                  })}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {deviceLoginPanel.statusText}
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground break-all">
+                {deviceLoginPanel.verificationUrl}
+              </div>
+              <div className="flex items-center gap-2">
+                <code className="inline-flex items-center rounded bg-muted px-2 py-1 text-sm font-semibold tracking-wider">
+                  {deviceLoginPanel.userCode}
+                </code>
+                {onCopyDeviceCode && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={onCopyDeviceCode}
+                  >
+                    <Copy className="h-3.5 w-3.5 mr-1.5" />
+                    {t("common.copy", { defaultValue: "复制" })}
+                  </Button>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <Timer className="h-3.5 w-3.5" />
+                  {t("provider.codexDeviceLoginCountdown", {
+                    defaultValue: "剩余 {{seconds}} 秒",
+                    seconds: Math.max(0, deviceLoginPanel.remainingSeconds),
+                  })}
+                </span>
+                {deviceLoginPanel.isPolling && !deviceLoginPanel.isFinished && (
+                  <span>{t("provider.codexDeviceLoginPolling", { defaultValue: "正在检查授权状态..." })}</span>
+                )}
+              </div>
+              {deviceLoginPanel.errorText && (
+                <p className="text-xs text-destructive">
+                  {deviceLoginPanel.errorText}
+                </p>
+              )}
+              {onCancelDeviceLogin && !deviceLoginPanel.isFinished && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={onCancelDeviceLogin}
+                  disabled={deviceLoginCancelLoading}
+                >
+                  <XCircle className="h-3.5 w-3.5 mr-1.5" />
+                  {t("common.cancel", { defaultValue: "取消" })}
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {category !== "official" && onQuickBindAuth && (
         <div className="space-y-2">
           <Button
             type="button"

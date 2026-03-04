@@ -1,5 +1,6 @@
 use crate::codex_account::{
-    CodexAccount, CodexUsageView, ImportResult, LoginSession, RefreshResult,
+    CodexAccount, CodexUsageView, DeviceLoginSession, DeviceLoginStatus, ImportResult,
+    LoginSession, RefreshResult,
 };
 use crate::services::CodexUsageService;
 use crate::store::AppState;
@@ -29,6 +30,31 @@ pub async fn codex_complete_login(
     CodexUsageService::complete_login(&state.db, session_id, callback_payload)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn codex_start_device_login(provider_id: String) -> Result<DeviceLoginSession, String> {
+    CodexUsageService::start_device_login(provider_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn codex_get_device_login_status(session_id: String) -> Result<DeviceLoginStatus, String> {
+    CodexUsageService::get_device_login_status(&session_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn codex_cancel_device_login(session_id: String) -> Result<bool, String> {
+    CodexUsageService::cancel_device_login(&session_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn codex_finalize_device_login(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<CodexAccount, String> {
+    CodexUsageService::finalize_device_login(&state.db, &session_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

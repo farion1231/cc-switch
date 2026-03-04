@@ -150,6 +150,18 @@ fn normalize_default(default: &Option<String>) -> Option<String> {
         .map(|s| s.trim_matches('\'').trim_matches('"').to_string())
 }
 
+fn get_table_columns(conn: &Connection, table: &str) -> Vec<String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info(\"{table}\");"))
+        .expect("prepare pragma");
+    let mut rows = stmt.query([]).expect("query pragma");
+    let mut columns = Vec::new();
+    while let Some(row) = rows.next().expect("read row") {
+        columns.push(row.get::<_, String>(1).expect("column name"));
+    }
+    columns
+}
+
 #[test]
 fn schema_migration_sets_user_version_when_missing() {
     let conn = Connection::open_in_memory().expect("open memory db");
@@ -573,6 +585,61 @@ fn dry_run_validates_schema_compatibility() {
         result.is_ok(),
         "Dry-run should succeed with provider data: {result:?}"
     );
+}
+
+#[test]
+fn schema_rebuilds_codex_provider_bindings_on_column_set_mismatch_idempotently() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE codex_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        INSERT INTO codex_provider_bindings(provider_id, account_id, updated_at)
+        VALUES ('provider-1', 'account-1', 1700000000);
+        "#,
+    )
+    .expect("seed malformed codex_provider_bindings");
+
+    Database::create_tables_on_conn(&conn).expect("create tables should repair mismatch");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations should stay healthy");
+
+    let mut columns = get_table_columns(&conn, "codex_provider_bindings");
+    columns.sort();
+    assert_eq!(
+        columns,
+        vec![
+            "account_id".to_string(),
+            "auto_bound".to_string(),
+            "provider_id".to_string(),
+            "updated_at".to_string(),
+        ]
+    );
+
+    let row: (String, String, i64, i64) = conn
+        .query_row(
+            "SELECT provider_id, account_id, auto_bound, updated_at
+             FROM codex_provider_bindings
+             WHERE provider_id = 'provider-1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .expect("row should be preserved");
+    assert_eq!(row.0, "provider-1");
+    assert_eq!(row.1, "account-1");
+    assert_eq!(row.2, 1, "missing auto_bound should be backfilled to default=1");
+    assert_eq!(row.3, 1700000000);
+
+    Database::create_tables_on_conn(&conn).expect("second create_tables should be idempotent");
+    Database::apply_schema_migrations_on_conn(&conn)
+        .expect("second apply_schema_migrations should be idempotent");
+
+    let row_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM codex_provider_bindings", [], |r| r.get(0))
+        .expect("count rows after second pass");
+    assert_eq!(row_count, 1);
 }
 
 #[test]

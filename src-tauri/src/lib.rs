@@ -31,8 +31,8 @@ mod usage_script;
 
 pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 pub use codex_account::{
-    CodexAccount, CodexProviderBinding, CodexUsageState, CodexUsageView, ImportResult,
-    LoginSession, RefreshResult,
+    CodexAccount, CodexProviderBinding, CodexUsageState, CodexUsageView, DeviceLoginSession,
+    DeviceLoginState, DeviceLoginStatus, ImportResult, LoginSession, RefreshResult,
 };
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
 pub use commands::open_provider_terminal;
@@ -913,6 +913,10 @@ pub fn run() {
             commands::codex_list_accounts,
             commands::codex_start_login,
             commands::codex_complete_login,
+            commands::codex_start_device_login,
+            commands::codex_get_device_login_status,
+            commands::codex_cancel_device_login,
+            commands::codex_finalize_device_login,
             commands::codex_import_from_switcher_once,
             commands::codex_get_usage_state,
             commands::codex_refresh_usage_now,

@@ -37,6 +37,17 @@ pub struct GuardianErrorStats {
     pub auth_401: u32,
     pub quota_429: u32,
     pub upstream_5xx: u32,
+    pub transport_disconnect: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GuardianDisconnectSummary {
+    pub app_type: String,
+    pub provider_id: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurred_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +81,8 @@ pub struct GuardianStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_self_heal_at: Option<String>,
     pub errors: GuardianErrorStats,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_transport_disconnect: Option<GuardianDisconnectSummary>,
     pub migration: GuardianMigrationPayload,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_at: Option<String>,
@@ -95,6 +108,7 @@ impl Default for GuardianStatus {
             proxy_healthy: false,
             last_self_heal_at: None,
             errors: GuardianErrorStats::default(),
+            last_transport_disconnect: None,
             migration: GuardianMigrationPayload::default(),
             last_run_at: None,
             last_success_at: None,
@@ -236,7 +250,7 @@ impl GuardianService {
         let auth_normalize = self.check_auth_normalize().await;
         let breaker_recovery = self.check_breaker_recovery().await;
         let webkit_contamination = self.check_webkit_contamination().await;
-        let errors = self.collect_error_stats().await;
+        let (errors, last_transport_disconnect) = self.collect_error_stats().await;
 
         let all_ok =
             proxy_health.ok && auth_normalize.ok && breaker_recovery.ok && webkit_contamination.ok;
@@ -256,6 +270,7 @@ impl GuardianService {
             };
             status.proxy_healthy = status.checks.proxy_health.ok;
             status.errors = errors;
+            status.last_transport_disconnect = last_transport_disconnect;
             status.migration = self.current_migration_payload();
 
             if status.checks.proxy_health.repaired > 0 {
@@ -842,6 +857,11 @@ impl GuardianService {
     fn classify_error_message(msg: &str, stats: &mut GuardianErrorStats) {
         let m = msg.to_ascii_lowercase();
 
+        if Self::is_transport_disconnect_message(&m) {
+            stats.transport_disconnect += 1;
+            return;
+        }
+
         if m.contains("401") || m.contains("unauthorized") || m.contains("invalid api key") {
             stats.auth_401 += 1;
         }
@@ -868,8 +888,31 @@ impl GuardianService {
         }
     }
 
-    async fn collect_error_stats(&self) -> GuardianErrorStats {
+    fn is_transport_disconnect_message(msg_lowercase: &str) -> bool {
+        [
+            "transport disconnected",
+            "transport disconnect",
+            "connection reset",
+            "connection closed",
+            "connection aborted",
+            "broken pipe",
+            "socket hang up",
+            "peer closed",
+            "stream closed",
+            "unexpected eof",
+            "tls eof",
+            "connection lost",
+            "channel closed",
+            "network is unreachable",
+        ]
+        .iter()
+        .any(|token| msg_lowercase.contains(token))
+    }
+
+    async fn collect_error_stats(&self) -> (GuardianErrorStats, Option<GuardianDisconnectSummary>) {
         let mut stats = GuardianErrorStats::default();
+        let mut latest_disconnect: Option<(chrono::DateTime<chrono::Utc>, GuardianDisconnectSummary)> =
+            None;
 
         for app in ["claude", "codex", "gemini"] {
             let providers = match self.db.get_all_providers(app) {
@@ -885,6 +928,31 @@ impl GuardianService {
                     Ok(health) => {
                         if let Some(msg) = health.last_error {
                             Self::classify_error_message(&msg, &mut stats);
+                            let message_lower = msg.to_ascii_lowercase();
+                            if Self::is_transport_disconnect_message(&message_lower) {
+                                let occurred_at = health
+                                    .last_failure_at
+                                    .clone()
+                                    .filter(|v| !v.trim().is_empty());
+                                let ts = occurred_at
+                                    .as_deref()
+                                    .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+                                    .map(|v| v.with_timezone(&chrono::Utc))
+                                    .unwrap_or_else(chrono::Utc::now);
+                                let summary = GuardianDisconnectSummary {
+                                    app_type: app.to_string(),
+                                    provider_id: provider_id.to_string(),
+                                    message: msg,
+                                    occurred_at,
+                                };
+                                if latest_disconnect
+                                    .as_ref()
+                                    .map(|(prev, _)| ts > *prev)
+                                    .unwrap_or(true)
+                                {
+                                    latest_disconnect = Some((ts, summary));
+                                }
+                            }
                         }
                     }
                     Err(err) => {
@@ -894,7 +962,7 @@ impl GuardianService {
             }
         }
 
-        stats
+        (stats, latest_disconnect.map(|(_, summary)| summary))
     }
 
     #[cfg(target_os = "macos")]
@@ -1011,5 +1079,20 @@ mod tests {
         assert_eq!(stats.auth_401, 1);
         assert_eq!(stats.quota_429, 1);
         assert_eq!(stats.upstream_5xx, 1);
+        assert_eq!(stats.transport_disconnect, 0);
+    }
+
+    #[test]
+    fn classify_error_message_transport_disconnect_is_exclusive_bucket() {
+        let mut stats = GuardianErrorStats::default();
+        GuardianService::classify_error_message(
+            "transport disconnect after upstream status:503",
+            &mut stats,
+        );
+
+        assert_eq!(stats.transport_disconnect, 1);
+        assert_eq!(stats.auth_401, 0);
+        assert_eq!(stats.quota_429, 0);
+        assert_eq!(stats.upstream_5xx, 0);
     }
 }

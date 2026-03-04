@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  CodexDeviceLoginSession,
+  CodexDeviceLoginStatusView,
   CodexAccount,
   CodexUsageView,
   ImportResult,
@@ -37,5 +39,23 @@ export const codexApi = {
 
   async bindProviderAuth(providerId: string): Promise<CodexAccount> {
     return await invoke("codex_bind_provider_auth", { providerId });
+  },
+
+  async startDeviceLogin(providerId: string): Promise<CodexDeviceLoginSession> {
+    return await invoke("codex_start_device_login", { providerId });
+  },
+
+  async getDeviceLoginStatus(
+    sessionId: string,
+  ): Promise<CodexDeviceLoginStatusView> {
+    return await invoke("codex_get_device_login_status", { sessionId });
+  },
+
+  async cancelDeviceLogin(sessionId: string): Promise<void> {
+    await invoke("codex_cancel_device_login", { sessionId });
+  },
+
+  async finalizeDeviceLogin(sessionId: string): Promise<CodexAccount> {
+    return await invoke("codex_finalize_device_login", { sessionId });
   },
 };

@@ -77,6 +77,42 @@ pub struct RefreshResult {
     pub failed_accounts: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceLoginState {
+    Pending,
+    Authorized,
+    Cancelled,
+    Failed,
+    Expired,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceLoginSession {
+    pub session_id: String,
+    pub provider_id: String,
+    pub verification_url: String,
+    pub user_code: String,
+    pub expires_at_ms: i64,
+    pub opened_browser: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceLoginStatus {
+    pub session_id: String,
+    pub provider_id: String,
+    pub status: DeviceLoginState,
+    pub verification_url: Option<String>,
+    pub user_code: Option<String>,
+    pub expires_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub remaining_seconds: i64,
+    pub message: Option<String>,
+}
+
+#[deprecated(note = "Use DeviceLoginSession APIs instead")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginSession {
