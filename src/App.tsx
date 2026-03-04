@@ -1053,9 +1053,7 @@ function App() {
                         : isRefreshingGeminiUsageAll) && "animate-spin",
                     )}
                   />
-                  {activeApp === "codex"
-                    ? "Codex Refresh All"
-                    : "Gemini Refresh All"}
+                  Refresh All
                 </Button>
               </div>
             )}
