@@ -61,22 +61,25 @@ function formatLastUpdated(tsMs?: number): string {
 
 interface WindowRowProps {
   label: string;
-  remainingPct: number;
+  remainingPct?: number;
   resetIn?: number;
   colorClass?: string;
 }
 
 function WindowRow({ label, remainingPct, resetIn, colorClass = "bg-emerald-500" }: WindowRowProps) {
+  const hasPercent = typeof remainingPct === "number" && Number.isFinite(remainingPct);
+  const pctText = hasPercent ? `${remainingPct!.toFixed(0)}% left` : "-- left";
+  const width = hasPercent ? `${remainingPct}%` : "0%";
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span className="font-medium">{label}</span>
-        <span>{`${remainingPct.toFixed(0)}% left`} • {`resets ${formatDuration(resetIn)}`}</span>
+        <span>{pctText} • {`resets ${formatDuration(resetIn)}`}</span>
       </div>
       <div className="h-2 w-full rounded bg-muted overflow-hidden">
         <div
           className={`h-full transition-all ${colorClass}`}
-          style={{ width: `${remainingPct}%` }}
+          style={{ width }}
         />
       </div>
     </div>
@@ -108,6 +111,8 @@ export default function CodexQuotaPanel({
   });
 
   const usage = data?.usage;
+  const hasBoundAccount = !!data?.account?.accountId;
+  const hasUsageData = !!usage?.lastRefreshAt || !!usage?.lastError;
 
   const {
     primaryRemaining,
@@ -119,10 +124,20 @@ export default function CodexQuotaPanel({
     status,
     primaryLabel,
     secondaryLabel,
+    statusColorClass,
   } = useMemo(() => {
-    const primaryRemaining = remainingPercent(usage?.primaryUsedPercent);
-    const secondaryRemaining = remainingPercent(usage?.secondaryUsedPercent);
-    const combinedRemaining = Math.min(primaryRemaining, secondaryRemaining);
+    const primaryRemaining =
+      typeof usage?.primaryUsedPercent === "number"
+        ? remainingPercent(usage.primaryUsedPercent)
+        : undefined;
+    const secondaryRemaining =
+      typeof usage?.secondaryUsedPercent === "number"
+        ? remainingPercent(usage.secondaryUsedPercent)
+        : undefined;
+    const combinedRemaining =
+      primaryRemaining !== undefined && secondaryRemaining !== undefined
+        ? Math.min(primaryRemaining, secondaryRemaining)
+        : undefined;
 
     const primaryResetIn = calcResetSeconds(
       usage?.primaryResetAfterSeconds,
@@ -138,9 +153,20 @@ export default function CodexQuotaPanel({
         ? t("usage.unlimited", { defaultValue: "无限" })
         : usage?.creditsBalance?.toFixed(2) ?? "--";
 
-    const status = data?.available
-      ? t("usage.available", { defaultValue: "可用" })
-      : t("usage.cooling", { defaultValue: "冷却中" });
+    let status = t("usage.pendingLogin", { defaultValue: "待登录" });
+    let statusColorClass = "text-muted-foreground";
+    if (hasBoundAccount) {
+      if (data?.available) {
+        status = t("usage.available", { defaultValue: "可用" });
+        statusColorClass = "text-emerald-600";
+      } else if (hasUsageData || data?.cooldownSeconds) {
+        status = t("usage.cooling", { defaultValue: "冷却中" });
+        statusColorClass = "text-amber-600";
+      } else {
+        status = t("usage.refreshPending", { defaultValue: "待刷新" });
+        statusColorClass = "text-muted-foreground";
+      }
+    }
 
     return {
       primaryRemaining,
@@ -150,6 +176,7 @@ export default function CodexQuotaPanel({
       secondaryResetIn,
       balance,
       status,
+      statusColorClass,
       primaryLabel: formatWindowLabel(
         usage?.primaryLimitWindowSeconds,
         "Primary Limit",
@@ -159,7 +186,7 @@ export default function CodexQuotaPanel({
         "Secondary Limit",
       ),
     };
-  }, [data?.available, t, usage]);
+  }, [data?.available, data?.cooldownSeconds, hasBoundAccount, hasUsageData, t, usage]);
 
   if (!data) return null;
 
@@ -198,11 +225,11 @@ export default function CodexQuotaPanel({
   if (inline) {
     return (
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className={data.available ? "text-emerald-600" : "text-amber-600"}>
+        <span className={statusColorClass}>
           {status}
         </span>
-        <span>{combinedRemaining.toFixed(0)}%</span>
-        {!data.available && (
+        <span>{combinedRemaining === undefined ? "--" : `${combinedRemaining.toFixed(0)}%`}</span>
+        {!data.available && (data.cooldownSeconds || primaryResetIn || secondaryResetIn) && (
           <span className="inline-flex items-center gap-1">
             <Clock3 size={12} />
             {formatDuration(data.cooldownSeconds ?? primaryResetIn ?? secondaryResetIn)}
@@ -212,7 +239,7 @@ export default function CodexQuotaPanel({
           onClick={(e) => void handleRefresh(true, e)}
           className="p-1 rounded hover:bg-muted"
           title={t("usage.refreshUsage", { defaultValue: "刷新用量" })}
-          disabled={loading}
+          disabled={loading || !hasBoundAccount}
         >
           <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
         </button>
@@ -228,7 +255,7 @@ export default function CodexQuotaPanel({
             {t("usage.codexQuotaTitle", { defaultValue: "Codex 额度" })}
           </span>
           <span
-            className={`text-xs ${data.available ? "text-emerald-600" : "text-amber-600"}`}
+            className={`text-xs ${statusColorClass}`}
           >
             {status}
           </span>
@@ -237,7 +264,7 @@ export default function CodexQuotaPanel({
           onClick={() => void handleRefresh()}
           className="p-1 rounded hover:bg-muted"
           title={t("usage.refreshUsage", { defaultValue: "刷新用量" })}
-          disabled={loading}
+          disabled={loading || !hasBoundAccount}
         >
           <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
         </button>

@@ -777,7 +777,7 @@ impl CodexUsageService {
                     && !u.limit_reached.unwrap_or(false)
                     && cooldown_seconds.unwrap_or(0) <= 0
             })
-            .unwrap_or(true);
+            .unwrap_or(false);
         Ok(CodexUsageView {
             provider_id: provider_id.to_string(),
             account,
