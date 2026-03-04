@@ -16,7 +16,10 @@ function clampPercent(v?: number): number {
   return Math.max(0, Math.min(100, v));
 }
 
-function remainingPercent(usedPercent?: number): number {
+function remainingPercent(usedPercent?: number): number | undefined {
+  if (typeof usedPercent !== "number" || Number.isNaN(usedPercent)) {
+    return undefined;
+  }
   return 100 - clampPercent(usedPercent);
 }
 
