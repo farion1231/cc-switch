@@ -18,6 +18,7 @@ pub type StreamModelExtractor = fn(&[Value], &str) -> String;
 #[derive(Clone, Copy)]
 pub struct UsageParserConfig {
     /// 流式响应解析器
+    #[allow(dead_code)]
     pub stream_parser: StreamUsageParser,
     /// 非流式响应解析器
     pub response_parser: ResponseUsageParser,

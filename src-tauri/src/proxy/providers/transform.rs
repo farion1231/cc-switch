@@ -299,6 +299,9 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as u32;
 
+    // Extract created timestamp from OpenAI response
+    let created = body.get("created").and_then(|v| v.as_u64());
+
     let result = json!({
         "id": body.get("id").and_then(|i| i.as_str()).unwrap_or(""),
         "type": "message",
@@ -310,7 +313,8 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         "usage": {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens
-        }
+        },
+        "created": created
     });
 
     Ok(result)
@@ -435,6 +439,7 @@ mod tests {
         assert_eq!(result["stop_reason"], "end_turn");
         assert_eq!(result["usage"]["input_tokens"], 10);
         assert_eq!(result["usage"]["output_tokens"], 5);
+        assert_eq!(result["created"], 1234567890);
     }
 
     #[test]

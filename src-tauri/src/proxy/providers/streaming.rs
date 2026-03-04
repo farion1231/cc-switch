@@ -12,6 +12,7 @@ use serde_json::json;
 struct OpenAIStreamChunk {
     id: String,
     model: String,
+    created: Option<u64>, // Unix timestamp
     choices: Vec<StreamChoice>,
     #[serde(default)]
     usage: Option<Usage>,
@@ -70,10 +71,13 @@ pub fn create_anthropic_sse_stream(
         let mut buffer = String::new();
         let mut message_id = None;
         let mut current_model = None;
+        let mut created: Option<u64> = None;
         let mut content_index = 0;
         let mut has_sent_message_start = false;
         let mut current_block_type: Option<String> = None;
-        let mut tool_call_id = None;
+        // Use a HashMap to track multiple tool_calls by index
+        use std::collections::HashMap;
+        let mut tool_call_states: HashMap<usize, (Option<String>, Option<String>)> = HashMap::new();
 
         tokio::pin!(stream);
 
@@ -112,6 +116,9 @@ pub fn create_anthropic_sse_stream(
                                     if current_model.is_none() {
                                         current_model = Some(chunk.model.clone());
                                     }
+                                    if created.is_none() {
+                                        created = chunk.created;
+                                    }
 
                                     if let Some(choice) = chunk.choices.first() {
                                         if !has_sent_message_start {
@@ -125,7 +132,8 @@ pub fn create_anthropic_sse_stream(
                                                     "usage": {
                                                         "input_tokens": 0,
                                                         "output_tokens": 0
-                                                    }
+                                                    },
+                                                    "created": created
                                                 }
                                             });
                                             let sse_data = format!("event: message_start\ndata: {}\n\n",
@@ -210,6 +218,10 @@ pub fn create_anthropic_sse_stream(
                                         // 处理工具调用
                                         if let Some(tool_calls) = &choice.delta.tool_calls {
                                             for tool_call in tool_calls {
+                                                // Get or create tool call state by index (shared across id and function handling)
+                                                let index = tool_call.index;
+                                                let state = tool_call_states.entry(index).or_insert((None, None));
+
                                                 if let Some(id) = &tool_call.id {
                                                     if current_block_type.is_some() {
                                                         let event = json!({
@@ -222,17 +234,18 @@ pub fn create_anthropic_sse_stream(
                                                         content_index += 1;
                                                     }
 
-                                                    tool_call_id = Some(id.clone());
+                                                    state.0 = Some(id.clone());
                                                 }
 
                                                 if let Some(function) = &tool_call.function {
                                                     if let Some(name) = &function.name {
+                                                        state.1 = Some(name.clone());
                                                         let event = json!({
                                                             "type": "content_block_start",
                                                             "index": content_index,
                                                             "content_block": {
                                                                 "type": "tool_use",
-                                                                "id": tool_call_id.clone().unwrap_or_default(),
+                                                                "id": state.0.clone().unwrap_or_default(),
                                                                 "name": name
                                                             }
                                                         });

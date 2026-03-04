@@ -178,9 +178,11 @@ impl Database {
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
-            duration_ms INTEGER, status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
+            status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
             provider_type TEXT, is_streaming INTEGER NOT NULL DEFAULT 0,
-            cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL
+            cost_multiplier TEXT NOT NULL DEFAULT '1.0',
+            request_body TEXT, response_body TEXT,
+            created_at INTEGER NOT NULL
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON proxy_request_logs(provider_id, app_type)", [])
@@ -360,6 +362,11 @@ impl Database {
                         Self::migrate_v4_to_v5(conn)?;
                         Self::set_user_version(conn, 5)?;
                     }
+                    5 => {
+                        log::info!("迁移数据库从 v5 到 v6（添加请求/响应体字段）");
+                        Self::migrate_v5_to_v6(conn)?;
+                        Self::set_user_version(conn, 6)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -535,9 +542,11 @@ impl Database {
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
-            duration_ms INTEGER, status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
+            status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
             provider_type TEXT, is_streaming INTEGER NOT NULL DEFAULT 0,
-            cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL
+            cost_multiplier TEXT NOT NULL DEFAULT '1.0',
+            request_body TEXT, response_body TEXT,
+            created_at INTEGER NOT NULL
         )", [])?;
 
         // 为已存在的表添加新字段
@@ -555,7 +564,8 @@ impl Database {
             "TEXT NOT NULL DEFAULT '1.0'",
         )?;
         Self::add_column_if_missing(conn, "proxy_request_logs", "first_token_ms", "INTEGER")?;
-        Self::add_column_if_missing(conn, "proxy_request_logs", "duration_ms", "INTEGER")?;
+        Self::add_column_if_missing(conn, "proxy_request_logs", "request_body", "TEXT")?;
+        Self::add_column_if_missing(conn, "proxy_request_logs", "response_body", "TEXT")?;
 
         // model_pricing 表
         conn.execute(
@@ -911,6 +921,17 @@ impl Database {
         }
 
         log::info!("v4 -> v5 迁移完成：已添加计费模式与请求模型字段");
+        Ok(())
+    }
+
+    /// v5 -> v6: Add request/response body field
+    fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(conn, "proxy_request_logs", "request_body", "TEXT")?;
+            Self::add_column_if_missing(conn, "proxy_request_logs", "response_body", "TEXT")?;
+        }
+
+        log::info!("v5 -> v6 迁移完成：已添加请求/响应体字段");
         Ok(())
     }
 
