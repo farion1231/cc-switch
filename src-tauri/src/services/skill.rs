@@ -86,8 +86,44 @@ pub struct Skill {
     pub repo_branch: Option<String>,
 }
 
+/// 仓库平台类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RepoPlatform {
+    /// GitHub (默认)
+    #[default]
+    GitHub,
+    /// GitLab (包括私有部署)
+    GitLab,
+    /// Gitea
+    Gitea,
+    /// 通用 Git 仓库
+    Generic,
+}
+
+impl RepoPlatform {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RepoPlatform::GitHub => "github",
+            RepoPlatform::GitLab => "gitlab",
+            RepoPlatform::Gitea => "gitea",
+            RepoPlatform::Generic => "generic",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "gitlab" => RepoPlatform::GitLab,
+            "gitea" => RepoPlatform::Gitea,
+            "generic" => RepoPlatform::Generic,
+            _ => RepoPlatform::GitHub,
+        }
+    }
+}
+
 /// 仓库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillRepo {
     /// GitHub 用户/组织名
     pub owner: String,
@@ -97,6 +133,15 @@ pub struct SkillRepo {
     pub branch: String,
     /// 是否启用
     pub enabled: bool,
+    /// 平台类型
+    #[serde(default)]
+    pub platform: RepoPlatform,
+    /// 基础 URL (用于私有 GitLab/Gitea，如 http://192.168.0.1)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// 认证令牌 (用于私有仓库)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
 }
 
 /// 技能安装状态（旧版兼容）
@@ -122,7 +167,7 @@ impl Default for SkillStore {
     fn default() -> Self {
         SkillStore {
             skills: HashMap::new(),
-            repos: vec![
+            repos: vec![                
                 SkillRepo {
                     owner: "anthropics".to_string(),
                     name: "skills".to_string(),
@@ -327,6 +372,48 @@ impl SkillService {
         format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
     }
 
+    /// 根据平台类型构建技能文档 URL
+    fn build_skill_doc_url_by_platform(
+        owner: &str,
+        repo: &str,
+        branch: &str,
+        doc_path: &str,
+        platform: &RepoPlatform,
+        base_url: Option<&String>,
+    ) -> String {
+        match platform {
+            RepoPlatform::GitHub => {
+                format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
+            }
+            RepoPlatform::GitLab => {
+                if let Some(base) = base_url {
+                    // 私有 GitLab
+                    format!("{base}/{owner}/{repo}/-/blob/{branch}/{doc_path}")
+                } else {
+                    // GitLab.com
+                    format!("https://gitlab.com/{owner}/{repo}/-/blob/{branch}/{doc_path}")
+                }
+            }
+            RepoPlatform::Gitea => {
+                if let Some(base) = base_url {
+                    // 私有 Gitea
+                    format!("{base}/{owner}/{repo}/src/branch/{branch}/{doc_path}")
+                } else {
+                    // Gitea.com
+                    format!("https://gitea.com/{owner}/{repo}/src/branch/{branch}/{doc_path}")
+                }
+            }
+            RepoPlatform::Generic => {
+                // 通用格式，默认使用 GitHub 风格
+                if let Some(base) = base_url {
+                    format!("{base}/{owner}/{repo}/blob/{branch}/{doc_path}")
+                } else {
+                    format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
+                }
+            }
+        }
+    }
+
     /// 从旧 readme_url 中提取仓库内文档路径，兼容 `blob`/`tree` 两种格式
     fn extract_doc_path_from_url(url: &str) -> Option<String> {
         let marker = if url.contains("/blob/") {
@@ -493,11 +580,29 @@ impl SkillService {
 
         // 如果已存在则跳过下载
         if !dest.exists() {
-            let repo = SkillRepo {
-                owner: skill.repo_owner.clone(),
-                name: skill.repo_name.clone(),
-                branch: skill.repo_branch.clone(),
-                enabled: true,
+            // 从数据库获取完整的仓库信息（包含 platform、base_url、auth_token）
+            let repos = db.get_skill_repos()?;
+            let saved_repo = repos.iter().find(|r| 
+                r.owner == skill.repo_owner && r.name == skill.repo_name
+            );
+            
+            let repo = if let Some(saved) = saved_repo {
+                // 使用数据库中保存的完整仓库信息
+                log::info!("使用数据库中的仓库信息: {}/{}, platform={:?}, has_auth_token={}", 
+                           saved.owner, saved.name, saved.platform, saved.auth_token.is_some());
+                saved.clone()
+            } else {
+                // 回退到默认值（如果没有在数据库中找到）
+                log::warn!("未在数据库中找到仓库 {}/{}, 使用默认配置", skill.repo_owner, skill.repo_name);
+                SkillRepo {
+                    owner: skill.repo_owner.clone(),
+                    name: skill.repo_name.clone(),
+                    branch: skill.repo_branch.clone(),
+                    enabled: true,
+                    platform: RepoPlatform::GitHub,
+                    base_url: None,
+                    auth_token: None,
+                }
             };
 
             // 下载仓库
@@ -1063,6 +1168,9 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
+        log::info!("开始获取仓库技能: {}/{} (platform={:?}, has_auth_token={})", 
+                   repo.owner, repo.name, repo.platform, repo.auth_token.is_some());
+        
         let (temp_dir, resolved_branch) =
             timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
                 .await
@@ -1152,11 +1260,13 @@ impl SkillService {
             name: meta.name.unwrap_or_else(|| directory.to_string()),
             description: meta.description.unwrap_or_default(),
             directory: directory.to_string(),
-            readme_url: Some(Self::build_skill_doc_url(
+            readme_url: Some(Self::build_skill_doc_url_by_platform(
                 &repo.owner,
                 &repo.name,
                 &repo.branch,
                 doc_path,
+                &repo.platform,
+                repo.base_url.as_ref(),
             )),
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
@@ -1299,12 +1409,12 @@ impl SkillService {
 
         let mut last_error = None;
         for branch in branches {
-            let url = format!(
-                "https://github.com/{}/{}/archive/refs/heads/{}.zip",
-                repo.owner, repo.name, branch
-            );
+            let url = self.build_download_url(repo, branch);
 
-            match self.download_and_extract(&url, &temp_path).await {
+            match self
+                .download_and_extract_with_auth(&url, &temp_path, repo.auth_token.as_deref())
+                .await
+            {
                 Ok(_) => {
                     return Ok((temp_path, branch.to_string()));
                 }
@@ -1316,6 +1426,167 @@ impl SkillService {
         }
 
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支下载失败")))
+    }
+
+    /// 构建下载 URL（根据平台类型）
+    fn build_download_url(&self, repo: &SkillRepo, branch: &str) -> String {
+        match &repo.platform {
+            RepoPlatform::GitHub => {
+                format!(
+                    "https://github.com/{}/{}/archive/refs/heads/{}.zip",
+                    repo.owner, repo.name, branch
+                )
+            }
+            RepoPlatform::GitLab => {
+                if let Some(base_url) = &repo.base_url {
+                    // 私有 GitLab: http://192.168.217.8/application-component/epoint-ai-tools/-/archive/main/epoint-ai-tools-main.zip
+                    format!(
+                        "{}/{}/{}/-/archive/{}/{}-{}.zip",
+                        base_url.trim_end_matches('/'),
+                        repo.owner,
+                        repo.name,
+                        branch,
+                        repo.name,
+                        branch
+                    )
+                } else {
+                    // 公共 GitLab.com
+                    format!(
+                        "https://gitlab.com/{}/{}/-/archive/{}/{}-{}.zip",
+                        repo.owner, repo.name, branch, repo.name, branch
+                    )
+                }
+            }
+            RepoPlatform::Gitea => {
+                if let Some(base_url) = &repo.base_url {
+                    format!(
+                        "{}/{}/{}/archive/{}.zip",
+                        base_url.trim_end_matches('/'),
+                        repo.owner,
+                        repo.name,
+                        branch
+                    )
+                } else {
+                    format!(
+                        "https://gitea.com/{}/{}/archive/{}.zip",
+                        repo.owner, repo.name, branch
+                    )
+                }
+            }
+            RepoPlatform::Generic => {
+                // 通用格式：假设使用 GitHub 风格的 URL 结构
+                if let Some(base_url) = &repo.base_url {
+                    format!(
+                        "{}/{}/{}/archive/refs/heads/{}.zip",
+                        base_url.trim_end_matches('/'),
+                        repo.owner,
+                        repo.name,
+                        branch
+                    )
+                } else {
+                    format!(
+                        "https://github.com/{}/{}/archive/refs/heads/{}.zip",
+                        repo.owner, repo.name, branch
+                    )
+                }
+            }
+        }
+    }
+
+    /// 下载并解压 ZIP（支持认证）
+    async fn download_and_extract_with_auth(
+        &self,
+        url: &str,
+        dest: &Path,
+        auth_token: Option<&str>,
+    ) -> Result<()> {
+        log::info!("认证令牌状态: {}", if auth_token.is_some() { "已提供" } else { "未提供" });
+        
+        let client = crate::proxy::http_client::get();
+        let mut request = client.get(url);
+
+        // 添加认证头
+        if let Some(token) = auth_token {
+            request = request.bearer_auth(token);
+            log::info!("已添加 Bearer 认证头");
+        }
+
+        let response = request.send().await?;
+        let status = response.status();
+        log::info!("下载响应状态: {}", status);
+        
+        if !status.is_success() {
+            let status_code = status.as_u16().to_string();
+            let body = response.text().await.unwrap_or_default();
+            log::error!("下载失败，状态码: {}, 响应内容: {}", status_code, body);
+            return Err(anyhow::anyhow!(format_skill_error(
+                "DOWNLOAD_FAILED",
+                &[("status", &status_code)],
+                match status_code.as_str() {
+                    "403" => Some("http403"),
+                    "404" => Some("http404"),
+                    "429" => Some("http429"),
+                    _ => Some("checkNetwork"),
+                },
+            )));
+        }
+
+        let bytes = response.bytes().await?;
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor)?;
+
+        let root_name = if !archive.is_empty() {
+            let first_file = archive.by_index(0)?;
+            let name = first_file.name();
+            name.split('/').next().unwrap_or("").to_string()
+        } else {
+            return Err(anyhow::anyhow!(format_skill_error(
+                "EMPTY_ARCHIVE",
+                &[],
+                Some("checkRepoUrl"),
+            )));
+        };
+
+        // 第一遍：解压普通文件和目录，收集 symlink 条目
+        let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
+
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let file_path = file.name().to_string();
+
+            let relative_path =
+                if let Some(stripped) = file_path.strip_prefix(&format!("{root_name}/")) {
+                    stripped
+                } else {
+                    continue;
+                };
+
+            if relative_path.is_empty() {
+                continue;
+            }
+
+            let outpath = dest.join(relative_path);
+
+            if file.is_symlink() {
+                // 读取 symlink 目标路径
+                let mut target = String::new();
+                std::io::Read::read_to_string(&mut file, &mut target)?;
+                symlinks.push((outpath, target.trim().to_string()));
+            } else if file.is_dir() {
+                fs::create_dir_all(&outpath)?;
+            } else {
+                if let Some(parent) = outpath.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut outfile = fs::File::create(&outpath)?;
+                std::io::copy(&mut file, &mut outfile)?;
+            }
+        }
+
+        // 第二遍：解析 symlink，将目标内容复制到 symlink 位置
+        Self::resolve_symlinks_in_dir(dest, &symlinks)?;
+
+        Ok(())
     }
 
     /// 下载并解压 ZIP
@@ -1794,6 +2065,9 @@ fn save_repos_from_lock(
                     // 未知分支时使用 HEAD 语义，后续下载会回退到 main/master。
                     branch: info.branch.clone().unwrap_or_else(|| "HEAD".to_string()),
                     enabled: true,
+                    platform: RepoPlatform::GitHub, // 从 lock 文件导入的默认为 GitHub
+                    base_url: None,
+                    auth_token: None,
                 };
                 if let Err(e) = db.save_skill_repo(&skill_repo) {
                     log::warn!("保存 skill 仓库 {}/{} 失败: {}", info.owner, info.repo, e);

@@ -61,12 +61,21 @@ export interface Skill {
   repoBranch?: string;
 }
 
+/** 仓库平台类型 */
+export type RepoPlatform = "github" | "gitlab" | "gitea" | "generic";
+
 /** 仓库配置 */
 export interface SkillRepo {
   owner: string;
   name: string;
   branch: string;
   enabled: boolean;
+  /** 平台类型 */
+  platform?: RepoPlatform;
+  /** 基础 URL (用于私有 GitLab/Gitea) */
+  baseUrl?: string;
+  /** 认证令牌 (用于私有仓库) */
+  authToken?: string;
 }
 
 // ========== API ==========

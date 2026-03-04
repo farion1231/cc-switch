@@ -96,7 +96,11 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            platform TEXT NOT NULL DEFAULT 'github',
+            base_url TEXT,
+            auth_token TEXT,
+            PRIMARY KEY (owner, name)
         )",
             [],
         )
@@ -360,6 +364,11 @@ impl Database {
                         Self::migrate_v4_to_v5(conn)?;
                         Self::set_user_version(conn, 5)?;
                     }
+                    5 => {
+                        log::info!("迁移数据库从 v5 到 v6（私有仓库支持）");
+                        Self::migrate_v5_to_v6(conn)?;
+                        Self::set_user_version(conn, 6)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -441,6 +450,16 @@ impl Database {
         )?;
         Self::add_column_if_missing(conn, "skill_repos", "enabled", "BOOLEAN NOT NULL DEFAULT 1")?;
         // 注意: skills_path 字段已被移除，因为现在支持全仓库递归扫描
+
+        // skill_repos 表新增字段（v3.12.0 私有仓库支持）
+        Self::add_column_if_missing(
+            conn,
+            "skill_repos",
+            "platform",
+            "TEXT NOT NULL DEFAULT 'github'",
+        )?;
+        Self::add_column_if_missing(conn, "skill_repos", "base_url", "TEXT")?;
+        Self::add_column_if_missing(conn, "skill_repos", "auth_token", "TEXT")?;
 
         Ok(())
     }
@@ -911,6 +930,22 @@ impl Database {
         }
 
         log::info!("v4 -> v5 迁移完成：已添加计费模式与请求模型字段");
+        Ok(())
+    }
+
+    /// v5 -> v6 迁移：私有仓库支持（添加 skill_repos 平台相关字段）
+    fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
+        // 为 skill_repos 表添加新字段
+        Self::add_column_if_missing(
+            conn,
+            "skill_repos",
+            "platform",
+            "TEXT NOT NULL DEFAULT 'github'",
+        )?;
+        Self::add_column_if_missing(conn, "skill_repos", "base_url", "TEXT")?;
+        Self::add_column_if_missing(conn, "skill_repos", "auth_token", "TEXT")?;
+
+        log::info!("v5 -> v6 迁移完成：已添加私有仓库支持字段");
         Ok(())
     }
 
