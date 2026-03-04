@@ -133,6 +133,19 @@ export const providerPresets: ProviderPreset[] = [
     icon: "bailian",
     iconColor: "#624AFF",
   },
+{
+    name: "Bailian For Coding",
+    websiteUrl: "https://bailian.console.aliyun.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "cn_official",
+    icon: "bailian",
+    iconColor: "#624AFF",
+  },
   {
     name: "Kimi",
     websiteUrl: "https://platform.moonshot.cn/console",
