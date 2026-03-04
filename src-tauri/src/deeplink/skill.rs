@@ -40,6 +40,9 @@ pub fn import_skill_from_deeplink(
         name: name.clone(),
         branch: request.branch.unwrap_or_else(|| "main".to_string()),
         enabled: request.enabled.unwrap_or(true),
+        platform: crate::services::skill::RepoPlatform::GitHub,
+        base_url: None,
+        auth_token: None,
     };
 
     // Save using Database
