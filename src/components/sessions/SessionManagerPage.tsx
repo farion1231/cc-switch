@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -12,7 +12,10 @@ import {
   FolderOpen,
   X,
 } from "lucide-react";
-import { useSessionMessagesQuery, useSessionsQuery } from "@/lib/query";
+import {
+  useSessionMessagesQuery,
+  useSessionsQuery,
+} from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,7 +77,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
-  // 使用 FlexSearch 全文搜索
+  // 浣跨敤 FlexSearch 鍏ㄦ枃鎼滅储
   const { search: searchSessions } = useSessionSearch({
     sessions,
     providerFilter,
@@ -114,7 +117,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       selectedSession?.sourcePath,
     );
 
-  // 提取用户消息用于目录
+  // 鎻愬彇鐢ㄦ埛娑堟伅鐢ㄤ簬鐩綍
   const userMessagesToc = useMemo(() => {
     return messages
       .map((msg, index) => ({ msg, index }))
@@ -132,21 +135,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       setActiveMessageIndex(index);
-      setTocDialogOpen(false); // 关闭弹窗
-      // 清除高亮状态
-      setTimeout(() => setActiveMessageIndex(null), 2000);
+      setTocDialogOpen(false); // 鍏抽棴寮圭獥
+      // 娓呴櫎楂樹寒鐘舵€?      setTimeout(() => setActiveMessageIndex(null), 2000);
     }
   };
 
-  // 清理定时器
-  useEffect(() => {
-    return () => {
-      // 这里的 setTimeout 其实无法直接清理，因为它在函数闭包里。
-      // 如果要严格清理，需要用 useRef 存 timer id。
-      // 但对于 2秒的高亮清除，通常不清理也没大问题。
-      // 为了代码规范，我们在组件卸载时将 activeMessageIndex 重置 (虽然 React 会处理)
-    };
-  }, []);
 
   const handleCopy = async (text: string, successMessage: string) => {
     try {
@@ -188,9 +181,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     <TooltipProvider>
       <div className="mx-auto px-4 sm:px-6 flex flex-col h-[calc(100vh-8rem)]">
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
-          {/* 主内容区域 - 左右分栏 */}
+          {/* 涓诲唴瀹瑰尯鍩?- 宸﹀彸鍒嗘爮 */}
           <div className="flex-1 overflow-hidden grid gap-4 md:grid-cols-[320px_1fr]">
-            {/* 左侧会话列表 */}
+            {/* 宸︿晶浼氳瘽鍒楄〃 */}
             <Card className="flex flex-col overflow-hidden">
               <CardHeader className="py-2 px-3 border-b">
                 {isSearchOpen ? (
@@ -402,7 +395,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
               </CardContent>
             </Card>
 
-            {/* 右侧会话详情 */}
+            {/* 鍙充晶浼氳瘽璇︽儏 */}
             <Card
               className="flex flex-col overflow-hidden min-h-0"
               ref={detailRef}
@@ -414,10 +407,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                 </div>
               ) : (
                 <>
-                  {/* 详情头部 */}
+                  {/* 璇︽儏澶撮儴 */}
                   <CardHeader className="py-3 px-4 border-b shrink-0">
                     <div className="flex items-start justify-between gap-4">
-                      {/* 左侧：会话信息 */}
+                      {/* 宸︿晶锛氫細璇濅俊鎭?*/}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <Tooltip>
@@ -441,7 +434,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           </h2>
                         </div>
 
-                        {/* 元信息 */}
+                        {/* 鍏冧俊鎭?*/}
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                           <div className="flex items-center gap-1">
                             <Clock className="size-3" />
@@ -487,7 +480,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         </div>
                       </div>
 
-                      {/* 右侧：操作按钮组 */}
+                      {/* 鍙充晶锛氭搷浣滄寜閽粍 */}
                       <div className="flex items-center gap-2 shrink-0">
                         {isMac() && (
                           <Tooltip>
@@ -501,7 +494,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 <Play className="size-3.5" />
                                 <span className="hidden sm:inline">
                                   {t("sessionManager.resume", {
-                                    defaultValue: "恢复会话",
+                                    defaultValue: "鎭㈠浼氳瘽",
                                   })}
                                 </span>
                               </Button>
@@ -509,10 +502,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             <TooltipContent>
                               {selectedSession.resumeCommand
                                 ? t("sessionManager.resumeTooltip", {
-                                    defaultValue: "在终端中恢复此会话",
+                                    defaultValue: "Resume this session in terminal",
                                   })
                                 : t("sessionManager.noResumeCommand", {
-                                    defaultValue: "此会话无法恢复",
+                                    defaultValue: "This session cannot be resumed",
                                   })}
                             </TooltipContent>
                           </Tooltip>
@@ -520,7 +513,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                       </div>
                     </div>
 
-                    {/* 恢复命令预览 */}
+                    {/* 鎭㈠鍛戒护棰勮 */}
                     {selectedSession.resumeCommand && (
                       <div className="mt-3 flex items-center gap-2">
                         <div className="flex-1 rounded-md bg-muted/60 px-3 py-1.5 font-mono text-xs text-muted-foreground truncate">
@@ -544,7 +537,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           </TooltipTrigger>
                           <TooltipContent>
                             {t("sessionManager.copyCommand", {
-                              defaultValue: "复制命令",
+                              defaultValue: "澶嶅埗鍛戒护",
                             })}
                           </TooltipContent>
                         </Tooltip>
@@ -552,17 +545,18 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     )}
                   </CardHeader>
 
-                  {/* 消息列表区域 */}
+                  {/* 娑堟伅鍒楄〃鍖哄煙 */}
                   <CardContent className="flex-1 overflow-hidden p-0">
                     <div className="flex h-full">
-                      {/* 消息列表 */}
+                      {/* 娑堟伅鍒楄〃 */}
                       <ScrollArea className="flex-1">
                         <div className="p-4">
+
                           <div className="flex items-center gap-2 mb-3">
                             <MessageSquare className="size-4 text-muted-foreground" />
                             <span className="text-sm font-medium">
                               {t("sessionManager.conversationHistory", {
-                                defaultValue: "对话记录",
+                                defaultValue: "瀵硅瘽璁板綍",
                               })}
                             </span>
                             <Badge variant="secondary" className="text-xs">
@@ -585,18 +579,20 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             <div className="space-y-3">
                               {messages.map((message, index) => (
                                 <SessionMessageItem
-                                  key={`${message.role}-${index}`}
+                                  key={`message-${index}-${message.ts ?? "na"}`}
                                   message={message}
                                   index={index}
                                   isActive={activeMessageIndex === index}
                                   setRef={(el) => {
-                                    if (el) messageRefs.current.set(index, el);
+                                    if (el) {
+                                      messageRefs.current.set(index, el);
+                                    }
                                   }}
                                   onCopy={(content) =>
                                     handleCopy(
                                       content,
                                       t("sessionManager.messageCopied", {
-                                        defaultValue: "已复制消息内容",
+                                        defaultValue: "Message copied",
                                       }),
                                     )
                                   }
@@ -608,14 +604,14 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         </div>
                       </ScrollArea>
 
-                      {/* 右侧目录 - 类似少数派 (大屏幕) */}
+                      {/* 鍙充晶鐩綍 - 绫讳技灏戞暟娲?(澶у睆骞? */}
                       <SessionTocSidebar
                         items={userMessagesToc}
                         onItemClick={scrollToMessage}
                       />
                     </div>
 
-                    {/* 浮动目录按钮 (小屏幕) */}
+                    {/* 娴姩鐩綍鎸夐挳 (灏忓睆骞? */}
                     <SessionTocDialog
                       items={userMessagesToc}
                       onItemClick={scrollToMessage}
@@ -632,3 +628,4 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     </TooltipProvider>
   );
 }
+

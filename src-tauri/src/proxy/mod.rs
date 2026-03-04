@@ -4,6 +4,7 @@
 
 pub mod body_filter;
 pub mod circuit_breaker;
+pub(crate) mod debug_capture_store;
 pub mod error;
 pub mod error_mapper;
 pub(crate) mod failover_switch;

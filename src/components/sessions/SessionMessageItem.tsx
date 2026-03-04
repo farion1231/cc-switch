@@ -53,7 +53,7 @@ export function SessionMessageItem({
         </TooltipTrigger>
         <TooltipContent>
           {t("sessionManager.copyMessage", {
-            defaultValue: "复制内容",
+            defaultValue: "Copy content",
           })}
         </TooltipContent>
       </Tooltip>

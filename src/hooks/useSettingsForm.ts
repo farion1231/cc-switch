@@ -89,6 +89,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
+      debugCaptureOutputDir: sanitizeDir(data.debugCaptureOutputDir),
       language: normalizedLanguage,
     };
 
@@ -147,6 +148,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),
         opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),
+        debugCaptureOutputDir: sanitizeDir(serverData.debugCaptureOutputDir),
         language: normalizedLanguage,
       };
 

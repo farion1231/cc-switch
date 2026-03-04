@@ -7,6 +7,7 @@ pub mod mcp;
 pub mod prompts;
 pub mod providers;
 pub mod proxy;
+pub mod session_prompt_capture;
 pub mod settings;
 pub mod skills;
 pub mod stream_check;
