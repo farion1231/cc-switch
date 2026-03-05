@@ -263,9 +263,26 @@ static VERSION_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?").expect("Invalid version regex"));
 
 /// 从版本输出中提取纯版本号
+/// 优先提取界定符之间的内容，若无界定符则取最后一个匹配的 semver
 fn extract_version(raw: &str) -> String {
+    // 1. 尝试匹配界定符之间的内容 (例如 __CC_START__1.2.3__CC_END__)
+    static DELIMITER_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"__CC_START__([\s\S]*?)__CC_END__").expect("Invalid delimiter regex")
+    });
+
+    if let Some(caps) = DELIMITER_RE.captures(raw) {
+        let content = caps.get(1).map_or("", |m| m.as_str()).trim();
+        // 在界定符内容中提取版本号
+        if let Some(m) = VERSION_RE.find(content) {
+            return m.as_str().to_string();
+        }
+        return content.to_string();
+    }
+
+    // 2. 回退方案：获取最后一个匹配到的版本号，以忽略 profile 打印的干扰信息
     VERSION_RE
-        .find(raw)
+        .find_iter(raw)
+        .last()
         .map(|m| m.as_str().to_string())
         .unwrap_or_else(|| raw.to_string())
 }
@@ -277,7 +294,10 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
     #[cfg(target_os = "windows")]
     let output = {
         Command::new("cmd")
-            .args(["/C", &format!("{tool} --version")])
+            .args([
+                "/C",
+                &format!("echo __CC_START__ && {tool} --version && echo __CC_END__"),
+            ])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
     };
@@ -285,8 +305,10 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
     #[cfg(not(target_os = "windows"))]
     let output = {
         Command::new("sh")
-            .arg("-c")
-            .arg(format!("{tool} --version"))
+            .arg("-lc")
+            .arg(format!(
+                "echo __CC_START__ && {tool} --version && echo __CC_END__"
+            ))
             .output()
     };
 
@@ -550,6 +572,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
+        push_unique_path(&mut search_paths, home.join(".opencode/bin"));
         push_unique_path(&mut search_paths, home.join("n/bin"));
         push_unique_path(&mut search_paths, home.join(".volta/bin"));
     }
@@ -586,13 +609,23 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         );
     }
 
-    let fnm_base = home.join(".local/state/fnm_multishells");
-    if fnm_base.exists() {
-        if let Ok(entries) = std::fs::read_dir(&fnm_base) {
-            for entry in entries.flatten() {
-                let bin_path = entry.path().join("bin");
-                if bin_path.exists() {
-                    push_unique_path(&mut search_paths, bin_path);
+    let fnm_paths = vec![
+        home.join(".local/state/fnm_multishells"),
+        #[cfg(target_os = "linux")]
+        std::path::PathBuf::from(format!(
+            "/run/user/{}/fnm_multishells",
+            unsafe { libc::getuid() }
+        )),
+    ];
+
+    for fnm_base in fnm_paths {
+        if fnm_base.exists() {
+            if let Ok(entries) = std::fs::read_dir(&fnm_base) {
+                for entry in entries.flatten() {
+                    let bin_path = entry.path().join("bin");
+                    if bin_path.exists() {
+                        push_unique_path(&mut search_paths, bin_path);
+                    }
                 }
             }
         }
@@ -660,6 +693,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
                 if out.status.success() {
                     let raw = if stdout.is_empty() { &stderr } else { &stdout };
                     if !raw.is_empty() {
+                        // 扫描路径时直接执行二进制，通常没有 profile 干扰，但为了统一也使用 extract_version
                         return (Some(extract_version(raw)), None);
                     }
                 }
