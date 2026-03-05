@@ -1,3 +1,4 @@
+pub mod codex_env;
 pub mod config;
 pub mod env_checker;
 pub mod env_manager;
