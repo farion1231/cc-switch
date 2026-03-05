@@ -1627,6 +1627,11 @@
           "placeholder": "15721",
           "description": "プロキシサーバーがリッスンするポート番号（1024 ~ 65535）"
         },
+        "upstreamUrl": {
+          "label": "Upstream URL",
+          "placeholder": "http://127.0.0.1:15721",
+          "description": "クライアント設定へ書き戻すプロキシURL（http/httpsのoriginのみ。空ならlistenアドレス/ポートを使用）。別ポートを指定する場合、そのアドレスで転送/デバッグプロキシを起動して本アプリのlistenポートへ転送してください。"
+        },
         "maxRetries": {
           "label": "最大リトライ回数",
           "placeholder": "3",
@@ -1677,6 +1682,7 @@
       "invalidAddress": "無効なアドレスです。有効な IP アドレス（例: 127.0.0.1）または localhost を入力してください",
       "configSaved": "プロキシ設定を保存しました",
       "configSaveFailed": "設定の保存に失敗しました",
+      "invalidUpstreamUrl": "Upstream URL が無効です。http(s)://host:port（origin のみ）を入力してください",
       "restartRequired": "アドレスまたはポートの変更を反映するにはプロキシサービスの再起動が必要です"
     },
     "switchFailed": "切り替えに失敗しました: {{error}}",

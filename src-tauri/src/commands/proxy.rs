@@ -6,6 +6,7 @@ use crate::error::AppError;
 use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 use crate::store::AppState;
+use url::Url;
 
 /// 启动代理服务器（仅启动服务，不接管 Live 配置）
 #[tauri::command]
@@ -84,8 +85,44 @@ pub async fn get_global_proxy_config(
 #[tauri::command]
 pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
-    config: GlobalProxyConfig,
+    mut config: GlobalProxyConfig,
 ) -> Result<(), String> {
+    // upstream_url 校验（仅允许 origin，http/https://host:port；空表示使用 listen_address/listen_port）
+    if let Some(raw) = config.upstream_url.as_ref() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            config.upstream_url = None;
+        } else {
+            let url = Url::parse(trimmed).map_err(|e| format!("upstreamUrl 无效: {e}"))?;
+            match url.scheme() {
+                "http" | "https" => {}
+                other => {
+                    return Err(format!(
+                        "upstreamUrl 仅支持 http/https，当前为 {other}"
+                    ))
+                }
+            }
+            if url.host_str().is_none() {
+                return Err("upstreamUrl 必须包含 host".to_string());
+            }
+            if url.port().is_none() {
+                return Err("upstreamUrl 必须包含 port".to_string());
+            }
+            if !url.path().is_empty() && url.path() != "/" {
+                return Err("upstreamUrl 只允许 origin，不允许包含 path".to_string());
+            }
+            if url.query().is_some() {
+                return Err("upstreamUrl 不允许包含 query".to_string());
+            }
+            if url.fragment().is_some() {
+                return Err("upstreamUrl 不允许包含 fragment".to_string());
+            }
+
+            // 规范化：存 origin（包含 scheme://host[:port]，不带末尾 /）
+            config.upstream_url = Some(url.origin().ascii_serialization());
+        }
+    }
+
     let db = &state.db;
     db.update_global_proxy_config(config)
         .await
