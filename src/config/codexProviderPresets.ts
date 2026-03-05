@@ -85,7 +85,6 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     isOfficial: true,
     auth: {
       OPENAI_API_KEY: "",
-      AZURE_OPENAI_API_KEY: "",
     },
     config: `model_provider = "azure"
 model = "gpt-5.3-codex"
@@ -95,7 +94,7 @@ disable_response_storage = true
 [model_providers.azure]
 name = "Azure OpenAI"
 base_url = "https://YOUR_RESOURCE_NAME.openai.azure.com/openai/v1"
-env_key = "AZURE_OPENAI_API_KEY"
+env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 requires_openai_auth = true`,
     endpointCandidates: [

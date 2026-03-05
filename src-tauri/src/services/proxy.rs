@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
-const CODEX_AUTH_KEYS: [&str; 2] = ["OPENAI_API_KEY", "AZURE_OPENAI_API_KEY"];
+const CODEX_AUTH_KEYS: [&str; 1] = ["OPENAI_API_KEY"];
 
 /// 代理接管模式下需要从 Claude Live 配置中移除的“模型覆盖”字段。
 ///
@@ -498,7 +498,7 @@ impl ProxyService {
                     if let Ok(Some(mut provider)) =
                         self.db.get_provider_by_id(&provider_id, "codex")
                     {
-                        if let Some((token_key, token)) =
+                        if let Some((_token_key, token)) =
                             Self::extract_codex_auth_token_with_key(live_config)
                         {
                             if let Some(auth_obj) = provider
@@ -506,15 +506,8 @@ impl ProxyService {
                                 .get_mut("auth")
                                 .and_then(|v| v.as_object_mut())
                             {
-                                let mut updated_any = false;
                                 for key in CODEX_AUTH_KEYS {
-                                    if auth_obj.contains_key(key) {
-                                        auth_obj.insert(key.to_string(), json!(token));
-                                        updated_any = true;
-                                    }
-                                }
-                                if !updated_any {
-                                    auth_obj.insert(token_key.to_string(), json!(token));
+                                    auth_obj.insert(key.to_string(), json!(token));
                                 }
                             } else {
                                 if provider.settings_config.is_null() {
@@ -524,7 +517,9 @@ impl ProxyService {
                                 if let Some(root) = provider.settings_config.as_object_mut() {
                                     root.insert(
                                         "auth".to_string(),
-                                        json!({ token_key: token }),
+                                        json!({
+                                            "OPENAI_API_KEY": token
+                                        }),
                                     );
                                 } else {
                                     log::warn!(
@@ -891,8 +886,7 @@ impl ProxyService {
                 Self::set_codex_auth_placeholder(auth);
             } else {
                 live_config["auth"] = json!({
-                    "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER,
-                    "AZURE_OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                    "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
                 });
             }
 
@@ -979,8 +973,7 @@ impl ProxyService {
                     Self::set_codex_auth_placeholder(auth);
                 } else {
                     live_config["auth"] = json!({
-                        "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER,
-                        "AZURE_OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                        "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
                     });
                 }
 
@@ -1075,8 +1068,7 @@ impl ProxyService {
                         Self::set_codex_auth_placeholder(auth);
                     } else {
                         live_config["auth"] = json!({
-                            "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER,
-                            "AZURE_OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                            "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
                         });
                     }
 
@@ -1639,20 +1631,8 @@ impl ProxyService {
     // ==================== Live 配置读写辅助方法 ====================
 
     fn set_codex_auth_placeholder(auth: &mut serde_json::Map<String, Value>) {
-        let mut replaced_any = false;
-        for key in CODEX_AUTH_KEYS {
-            if auth.contains_key(key) {
-                auth.insert(key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
-                replaced_any = true;
-            }
-        }
-        if !replaced_any {
-            auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
-            auth.insert(
-                "AZURE_OPENAI_API_KEY".to_string(),
-                json!(PROXY_TOKEN_PLACEHOLDER),
-            );
-        }
+        // 统一只使用 OPENAI_API_KEY。
+        auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
     }
 
     fn extract_codex_auth_token_with_key(live_config: &Value) -> Option<(&'static str, String)> {
@@ -1711,6 +1691,12 @@ impl ProxyService {
 
                 if let Some(provider_table) = model_providers[&provider_key].as_table_mut() {
                     provider_table["base_url"] = toml_edit::value(new_url);
+                    if matches!(
+                        provider_table.get("env_key").and_then(|v| v.as_str()),
+                        Some("OPENAI_API_KEY")
+                    ) {
+                        provider_table["env_key"] = toml_edit::value("OPENAI_API_KEY");
+                    }
                     return doc.to_string();
                 }
             }
@@ -2207,19 +2193,6 @@ model = "gpt-5.1-codex"
     }
 
     #[test]
-    fn extract_codex_auth_token_reads_azure_key_from_auth() {
-        let live_config = json!({
-            "auth": {
-                "AZURE_OPENAI_API_KEY": "azure-live-token"
-            }
-        });
-
-        let token = ProxyService::extract_codex_auth_token_with_key(&live_config)
-            .map(|(_, token)| token);
-        assert_eq!(token.as_deref(), Some("azure-live-token"));
-    }
-
-    #[test]
     fn extract_codex_auth_token_ignores_placeholder() {
         let live_config = json!({
             "auth": {
@@ -2233,18 +2206,6 @@ model = "gpt-5.1-codex"
     }
 
     #[test]
-    fn extract_codex_auth_token_ignores_azure_placeholder() {
-        let live_config = json!({
-            "auth": {
-                "AZURE_OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
-            }
-        });
-
-        let token = ProxyService::extract_codex_auth_token_with_key(&live_config)
-            .map(|(_, token)| token);
-        assert!(token.is_none(), "placeholder token should be ignored");
-    }
-
     #[tokio::test]
     #[serial]
     async fn switch_proxy_target_updates_live_backup_when_taken_over() {

@@ -22,12 +22,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     if (typeof auth.OPENAI_API_KEY === "string" && auth.OPENAI_API_KEY.trim()) {
       return auth.OPENAI_API_KEY;
     }
-    if (
-      typeof auth.AZURE_OPENAI_API_KEY === "string" &&
-      auth.AZURE_OPENAI_API_KEY.trim()
-    ) {
-      return auth.AZURE_OPENAI_API_KEY;
-    }
     return "";
   }, []);
 
@@ -165,19 +159,12 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       try {
         const auth = JSON.parse(codexAuth || "{}");
         auth.OPENAI_API_KEY = trimmed;
-        const hasAzureKey =
-          Object.prototype.hasOwnProperty.call(auth, "AZURE_OPENAI_API_KEY") ||
-          codexConfig.includes("[model_providers.azure]") ||
-          codexConfig.includes('model_provider = "azure"');
-        if (hasAzureKey) {
-          auth.AZURE_OPENAI_API_KEY = trimmed;
-        }
         setCodexAuth(JSON.stringify(auth, null, 2));
       } catch {
         // ignore
       }
     },
-    [codexAuth, codexConfig, setCodexAuth],
+    [codexAuth, setCodexAuth],
   );
 
   // 处理 Codex Base URL 变化

@@ -129,10 +129,10 @@ impl SpeedtestService {
     }
 
     fn build_client(timeout_secs: u64) -> Result<(Client, std::time::Duration), AppError> {
-        // 使用全局 HTTP 客户端（已包含代理配置）
+        // 使用测速专用客户端：当全局代理指向 CC Switch 自身时自动绕过，避免递归代理干扰结果。
         // 返回 timeout Duration 供请求级别使用
         let timeout = std::time::Duration::from_secs(timeout_secs);
-        Ok((crate::proxy::http_client::get(), timeout))
+        Ok((crate::proxy::http_client::get_for_speedtest(), timeout))
     }
 
     fn sanitize_timeout(timeout_secs: Option<u64>) -> u64 {

@@ -35,7 +35,7 @@ impl CodexAdapter {
 
     /// 从 Provider 配置中提取 API Key
     fn extract_key(&self, provider: &Provider) -> Option<String> {
-        const KEY_NAMES: [&str; 2] = ["OPENAI_API_KEY", "AZURE_OPENAI_API_KEY"];
+        const KEY_NAMES: [&str; 1] = ["OPENAI_API_KEY"];
 
         // 1. 尝试从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
@@ -245,20 +245,6 @@ mod tests {
 
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-env-key-12345678");
-    }
-
-    #[test]
-    fn test_extract_auth_from_azure_auth_field() {
-        let adapter = CodexAdapter::new();
-        let provider = create_provider(json!({
-            "auth": {
-                "AZURE_OPENAI_API_KEY": "azure-sk-test-key-12345678"
-            }
-        }));
-
-        let auth = adapter.extract_auth(&provider).unwrap();
-        assert_eq!(auth.api_key, "azure-sk-test-key-12345678");
-        assert_eq!(auth.strategy, AuthStrategy::Bearer);
     }
 
     #[test]

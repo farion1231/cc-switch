@@ -1075,7 +1075,6 @@ impl ProviderService {
 
                 let api_key = auth
                     .get("OPENAI_API_KEY")
-                    .or_else(|| auth.get("AZURE_OPENAI_API_KEY"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
                         AppError::localized(

@@ -142,7 +142,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         const auth = (config as any).auth || {};
         const configToml = (config as any).config || "";
         return {
-          apiKey: auth.OPENAI_API_KEY || auth.AZURE_OPENAI_API_KEY,
+          apiKey: auth.OPENAI_API_KEY,
           baseUrl: extractCodexBaseUrl(configToml),
         };
       } else if (appId === "gemini") {

@@ -197,6 +197,25 @@ pub fn get() -> Client {
         })
 }
 
+/// 获取适用于端点测速的 HTTP 客户端。
+///
+/// 当全局代理指向 CC Switch 自身代理端口时，测速请求会被本地代理链路拦截，
+/// 造成“可达性”判断失真（例如触发本地鉴权/环境变量错误）。
+/// 这种情况下回退到直连/系统代理自动探测客户端，避免自代理递归。
+pub fn get_for_speedtest() -> Client {
+    if let Some(proxy_url) = get_current_proxy_url() {
+        if proxy_points_to_loopback(&proxy_url) {
+            log::warn!(
+                "[GlobalProxy] [GP-005] Bypassing self proxy for speedtest: {}",
+                mask_url(&proxy_url)
+            );
+            return build_client(None).unwrap_or_default();
+        }
+    }
+
+    get()
+}
+
 /// 获取当前代理 URL
 ///
 /// 返回当前配置的代理 URL，None 表示直连。
