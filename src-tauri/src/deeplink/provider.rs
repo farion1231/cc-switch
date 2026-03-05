@@ -316,7 +316,7 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let model_name = request
         .model
         .as_deref()
-        .unwrap_or("gpt-5-codex")
+        .unwrap_or("gpt-5.3-codex")
         .to_string();
 
     // Endpoint: normalize trailing slashes (use primary endpoint only)
@@ -571,11 +571,14 @@ fn merge_codex_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
-    // Auto-fill API key from auth.OPENAI_API_KEY
+    // Auto-fill API key from auth.OPENAI_API_KEY / auth.AZURE_OPENAI_API_KEY
     if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(api_key) = config
             .get("auth")
-            .and_then(|v| v.get("OPENAI_API_KEY"))
+            .and_then(|v| {
+                v.get("OPENAI_API_KEY")
+                    .or_else(|| v.get("AZURE_OPENAI_API_KEY"))
+            })
             .and_then(|v| v.as_str())
         {
             request.api_key = Some(api_key.to_string());

@@ -3,6 +3,7 @@ use reqwest::{Client, Url};
 use serde::Serialize;
 use std::time::Instant;
 
+use crate::app_config::AppType;
 use crate::error::AppError;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 8;
@@ -26,6 +27,7 @@ impl SpeedtestService {
     pub async fn test_endpoints(
         urls: Vec<String>,
         timeout_secs: Option<u64>,
+        app_type: Option<&AppType>,
     ) -> Result<Vec<EndpointLatency>, AppError> {
         if urls.is_empty() {
             return Ok(vec![]);
@@ -69,23 +71,33 @@ impl SpeedtestService {
 
         let tasks = valid_targets.into_iter().map(|(idx, trimmed, parsed_url)| {
             let client = client.clone();
+            let probe_urls = Self::build_probe_urls(&trimmed, &parsed_url, app_type);
+            let auth_status_reachable = Self::allow_auth_status_as_reachable(app_type, &parsed_url);
             async move {
                 // 先进行一次热身请求，忽略结果，仅用于复用连接/绕过首包惩罚。
-                let _ = client
-                    .get(parsed_url.clone())
-                    .timeout(request_timeout)
-                    .send()
-                    .await;
+                let _ = Self::send_probe_request(&client, &probe_urls, request_timeout).await;
 
                 // 第二次请求开始计时，并将其作为结果返回。
                 let start = Instant::now();
-                let latency = match client.get(parsed_url).timeout(request_timeout).send().await {
-                    Ok(resp) => EndpointLatency {
-                        url: trimmed,
-                        latency: Some(start.elapsed().as_millis()),
-                        status: Some(resp.status().as_u16()),
-                        error: None,
-                    },
+                let latency = match Self::send_probe_request(&client, &probe_urls, request_timeout)
+                    .await
+                {
+                    Ok(resp) => {
+                        let status = resp.status().as_u16();
+                        let latency = start.elapsed().as_millis();
+                        let error = if Self::is_reachable_status(status, auth_status_reachable) {
+                            None
+                        } else {
+                            Some(format!("HTTP {status}"))
+                        };
+
+                        EndpointLatency {
+                            url: trimmed,
+                            latency: Some(latency),
+                            status: Some(status),
+                            error,
+                        }
+                    }
                     Err(err) => {
                         let status = err.status().map(|s| s.as_u16());
                         let error_message = if err.is_timeout() {
@@ -127,11 +139,77 @@ impl SpeedtestService {
         let secs = timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
         secs.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS)
     }
+
+    fn build_probe_urls(
+        base_url: &str,
+        parsed_url: &Url,
+        app_type: Option<&AppType>,
+    ) -> Vec<String> {
+        match app_type {
+            // Codex endpoint management should validate Responses API availability,
+            // not just whether the host returns a generic 200 page.
+            Some(AppType::Codex) if Self::is_azure_openai_host(parsed_url) => {
+                let base = base_url.trim_end_matches('/');
+                let mut urls = if base.ends_with("/v1") {
+                    vec![format!("{base}/responses")]
+                } else {
+                    vec![format!("{base}/responses"), format!("{base}/v1/responses")]
+                };
+                urls.dedup();
+                urls
+            }
+            _ => vec![parsed_url.to_string()],
+        }
+    }
+
+    fn is_reachable_status(status: u16, allow_auth_status: bool) -> bool {
+        (200..300).contains(&status) || (allow_auth_status && matches!(status, 401 | 403 | 405))
+    }
+
+    fn allow_auth_status_as_reachable(app_type: Option<&AppType>, parsed_url: &Url) -> bool {
+        matches!(app_type, Some(AppType::Codex)) && Self::is_azure_openai_host(parsed_url)
+    }
+
+    fn is_azure_openai_host(parsed_url: &Url) -> bool {
+        let Some(host) = parsed_url.host_str() else {
+            return false;
+        };
+        host.ends_with(".openai.azure.com") || host.ends_with(".cognitiveservices.azure.com")
+    }
+
+    async fn send_probe_request(
+        client: &Client,
+        probe_urls: &[String],
+        timeout: std::time::Duration,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        for (idx, url) in probe_urls.iter().enumerate() {
+            match client.get(url).timeout(timeout).send().await {
+                Ok(resp) => {
+                    // 对于多候选路径，仅在 404 时继续尝试下一个路径
+                    if resp.status().as_u16() == 404 && idx + 1 < probe_urls.len() {
+                        continue;
+                    }
+                    return Ok(resp);
+                }
+                Err(err) => {
+                    // 路径回退只处理 HTTP 404；连接类错误直接返回
+                    if err.status().map(|s| s.as_u16()) == Some(404) && idx + 1 < probe_urls.len()
+                    {
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
+
+        unreachable!("probe_urls should never be empty")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::AppType;
 
     #[test]
     fn sanitize_timeout_clamps_values() {
@@ -156,8 +234,12 @@ mod tests {
     #[test]
     fn test_endpoints_handles_empty_list() {
         let result =
-            tauri::async_runtime::block_on(SpeedtestService::test_endpoints(Vec::new(), Some(5)))
-                .expect("empty list should succeed");
+            tauri::async_runtime::block_on(SpeedtestService::test_endpoints(
+                Vec::new(),
+                Some(5),
+                None,
+            ))
+            .expect("empty list should succeed");
         assert!(result.is_empty());
     }
 
@@ -165,6 +247,7 @@ mod tests {
     fn test_endpoints_reports_invalid_url() {
         let result = tauri::async_runtime::block_on(SpeedtestService::test_endpoints(
             vec!["not a url".into(), "".into()],
+            None,
             None,
         ))
         .expect("invalid inputs should still succeed");
@@ -183,5 +266,44 @@ mod tests {
             Some("URL 不能为空"),
             "empty url should report validation error"
         );
+    }
+
+    #[test]
+    fn build_probe_urls_for_codex_prefers_responses_path() {
+        let parsed = Url::parse("https://example.openai.azure.com/openai").expect("valid url");
+        let urls = SpeedtestService::build_probe_urls(
+            "https://example.openai.azure.com/openai",
+            &parsed,
+            Some(&AppType::Codex),
+        );
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.openai.azure.com/openai/responses".to_string(),
+                "https://example.openai.azure.com/openai/v1/responses".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn build_probe_urls_for_non_azure_codex_uses_original_url() {
+        let parsed = Url::parse("https://api.openai.com/v1").expect("valid url");
+        let urls =
+            SpeedtestService::build_probe_urls("https://api.openai.com/v1", &parsed, Some(&AppType::Codex));
+        assert_eq!(urls, vec!["https://api.openai.com/v1".to_string()]);
+    }
+
+    #[test]
+    fn reachable_status_auth_errors_only_when_allowed() {
+        assert!(SpeedtestService::is_reachable_status(200, false));
+        assert!(SpeedtestService::is_reachable_status(204, false));
+        assert!(!SpeedtestService::is_reachable_status(401, false));
+        assert!(!SpeedtestService::is_reachable_status(403, false));
+        assert!(!SpeedtestService::is_reachable_status(405, false));
+        assert!(SpeedtestService::is_reachable_status(401, true));
+        assert!(SpeedtestService::is_reachable_status(403, true));
+        assert!(SpeedtestService::is_reachable_status(405, true));
+        assert!(!SpeedtestService::is_reachable_status(404, true));
+        assert!(!SpeedtestService::is_reachable_status(500, true));
     }
 }

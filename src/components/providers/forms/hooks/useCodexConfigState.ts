@@ -18,6 +18,19 @@ interface UseCodexConfigStateProps {
  * Codex 配置包含两部分：auth.json (JSON) 和 config.toml (TOML 字符串)
  */
 export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
+  const pickCodexApiKey = useCallback((auth: Record<string, unknown>): string => {
+    if (typeof auth.OPENAI_API_KEY === "string" && auth.OPENAI_API_KEY.trim()) {
+      return auth.OPENAI_API_KEY;
+    }
+    if (
+      typeof auth.AZURE_OPENAI_API_KEY === "string" &&
+      auth.AZURE_OPENAI_API_KEY.trim()
+    ) {
+      return auth.AZURE_OPENAI_API_KEY;
+    }
+    return "";
+  }, []);
+
   const [codexAuth, setCodexAuthState] = useState("");
   const [codexConfig, setCodexConfigState] = useState("");
   const [codexApiKey, setCodexApiKey] = useState("");
@@ -59,14 +72,14 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
 
       // 提取 API Key
       try {
-        if (auth && typeof auth.OPENAI_API_KEY === "string") {
-          setCodexApiKey(auth.OPENAI_API_KEY);
+        if (auth && typeof auth === "object") {
+          setCodexApiKey(pickCodexApiKey(auth));
         }
       } catch {
         // ignore
       }
     }
-  }, [initialData]);
+  }, [initialData, pickCodexApiKey]);
 
   // 与 TOML 配置保持基础 URL 同步
   useEffect(() => {
@@ -94,11 +107,12 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   const getCodexAuthApiKey = useCallback((authString: string): string => {
     try {
       const auth = JSON.parse(authString || "{}");
-      return typeof auth.OPENAI_API_KEY === "string" ? auth.OPENAI_API_KEY : "";
+      if (!auth || typeof auth !== "object" || Array.isArray(auth)) return "";
+      return pickCodexApiKey(auth);
     } catch {
       return "";
     }
-  }, []);
+  }, [pickCodexApiKey]);
 
   // 从 codexAuth 中提取并同步 API Key
   useEffect(() => {
@@ -151,12 +165,19 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       try {
         const auth = JSON.parse(codexAuth || "{}");
         auth.OPENAI_API_KEY = trimmed;
+        const hasAzureKey =
+          Object.prototype.hasOwnProperty.call(auth, "AZURE_OPENAI_API_KEY") ||
+          codexConfig.includes("[model_providers.azure]") ||
+          codexConfig.includes('model_provider = "azure"');
+        if (hasAzureKey) {
+          auth.AZURE_OPENAI_API_KEY = trimmed;
+        }
         setCodexAuth(JSON.stringify(auth, null, 2));
       } catch {
         // ignore
       }
     },
-    [codexAuth, setCodexAuth],
+    [codexAuth, codexConfig, setCodexAuth],
   );
 
   // 处理 Codex Base URL 变化
@@ -242,8 +263,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
 
       // 提取 API Key
       try {
-        if (auth && typeof auth.OPENAI_API_KEY === "string") {
-          setCodexApiKey(auth.OPENAI_API_KEY);
+        if (auth && typeof auth === "object") {
+          setCodexApiKey(pickCodexApiKey(auth));
         } else {
           setCodexApiKey("");
         }
@@ -251,7 +272,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
         setCodexApiKey("");
       }
     },
-    [setCodexAuth, setCodexConfig],
+    [setCodexAuth, setCodexConfig, pickCodexApiKey],
   );
 
   return {

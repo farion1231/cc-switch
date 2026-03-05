@@ -191,8 +191,15 @@ pub fn read_live_provider_settings(app: String) -> Result<serde_json::Value, Str
 pub async fn test_api_endpoints(
     urls: Vec<String>,
     #[allow(non_snake_case)] timeoutSecs: Option<u64>,
+    app: Option<String>,
 ) -> Result<Vec<EndpointLatency>, String> {
-    SpeedtestService::test_endpoints(urls, timeoutSecs)
+    let app_type = app
+        .as_deref()
+        .map(AppType::from_str)
+        .transpose()
+        .map_err(|e| e.to_string())?;
+
+    SpeedtestService::test_endpoints(urls, timeoutSecs, app_type.as_ref())
         .await
         .map_err(|e| e.to_string())
 }

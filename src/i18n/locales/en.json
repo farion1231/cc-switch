@@ -720,7 +720,8 @@
     "pleaseAddEndpoint": "Please add an endpoint first",
     "testUnavailable": "Speed test unavailable",
     "noResult": "No result returned",
-    "testFailed": "Speed test failed: {{error}}"
+    "testFailed": "Speed test failed: {{error}}",
+    "statusCode": "Status Code"
   },
   "providerAdvanced": {
     "testConfig": "Model Test Config",

@@ -720,7 +720,8 @@
     "pleaseAddEndpoint": "まずエンドポイントを追加してください",
     "testUnavailable": "速度テストを実行できません",
     "noResult": "結果がありません",
-    "testFailed": "速度テストに失敗しました: {{error}}"
+    "testFailed": "速度テストに失敗しました: {{error}}",
+    "statusCode": "ステータスコード"
   },
   "providerAdvanced": {
     "testConfig": "モデルテスト設定",
