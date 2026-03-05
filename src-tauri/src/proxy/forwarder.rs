@@ -12,7 +12,7 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{ProxyStatus, RectifierConfig},
+    types::{OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
 use crate::{app_config::AppType, provider::Provider};
@@ -97,6 +97,8 @@ pub struct RequestForwarder {
     current_provider_id_at_start: String,
     /// 整流器配置
     rectifier_config: RectifierConfig,
+    /// 优化器配置
+    optimizer_config: OptimizerConfig,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
 }
@@ -114,6 +116,7 @@ impl RequestForwarder {
         _streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
+        optimizer_config: OptimizerConfig,
     ) -> Self {
         Self {
             router,
@@ -123,6 +126,7 @@ impl RequestForwarder {
             app_handle,
             current_provider_id_at_start,
             rectifier_config,
+            optimizer_config,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
         }
     }
@@ -152,6 +156,20 @@ impl RequestForwarder {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
             });
+        }
+
+        // PRE-SEND 优化器：仅 Bedrock provider 生效
+        if self.optimizer_config.enabled {
+            if let Some(first_provider) = providers.first() {
+                if is_bedrock_provider(first_provider) {
+                    if self.optimizer_config.thinking_optimizer {
+                        super::thinking_optimizer::optimize(&mut body, &self.optimizer_config);
+                    }
+                    if self.optimizer_config.cache_injection {
+                        super::cache_injector::inject(&mut body, &self.optimizer_config);
+                    }
+                }
+            }
         }
 
         let mut last_error = None;
@@ -926,4 +944,15 @@ fn extract_error_message(error: &ProxyError) -> Option<String> {
         ProxyError::UpstreamError { body, .. } => body.clone(),
         _ => Some(error.to_string()),
     }
+}
+
+/// 检测 Provider 是否为 Bedrock（通过 CLAUDE_CODE_USE_BEDROCK 环境变量判断）
+fn is_bedrock_provider(provider: &Provider) -> bool {
+    provider
+        .settings_config
+        .get("env")
+        .and_then(|e| e.get("CLAUDE_CODE_USE_BEDROCK"))
+        .and_then(|v| v.as_str())
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }

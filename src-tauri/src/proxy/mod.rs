@@ -22,6 +22,8 @@ pub mod response_processor;
 pub(crate) mod server;
 pub mod session;
 pub mod thinking_budget_rectifier;
+pub mod thinking_optimizer;
+pub mod cache_injector;
 pub mod thinking_rectifier;
 pub(crate) mod types;
 pub mod usage;
