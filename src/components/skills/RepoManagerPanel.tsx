@@ -61,11 +61,15 @@ export function RepoManagerPanel({
     }
 
     try {
-      await onAdd({
+      const repoToAdd: SkillRepo = {
         owner: parsed.owner,
         name: parsed.name,
         branch: branch || "main",
         enabled: true,
+      };
+      await onAdd({
+        ...repoToAdd,
+        count: getSkillCount(repoToAdd),
       });
 
       setRepoUrl("");

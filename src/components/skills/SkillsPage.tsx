@@ -168,6 +168,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
           t("skills.repo.addSuccess", {
             owner: repo.owner,
             name: repo.name,
+            count: repo.count || 0,
           }),
           { closeButton: true },
         );

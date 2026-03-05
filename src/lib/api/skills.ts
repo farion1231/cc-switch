@@ -67,6 +67,7 @@ export interface SkillRepo {
   name: string;
   branch: string;
   enabled: boolean;
+  count?: number;
 }
 
 // ========== API ==========
