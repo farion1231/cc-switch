@@ -20,9 +20,17 @@ interface SkillCardProps {
   skill: SkillCardSkill;
   onInstall: (directory: string) => Promise<void>;
   onUninstall: (directory: string) => Promise<void>;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }
 
-export function SkillCard({ skill, onInstall, onUninstall }: SkillCardProps) {
+export function SkillCard({
+  skill,
+  onInstall,
+  onUninstall,
+  selected = false,
+  onToggleSelect,
+}: SkillCardProps) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
 
@@ -91,6 +99,14 @@ export function SkillCard({ skill, onInstall, onUninstall }: SkillCardProps) {
               {t("skills.installed")}
             </Badge>
           )}
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelect}
+            disabled={!onToggleSelect}
+            className="mt-1 h-4 w-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+            title={t("skills.select")}
+          />
         </div>
       </CardHeader>
       <CardContent className="flex-1 pt-0">

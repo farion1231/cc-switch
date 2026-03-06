@@ -82,6 +82,7 @@ impl Database {
             repo_name TEXT,
             repo_branch TEXT DEFAULT 'main',
             readme_url TEXT,
+            content_hash TEXT,
             enabled_claude BOOLEAN NOT NULL DEFAULT 0,
             enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
@@ -440,6 +441,7 @@ impl Database {
             "TEXT NOT NULL DEFAULT 'main'",
         )?;
         Self::add_column_if_missing(conn, "skill_repos", "enabled", "BOOLEAN NOT NULL DEFAULT 1")?;
+        Self::add_column_if_missing(conn, "skills", "content_hash", "TEXT")?;
         // 注意: skills_path 字段已被移除，因为现在支持全仓库递归扫描
 
         Ok(())
@@ -849,6 +851,7 @@ impl Database {
                 repo_name TEXT,
                 repo_branch TEXT DEFAULT 'main',
                 readme_url TEXT,
+                content_hash TEXT,
                 enabled_claude BOOLEAN NOT NULL DEFAULT 0,
                 enabled_codex BOOLEAN NOT NULL DEFAULT 0,
                 enabled_gemini BOOLEAN NOT NULL DEFAULT 0,

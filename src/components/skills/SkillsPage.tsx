@@ -1,5 +1,6 @@
 import { useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -17,12 +18,17 @@ import {
   useDiscoverableSkills,
   useInstalledSkills,
   useInstallSkill,
+  useBatchInstallSkills,
   useSkillRepos,
   useAddSkillRepo,
   useRemoveSkillRepo,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
-import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
+import {
+  skillsApi,
+  type DiscoverableSkill,
+  type SkillRepo,
+} from "@/lib/api/skills";
 import { formatSkillError } from "@/lib/errors/skillErrorParser";
 
 interface SkillsPageProps {
@@ -30,7 +36,7 @@ interface SkillsPageProps {
 }
 
 export interface SkillsPageHandle {
-  refresh: () => void;
+  refresh: () => Promise<void>;
   openRepoManager: () => void;
 }
 
@@ -41,12 +47,14 @@ export interface SkillsPageHandle {
 export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
   ({ initialApp = "claude" }, ref) => {
     const { t } = useTranslation();
+    const queryClient = useQueryClient();
     const [repoManagerOpen, setRepoManagerOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [filterRepo, setFilterRepo] = useState<string>("all");
     const [filterStatus, setFilterStatus] = useState<
       "all" | "installed" | "uninstalled"
     >("all");
+    const [selected, setSelected] = useState<Set<string>>(new Set());
 
     // currentApp 用于安装时的默认应用
     const currentApp = initialApp;
@@ -56,16 +64,15 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       data: discoverableSkills,
       isLoading: loadingDiscoverable,
       isFetching: fetchingDiscoverable,
-      refetch: refetchDiscoverable,
     } = useDiscoverableSkills();
     const { data: installedSkills } = useInstalledSkills();
     const { data: repos = [], refetch: refetchRepos } = useSkillRepos();
 
     // Mutations
     const installMutation = useInstallSkill();
+    const batchInstallMutation = useBatchInstallSkills();
     const addRepoMutation = useAddSkillRepo();
     const removeRepoMutation = useRemoveSkillRepo();
-
     // 已安装的 skill key 集合（使用 directory + repoOwner + repoName 组合判断）
     const installedKeys = useMemo(() => {
       if (!installedSkills) return new Set<string>();
@@ -113,9 +120,10 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const loading = loadingDiscoverable || fetchingDiscoverable;
 
     useImperativeHandle(ref, () => ({
-      refresh: () => {
-        refetchDiscoverable();
-        refetchRepos();
+      refresh: async () => {
+        const latest = await skillsApi.discoverAvailable(true);
+        queryClient.setQueryData(["skills", "discoverable"], latest);
+        await refetchRepos();
       },
       openRepoManager: () => setRepoManagerOpen(true),
     }));
@@ -161,18 +169,29 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       toast.info(t("skills.uninstallInMainPanel"));
     };
 
+    const toggleSelect = (key: string) => {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) {
+          next.delete(key);
+        } else {
+          next.add(key);
+        }
+        return next;
+      });
+    };
+
     const handleAddRepo = async (repo: SkillRepo) => {
       try {
         await addRepoMutation.mutateAsync(repo);
-        // Await discovery so we can report the real count
-        const { data: freshSkills } = await refetchDiscoverable();
-        const count =
-          freshSkills?.filter(
-            (s) =>
-              s.repoOwner === repo.owner &&
-              s.repoName === repo.name &&
-              (s.repoBranch || "main") === (repo.branch || "main"),
-          ).length ?? 0;
+        const latest = await skillsApi.discoverAvailable(true);
+        queryClient.setQueryData(["skills", "discoverable"], latest);
+        const count = latest.filter(
+          (skill) =>
+            skill.repoOwner === repo.owner &&
+            skill.repoName === repo.name &&
+            (skill.repoBranch || "main") === (repo.branch || "main"),
+        ).length;
         toast.success(
           t("skills.repo.addSuccess", {
             owner: repo.owner,
@@ -191,6 +210,8 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const handleRemoveRepo = async (owner: string, name: string) => {
       try {
         await removeRepoMutation.mutateAsync({ owner, name });
+        const latest = await skillsApi.discoverAvailable(true);
+        queryClient.setQueryData(["skills", "discoverable"], latest);
         toast.success(t("skills.repo.removeSuccess", { owner, name }), {
           closeButton: true,
         });
@@ -231,6 +252,61 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         return name.includes(query) || repo.includes(query);
       });
     }, [skills, searchQuery, filterRepo, filterStatus]);
+
+    const selectedCount = useMemo(
+      () =>
+        filteredSkills.filter(
+          (item) => selected.has(item.key) && !item.installed,
+        ).length,
+      [filteredSkills, selected],
+    );
+
+    const handleSelectAllVisible = () => {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        filteredSkills
+          .filter((item) => !item.installed)
+          .forEach((item) => next.add(item.key));
+        return next;
+      });
+    };
+
+    const handleClearSelection = () => setSelected(new Set());
+
+    const handleBatchInstall = async () => {
+      const target = filteredSkills.filter(
+        (item) => selected.has(item.key) && !item.installed,
+      );
+      if (target.length === 0) {
+        toast.info(t("skills.batchInstallNoop"));
+        return;
+      }
+
+      try {
+        const result = await batchInstallMutation.mutateAsync({
+          skills: target,
+          currentApp,
+        });
+        const success = result.installed.length;
+        const failed = result.failed.length;
+        if (failed === 0) {
+          toast.success(t("skills.batchInstallSuccess", { count: success }), {
+            closeButton: true,
+          });
+        } else {
+          toast.warning(
+            t("skills.batchInstallPartial", {
+              success,
+              failed,
+            }),
+            { description: result.failed[0]?.error },
+          );
+        }
+        setSelected(new Set());
+      } catch (error) {
+        toast.error(t("skills.installFailed"), { description: String(error) });
+      }
+    };
 
     return (
       <div className="px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden bg-background/50">
@@ -346,6 +422,36 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                     </p>
                   )}
                 </div>
+                <div className="mb-4 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSelectAllVisible}
+                  >
+                    {t("skills.selectAllVisible", {
+                      defaultValue: "全选可见",
+                    })}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleClearSelection}
+                  >
+                    {t("skills.clearSelection")}
+                  </Button>
+                  <Button
+                    variant="mcp"
+                    size="sm"
+                    onClick={handleBatchInstall}
+                    disabled={
+                      selectedCount === 0 || batchInstallMutation.isPending
+                    }
+                  >
+                    {batchInstallMutation.isPending
+                      ? t("skills.installing")
+                      : t("skills.batchInstall", { count: selectedCount })}
+                  </Button>
+                </div>
 
                 {/* 技能列表或无结果提示 */}
                 {filteredSkills.length === 0 ? (
@@ -365,6 +471,12 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                         skill={skill}
                         onInstall={handleInstall}
                         onUninstall={handleUninstall}
+                        selected={selected.has(skill.key)}
+                        onToggleSelect={
+                          skill.installed
+                            ? undefined
+                            : () => toggleSelect(skill.key)
+                        }
                       />
                     ))}
                   </div>
