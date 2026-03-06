@@ -95,6 +95,7 @@ interface WebDavSyncStatusUpdatedPayload {
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
 const CONTENT_TOP_OFFSET = DRAG_BAR_HEIGHT + HEADER_HEIGHT;
+const ENABLE_CUSTOM_WINDOW_DRAG = !isLinux();
 
 const STORAGE_KEY = "cc-switch-last-app";
 const VALID_APPS: AppId[] = [
@@ -825,8 +826,15 @@ function App() {
     >
       <div
         className="fixed top-0 left-0 right-0 z-[60]"
-        data-tauri-drag-region
-        style={{ WebkitAppRegion: "drag", height: DRAG_BAR_HEIGHT } as any}
+        {...(ENABLE_CUSTOM_WINDOW_DRAG
+          ? { "data-tauri-drag-region": true }
+          : {})}
+        style={
+          {
+            ...(ENABLE_CUSTOM_WINDOW_DRAG ? { WebkitAppRegion: "drag" } : {}),
+            height: DRAG_BAR_HEIGHT,
+          } as any
+        }
       />
       {showEnvBanner && envConflicts.length > 0 && (
         <EnvWarningBanner
@@ -855,10 +863,12 @@ function App() {
 
       <header
         className="fixed z-50 w-full transition-all duration-300 bg-background/80 backdrop-blur-md"
-        data-tauri-drag-region
+        {...(ENABLE_CUSTOM_WINDOW_DRAG
+          ? { "data-tauri-drag-region": true }
+          : {})}
         style={
           {
-            WebkitAppRegion: "drag",
+            ...(ENABLE_CUSTOM_WINDOW_DRAG ? { WebkitAppRegion: "drag" } : {}),
             top: DRAG_BAR_HEIGHT,
             height: HEADER_HEIGHT,
           } as any
@@ -866,8 +876,14 @@ function App() {
       >
         <div
           className="flex h-full items-center justify-between gap-2 px-6"
-          data-tauri-drag-region
-          style={{ WebkitAppRegion: "drag" } as any}
+          {...(ENABLE_CUSTOM_WINDOW_DRAG
+            ? { "data-tauri-drag-region": true }
+            : {})}
+          style={
+            (ENABLE_CUSTOM_WINDOW_DRAG
+              ? { WebkitAppRegion: "drag" }
+              : undefined) as any
+          }
         >
           <div
             className="flex items-center gap-1"

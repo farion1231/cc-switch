@@ -16,6 +16,7 @@ interface FullScreenPanelProps {
 
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px - match App.tsx
 const HEADER_HEIGHT = 64; // px - match App.tsx
+const ENABLE_CUSTOM_WINDOW_DRAG = !isLinux();
 
 /**
  * Reusable full-screen panel component
@@ -84,10 +85,14 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
         >
           {/* Drag region - match App.tsx */}
           <div
-            data-tauri-drag-region
+            {...(ENABLE_CUSTOM_WINDOW_DRAG
+              ? { "data-tauri-drag-region": true }
+              : {})}
             style={
               {
-                WebkitAppRegion: "drag",
+                ...(ENABLE_CUSTOM_WINDOW_DRAG
+                  ? { WebkitAppRegion: "drag" }
+                  : {}),
                 height: DRAG_BAR_HEIGHT,
               } as React.CSSProperties
             }
@@ -96,10 +101,14 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           {/* Header - match App.tsx */}
           <div
             className="flex-shrink-0 flex items-center"
-            data-tauri-drag-region
+            {...(ENABLE_CUSTOM_WINDOW_DRAG
+              ? { "data-tauri-drag-region": true }
+              : {})}
             style={
               {
-                WebkitAppRegion: "drag",
+                ...(ENABLE_CUSTOM_WINDOW_DRAG
+                  ? { WebkitAppRegion: "drag" }
+                  : {}),
                 backgroundColor: "hsl(var(--background))",
                 height: HEADER_HEIGHT,
               } as React.CSSProperties
@@ -107,8 +116,14 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           >
             <div
               className="px-6 w-full flex items-center gap-4"
-              data-tauri-drag-region
-              style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+              {...(ENABLE_CUSTOM_WINDOW_DRAG
+                ? { "data-tauri-drag-region": true }
+                : {})}
+              style={
+                (ENABLE_CUSTOM_WINDOW_DRAG
+                  ? { WebkitAppRegion: "drag" }
+                  : undefined) as React.CSSProperties
+              }
             >
               <Button
                 type="button"
