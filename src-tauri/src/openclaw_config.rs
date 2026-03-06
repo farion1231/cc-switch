@@ -24,26 +24,27 @@
 //!     ANTHROPIC_API_KEY: "sk-...",
 //!     vars: { ... }
 //!   },
-//!   // Agent 默认模型配置
+//!   // Agent 默认配置
 //!   agents: {
 //!     defaults: {
 //!       model: {
 //!         primary: "provider/model",
 //!         fallbacks: ["provider2/model2"]
-//!       }
+//!       },
+//!       workspace: "~/.openclaw/workspace"
 //!     }
 //!   }
 //! }
 //! ```
 
-use crate::config::write_json_file;
+use crate::config::{get_home_dir, write_json_file};
 use crate::error::AppError;
 use crate::settings::get_openclaw_override_dir;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ============================================================================
 // Path Functions
@@ -59,9 +60,7 @@ pub fn get_openclaw_dir() -> PathBuf {
     }
 
     // 所有平台统一使用 ~/.openclaw
-    dirs::home_dir()
-        .map(|h| h.join(".openclaw"))
-        .unwrap_or_else(|| PathBuf::from(".openclaw"))
+    get_home_dir().join(".openclaw")
 }
 
 /// 获取 OpenClaw 配置文件路径
@@ -69,6 +68,86 @@ pub fn get_openclaw_dir() -> PathBuf {
 /// 返回 `~/.openclaw/openclaw.json`
 pub fn get_openclaw_config_path() -> PathBuf {
     get_openclaw_dir().join("openclaw.json")
+}
+
+/// 获取 OpenClaw 工作区目录
+///
+/// 优先级：
+/// 1. `agents.defaults.workspace`（OpenClaw 官方配置）
+/// 2. `agent.workspace`（兼容部分官方文档示例）
+/// 3. `workspace.path`（兼容旧配置/旧文档）
+/// 4. 默认值 `~/.openclaw/workspace`
+///
+/// 额外兼容 OpenClaw profile：
+/// - 若 `OPENCLAW_PROFILE` 存在且不为 `default`，默认路径为 `~/.openclaw/workspace-<profile>`
+pub fn get_openclaw_workspace_dir() -> PathBuf {
+    if let Ok(config) = read_openclaw_config() {
+        if let Some(path) = config
+            .get("agents")
+            .and_then(|agents| agents.get("defaults"))
+            .and_then(|defaults| defaults.get("workspace"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return expand_workspace_path(path);
+        }
+
+        if let Some(path) = config
+            .get("agent")
+            .and_then(|agent| agent.get("workspace"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return expand_workspace_path(path);
+        }
+
+        if let Some(path) = config
+            .get("workspace")
+            .and_then(|workspace| workspace.get("path"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return expand_workspace_path(path);
+        }
+    }
+
+    default_openclaw_workspace_dir()
+}
+
+fn default_openclaw_workspace_dir() -> PathBuf {
+    let profile = std::env::var("OPENCLAW_PROFILE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "default");
+
+    match profile {
+        Some(profile) => get_openclaw_dir().join(format!("workspace-{profile}")),
+        None => get_openclaw_dir().join("workspace"),
+    }
+}
+
+fn expand_workspace_path(path: &str) -> PathBuf {
+    if path == "~" {
+        return get_home_dir();
+    }
+
+    if let Some(stripped) = path.strip_prefix("~/") {
+        return get_home_dir().join(stripped);
+    }
+
+    let candidate = PathBuf::from(path);
+    if candidate.is_relative() {
+        return normalize_relative_workspace_path(&candidate);
+    }
+
+    candidate
+}
+
+fn normalize_relative_workspace_path(path: &Path) -> PathBuf {
+    get_openclaw_dir().join(path)
 }
 
 // ============================================================================
@@ -355,6 +434,104 @@ pub fn get_default_model() -> Result<Option<OpenClawDefaultModel>, AppError> {
         .map_err(|e| AppError::Config(format!("Failed to parse agents.defaults.model: {e}")))?;
 
     Ok(Some(model))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+    use tempfile::TempDir;
+
+    fn set_test_home(temp_dir: &TempDir) {
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp_dir.path());
+        std::env::remove_var("OPENCLAW_PROFILE");
+    }
+
+    #[test]
+    #[serial]
+    fn workspace_dir_defaults_to_openclaw_workspace() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        set_test_home(&temp_dir);
+
+        assert_eq!(
+            get_openclaw_workspace_dir(),
+            temp_dir.path().join(".openclaw").join("workspace")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn workspace_dir_reads_agents_defaults_workspace() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        set_test_home(&temp_dir);
+
+        std::fs::create_dir_all(get_openclaw_dir()).expect("create openclaw dir");
+        std::fs::write(
+            get_openclaw_config_path(),
+            r#"{
+              agents: {
+                defaults: {
+                  workspace: "~/custom-agent-workspace",
+                },
+              },
+            }"#,
+        )
+        .expect("write openclaw config");
+
+        assert_eq!(
+            get_openclaw_workspace_dir(),
+            temp_dir.path().join("custom-agent-workspace")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn workspace_dir_reads_agent_workspace() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        set_test_home(&temp_dir);
+
+        std::fs::create_dir_all(get_openclaw_dir()).expect("create openclaw dir");
+        std::fs::write(
+            get_openclaw_config_path(),
+            r#"{
+              agent: {
+                workspace: "/tmp/openclaw-agent-workspace",
+              },
+            }"#,
+        )
+        .expect("write openclaw config");
+
+        assert_eq!(
+            get_openclaw_workspace_dir(),
+            PathBuf::from("/tmp/openclaw-agent-workspace")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn workspace_dir_falls_back_to_legacy_workspace_path() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        set_test_home(&temp_dir);
+
+        std::fs::create_dir_all(get_openclaw_dir()).expect("create openclaw dir");
+        std::fs::write(
+            get_openclaw_config_path(),
+            r#"{
+              workspace: {
+                path: "workspace-from-legacy",
+              },
+            }"#,
+        )
+        .expect("write openclaw config");
+
+        assert_eq!(
+            get_openclaw_workspace_dir(),
+            temp_dir
+                .path()
+                .join(".openclaw")
+                .join("workspace-from-legacy")
+        );
+    }
 }
 
 /// 设置默认模型配置（agents.defaults.model）
