@@ -684,35 +684,55 @@ impl Database {
         let since = chrono::Utc::now() - chrono::Duration::days(days as i64);
         let since_ts = since.timestamp_millis();
 
-        let total_requests: u64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM proxy_request_logs WHERE created_at >= ?",
-                [since_ts],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+        let (where_clause, params) = build_usage_filters(app, Some(since_ts), None);
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-        let total_tokens: u64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM proxy_request_logs WHERE created_at >= ?",
-                [since_ts],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+        let summary_sql = format!(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(input_tokens + output_tokens), 0),
+                COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
+             FROM proxy_request_logs
+             {where_clause}"
+        );
 
-        let total_cost: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) FROM proxy_request_logs WHERE created_at >= ?",
-                [since_ts],
-                |row| row.get(0),
-            )
-            .unwrap_or(0.0);
+        let (total_requests, total_tokens, total_cost) = conn
+            .query_row(&summary_sql, params_refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, u64>(0)?,
+                    row.get::<_, u64>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let by_model_sql = format!(
+            "SELECT model, COUNT(*)
+             FROM proxy_request_logs
+             {where_clause}
+             GROUP BY model
+             ORDER BY COUNT(*) DESC, model ASC"
+        );
+        let mut stmt = conn
+            .prepare(&by_model_sql)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut requests_by_model = HashMap::new();
+        for row in rows {
+            let (model, count) = row.map_err(|e| AppError::Database(e.to_string()))?;
+            requests_by_model.insert(model, count);
+        }
 
         Ok(UsageSummary {
             total_requests,
             total_tokens,
             total_cost,
-            requests_by_model: HashMap::new(),
+            requests_by_model,
         })
     }
 
@@ -722,7 +742,44 @@ impl Database {
         from: Option<&str>,
         to: Option<&str>,
     ) -> Result<Vec<RequestLog>, AppError> {
-        Ok(vec![])
+        let start_ts = from.map(|date| parse_usage_date(date, false)).transpose()?;
+        let end_ts = to.map(|date| parse_usage_date(date, true)).transpose()?;
+
+        if let (Some(start_ts), Some(end_ts)) = (start_ts, end_ts) {
+            if start_ts > end_ts {
+                return Err(AppError::InvalidInput(
+                    "The 'from' date must be earlier than or equal to the 'to' date".to_string(),
+                ));
+            }
+        }
+
+        let conn = lock_conn!(self.conn);
+        let (where_clause, params) = build_usage_filters(app, start_ts, end_ts);
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+        let sql = format!(
+            "SELECT created_at, model, input_tokens + output_tokens, CAST(total_cost_usd AS REAL)
+             FROM proxy_request_logs
+             {where_clause}
+             ORDER BY created_at DESC"
+        );
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok(RequestLog {
+                    timestamp: format_usage_timestamp(row.get(0)?),
+                    model: row.get(1)?,
+                    total_tokens: row.get::<_, u64>(2)?,
+                    cost: row.get::<_, f64>(3)?,
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     // ========== Export Methods ==========
@@ -783,4 +840,269 @@ fn parse_json<T: DeserializeOwned>(json: String) -> T {
 
 fn parse_json_opt<T: DeserializeOwned>(json: Option<String>) -> Option<T> {
     json.and_then(|s| serde_json::from_str(&s).ok())
+}
+
+fn build_usage_filters(
+    app: &str,
+    start_ts: Option<i64>,
+    end_ts: Option<i64>,
+) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+    let mut conditions = vec!["app_type = ?".to_string()];
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(app.to_string())];
+
+    if let Some(start_ts) = start_ts {
+        conditions.push("created_at >= ?".to_string());
+        params.push(Box::new(start_ts));
+    }
+
+    if let Some(end_ts) = end_ts {
+        conditions.push("created_at <= ?".to_string());
+        params.push(Box::new(end_ts));
+    }
+
+    (format!("WHERE {}", conditions.join(" AND ")), params)
+}
+
+fn parse_usage_date(date: &str, end_of_day: bool) -> Result<i64, AppError> {
+    let parsed = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|_| {
+        AppError::InvalidInput(format!(
+            "Invalid date '{date}'. Expected format: YYYY-MM-DD"
+        ))
+    })?;
+
+    let datetime = if end_of_day {
+        parsed.and_hms_milli_opt(23, 59, 59, 999)
+    } else {
+        parsed.and_hms_opt(0, 0, 0)
+    }
+    .ok_or_else(|| AppError::InvalidInput(format!("Invalid date '{date}'")))?;
+
+    Ok(datetime.and_utc().timestamp_millis())
+}
+
+fn format_usage_timestamp(created_at: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(created_at)
+        .map(|datetime| datetime.to_rfc3339())
+        .unwrap_or_else(|| created_at.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::UniversalProvider;
+    use rusqlite::params;
+
+    #[test]
+    fn universal_providers_round_trip_through_database() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut provider = UniversalProvider::new(
+            "universal-openrouter".to_string(),
+            "OpenRouter".to_string(),
+            "openai-compatible".to_string(),
+            "https://openrouter.ai/api/v1".to_string(),
+            "test-key".to_string(),
+        );
+        provider.apps.claude = true;
+        provider.apps.codex = true;
+
+        db.save_universal_provider(&provider)?;
+
+        let providers = db.get_all_universal_providers()?;
+        let saved = providers
+            .get("universal-openrouter")
+            .expect("saved universal provider should exist");
+
+        assert_eq!(saved.name, "OpenRouter");
+        assert!(saved.apps.claude);
+        assert!(saved.apps.codex);
+        assert!(!saved.apps.gemini);
+
+        Ok(())
+    }
+
+    #[test]
+    fn usage_summary_filters_by_app_and_groups_models() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let stale = now - chrono::Duration::days(10).num_milliseconds();
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-claude-1",
+                    "p1",
+                    "claude",
+                    "claude-sonnet",
+                    100,
+                    50,
+                    "0.01",
+                    100,
+                    200,
+                    now
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-claude-2",
+                    "p1",
+                    "claude",
+                    "claude-haiku",
+                    40,
+                    10,
+                    "0.005",
+                    90,
+                    200,
+                    now
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-codex-1",
+                    "p2",
+                    "codex",
+                    "gpt-5",
+                    200,
+                    100,
+                    "0.02",
+                    120,
+                    200,
+                    now
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-claude-stale",
+                    "p1",
+                    "claude",
+                    "claude-sonnet",
+                    999,
+                    1,
+                    "9.99",
+                    80,
+                    200,
+                    stale
+                ],
+            )?;
+        }
+
+        let summary = db.get_usage_summary("claude", 7)?;
+
+        assert_eq!(summary.total_requests, 2);
+        assert_eq!(summary.total_tokens, 200);
+        assert!((summary.total_cost - 0.015).abs() < f64::EPSILON);
+        assert_eq!(summary.requests_by_model.get("claude-sonnet"), Some(&1));
+        assert_eq!(summary.requests_by_model.get("claude-haiku"), Some(&1));
+        assert!(!summary.requests_by_model.contains_key("gpt-5"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn request_logs_filter_by_app_and_date_range() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let march_4 = chrono::NaiveDate::from_ymd_opt(2026, 3, 4)
+            .expect("valid date")
+            .and_hms_opt(12, 0, 0)
+            .expect("valid time")
+            .and_utc()
+            .timestamp_millis();
+        let march_6 = chrono::NaiveDate::from_ymd_opt(2026, 3, 6)
+            .expect("valid date")
+            .and_hms_opt(9, 30, 0)
+            .expect("valid time")
+            .and_utc()
+            .timestamp_millis();
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-claude-older",
+                    "p1",
+                    "claude",
+                    "claude-sonnet",
+                    10,
+                    5,
+                    "0.001",
+                    100,
+                    200,
+                    march_4
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-codex-same-day",
+                    "p2",
+                    "codex",
+                    "gpt-5",
+                    20,
+                    10,
+                    "0.002",
+                    100,
+                    200,
+                    march_6
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-claude-latest",
+                    "p1",
+                    "claude",
+                    "claude-haiku",
+                    30,
+                    15,
+                    "0.003",
+                    100,
+                    200,
+                    march_6
+                ],
+            )?;
+        }
+
+        let logs = db.get_request_logs("claude", Some("2026-03-05"), Some("2026-03-06"))?;
+
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].model, "claude-haiku");
+        assert_eq!(logs[0].total_tokens, 45);
+        assert!((logs[0].cost - 0.003).abs() < f64::EPSILON);
+        assert!(logs[0].timestamp.starts_with("2026-03-06T09:30:00"));
+
+        Ok(())
+    }
 }

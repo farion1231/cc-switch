@@ -112,10 +112,10 @@ pub enum ProviderCommands {
         #[arg(short, long)]
         name: Option<String>,
         /// Base URL
-        #[arg(short, long)]
+        #[arg(short = 'u', long)]
         base_url: Option<String>,
         /// API key
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         api_key: Option<String>,
         /// Import from JSON file
         #[arg(long)]
@@ -183,10 +183,10 @@ pub enum UniversalProviderCommands {
         #[arg(short, long)]
         apps: String,
         /// Base URL
-        #[arg(short, long)]
+        #[arg(short = 'u', long)]
         base_url: Option<String>,
         /// API key
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         api_key: Option<String>,
     },
     /// Sync universal provider to apps
@@ -222,7 +222,7 @@ pub enum McpCommands {
         #[arg(short, long)]
         command: Option<String>,
         /// Comma-separated arguments
-        #[arg(short, long)]
+        #[arg(short = 'g', long)]
         args: Option<String>,
         /// Comma-separated list of apps
         #[arg(short, long)]
@@ -438,7 +438,7 @@ pub enum PromptCommands {
         #[arg(short, long)]
         id: Option<String>,
         /// File containing prompt content
-        #[arg(short, long)]
+        #[arg(short = 'p', long)]
         file: Option<String>,
     },
     /// Edit a prompt
@@ -449,7 +449,7 @@ pub enum PromptCommands {
         #[arg(short, long, default_value = "claude")]
         app: String,
         /// File containing prompt content
-        #[arg(short, long)]
+        #[arg(short = 'p', long)]
         file: Option<String>,
     },
     /// Delete a prompt
@@ -574,4 +574,15 @@ pub enum UsageCommands {
         #[arg(short, long, default_value = "claude")]
         app: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_definition_has_no_short_flag_conflicts() {
+        Cli::command().debug_assert();
+    }
 }

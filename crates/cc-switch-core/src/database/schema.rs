@@ -5,7 +5,7 @@ use crate::error::AppError;
 use rusqlite::Connection;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
 
 impl Database {
     /// Create all database tables
@@ -38,7 +38,29 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 2. MCP Servers table
+        // 2. Universal Providers table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS universal_providers (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider_type TEXT NOT NULL,
+                apps TEXT NOT NULL DEFAULT '{}',
+                base_url TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                models TEXT NOT NULL DEFAULT '{}',
+                website_url TEXT,
+                notes TEXT,
+                icon TEXT,
+                icon_color TEXT,
+                meta TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER,
+                sort_index INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 3. MCP Servers table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mcp_servers (
                 id TEXT PRIMARY KEY,
@@ -57,7 +79,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 3. Prompts table
+        // 4. Prompts table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS prompts (
                 id TEXT NOT NULL,
@@ -74,7 +96,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 4. Skills table
+        // 5. Skills table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skills (
                 id TEXT PRIMARY KEY,
@@ -95,14 +117,14 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 5. Settings table
+        // 6. Settings table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 6. Proxy Config table
+        // 7. Proxy Config table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS proxy_config (
                 app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
@@ -128,7 +150,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 7. Provider Health table
+        // 8. Provider Health table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS provider_health (
                 provider_id TEXT NOT NULL,
@@ -146,7 +168,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 8. Proxy Request Logs table
+        // 9. Proxy Request Logs table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS proxy_request_logs (
                 request_id TEXT PRIMARY KEY,
