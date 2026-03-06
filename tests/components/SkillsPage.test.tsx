@@ -27,6 +27,7 @@ const useBatchInstallSkillsMock = vi.fn();
 const useAddSkillRepoMock = vi.fn();
 const useRemoveSkillRepoMock = vi.fn();
 const discoverAvailableMock = vi.fn();
+const batchInstallMutateAsyncMock = vi.fn();
 
 vi.mock("sonner", () => ({
   toast: {
@@ -38,7 +39,22 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/components/skills/SkillCard", () => ({
-  SkillCard: ({ skill }: any) => <div data-testid={`skill-${skill.key}`} />,
+  SkillCard: ({ skill, selected, onToggleSelect }: any) => (
+    <div data-testid={`skill-${skill.key}`}>
+      <span>{skill.name}</span>
+      {onToggleSelect ? (
+        <label>
+          <input
+            type="checkbox"
+            aria-label={`select-${skill.key}`}
+            checked={selected}
+            onChange={onToggleSelect}
+          />
+          select
+        </label>
+      ) : null}
+    </div>
+  ),
 }));
 
 vi.mock("@/components/skills/RepoManagerPanel", () => ({
@@ -110,12 +126,13 @@ describe("SkillsPage", () => {
     useSkillReposMock.mockReturnValue({ data: [], refetch: vi.fn() });
     useInstallSkillMock.mockReturnValue({ mutateAsync: vi.fn() });
     useBatchInstallSkillsMock.mockReturnValue({
-      mutateAsync: vi.fn(),
+      mutateAsync: batchInstallMutateAsyncMock,
       isPending: false,
     });
     useAddSkillRepoMock.mockReturnValue({ mutateAsync: vi.fn() });
     useRemoveSkillRepoMock.mockReturnValue({ mutateAsync: vi.fn() });
     discoverAvailableMock.mockResolvedValue([]);
+    batchInstallMutateAsyncMock.mockReset();
   });
 
   it("forces discover refresh after adding a repo", async () => {
@@ -186,5 +203,127 @@ describe("SkillsPage", () => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
     expect(discoverAvailableMock).not.toHaveBeenCalled();
+  });
+
+  it("batch installs selected uninstalled skills and clears the selection", async () => {
+    const discoverableSkills = [
+      {
+        key: "owner/repo:skill-1",
+        name: "Skill One",
+        directory: "skill-one",
+        description: "",
+        repoOwner: "owner",
+        repoName: "repo",
+        repoBranch: "main",
+      },
+      {
+        key: "owner/repo:skill-2",
+        name: "Skill Two",
+        directory: "skill-two",
+        description: "",
+        repoOwner: "owner",
+        repoName: "repo",
+        repoBranch: "main",
+      },
+    ];
+    useDiscoverableSkillsMock.mockReturnValue({
+      data: discoverableSkills,
+      isLoading: false,
+      isFetching: false,
+    });
+    batchInstallMutateAsyncMock.mockResolvedValue({
+      installed: [
+        {
+          id: "owner/repo:skill-1",
+          name: "Skill One",
+          directory: "skill-one",
+          apps: { claude: true, codex: false, gemini: false, opencode: false },
+          installedAt: 1,
+        },
+        {
+          id: "owner/repo:skill-2",
+          name: "Skill Two",
+          directory: "skill-two",
+          apps: { claude: true, codex: false, gemini: false, opencode: false },
+          installedAt: 2,
+        },
+      ],
+      failed: [],
+    });
+
+    renderWithQueryClient(<SkillsPage />);
+
+    fireEvent.click(screen.getByLabelText("select-owner/repo:skill-1"));
+    fireEvent.click(screen.getByLabelText("select-owner/repo:skill-2"));
+    fireEvent.click(screen.getByRole("button", { name: /skills\.batchInstall|Install Selected|安装选中/ }));
+
+    await waitFor(() => {
+      expect(batchInstallMutateAsyncMock).toHaveBeenCalledWith({
+        skills: discoverableSkills.map((skill) => ({
+          ...skill,
+          installed: false,
+        })),
+        currentApp: "claude",
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("select-owner/repo:skill-1"),
+      ).not.toBeChecked();
+      expect(
+        screen.getByLabelText("select-owner/repo:skill-2"),
+      ).not.toBeChecked();
+    });
+  });
+
+  it("shows a warning when batch install partially fails", async () => {
+    const discoverableSkills = [
+      {
+        key: "owner/repo:skill-1",
+        name: "Skill One",
+        directory: "skill-one",
+        description: "",
+        repoOwner: "owner",
+        repoName: "repo",
+        repoBranch: "main",
+      },
+      {
+        key: "owner/repo:skill-2",
+        name: "Skill Two",
+        directory: "skill-two",
+        description: "",
+        repoOwner: "owner",
+        repoName: "repo",
+        repoBranch: "main",
+      },
+    ];
+    useDiscoverableSkillsMock.mockReturnValue({
+      data: discoverableSkills,
+      isLoading: false,
+      isFetching: false,
+    });
+    batchInstallMutateAsyncMock.mockResolvedValue({
+      installed: [
+        {
+          id: "owner/repo:skill-1",
+          name: "Skill One",
+          directory: "skill-one",
+          apps: { claude: true, codex: false, gemini: false, opencode: false },
+          installedAt: 1,
+        },
+      ],
+      failed: [{ key: "owner/repo:skill-2", error: "install failed" }],
+    });
+
+    renderWithQueryClient(<SkillsPage />);
+
+    fireEvent.click(screen.getByLabelText("select-owner/repo:skill-1"));
+    fireEvent.click(screen.getByLabelText("select-owner/repo:skill-2"));
+    fireEvent.click(screen.getByRole("button", { name: /skills\.batchInstall|Install Selected|安装选中/ }));
+
+    await waitFor(() => {
+      expect(toastWarningMock).toHaveBeenCalled();
+    });
   });
 });

@@ -19,7 +19,11 @@ const useSkillUpdatesMock = vi.fn();
 const useBatchUpdateSkillsMock = vi.fn();
 
 const toggleAppApiMock = vi.fn();
+const uninstallUnifiedApiMock = vi.fn();
+const checkInstalledUpdatesApiMock = vi.fn();
 const toggleSkillMutateAsyncMock = vi.fn();
+const batchUpdateMutateAsyncMock = vi.fn();
+const refetchUpdatesMock = vi.fn();
 
 vi.mock("sonner", () => ({
   toast: {
@@ -54,8 +58,9 @@ vi.mock("@/lib/api", async () => {
     skillsApi: {
       toggleApp: (...args: unknown[]) => toggleAppApiMock(...args),
       openZipFileDialog: vi.fn(),
-      checkInstalledUpdates: vi.fn(),
-      uninstallUnified: vi.fn(),
+      checkInstalledUpdates: (...args: unknown[]) =>
+        checkInstalledUpdatesApiMock(...args),
+      uninstallUnified: (...args: unknown[]) => uninstallUnifiedApiMock(...args),
     },
   };
 });
@@ -124,7 +129,11 @@ describe("UnifiedSkillsPanel", () => {
     toastInfoMock.mockReset();
     toastWarningMock.mockReset();
     toggleAppApiMock.mockReset();
+    uninstallUnifiedApiMock.mockReset();
+    checkInstalledUpdatesApiMock.mockReset();
     toggleSkillMutateAsyncMock.mockReset();
+    batchUpdateMutateAsyncMock.mockReset();
+    refetchUpdatesMock.mockReset();
 
     useInstalledSkillsMock.mockReturnValue({
       data: installedSkills,
@@ -148,10 +157,10 @@ describe("UnifiedSkillsPanel", () => {
     });
     useSkillUpdatesMock.mockReturnValue({
       data: [],
-      refetch: vi.fn(),
+      refetch: refetchUpdatesMock,
     });
     useBatchUpdateSkillsMock.mockReturnValue({
-      mutateAsync: vi.fn(),
+      mutateAsync: batchUpdateMutateAsyncMock,
       isPending: false,
     });
   });
@@ -272,6 +281,110 @@ describe("UnifiedSkillsPanel", () => {
 
     expect(screen.getByText("Apply changes (1)")).not.toBeDisabled();
     expect(screen.getAllByLabelText("Gemini pending")).toHaveLength(1);
+  });
+
+  it("discards pending changes when leaving batch mode after confirmation", async () => {
+    renderWithQueryClient(
+      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByRole("switch", { name: "Batch mode" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "OpenCode" })[0]);
+
+    expect(screen.getByText("Apply changes (1)")).not.toBeDisabled();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Batch mode" }));
+    expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("confirm-action"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("switch", { name: "Batch mode" }),
+      ).not.toBeChecked();
+    });
+
+    expect(screen.queryByLabelText("OpenCode pending")).not.toBeInTheDocument();
+    expect(screen.getByText("Apply changes (0)")).toBeDisabled();
+  });
+
+  it("batch uninstalls selected skills and reports partial failures", async () => {
+    uninstallUnifiedApiMock
+      .mockResolvedValueOnce(true)
+      .mockRejectedValueOnce(new Error("uninstall failed"));
+
+    renderWithQueryClient(
+      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getAllByRole("checkbox")[0]);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Uninstall selected|卸载已选/ }),
+    );
+    fireEvent.click(screen.getByText("confirm-action"));
+
+    await waitFor(() => {
+      expect(uninstallUnifiedApiMock).toHaveBeenCalledTimes(2);
+      expect(toastWarningMock).toHaveBeenCalled();
+    });
+  });
+
+  it("updates only selected skills with available updates", async () => {
+    useSkillUpdatesMock.mockReturnValue({
+      data: [
+        { id: "skill-1", state: "update_available" },
+        { id: "skill-2", state: "up_to_date" },
+      ],
+      refetch: refetchUpdatesMock,
+    });
+    batchUpdateMutateAsyncMock.mockResolvedValue({
+      installed: [installedSkills[0]],
+      failed: [],
+    });
+
+    renderWithQueryClient(
+      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getAllByRole("checkbox")[0]);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+
+    expect(
+      screen.getByRole("button", { name: /Update selected|更新已选/ }),
+    ).not.toBeDisabled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Update selected|更新已选/ }),
+    );
+
+    await waitFor(() => {
+      expect(batchUpdateMutateAsyncMock).toHaveBeenCalledWith({
+        ids: ["skill-1"],
+        forceRefresh: true,
+      });
+      expect(refetchUpdatesMock).toHaveBeenCalled();
+    });
+  });
+
+  it("checks updates and shows success when nothing is available", async () => {
+    checkInstalledUpdatesApiMock.mockResolvedValue([
+      { id: "skill-1", state: "up_to_date" },
+      { id: "skill-2", state: "unknown" },
+    ]);
+
+    renderWithQueryClient(
+      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Check updates|skills\.checkUpdates/ }),
+    );
+
+    await waitFor(() => {
+      expect(checkInstalledUpdatesApiMock).toHaveBeenCalledWith(true);
+      expect(toastSuccessMock).toHaveBeenCalled();
+    });
   });
 
   it("disables apply changes while staged updates are being submitted", async () => {
