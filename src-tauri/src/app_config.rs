@@ -170,6 +170,9 @@ pub struct InstalledSkill {
     /// README URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub readme_url: Option<String>,
+    /// 内容哈希（用于更新检测）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
     /// 应用启用状态
     pub apps: SkillApps,
     /// 安装时间（Unix 时间戳）

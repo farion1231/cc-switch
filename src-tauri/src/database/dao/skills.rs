@@ -14,17 +14,39 @@ use indexmap::IndexMap;
 use rusqlite::params;
 
 impl Database {
+    fn skills_has_content_hash_column(conn: &rusqlite::Connection) -> Result<bool, AppError> {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(skills)")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut rows = stmt
+            .query([])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+            let name: String = row.get(1).map_err(|e| AppError::Database(e.to_string()))?;
+            if name == "content_hash" {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     // ========== InstalledSkill CRUD ==========
 
     /// 获取所有已安装的 Skills
     pub fn get_all_installed_skills(&self) -> Result<IndexMap<String, InstalledSkill>, AppError> {
         let conn = lock_conn!(self.conn);
+        let has_content_hash = Self::skills_has_content_hash_column(&conn)?;
+        let sql = if has_content_hash {
+            "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+                    readme_url, content_hash, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at
+             FROM skills ORDER BY name ASC"
+        } else {
+            "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+                    readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at
+             FROM skills ORDER BY name ASC"
+        };
         let mut stmt = conn
-            .prepare(
-                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at
-                 FROM skills ORDER BY name ASC",
-            )
+            .prepare(sql)
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let skill_iter = stmt
@@ -38,13 +60,14 @@ impl Database {
                     repo_name: row.get(5)?,
                     repo_branch: row.get(6)?,
                     readme_url: row.get(7)?,
+                    content_hash: if has_content_hash { row.get(8)? } else { None },
                     apps: SkillApps {
-                        claude: row.get(8)?,
-                        codex: row.get(9)?,
-                        gemini: row.get(10)?,
-                        opencode: row.get(11)?,
+                        claude: row.get(if has_content_hash { 9 } else { 8 })?,
+                        codex: row.get(if has_content_hash { 10 } else { 9 })?,
+                        gemini: row.get(if has_content_hash { 11 } else { 10 })?,
+                        opencode: row.get(if has_content_hash { 12 } else { 11 })?,
                     },
-                    installed_at: row.get(12)?,
+                    installed_at: row.get(if has_content_hash { 13 } else { 12 })?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -60,12 +83,18 @@ impl Database {
     /// 获取单个已安装的 Skill
     pub fn get_installed_skill(&self, id: &str) -> Result<Option<InstalledSkill>, AppError> {
         let conn = lock_conn!(self.conn);
+        let has_content_hash = Self::skills_has_content_hash_column(&conn)?;
+        let sql = if has_content_hash {
+            "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+                    readme_url, content_hash, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at
+             FROM skills WHERE id = ?1"
+        } else {
+            "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+                    readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at
+             FROM skills WHERE id = ?1"
+        };
         let mut stmt = conn
-            .prepare(
-                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at
-                 FROM skills WHERE id = ?1",
-            )
+            .prepare(sql)
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let result = stmt.query_row([id], |row| {
@@ -78,13 +107,14 @@ impl Database {
                 repo_name: row.get(5)?,
                 repo_branch: row.get(6)?,
                 readme_url: row.get(7)?,
+                content_hash: if has_content_hash { row.get(8)? } else { None },
                 apps: SkillApps {
-                    claude: row.get(8)?,
-                    codex: row.get(9)?,
-                    gemini: row.get(10)?,
-                    opencode: row.get(11)?,
+                    claude: row.get(if has_content_hash { 9 } else { 8 })?,
+                    codex: row.get(if has_content_hash { 10 } else { 9 })?,
+                    gemini: row.get(if has_content_hash { 11 } else { 10 })?,
+                    opencode: row.get(if has_content_hash { 12 } else { 11 })?,
                 },
-                installed_at: row.get(12)?,
+                installed_at: row.get(if has_content_hash { 13 } else { 12 })?,
             })
         });
 
@@ -98,28 +128,55 @@ impl Database {
     /// 保存 Skill（添加或更新）
     pub fn save_skill(&self, skill: &InstalledSkill) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
-        conn.execute(
-            "INSERT OR REPLACE INTO skills
-             (id, name, description, directory, repo_owner, repo_name, repo_branch,
-              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![
-                skill.id,
-                skill.name,
-                skill.description,
-                skill.directory,
-                skill.repo_owner,
-                skill.repo_name,
-                skill.repo_branch,
-                skill.readme_url,
-                skill.apps.claude,
-                skill.apps.codex,
-                skill.apps.gemini,
-                skill.apps.opencode,
-                skill.installed_at,
-            ],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        let has_content_hash = Self::skills_has_content_hash_column(&conn)?;
+        if has_content_hash {
+            conn.execute(
+                "INSERT OR REPLACE INTO skills
+                 (id, name, description, directory, repo_owner, repo_name, repo_branch,
+                  readme_url, content_hash, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                params![
+                    skill.id,
+                    skill.name,
+                    skill.description,
+                    skill.directory,
+                    skill.repo_owner,
+                    skill.repo_name,
+                    skill.repo_branch,
+                    skill.readme_url,
+                    skill.content_hash,
+                    skill.apps.claude,
+                    skill.apps.codex,
+                    skill.apps.gemini,
+                    skill.apps.opencode,
+                    skill.installed_at,
+                ],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        } else {
+            conn.execute(
+                "INSERT OR REPLACE INTO skills
+                 (id, name, description, directory, repo_owner, repo_name, repo_branch,
+                  readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    skill.id,
+                    skill.name,
+                    skill.description,
+                    skill.directory,
+                    skill.repo_owner,
+                    skill.repo_name,
+                    skill.repo_branch,
+                    skill.readme_url,
+                    skill.apps.claude,
+                    skill.apps.codex,
+                    skill.apps.gemini,
+                    skill.apps.opencode,
+                    skill.installed_at,
+                ],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
         Ok(())
     }
 

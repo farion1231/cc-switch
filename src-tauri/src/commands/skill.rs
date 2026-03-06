@@ -11,11 +11,34 @@ use crate::services::skill::{
     SkillUninstallResult,
 };
 use crate::store::AppState;
+use serde::Serialize;
 use std::sync::Arc;
 use tauri::State;
 
 /// SkillService 状态包装
 pub struct SkillServiceState(pub Arc<SkillService>);
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillBatchFailure {
+    pub key: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillBatchInstallResult {
+    pub installed: Vec<InstalledSkill>,
+    pub failed: Vec<SkillBatchFailure>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUpdateStatus {
+    pub id: String,
+    pub state: String,
+    pub latest: Option<DiscoverableSkill>,
+}
 
 /// 解析 app 参数为 AppType
 fn parse_app_type(app: &str) -> Result<AppType, String> {
@@ -66,6 +89,30 @@ pub async fn install_skill_unified(
         .install(&app_state.db, &skill, &app_type)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn install_skills_unified_batch(
+    skills: Vec<DiscoverableSkill>,
+    current_app: String,
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<SkillBatchInstallResult, String> {
+    let app_type = parse_app_type(&current_app)?;
+    let mut installed = Vec::new();
+    let mut failed = Vec::new();
+
+    for skill in skills {
+        match service.0.install(&app_state.db, &skill, &app_type).await {
+            Ok(item) => installed.push(item),
+            Err(err) => failed.push(SkillBatchFailure {
+                key: skill.key,
+                error: err.to_string(),
+            }),
+        }
+    }
+
+    Ok(SkillBatchInstallResult { installed, failed })
 }
 
 /// 卸载 Skill（新版统一卸载）
@@ -123,15 +170,112 @@ pub fn import_skills_from_apps(
 /// 发现可安装的 Skills（从仓库获取）
 #[tauri::command]
 pub async fn discover_available_skills(
+    force_refresh: Option<bool>,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<DiscoverableSkill>, String> {
     let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
     service
         .0
-        .discover_available(repos)
+        .discover_available_with_policy(repos, &app_state.db, force_refresh.unwrap_or(false))
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn check_installed_skill_updates(
+    force_refresh: Option<bool>,
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<Vec<SkillUpdateStatus>, String> {
+    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    let discoverable = service
+        .0
+        .discover_available_with_policy(repos, &app_state.db, force_refresh.unwrap_or(false))
+        .await
+        .map_err(|e| e.to_string())?;
+    let latest_by_key = discoverable
+        .into_iter()
+        .map(|skill| (skill.key.to_lowercase(), skill))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let installed = SkillService::get_all_installed(&app_state.db).map_err(|e| e.to_string())?;
+    let mut updates = Vec::with_capacity(installed.len());
+
+    for skill in installed {
+        if let Some(latest) = latest_by_key.get(&skill.id.to_lowercase()) {
+            let current_hash = skill.content_hash.clone().or_else(|| {
+                SkillService::get_installed_content_hash(&skill.directory).ok()
+            });
+            let state = match (&current_hash, &latest.content_hash) {
+                (Some(current), Some(next)) if current != next => "update_available",
+                (Some(_), Some(_)) => "up_to_date",
+                _ => "unknown",
+            };
+            updates.push(SkillUpdateStatus {
+                id: skill.id.clone(),
+                state: state.to_string(),
+                latest: Some(latest.clone()),
+            });
+        } else {
+            updates.push(SkillUpdateStatus {
+                id: skill.id.clone(),
+                state: "not_found".to_string(),
+                latest: None,
+            });
+        }
+    }
+
+    Ok(updates)
+}
+
+#[tauri::command]
+pub async fn update_skills_unified_batch(
+    ids: Vec<String>,
+    force_refresh: Option<bool>,
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<SkillBatchInstallResult, String> {
+    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    let discoverable = service
+        .0
+        .discover_available_with_policy(repos, &app_state.db, force_refresh.unwrap_or(false))
+        .await
+        .map_err(|e| e.to_string())?;
+    let latest_by_key = discoverable
+        .into_iter()
+        .map(|skill| (skill.key.to_lowercase(), skill))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let mut installed = Vec::new();
+    let mut failed = Vec::new();
+    for id in ids {
+        let existing = app_state
+            .db
+            .get_installed_skill(&id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Skill not found: {id}"))?;
+        let Some(latest) = latest_by_key.get(&id.to_lowercase()) else {
+            failed.push(SkillBatchFailure {
+                key: id.clone(),
+                error: "Skill not found in repository".to_string(),
+            });
+            continue;
+        };
+        match service
+            .0
+            .update_installed(&app_state.db, &existing, latest)
+            .await
+        {
+            Ok(item) => installed.push(item),
+            Err(err) => failed.push(SkillBatchFailure {
+                key: id.clone(),
+                error: err.to_string(),
+            }),
+        }
+    }
+
+    Ok(SkillBatchInstallResult { installed, failed })
 }
 
 // ========== 兼容旧 API 的命令 ==========

@@ -10,6 +10,7 @@ import {
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
+  type SkillUpdateStatus,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 
@@ -102,6 +103,27 @@ export function useInstallSkill() {
           });
         },
       );
+    },
+  });
+}
+
+/**
+ * 批量安装 Skills
+ */
+export function useBatchInstallSkills() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      skills,
+      currentApp,
+    }: {
+      skills: DiscoverableSkill[];
+      currentApp: AppId;
+    }) => skillsApi.installUnifiedBatch(skills, currentApp),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "updates"] });
     },
   });
 }
@@ -283,6 +305,38 @@ export function useInstallSkillsFromZip() {
   });
 }
 
+/**
+ * 获取已安装 Skills 的更新状态
+ */
+export function useSkillUpdates(forceRefresh = false) {
+  return useQuery({
+    queryKey: ["skills", "updates", forceRefresh],
+    queryFn: () => skillsApi.checkInstalledUpdates(forceRefresh),
+    staleTime: 30 * 1000,
+  });
+}
+
+/**
+ * 批量更新 Skills
+ */
+export function useBatchUpdateSkills() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      ids,
+      forceRefresh,
+    }: {
+      ids: string[];
+      forceRefresh?: boolean;
+    }) => skillsApi.updateUnifiedBatch(ids, forceRefresh ?? false),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "updates"] });
+    },
+  });
+}
+
 // ========== 辅助类型 ==========
 
 export type {
@@ -290,5 +344,6 @@ export type {
   DiscoverableSkill,
   ImportSkillSelection,
   SkillBackupEntry,
+  SkillUpdateStatus,
   AppId,
 };
