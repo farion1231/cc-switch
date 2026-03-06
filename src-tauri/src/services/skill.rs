@@ -2618,9 +2618,79 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::SkillService;
+    use super::{DiscoverableSkill, SkillRepo};
+    use crate::database::Database;
+    use serial_test::serial;
+    use std::env;
     use std::fs;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let original_home = env::var("HOME").ok();
+            let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+            match &self.original_userprofile {
+                Some(value) => env::set_var("USERPROFILE", value),
+                None => env::remove_var("USERPROFILE"),
+            }
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn create_db() -> Arc<Database> {
+        Arc::new(Database::init().expect("init db"))
+    }
+
+    fn cached_skill() -> DiscoverableSkill {
+        DiscoverableSkill {
+            key: "owner/repo:skill-a".to_string(),
+            name: "Skill A".to_string(),
+            description: "cached".to_string(),
+            directory: "skill-a".to_string(),
+            readme_url: Some("https://example.com".to_string()),
+            repo_owner: "owner".to_string(),
+            repo_name: "repo".to_string(),
+            repo_branch: "main".to_string(),
+            content_hash: Some("hash-a".to_string()),
+        }
+    }
 
     #[test]
+    #[serial]
     fn atomic_replace_directory_commit_swaps_contents() {
         let temp = tempfile::tempdir().expect("temp dir");
         let source = temp.path().join("source");
@@ -2648,6 +2718,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn atomic_replace_directory_drop_restores_original_contents() {
         let temp = tempfile::tempdir().expect("temp dir");
         let source = temp.path().join("source");
@@ -2672,5 +2743,48 @@ mod tests {
             fs::read_to_string(dest.join("skill.txt")).expect("read restored"),
             "old-content"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn discover_available_with_policy_prefers_cached_results() {
+        let _home = TempHome::new();
+        let db = create_db();
+        let service = SkillService::new();
+        let expected = cached_skill();
+
+        SkillService::write_discovery_cache(&db, std::slice::from_ref(&expected))
+            .expect("write cache");
+
+        let result = service
+            .discover_available_with_policy(Vec::<SkillRepo>::new(), &db, false)
+            .await
+            .expect("discover from cache");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].key, expected.key);
+        assert_eq!(result[0].content_hash, expected.content_hash);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn discover_available_with_policy_force_refresh_ignores_cached_results() {
+        let _home = TempHome::new();
+        let db = create_db();
+        let service = SkillService::new();
+
+        SkillService::write_discovery_cache(&db, &[cached_skill()]).expect("write cache");
+
+        let result = service
+            .discover_available_with_policy(Vec::<SkillRepo>::new(), &db, true)
+            .await
+            .expect("force refresh");
+
+        assert!(result.is_empty());
+
+        let cached = SkillService::read_discovery_cache(&db)
+            .expect("read cache")
+            .expect("cache exists");
+        assert!(cached.skills.is_empty());
     }
 }
