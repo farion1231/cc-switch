@@ -1,0 +1,54 @@
+[package]
+name = "cc-switch-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core library for CC-Switch - shared between CLI and Tauri GUI"
+
+[lib]
+name = "cc_switch_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+indexmap = { workspace = true }
+rusqlite = { workspace = true }
+reqwest = { workspace = true }
+dirs = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+regex = { workspace = true }
+futures = { workspace = true }
+async-stream = { workspace = true }
+bytes = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+hyper = { workspace = true }
+url = { workspace = true }
+once_cell = { workspace = true }
+base64 = { workspace = true }
+uuid = { workspace = true }
+rust_decimal = { workspace = true }
+log = { workspace = true }
+rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }
+csv = "1.3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSColor"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.52"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serial_test = "3"

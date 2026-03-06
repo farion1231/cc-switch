@@ -1,0 +1,30 @@
+[package]
+name = "cc-switch-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI client for CC-Switch"
+
+[[bin]]
+name = "cc-switch"
+path = "src/main.rs"
+
+[dependencies]
+cc-switch-core = { path = "../cc-switch-core" }
+clap = { version = "4", features = ["derive", "string"] }
+dialoguer = "0.11"
+tabled = "0.17"
+colored = "3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+tokio = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+indexmap = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
