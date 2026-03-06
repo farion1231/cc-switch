@@ -322,6 +322,22 @@ impl Database {
 
         let mut version = Self::get_user_version(conn)?;
 
+        // 兼容历史误发布：曾有版本将 user_version 提升到 6（OpenClaw MCP/Skills 列）。
+        // 当前已回退到 v5，且该 v6 仅是 v5 的可忽略超集（多两列）。
+        // 若检测到这类数据库，自动将版本标记归一化到 v5，避免阻塞安装/启动。
+        if version == 6 && SCHEMA_VERSION == 5 {
+            let has_mcp_openclaw = Self::has_column(conn, "mcp_servers", "enabled_openclaw")?;
+            let has_skills_openclaw = Self::has_column(conn, "skills", "enabled_openclaw")?;
+            if has_mcp_openclaw && has_skills_openclaw {
+                log::warn!(
+                    "检测到 legacy user_version=6（兼容超集），自动归一化为 {}",
+                    SCHEMA_VERSION
+                );
+                Self::set_user_version(conn, SCHEMA_VERSION)?;
+                version = SCHEMA_VERSION;
+            }
+        }
+
         if version > SCHEMA_VERSION {
             conn.execute("ROLLBACK TO schema_migration;", []).ok();
             conn.execute("RELEASE schema_migration;", []).ok();

@@ -731,12 +731,55 @@ pub async fn open_provider_terminal(
 
     // 从提供商配置中提取环境变量
     let config = &provider.settings_config;
-    let env_vars = extract_env_vars_from_config(config, &app_type);
+    let mut env_vars = extract_env_vars_from_config(config, &app_type);
+
+    // Claude provider-terminal 统一走本地代理，避免 CLI 直连上游时的模型校验/格式不兼容
+    if app_type == AppType::Claude {
+        // 切换当前 Provider，确保代理路由到用户选择的目标
+        ProviderService::switch(state.inner(), app_type.clone(), &providerId)
+            .map_err(|e| format!("切换当前 Provider 失败: {e}"))?;
+
+        // 确保代理服务已启动并接管 Claude
+        if !state.proxy_service.is_running().await {
+            state
+                .proxy_service
+                .start_with_takeover()
+                .await
+                .map_err(|e| format!("启动代理失败: {e}"))?;
+        }
+
+        state
+            .proxy_service
+            .set_takeover_for_app("claude", true)
+            .await
+            .map_err(|e| format!("启用 Claude 代理接管失败: {e}"))?;
+
+        let proxy_config = state
+            .db
+            .get_proxy_config()
+            .await
+            .map_err(|e| format!("读取代理配置失败: {e}"))?;
+
+        let connect_host = match proxy_config.listen_address.as_str() {
+            "0.0.0.0" | "::" => "127.0.0.1".to_string(),
+            _ => proxy_config.listen_address,
+        };
+        let proxy_url = format!("http://{}:{}", connect_host, proxy_config.listen_port);
+        upsert_env_var(&mut env_vars, "ANTHROPIC_BASE_URL", &proxy_url);
+    }
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
     launch_terminal_with_env(env_vars, &providerId).map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
+}
+
+fn upsert_env_var(env_vars: &mut Vec<(String, String)>, key: &str, value: &str) {
+    if let Some((_, v)) = env_vars.iter_mut().find(|(k, _)| k == key) {
+        *v = value.to_string();
+    } else {
+        env_vars.push((key.to_string(), value.to_string()));
+    }
 }
 
 /// 从提供商配置中提取环境变量
@@ -862,10 +905,10 @@ fn launch_macos_terminal(config_file: &std::path::Path) -> Result<(), String> {
     // Write the shell script to a temp file
     let script_content = format!(
         r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
+rm -f "{config_path}" "{script_file}"
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
@@ -1030,10 +1073,10 @@ fn launch_linux_terminal(config_file: &std::path::Path) -> Result<(), String> {
 
     let script_content = format!(
         r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
+rm -f "{config_path}" "{script_file}"
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
