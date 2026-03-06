@@ -4,9 +4,10 @@ import {
   setCodexBaseUrl as setCodexBaseUrlInConfig,
 } from "@/utils/providerConfigUtils";
 import type { ProviderCategory } from "@/types";
+import type { AppId } from "@/lib/api";
 
 interface UseBaseUrlStateProps {
-  appType: "claude" | "codex" | "gemini" | "opencode";
+  appType: AppId;
   category: ProviderCategory | undefined;
   settingsConfig: string;
   codexConfig?: string;

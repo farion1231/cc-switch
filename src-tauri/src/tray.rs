@@ -15,7 +15,7 @@ pub struct TrayTexts {
     pub show_main: &'static str,
     pub no_provider_hint: &'static str,
     pub quit: &'static str,
-    pub auto_label: &'static str,
+    pub _auto_label: &'static str,
 }
 
 impl TrayTexts {
@@ -25,20 +25,20 @@ impl TrayTexts {
                 show_main: "Open main window",
                 no_provider_hint: "  (No providers yet, please add them from the main window)",
                 quit: "Quit",
-                auto_label: "Auto (Failover)",
+                _auto_label: "Auto (Failover)",
             },
             "ja" => Self {
                 show_main: "メインウィンドウを開く",
                 no_provider_hint:
                     "  (プロバイダーがまだありません。メイン画面から追加してください)",
                 quit: "終了",
-                auto_label: "自動 (フェイルオーバー)",
+                _auto_label: "自動 (フェイルオーバー)",
             },
             _ => Self {
                 show_main: "打开主界面",
                 no_provider_hint: "  (无供应商，请在主界面添加)",
                 quit: "退出",
-                auto_label: "自动 (故障转移)",
+                _auto_label: "自动 (故障转移)",
             },
         }
     }
@@ -91,7 +91,7 @@ fn append_provider_section<'a>(
     manager: Option<&crate::provider::ProviderManager>,
     section: &TrayAppSection,
     tray_texts: &TrayTexts,
-    app_state: &AppState,
+    _app_state: &AppState,
 ) -> Result<MenuBuilder<'a, tauri::Wry, tauri::AppHandle<tauri::Wry>>, AppError> {
     let Some(manager) = manager else {
         return Ok(menu_builder);
@@ -119,22 +119,9 @@ fn append_provider_section<'a>(
         return Ok(menu_builder.item(&empty_hint));
     }
 
-    // 获取 proxy 状态，决定 Auto 是否选中
-    let (proxy_enabled, auto_failover) =
-        app_state.db.get_proxy_flags_sync(section.app_type.as_str());
-    let auto_mode = proxy_enabled && auto_failover;
-
-    // 添加 Auto 菜单项（始终显示在供应商列表前）
-    let auto_item = CheckMenuItem::with_id(
-        app,
-        format!("{}{}", section.prefix, AUTO_SUFFIX),
-        tray_texts.auto_label,
-        true,
-        auto_mode,
-        None::<&str>,
-    )
-    .map_err(|e| AppError::Message(format!("创建{}Auto菜单项失败: {e}", section.log_name)))?;
-    menu_builder = menu_builder.item(&auto_item);
+    // Auto (Failover) menu item is hidden from tray; the feature is still
+    // accessible from the Settings page.  Keep the surrounding code intact so
+    // it can be re-enabled easily in the future.
 
     let mut sorted_providers: Vec<_> = manager.providers.iter().collect();
     sorted_providers.sort_by(|(_, a), (_, b)| {
@@ -156,8 +143,7 @@ fn append_provider_section<'a>(
     });
 
     for (id, provider) in sorted_providers {
-        // Auto 模式下所有供应商都不选中
-        let is_current = !auto_mode && manager.current == *id;
+        let is_current = manager.current == *id;
         let item = CheckMenuItem::with_id(
             app,
             format!("{}{}", section.prefix, id),

@@ -4,7 +4,9 @@ use tauri::State;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::services::{EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService};
+use crate::services::{
+    EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
+};
 use crate::store::AppState;
 use std::str::FromStr;
 
@@ -67,7 +69,11 @@ pub fn remove_provider_from_live_config(
         .map_err(|e| e.to_string())
 }
 
-fn switch_provider_internal(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+fn switch_provider_internal(
+    state: &AppState,
+    app_type: AppType,
+    id: &str,
+) -> Result<SwitchResult, AppError> {
     ProviderService::switch(state, app_type, id)
 }
 
@@ -76,7 +82,7 @@ pub fn switch_provider_test_hook(
     state: &AppState,
     app_type: AppType,
     id: &str,
-) -> Result<(), AppError> {
+) -> Result<SwitchResult, AppError> {
     switch_provider_internal(state, app_type, id)
 }
 
@@ -85,15 +91,35 @@ pub fn switch_provider(
     state: State<'_, AppState>,
     app: String,
     id: String,
-) -> Result<bool, String> {
+) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    switch_provider_internal(&state, app_type, &id)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+    switch_provider_internal(&state, app_type, &id).map_err(|e| e.to_string())
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
-    ProviderService::import_default_config(state, app_type)
+    let imported = ProviderService::import_default_config(state, app_type.clone())?;
+
+    if imported {
+        // Extract common config snippet (mirrors old startup logic in lib.rs)
+        if state
+            .db
+            .get_config_snippet(app_type.as_str())
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            match ProviderService::extract_common_config_snippet(state, app_type.clone()) {
+                Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
+                    let _ = state
+                        .db
+                        .set_config_snippet(app_type.as_str(), Some(snippet));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(imported)
 }
 
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
@@ -318,3 +344,7 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
         .map(|providers| providers.keys().cloned().collect())
         .map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
+// ============================================================================

@@ -322,12 +322,14 @@ export function useGeminiCommonConfig({
       if (!value.trim()) {
         setCommonConfigError("");
         // 保存到 config.json（清空）
-        configApi.setCommonConfigSnippet("gemini", "").catch((error) => {
-          console.error("保存 Gemini 通用配置失败:", error);
-          setCommonConfigError(
-            t("geminiConfig.saveFailed", { error: String(error) }),
-          );
-        });
+        configApi
+          .setCommonConfigSnippet("gemini", "")
+          .catch((error: unknown) => {
+            console.error("保存 Gemini 通用配置失败:", error);
+            setCommonConfigError(
+              t("geminiConfig.saveFailed", { error: String(error) }),
+            );
+          });
 
         if (useCommonConfig) {
           const parsed = parseSnippetEnv(previousSnippet);
@@ -349,12 +351,14 @@ export function useGeminiCommonConfig({
       }
 
       setCommonConfigError("");
-      configApi.setCommonConfigSnippet("gemini", value).catch((error) => {
-        console.error("保存 Gemini 通用配置失败:", error);
-        setCommonConfigError(
-          t("geminiConfig.saveFailed", { error: String(error) }),
-        );
-      });
+      configApi
+        .setCommonConfigSnippet("gemini", value)
+        .catch((error: unknown) => {
+          console.error("保存 Gemini 通用配置失败:", error);
+          setCommonConfigError(
+            t("geminiConfig.saveFailed", { error: String(error) }),
+          );
+        });
 
       // 若当前启用通用配置，需要替换为最新片段
       if (useCommonConfig) {

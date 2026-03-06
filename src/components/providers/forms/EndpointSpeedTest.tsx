@@ -14,6 +14,7 @@ const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   claude: 8,
   gemini: 8,
   opencode: 8,
+  openclaw: 8,
 };
 
 interface TestResult {
@@ -605,11 +606,6 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                           }`}
                         >
                           {latency}ms
-                        </div>
-                        <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                          {entry.status
-                            ? t("endpointTest.status", { code: entry.status })
-                            : t("endpointTest.notTested")}
                         </div>
                       </div>
                     ) : isTesting ? (

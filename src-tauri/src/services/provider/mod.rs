@@ -21,8 +21,8 @@ use crate::store::AppState;
 
 // Re-export sub-module functions for external access
 pub use live::{
-    import_default_config, import_opencode_providers_from_live, read_live_settings,
-    sync_current_to_live,
+    import_default_config, import_openclaw_providers_from_live,
+    import_opencode_providers_from_live, read_live_settings, sync_current_to_live,
 };
 
 // Internal re-exports (pub(crate))
@@ -30,11 +30,20 @@ pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::write_live_snapshot;
 
 // Internal re-exports
-use live::{remove_opencode_provider_from_live, write_gemini_live};
+use live::{
+    remove_openclaw_provider_from_live, remove_opencode_provider_from_live, write_gemini_live,
+};
 use usage::validate_usage_script;
 
 /// Provider business logic service
 pub struct ProviderService;
+
+/// Result of a provider switch operation, including any non-fatal warnings
+#[derive(Debug, serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchResult {
+    pub warnings: Vec<String>,
+}
 
 #[cfg(test)]
 mod tests {
@@ -142,10 +151,10 @@ impl ProviderService {
     /// 优先从本地 settings 读取，验证后 fallback 到数据库的 is_current 字段。
     /// 这确保了云同步场景下多设备可以独立选择供应商，且返回的 ID 一定有效。
     ///
-    /// 对于 OpenCode（累加模式），不存在"当前供应商"概念，直接返回空字符串。
+    /// 对于累加模式应用（OpenCode, OpenClaw），不存在"当前供应商"概念，直接返回空字符串。
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
-        // OpenCode uses additive mode - no "current" provider concept
-        if matches!(app_type, AppType::OpenCode) {
+        // Additive mode apps have no "current" provider concept
+        if app_type.is_additive_mode() {
             return Ok(String::new());
         }
         crate::settings::get_effective_current_provider(&state.db, &app_type)
@@ -162,11 +171,13 @@ impl ProviderService {
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
-        // OpenCode uses additive mode - always write to live config
-        if matches!(app_type, AppType::OpenCode) {
-            // OMO providers use exclusive mode and write to dedicated config file.
-            if provider.category.as_deref() == Some("omo") {
-                // Do not auto-enable newly added OMO providers.
+        // Additive mode apps (OpenCode, OpenClaw) - always write to live config
+        if app_type.is_additive_mode() {
+            // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
+            if matches!(app_type, AppType::OpenCode)
+                && matches!(provider.category.as_deref(), Some("omo") | Some("omo-slim"))
+            {
+                // Do not auto-enable newly added OMO / OMO Slim providers.
                 // Users must explicitly switch/apply an OMO provider to activate it.
                 return Ok(true);
             }
@@ -201,14 +212,35 @@ impl ProviderService {
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
-        // OpenCode uses additive mode - always update in live config
-        if matches!(app_type, AppType::OpenCode) {
-            if provider.category.as_deref() == Some("omo") {
-                let is_omo_current = state
-                    .db
-                    .is_omo_provider_current(app_type.as_str(), &provider.id)?;
+        // Additive mode apps (OpenCode, OpenClaw) - always update in live config
+        if app_type.is_additive_mode() {
+            if matches!(app_type, AppType::OpenCode) && provider.category.as_deref() == Some("omo")
+            {
+                let is_omo_current =
+                    state
+                        .db
+                        .is_omo_provider_current(app_type.as_str(), &provider.id, "omo")?;
                 if is_omo_current {
-                    crate::services::OmoService::write_config_to_file(state)?;
+                    crate::services::OmoService::write_config_to_file(
+                        state,
+                        &crate::services::omo::STANDARD,
+                    )?;
+                }
+                return Ok(true);
+            }
+            if matches!(app_type, AppType::OpenCode)
+                && provider.category.as_deref() == Some("omo-slim")
+            {
+                let is_current = state.db.is_omo_provider_current(
+                    app_type.as_str(),
+                    &provider.id,
+                    "omo-slim",
+                )?;
+                if is_current {
+                    crate::services::OmoService::write_config_to_file(
+                        state,
+                        &crate::services::omo::SLIM,
+                    )?;
                 }
                 return Ok(true);
             }
@@ -253,43 +285,54 @@ impl ProviderService {
     /// Delete a provider
     ///
     /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
-    /// 对于 OpenCode（累加模式），可以随时删除任意供应商，同时从 live 配置中移除。
+    /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
-        // OpenCode uses additive mode - no current provider concept
-        if matches!(app_type, AppType::OpenCode) {
-            let is_omo = state
-                .db
-                .get_provider_by_id(id, app_type.as_str())?
-                .and_then(|p| p.category)
-                .as_deref()
-                == Some("omo");
-
-            if is_omo {
-                let was_current = state.db.is_omo_provider_current(app_type.as_str(), id)?;
-                let omo_count = state
+        // Additive mode apps - no current provider concept
+        if app_type.is_additive_mode() {
+            if matches!(app_type, AppType::OpenCode) {
+                let provider_category = state
                     .db
-                    .get_all_providers(app_type.as_str())?
-                    .values()
-                    .filter(|p| p.category.as_deref() == Some("omo"))
-                    .count();
+                    .get_provider_by_id(id, app_type.as_str())?
+                    .and_then(|p| p.category);
 
-                if omo_count <= 1 && was_current {
-                    return Err(AppError::Message(
-                        "无法删除当前启用的最后一个 OMO 配置，请先停用".to_string(),
-                    ));
+                if provider_category.as_deref() == Some("omo") {
+                    let was_current =
+                        state
+                            .db
+                            .is_omo_provider_current(app_type.as_str(), id, "omo")?;
+
+                    state.db.delete_provider(app_type.as_str(), id)?;
+                    if was_current {
+                        crate::services::OmoService::delete_config_file(
+                            &crate::services::omo::STANDARD,
+                        )?;
+                    }
+                    return Ok(());
                 }
 
-                state.db.delete_provider(app_type.as_str(), id)?;
-                if was_current {
-                    crate::services::OmoService::delete_config_file()?;
+                if provider_category.as_deref() == Some("omo-slim") {
+                    let was_current =
+                        state
+                            .db
+                            .is_omo_provider_current(app_type.as_str(), id, "omo-slim")?;
+
+                    state.db.delete_provider(app_type.as_str(), id)?;
+                    if was_current {
+                        crate::services::OmoService::delete_config_file(
+                            &crate::services::omo::SLIM,
+                        )?;
+                    }
+                    return Ok(());
                 }
-                return Ok(());
             }
-
             // Remove from database
             state.db.delete_provider(app_type.as_str(), id)?;
             // Also remove from live config
-            remove_opencode_provider_from_live(id)?;
+            match app_type {
+                AppType::OpenCode => remove_opencode_provider_from_live(id)?,
+                AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
+                _ => {} // Should not reach here
+            }
             return Ok(());
         }
 
@@ -306,7 +349,7 @@ impl ProviderService {
         state.db.delete_provider(app_type.as_str(), id)
     }
 
-    /// Remove provider from live config only (for additive mode apps like OpenCode)
+    /// Remove provider from live config only (for additive mode apps like OpenCode, OpenClaw)
     ///
     /// Does NOT delete from database - provider remains in the list.
     /// This is used when user wants to "remove" a provider from active config
@@ -318,27 +361,54 @@ impl ProviderService {
     ) -> Result<(), AppError> {
         match app_type {
             AppType::OpenCode => {
-                let is_omo = state
+                let provider_category = state
                     .db
                     .get_provider_by_id(id, app_type.as_str())?
-                    .and_then(|p| p.category)
-                    .as_deref()
-                    == Some("omo");
+                    .and_then(|p| p.category);
 
-                if is_omo {
-                    state.db.clear_omo_provider_current(app_type.as_str(), id)?;
-                    let still_has_current =
-                        state.db.get_current_omo_provider("opencode")?.is_some();
+                if provider_category.as_deref() == Some("omo") {
+                    state
+                        .db
+                        .clear_omo_provider_current(app_type.as_str(), id, "omo")?;
+                    let still_has_current = state
+                        .db
+                        .get_current_omo_provider("opencode", "omo")?
+                        .is_some();
                     if still_has_current {
-                        crate::services::OmoService::write_config_to_file(state)?;
+                        crate::services::OmoService::write_config_to_file(
+                            state,
+                            &crate::services::omo::STANDARD,
+                        )?;
                     } else {
-                        crate::services::OmoService::delete_config_file()?;
+                        crate::services::OmoService::delete_config_file(
+                            &crate::services::omo::STANDARD,
+                        )?;
+                    }
+                } else if provider_category.as_deref() == Some("omo-slim") {
+                    state
+                        .db
+                        .clear_omo_provider_current(app_type.as_str(), id, "omo-slim")?;
+                    let still_has_current = state
+                        .db
+                        .get_current_omo_provider("opencode", "omo-slim")?
+                        .is_some();
+                    if still_has_current {
+                        crate::services::OmoService::write_config_to_file(
+                            state,
+                            &crate::services::omo::SLIM,
+                        )?;
+                    } else {
+                        crate::services::OmoService::delete_config_file(
+                            &crate::services::omo::SLIM,
+                        )?;
                     }
                 } else {
                     remove_opencode_provider_from_live(id)?;
                 }
             }
-            // Future: add other additive mode apps here
+            AppType::OpenClaw => {
+                remove_openclaw_provider_from_live(id)?;
+            }
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -361,7 +431,7 @@ impl ProviderService {
     ///    c. Update database is_current (as default for new devices)
     ///    d. Write target provider config to live files
     ///    e. Sync MCP configuration
-    pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+    pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
         // Check if provider exists
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let _provider = providers
@@ -370,6 +440,13 @@ impl ProviderService {
 
         // OMO providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {
+            return Self::switch_normal(state, app_type, id, &providers);
+        }
+
+        // OMO Slim providers are switched through their own exclusive path.
+        if matches!(app_type, AppType::OpenCode)
+            && _provider.category.as_deref() == Some("omo-slim")
+        {
             return Self::switch_normal(state, app_type, id, &providers);
         }
 
@@ -426,7 +503,7 @@ impl ProviderService {
 
             // Note: No Live config write, no MCP sync
             // The proxy server will route requests to the new provider via is_current
-            return Ok(());
+            return Ok(SwitchResult::default());
         }
 
         // Normal mode: full switch with Live config write
@@ -439,37 +516,67 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
         providers: &indexmap::IndexMap<String, Provider>,
-    ) -> Result<(), AppError> {
+    ) -> Result<SwitchResult, AppError> {
         let provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
 
         if matches!(app_type, AppType::OpenCode) && provider.category.as_deref() == Some("omo") {
-            state.db.set_omo_provider_current(app_type.as_str(), id)?;
-            crate::services::OmoService::write_config_to_file(state)?;
-            return Ok(());
+            state
+                .db
+                .set_omo_provider_current(app_type.as_str(), id, "omo")?;
+            crate::services::OmoService::write_config_to_file(
+                state,
+                &crate::services::omo::STANDARD,
+            )?;
+            // OMO ↔ OMO Slim mutually exclusive: remove Slim config
+            let _ = crate::services::OmoService::delete_config_file(&crate::services::omo::SLIM);
+            return Ok(SwitchResult::default());
         }
+
+        if matches!(app_type, AppType::OpenCode) && provider.category.as_deref() == Some("omo-slim")
+        {
+            state
+                .db
+                .set_omo_provider_current(app_type.as_str(), id, "omo-slim")?;
+            crate::services::OmoService::write_config_to_file(state, &crate::services::omo::SLIM)?;
+            // OMO ↔ OMO Slim mutually exclusive: remove Standard config
+            let _ =
+                crate::services::OmoService::delete_config_file(&crate::services::omo::STANDARD);
+            return Ok(SwitchResult::default());
+        }
+
+        let mut result = SwitchResult::default();
 
         // Backfill: Backfill current live config to current provider
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
         let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
 
-        match (current_id, matches!(app_type, AppType::OpenCode)) {
-            (Some(current_id), false) if current_id != id => {
-                // Only backfill when switching to a different provider.
-                if let Ok(live_config) = read_live_settings(app_type.clone()) {
-                    if let Some(mut current_provider) = providers.get(&current_id).cloned() {
-                        current_provider.settings_config = live_config;
-                        // Ignore backfill failure, don't affect switch flow.
-                        let _ = state.db.save_provider(app_type.as_str(), &current_provider);
+        if let Some(current_id) = current_id {
+            if current_id != id {
+                // Additive mode apps - all providers coexist in the same file,
+                // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
+                if !app_type.is_additive_mode() {
+                    // Only backfill when switching to a different provider
+                    if let Ok(live_config) = read_live_settings(app_type.clone()) {
+                        if let Some(mut current_provider) = providers.get(&current_id).cloned() {
+                            current_provider.settings_config = live_config;
+                            if let Err(e) =
+                                state.db.save_provider(app_type.as_str(), &current_provider)
+                            {
+                                log::warn!("Backfill failed: {e}");
+                                result
+                                    .warnings
+                                    .push(format!("backfill_failed:{current_id}"));
+                            }
+                        }
                     }
                 }
             }
-            _ => {}
         }
 
-        // OpenCode uses additive mode - skip setting is_current (no such concept)
-        if !matches!(app_type, AppType::OpenCode) {
+        // Additive mode apps skip setting is_current (no such concept)
+        if !app_type.is_additive_mode() {
             // Update local settings (device-level, takes priority)
             crate::settings::set_current_provider(&app_type, Some(id))?;
 
@@ -483,7 +590,7 @@ impl ProviderService {
         // Sync MCP
         McpService::sync_all_enabled(state)?;
 
-        Ok(())
+        Ok(result)
     }
 
     /// Sync current provider to live configuration (re-export)
@@ -515,6 +622,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
+            AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
         }
     }
 
@@ -528,6 +636,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
+            AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
         }
     }
 
@@ -674,6 +783,27 @@ impl ProviderService {
                 options.remove("baseURL");
             }
             // Keep npm and models as they might be common
+        }
+
+        if config.is_null() || (config.is_object() && config.as_object().unwrap().is_empty()) {
+            return Ok("{}".to_string());
+        }
+
+        serde_json::to_string_pretty(&config)
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+    }
+
+    /// Extract common config for OpenClaw (JSON format)
+    fn extract_openclaw_common_config(settings: &Value) -> Result<String, AppError> {
+        // OpenClaw uses a different config structure with baseUrl, apiKey, api, models
+        // For common config, we exclude provider-specific fields like apiKey
+        let mut config = settings.clone();
+
+        // Remove provider-specific fields
+        if let Some(obj) = config.as_object_mut() {
+            obj.remove("apiKey");
+            obj.remove("baseUrl");
+            // Keep api and models as they might be common
         }
 
         if config.is_null() || (config.is_object() && config.as_object().unwrap().is_empty()) {
@@ -861,6 +991,17 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::OpenClaw => {
+                // OpenClaw uses config structure: { baseUrl, apiKey, api, models }
+                // Basic validation - must be an object
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.openclaw.settings.not_object",
+                        "OpenClaw 配置必须是 JSON 对象",
+                        "OpenClaw configuration must be a JSON object",
+                    ));
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -1026,6 +1167,30 @@ impl ProviderService {
 
                 let base_url = options
                     .get("baseURL")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::OpenClaw => {
+                // OpenClaw uses apiKey and baseUrl directly on the object
+                let api_key = provider
+                    .settings_config
+                    .get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.openclaw.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = provider
+                    .settings_config
+                    .get("baseUrl")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

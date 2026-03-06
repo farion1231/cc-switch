@@ -110,7 +110,6 @@ export function ProviderAdvancedConfig({
   // 标记是否为用户主动输入（用于区分外部更新和用户输入）
   const [isUserTyping, setIsUserTyping] = useState(false);
 
-  // 同步外部 testConfig.enabled 变化到展开状态
   useEffect(() => {
     setIsTestConfigOpen(testConfig.enabled);
   }, [testConfig.enabled]);
@@ -167,7 +166,6 @@ export function ProviderAdvancedConfig({
 
   return (
     <div className="space-y-4">
-      {/* 模型测试配置 */}
       <div className="rounded-lg border border-border/50 bg-muted/20">
         <button
           type="button"

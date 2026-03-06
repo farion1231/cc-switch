@@ -1,12 +1,16 @@
-import { Users } from "lucide-react";
+import { Download, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 
 interface ProviderEmptyStateProps {
   onCreate?: () => void;
+  onImport?: () => void;
 }
 
-export function ProviderEmptyState({ onCreate }: ProviderEmptyStateProps) {
+export function ProviderEmptyState({
+  onCreate,
+  onImport,
+}: ProviderEmptyStateProps) {
   const { t } = useTranslation();
 
   return (
@@ -18,11 +22,19 @@ export function ProviderEmptyState({ onCreate }: ProviderEmptyStateProps) {
       <p className="mt-2 max-w-sm text-sm text-muted-foreground">
         {t("provider.noProvidersDescription")}
       </p>
-      {onCreate && (
-        <Button className="mt-6" onClick={onCreate}>
-          {t("provider.addProvider")}
-        </Button>
-      )}
+      <div className="mt-6 flex flex-col gap-2">
+        {onImport && (
+          <Button onClick={onImport}>
+            <Download className="mr-2 h-4 w-4" />
+            {t("provider.importCurrent")}
+          </Button>
+        )}
+        {onCreate && (
+          <Button variant={onImport ? "outline" : "default"} onClick={onCreate}>
+            {t("provider.addProvider")}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

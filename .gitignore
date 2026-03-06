@@ -27,3 +27,5 @@ flatpak-repo/
 # Rust
 target/
 Cargo.lock
+
+.worktrees/

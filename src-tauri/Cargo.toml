@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "3.10.3"
+version = "3.11.1"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
@@ -57,13 +57,18 @@ url = "2.5"
 auto-launch = "0.5"
 once_cell = "1.21.3"
 base64 = "0.22"
-rusqlite = { version = "0.31", features = ["bundled", "backup"] }
+rusqlite = { version = "0.31", features = ["bundled", "backup", "hooks"] }
 indexmap = { version = "2", features = ["serde"] }
 rust_decimal = "1.33"
 uuid = { version = "1.11", features = ["v4"] }
+sha2 = "0.10"
+json5 = "0.4"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2.0.1", features = ["v2_16"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"

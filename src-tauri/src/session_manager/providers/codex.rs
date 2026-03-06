@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use regex::Regex;
 use serde_json::Value;
@@ -8,9 +9,16 @@ use serde_json::Value;
 use crate::codex_config::get_codex_config_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{extract_text, parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::utils::{
+    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
+};
 
 const PROVIDER_ID: &str = "codex";
+
+static UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+        .unwrap()
+});
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let root = get_codex_config_dir().join("sessions");
@@ -74,32 +82,21 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
-    let file = File::open(path).ok()?;
-    let reader = BufReader::new(file);
+    let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
 
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
-    let mut last_active_at: Option<i64> = None;
-    let mut summary: Option<String> = None;
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let value: Value = match serde_json::from_str(&line) {
+    // Extract metadata from head lines
+    for line in &head {
+        let value: Value = match serde_json::from_str(line) {
             Ok(parsed) => parsed,
             Err(_) => continue,
         };
-
-        if let Some(ts) = value.get("timestamp").and_then(parse_timestamp_to_ms) {
-            if created_at.is_none() {
-                created_at = Some(ts);
-            }
-            last_active_at = Some(ts);
+        if created_at.is_none() {
+            created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
-
         if value.get("type").and_then(Value::as_str) == Some("session_meta") {
             if let Some(payload) = value.get("payload") {
                 if session_id.is_none() {
@@ -118,27 +115,34 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                     created_at.get_or_insert(ts);
                 }
             }
-            continue;
         }
+    }
 
-        if value.get("type").and_then(Value::as_str) != Some("response_item") {
-            continue;
-        }
+    // Extract last_active_at and summary from tail lines (reverse order)
+    let mut last_active_at: Option<i64> = None;
+    let mut summary: Option<String> = None;
 
-        let payload = match value.get("payload") {
-            Some(payload) => payload,
-            None => continue,
+    for line in tail.iter().rev() {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
         };
-
-        if payload.get("type").and_then(Value::as_str) != Some("message") {
-            continue;
+        if last_active_at.is_none() {
+            last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
-
-        let text = payload.get("content").map(extract_text).unwrap_or_default();
-        if text.trim().is_empty() {
-            continue;
+        if summary.is_none() && value.get("type").and_then(Value::as_str) == Some("response_item") {
+            if let Some(payload) = value.get("payload") {
+                if payload.get("type").and_then(Value::as_str) == Some("message") {
+                    let text = payload.get("content").map(extract_text).unwrap_or_default();
+                    if !text.trim().is_empty() {
+                        summary = Some(text);
+                    }
+                }
+            }
         }
-        summary = Some(text);
+        if last_active_at.is_some() && summary.is_some() {
+            break;
+        }
     }
 
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
@@ -166,10 +170,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
 
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {
     let file_name = path.file_name()?.to_string_lossy();
-    let re =
-        Regex::new(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
-            .ok()?;
-    re.find(&file_name).map(|mat| mat.as_str().to_string())
+    UUID_RE.find(&file_name).map(|mat| mat.as_str().to_string())
 }
 
 fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {

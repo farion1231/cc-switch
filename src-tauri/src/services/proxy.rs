@@ -210,11 +210,16 @@ impl ProxyService {
             .await
             .map(|c| c.enabled)
             .unwrap_or(false);
+        // OpenCode and OpenClaw don't support proxy features, always return false
+        let opencode_enabled = false;
+        let openclaw_enabled = false;
 
         Ok(ProxyTakeoverStatus {
             claude: claude_enabled,
             codex: codex_enabled,
             gemini: gemini_enabled,
+            opencode: opencode_enabled,
+            openclaw: openclaw_enabled,
         })
     }
 
@@ -371,6 +376,10 @@ impl ProxyService {
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features
                 return Err("OpenCode 不支持代理功能".to_string());
+            }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support proxy features
+                return Err("OpenClaw 不支持代理功能".to_string());
             }
         };
 
@@ -588,6 +597,9 @@ impl ProxyService {
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features, skip silently
             }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support proxy features, skip silently
+            }
         }
 
         Ok(())
@@ -769,6 +781,10 @@ impl ProxyService {
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features
                 return Err("OpenCode 不支持代理功能".to_string());
+            }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support proxy features
+                return Err("OpenClaw 不支持代理功能".to_string());
             }
         };
 
@@ -982,6 +998,10 @@ impl ProxyService {
                 // OpenCode doesn't support proxy features
                 return Err("OpenCode 不支持代理功能".to_string());
             }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support proxy features
+                return Err("OpenClaw 不支持代理功能".to_string());
+            }
         }
 
         Ok(())
@@ -1068,6 +1088,9 @@ impl ProxyService {
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features, skip silently
             }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support proxy features, skip silently
+            }
         }
 
         Ok(())
@@ -1102,6 +1125,9 @@ impl ProxyService {
             }
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features, skip silently
+            }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support proxy features, skip silently
             }
         }
 
@@ -1186,6 +1212,10 @@ impl ProxyService {
                 // OpenCode doesn't support proxy features
                 Err("OpenCode 不支持代理功能".to_string())
             }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support proxy features
+                Err("OpenClaw 不支持代理功能".to_string())
+            }
         }
     }
 
@@ -1205,6 +1235,10 @@ impl ProxyService {
             },
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy takeover
+                false
+            }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support proxy takeover
                 false
             }
         }
@@ -1248,6 +1282,10 @@ impl ProxyService {
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
             AppType::OpenCode => {
                 // OpenCode doesn't support proxy features
+                Ok(())
+            }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support proxy features
                 Ok(())
             }
         }

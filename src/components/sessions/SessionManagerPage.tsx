@@ -46,9 +46,15 @@ import {
   getSessionKey,
 } from "./utils";
 
-type ProviderFilter = "all" | "codex" | "claude";
+type ProviderFilter =
+  | "all"
+  | "codex"
+  | "claude"
+  | "opencode"
+  | "openclaw"
+  | "gemini";
 
-export function SessionManagerPage() {
+export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
   const { data, isLoading, refetch } = useSessionsQuery();
   const sessions = data ?? [];
@@ -63,7 +69,9 @@ export function SessionManagerPage() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = useState("");
-  const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>(
+    appId as ProviderFilter,
+  );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   // 使用 FlexSearch 全文搜索
@@ -265,9 +273,7 @@ export function SessionManagerPage() {
                                 icon={
                                   providerFilter === "all"
                                     ? "apps"
-                                    : providerFilter === "codex"
-                                      ? "openai"
-                                      : "claude"
+                                    : getProviderIconName(providerFilter)
                                 }
                                 name={providerFilter}
                                 size={14}
@@ -307,6 +313,36 @@ export function SessionManagerPage() {
                                 size={14}
                               />
                               <span>Claude Code</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="opencode">
+                            <div className="flex items-center gap-2">
+                              <ProviderIcon
+                                icon="opencode"
+                                name="opencode"
+                                size={14}
+                              />
+                              <span>OpenCode</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="openclaw">
+                            <div className="flex items-center gap-2">
+                              <ProviderIcon
+                                icon="openclaw"
+                                name="openclaw"
+                                size={14}
+                              />
+                              <span>OpenClaw</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="gemini">
+                            <div className="flex items-center gap-2">
+                              <ProviderIcon
+                                icon="gemini"
+                                name="gemini"
+                                size={14}
+                              />
+                              <span>Gemini CLI</span>
                             </div>
                           </SelectItem>
                         </SelectContent>

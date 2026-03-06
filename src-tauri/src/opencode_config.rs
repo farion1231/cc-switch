@@ -145,12 +145,23 @@ pub fn add_plugin(plugin_name: &str) -> Result<(), AppError> {
 
     match plugins {
         Some(arr) => {
+            // Mutual exclusion: standard OMO and OMO Slim cannot coexist as plugins
             if plugin_name.starts_with("oh-my-opencode")
                 && !plugin_name.starts_with("oh-my-opencode-slim")
             {
+                // Adding standard OMO -> remove all Slim variants
                 arr.retain(|v| {
                     v.as_str()
                         .map(|s| !s.starts_with("oh-my-opencode-slim"))
+                        .unwrap_or(true)
+                });
+            } else if plugin_name.starts_with("oh-my-opencode-slim") {
+                // Adding Slim -> remove all standard OMO variants (but keep slim)
+                arr.retain(|v| {
+                    v.as_str()
+                        .map(|s| {
+                            !s.starts_with("oh-my-opencode") || s.starts_with("oh-my-opencode-slim")
+                        })
                         .unwrap_or(true)
                 });
             }

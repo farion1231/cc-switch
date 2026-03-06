@@ -1,5 +1,49 @@
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
+use std::path::Path;
+
 use chrono::{DateTime, FixedOffset};
 use serde_json::Value;
+
+/// Read the first `head_n` lines and last `tail_n` lines from a file.
+/// For small files (< 16 KB), reads all lines once to avoid unnecessary seeking.
+pub fn read_head_tail_lines(
+    path: &Path,
+    head_n: usize,
+    tail_n: usize,
+) -> io::Result<(Vec<String>, Vec<String>)> {
+    let file = File::open(path)?;
+    let file_len = file.metadata()?.len();
+
+    // For small files, read all lines once and split
+    if file_len < 16_384 {
+        let reader = BufReader::new(file);
+        let all: Vec<String> = reader.lines().map_while(Result::ok).collect();
+        let head = all.iter().take(head_n).cloned().collect();
+        let skip = all.len().saturating_sub(tail_n);
+        let tail = all.into_iter().skip(skip).collect();
+        return Ok((head, tail));
+    }
+
+    // Read head lines from the beginning
+    let reader = BufReader::new(file);
+    let head: Vec<String> = reader.lines().take(head_n).map_while(Result::ok).collect();
+
+    // Seek to last ~16 KB for tail lines
+    let seek_pos = file_len.saturating_sub(16_384);
+    let mut file2 = File::open(path)?;
+    file2.seek(SeekFrom::Start(seek_pos))?;
+    let tail_reader = BufReader::new(file2);
+    let all_tail: Vec<String> = tail_reader.lines().map_while(Result::ok).collect();
+
+    // Skip first partial line if we seeked into the middle of a line
+    let skip_first = if seek_pos > 0 { 1 } else { 0 };
+    let usable: Vec<String> = all_tail.into_iter().skip(skip_first).collect();
+    let skip = usable.len().saturating_sub(tail_n);
+    let tail = usable.into_iter().skip(skip).collect();
+
+    Ok((head, tail))
+}
 
 pub fn parse_timestamp_to_ms(value: &Value) -> Option<i64> {
     let raw = value.as_str()?;

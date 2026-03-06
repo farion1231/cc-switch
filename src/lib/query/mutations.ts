@@ -2,9 +2,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
+import type { SwitchResult } from "@/lib/api/providers";
 import type { Provider, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
+import { openclawKeys } from "@/hooks/useOpenClaw";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -16,12 +18,16 @@ export const useAddProviderMutation = (appId: AppId) => {
     ) => {
       let id: string;
 
-      if (appId === "opencode") {
-        if (providerInput.category === "omo") {
-          id = `omo-${generateUUID()}`;
+      if (appId === "opencode" || appId === "openclaw") {
+        if (
+          providerInput.category === "omo" ||
+          providerInput.category === "omo-slim"
+        ) {
+          const prefix = providerInput.category === "omo" ? "omo" : "omo-slim";
+          id = `${prefix}-${generateUUID()}`;
         } else {
           if (!providerInput.providerKey) {
-            throw new Error("Provider key is required for OpenCode");
+            throw new Error(`Provider key is required for ${appId}`);
           }
           id = providerInput.providerKey;
         }
@@ -29,8 +35,10 @@ export const useAddProviderMutation = (appId: AppId) => {
         id = generateUUID();
       }
 
+      const { providerKey: _providerKey, ...rest } = providerInput;
+
       const newProvider: Provider = {
-        ...providerInput,
+        ...rest,
         id,
         createdAt: Date.now(),
       };
@@ -48,6 +56,12 @@ export const useAddProviderMutation = (appId: AppId) => {
         });
         await queryClient.invalidateQueries({
           queryKey: ["omo", "provider-count"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo-slim", "current-provider-id"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo-slim", "provider-count"],
         });
       }
 
@@ -131,6 +145,12 @@ export const useDeleteProviderMutation = (appId: AppId) => {
         await queryClient.invalidateQueries({
           queryKey: ["omo", "provider-count"],
         });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo-slim", "current-provider-id"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo-slim", "provider-count"],
+        });
       }
 
       try {
@@ -168,18 +188,30 @@ export const useSwitchProviderMutation = (appId: AppId) => {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: async (providerId: string) => {
+    mutationFn: async (providerId: string): Promise<SwitchResult> => {
       return await providersApi.switch(providerId, appId);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
+      // OpenCode/OpenClaw: also invalidate live provider IDs cache to update button state
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
           queryKey: ["opencodeLiveProviderIds"],
         });
         await queryClient.invalidateQueries({
           queryKey: ["omo", "current-provider-id"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["omo-slim", "current-provider-id"],
+        });
+      }
+      if (appId === "openclaw") {
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.liveProviderIds,
+        });
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.defaultModel,
         });
       }
 

@@ -10,6 +10,7 @@ export function RectifierConfigPanel() {
   const [config, setConfig] = useState<RectifierConfig>({
     enabled: true,
     requestThinkingSignature: true,
+    requestThinkingBudget: true,
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -66,6 +67,21 @@ export function RectifierConfigPanel() {
             disabled={!config.enabled}
             onCheckedChange={(checked) =>
               handleChange({ requestThinkingSignature: checked })
+            }
+          />
+        </div>
+        <div className="flex items-center justify-between pl-4">
+          <div className="space-y-0.5">
+            <Label>{t("settings.advanced.rectifier.thinkingBudget")}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.advanced.rectifier.thinkingBudgetDescription")}
+            </p>
+          </div>
+          <Switch
+            checked={config.requestThinkingBudget}
+            disabled={!config.enabled}
+            onCheckedChange={(checked) =>
+              handleChange({ requestThinkingBudget: checked })
             }
           />
         </div>

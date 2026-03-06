@@ -7,7 +7,9 @@ use serde_json::Value;
 use crate::config::get_claude_config_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{extract_text, parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::utils::{
+    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
+};
 
 const PROVIDER_ID: &str = "claude";
 
@@ -73,60 +75,61 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         return None;
     }
 
-    let file = File::open(path).ok()?;
-    let reader = BufReader::new(file);
+    let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
 
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
-    let mut last_active_at: Option<i64> = None;
-    let mut summary: Option<String> = None;
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let value: Value = match serde_json::from_str(&line) {
+    // Extract metadata from head lines
+    for line in &head {
+        let value: Value = match serde_json::from_str(line) {
             Ok(parsed) => parsed,
             Err(_) => continue,
         };
-
         if session_id.is_none() {
             session_id = value
                 .get("sessionId")
                 .and_then(Value::as_str)
                 .map(|s| s.to_string());
         }
-
         if project_dir.is_none() {
             project_dir = value
                 .get("cwd")
                 .and_then(Value::as_str)
                 .map(|s| s.to_string());
         }
-
-        if let Some(ts) = value.get("timestamp").and_then(parse_timestamp_to_ms) {
-            if created_at.is_none() {
-                created_at = Some(ts);
-            }
-            last_active_at = Some(ts);
+        if created_at.is_none() {
+            created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
+    }
 
-        if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
-            continue;
-        }
+    // Extract last_active_at and summary from tail lines (reverse order)
+    let mut last_active_at: Option<i64> = None;
+    let mut summary: Option<String> = None;
 
-        let message = match value.get("message") {
-            Some(message) => message,
-            None => continue,
+    for line in tail.iter().rev() {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
         };
-
-        let text = message.get("content").map(extract_text).unwrap_or_default();
-        if text.trim().is_empty() {
-            continue;
+        if last_active_at.is_none() {
+            last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
-        summary = Some(text);
+        if summary.is_none() {
+            if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
+            if let Some(message) = value.get("message") {
+                let text = message.get("content").map(extract_text).unwrap_or_default();
+                if !text.trim().is_empty() {
+                    summary = Some(text);
+                }
+            }
+        }
+        if last_active_at.is_some() && summary.is_some() {
+            break;
+        }
     }
 
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));

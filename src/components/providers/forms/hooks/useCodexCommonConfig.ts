@@ -188,12 +188,14 @@ export function useCodexCommonConfig({
       if (!value.trim()) {
         setCommonConfigError("");
         // 保存到 config.json（清空）
-        configApi.setCommonConfigSnippet("codex", "").catch((error) => {
-          console.error("保存 Codex 通用配置失败:", error);
-          setCommonConfigError(
-            t("codexConfig.saveFailed", { error: String(error) }),
-          );
-        });
+        configApi
+          .setCommonConfigSnippet("codex", "")
+          .catch((error: unknown) => {
+            console.error("保存 Codex 通用配置失败:", error);
+            setCommonConfigError(
+              t("codexConfig.saveFailed", { error: String(error) }),
+            );
+          });
 
         if (useCommonConfig) {
           const { updatedConfig } = updateTomlCommonConfigSnippet(
@@ -210,12 +212,14 @@ export function useCodexCommonConfig({
       // TOML 格式校验较为复杂，暂时不做校验，直接清空错误
       setCommonConfigError("");
       // 保存到 config.json
-      configApi.setCommonConfigSnippet("codex", value).catch((error) => {
-        console.error("保存 Codex 通用配置失败:", error);
-        setCommonConfigError(
-          t("codexConfig.saveFailed", { error: String(error) }),
-        );
-      });
+      configApi
+        .setCommonConfigSnippet("codex", value)
+        .catch((error: unknown) => {
+          console.error("保存 Codex 通用配置失败:", error);
+          setCommonConfigError(
+            t("codexConfig.saveFailed", { error: String(error) }),
+          );
+        });
 
       // 若当前启用通用配置，需要替换为最新片段
       if (useCommonConfig) {

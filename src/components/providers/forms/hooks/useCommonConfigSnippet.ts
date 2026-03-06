@@ -200,12 +200,14 @@ export function useCommonConfigSnippet({
       if (!value.trim()) {
         setCommonConfigError("");
         // 保存到 config.json（清空）
-        configApi.setCommonConfigSnippet("claude", "").catch((error) => {
-          console.error("保存通用配置失败:", error);
-          setCommonConfigError(
-            t("claudeConfig.saveFailed", { error: String(error) }),
-          );
-        });
+        configApi
+          .setCommonConfigSnippet("claude", "")
+          .catch((error: unknown) => {
+            console.error("保存通用配置失败:", error);
+            setCommonConfigError(
+              t("claudeConfig.saveFailed", { error: String(error) }),
+            );
+          });
 
         if (useCommonConfig) {
           const { updatedConfig } = updateCommonConfigSnippet(
@@ -226,12 +228,14 @@ export function useCommonConfigSnippet({
       } else {
         setCommonConfigError("");
         // 保存到 config.json
-        configApi.setCommonConfigSnippet("claude", value).catch((error) => {
-          console.error("保存通用配置失败:", error);
-          setCommonConfigError(
-            t("claudeConfig.saveFailed", { error: String(error) }),
-          );
-        });
+        configApi
+          .setCommonConfigSnippet("claude", value)
+          .catch((error: unknown) => {
+            console.error("保存通用配置失败:", error);
+            setCommonConfigError(
+              t("claudeConfig.saveFailed", { error: String(error) }),
+            );
+          });
       }
 
       // 若当前启用通用配置且格式正确，需要替换为最新片段

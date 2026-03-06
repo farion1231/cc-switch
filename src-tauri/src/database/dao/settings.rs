@@ -38,7 +38,7 @@ impl Database {
         Ok(())
     }
 
-    // --- Config Snippets 辅助方法 ---
+    // --- 通用配置片段 (Common Config Snippet) ---
 
     /// 获取通用配置片段
     pub fn get_config_snippet(&self, app_type: &str) -> Result<Option<String>, AppError> {
@@ -168,7 +168,7 @@ impl Database {
 
     /// 获取整流器配置
     ///
-    /// 返回整流器配置，如果不存在则返回默认值（全部启用）
+    /// 返回整流器配置，如果不存在则返回默认值（全部开启）
     pub fn get_rectifier_config(&self) -> Result<crate::proxy::types::RectifierConfig, AppError> {
         match self.get_setting("rectifier_config")? {
             Some(json) => serde_json::from_str(&json)

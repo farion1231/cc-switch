@@ -2,16 +2,28 @@
 
 use tauri::AppHandle;
 
+fn merge_settings_for_save(
+    mut incoming: crate::settings::AppSettings,
+    existing: &crate::settings::AppSettings,
+) -> crate::settings::AppSettings {
+    if incoming.webdav_sync.is_none() {
+        incoming.webdav_sync = existing.webdav_sync.clone();
+    }
+    incoming
+}
+
 /// 获取设置
 #[tauri::command]
 pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
-    Ok(crate::settings::get_settings())
+    Ok(crate::settings::get_settings_for_frontend())
 }
 
 /// 保存设置
 #[tauri::command]
 pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<bool, String> {
-    crate::settings::update_settings(settings).map_err(|e| e.to_string())?;
+    let existing = crate::settings::get_settings();
+    let merged = merge_settings_for_save(settings, &existing);
+    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -52,6 +64,58 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
         crate::auto_launch::disable_auto_launch().map_err(|e| format!("禁用开机自启失败: {e}"))?;
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_settings_for_save;
+    use crate::settings::{AppSettings, WebDavSyncSettings};
+
+    #[test]
+    fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
+        let mut existing = AppSettings::default();
+        existing.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "secret".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert!(merged.webdav_sync.is_some());
+        assert_eq!(
+            merged.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
+            Some("https://dav.example.com")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_keep_incoming_webdav_when_present() {
+        let mut existing = AppSettings::default();
+        existing.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.old.example.com".to_string(),
+            username: "old".to_string(),
+            password: "old-pass".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+
+        let mut incoming = AppSettings::default();
+        incoming.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.new.example.com".to_string(),
+            username: "new".to_string(),
+            password: "new-pass".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
+            Some("https://dav.new.example.com")
+        );
+    }
 }
 
 /// 获取开机自启状态

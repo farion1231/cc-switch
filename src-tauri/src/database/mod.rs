@@ -23,7 +23,7 @@
 //!     └── settings.rs
 //! ```
 
-mod backup;
+pub(crate) mod backup;
 mod dao;
 mod migration;
 mod schema;
@@ -33,18 +33,14 @@ mod tests;
 
 // DAO 类型导出供外部使用
 pub use dao::FailoverQueueItem;
-pub use dao::OmoGlobalConfig;
 
 use crate::config::get_app_config_dir;
 use crate::error::AppError;
-use rusqlite::Connection;
+use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
 use std::sync::Mutex;
 
 // DAO 方法通过 impl Database 提供，无需额外导出
-
-/// 数据库备份保留数量
-const DB_BACKUP_RETAIN: usize = 10;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
@@ -76,6 +72,17 @@ pub struct Database {
     pub(crate) conn: Mutex<Connection>,
 }
 
+fn register_db_change_hook(conn: &Connection) {
+    conn.update_hook(Some(
+        |action: Action, _database: &str, table: &str, _row_id: i64| match action {
+            Action::SQLITE_INSERT | Action::SQLITE_UPDATE | Action::SQLITE_DELETE => {
+                crate::services::webdav_auto_sync::notify_db_changed(table);
+            }
+            _ => {}
+        },
+    ));
+}
+
 impl Database {
     /// 初始化数据库连接并创建表
     ///
@@ -93,11 +100,28 @@ impl Database {
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
+        register_db_change_hook(&conn);
 
         let db = Self {
             conn: Mutex::new(conn),
         };
         db.create_tables()?;
+
+        // Pre-migration backup: only when upgrading from an existing database
+        {
+            let conn = lock_conn!(db.conn);
+            let version = Self::get_user_version(&conn)?;
+            drop(conn);
+            if version > 0 && version < SCHEMA_VERSION {
+                log::info!(
+                    "Creating pre-migration database backup (v{version} → v{SCHEMA_VERSION})"
+                );
+                if let Err(e) = db.backup_database_file() {
+                    log::warn!("Pre-migration backup failed, continuing migration: {e}");
+                }
+            }
+        }
+
         db.apply_schema_migrations()?;
         db.ensure_model_pricing_seeded()?;
 
@@ -111,6 +135,7 @@ impl Database {
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
+        register_db_change_hook(&conn);
 
         let db = Self {
             conn: Mutex::new(conn),

@@ -1,25 +1,30 @@
 <div align="center">
 
-# Claude Code / Codex / Gemini CLI オールインワン・アシスタント
+# CC Switch
 
-[![Version](https://img.shields.io/badge/version-3.10.2-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+### Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw のオールインワン管理ツール
+
+[![Version](https://img.shields.io/badge/version-3.11.1-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![Downloads](https://img.shields.io/endpoint?url=https://api.pinstudios.net/api/badges/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
 
 <a href="https://trendshift.io/repositories/15372" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15372" alt="farion1231%2Fcc-switch | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-[English](README.md) | [中文](README_ZH.md) | 日本語 | [Changelog](CHANGELOG.md) | [v3.9.0 リリースノート](docs/release-note-v3.9.0-ja.md)
+[English](README.md) | [中文](README_ZH.md) | 日本語 | [Changelog](CHANGELOG.md)
 
 </div>
 
 ## ❤️スポンサー
 
-[![MiniMax](assets/partners/banners/minimax-en.jpg)](https://bit.ly/3Nue8mA)
+<details open>
+<summary>クリックで折りたたむ</summary>
 
-MiniMax M2.1 は、実務開発とエージェントワークフロー向けに構築されたオープンソースの最先端モデルです。100 億のアクティブパラメータ / 2,300 億の総パラメータを持つ MoE アーキテクチャにより、高速な推論、簡単なデプロイ、ローカル実行にも対応します。SWE、VIBE、Multi-SWE などの主要コーディングベンチマークでトップクラスの性能を発揮し、コーディング、デジタル環境のナビゲーション、大規模な多段階タスクの処理に優れています。
+[![MiniMax](assets/partners/banners/minimax-en.jpeg)](https://platform.minimax.io/subscribe/coding-plan?code=ClLhgxr2je&source=link)
 
-[こちら](https://bit.ly/3Nue8mA)から MiniMax Coding Plan の限定 12% オフを入手！
+MiniMax-M2.5 は、実際の生産性向上のために設計された最先端の大規模言語モデルです。多様で複雑な実環境のデジタルワークスペースでトレーニングされた M2.5 は、M2.1 のコーディング能力をベースに一般的なオフィス業務へと拡張し、Word・Excel・PowerPoint ファイルの生成と操作、多様なソフトウェア環境間のコンテキスト切り替え、異なるエージェントや人間チーム間での協働を流暢にこなします。SWE-Bench Verified で 80.2%、Multi-SWE-Bench で 51.3%、BrowseComp で 76.3% を達成し、計画的な行動と出力の最適化トレーニングにより、前世代よりもトークン効率に優れています。
+
+[こちら](https://platform.minimax.io/subscribe/coding-plan?code=ClLhgxr2je&source=link)から MiniMax Coding Plan の限定 12% オフを入手！
 
 ---
 
@@ -51,6 +56,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://www.compshare.cn/?ytag=GPU_YY_YX_git_cc-switch"><img src="assets/partners/logos/ucloud.png" alt="Ucloud" width="150"></a></td>
+<td>UCloud CompShare のご支援に感謝します！CompShare は UCloud 傘下の AI クラウドプラットフォームで、国内外の安定した包括的なモデル API を 1 つのキーだけで利用可能。月額・従量課金のコストパフォーマンスに優れた Coding Plan パッケージを提供し、公式価格の 60〜80% オフで利用できます。Claude Code、Codex および API アクセスに対応。エンタープライズ級の高同時接続、24 時間年中無休のテクニカルサポート、セルフサービス請求書発行に対応。<a href="https://www.compshare.cn/?ytag=GPU_YY_YX_git_cc-switch">こちらのリンク</a>から登録すると、無料で 5 元分のプラットフォーム体験クレジットがもらえます！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.right.codes/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
 <td>本プロジェクトへのご支援として、Right Code にご協賛いただき誠にありがとうございます。Right Code は、Claude Code、Codex、Gemini などのモデルに対応した中継（プロキシ）サービスを安定して提供しています。特に高いコストパフォーマンスを誇る Codex の月額プランを主力としており、<strong>未使用分の利用枠を翌日に繰り越して利用できる（繰越対応）</strong>点が特長です。チャージ（入金）後に請求書の発行が可能で、企業・チーム向けには専任担当による個別対応も行っています。さらに CC Switch ユーザー向けの特別優待として、<a href="https://www.right.codes/register?aff=CCSWITCH">こちらのリンク</a>からご登録いただくと、チャージのたびに実支払額の 25% 相当の従量課金クレジットが付与されます。</td>
 </tr>
@@ -60,7 +70,33 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <td>AICoding.sh のご支援に感謝します！AICoding.sh —— グローバル AI モデル API 超お得な中継サービス！Claude Code 81% オフ、GPT 99% オフ！数百社の企業に高コストパフォーマンスの AI サービスを提供。Claude Code、GPT、Gemini および国内主要モデルに対応、エンタープライズ級の高同時接続、迅速な請求書発行、24 時間年中無休の専属テクニカルサポート。<a href="https://aicoding.sh/i/CCSWITCH">こちらのリンク</a>から登録した CC Switch ユーザーは、初回チャージ 10% オフ！</td>
 </tr>
 
+<tr>
+<td width="180"><a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch"><img src="assets/partners/logos/crazyrouter.jpg" alt="AICoding" width="150"></a></td>
+<td>Crazyrouter のご支援に感謝します！Crazyrouter は高性能 AI API アグリゲーションプラットフォームです。1 つの API キーで Claude Code、Codex、Gemini CLI など 300 以上のモデルにアクセス可能。全モデルが公式価格の 55% で利用でき、自動フェイルオーバー、スマートルーティング、無制限同時接続に対応。CC Switch ユーザー向けの限定特典：<a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch">こちらのリンク</a>から登録すると <strong>$2 の無料クレジット</strong> を即時進呈。さらに初回チャージ時にプロモコード `CCSWITCH` を入力すると <strong>30% のボーナスクレジット</strong> が追加されます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.sssaicode.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
+<td>SSSAiCode のご支援に感謝します！SSSAiCode は安定性と信頼性に優れた API 中継サービスで、安定的で信頼性が高く、手頃な価格の Claude・Codex モデルサービスを提供しています。<strong>高コストパフォーマンスの公式 Claude サービスを 0.5￥/$ 換算で提供</strong>、月額制・Paygo など多様な課金方式に対応し、当日の迅速な請求書発行をサポート。CC Switch ユーザー向けの特別特典：<a href="https://www.sssaicode.com/register?ref=DCP0SM">こちらのリンク</a>から登録すると、毎回のチャージで $10 の追加ボーナスを受けられます！</td>
+</tr>
+
 </table>
+
+</details>
+
+## CC Switch を選ぶ理由
+
+最新の AI コーディングは Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw などの CLI ツールに依存していますが、各ツールの設定形式はバラバラです。API プロバイダを切り替えるたびに JSON、TOML、`.env` ファイルを手動で編集する必要があり、複数ツール間で MCP や Skills を統一的に管理する手段もありません。
+
+**CC Switch** は、5 つの CLI ツールを 1 つのデスクトップアプリで一元管理できます。設定ファイルを手作業で編集する代わりに、ワンクリックでプロバイダをインポートし、瞬時に切り替えられるビジュアルインターフェースを提供します。50 以上の組み込みプリセット、統一 MCP・Skills 管理、システムトレイからの即時切り替え機能を搭載。すべてはアトミック書き込みによる信頼性の高い SQLite データベースに支えられており、設定の破損を防ぎます。
+
+- **1 つのアプリで 5 つの CLI ツール** -- Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw を単一インターフェースで管理
+- **手動編集は不要** -- AWS Bedrock、NVIDIA NIM、コミュニティリレーなど 50 以上のプロバイダプリセットを内蔵。選んで切り替えるだけ
+- **統一 MCP・Skills 管理** -- 1 つのパネルで 4 つのアプリの MCP サーバーと Skills を双方向同期で管理
+- **システムトレイでクイック切り替え** -- トレイメニューから即座にプロバイダを切り替え。アプリを開く必要なし
+- **クラウド同期** -- Dropbox、OneDrive、iCloud、または WebDAV サーバー経由でデバイス間のプロバイダデータを同期
+- **クロスプラットフォーム** -- Tauri 2 で構築された Windows、macOS、Linux 対応のネイティブデスクトップアプリ
+- **便利ツール内蔵** -- 初回起動時のログイン確認、署名バイパス、プラグイン拡張の同期など、さまざまなユーティリティを搭載
 
 ## スクリーンショット
 
@@ -70,101 +106,117 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 
 ## 特長
 
-### 現在のバージョン：v3.10.2 | [完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-note-v3.9.0-ja.md)
+[完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-notes/v3.11.1-ja.md)
 
-**v3.8.0 メジャーアップデート (2025-11-28)**
+### プロバイダ管理
 
-**永続化アーキテクチャ刷新 & 新 UI**
+- **5 つの CLI ツール、50 以上のプリセット** -- Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw。キーをコピーしてワンクリックでインポート
+- **ユニバーサルプロバイダ** -- 1 つの設定を複数アプリに同期（OpenCode、OpenClaw）
+- ワンクリック切り替え、システムトレイクイックアクセス、ドラッグ＆ドロップ並び替え、インポート/エクスポート
 
-- **SQLite + JSON 二層構造**
-  - JSON 単独保存から SQLite + JSON の二層構造へ移行
-  - 同期対象データ（プロバイダ、MCP、Prompts、Skills）は SQLite に保存
-  - デバイス固有データ（ウィンドウ状態、ローカルパス）は JSON に保存
-  - 将来のクラウド同期の土台を用意
-  - DB マイグレーション用にスキーマバージョンを管理
+### プロキシ & フェイルオーバー
 
-- **新しいユーザーインターフェース**
-  - レイアウトを全面再設計
-  - コンポーネントスタイルとアニメーションを統一
-  - 視覚的な階層を最適化
-  - ブラウザ互換性向上のため Tailwind CSS を v4 から v3.4 にダウングレード
+- **ローカルプロキシのホットスイッチ** -- フォーマット変換、自動フェイルオーバー、サーキットブレーカー、プロバイダヘルスモニタリング、リクエストレクティファイア
+- **アプリレベルのテイクオーバー** -- Claude、Codex、Gemini を個別にプロキシ経由でルーティング、プロバイダ単位で設定可能
 
-- **日本語対応**
-  - UI が中国語/英語/日本語の 3 言語対応に
+### MCP、Prompts & Skills
 
-- **自動起動**
-  - 設定画面でワンクリック ON/OFF
-  - プラットフォームネイティブ API（Registry/LaunchAgent/XDG autostart）を使用
+- **統一 MCP パネル** -- 4 つのアプリの MCP サーバーを管理、双方向同期、Deep Link インポート対応
+- **Prompts** -- Markdown エディタ、クロスアプリ同期（CLAUDE.md / AGENTS.md / GEMINI.md）、バックフィル保護
+- **Skills** -- GitHub リポジトリまたは ZIP ファイルからワンクリックインストール、カスタムリポジトリ管理、シンボリックリンクとファイルコピーに対応
 
-- **Skills 再帰スキャン**
-  - 多階層ディレクトリをサポート
-  - リポジトリが異なる同名スキルを許可
+### 使用量 & コストトラッキング
 
-- **重要なバグ修正**
-  - プロバイダ更新時にカスタムエンドポイントが失われる問題を修正
-  - Gemini 設定の書き込み問題を修正
-  - Linux WebKitGTK の描画問題を修正
+- **使用量ダッシュボード** -- プロバイダ横断で支出・リクエスト数・トークン使用量を追跡、トレンドチャート、詳細リクエストログ、カスタムモデル価格設定
 
-**v3.7.0 ハイライト**
+### Session Manager & ワークスペース
 
-**6 つのコア機能、18,000 行超の新コード**
+- すべてのアプリの会話履歴を閲覧・検索・復元
+- **ワークスペースエディタ**（OpenClaw）-- エージェントファイル（AGENTS.md、SOUL.md など）を Markdown プレビュー付きで編集
 
-- **Gemini CLI 統合**
-  - Claude Code / Codex / Gemini の 3 番目のサポート AI CLI
-  - 2 つの設定ファイル（`.env` + `settings.json`）に対応
-  - MCP サーバー管理を完備
-  - プリセット：Google 公式（OAuth）/ PackyCode / カスタム
+### システム & プラットフォーム
 
-- **Claude Skills 管理システム**
-  - GitHub リポジトリを自動スキャン（3 つのキュレーション済みリポジトリを同梱）
-  - `~/.claude/skills/` へワンクリックでインストール/アンインストール
-  - カスタムリポジトリ + サブディレクトリスキャンをサポート
-  - ライフサイクル管理（検出/インストール/更新）を完備
+- **クラウド同期** -- カスタム設定ディレクトリ（Dropbox、OneDrive、iCloud、NAS）および WebDAV サーバー同期
+- **Deep Link** (`ccswitch://`) -- URL 経由でプロバイダ、MCP サーバー、Prompts、Skills をワンクリックインポート
+- ダーク / ライト / システムテーマ、自動起動、自動アップデーター、アトミック書き込み、自動バックアップ、多言語対応（中/英/日）
 
-- **Prompts 管理システム**
-  - 無制限のシステムプロンプトプリセットを作成
-  - Markdown エディタ（CodeMirror 6 + リアルタイムプレビュー）付き
-  - スマートなバックフィル保護で手動変更を保持
-  - 複数アプリに同時対応（Claude: `CLAUDE.md` / Codex: `AGENTS.md` / Gemini: `GEMINI.md`）
+## よくある質問
 
-- **MCP v3.7.0 統合アーキテクチャ**
-  - 1 つのパネルで 3 アプリの MCP を管理
-  - 新たに SSE（Server-Sent Events）トランスポートを追加
-  - スマート JSON パーサー + Codex TOML 自動修正
-  - 双方向のインポート/エクスポート + 双方向同期
+<details>
+<summary><strong>CC Switch はどの AI CLI ツールに対応していますか？</strong></summary>
 
-- **ディープリンクプロトコル**
-  - `ccswitch://` を全プラットフォームで登録
-  - 共有リンクからプロバイダ設定をワンクリックでインポート
-  - セキュリティ検証 + ライフサイクル統合
+CC Switch は **Claude Code**、**Codex**、**Gemini CLI**、**OpenCode**、**OpenClaw** の 5 つのツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。
 
-- **環境変数の競合検知**
-  - Claude/Codex/Gemini/MCP 間の設定競合を自動検出
-  - 競合表示 + 解決ガイド
-  - 上書き前の警告 + バックアップ
+</details>
 
-**コア機能**
+<details>
+<summary><strong>プロバイダを切り替えた後、ターミナルの再起動は必要ですか？</strong></summary>
 
-- **プロバイダ管理**：Claude Code、Codex、Gemini の API 設定をワンクリックで切り替え
-- **速度テスト**：エンドポイント遅延を計測し、品質を可視化
-- **インポート/エクスポート**：設定をバックアップ・復元（最新 10 件を自動ローテーション）
-- **多言語対応**：UI/エラー/トレイを含む中国語・英語・日本語ローカライズ
-- **Claude プラグイン同期**：Claude プラグイン設定をワンクリックで適用/復元
+ほとんどのツールでは、はい。変更を反映するにはターミナルまたは CLI ツールを再起動してください。ただし **Claude Code** は例外で、現在プロバイダデータのホットスイッチに対応しており、再起動は不要です。
 
-**v3.6 ハイライト**
+</details>
 
-- プロバイダの複製とドラッグ＆ドロップ並び替え
-- 複数エンドポイント管理とカスタム設定ディレクトリ（クラウド同期準備済み）
-- 4 階層のモデル設定（Haiku/Sonnet/Opus/Custom）
-- WSL 環境をサポートし、ディレクトリ変更時に自動同期
-- Hooks テスト 100% カバレッジ + アーキテクチャ全面リファクタ
+<details>
+<summary><strong>プロバイダを切り替えた後、プラグイン設定が消えてしまいました。どうすればよいですか？</strong></summary>
 
-**システム機能**
+CC Switch には「共有設定スニペット」機能があり、APIキーやエンドポイント以外の共通データをプロバイダ間で引き継ぐことができます。「プロバイダ編集」→「共有設定パネル」→「現在のプロバイダから抽出」をクリックして、すべての共通データを保存してください。新しいプロバイダを作成する際に「共有設定を書き込む」にチェック（デフォルトで有効）を入れれば、プラグインなどのデータが新しいプロバイダ設定に含まれます。すべての設定項目は、アプリ初回起動時にインポートされたデフォルトプロバイダに保存されており、失われることはありません。
 
-- クイックスイッチ付きシステムトレイ
-- シングルインスタンス常駐
-- ビルトイン自動アップデータ
-- ロールバック保護付きのアトミック書き込み
+</details>
+
+<details>
+<summary><strong>macOS で「開発元を確認できません」と表示されます。どうすればよいですか？</strong></summary>
+
+開発者が Apple Developer アカウントをまだ取得していないためです（登録手続き中）。警告を閉じてから、**システム設定 → プライバシーとセキュリティ → このまま開く**をクリックしてください。以降は通常通り起動できます。
+
+</details>
+
+<details>
+<summary><strong>現在アクティブなプロバイダを削除できないのはなぜですか？</strong></summary>
+
+CC Switch は「最小限の介入」という設計原則に従っています。アプリをアンインストールしても、CLI ツールは正常に動作し続けます。すべての設定を削除すると対応する CLI ツールが使用できなくなるため、システムは常にアクティブな設定を 1 つ保持します。特定の CLI ツールをあまり使用しない場合は、設定で非表示にできます。公式ログインに戻す方法は、次の質問をご覧ください。
+
+</details>
+
+<details>
+<summary><strong>公式ログインに戻すにはどうすればよいですか？</strong></summary>
+
+プリセットリストから公式プロバイダを追加してください。切り替え後、ログアウト／ログインのフローを実行すれば、以降は公式プロバイダとサードパーティプロバイダを自由に切り替えられます。Codex では異なる公式プロバイダ間の切り替えに対応しており、複数の Plus アカウントや Team アカウントの切り替えに便利です。
+
+</details>
+
+<details>
+<summary><strong>データはどこに保存されますか？</strong></summary>
+
+- **データベース**: `~/.cc-switch/cc-switch.db`（SQLite -- プロバイダ、MCP、Prompts、Skills）
+- **ローカル設定**: `~/.cc-switch/settings.json`（デバイスレベルの UI 設定）
+- **バックアップ**: `~/.cc-switch/backups/`（自動ローテーション、最新 10 件を保持）
+- **Skills**: `~/.cc-switch/skills/`（デフォルトでシンボリックリンクにより対応アプリに接続）
+
+</details>
+
+## ドキュメント
+
+各機能の詳しい使い方については、**[ユーザーマニュアル](docs/user-manual/ja/README.md)** をご覧ください。プロバイダ管理、MCP/Prompts/Skills、プロキシとフェイルオーバーなど、すべての機能を網羅しています。
+
+## クイックスタート
+
+### 基本的な使い方
+
+1. **プロバイダ追加**: 「Add Provider」をクリック → プリセットを選ぶかカスタム設定を作成
+2. **プロバイダ切り替え**:
+   - メイン UI: プロバイダを選択 → 「Enable」をクリック
+   - システムトレイ: プロバイダ名をクリック（即時反映）
+3. **反映**: ターミナルまたは対応する CLI ツールを再起動して適用（Claude Code は再起動不要）
+4. **公式設定に戻す**: 「Official Login」プリセットを追加し、CLI ツールを再起動してログイン/OAuth フローを実行
+
+### MCP、Prompts、Skills & Sessions
+
+- **MCP**: 「MCP」ボタンをクリック → テンプレートまたはカスタム設定でサーバーを追加 → アプリごとの同期をトグルで切り替え
+- **Prompts**: 「Prompts」をクリック → Markdown エディタでプリセットを作成 → 有効化してライブファイルに同期
+- **Skills**: 「Skills」をクリック → GitHub リポジトリを閲覧 → ワンクリックですべてのアプリにインストール
+- **Sessions**: 「Sessions」をクリック → すべてのアプリの会話履歴を閲覧・検索・復元
+
+> **補足**: 初回起動時に、既存の CLI ツール設定を手動でインポートしてデフォルトプロバイダとして使用できます。
 
 ## ダウンロード & インストール
 
@@ -199,7 +251,7 @@ brew upgrade --cask cc-switch
 
 > **注意**: 開発者アカウント未登録のため、初回起動時に「開発元を確認できません」と表示される場合があります。一度閉じてから「システム設定」→「プライバシーとセキュリティ」→「このまま開く」をクリックしてください。以降は通常通り起動できます。
 
-### ArchLinux ユーザー
+### Arch Linux ユーザー
 
 **paru でインストール（推奨）**
 
@@ -223,89 +275,8 @@ flatpak install --user ./CC-Switch-v{version}-Linux.flatpak
 flatpak run com.ccswitch.desktop
 ```
 
-## クイックスタート
-
-### 基本的な使い方
-
-1. **プロバイダ追加**：「Add Provider」をクリック → プリセットを選ぶかカスタム設定を作成
-2. **プロバイダ切り替え**:
-   - メイン UI: プロバイダを選択 → 「Enable」をクリック
-   - システムトレイ: プロバイダ名をクリック（即時反映）
-3. **反映**: ターミナルや Claude Code / Codex / Gemini クライアントを再起動して適用
-4. **公式設定に戻す**: 「Official Login」プリセット（Claude/Codex）または「Google Official」プリセット（Gemini）を選び、対応クライアントを再起動してログイン/OAuth を実行
-
-### MCP 管理
-
-- **入口**: 右上の「MCP」ボタンをクリック
-- **サーバー追加**:
-  - 組み込みテンプレート（mcp-fetch、mcp-filesystem など）を使用
-  - stdio / http / sse の各トランスポートをサポート
-  - アプリごとに独立した MCP を設定可能
-- **有効/無効**: トグルでライブ設定への同期を切り替え
-- **同期**: 有効なサーバーは各アプリのライブファイルへ自動同期
-- **インポート/エクスポート**: Claude/Codex/Gemini の設定ファイルから既存 MCP を取り込み
-
-### Skills 管理 (v3.7.0 新機能)
-
-- **入口**: 右上の「Skills」ボタンをクリック
-- **スキル探索**:
-  - 事前設定済みの GitHub リポジトリを自動スキャン（Anthropic 公式、ComposioHQ、コミュニティなど）
-  - カスタムリポジトリを追加（サブディレクトリスキャン対応）
-- **インストール**: 「Install」を押すだけで `~/.claude/skills/` に配置
-- **アンインストール**: 「Uninstall」で安全に削除と状態クリーンアップ
-- **リポジトリ管理**: カスタム GitHub リポジトリを追加/削除
-
-### Prompts 管理 (v3.7.0 新機能)
-
-- **入口**: 右上の「Prompts」ボタンをクリック
-- **プリセット作成**:
-  - 無制限のシステムプロンプトプリセットを作成
-  - Markdown エディタで記述（シンタックスハイライト + リアルタイムプレビュー）
-- **プリセット切り替え**: プリセットを選択 → 「Activate」で即適用
-- **同期先**:
-  - Claude: `~/.claude/CLAUDE.md`
-  - Codex: `~/.codex/AGENTS.md`
-  - Gemini: `~/.gemini/GEMINI.md`
-- **保護機構**: 切り替え前に現在の内容を自動保存し、手動変更を保持
-
-### 設定ファイルパス
-
-**Claude Code**
-
-- ライブ設定: `~/.claude/settings.json`（または `claude.json`）
-- API キーフィールド: `env.ANTHROPIC_AUTH_TOKEN` または `env.ANTHROPIC_API_KEY`
-- MCP サーバー: `~/.claude.json` → `mcpServers`
-
-**Codex**
-
-- ライブ設定: `~/.codex/auth.json`（必須）+ `config.toml`（任意）
-- API キーフィールド: `auth.json` 内の `OPENAI_API_KEY`
-- MCP サーバー: `~/.codex/config.toml` → `[mcp_servers]` テーブル
-
-**Gemini**
-
-- ライブ設定: `~/.gemini/.env`（API キー）+ `~/.gemini/settings.json`（認証モード）
-- API キーフィールド: `.env` 内の `GEMINI_API_KEY` または `GOOGLE_GEMINI_API_KEY`
-- 環境変数: `GOOGLE_GEMINI_BASE_URL`、`GEMINI_MODEL` などをサポート
-- MCP サーバー: `~/.gemini/settings.json` → `mcpServers`
-- トレイでのクイックスイッチ: プロバイダ切り替えごとに `~/.gemini/.env` を書き換えるため Gemini CLI の再起動は不要
-
-**CC Switch 保存先 (v3.8.0 新アーキテクチャ)**
-
-- データベース (SSOT): `~/.cc-switch/cc-switch.db`（SQLite。プロバイダ、MCP、Prompts、Skills を保存）
-- ローカル設定: `~/.cc-switch/settings.json`（デバイスレベル設定）
-- バックアップ: `~/.cc-switch/backups/`（自動ローテーション、最新 10 件を保持）
-
-### クラウド同期の設定
-
-1. 設定 → 「Custom Configuration Directory」へ進む
-2. クラウド同期フォルダ（Dropbox、OneDrive、iCloud など）を選択
-3. アプリを再起動して反映
-4. 他のデバイスでも同じフォルダを指定すればクロスデバイス同期が有効に
-
-> **補足**: 初回起動時に既存の Claude/Codex 設定をデフォルトプロバイダとして自動インポートします。
-
-## アーキテクチャ概要
+<details>
+<summary><strong>アーキテクチャ概要</strong></summary>
 
 ### 設計原則
 
@@ -333,23 +304,22 @@ flatpak run com.ccswitch.desktop
 - **二層ストレージ**: 同期データは SQLite、デバイスデータは JSON
 - **双方向同期**: 切り替え時はライブファイルへ書き込み、編集時はアクティブプロバイダから逆同期
 - **アトミック書き込み**: 一時ファイル + rename パターンで設定破損を防止
-- **並行安全**: Mutex で保護された DB 接続でレースを防ぐ
+- **並行安全**: Mutex で保護された DB 接続でレースコンディションを防止
 - **レイヤードアーキテクチャ**: Commands → Services → DAO → Database を明確に分離
 
 **主要コンポーネント**
 
 - **ProviderService**: プロバイダの CRUD、切り替え、バックフィル、ソート
 - **McpService**: MCP サーバー管理、インポート/エクスポート、ライブファイル同期
+- **ProxyService**: ローカル Proxy モードのホットスイッチとフォーマット変換
+- **SessionManager**: Claude Code の会話履歴閲覧
 - **ConfigService**: 設定のインポート/エクスポート、バックアップローテーション
 - **SpeedtestService**: API エンドポイントの遅延計測
 
-**v3.6 リファクタリング**
+</details>
 
-- バックエンド: エラーハンドリング → コマンド分割 → テスト → サービス層 → 並行性の 5 フェーズ
-- フロントエンド: テスト基盤 → hooks → コンポーネント → クリーンアップの 4 ステージ
-- テスト: hooks 100% カバレッジ + 統合テスト（vitest + MSW）
-
-## 開発
+<details>
+<summary><strong>開発ガイド</strong></summary>
 
 ### 開発環境
 
@@ -410,25 +380,13 @@ cargo test test_name
 cargo test --features test-hooks
 ```
 
-### テストガイド (v3.6)
+### テストガイド
 
 **フロントエンドテスト**:
 
 - テストフレームワークに **vitest** を使用
 - **MSW (Mock Service Worker)** で Tauri API 呼び出しをモック
 - コンポーネントテストに **@testing-library/react** を採用
-
-**テストカバレッジ**:
-
-- Hooks の単体テスト（100% カバレッジ）
-  - `useProviderActions` - プロバイダ操作
-  - `useMcpActions` - MCP 管理
-  - `useSettings` 系 - 設定管理
-  - `useImportExport` - インポート/エクスポート
-- 統合テスト
-  - アプリのメインフロー
-  - SettingsDialog の一連操作
-  - MCP パネルの機能
 
 **テスト実行**:
 
@@ -443,60 +401,68 @@ pnpm test:unit:watch
 pnpm test:unit --coverage
 ```
 
-## 技術スタック
+### 技術スタック
 
-**フロントエンド**: React 18 · TypeScript · Vite · TailwindCSS 4 · TanStack Query v5 · react-i18next · react-hook-form · zod · shadcn/ui · @dnd-kit
+**フロントエンド**: React 18 · TypeScript · Vite · TailwindCSS 3.4 · TanStack Query v5 · react-i18next · react-hook-form · zod · shadcn/ui · @dnd-kit
 
 **バックエンド**: Tauri 2.8 · Rust · serde · tokio · thiserror · tauri-plugin-updater/process/dialog/store/log
 
 **テスト**: vitest · MSW · @testing-library/react
 
-## プロジェクト構成
+</details>
+
+<details>
+<summary><strong>プロジェクト構成</strong></summary>
 
 ```
-├── src/                      # フロントエンド (React + TypeScript)
-│   ├── components/           # UI コンポーネント (providers/settings/mcp/ui)
-│   ├── hooks/                # ビジネスロジック用カスタムフック
+├── src/                        # フロントエンド (React + TypeScript)
+│   ├── components/
+│   │   ├── providers/          # プロバイダ管理
+│   │   ├── mcp/                # MCP パネル
+│   │   ├── prompts/            # Prompts 管理
+│   │   ├── skills/             # Skills 管理
+│   │   ├── sessions/           # Session Manager
+│   │   ├── proxy/              # Proxy モードパネル
+│   │   ├── openclaw/           # OpenClaw 設定パネル
+│   │   ├── settings/           # 設定 (Terminal/Backup/About)
+│   │   ├── deeplink/           # Deep Link インポート
+│   │   ├── env/                # 環境変数管理
+│   │   ├── universal/          # クロスアプリ設定
+│   │   ├── usage/              # 使用量統計
+│   │   └── ui/                 # shadcn/ui コンポーネントライブラリ
+│   ├── hooks/                  # カスタムフック（ビジネスロジック）
 │   ├── lib/
-│   │   ├── api/              # Tauri API ラッパー (型安全)
-│   │   └── query/            # TanStack Query 設定
-│   ├── i18n/locales/         # 翻訳 (zh/en)
-│   ├── config/               # プリセット (providers/mcp)
-│   └── types/                # TypeScript 型定義
-├── src-tauri/                # バックエンド (Rust)
+│   │   ├── api/                # Tauri API ラッパー（型安全）
+│   │   └── query/              # TanStack Query 設定
+│   ├── locales/                # 翻訳 (zh/en/ja)
+│   ├── config/                 # プリセット (providers/mcp)
+│   └── types/                  # TypeScript 型定義
+├── src-tauri/                  # バックエンド (Rust)
 │   └── src/
-│       ├── commands/         # Tauri コマンド層 (ドメイン別)
-│       ├── services/         # ビジネスロジック層
-│       ├── app_config.rs     # 設定モデル
-│       ├── provider.rs       # プロバイダドメインモデル
-│       ├── mcp.rs            # MCP 同期 & 検証
-│       └── lib.rs            # アプリエントリ & トレイメニュー
-├── tests/                    # フロントエンドテスト
-│   ├── hooks/                # 単体テスト
-│   └── components/           # 統合テスト
-└── assets/                   # スクリーンショット & スポンサーリソース
+│       ├── commands/           # Tauri コマンド層（ドメイン別）
+│       ├── services/           # ビジネスロジック層
+│       ├── database/           # SQLite DAO 層
+│       ├── proxy/              # Proxy モジュール
+│       ├── session_manager/    # セッション管理
+│       ├── deeplink/           # Deep Link 処理
+│       └── mcp/                # MCP 同期モジュール
+├── tests/                      # フロントエンドテスト
+└── assets/                     # スクリーンショット & パートナーリソース
 ```
 
-## 更新履歴
-
-詳細は [CHANGELOG.md](CHANGELOG.md) をご覧ください。
-
-## 旧 Electron 版
-
-[Releases](../../releases) に v2.0.3 の Electron 旧版を残しています。
-
-旧版コードが必要な場合は `electron-legacy` ブランチを取得してください。
+</details>
 
 ## 貢献
 
 Issue や提案を歓迎します！
 
-PR を送る前に以下をご確認ください:
+PR を送る前に以下をご確認ください：
 
 - 型チェック: `pnpm typecheck`
 - フォーマットチェック: `pnpm format:check`
 - 単体テスト: `pnpm test:unit`
-- 💡 新機能の場合は、事前に Issue でディスカッションしていただけると助かります
+
+新機能の場合は、PR を送る前に Issue でディスカッションしてください。プロジェクトに合わない機能の PR はクローズされる場合があります。
 
 ## Star History
 

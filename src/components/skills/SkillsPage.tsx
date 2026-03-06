@@ -213,14 +213,12 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       const query = searchQuery.toLowerCase();
       return byStatus.filter((skill) => {
         const name = skill.name?.toLowerCase() || "";
-        const description = skill.description?.toLowerCase() || "";
-        const directory = skill.directory?.toLowerCase() || "";
+        const repo =
+          skill.repoOwner && skill.repoName
+            ? `${skill.repoOwner}/${skill.repoName}`.toLowerCase()
+            : "";
 
-        return (
-          name.includes(query) ||
-          description.includes(query) ||
-          directory.includes(query)
-        );
+        return name.includes(query) || repo.includes(query);
       });
     }, [skills, searchQuery, filterRepo, filterStatus]);
 
