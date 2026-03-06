@@ -601,7 +601,19 @@
     "daysAgo": "{{count}}日前",
     "roleUser": "ユーザー",
     "roleSystem": "システム",
-    "roleTool": "ツール"
+    "roleTool": "ツール",
+    "exportCurrent": "現在のセッションをエクスポート",
+    "exportSelected": "選択を一括エクスポート（{{count}}）",
+    "exportFormat": "エクスポート形式",
+    "exportFormatMd": "Markdown (.md)",
+    "exportFormatJson": "JSON (.json)",
+    "exporting": "エクスポート中...",
+    "exportCurrentSuccess": "現在のセッションをエクスポートしました",
+    "exportCurrentFailed": "現在のセッションのエクスポートに失敗しました",
+    "exportBatchSuccess": "{{count}} 件のセッションをエクスポートしました",
+    "exportBatchFailed": "セッションの一括エクスポートに失敗しました",
+    "noSelectedSessions": "先にセッションを選択してください",
+    "selectForBatchExport": "一括エクスポート対象として選択"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",

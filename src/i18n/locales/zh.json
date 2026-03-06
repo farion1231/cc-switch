@@ -601,7 +601,19 @@
     "daysAgo": "{{count}} 天前",
     "roleUser": "用户",
     "roleSystem": "系统",
-    "roleTool": "工具"
+    "roleTool": "工具",
+    "exportCurrent": "导出当前会话",
+    "exportSelected": "批量导出（已选 {{count}}）",
+    "exportFormat": "导出格式",
+    "exportFormatMd": "Markdown (.md)",
+    "exportFormatJson": "JSON (.json)",
+    "exporting": "导出中...",
+    "exportCurrentSuccess": "当前会话导出成功",
+    "exportCurrentFailed": "导出当前会话失败",
+    "exportBatchSuccess": "已成功导出 {{count}} 个会话",
+    "exportBatchFailed": "批量导出会话失败",
+    "noSelectedSessions": "请先选择会话",
+    "selectForBatchExport": "选择用于批量导出"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",

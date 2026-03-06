@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use crate::session_manager;
+use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
 pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
@@ -56,4 +57,67 @@ pub async fn launch_session_terminal(
     .map_err(|e| format!("Failed to launch terminal: {e}"))??;
 
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn save_session_export_file_dialog<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    defaultName: String,
+    format: String,
+) -> Result<Option<String>, String> {
+    let ext = match format.as_str() {
+        "md" => "md",
+        "json" => "json",
+        _ => return Err(format!("Unsupported export format: {format}")),
+    };
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter(ext.to_uppercase(), &[ext])
+            .set_file_name(&defaultName)
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| format!("Failed to open save dialog: {e}"))?;
+
+    Ok(result.map(|p| p.to_string()))
+}
+
+#[tauri::command]
+pub async fn export_session_to_file(
+    providerId: String,
+    sourcePath: String,
+    format: String,
+    filePath: String,
+    sessionId: Option<String>,
+    title: Option<String>,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::export_session_to_file(
+            &providerId,
+            &sourcePath,
+            sessionId.as_deref(),
+            title.as_deref(),
+            &format,
+            &filePath,
+        )
+    })
+    .await
+    .map_err(|e| format!("Failed to export session: {e}"))??;
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn export_sessions_to_directory(
+    sessions: Vec<session_manager::SessionExportTarget>,
+    format: String,
+    directoryPath: String,
+) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::export_sessions_to_directory(sessions, &format, &directoryPath)
+    })
+    .await
+    .map_err(|e| format!("Failed to batch export sessions: {e}"))?
 }
