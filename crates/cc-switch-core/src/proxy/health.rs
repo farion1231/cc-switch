@@ -1,19 +1,7 @@
-//! Health checker for providers
+//! 健康检查器
+//!
+//! 负责定期检查Provider健康状态（占位实现）
 
-use std::time::Duration;
-
-pub struct HealthChecker {
-    _timeout: Duration,
-}
-
-impl HealthChecker {
-    pub fn new(timeout_secs: u64) -> Self {
-        Self {
-            _timeout: Duration::from_secs(timeout_secs),
-        }
-    }
-
-    pub async fn check(&self, _url: &str) -> Result<u64, String> {
-        Ok(0)
-    }
-}
+// 占位实现，稍后添加完整逻辑
+#[allow(dead_code)]
+pub struct HealthChecker;

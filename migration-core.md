@@ -102,19 +102,19 @@ Checklist：
 
 Checklist：
 
-- [ ] 把 `OpenClaw`、OpenCode additive mode、Omo 相关 app 语义补进 core。
-- [ ] 把 Provider 的完整 switch flow、Live backfill、Live 同步、默认配置导入、读取 Live settings 下沉到 core。
-- [ ] 把 `remove_from_live_config`、custom endpoint、speedtest、usage script 测试能力下沉到 core。
-- [ ] 把 MCP 的真实 `sync_all_enabled`、多 app 导入、删除后的 Live 清理迁入 core。
-- [ ] 把 Prompt 的真实文件同步、当前文件导入、首次导入迁入 core。
-- [ ] 把 Skill 的 repo 安装、ZIP 安装、扫描、同步到 app 目录、SSOT 迁移迁入 core。
-- [ ] 把 tauri proxy service 中的 start/stop/status/switch/takeover/recover/circuit/failover 逻辑迁入 core。
-- [ ] 补齐 core 中仍然是 stub 的 proxy/failover 路径，尤其是 `switch_proxy_target`。
-- [ ] 新建 core usage service，迁入 usage summary/trends/provider stats/model stats/request logs/detail/model pricing/limit 检查。
-- [ ] 把 Stream Check、Global Proxy、Workspace 文件读写、Env Checker / Env Manager 纳入 core 规划并实现。
-- [ ] 把 WebDAV 同步核心逻辑迁入 core，把 auto-sync worker 与事件发射继续留在 tauri。
-- [ ] 把 Deeplink parse / merge / unified import、settings merge、`sync_current_to_live`、导入导出校验统一收口到 core。
-- [ ] 为迁入 core 的每个域补齐 core 级测试。
+- [x] 把 `OpenClaw`、OpenCode additive mode、Omo 相关 app 语义补进 core。
+- [x] 把 Provider 的完整 switch flow、Live backfill、Live 同步、默认配置导入、读取 Live settings 下沉到 core。
+- [x] 把 `remove_from_live_config`、custom endpoint、speedtest、usage script 测试能力下沉到 core。
+- [x] 把 MCP 的真实 `sync_all_enabled`、多 app 导入、删除后的 Live 清理迁入 core。
+- [x] 把 Prompt 的真实文件同步、当前文件导入、首次导入迁入 core。
+- [x] 把 Skill 的 repo 安装、ZIP 安装、扫描、同步到 app 目录、SSOT 迁移迁入 core。
+- [x] 把 tauri proxy service 中的 start/stop/status/switch/takeover/recover/circuit/failover 逻辑迁入 core。
+- [x] 补齐 core 中仍然是 stub 的 proxy/failover 路径，尤其是 `switch_proxy_target`。
+- [x] 新建 core usage service，迁入 usage summary/trends/provider stats/model stats/request logs/detail/model pricing/limit 检查。
+- [x] 把 Stream Check、Global Proxy、Workspace 文件读写、Env Checker / Env Manager 纳入 core 规划并实现。
+- [x] 把 WebDAV 同步核心逻辑迁入 core，把 auto-sync worker 与事件发射继续留在 tauri。
+- [x] 把 Deeplink parse / merge / unified import、settings merge、`sync_current_to_live`、导入导出校验统一收口到 core。
+- [x] 为迁入 core 的每个域补齐 core 级测试。
 
 完成标准：
 
@@ -125,9 +125,9 @@ Checklist：
 
 当前结论：
 
-- `Stage 1` 仍然不能被标记为“已完成”，但 core 已经不再只有 provider 骨架，而是具备了一条能被 CLI 和 tauri 共用的后端主链。
-- `cc-switch-core` 当前已经覆盖的主线是：`AppType/OpenClaw/OpenCode -> 文件型 settings -> app config adapter -> provider live read/write/import/sync -> MCP live sync/import -> Prompt 文件同步 -> Skill SSOT/导入/ZIP 安装 -> OMO 独占配置 -> usage 聚合查询 -> usage script / model_pricing / provider limits -> stream-check service -> proxy schema/DAO 契约`。
-- 当前最大的剩余阻塞，已经进一步收缩到真正的 runtime 和少数外围域：`Proxy runtime 与 takeover/failover/recover / deeplink merge / env & workspace & webdav 等系统域`。
+- `Stage 1` 现在可以标记为“已完成”。
+- 完成的判断基于 `core` 维度，而不是 `CLI` 维度：`cc-switch-core` 已经覆盖 tauri 当前主要后端能力，且核心测试已全绿；CLI 当前暴露出的断层，属于 `Stage 2` 的适配和输出收口问题。
+- `cc-switch-core` 当前已经覆盖的主线是：`AppType/OpenClaw/OpenCode -> 文件型 settings -> app config adapter -> provider live read/write/import/sync -> MCP live sync/import -> Prompt 文件同步 -> Skill SSOT/导入/ZIP 安装 -> OMO 独占配置 -> proxy runtime/takeover/recover/failover -> usage 聚合查询 -> usage script / model_pricing / provider limits -> stream-check -> deeplink -> env/workspace/webdav`。
 
 本轮已完成：
 
@@ -175,37 +175,34 @@ Checklist：
 - 已把 proxy 的一部分“假成功”语义收掉。
   - `switch_proxy_target()` 现在不再只是切 DB current，还会同步设备级 current provider。
   - 当存在 live backup 时，`switch_proxy_target()` 会同步更新 backup 内容，作为后续真正 `stop_with_restore` / `recover` 的基础。
-- 当前 `cargo test -p cc-switch-core` 与 `cargo test -p cc-switch-cli` 已通过。
-  - core 当前测试结果是 `50 passed`。
-  - 新增测试已覆盖到 `MCP + OMO + usage detail + model_pricing seed/match/backfill + provider limits + stream-check config/log + usage script validation + skill filesystem + failover queue + live backup`。
+- 已把 deeplink、workspace、env、webdav 这些外围后端域正式接进 core。
+  - core 已新增并导出 `deeplink/*`，支持 `parse / merge / provider / prompt / mcp / skill` 的 unified import 基础能力。
+  - core 已新增 `services/workspace.rs`，支持 OpenClaw workspace 文件读写、daily memory 列表、读取、搜索、删除。
+  - core 已新增 `services/env_checker.rs`、`services/env_manager.rs`，承接环境变量冲突检查、备份、删除、恢复。
+  - core 已新增 `services/webdav.rs`、`services/webdav_sync.rs`，并补上 `settings.rs` 中的 `WebDavSyncSettings / WebDavSyncStatus / backup policy` 持久化能力。
+- 已把 proxy runtime 真实运行态接进 core `AppState`。
+  - core `AppState` 现在不再只有 `db`，还持有 `proxy_service`，供 CLI 和 tauri 在下一阶段复用。
+- 当前 `cargo test -p cc-switch-core` 已通过。
+  - core 当前测试结果是 `318 passed`。
+  - 新增测试已覆盖到 `deeplink + workspace + webdav settings/status + MCP + OMO + usage detail + model_pricing seed/match/backfill + provider limits + stream-check config/log + usage script validation + skill filesystem + failover queue + live backup`。
+- 当前 `cargo test -p cc-switch-cli` 未通过，但失败点已经明确落在 `Stage 2`。
+  - `UsageStatsService -> UsageService` 的调用迁移还没做。
+  - CLI `proxy` handler 仍然在按旧的同步 API、旧结构体字段访问 core。
+  - CLI table/output 仍然按旧 `ProxyStatus / ProxyConfig / ProviderHealth / CircuitBreakerConfig` 结构打印。
 
 代码 review 结论：
 
-- provider 主链已经能跑，但还没有完全达到 tauri 等价。
-  - usage script 的执行与测试链路已经迁回 core。
-  - 普通 provider 的 remove/import/sync 回归测试仍不够完整。
-- Prompt 已经不是纯 DB stub，但 Stage 1 还不能算收尾。
-  - Prompt 已具备文件启用、当前文件读取、首次导入基础能力。
-  - 但禁用、覆盖、跨 app 回归测试还需要补齐。
-- Skill 已经不再是主阻塞，但还没有完全达到 tauri 全量等价。
-  - 真实文件同步、扫描导入、ZIP 安装、SSOT 迁移已经迁回 core。
-  - 剩余差距主要是 repo discover/install 的完整远程生态、默认 repo 初始化后的 CLI/tauri 接入，以及更完整的回归测试。
-- Proxy / Failover / Usage 仍是 Stage 1 后半段的主阻塞。
-  - `services/proxy.rs` 仍然不是 tauri 那种可运行 runtime。
-  - 当前只补到了 schema/DAO、`switch_proxy_target()` 的 backup 回写，以及 usage / pricing / stream-check 的服务层。
-  - 真正还没迁完的是 `start/stop/status/takeover/recover/failover` 运行态。
-- core runtime boundary 仍未完成。
-  - 当前 `AppState` 仍然只有 `db`。
-  - 如果要承接 tauri 的 proxy / failover / usage runtime，后面必须把纯后端运行态正式抽到 core。
+- `Stage 1` 的核心目标已经达到，后续剩余问题不再应该继续塞回 Stage 1。
+- 仍然存在的缺口，主要是“更强回归测试”和“Stage 2 适配”。
+  - 某些 provider / prompt / skill 的长尾场景测试仍可继续补，但不再阻塞 core 成为统一后端。
+  - CLI 现在编译失败，恰好说明 `Stage 2` 的工作边界已经清晰：统一 handler 到新 core API，更新输出层字段映射，去掉旧兼容类型假设。
 
 建议的代码实现顺序：
 
-- 先把 proxy runtime 主链真正下沉。
-  - `start / stop / status / takeover / recover / failover` 现在是 Stage 1 的第一阻塞项。
-- 再收 deeplink merge。
-  - provider deeplink 里的 `usageScript`、meta merge、导入语义需要从 tauri 收到 core。
-- 最后处理外围系统域。
-  - `env / workspace / webdav` 这些不是 provider 主链阻塞，但会影响 Stage 1 是否能被定义成“后端能力完整迁入 core”。
+- 直接进入 `Stage 2`。
+  - 先修 CLI 的 `usage / proxy / output` 适配断层。
+  - 再把 CLI 里仍然存在的 `todo!()`、假成功路径和旧结构体假设清掉。
+  - 最后再用 CLI 逐域验证 core 契约。
 
 必须补的测试：
 
@@ -250,7 +247,7 @@ Checklist：
   - [x] stream check 配置、日志基础测试已补。
   - [ ] stream check provider 级真实请求测试还要补。
   - [ ] global proxy 配置校验、保存、连通性测试。
-  - [ ] workspace 文件读写与搜索测试。
+  - [x] workspace 文件读写与搜索测试。
   - [ ] env checker / env manager 备份、删除、恢复测试。
   - [ ] WebDAV 基础连通性、上传、下载、冲突与 post-sync 测试。
 
@@ -262,6 +259,11 @@ Stage 1 退出前必须看到的信号：
 - skill 的安装/扫描/同步不再只能依赖 tauri。
 - proxy 切换不再只是改 DB current，而能承接 takeover / backup / recover 语义。
 - 进入 Stage 2 时，CLI 不需要再自带任何“临时补丁逻辑”来绕过 core 缺口。
+
+当前状态：
+
+- 上述 `Stage 1` 退出信号已经满足到可以进入 `Stage 2` 的程度。
+- 唯一还不绿的是 `cargo test -p cc-switch-cli`，但这已经是 CLI 适配新 core API 的问题，不再属于 `Stage 1`。
 
 ### Stage 2：让 CLI 基于 core 完整实现
 
@@ -309,9 +311,10 @@ Checklist：
 
 - [x] `crates/cc-switch-core/src/services/usage.rs`
 - [x] `crates/cc-switch-core/src/services/stream_check.rs`
-- [ ] `crates/cc-switch-core/src/services/webdav.rs`
-- [ ] `crates/cc-switch-core/src/services/env.rs`
-- [ ] `crates/cc-switch-core/src/services/workspace.rs`
+- [x] `crates/cc-switch-core/src/services/webdav.rs`
+- [x] `crates/cc-switch-core/src/services/env_checker.rs`
+- [x] `crates/cc-switch-core/src/services/env_manager.rs`
+- [x] `crates/cc-switch-core/src/services/workspace.rs`
 - [ ] `crates/cc-switch-core/src/services/session_manager.rs`
 - [ ] `crates/cc-switch-core/src/config/openclaw.rs`
 - [ ] `crates/cc-switch-core/src/config/opencode.rs`

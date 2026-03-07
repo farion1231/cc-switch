@@ -19,8 +19,7 @@ use crate::store::AppState;
 
 use super::McpService;
 use live::{
-    remove_openclaw_provider_from_live, remove_opencode_provider_from_live,
-    sanitize_claude_settings_for_live, write_gemini_live,
+    remove_openclaw_provider_from_live, remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -32,6 +31,8 @@ pub struct ProviderSortUpdate {
 }
 
 pub struct ProviderService;
+
+pub(crate) use live::sanitize_claude_settings_for_live;
 
 impl ProviderService {
     fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
@@ -832,7 +833,7 @@ impl ProviderService {
         }
     }
 
-    fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+    pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
         match app_type {
             AppType::Claude => {
                 let path = crate::config::get_claude_settings_path();

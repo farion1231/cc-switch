@@ -7,6 +7,24 @@ use crate::error::AppError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UsageSummary {
+    pub total_requests: u64,
+    pub total_tokens: u64,
+    pub total_cost: f64,
+    pub requests_by_model: std::collections::HashMap<String, u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestLog {
+    pub timestamp: String,
+    pub model: String,
+    pub total_tokens: u64,
+    pub cost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UsageTrendPoint {
     pub date: String,
     pub request_count: u64,

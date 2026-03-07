@@ -764,6 +764,11 @@ impl Database {
         Self::ensure_model_pricing_seeded_on_conn(&conn)
     }
 
+    pub fn apply_schema_migrations(&self) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        Self::apply_schema_migrations_on_conn(&conn)
+    }
+
     fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
         Self::seed_model_pricing(conn)
     }

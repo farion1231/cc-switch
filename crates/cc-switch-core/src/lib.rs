@@ -7,6 +7,7 @@ pub mod app_config;
 pub mod codex_config;
 pub mod config;
 pub mod database;
+pub mod deeplink;
 pub mod error;
 pub mod gemini_config;
 pub mod mcp;
@@ -23,15 +24,19 @@ pub mod usage_script;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, SkillApps, UnmanagedSkill};
 pub use database::Database;
+pub use deeplink::{
+    import_mcp_from_deeplink, import_prompt_from_deeplink, import_provider_from_deeplink,
+    import_skill_from_deeplink, parse_and_merge_config, parse_deeplink_url, DeepLinkImportRequest,
+};
 pub use error::AppError;
 pub use prompt::Prompt;
 pub use provider::{Provider, UniversalProvider};
 pub use services::config::{DeeplinkImportResult, DeeplinkService};
 pub use services::omo::{OmoLocalFileData, OmoService, OmoVariant, SLIM, STANDARD};
 pub use services::provider::{EndpointLatency, ProviderSortUpdate};
-pub use services::proxy::{
+pub use proxy::{
     CircuitBreakerConfig, FailoverQueueItem, LiveBackup, ProviderHealth, ProxyConfig, ProxyStatus,
-    ProxyTakeoverStatus, RequestLog, UsageStatsService, UsageSummary,
+    ProxyTakeoverStatus,
 };
 pub use services::skill::{
     migrate_skills_to_ssot, DiscoverableSkill, Skill, SkillRepo, SkillStore,
@@ -40,12 +45,15 @@ pub use services::stream_check::{
     HealthStatus, StreamCheckConfig, StreamCheckResult, StreamCheckService,
 };
 pub use services::usage::{
-    ModelPricingInfo, PaginatedUsageLogs, ProviderLimitStatus, UsageLogDetail, UsageLogFilters,
-    UsageModelStat, UsageProviderStat, UsageService, UsageTrendPoint,
+    ModelPricingInfo, PaginatedUsageLogs, ProviderLimitStatus, RequestLog, UsageLogDetail,
+    UsageLogFilters, UsageModelStat, UsageProviderStat, UsageService, UsageSummary,
+    UsageTrendPoint,
 };
+pub use services::webdav_sync::{check_connection as webdav_check_connection, fetch_remote_info};
+pub use services::workspace::{DailyMemoryFileInfo, DailyMemorySearchResult, WorkspaceService};
 pub use services::{
     ConfigService, McpService, PromptService, ProviderService, ProxyService, SkillService,
     SpeedtestService,
 };
-pub use settings::AppSettings;
+pub use settings::{AppSettings, WebDavSyncSettings, WebDavSyncStatus};
 pub use store::AppState;

@@ -1,6 +1,7 @@
 //! Database module - SQLite persistence layer
 
-mod dao;
+mod backup;
+pub(crate) mod dao;
 mod schema;
 
 use crate::config::database_path;

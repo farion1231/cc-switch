@@ -92,6 +92,104 @@ impl VisibleApps {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavSyncStatus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_remote_etag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_local_manifest_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_remote_manifest_hash: Option<String>,
+}
+
+fn default_remote_root() -> String {
+    "cc-switch-sync".to_string()
+}
+
+fn default_profile() -> String {
+    "default".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavSyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_sync: bool,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default = "default_remote_root")]
+    pub remote_root: String,
+    #[serde(default = "default_profile")]
+    pub profile: String,
+    #[serde(default)]
+    pub status: WebDavSyncStatus,
+}
+
+impl Default for WebDavSyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_sync: false,
+            base_url: String::new(),
+            username: String::new(),
+            password: String::new(),
+            remote_root: default_remote_root(),
+            profile: default_profile(),
+            status: WebDavSyncStatus::default(),
+        }
+    }
+}
+
+impl WebDavSyncSettings {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if self.base_url.trim().is_empty() {
+            return Err(AppError::localized(
+                "webdav.base_url.required",
+                "WebDAV 地址不能为空",
+                "WebDAV URL is required.",
+            ));
+        }
+        if self.username.trim().is_empty() {
+            return Err(AppError::localized(
+                "webdav.username.required",
+                "WebDAV 用户名不能为空",
+                "WebDAV username is required.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn normalize(&mut self) {
+        self.base_url = self.base_url.trim().to_string();
+        self.username = self.username.trim().to_string();
+        self.remote_root = self.remote_root.trim().to_string();
+        self.profile = self.profile.trim().to_string();
+        if self.remote_root.is_empty() {
+            self.remote_root = default_remote_root();
+        }
+        if self.profile.is_empty() {
+            self.profile = default_profile();
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.base_url.is_empty() && self.username.is_empty() && self.password.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -107,6 +205,14 @@ pub struct AppSettings {
     pub launch_on_startup: bool,
     #[serde(default)]
     pub silent_startup: bool,
+    #[serde(default)]
+    pub enable_local_proxy: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_confirmed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_confirmed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_check_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,6 +240,14 @@ pub struct AppSettings {
     #[serde(default)]
     pub skill_sync_method: SyncMethod,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webdav_sync: Option<WebDavSyncSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webdav_backup: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_interval_hours: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_retain_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
 }
 
@@ -146,6 +260,10 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            enable_local_proxy: false,
+            proxy_confirmed: None,
+            usage_confirmed: None,
+            stream_check_confirmed: None,
             language: None,
             visible_apps: None,
             claude_config_dir: None,
@@ -159,6 +277,10 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             skill_sync_method: SyncMethod::default(),
+            webdav_sync: None,
+            webdav_backup: None,
+            backup_interval_hours: None,
+            backup_retain_count: None,
             preferred_terminal: None,
         }
     }
@@ -188,6 +310,12 @@ impl AppSettings {
             normalize_optional_string(self.current_provider_opencode.take());
         self.current_provider_openclaw =
             normalize_optional_string(self.current_provider_openclaw.take());
+        if let Some(sync) = &mut self.webdav_sync {
+            sync.normalize();
+            if sync.is_empty() {
+                self.webdav_sync = None;
+            }
+        }
         self.preferred_terminal = normalize_optional_string(self.preferred_terminal.take());
     }
 
@@ -260,11 +388,33 @@ pub fn get_settings() -> AppSettings {
         .clone()
 }
 
+pub fn get_settings_for_frontend() -> AppSettings {
+    let mut settings = get_settings();
+    if let Some(sync) = &mut settings.webdav_sync {
+        sync.password.clear();
+    }
+    settings.webdav_backup = None;
+    settings
+}
+
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.normalize();
     save_settings_file(&new_settings)?;
     let mut guard = settings_store().write().unwrap_or_else(|e| e.into_inner());
     *guard = new_settings;
+    Ok(())
+}
+
+fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
+where
+    F: FnOnce(&mut AppSettings),
+{
+    let mut guard = settings_store().write().unwrap_or_else(|e| e.into_inner());
+    let mut next = guard.clone();
+    mutator(&mut next);
+    next.normalize();
+    save_settings_file(&next)?;
+    *guard = next;
     Ok(())
 }
 
@@ -366,6 +516,35 @@ pub fn get_preferred_terminal() -> Option<String> {
     get_settings().preferred_terminal
 }
 
+pub fn effective_backup_interval_hours() -> u32 {
+    get_settings().backup_interval_hours.unwrap_or(24)
+}
+
+pub fn effective_backup_retain_count() -> usize {
+    get_settings()
+        .backup_retain_count
+        .map(|value| (value as usize).max(1))
+        .unwrap_or(10)
+}
+
+pub fn get_webdav_sync_settings() -> Option<WebDavSyncSettings> {
+    get_settings().webdav_sync
+}
+
+pub fn set_webdav_sync_settings(settings: Option<WebDavSyncSettings>) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        current.webdav_sync = settings;
+    })
+}
+
+pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        if let Some(sync) = current.webdav_sync.as_mut() {
+            sync.status = status;
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,6 +611,74 @@ mod tests {
             Some("provider-a".to_string())
         );
         assert_eq!(get_current_provider(&AppType::Claude), None);
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn frontend_settings_redacts_webdav_password() -> Result<(), AppError> {
+        let temp = tempdir().expect("tempdir");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        update_settings(AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                base_url: "https://dav.example.com".to_string(),
+                username: "alice".to_string(),
+                password: "secret".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            ..AppSettings::default()
+        })?;
+
+        let frontend = get_settings_for_frontend();
+        assert_eq!(
+            frontend
+                .webdav_sync
+                .as_ref()
+                .map(|item| item.password.as_str()),
+            Some("")
+        );
+
+        let stored = get_settings();
+        assert_eq!(
+            stored
+                .webdav_sync
+                .as_ref()
+                .map(|item| item.password.as_str()),
+            Some("secret")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn webdav_status_update_preserves_credentials() -> Result<(), AppError> {
+        let temp = tempdir().expect("tempdir");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        set_webdav_sync_settings(Some(WebDavSyncSettings {
+            enabled: true,
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "secret".to_string(),
+            ..WebDavSyncSettings::default()
+        }))?;
+
+        update_webdav_sync_status(WebDavSyncStatus {
+            last_sync_at: Some(123),
+            last_error: None,
+            last_error_source: None,
+            last_remote_etag: Some("etag".to_string()),
+            last_local_manifest_hash: Some("local".to_string()),
+            last_remote_manifest_hash: Some("remote".to_string()),
+        })?;
+
+        let saved = get_webdav_sync_settings().expect("webdav settings");
+        assert_eq!(saved.password, "secret");
+        assert_eq!(saved.status.last_sync_at, Some(123));
+        assert_eq!(saved.status.last_remote_etag.as_deref(), Some("etag"));
 
         Ok(())
     }

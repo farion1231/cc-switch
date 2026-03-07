@@ -27,6 +27,10 @@ pub fn config_dir() -> PathBuf {
     get_home_dir().join(".cc-switch")
 }
 
+pub fn get_app_config_dir() -> PathBuf {
+    config_dir()
+}
+
 /// Get database path
 pub fn database_path() -> PathBuf {
     config_dir().join("cc-switch.db")
