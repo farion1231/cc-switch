@@ -13,14 +13,14 @@ pub mod mcp;
 pub mod openclaw_config;
 pub mod opencode_config;
 pub mod prompt;
-pub mod provider;
 pub mod prompt_files;
+pub mod provider;
 pub mod proxy;
 pub mod services;
 pub mod settings;
 pub mod store;
 
-pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, SkillApps};
+pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, SkillApps, UnmanagedSkill};
 pub use database::Database;
 pub use error::AppError;
 pub use prompt::Prompt;
@@ -29,8 +29,11 @@ pub use services::config::{DeeplinkImportResult, DeeplinkService};
 pub use services::omo::{OmoLocalFileData, OmoService, OmoVariant, SLIM, STANDARD};
 pub use services::provider::{EndpointLatency, ProviderSortUpdate};
 pub use services::proxy::{
-    CircuitBreakerConfig, FailoverQueueItem, ProviderHealth, ProxyConfig, ProxyStatus,
+    CircuitBreakerConfig, FailoverQueueItem, LiveBackup, ProviderHealth, ProxyConfig, ProxyStatus,
     ProxyTakeoverStatus, RequestLog, UsageStatsService, UsageSummary,
+};
+pub use services::skill::{
+    migrate_skills_to_ssot, DiscoverableSkill, Skill, SkillRepo, SkillStore,
 };
 pub use services::usage::{
     PaginatedUsageLogs, UsageLogDetail, UsageLogFilters, UsageModelStat, UsageProviderStat,

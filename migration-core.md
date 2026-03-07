@@ -126,8 +126,8 @@ Checklist：
 当前结论：
 
 - `Stage 1` 仍然不能被标记为“已完成”，但 core 已经不再只有 provider 骨架，而是具备了一条能被 CLI 和 tauri 共用的后端主链。
-- `cc-switch-core` 当前已经覆盖的主线是：`AppType/OpenClaw/OpenCode -> 文件型 settings -> app config adapter -> provider live read/write/import/sync -> MCP live sync/import -> OMO 独占配置 -> usage 聚合查询 -> schema/DAO 落库`。
-- 当前最大的剩余阻塞，已经进一步收缩到真正的“大件”：`Skill SSOT 与安装链路 / Proxy runtime 与 takeover/failover / usage script 与 speedtest / model_pricing & stream_check 等外围后端域`。
+- `cc-switch-core` 当前已经覆盖的主线是：`AppType/OpenClaw/OpenCode -> 文件型 settings -> app config adapter -> provider live read/write/import/sync -> MCP live sync/import -> Prompt 文件同步 -> Skill SSOT/导入/ZIP 安装 -> OMO 独占配置 -> usage 聚合查询 -> proxy schema/DAO 契约`。
+- 当前最大的剩余阻塞，已经进一步收缩到真正的 runtime 和计费外围：`Proxy runtime 与 takeover/failover / usage script 与 provider limits / model_pricing & stream_check / deeplink merge / env & workspace & webdav 等系统域`。
 
 本轮已完成：
 
@@ -153,14 +153,22 @@ Checklist：
 - 已把 usage 聚合查询往 core 继续下沉。
   - 新增 `services/usage.rs`。
   - DAO 已支持 `usage_trends`、`provider_stats`、`model_stats`、`paginated logs`、`request detail`。
+- 已把 Skill 从“只改 DB”补成真实文件链。
+  - core `services/skill.rs` 现在已经支持 `SSOT (~/.cc-switch/skills)`、`sync_to_app_dir()`、`remove_from_app()`、`sync_to_app()`。
+  - 已支持 `scan_unmanaged()`、`import_from_apps()`、`install_from_zip()`、`migrate_skills_to_ssot()`。
+  - 已补 `UnmanagedSkill`、`SkillApps::from_labels()`、`skill_repos` schema/DAO，以及 `provider/live::sync_current_to_live()` 对 skill 同步的接入。
 - 已补一版独立的 endpoint speedtest 能力。
   - 新增 `services/speedtest.rs`。
   - 已具备基础 URL 校验、超时归一化和并发测速骨架。
 - 已补齐这条链路依赖的数据库契约。
   - schema 里新增了 `provider_endpoints` 表。
   - `mcp_servers` / `skills` 已补 `enabled_openclaw` 列，并加了向前兼容的加列逻辑。
-  - DAO 已对齐 provider endpoint 读写、OpenClaw settings 字段、OpenClaw export 范围。
-- 当前 `cargo test -p cc-switch-core` 已通过，新增测试已覆盖到 `MCP + OMO + usage detail`。
+  - 这轮继续补了 `skill_repos`、`model_pricing`、`stream_check_logs`、`proxy_live_backup`、`proxy_config.default_cost_multiplier`、`proxy_config.pricing_model_source` 这些表和列。
+  - DAO 已对齐 provider endpoint 读写、OpenClaw settings 字段、OpenClaw export 范围，以及 skill repo / failover queue / live backup 的基础读写。
+- 已把 proxy 的一部分“假成功”语义收掉。
+  - `switch_proxy_target()` 现在不再只是切 DB current，还会同步设备级 current provider。
+  - 当存在 live backup 时，`switch_proxy_target()` 会同步更新 backup 内容，作为后续真正 `stop_with_restore` / `recover` 的基础。
+- 当前 `cargo test -p cc-switch-core` 已通过，新增测试已覆盖到 `MCP + OMO + usage detail + skill filesystem + failover queue + live backup`。
 
 代码 review 结论：
 
@@ -170,13 +178,13 @@ Checklist：
 - Prompt 已经不是纯 DB stub，但 Stage 1 还不能算收尾。
   - Prompt 已具备文件启用、当前文件读取、首次导入基础能力。
   - 但禁用、覆盖、跨 app 回归测试还需要补齐。
-- Skill 仍然是当前最明显的“能力面差距”域。
-  - 现有 core skill service 还只是 DB CRUD + toggle。
-  - repo 安装、ZIP 安装、扫描、同步到 app 目录、SSOT 迁移还没回到 core。
+- Skill 已经不再是主阻塞，但还没有完全达到 tauri 全量等价。
+  - 真实文件同步、扫描导入、ZIP 安装、SSOT 迁移已经迁回 core。
+  - 剩余差距主要是 repo discover/install 的完整远程生态、默认 repo 初始化后的 CLI/tauri 接入，以及更完整的回归测试。
 - Proxy / Failover / Usage 仍是 Stage 1 后半段的主阻塞。
   - `services/proxy.rs` 仍然不是 tauri 那种可运行 runtime。
-  - `switch_proxy_target()` 目前仍只是切 DB current，没有 live backup / takeover 语义。
-  - `model_pricing`、`proxy_live_backup`、`stream_check_logs` 等关键表还没对齐。
+  - 当前只补到了 schema/DAO 和 `switch_proxy_target()` 的 backup 回写语义，还没有 `start/stop/status/takeover/recover` 运行态。
+  - `model_pricing`、`stream_check_logs` 虽然已建表，但计费匹配、seed、stream-check service 还没真正迁完。
 - core runtime boundary 仍未完成。
   - 当前 `AppState` 仍然只有 `db`。
   - 如果要承接 tauri 的 proxy / failover / usage runtime，后面必须把纯后端运行态正式抽到 core。
@@ -185,12 +193,10 @@ Checklist：
 
 - 先收掉 provider 余项。
   - 补 `usage script`，并把 provider 行为回归测试补满。
-- 然后优先处理 Skill。
-  - 这是当前最缺的“非 runtime 但仍属核心后端”大块。
-- 再集中补 schema + DAO。
-  - 对齐 `model_pricing`、`proxy_live_backup`、`stream_check_logs`、failover queue。
-- 最后迁 proxy runtime / takeover / recover / failover。
-  - 这是 Stage 1 最重的一段，建议单独成块推进。
+- 再把 usage / pricing / stream-check 的服务层补齐。
+  - 现在 schema 已经到位，下一步应该把 `model_pricing`、`provider limits`、`stream-check` 真的跑起来。
+- 最后集中迁 proxy runtime / takeover / recover / failover。
+  - 这是 Stage 1 最重的一段，也是当前真正的退出线阻塞。
 
 必须补的测试：
 
@@ -218,12 +224,13 @@ Checklist：
   - [x] prompt 启用、读取当前文件、首次导入测试已经具备基础覆盖。
   - [ ] prompt 禁用、覆盖、跨 app 回归测试还要补。
 - Skill
-  - [ ] repo 安装、ZIP 安装、同步到 app 目录、SSOT 迁移测试。
+  - [x] ZIP 安装、同步到 app 目录、扫描导入、SSOT 迁移基础测试已补。
+  - [ ] repo discover/install、默认 repo 初始化、冲突目录名与重复安装测试还要补。
 - Proxy / Failover / Usage
   - [x] usage summary / logs / trends / provider stats / model stats / request detail 基础测试已补到 DAO 层。
   - [ ] schema 迁移后 `model_pricing` seed 测试。
-  - [ ] failover queue 增删改查和优先级顺序测试。
-  - [ ] `switch_proxy_target()` 更新 live backup 的测试。
+  - [x] failover queue 增删改查基础测试已补。
+  - [x] `switch_proxy_target()` 更新 live backup 的基础测试已补。
   - [ ] proxy start / stop / status / takeover / recover 测试。
   - [ ] model pricing 匹配和计费回填测试。
   - [ ] provider limits / pricing / usage script / speedtest 测试。

@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 /// Current schema version
 #[allow(dead_code)]
-pub const SCHEMA_VERSION: i32 = 7;
+pub const SCHEMA_VERSION: i32 = 9;
 
 impl Database {
     /// Create all database tables
@@ -134,14 +134,27 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 7. Settings table
+        // 7. Skill repos table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_repos (
+                owner TEXT NOT NULL,
+                name TEXT NOT NULL,
+                branch TEXT NOT NULL DEFAULT 'main',
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                PRIMARY KEY (owner, name)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 8. Settings table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 8. Proxy Config table
+        // 9. Proxy Config table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS proxy_config (
                 app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
@@ -160,6 +173,8 @@ impl Database {
                 circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
                 circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
                 circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )",
@@ -167,7 +182,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 9. Provider Health table
+        // 10. Provider Health table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS provider_health (
                 provider_id TEXT NOT NULL,
@@ -185,7 +200,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 10. Proxy Request Logs table
+        // 11. Proxy Request Logs table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS proxy_request_logs (
                 request_id TEXT PRIMARY KEY,
@@ -229,6 +244,63 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 12. Model pricing table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS model_pricing (
+                model_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                input_cost_per_million TEXT NOT NULL,
+                output_cost_per_million TEXT NOT NULL,
+                cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
+                cache_creation_cost_per_million TEXT NOT NULL DEFAULT '0'
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 13. Stream check logs table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS stream_check_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id TEXT NOT NULL,
+                provider_name TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                success INTEGER NOT NULL,
+                message TEXT NOT NULL,
+                response_time_ms INTEGER,
+                http_status INTEGER,
+                model_used TEXT,
+                retry_count INTEGER DEFAULT 0,
+                tested_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stream_check_logs_provider
+             ON stream_check_logs(app_type, provider_id, tested_at DESC)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 14. Proxy live backup table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS proxy_live_backup (
+                app_type TEXT PRIMARY KEY,
+                original_config TEXT NOT NULL,
+                backed_up_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_providers_failover
+             ON providers(app_type, in_failover_queue, sort_index)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         Self::apply_schema_migrations_on_conn(conn)?;
 
         // Initialize proxy_config rows
@@ -262,6 +334,87 @@ impl Database {
             "enabled_openclaw",
             "BOOLEAN NOT NULL DEFAULT 0",
         )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_repos (
+                owner TEXT NOT NULL,
+                name TEXT NOT NULL,
+                branch TEXT NOT NULL DEFAULT 'main',
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                PRIMARY KEY (owner, name)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::add_column_if_missing(
+            conn,
+            "skill_repos",
+            "branch",
+            "TEXT NOT NULL DEFAULT 'main'",
+        )?;
+        Self::add_column_if_missing(conn, "skill_repos", "enabled", "BOOLEAN NOT NULL DEFAULT 1")?;
+        Self::add_column_if_missing(
+            conn,
+            "proxy_config",
+            "default_cost_multiplier",
+            "TEXT NOT NULL DEFAULT '1'",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "proxy_config",
+            "pricing_model_source",
+            "TEXT NOT NULL DEFAULT 'response'",
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS model_pricing (
+                model_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                input_cost_per_million TEXT NOT NULL,
+                output_cost_per_million TEXT NOT NULL,
+                cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
+                cache_creation_cost_per_million TEXT NOT NULL DEFAULT '0'
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS stream_check_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id TEXT NOT NULL,
+                provider_name TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                success INTEGER NOT NULL,
+                message TEXT NOT NULL,
+                response_time_ms INTEGER,
+                http_status INTEGER,
+                model_used TEXT,
+                retry_count INTEGER DEFAULT 0,
+                tested_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stream_check_logs_provider
+             ON stream_check_logs(app_type, provider_id, tested_at DESC)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS proxy_live_backup (
+                app_type TEXT PRIMARY KEY,
+                original_config TEXT NOT NULL,
+                backed_up_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_providers_failover
+             ON providers(app_type, in_failover_queue, sort_index)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 

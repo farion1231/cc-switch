@@ -165,7 +165,8 @@ impl PromptService {
             return Err(AppError::Message("提示词文件不存在".to_string()));
         }
 
-        let content = std::fs::read_to_string(&file_path).map_err(|err| AppError::io(&file_path, err))?;
+        let content =
+            std::fs::read_to_string(&file_path).map_err(|err| AppError::io(&file_path, err))?;
         let timestamp = unix_timestamp()?;
         let id = format!("imported-{timestamp}");
 
@@ -213,7 +214,11 @@ impl PromptService {
         let content = match std::fs::read_to_string(&file_path) {
             Ok(content) => content,
             Err(err) => {
-                log::warn!("Failed to read prompt file {}: {}", file_path.display(), err);
+                log::warn!(
+                    "Failed to read prompt file {}: {}",
+                    file_path.display(),
+                    err
+                );
                 return Ok(0);
             }
         };

@@ -101,11 +101,17 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
         Err(_) => return Ok(()),
     };
 
-    if let Some(mcp_servers) = doc.get_mut("mcp_servers").and_then(|item| item.as_table_mut()) {
+    if let Some(mcp_servers) = doc
+        .get_mut("mcp_servers")
+        .and_then(|item| item.as_table_mut())
+    {
         mcp_servers.remove(id);
     }
     if let Some(mcp_table) = doc.get_mut("mcp").and_then(|item| item.as_table_mut()) {
-        if let Some(servers) = mcp_table.get_mut("servers").and_then(|item| item.as_table_mut()) {
+        if let Some(servers) = mcp_table
+            .get_mut("servers")
+            .and_then(|item| item.as_table_mut())
+        {
             servers.remove(id);
         }
     }

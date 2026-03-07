@@ -11,7 +11,9 @@ fn should_sync_opencode_mcp() -> bool {
 }
 
 pub fn read_mcp_servers_map() -> Result<HashMap<String, Value>, AppError> {
-    Ok(crate::opencode_config::get_mcp_servers()?.into_iter().collect())
+    Ok(crate::opencode_config::get_mcp_servers()?
+        .into_iter()
+        .collect())
 }
 
 pub fn convert_to_opencode_format(spec: &Value) -> Result<Value, AppError> {
@@ -46,7 +48,9 @@ pub fn convert_to_opencode_format(spec: &Value) -> Result<Value, AppError> {
             result.insert("enabled".into(), json!(true));
         }
         _ => {
-            return Err(AppError::McpValidation(format!("未知的 OpenCode MCP 类型: {kind}")));
+            return Err(AppError::McpValidation(format!(
+                "未知的 OpenCode MCP 类型: {kind}"
+            )));
         }
     }
 
@@ -85,7 +89,9 @@ pub fn convert_from_opencode_format(spec: &Value) -> Result<Value, AppError> {
             }
         }
         _ => {
-            return Err(AppError::McpValidation(format!("未知的 OpenCode MCP 类型: {kind}")));
+            return Err(AppError::McpValidation(format!(
+                "未知的 OpenCode MCP 类型: {kind}"
+            )));
         }
     }
 

@@ -9,7 +9,10 @@ use crate::app_config::{InstalledSkill, McpApps, McpServer, SkillApps};
 use crate::error::AppError;
 use crate::prompt::Prompt;
 use crate::provider::{Provider, UniversalProvider};
-use crate::services::proxy::{ProxyConfig, ProxyTakeoverStatus, RequestLog, UsageSummary};
+use crate::services::proxy::{
+    FailoverQueueItem, LiveBackup, ProxyConfig, ProxyTakeoverStatus, RequestLog, UsageSummary,
+};
+use crate::services::skill::SkillRepo;
 use crate::services::usage::{
     PaginatedUsageLogs, UsageLogDetail, UsageLogFilters, UsageModelStat, UsageProviderStat,
     UsageTrendPoint,
@@ -346,12 +349,20 @@ impl Database {
             },
         );
 
-        let (id, name, settings_config_str, category_value, created_at, sort_index, notes, meta_str) =
-            match row_data {
-                Ok(value) => value,
-                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-                Err(e) => return Err(AppError::Database(e.to_string())),
-            };
+        let (
+            id,
+            name,
+            settings_config_str,
+            category_value,
+            created_at,
+            sort_index,
+            notes,
+            meta_str,
+        ) = match row_data {
+            Ok(value) => value,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(AppError::Database(e.to_string())),
+        };
 
         let settings_config = serde_json::from_str(&settings_config_str).map_err(|e| {
             AppError::Database(format!(
@@ -724,6 +735,14 @@ impl Database {
         Ok(skills)
     }
 
+    pub fn get_all_installed_skills(&self) -> Result<IndexMap<String, InstalledSkill>, AppError> {
+        let skills = self.get_all_skills()?;
+        Ok(skills
+            .into_iter()
+            .map(|skill| (skill.id.clone(), skill))
+            .collect())
+    }
+
     pub fn get_skill(&self, id: &str) -> Result<Option<InstalledSkill>, AppError> {
         let conn = lock_conn!(self.conn);
         let result = conn
@@ -757,6 +776,10 @@ impl Database {
         Ok(result)
     }
 
+    pub fn get_installed_skill(&self, id: &str) -> Result<Option<InstalledSkill>, AppError> {
+        self.get_skill(id)
+    }
+
     pub fn save_skill(&self, skill: &InstalledSkill) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
@@ -788,6 +811,105 @@ impl Database {
         conn.execute("DELETE FROM skills WHERE id = ?", [id])
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
+    }
+
+    pub fn clear_skills(&self) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute("DELETE FROM skills", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn update_skill_apps(&self, id: &str, apps: &SkillApps) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE skills
+             SET enabled_claude = ?1,
+                 enabled_codex = ?2,
+                 enabled_gemini = ?3,
+                 enabled_opencode = ?4,
+                 enabled_openclaw = ?5
+             WHERE id = ?6",
+            params![
+                apps.claude,
+                apps.codex,
+                apps.gemini,
+                apps.opencode,
+                apps.openclaw,
+                id
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn get_skill_repos(&self) -> Result<Vec<SkillRepo>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT owner, name, branch, enabled
+                 FROM skill_repos
+                 ORDER BY owner ASC, name ASC",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let repos = stmt
+            .query_map([], |row| {
+                Ok(SkillRepo {
+                    owner: row.get(0)?,
+                    name: row.get(1)?,
+                    branch: row.get(2)?,
+                    enabled: row.get(3)?,
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(repos)
+    }
+
+    pub fn save_skill_repo(&self, repo: &SkillRepo) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![repo.owner, repo.name, repo.branch, repo.enabled],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn delete_skill_repo(&self, owner: &str, name: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "DELETE FROM skill_repos WHERE owner = ?1 AND name = ?2",
+            params![owner, name],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn init_default_skill_repos(&self) -> Result<usize, AppError> {
+        let existing = self.get_skill_repos()?;
+        let existing_keys: std::collections::HashSet<(String, String)> = existing
+            .iter()
+            .map(|repo| (repo.owner.clone(), repo.name.clone()))
+            .collect();
+
+        let default_store = crate::services::skill::SkillStore::default();
+        let mut added = 0;
+        for repo in &default_store.repos {
+            let key = (repo.owner.clone(), repo.name.clone());
+            if existing_keys.contains(&key) {
+                continue;
+            }
+
+            self.save_skill_repo(repo)?;
+            added += 1;
+        }
+
+        Ok(added)
     }
 
     // ========== Settings Methods ==========
@@ -912,7 +1034,7 @@ impl Database {
     pub fn set_proxy_takeover(&self, app: &str, enabled: bool) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "UPDATE proxy_config SET proxy_enabled = ? WHERE app_type = ?",
+            "UPDATE proxy_config SET proxy_enabled = ?1, enabled = ?1 WHERE app_type = ?2",
             params![enabled, app],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -922,7 +1044,7 @@ impl Database {
     pub fn get_proxy_takeover_status(&self) -> Result<ProxyTakeoverStatus, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
-            .prepare("SELECT app_type, proxy_enabled FROM proxy_config")
+            .prepare("SELECT app_type, enabled FROM proxy_config")
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let pairs = stmt
@@ -950,6 +1072,91 @@ impl Database {
         self.set_current_provider(app, provider_id)
     }
 
+    pub fn get_failover_queue(&self, app_type: &str) -> Result<Vec<FailoverQueueItem>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT COALESCE(sort_index, 999999), id, name
+                 FROM providers
+                 WHERE app_type = ?1 AND in_failover_queue = 1
+                 ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([app_type], |row| {
+                Ok(FailoverQueueItem {
+                    priority: row.get(0)?,
+                    provider_id: row.get(1)?,
+                    provider_name: row.get(2)?,
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub fn add_to_failover_queue(&self, app_type: &str, provider_id: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET in_failover_queue = 1 WHERE id = ?1 AND app_type = ?2",
+            params![provider_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn remove_from_failover_queue(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET in_failover_queue = 0 WHERE id = ?1 AND app_type = ?2",
+            params![provider_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM provider_health WHERE provider_id = ?1 AND app_type = ?2",
+            params![provider_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn clear_failover_queue(&self, app_type: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET in_failover_queue = 0 WHERE app_type = ?1",
+            [app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM provider_health WHERE app_type = ?1",
+            [app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn is_in_failover_queue(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+    ) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.query_row(
+            "SELECT in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
+            params![provider_id, app_type],
+            |row| row.get::<_, bool>(0),
+        )
+        .optional()
+        .map(|value| value.unwrap_or(false))
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
+
     pub fn reset_provider_health(&self, provider_id: &str, app: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
@@ -957,6 +1164,71 @@ impl Database {
             [provider_id, app],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn clear_provider_health_for_app(&self, app_type: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute("DELETE FROM provider_health WHERE app_type = ?", [app_type])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn save_live_backup(&self, app_type: &str, config_json: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT OR REPLACE INTO proxy_live_backup (app_type, original_config, backed_up_at)
+             VALUES (?1, ?2, ?3)",
+            params![app_type, config_json, now],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn has_any_live_backup(&self) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM proxy_live_backup", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(count > 0)
+    }
+
+    pub fn get_live_backup(&self, app_type: &str) -> Result<Option<LiveBackup>, AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.query_row(
+            "SELECT app_type, original_config, backed_up_at
+             FROM proxy_live_backup
+             WHERE app_type = ?1",
+            [app_type],
+            |row| {
+                Ok(LiveBackup {
+                    app_type: row.get(0)?,
+                    original_config: row.get(1)?,
+                    backed_up_at: row.get(2)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub fn delete_live_backup(&self, app_type: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "DELETE FROM proxy_live_backup WHERE app_type = ?",
+            [app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn delete_all_live_backups(&self) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute("DELETE FROM proxy_live_backup", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -1269,7 +1541,8 @@ impl Database {
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}"
         );
-        let count_params: Vec<&dyn rusqlite::ToSql> = params.iter().map(|item| item.as_ref()).collect();
+        let count_params: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|item| item.as_ref()).collect();
         let total = conn
             .query_row(&count_sql, count_params.as_slice(), |row| {
                 row.get::<_, i64>(0).map(|value| value as u32)
@@ -1279,7 +1552,8 @@ impl Database {
         let offset = page.saturating_mul(page_size);
         params.push(Box::new(page_size as i64));
         params.push(Box::new(offset as i64));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|item| item.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|item| item.as_ref()).collect();
 
         let sql = format!(
             "SELECT l.request_id, l.provider_id, p.name, l.app_type, l.model, l.request_model,
@@ -1536,8 +1810,9 @@ fn format_usage_timestamp(created_at: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::UniversalProvider;
+    use crate::provider::{Provider, UniversalProvider};
     use rusqlite::params;
+    use serde_json::json;
 
     #[test]
     fn universal_providers_round_trip_through_database() -> Result<(), AppError> {
@@ -1880,6 +2155,54 @@ mod tests {
         assert_eq!(detail.provider_name.as_deref(), Some("Gemini Alpha"));
         assert!(detail.is_streaming);
         assert_eq!(detail.total_cost_usd, "0.033000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn failover_queue_round_trip_through_provider_flags() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.save_provider(
+            "claude",
+            &Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None),
+        )?;
+        db.save_provider(
+            "claude",
+            &Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None),
+        )?;
+
+        db.add_to_failover_queue("claude", "b")?;
+        db.add_to_failover_queue("claude", "a")?;
+
+        let queue = db.get_failover_queue("claude")?;
+        assert_eq!(queue.len(), 2);
+        assert!(db.is_in_failover_queue("claude", "a")?);
+        assert!(db.is_in_failover_queue("claude", "b")?);
+
+        db.remove_from_failover_queue("claude", "a")?;
+        assert!(!db.is_in_failover_queue("claude", "a")?);
+        assert!(db.is_in_failover_queue("claude", "b")?);
+
+        db.clear_failover_queue("claude")?;
+        assert!(db.get_failover_queue("claude")?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn live_backup_round_trip_through_database() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        assert!(!db.has_any_live_backup()?);
+
+        db.save_live_backup("claude", "{\"env\":{\"ANTHROPIC_AUTH_TOKEN\":\"abc\"}}")?;
+        assert!(db.has_any_live_backup()?);
+
+        let backup = db.get_live_backup("claude")?.expect("backup should exist");
+        assert_eq!(backup.app_type, "claude");
+        assert!(backup.original_config.contains("ANTHROPIC_AUTH_TOKEN"));
+
+        db.delete_live_backup("claude")?;
+        assert!(db.get_live_backup("claude")?.is_none());
 
         Ok(())
     }

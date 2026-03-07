@@ -105,6 +105,12 @@ impl From<rusqlite::Error> for AppError {
     }
 }
 
+impl From<anyhow::Error> for AppError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Message(err.to_string())
+    }
+}
+
 impl From<AppError> for String {
     fn from(err: AppError) -> Self {
         err.to_string()

@@ -76,9 +76,10 @@ pub fn set_mcp_servers_map(servers: &HashMap<String, Value>) -> Result<(), AppEr
 
     let mut out = Map::new();
     for (id, spec) in servers {
-        let mut obj = spec.as_object().cloned().ok_or_else(|| {
-            AppError::McpValidation(format!("MCP 服务器 '{id}' 不是 JSON 对象"))
-        })?;
+        let mut obj = spec
+            .as_object()
+            .cloned()
+            .ok_or_else(|| AppError::McpValidation(format!("MCP 服务器 '{id}' 不是 JSON 对象")))?;
 
         if let Some(server_val) = obj.remove("server") {
             obj = server_val.as_object().cloned().ok_or_else(|| {

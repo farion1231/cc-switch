@@ -90,15 +90,27 @@ impl McpService {
     }
 
     pub fn import_from_claude(state: &AppState) -> Result<usize, AppError> {
-        Self::import_from_map(state, crate::mcp::claude::read_mcp_servers_map()?, AppType::Claude)
+        Self::import_from_map(
+            state,
+            crate::mcp::claude::read_mcp_servers_map()?,
+            AppType::Claude,
+        )
     }
 
     pub fn import_from_codex(state: &AppState) -> Result<usize, AppError> {
-        Self::import_from_map(state, crate::mcp::codex::read_mcp_servers_map()?, AppType::Codex)
+        Self::import_from_map(
+            state,
+            crate::mcp::codex::read_mcp_servers_map()?,
+            AppType::Codex,
+        )
     }
 
     pub fn import_from_gemini(state: &AppState) -> Result<usize, AppError> {
-        Self::import_from_map(state, crate::mcp::gemini::read_mcp_servers_map()?, AppType::Gemini)
+        Self::import_from_map(
+            state,
+            crate::mcp::gemini::read_mcp_servers_map()?,
+            AppType::Gemini,
+        )
     }
 
     pub fn import_from_opencode(state: &AppState) -> Result<usize, AppError> {
@@ -167,10 +179,18 @@ impl McpService {
 
     fn sync_server_to_app(server: &McpServer, app: &AppType) -> Result<(), AppError> {
         match app {
-            AppType::Claude => crate::mcp::claude::sync_single_server_to_claude(&server.id, &server.server),
-            AppType::Codex => crate::mcp::codex::sync_single_server_to_codex(&server.id, &server.server),
-            AppType::Gemini => crate::mcp::gemini::sync_single_server_to_gemini(&server.id, &server.server),
-            AppType::OpenCode => crate::mcp::opencode::sync_single_server_to_opencode(&server.id, &server.server),
+            AppType::Claude => {
+                crate::mcp::claude::sync_single_server_to_claude(&server.id, &server.server)
+            }
+            AppType::Codex => {
+                crate::mcp::codex::sync_single_server_to_codex(&server.id, &server.server)
+            }
+            AppType::Gemini => {
+                crate::mcp::gemini::sync_single_server_to_gemini(&server.id, &server.server)
+            }
+            AppType::OpenCode => {
+                crate::mcp::opencode::sync_single_server_to_opencode(&server.id, &server.server)
+            }
             AppType::OpenClaw => Ok(()),
         }
     }

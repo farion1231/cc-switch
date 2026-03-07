@@ -200,6 +200,40 @@ impl SkillApps {
         apps.set_enabled_for(app, true);
         apps
     }
+
+    pub fn enabled_apps(&self) -> Vec<AppType> {
+        let mut apps = Vec::new();
+        if self.claude {
+            apps.push(AppType::Claude);
+        }
+        if self.codex {
+            apps.push(AppType::Codex);
+        }
+        if self.gemini {
+            apps.push(AppType::Gemini);
+        }
+        if self.opencode {
+            apps.push(AppType::OpenCode);
+        }
+        if self.openclaw {
+            apps.push(AppType::OpenClaw);
+        }
+        apps
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.claude && !self.codex && !self.gemini && !self.opencode && !self.openclaw
+    }
+
+    pub fn from_labels(labels: &[String]) -> Self {
+        let mut apps = Self::default();
+        for label in labels {
+            if let Ok(app) = label.parse::<AppType>() {
+                apps.set_enabled_for(&app, true);
+            }
+        }
+        apps
+    }
 }
 
 #[cfg(test)]
@@ -241,6 +275,18 @@ pub struct InstalledSkill {
     pub readme_url: Option<String>,
     pub apps: SkillApps,
     pub installed_at: i64,
+}
+
+/// Unmanaged skill found in live app directories but not yet tracked by CC-Switch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnmanagedSkill {
+    pub directory: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub found_in: Vec<String>,
+    pub path: String,
 }
 
 /// MCP config (single client dimension, v3.6.x and earlier)

@@ -30,7 +30,10 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
     Ok(base_dir.join(file_name))
 }
 
-fn get_base_dir_with_fallback(primary_path: PathBuf, fallback_dir: &str) -> Result<PathBuf, AppError> {
+fn get_base_dir_with_fallback(
+    primary_path: PathBuf,
+    fallback_dir: &str,
+) -> Result<PathBuf, AppError> {
     primary_path
         .parent()
         .map(|path| path.to_path_buf())

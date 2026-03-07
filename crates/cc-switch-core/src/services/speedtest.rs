@@ -107,9 +107,18 @@ mod tests {
 
     #[test]
     fn sanitize_timeout_clamps_values() {
-        assert_eq!(SpeedtestService::sanitize_timeout(Some(1)), MIN_TIMEOUT_SECS);
-        assert_eq!(SpeedtestService::sanitize_timeout(Some(999)), MAX_TIMEOUT_SECS);
-        assert_eq!(SpeedtestService::sanitize_timeout(None), DEFAULT_TIMEOUT_SECS);
+        assert_eq!(
+            SpeedtestService::sanitize_timeout(Some(1)),
+            MIN_TIMEOUT_SECS
+        );
+        assert_eq!(
+            SpeedtestService::sanitize_timeout(Some(999)),
+            MAX_TIMEOUT_SECS
+        );
+        assert_eq!(
+            SpeedtestService::sanitize_timeout(None),
+            DEFAULT_TIMEOUT_SECS
+        );
     }
 
     #[tokio::test]
@@ -122,21 +131,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_endpoints_reports_invalid_url() {
-        let result = SpeedtestService::test_endpoints(
-            vec!["not a url".into(), "".into()],
-            None,
-        )
-        .await
-        .expect("invalid inputs should still succeed");
+        let result = SpeedtestService::test_endpoints(vec!["not a url".into(), "".into()], None)
+            .await
+            .expect("invalid inputs should still succeed");
 
         assert_eq!(result.len(), 2);
-        assert!(
-            result[0]
-                .error
-                .as_deref()
-                .unwrap_or_default()
-                .starts_with("URL 无效")
-        );
+        assert!(result[0]
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("URL 无效"));
         assert_eq!(result[1].error.as_deref(), Some("URL 不能为空"));
     }
 }

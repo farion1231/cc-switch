@@ -9,7 +9,7 @@ use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::services::McpService;
+use crate::services::{McpService, SkillService};
 use crate::store::AppState;
 
 use super::gemini_auth::{
@@ -48,6 +48,11 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     }
 
     McpService::sync_all_enabled(state)?;
+    for app_type in AppType::all() {
+        if let Err(err) = SkillService::sync_to_app(&state.db, &app_type) {
+            log::warn!("同步 Skill 到 {app_type:?} 失败: {err}");
+        }
+    }
     Ok(())
 }
 
@@ -129,7 +134,9 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     provider.category = Some("custom".to_string());
 
     state.db.save_provider(app_type.as_str(), &provider)?;
-    state.db.set_current_provider(app_type.as_str(), &provider.id)?;
+    state
+        .db
+        .set_current_provider(app_type.as_str(), &provider.id)?;
     crate::settings::set_current_provider(&app_type, Some(&provider.id))?;
 
     Ok(true)
@@ -316,7 +323,9 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
             None,
         );
         provider.category = Some("custom".to_string());
-        state.db.save_provider(AppType::OpenCode.as_str(), &provider)?;
+        state
+            .db
+            .save_provider(AppType::OpenCode.as_str(), &provider)?;
         imported += 1;
     }
 

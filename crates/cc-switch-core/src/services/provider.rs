@@ -97,11 +97,14 @@ impl ProviderService {
 
         if app_type.is_additive_mode() {
             if matches!(app_type, AppType::OpenCode) {
-                if let Some((category, variant)) = Self::omo_variant_for(provider.category.as_deref()) {
-                    let is_current =
-                        state
-                            .db
-                            .is_omo_provider_current(app_type.as_str(), &provider.id, category)?;
+                if let Some((category, variant)) =
+                    Self::omo_variant_for(provider.category.as_deref())
+                {
+                    let is_current = state.db.is_omo_provider_current(
+                        app_type.as_str(),
+                        &provider.id,
+                        category,
+                    )?;
                     if is_current {
                         crate::services::omo::OmoService::write_config_to_file(state, variant)?;
                     }
@@ -129,9 +132,10 @@ impl ProviderService {
                     .and_then(|provider| provider.category);
 
                 if let Some((omo_category, variant)) = Self::omo_variant_for(category.as_deref()) {
-                    let was_current = state
-                        .db
-                        .is_omo_provider_current(app_type.as_str(), id, omo_category)?;
+                    let was_current =
+                        state
+                            .db
+                            .is_omo_provider_current(app_type.as_str(), id, omo_category)?;
                     state.db.delete_provider(app_type.as_str(), id)?;
                     if was_current {
                         crate::services::omo::OmoService::delete_config_file(variant)?;
@@ -168,7 +172,9 @@ impl ProviderService {
 
         if app_type.is_additive_mode() {
             if matches!(app_type, AppType::OpenCode) {
-                if let Some((category, variant)) = Self::omo_variant_for(provider.category.as_deref()) {
+                if let Some((category, variant)) =
+                    Self::omo_variant_for(provider.category.as_deref())
+                {
                     state
                         .db
                         .set_omo_provider_current(app_type.as_str(), id, category)?;
@@ -180,7 +186,8 @@ impl ProviderService {
                         Some(&crate::services::omo::STANDARD)
                     };
                     if let Some(opposite_variant) = opposite {
-                        let _ = crate::services::omo::OmoService::delete_config_file(opposite_variant);
+                        let _ =
+                            crate::services::omo::OmoService::delete_config_file(opposite_variant);
                     }
 
                     return Ok(());
@@ -475,8 +482,7 @@ impl ProviderService {
             "ANTHROPIC_BASE_URL",
         ];
 
-        const TOP_LEVEL_EXCLUDES: &[&str] =
-            &["apiBaseUrl", "primaryModel", "smallFastModel"];
+        const TOP_LEVEL_EXCLUDES: &[&str] = &["apiBaseUrl", "primaryModel", "smallFastModel"];
 
         if let Some(env) = config.get_mut("env").and_then(Value::as_object_mut) {
             for key in ENV_EXCLUDES {
@@ -830,7 +836,6 @@ impl ProviderService {
 
         Ok(())
     }
-
 }
 
 pub(crate) fn normalize_claude_models_in_value(settings: &mut Value) -> bool {
@@ -873,21 +878,30 @@ pub(crate) fn normalize_claude_models_in_value(settings: &mut Value) -> bool {
 
     if env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL").is_none() {
         if let Some(value) = target_haiku {
-            env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(), Value::String(value));
+            env.insert(
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
+                Value::String(value),
+            );
             changed = true;
         }
     }
 
     if env.get("ANTHROPIC_DEFAULT_SONNET_MODEL").is_none() {
         if let Some(value) = target_sonnet {
-            env.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(), Value::String(value));
+            env.insert(
+                "ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(),
+                Value::String(value),
+            );
             changed = true;
         }
     }
 
     if env.get("ANTHROPIC_DEFAULT_OPUS_MODEL").is_none() {
         if let Some(value) = target_opus {
-            env.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(), Value::String(value));
+            env.insert(
+                "ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(),
+                Value::String(value),
+            );
             changed = true;
         }
     }
@@ -981,19 +995,17 @@ mod tests {
         ProviderService::switch(&state, AppType::OpenCode, "omo-demo")?;
 
         let written: Value = crate::config::read_json_file(
-            &temp
-                .path()
-                .join(".config/opencode/oh-my-opencode.jsonc"),
+            &temp.path().join(".config/opencode/oh-my-opencode.jsonc"),
         )?;
         assert!(written.get("agents").is_some());
 
         let config = crate::opencode_config::read_opencode_config()?;
-        assert!(
-            config
-                .get("plugin")
-                .and_then(Value::as_array)
-                .is_some_and(|plugins| plugins.iter().any(|item| item.as_str() == Some("oh-my-opencode@latest")))
-        );
+        assert!(config
+            .get("plugin")
+            .and_then(Value::as_array)
+            .is_some_and(|plugins| plugins
+                .iter()
+                .any(|item| item.as_str() == Some("oh-my-opencode@latest"))));
 
         Ok(())
     }

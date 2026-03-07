@@ -1,6 +1,7 @@
 //! Proxy service - business logic for proxy management
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::database::Database;
 use crate::error::AppError;
@@ -27,6 +28,17 @@ pub struct ProxyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyTakeoverStatus {
     pub apps: std::collections::HashMap<String, bool>,
+}
+
+/// Saved live config backup used by proxy takeover mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveBackup {
+    #[serde(rename = "appType")]
+    pub app_type: String,
+    #[serde(rename = "originalConfig")]
+    pub original_config: String,
+    #[serde(rename = "backedUpAt")]
+    pub backed_up_at: String,
 }
 
 /// Failover queue item
@@ -99,7 +111,23 @@ impl ProxyService {
         app: &str,
         provider_id: &str,
     ) -> Result<(), AppError> {
-        state.db.switch_proxy_target(app, provider_id)
+        let app_type = app.parse::<crate::app_config::AppType>()?;
+        state.db.switch_proxy_target(app, provider_id)?;
+        crate::settings::set_current_provider(&app_type, Some(provider_id))?;
+
+        if state.db.get_live_backup(app)?.is_some() {
+            let provider = state
+                .db
+                .get_provider_by_id(provider_id, app)?
+                .ok_or_else(|| {
+                    AppError::Message(format!(
+                        "Provider '{provider_id}' not found for app '{app}'"
+                    ))
+                })?;
+            Self::update_live_backup_from_provider(&state.db, app, &provider)?;
+        }
+
+        Ok(())
     }
 
     /// Reset provider circuit breaker
@@ -109,6 +137,39 @@ impl ProxyService {
         app: &str,
     ) -> Result<(), AppError> {
         state.db.reset_provider_health(provider_id, app)
+    }
+}
+
+impl ProxyService {
+    fn update_live_backup_from_provider(
+        db: &Database,
+        app_type: &str,
+        provider: &crate::provider::Provider,
+    ) -> Result<(), AppError> {
+        let backup_json = match app_type {
+            "claude" | "codex" => {
+                serde_json::to_string(&provider.settings_config).map_err(|err| {
+                    AppError::Message(format!("Failed to serialize {app_type} backup: {err}"))
+                })?
+            }
+            "gemini" => {
+                let env_backup = if let Some(env) = provider.settings_config.get("env") {
+                    json!({ "env": env })
+                } else {
+                    json!({ "env": {} })
+                };
+                serde_json::to_string(&env_backup).map_err(|err| {
+                    AppError::Message(format!("Failed to serialize gemini backup: {err}"))
+                })?
+            }
+            _ => {
+                return Err(AppError::InvalidInput(format!(
+                    "Unsupported proxy app type: {app_type}"
+                )))
+            }
+        };
+
+        db.save_live_backup(app_type, &backup_json)
     }
 }
 
@@ -178,5 +239,62 @@ impl UsageStatsService {
             .map_err(|e| AppError::Message(format!("CSV write error: {}", e)))?;
 
         Ok(output.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use serial_test::serial;
+    use tempfile::tempdir;
+
+    use crate::database::Database;
+    use crate::provider::Provider;
+    use crate::settings::AppSettings;
+
+    #[test]
+    #[serial]
+    fn switch_proxy_target_updates_live_backup_when_present() -> Result<(), AppError> {
+        let temp = tempdir().expect("tempdir");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        crate::settings::update_settings(AppSettings::default())?;
+
+        let state = AppState::new(Database::memory()?);
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "Provider A".to_string(),
+            json!({"env": {"ANTHROPIC_AUTH_TOKEN": "stale"}}),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "Provider B".to_string(),
+            json!({"env": {"ANTHROPIC_AUTH_TOKEN": "fresh"}}),
+            None,
+        );
+
+        state.db.save_provider("claude", &provider_a)?;
+        state.db.save_provider("claude", &provider_b)?;
+        state.db.set_current_provider("claude", "a")?;
+        crate::settings::set_current_provider(&crate::app_config::AppType::Claude, Some("a"))?;
+        state.db.save_live_backup("claude", "{\"env\":{}}")?;
+
+        ProxyService::switch_proxy_target(&state, "claude", "b")?;
+
+        let backup = state
+            .db
+            .get_live_backup("claude")?
+            .expect("backup should exist");
+        assert_eq!(
+            backup.original_config,
+            serde_json::to_string(&provider_b.settings_config).unwrap()
+        );
+        assert_eq!(
+            crate::settings::get_current_provider(&crate::app_config::AppType::Claude),
+            Some("b".to_string())
+        );
+
+        Ok(())
     }
 }

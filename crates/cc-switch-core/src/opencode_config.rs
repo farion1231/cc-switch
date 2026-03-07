@@ -111,7 +111,10 @@ pub fn set_mcp_server(id: &str, config: Value) -> Result<(), AppError> {
         full_config["mcp"] = json!({});
     }
 
-    if let Some(mcp) = full_config.get_mut("mcp").and_then(|value| value.as_object_mut()) {
+    if let Some(mcp) = full_config
+        .get_mut("mcp")
+        .and_then(|value| value.as_object_mut())
+    {
         mcp.insert(id.to_string(), config);
     }
 
@@ -120,7 +123,10 @@ pub fn set_mcp_server(id: &str, config: Value) -> Result<(), AppError> {
 
 pub fn remove_mcp_server(id: &str) -> Result<(), AppError> {
     let mut config = read_opencode_config()?;
-    if let Some(mcp) = config.get_mut("mcp").and_then(|value| value.as_object_mut()) {
+    if let Some(mcp) = config
+        .get_mut("mcp")
+        .and_then(|value| value.as_object_mut())
+    {
         mcp.remove(id);
     }
     write_opencode_config(&config)
@@ -128,7 +134,9 @@ pub fn remove_mcp_server(id: &str) -> Result<(), AppError> {
 
 pub fn add_plugin(plugin_name: &str) -> Result<(), AppError> {
     let mut config = read_opencode_config()?;
-    let plugins = config.get_mut("plugin").and_then(|value| value.as_array_mut());
+    let plugins = config
+        .get_mut("plugin")
+        .and_then(|value| value.as_array_mut());
 
     match plugins {
         Some(items) => {
@@ -153,7 +161,10 @@ pub fn add_plugin(plugin_name: &str) -> Result<(), AppError> {
                 });
             }
 
-            if !items.iter().any(|value| value.as_str() == Some(plugin_name)) {
+            if !items
+                .iter()
+                .any(|value| value.as_str() == Some(plugin_name))
+            {
                 items.push(Value::String(plugin_name.to_string()));
             }
         }
@@ -167,7 +178,10 @@ pub fn add_plugin(plugin_name: &str) -> Result<(), AppError> {
 
 pub fn remove_plugin_by_prefix(prefix: &str) -> Result<(), AppError> {
     let mut config = read_opencode_config()?;
-    if let Some(items) = config.get_mut("plugin").and_then(|value| value.as_array_mut()) {
+    if let Some(items) = config
+        .get_mut("plugin")
+        .and_then(|value| value.as_array_mut())
+    {
         items.retain(|value| {
             value
                 .as_str()

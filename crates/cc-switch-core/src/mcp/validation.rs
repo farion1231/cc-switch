@@ -39,7 +39,10 @@ pub fn validate_server_spec(spec: &Value) -> Result<(), AppError> {
     }
 
     if is_stdio {
-        let command = spec.get("command").and_then(Value::as_str).unwrap_or_default();
+        let command = spec
+            .get("command")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if command.trim().is_empty() {
             return Err(AppError::McpValidation(
                 "stdio 类型的 MCP 服务器缺少 command 字段".into(),

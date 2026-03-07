@@ -87,7 +87,10 @@ impl OmoService {
             .ok_or_else(|| AppError::Config("Expected JSON object".to_string()))
     }
 
-    fn extract_other_fields_with_keys(obj: &Map<String, Value>, known: &[&str]) -> Map<String, Value> {
+    fn extract_other_fields_with_keys(
+        obj: &Map<String, Value>,
+        known: &[&str],
+    ) -> Map<String, Value> {
         let mut other = Map::new();
         for (key, value) in obj {
             if !known.contains(&key.as_str()) {
