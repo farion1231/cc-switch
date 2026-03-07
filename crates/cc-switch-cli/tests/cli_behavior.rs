@@ -591,6 +591,84 @@ fn provider_add_from_json_switch_and_delete_round_trip() {
 
 #[test]
 #[serial]
+fn provider_usage_without_script_falls_back_to_local_summary() {
+    let temp = tempdir().expect("tempdir");
+    let provider_file = temp.path().join("provider.json");
+    fs::write(
+        &provider_file,
+        r#"{"env":{"ANTHROPIC_BASE_URL":"https://usage.example","ANTHROPIC_AUTH_TOKEN":"sk-usage"}}"#,
+    )
+    .expect("write provider json");
+
+    let add_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "add",
+            "--app",
+            "claude",
+            "--name",
+            "Local Usage Provider",
+            "--base-url",
+            "https://usage.example",
+            "--api-key",
+            "sk-usage",
+            "--from-json",
+            provider_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        add_output.status.success(),
+        "stderr: {}",
+        stderr_text(&add_output)
+    );
+
+    insert_usage_log(
+        temp.path(),
+        "req-provider-usage",
+        "claude",
+        "local-usage-provider",
+        "claude-haiku",
+        12,
+        8,
+        "0.0015",
+        chrono::Utc::now().timestamp(),
+    );
+
+    let usage_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "usage",
+            "local-usage-provider",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        usage_output.status.success(),
+        "stderr: {}",
+        stderr_text(&usage_output)
+    );
+    assert!(stderr_text(&usage_output).contains("local proxy usage"));
+
+    let value: Value =
+        serde_json::from_slice(&usage_output.stdout).expect("provider usage should return json");
+    assert_eq!(value.get("totalRequests").and_then(Value::as_u64), Some(1));
+    assert_eq!(value.get("totalTokens").and_then(Value::as_u64), Some(20));
+    assert_eq!(
+        value
+            .get("requestsByModel")
+            .and_then(|items| items.get("claude-haiku"))
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+}
+
+#[test]
+#[serial]
 fn universal_provider_sync_adds_target_app_providers() {
     let temp = tempdir().expect("tempdir");
 
@@ -896,6 +974,78 @@ fn proxy_circuit_config_rejects_half_open_requests() {
     );
     assert!(!output.status.success(), "command should fail");
     assert!(stderr_text(&output).contains("not supported"));
+}
+
+#[test]
+#[serial]
+fn usage_summary_defaults_to_all_history_and_days_filters_when_requested() {
+    let temp = tempdir().expect("tempdir");
+
+    insert_usage_log(
+        temp.path(),
+        "req-claude-history",
+        "claude",
+        "claude-provider",
+        "claude-haiku",
+        120,
+        30,
+        "0.0125",
+        chrono::NaiveDate::from_ymd_opt(2026, 2, 14)
+            .expect("date")
+            .and_hms_opt(2, 1, 3)
+            .expect("time")
+            .and_utc()
+            .timestamp(),
+    );
+
+    let all_history_output = run_cli(
+        temp.path(),
+        &["--format", "json", "usage", "summary", "--app", "claude"],
+    );
+    assert!(
+        all_history_output.status.success(),
+        "stderr: {}",
+        stderr_text(&all_history_output)
+    );
+    let all_history: Value = serde_json::from_slice(&all_history_output.stdout)
+        .expect("usage summary should return json");
+    assert_eq!(
+        all_history.get("totalRequests").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        all_history.get("totalTokens").and_then(Value::as_u64),
+        Some(150)
+    );
+
+    let recent_only_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "usage",
+            "summary",
+            "--app",
+            "claude",
+            "--days",
+            "7",
+        ],
+    );
+    assert!(
+        recent_only_output.status.success(),
+        "stderr: {}",
+        stderr_text(&recent_only_output)
+    );
+    let recent_only: Value = serde_json::from_slice(&recent_only_output.stdout)
+        .expect("usage summary should return json");
+    assert_eq!(
+        recent_only.get("totalRequests").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        recent_only.get("totalTokens").and_then(Value::as_u64),
+        Some(0)
+    );
 }
 
 #[test]

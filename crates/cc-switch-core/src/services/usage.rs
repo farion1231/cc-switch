@@ -132,8 +132,29 @@ pub struct ProviderLimitStatus {
 pub struct UsageService;
 
 impl UsageService {
+    pub fn get_summary_all(db: &Database, app: &str) -> Result<UsageSummary, AppError> {
+        db.get_usage_summary_all(app)
+    }
+
     pub fn get_summary(db: &Database, app: &str, days: u32) -> Result<UsageSummary, AppError> {
         db.get_usage_summary(app, days)
+    }
+
+    pub fn get_provider_summary_all(
+        db: &Database,
+        app: &str,
+        provider_id: &str,
+    ) -> Result<UsageSummary, AppError> {
+        db.get_provider_usage_summary_all(app, provider_id)
+    }
+
+    pub fn get_provider_summary(
+        db: &Database,
+        app: &str,
+        provider_id: &str,
+        days: u32,
+    ) -> Result<UsageSummary, AppError> {
+        db.get_provider_usage_summary(app, provider_id, days)
     }
 
     pub fn get_trends(

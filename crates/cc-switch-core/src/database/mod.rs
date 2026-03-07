@@ -73,6 +73,13 @@ impl Database {
     fn lock_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().expect("Database mutex lock failed")
     }
+
+    /// Run best-effort startup maintenance tasks for file-backed databases.
+    pub fn run_startup_maintenance(&self) {
+        if let Err(err) = self.periodic_backup_if_needed() {
+            log::warn!("Periodic backup check failed during startup maintenance: {err}");
+        }
+    }
 }
 
 /// Safely serialize JSON

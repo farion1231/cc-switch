@@ -18,4 +18,8 @@ impl AppState {
         let proxy_service = ProxyService::new(db.clone());
         Self { db, proxy_service }
     }
+
+    pub fn run_startup_maintenance(&self) {
+        self.db.run_startup_maintenance();
+    }
 }

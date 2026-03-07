@@ -14,6 +14,7 @@ async fn main() -> anyhow::Result<()> {
 
     let db = Database::new()?;
     let state = AppState::new(db);
+    state.run_startup_maintenance();
 
     if matches!(args.command, cli::Commands::E2eSession) {
         return e2e_session::run(state).await;

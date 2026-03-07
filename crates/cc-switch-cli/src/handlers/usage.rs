@@ -17,12 +17,15 @@ pub async fn handle(cmd: UsageCommands, state: &AppState, printer: &Printer) -> 
 
 async fn handle_summary(
     app: &str,
-    days: u32,
+    days: Option<u32>,
     state: &AppState,
     printer: &Printer,
 ) -> anyhow::Result<()> {
     let app = parse_app_type(app)?;
-    let summary = UsageService::get_summary(&state.db, app.as_str(), days)?;
+    let summary = match days {
+        Some(days) => UsageService::get_summary(&state.db, app.as_str(), days)?,
+        None => UsageService::get_summary_all(&state.db, app.as_str())?,
+    };
     printer.print_usage_summary(&summary)?;
     Ok(())
 }

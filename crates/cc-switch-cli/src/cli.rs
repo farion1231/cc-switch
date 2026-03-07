@@ -551,9 +551,9 @@ pub enum UsageCommands {
         /// App type
         #[arg(short, long, default_value = "claude")]
         app: String,
-        /// Number of days to include
-        #[arg(short, long, default_value = "7")]
-        days: u32,
+        /// Number of recent days to include; omit to summarize all recorded usage
+        #[arg(short, long)]
+        days: Option<u32>,
     },
     /// Show request logs
     Logs {

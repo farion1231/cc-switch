@@ -1767,56 +1767,34 @@ impl Database {
         let since = chrono::Utc::now() - chrono::Duration::days(days as i64);
         let since_ts = since.timestamp_millis();
 
-        let (where_clause, params) = build_usage_filters(app, Some(since_ts), None);
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        self.query_usage_summary(app, None, Some(since_ts), None, &conn)
+    }
 
-        let summary_sql = format!(
-            "SELECT
-                COUNT(*),
-                COALESCE(SUM(input_tokens + output_tokens), 0),
-                COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
-             FROM proxy_request_logs
-             {where_clause}"
-        );
+    pub fn get_usage_summary_all(&self, app: &str) -> Result<UsageSummary, AppError> {
+        let conn = lock_conn!(self.conn);
+        self.query_usage_summary(app, None, None, None, &conn)
+    }
 
-        let (total_requests, total_tokens, total_cost) = conn
-            .query_row(&summary_sql, params_refs.as_slice(), |row| {
-                Ok((
-                    row.get::<_, u64>(0)?,
-                    row.get::<_, u64>(1)?,
-                    row.get::<_, f64>(2)?,
-                ))
-            })
-            .map_err(|e| AppError::Database(e.to_string()))?;
+    pub fn get_provider_usage_summary(
+        &self,
+        app: &str,
+        provider_id: &str,
+        days: u32,
+    ) -> Result<UsageSummary, AppError> {
+        let conn = lock_conn!(self.conn);
+        let since = chrono::Utc::now() - chrono::Duration::days(days as i64);
+        let since_ts = since.timestamp_millis();
 
-        let by_model_sql = format!(
-            "SELECT model, COUNT(*)
-             FROM proxy_request_logs
-             {where_clause}
-             GROUP BY model
-             ORDER BY COUNT(*) DESC, model ASC"
-        );
-        let mut stmt = conn
-            .prepare(&by_model_sql)
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        let rows = stmt
-            .query_map(params_refs.as_slice(), |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
-            })
-            .map_err(|e| AppError::Database(e.to_string()))?;
+        self.query_usage_summary(app, Some(provider_id), Some(since_ts), None, &conn)
+    }
 
-        let mut requests_by_model = HashMap::new();
-        for row in rows {
-            let (model, count) = row.map_err(|e| AppError::Database(e.to_string()))?;
-            requests_by_model.insert(model, count);
-        }
-
-        Ok(UsageSummary {
-            total_requests,
-            total_tokens,
-            total_cost,
-            requests_by_model,
-        })
+    pub fn get_provider_usage_summary_all(
+        &self,
+        app: &str,
+        provider_id: &str,
+    ) -> Result<UsageSummary, AppError> {
+        let conn = lock_conn!(self.conn);
+        self.query_usage_summary(app, Some(provider_id), None, None, &conn)
     }
 
     pub fn get_request_logs(
@@ -1837,14 +1815,15 @@ impl Database {
         }
 
         let conn = lock_conn!(self.conn);
-        let (where_clause, params) = build_usage_filters(app, start_ts, end_ts);
+        let (where_clause, params) = build_usage_filters(app, None, start_ts, end_ts);
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let created_at_expr = normalized_usage_timestamp_sql("created_at");
 
         let sql = format!(
-            "SELECT created_at, model, input_tokens + output_tokens, CAST(total_cost_usd AS REAL)
+            "SELECT {created_at_expr} AS normalized_created_at, model, input_tokens + output_tokens, CAST(total_cost_usd AS REAL)
              FROM proxy_request_logs
              {where_clause}
-             ORDER BY created_at DESC"
+             ORDER BY normalized_created_at DESC"
         );
 
         let mut stmt = conn
@@ -1899,9 +1878,11 @@ impl Database {
             bucket_count = 1;
         }
 
-        let sql = "
+        let created_at_expr = normalized_usage_timestamp_sql("created_at");
+        let sql = format!(
+            "
             SELECT
-                CAST((created_at - ?1) / ?3 AS INTEGER) as bucket_idx,
+                CAST(({created_at_expr} - ?1) / ?3 AS INTEGER) as bucket_idx,
                 COUNT(*) as request_count,
                 COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
                 COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
@@ -1910,12 +1891,13 @@ impl Database {
                 COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
                 COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens
             FROM proxy_request_logs
-            WHERE created_at >= ?1 AND created_at <= ?2
+            WHERE {created_at_expr} >= ?1 AND {created_at_expr} <= ?2
             GROUP BY bucket_idx
-            ORDER BY bucket_idx ASC";
+            ORDER BY bucket_idx ASC"
+        );
 
         let mut stmt = conn
-            .prepare(sql)
+            .prepare(&sql)
             .map_err(|e| AppError::Database(e.to_string()))?;
         let rows = stmt
             .query_map(params![start_ts, end_ts, bucket_ms], |row| {
@@ -2084,6 +2066,7 @@ impl Database {
         params.push(Box::new(offset as i64));
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(|item| item.as_ref()).collect();
+        let created_at_expr = normalized_usage_timestamp_sql("l.created_at");
 
         let sql = format!(
             "SELECT l.request_id, l.provider_id, p.name, l.app_type, l.model, l.request_model,
@@ -2091,11 +2074,11 @@ impl Database {
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
-                    l.status_code, l.error_message, l.created_at
+                    l.status_code, l.error_message, {created_at_expr} AS normalized_created_at
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
-             ORDER BY l.created_at DESC
+             ORDER BY normalized_created_at DESC
              LIMIT ? OFFSET ?"
         );
 
@@ -2156,19 +2139,22 @@ impl Database {
         request_id: &str,
     ) -> Result<Option<UsageLogDetail>, AppError> {
         let conn = lock_conn!(self.conn);
-        let sql = "SELECT l.request_id, l.provider_id, p.name, l.app_type, l.model, l.request_model,
+        let created_at_expr = normalized_usage_timestamp_sql("l.created_at");
+        let sql = format!(
+            "SELECT l.request_id, l.provider_id, p.name, l.app_type, l.model, l.request_model,
                     COALESCE(l.cost_multiplier, '1'),
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
-                    l.status_code, l.error_message, l.created_at
+                    l.status_code, l.error_message, {created_at_expr} AS normalized_created_at
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?1
-             LIMIT 1";
+             LIMIT 1"
+        );
 
         let result = conn
-            .query_row(sql, [request_id], |row| {
+            .query_row(&sql, [request_id], |row| {
                 Ok(UsageLogDetail {
                     request_id: row.get(0)?,
                     provider_id: row.get(1)?,
@@ -2303,7 +2289,7 @@ impl Database {
                 "SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
                  FROM proxy_request_logs
                  WHERE provider_id = ?1 AND app_type = ?2
-                   AND date(datetime(created_at / 1000, 'unixepoch', 'localtime')) = date('now', 'localtime')",
+                   AND date(datetime((CASE WHEN ABS(created_at) < 100000000000 THEN created_at * 1000 ELSE created_at END) / 1000, 'unixepoch', 'localtime')) = date('now', 'localtime')",
                 params![provider_id, app_type],
                 |row| row.get(0),
             )
@@ -2314,7 +2300,7 @@ impl Database {
                 "SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
                  FROM proxy_request_logs
                  WHERE provider_id = ?1 AND app_type = ?2
-                   AND strftime('%Y-%m', datetime(created_at / 1000, 'unixepoch', 'localtime')) = strftime('%Y-%m', 'now', 'localtime')",
+                   AND strftime('%Y-%m', datetime((CASE WHEN ABS(created_at) < 100000000000 THEN created_at * 1000 ELSE created_at END) / 1000, 'unixepoch', 'localtime')) = strftime('%Y-%m', 'now', 'localtime')",
                 params![provider_id, app_type],
                 |row| row.get(0),
             )
@@ -2440,6 +2426,66 @@ struct PricingInfo {
 }
 
 impl Database {
+    fn query_usage_summary(
+        &self,
+        app: &str,
+        provider_id: Option<&str>,
+        start_ts: Option<i64>,
+        end_ts: Option<i64>,
+        conn: &Connection,
+    ) -> Result<UsageSummary, AppError> {
+        let (where_clause, params) = build_usage_filters(app, provider_id, start_ts, end_ts);
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+        let summary_sql = format!(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(input_tokens + output_tokens), 0),
+                COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
+             FROM proxy_request_logs
+             {where_clause}"
+        );
+
+        let (total_requests, total_tokens, total_cost) = conn
+            .query_row(&summary_sql, params_refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, u64>(0)?,
+                    row.get::<_, u64>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let by_model_sql = format!(
+            "SELECT model, COUNT(*)
+             FROM proxy_request_logs
+             {where_clause}
+             GROUP BY model
+             ORDER BY COUNT(*) DESC, model ASC"
+        );
+        let mut stmt = conn
+            .prepare(&by_model_sql)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut requests_by_model = HashMap::new();
+        for row in rows {
+            let (model, count) = row.map_err(|e| AppError::Database(e.to_string()))?;
+            requests_by_model.insert(model, count);
+        }
+
+        Ok(UsageSummary {
+            total_requests,
+            total_tokens,
+            total_cost,
+            requests_by_model,
+        })
+    }
+
     fn maybe_backfill_log_costs(
         conn: &Connection,
         log: &mut UsageLogDetail,
@@ -2626,19 +2672,26 @@ fn parse_json_opt<T: DeserializeOwned>(json: Option<String>) -> Option<T> {
 
 fn build_usage_filters(
     app: &str,
+    provider_id: Option<&str>,
     start_ts: Option<i64>,
     end_ts: Option<i64>,
 ) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+    let created_at_expr = normalized_usage_timestamp_sql("created_at");
     let mut conditions = vec!["app_type = ?".to_string()];
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(app.to_string())];
 
+    if let Some(provider_id) = provider_id {
+        conditions.push("provider_id = ?".to_string());
+        params.push(Box::new(provider_id.to_string()));
+    }
+
     if let Some(start_ts) = start_ts {
-        conditions.push("created_at >= ?".to_string());
+        conditions.push(format!("{created_at_expr} >= ?"));
         params.push(Box::new(start_ts));
     }
 
     if let Some(end_ts) = end_ts {
-        conditions.push("created_at <= ?".to_string());
+        conditions.push(format!("{created_at_expr} <= ?"));
         params.push(Box::new(end_ts));
     }
 
@@ -2648,6 +2701,7 @@ fn build_usage_filters(
 fn build_usage_detail_filters(
     filters: &UsageLogFilters,
 ) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+    let created_at_expr = normalized_usage_timestamp_sql("l.created_at");
     let mut conditions = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -2668,11 +2722,11 @@ fn build_usage_detail_filters(
         params.push(Box::new(status_code as i64));
     }
     if let Some(start_date) = filters.start_date {
-        conditions.push("l.created_at >= ?".to_string());
+        conditions.push(format!("{created_at_expr} >= ?"));
         params.push(Box::new(start_date));
     }
     if let Some(end_date) = filters.end_date {
-        conditions.push("l.created_at <= ?".to_string());
+        conditions.push(format!("{created_at_expr} <= ?"));
         params.push(Box::new(end_date));
     }
 
@@ -2702,8 +2756,20 @@ fn parse_usage_date(date: &str, end_of_day: bool) -> Result<i64, AppError> {
     Ok(datetime.and_utc().timestamp_millis())
 }
 
+fn normalize_usage_timestamp(created_at: i64) -> i64 {
+    if created_at.abs() < 100_000_000_000 {
+        created_at.saturating_mul(1000)
+    } else {
+        created_at
+    }
+}
+
+fn normalized_usage_timestamp_sql(column: &str) -> String {
+    format!("CASE WHEN ABS({column}) < 100000000000 THEN {column} * 1000 ELSE {column} END")
+}
+
 fn format_usage_timestamp(created_at: i64) -> String {
-    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(created_at)
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(normalize_usage_timestamp(created_at))
         .map(|datetime| datetime.to_rfc3339())
         .unwrap_or_else(|| created_at.to_string())
 }
@@ -2925,6 +2991,47 @@ mod tests {
         assert_eq!(logs[0].total_tokens, 45);
         assert!((logs[0].cost - 0.003).abs() < f64::EPSILON);
         assert!(logs[0].timestamp.starts_with("2026-03-06T09:30:00"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_second_timestamps_are_compatible_with_usage_queries() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let now_secs = chrono::Utc::now().timestamp();
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-legacy-seconds",
+                    "p1",
+                    "claude",
+                    "claude-haiku",
+                    12,
+                    7,
+                    "0.0015",
+                    100,
+                    200,
+                    now_secs
+                ],
+            )?;
+        }
+
+        let summary = db.get_usage_summary("claude", 7)?;
+        assert_eq!(summary.total_requests, 1);
+        assert_eq!(summary.total_tokens, 19);
+        assert!((summary.total_cost - 0.0015).abs() < f64::EPSILON);
+
+        let logs = db.get_request_logs("claude", None, None)?;
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].model, "claude-haiku");
+        assert!(!logs[0].timestamp.starts_with("1970-"));
 
         Ok(())
     }

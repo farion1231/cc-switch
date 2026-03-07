@@ -5,7 +5,7 @@ use crate::handlers::common::parse_app_type;
 use crate::output::Printer;
 use anyhow::Context;
 use cc_switch_core::{
-    config::sanitize_provider_name, AppState, AppType, Provider, UniversalProvider,
+    config::sanitize_provider_name, AppState, AppType, Provider, UniversalProvider, UsageService,
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -190,8 +190,27 @@ async fn handle_usage(
     printer: &Printer,
 ) -> anyhow::Result<()> {
     let app_type = parse_app_type(app)?;
-    let result = cc_switch_core::ProviderService::query_usage(state, app_type, id).await?;
-    printer.print_value(&result)?;
+    let provider = cc_switch_core::ProviderService::list(state, app_type.clone())?
+        .shift_remove(id)
+        .ok_or_else(|| anyhow::anyhow!("Provider not found: {}", id))?;
+
+    let has_enabled_usage_script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .is_some_and(|script| script.enabled);
+
+    if has_enabled_usage_script {
+        let result = cc_switch_core::ProviderService::query_usage(state, app_type, id).await?;
+        printer.print_value(&result)?;
+    } else {
+        printer.warn(format!(
+            "No enabled usage script configured for '{}'; showing local proxy usage summary instead.",
+            id
+        ));
+        let summary = UsageService::get_provider_summary_all(&state.db, app_type.as_str(), id)?;
+        printer.print_usage_summary(&summary)?;
+    }
     Ok(())
 }
 
