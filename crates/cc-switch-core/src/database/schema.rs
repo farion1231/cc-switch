@@ -5,7 +5,8 @@ use crate::error::AppError;
 use rusqlite::Connection;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 6;
+#[allow(dead_code)]
+pub const SCHEMA_VERSION: i32 = 7;
 
 impl Database {
     /// Create all database tables
@@ -38,7 +39,21 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 2. Universal Providers table
+        // 2. Provider endpoints table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS provider_endpoints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                url TEXT NOT NULL,
+                added_at INTEGER,
+                FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 3. Universal Providers table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS universal_providers (
                 id TEXT PRIMARY KEY,
@@ -60,7 +75,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 3. MCP Servers table
+        // 4. MCP Servers table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mcp_servers (
                 id TEXT PRIMARY KEY,
@@ -73,13 +88,14 @@ impl Database {
                 enabled_claude BOOLEAN NOT NULL DEFAULT 0,
                 enabled_codex BOOLEAN NOT NULL DEFAULT 0,
                 enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
-                enabled_opencode BOOLEAN NOT NULL DEFAULT 0
+                enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+                enabled_openclaw BOOLEAN NOT NULL DEFAULT 0
             )",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 4. Prompts table
+        // 5. Prompts table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS prompts (
                 id TEXT NOT NULL,
@@ -96,7 +112,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 5. Skills table
+        // 6. Skills table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skills (
                 id TEXT PRIMARY KEY,
@@ -111,20 +127,21 @@ impl Database {
                 enabled_codex BOOLEAN NOT NULL DEFAULT 0,
                 enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
                 enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+                enabled_openclaw BOOLEAN NOT NULL DEFAULT 0,
                 installed_at INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 6. Settings table
+        // 7. Settings table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 7. Proxy Config table
+        // 8. Proxy Config table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS proxy_config (
                 app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
@@ -150,7 +167,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 8. Provider Health table
+        // 9. Provider Health table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS provider_health (
                 provider_id TEXT NOT NULL,
@@ -168,7 +185,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 9. Proxy Request Logs table
+        // 10. Proxy Request Logs table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS proxy_request_logs (
                 request_id TEXT PRIMARY KEY,
@@ -212,6 +229,8 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        Self::apply_schema_migrations_on_conn(conn)?;
+
         // Initialize proxy_config rows
         Self::init_proxy_config_rows(conn)?;
 
@@ -227,6 +246,57 @@ impl Database {
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         }
+        Ok(())
+    }
+
+    pub(crate) fn apply_schema_migrations_on_conn(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_openclaw",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "skills",
+            "enabled_openclaw",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+        Ok(())
+    }
+
+    fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, AppError> {
+        let sql = format!("PRAGMA table_info(\"{table}\")");
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut rows = stmt
+            .query([])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+            let name: String = row.get(1).map_err(|e| AppError::Database(e.to_string()))?;
+            if name == column {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn add_column_if_missing(
+        conn: &Connection,
+        table: &str,
+        column: &str,
+        definition: &str,
+    ) -> Result<(), AppError> {
+        if Self::has_column(conn, table, column)? {
+            return Ok(());
+        }
+
+        let sql = format!("ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {definition}");
+        conn.execute(&sql, [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 }

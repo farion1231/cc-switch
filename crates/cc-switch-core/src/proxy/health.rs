@@ -3,13 +3,13 @@
 use std::time::Duration;
 
 pub struct HealthChecker {
-    timeout: Duration,
+    _timeout: Duration,
 }
 
 impl HealthChecker {
     pub fn new(timeout_secs: u64) -> Self {
         Self {
-            timeout: Duration::from_secs(timeout_secs),
+            _timeout: Duration::from_secs(timeout_secs),
         }
     }
 

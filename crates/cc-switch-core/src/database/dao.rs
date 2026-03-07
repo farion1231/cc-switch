@@ -10,6 +10,10 @@ use crate::error::AppError;
 use crate::prompt::Prompt;
 use crate::provider::{Provider, UniversalProvider};
 use crate::services::proxy::{ProxyConfig, ProxyTakeoverStatus, RequestLog, UsageSummary};
+use crate::services::usage::{
+    PaginatedUsageLogs, UsageLogDetail, UsageLogFilters, UsageModelStat, UsageProviderStat,
+    UsageTrendPoint,
+};
 use crate::settings::AppSettings;
 
 use super::{lock_conn, to_json_string, Database};
@@ -23,8 +27,8 @@ impl Database {
     ) -> Result<IndexMap<String, Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
-             FROM providers WHERE app_type = ? ORDER BY sort_index, created_at"
+            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+             FROM providers WHERE app_type = ? ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
 
         let providers = stmt
@@ -40,8 +44,8 @@ impl Database {
                     notes: row.get(7)?,
                     icon: row.get(8)?,
                     icon_color: row.get(9)?,
-                    meta: parse_json_opt(row.get(10)?),
-                    in_failover_queue: row.get(12)?,
+                    meta: Some(parse_json(row.get::<_, String>(10)?)),
+                    in_failover_queue: row.get(11)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?
@@ -49,8 +53,30 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut map = IndexMap::new();
-        for p in providers {
-            map.insert(p.id.clone(), p);
+        for mut provider in providers {
+            let mut stmt_endpoints = conn.prepare(
+                "SELECT url, added_at FROM provider_endpoints
+                 WHERE provider_id = ?1 AND app_type = ?2
+                 ORDER BY added_at ASC, url ASC",
+            )?;
+
+            let endpoints = stmt_endpoints
+                .query_map(params![&provider.id, app_type], |row| {
+                    Ok(crate::settings::CustomEndpoint {
+                        url: row.get(0)?,
+                        added_at: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                        last_used: None,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut meta = provider.meta.take().unwrap_or_default();
+            meta.custom_endpoints = endpoints
+                .into_iter()
+                .map(|endpoint| (endpoint.url.clone(), endpoint))
+                .collect();
+            provider.meta = Some(meta);
+            map.insert(provider.id.clone(), provider);
         }
         Ok(map)
     }
@@ -84,13 +110,22 @@ impl Database {
     }
 
     pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<bool, AppError> {
-        let conn = lock_conn!(self.conn);
-        let meta_json = to_json_string(&provider.meta)?;
+        let mut conn = lock_conn!(self.conn);
         let config_json = to_json_string(&provider.settings_config)?;
+        let mut meta = provider.meta.clone().unwrap_or_default();
+        let endpoints = std::mem::take(&mut meta.custom_endpoints);
+        let meta_json = to_json_string(&meta)?;
 
-        conn.execute(
-            "INSERT OR REPLACE INTO providers (id, app_type, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        tx.execute(
+            "INSERT OR REPLACE INTO providers (
+                id, app_type, name, settings_config, website_url, category, created_at,
+                sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
+            )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
                 COALESCE((SELECT is_current FROM providers WHERE id = ?1 AND app_type = ?2), 0),
                 ?13)",
             params![
@@ -111,6 +146,22 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        tx.execute(
+            "DELETE FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2",
+            params![provider.id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        for (url, endpoint) in endpoints {
+            tx.execute(
+                "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![provider.id, app_type, url, endpoint.added_at],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
         Ok(true)
     }
 
@@ -122,6 +173,215 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
+    }
+
+    pub fn get_provider_by_id(
+        &self,
+        id: &str,
+        app_type: &str,
+    ) -> Result<Option<Provider>, AppError> {
+        Ok(self.get_all_providers(app_type)?.shift_remove(id))
+    }
+
+    pub fn update_provider_settings_config(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        settings_config: &serde_json::Value,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET settings_config = ?1 WHERE id = ?2 AND app_type = ?3",
+            params![
+                serde_json::to_string(settings_config).map_err(|e| AppError::Database(format!(
+                    "Failed to serialize settings_config: {e}"
+                )))?,
+                provider_id,
+                app_type
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn add_custom_endpoint(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        url: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let added_at = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![provider_id, app_type, url, added_at],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn remove_custom_endpoint(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        url: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "DELETE FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 AND url = ?3",
+            params![provider_id, app_type, url],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn set_omo_provider_current(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        category: &str,
+    ) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        tx.execute(
+            "UPDATE providers SET is_current = 0 WHERE app_type = ?1 AND category = ?2",
+            params![app_type, category],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let opposite = match category {
+            "omo" => Some("omo-slim"),
+            "omo-slim" => Some("omo"),
+            _ => None,
+        };
+        if let Some(opposite) = opposite {
+            tx.execute(
+                "UPDATE providers SET is_current = 0 WHERE app_type = ?1 AND category = ?2",
+                params![app_type, opposite],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        let updated = tx
+            .execute(
+                "UPDATE providers
+                 SET is_current = 1
+                 WHERE id = ?1 AND app_type = ?2 AND category = ?3",
+                params![provider_id, app_type, category],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        if updated != 1 {
+            return Err(AppError::Database(format!(
+                "Failed to set {category} provider current: provider '{provider_id}' not found in app '{app_type}'"
+            )));
+        }
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn is_omo_provider_current(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        category: &str,
+    ) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        match conn.query_row(
+            "SELECT is_current FROM providers
+             WHERE id = ?1 AND app_type = ?2 AND category = ?3",
+            params![provider_id, app_type, category],
+            |row| row.get(0),
+        ) {
+            Ok(is_current) => Ok(is_current),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(AppError::Database(e.to_string())),
+        }
+    }
+
+    pub fn clear_omo_provider_current(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        category: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET is_current = 0
+             WHERE id = ?1 AND app_type = ?2 AND category = ?3",
+            params![provider_id, app_type, category],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn get_current_omo_provider(
+        &self,
+        app_type: &str,
+        category: &str,
+    ) -> Result<Option<Provider>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let row_data = conn.query_row(
+            "SELECT id, name, settings_config, category, created_at, sort_index, notes, meta
+             FROM providers
+             WHERE app_type = ?1 AND category = ?2 AND is_current = 1
+             LIMIT 1",
+            params![app_type, category],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<usize>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            },
+        );
+
+        let (id, name, settings_config_str, category_value, created_at, sort_index, notes, meta_str) =
+            match row_data {
+                Ok(value) => value,
+                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+                Err(e) => return Err(AppError::Database(e.to_string())),
+            };
+
+        let settings_config = serde_json::from_str(&settings_config_str).map_err(|e| {
+            AppError::Database(format!(
+                "Failed to parse {category} provider settings_config (provider_id={id}): {e}"
+            ))
+        })?;
+        let meta = if meta_str.trim().is_empty() {
+            crate::provider::ProviderMeta::default()
+        } else {
+            serde_json::from_str(&meta_str).map_err(|e| {
+                AppError::Database(format!(
+                    "Failed to parse {category} provider meta (provider_id={id}): {e}"
+                ))
+            })?
+        };
+
+        Ok(Some(Provider {
+            id,
+            name,
+            settings_config,
+            website_url: None,
+            category: category_value,
+            created_at,
+            sort_index,
+            notes,
+            meta: Some(meta),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }))
     }
 
     // ========== Universal Provider Methods ==========
@@ -239,7 +499,7 @@ impl Database {
     pub fn get_all_mcp_servers(&self) -> Result<IndexMap<String, McpServer>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode
+            "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_openclaw
              FROM mcp_servers ORDER BY id"
         ).map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -258,6 +518,7 @@ impl Database {
                         codex: row.get(8)?,
                         gemini: row.get(9)?,
                         opencode: row.get(10)?,
+                        openclaw: row.get(11)?,
                     },
                 })
             })
@@ -276,7 +537,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let result = conn
             .query_row(
-                "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode
+                "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_openclaw
                  FROM mcp_servers WHERE id = ?",
                 [id],
                 |row| {
@@ -293,6 +554,7 @@ impl Database {
                             codex: row.get(8)?,
                             gemini: row.get(9)?,
                             opencode: row.get(10)?,
+                            openclaw: row.get(11)?,
                         },
                     })
                 },
@@ -308,8 +570,8 @@ impl Database {
         let tags_json = to_json_string(&server.tags)?;
 
         conn.execute(
-            "INSERT OR REPLACE INTO mcp_servers (id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT OR REPLACE INTO mcp_servers (id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_openclaw)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 server.id,
                 server.name,
@@ -322,6 +584,7 @@ impl Database {
                 server.apps.codex,
                 server.apps.gemini,
                 server.apps.opencode,
+                server.apps.openclaw,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -429,7 +692,7 @@ impl Database {
     pub fn get_all_skills(&self) -> Result<Vec<InstalledSkill>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch, readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at
+            "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch, readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_openclaw, installed_at
              FROM skills ORDER BY installed_at DESC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -449,8 +712,9 @@ impl Database {
                         codex: row.get(9)?,
                         gemini: row.get(10)?,
                         opencode: row.get(11)?,
+                        openclaw: row.get(12)?,
                     },
-                    installed_at: row.get(12)?,
+                    installed_at: row.get(13)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?
@@ -464,7 +728,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let result = conn
             .query_row(
-                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch, readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at
+                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch, readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_openclaw, installed_at
                  FROM skills WHERE id = ?",
                 [id],
                 |row| {
@@ -482,8 +746,9 @@ impl Database {
                             codex: row.get(9)?,
                             gemini: row.get(10)?,
                             opencode: row.get(11)?,
+                            openclaw: row.get(12)?,
                         },
-                        installed_at: row.get(12)?,
+                        installed_at: row.get(13)?,
                     })
                 },
             )
@@ -495,8 +760,8 @@ impl Database {
     pub fn save_skill(&self, skill: &InstalledSkill) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "INSERT OR REPLACE INTO skills (id, name, description, directory, repo_owner, repo_name, repo_branch, readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT OR REPLACE INTO skills (id, name, description, directory, repo_owner, repo_name, repo_branch, readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_openclaw, installed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 skill.id,
                 skill.name,
@@ -510,6 +775,7 @@ impl Database {
                 skill.apps.codex,
                 skill.apps.gemini,
                 skill.apps.opencode,
+                skill.apps.openclaw,
                 skill.installed_at,
             ],
         )
@@ -546,10 +812,12 @@ impl Database {
                 "codexConfigDir" => settings.codex_config_dir = Some(value),
                 "geminiConfigDir" => settings.gemini_config_dir = Some(value),
                 "opencodeConfigDir" => settings.opencode_config_dir = Some(value),
+                "openclawConfigDir" => settings.openclaw_config_dir = Some(value),
                 "currentProviderClaude" => settings.current_provider_claude = Some(value),
                 "currentProviderCodex" => settings.current_provider_codex = Some(value),
                 "currentProviderGemini" => settings.current_provider_gemini = Some(value),
                 "currentProviderOpenCode" => settings.current_provider_opencode = Some(value),
+                "currentProviderOpenClaw" => settings.current_provider_openclaw = Some(value),
                 "skillSyncMethod" => settings.skill_sync_method = value.parse().unwrap_or_default(),
                 "preferredTerminal" => settings.preferred_terminal = Some(value),
                 _ => {}
@@ -596,6 +864,9 @@ impl Database {
         if let Some(v) = &settings.opencode_config_dir {
             self.set_setting("opencodeConfigDir", v)?;
         }
+        if let Some(v) = &settings.openclaw_config_dir {
+            self.set_setting("openclawConfigDir", v)?;
+        }
         if let Some(v) = &settings.current_provider_claude {
             self.set_setting("currentProviderClaude", v)?;
         }
@@ -607,6 +878,9 @@ impl Database {
         }
         if let Some(v) = &settings.current_provider_opencode {
             self.set_setting("currentProviderOpenCode", v)?;
+        }
+        if let Some(v) = &settings.current_provider_openclaw {
+            self.set_setting("currentProviderOpenClaw", v)?;
         }
         self.set_setting("skillSyncMethod", &settings.skill_sync_method.to_string())?;
         if let Some(v) = &settings.preferred_terminal {
@@ -666,7 +940,14 @@ impl Database {
     }
 
     pub fn switch_proxy_target(&self, app: &str, provider_id: &str) -> Result<(), AppError> {
-        Ok(())
+        let exists = self.get_provider_by_id(provider_id, app)?.is_some();
+        if !exists {
+            return Err(AppError::Message(format!(
+                "Provider '{provider_id}' not found for app '{app}'"
+            )));
+        }
+
+        self.set_current_provider(app, provider_id)
     }
 
     pub fn reset_provider_health(&self, provider_id: &str, app: &str) -> Result<(), AppError> {
@@ -782,11 +1063,335 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
+    pub fn get_usage_trends(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<Vec<UsageTrendPoint>, AppError> {
+        use chrono::{Local, TimeZone};
+
+        let conn = lock_conn!(self.conn);
+        let end_ts = end_date.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+        let mut start_ts =
+            start_date.unwrap_or_else(|| end_ts - chrono::Duration::hours(24).num_milliseconds());
+
+        if start_ts >= end_ts {
+            start_ts = end_ts - chrono::Duration::hours(24).num_milliseconds();
+        }
+
+        let duration = end_ts - start_ts;
+        let bucket_ms: i64 = if duration <= chrono::Duration::hours(24).num_milliseconds() {
+            chrono::Duration::hours(1).num_milliseconds()
+        } else {
+            chrono::Duration::days(1).num_milliseconds()
+        };
+        let mut bucket_count = if duration <= 0 {
+            1
+        } else {
+            ((duration as f64) / bucket_ms as f64).ceil() as i64
+        };
+        if bucket_ms == chrono::Duration::hours(1).num_milliseconds() {
+            bucket_count = 24;
+        }
+        if bucket_count < 1 {
+            bucket_count = 1;
+        }
+
+        let sql = "
+            SELECT
+                CAST((created_at - ?1) / ?3 AS INTEGER) as bucket_idx,
+                COUNT(*) as request_count,
+                COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
+                COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
+                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens
+            FROM proxy_request_logs
+            WHERE created_at >= ?1 AND created_at <= ?2
+            GROUP BY bucket_idx
+            ORDER BY bucket_idx ASC";
+
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![start_ts, end_ts, bucket_ms], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    UsageTrendPoint {
+                        date: String::new(),
+                        request_count: row.get::<_, i64>(1)? as u64,
+                        total_cost: format!("{:.6}", row.get::<_, f64>(2)?),
+                        total_tokens: row.get::<_, i64>(3)? as u64,
+                        total_input_tokens: row.get::<_, i64>(4)? as u64,
+                        total_output_tokens: row.get::<_, i64>(5)? as u64,
+                        total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
+                        total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
+                    },
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut map = HashMap::new();
+        for row in rows {
+            let (mut bucket_idx, point) = row.map_err(|e| AppError::Database(e.to_string()))?;
+            if bucket_idx < 0 {
+                continue;
+            }
+            if bucket_idx >= bucket_count {
+                bucket_idx = bucket_count - 1;
+            }
+            map.insert(bucket_idx, point);
+        }
+
+        let mut points = Vec::with_capacity(bucket_count as usize);
+        for index in 0..bucket_count {
+            let bucket_start_ms = start_ts + index * bucket_ms;
+            let bucket_start = Local
+                .timestamp_millis_opt(bucket_start_ms)
+                .single()
+                .unwrap_or_else(Local::now);
+            let date = bucket_start.to_rfc3339();
+
+            if let Some(mut point) = map.remove(&index) {
+                point.date = date;
+                points.push(point);
+            } else {
+                points.push(UsageTrendPoint {
+                    date,
+                    request_count: 0,
+                    total_cost: "0.000000".to_string(),
+                    total_tokens: 0,
+                    total_input_tokens: 0,
+                    total_output_tokens: 0,
+                    total_cache_creation_tokens: 0,
+                    total_cache_read_tokens: 0,
+                });
+            }
+        }
+
+        Ok(points)
+    }
+
+    pub fn get_usage_provider_stats(&self) -> Result<Vec<UsageProviderStat>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let sql = "SELECT
+                l.provider_id,
+                COALESCE(p.name, 'Unknown') as provider_name,
+                COUNT(*) as request_count,
+                COALESCE(SUM(l.input_tokens + l.output_tokens), 0) as total_tokens,
+                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
+                COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
+                COALESCE(AVG(l.latency_ms), 0) as avg_latency
+             FROM proxy_request_logs l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             GROUP BY l.provider_id, l.app_type
+             ORDER BY total_cost DESC";
+
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                let request_count: i64 = row.get(2)?;
+                let success_count: i64 = row.get(5)?;
+                let success_rate = if request_count > 0 {
+                    (success_count as f32 / request_count as f32) * 100.0
+                } else {
+                    0.0
+                };
+
+                Ok(UsageProviderStat {
+                    provider_id: row.get(0)?,
+                    provider_name: row.get(1)?,
+                    request_count: request_count as u64,
+                    total_tokens: row.get::<_, i64>(3)? as u64,
+                    total_cost: format!("{:.6}", row.get::<_, f64>(4)?),
+                    success_rate,
+                    avg_latency_ms: row.get::<_, f64>(6)? as u64,
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub fn get_usage_model_stats(&self) -> Result<Vec<UsageModelStat>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let sql = "SELECT
+                model,
+                COUNT(*) as request_count,
+                COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
+                COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost
+             FROM proxy_request_logs
+             GROUP BY model
+             ORDER BY total_cost DESC";
+
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                let request_count: i64 = row.get(1)?;
+                let total_cost: f64 = row.get(3)?;
+                let avg_cost = if request_count > 0 {
+                    total_cost / request_count as f64
+                } else {
+                    0.0
+                };
+                Ok(UsageModelStat {
+                    model: row.get(0)?,
+                    request_count: request_count as u64,
+                    total_tokens: row.get::<_, i64>(2)? as u64,
+                    total_cost: format!("{total_cost:.6}"),
+                    avg_cost_per_request: format!("{avg_cost:.6}"),
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub fn get_usage_log_details(
+        &self,
+        filters: &UsageLogFilters,
+        page: u32,
+        page_size: u32,
+    ) -> Result<PaginatedUsageLogs, AppError> {
+        let conn = lock_conn!(self.conn);
+        let (where_clause, mut params) = build_usage_detail_filters(filters);
+
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM proxy_request_logs l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             {where_clause}"
+        );
+        let count_params: Vec<&dyn rusqlite::ToSql> = params.iter().map(|item| item.as_ref()).collect();
+        let total = conn
+            .query_row(&count_sql, count_params.as_slice(), |row| {
+                row.get::<_, i64>(0).map(|value| value as u32)
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let offset = page.saturating_mul(page_size);
+        params.push(Box::new(page_size as i64));
+        params.push(Box::new(offset as i64));
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|item| item.as_ref()).collect();
+
+        let sql = format!(
+            "SELECT l.request_id, l.provider_id, p.name, l.app_type, l.model, l.request_model,
+                    COALESCE(l.cost_multiplier, '1'),
+                    l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
+                    l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
+                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
+                    l.status_code, l.error_message, l.created_at
+             FROM proxy_request_logs l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             {where_clause}
+             ORDER BY l.created_at DESC
+             LIMIT ? OFFSET ?"
+        );
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok(UsageLogDetail {
+                    request_id: row.get(0)?,
+                    provider_id: row.get(1)?,
+                    provider_name: row.get(2)?,
+                    app_type: row.get(3)?,
+                    model: row.get(4)?,
+                    request_model: row.get(5)?,
+                    cost_multiplier: row.get(6)?,
+                    input_tokens: row.get::<_, i64>(7)? as u32,
+                    output_tokens: row.get::<_, i64>(8)? as u32,
+                    cache_read_tokens: row.get::<_, i64>(9)? as u32,
+                    cache_creation_tokens: row.get::<_, i64>(10)? as u32,
+                    input_cost_usd: row.get(11)?,
+                    output_cost_usd: row.get(12)?,
+                    cache_read_cost_usd: row.get(13)?,
+                    cache_creation_cost_usd: row.get(14)?,
+                    total_cost_usd: row.get(15)?,
+                    is_streaming: row.get::<_, i64>(16)? != 0,
+                    latency_ms: row.get::<_, i64>(17)? as u64,
+                    first_token_ms: row.get::<_, Option<i64>>(18)?.map(|value| value as u64),
+                    duration_ms: row.get::<_, Option<i64>>(19)?.map(|value| value as u64),
+                    status_code: row.get::<_, i64>(20)? as u16,
+                    error_message: row.get(21)?,
+                    created_at: row.get(22)?,
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let data = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(PaginatedUsageLogs {
+            data,
+            total,
+            page,
+            page_size,
+        })
+    }
+
+    pub fn get_usage_request_detail(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<UsageLogDetail>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let sql = "SELECT l.request_id, l.provider_id, p.name, l.app_type, l.model, l.request_model,
+                    COALESCE(l.cost_multiplier, '1'),
+                    l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
+                    l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
+                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
+                    l.status_code, l.error_message, l.created_at
+             FROM proxy_request_logs l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             WHERE l.request_id = ?1
+             LIMIT 1";
+
+        conn.query_row(sql, [request_id], |row| {
+            Ok(UsageLogDetail {
+                request_id: row.get(0)?,
+                provider_id: row.get(1)?,
+                provider_name: row.get(2)?,
+                app_type: row.get(3)?,
+                model: row.get(4)?,
+                request_model: row.get(5)?,
+                cost_multiplier: row.get(6)?,
+                input_tokens: row.get::<_, i64>(7)? as u32,
+                output_tokens: row.get::<_, i64>(8)? as u32,
+                cache_read_tokens: row.get::<_, i64>(9)? as u32,
+                cache_creation_tokens: row.get::<_, i64>(10)? as u32,
+                input_cost_usd: row.get(11)?,
+                output_cost_usd: row.get(12)?,
+                cache_read_cost_usd: row.get(13)?,
+                cache_creation_cost_usd: row.get(14)?,
+                total_cost_usd: row.get(15)?,
+                is_streaming: row.get::<_, i64>(16)? != 0,
+                latency_ms: row.get::<_, i64>(17)? as u64,
+                first_token_ms: row.get::<_, Option<i64>>(18)?.map(|value| value as u64),
+                duration_ms: row.get::<_, Option<i64>>(19)?.map(|value| value as u64),
+                status_code: row.get::<_, i64>(20)? as u16,
+                error_message: row.get(21)?,
+                created_at: row.get(22)?,
+            })
+        })
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
+
     // ========== Export Methods ==========
 
     pub fn export_all_providers(&self) -> Result<serde_json::Value, AppError> {
         let mut result = serde_json::Map::new();
-        for app in ["claude", "codex", "gemini", "opencode"] {
+        for app in ["claude", "codex", "gemini", "opencode", "openclaw"] {
             let providers = self.get_all_providers(app)?;
             result.insert(
                 app.to_string(),
@@ -803,7 +1408,7 @@ impl Database {
 
     pub fn export_all_prompts(&self) -> Result<serde_json::Value, AppError> {
         let mut result = serde_json::Map::new();
-        for app in ["claude", "codex", "gemini", "opencode"] {
+        for app in ["claude", "codex", "gemini", "opencode", "openclaw"] {
             let prompts = self.get_all_prompts(app)?;
             result.insert(
                 app.to_string(),
@@ -821,6 +1426,8 @@ impl Database {
     pub fn clear_all_data(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute("DELETE FROM providers", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute("DELETE FROM universal_providers", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute("DELETE FROM mcp_servers", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -861,6 +1468,46 @@ fn build_usage_filters(
     }
 
     (format!("WHERE {}", conditions.join(" AND ")), params)
+}
+
+fn build_usage_detail_filters(
+    filters: &UsageLogFilters,
+) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+    let mut conditions = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(app_type) = &filters.app_type {
+        conditions.push("l.app_type = ?".to_string());
+        params.push(Box::new(app_type.clone()));
+    }
+    if let Some(provider_name) = &filters.provider_name {
+        conditions.push("p.name LIKE ?".to_string());
+        params.push(Box::new(format!("%{provider_name}%")));
+    }
+    if let Some(model) = &filters.model {
+        conditions.push("l.model LIKE ?".to_string());
+        params.push(Box::new(format!("%{model}%")));
+    }
+    if let Some(status_code) = filters.status_code {
+        conditions.push("l.status_code = ?".to_string());
+        params.push(Box::new(status_code as i64));
+    }
+    if let Some(start_date) = filters.start_date {
+        conditions.push("l.created_at >= ?".to_string());
+        params.push(Box::new(start_date));
+    }
+    if let Some(end_date) = filters.end_date {
+        conditions.push("l.created_at <= ?".to_string());
+        params.push(Box::new(end_date));
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    (where_clause, params)
 }
 
 fn parse_usage_date(date: &str, end_of_day: bool) -> Result<i64, AppError> {
@@ -1102,6 +1749,137 @@ mod tests {
         assert_eq!(logs[0].total_tokens, 45);
         assert!((logs[0].cost - 0.003).abs() < f64::EPSILON);
         assert!(logs[0].timestamp.starts_with("2026-03-06T09:30:00"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn usage_provider_and_model_stats_are_aggregated() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["p1", "claude", "Claude Main", "{}", "{}"],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-1",
+                    "p1",
+                    "claude",
+                    "claude-sonnet",
+                    10,
+                    5,
+                    "0.010000",
+                    100,
+                    200,
+                    1_741_000_000_000i64
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-2",
+                    "p1",
+                    "claude",
+                    "claude-sonnet",
+                    20,
+                    10,
+                    "0.020000",
+                    200,
+                    500,
+                    1_741_000_100_000i64
+                ],
+            )?;
+        }
+
+        let provider_stats = db.get_usage_provider_stats()?;
+        assert_eq!(provider_stats.len(), 1);
+        assert_eq!(provider_stats[0].provider_name, "Claude Main");
+        assert_eq!(provider_stats[0].request_count, 2);
+        assert_eq!(provider_stats[0].total_tokens, 45);
+
+        let model_stats = db.get_usage_model_stats()?;
+        assert_eq!(model_stats.len(), 1);
+        assert_eq!(model_stats[0].model, "claude-sonnet");
+        assert_eq!(model_stats[0].request_count, 2);
+        assert_eq!(model_stats[0].avg_cost_per_request, "0.015000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn usage_log_details_support_filters_and_detail_lookup() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["p9", "gemini", "Gemini Alpha", "{}", "{}"],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                    latency_ms, first_token_ms, duration_ms, status_code, error_message, is_streaming, cost_multiplier, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-detail",
+                    "p9",
+                    "gemini",
+                    "gemini-2.5-pro",
+                    "gemini-2.5-pro",
+                    111,
+                    222,
+                    3,
+                    4,
+                    "0.010000",
+                    "0.020000",
+                    "0.001000",
+                    "0.002000",
+                    "0.033000",
+                    321,
+                    111,
+                    654,
+                    200,
+                    Option::<String>::None,
+                    1,
+                    "1.0",
+                    1_741_000_200_000i64
+                ],
+            )?;
+        }
+
+        let filters = UsageLogFilters {
+            app_type: Some("gemini".into()),
+            provider_name: Some("Alpha".into()),
+            ..Default::default()
+        };
+        let page = db.get_usage_log_details(&filters, 0, 20)?;
+        assert_eq!(page.total, 1);
+        assert_eq!(page.data.len(), 1);
+        assert_eq!(page.data[0].request_id, "req-detail");
+
+        let detail = db
+            .get_usage_request_detail("req-detail")?
+            .expect("detail should exist");
+        assert_eq!(detail.provider_name.as_deref(), Some("Gemini Alpha"));
+        assert!(detail.is_streaming);
+        assert_eq!(detail.total_cost_usd, "0.033000");
 
         Ok(())
     }

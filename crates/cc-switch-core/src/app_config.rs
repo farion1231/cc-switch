@@ -15,6 +15,7 @@ pub enum AppType {
     Codex,
     Gemini,
     OpenCode,
+    OpenClaw,
 }
 
 impl AppType {
@@ -24,11 +25,12 @@ impl AppType {
             AppType::Codex => "codex",
             AppType::Gemini => "gemini",
             AppType::OpenCode => "opencode",
+            AppType::OpenClaw => "openclaw",
         }
     }
 
     pub fn is_additive_mode(&self) -> bool {
-        matches!(self, AppType::OpenCode)
+        matches!(self, AppType::OpenCode | AppType::OpenClaw)
     }
 
     pub fn all() -> impl Iterator<Item = AppType> {
@@ -37,6 +39,7 @@ impl AppType {
             AppType::Codex,
             AppType::Gemini,
             AppType::OpenCode,
+            AppType::OpenClaw,
         ]
         .into_iter()
     }
@@ -52,10 +55,15 @@ impl FromStr for AppType {
             "codex" => Ok(AppType::Codex),
             "gemini" => Ok(AppType::Gemini),
             "opencode" => Ok(AppType::OpenCode),
+            "openclaw" => Ok(AppType::OpenClaw),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode."),
+                format!(
+                    "不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode, openclaw。"
+                ),
+                format!(
+                    "Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode, openclaw."
+                ),
             )),
         }
     }
@@ -78,6 +86,8 @@ pub struct McpApps {
     pub gemini: bool,
     #[serde(default)]
     pub opencode: bool,
+    #[serde(default)]
+    pub openclaw: bool,
 }
 
 impl McpApps {
@@ -87,6 +97,7 @@ impl McpApps {
             AppType::Codex => self.codex,
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
+            AppType::OpenClaw => self.openclaw,
         }
     }
 
@@ -96,6 +107,7 @@ impl McpApps {
             AppType::Codex => self.codex = enabled,
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
+            AppType::OpenClaw => self.openclaw = enabled,
         }
     }
 
@@ -113,11 +125,20 @@ impl McpApps {
         if self.opencode {
             apps.push(AppType::OpenCode);
         }
+        if self.openclaw {
+            apps.push(AppType::OpenClaw);
+        }
         apps
     }
 
     pub fn is_empty(&self) -> bool {
-        !self.claude && !self.codex && !self.gemini && !self.opencode
+        !self.claude && !self.codex && !self.gemini && !self.opencode && !self.openclaw
+    }
+
+    pub fn only(app: &AppType) -> Self {
+        let mut apps = Self::default();
+        apps.set_enabled_for(app, true);
+        apps
     }
 }
 
@@ -149,6 +170,8 @@ pub struct SkillApps {
     pub gemini: bool,
     #[serde(default)]
     pub opencode: bool,
+    #[serde(default)]
+    pub openclaw: bool,
 }
 
 impl SkillApps {
@@ -158,6 +181,7 @@ impl SkillApps {
             AppType::Codex => self.codex,
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
+            AppType::OpenClaw => self.openclaw,
         }
     }
 
@@ -167,6 +191,7 @@ impl SkillApps {
             AppType::Codex => self.codex = enabled,
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
+            AppType::OpenClaw => self.openclaw = enabled,
         }
     }
 
@@ -174,6 +199,26 @@ impl SkillApps {
         let mut apps = Self::default();
         apps.set_enabled_for(app, true);
         apps
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppType;
+    use std::str::FromStr;
+
+    #[test]
+    fn openclaw_round_trips() {
+        let app = AppType::from_str("openclaw").expect("openclaw should parse");
+        assert_eq!(app, AppType::OpenClaw);
+        assert_eq!(app.as_str(), "openclaw");
+        assert!(app.is_additive_mode());
+    }
+
+    #[test]
+    fn all_contains_openclaw() {
+        let apps: Vec<_> = AppType::all().collect();
+        assert!(apps.contains(&AppType::OpenClaw));
     }
 }
 

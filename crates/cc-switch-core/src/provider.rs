@@ -177,7 +177,7 @@ pub struct ProviderProxyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub custom_endpoints: HashMap<String, CustomEndpoint>,
+    pub custom_endpoints: HashMap<String, crate::settings::CustomEndpoint>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,
     #[serde(rename = "endpointAutoSelect", skip_serializing_if = "Option::is_none")]
@@ -203,18 +203,6 @@ pub struct ProviderMeta {
     pub proxy_config: Option<ProviderProxyConfig>,
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
-}
-
-/// Custom endpoint
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomEndpoint {
-    pub url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub models: Option<Vec<String>>,
 }
 
 /// Universal provider apps
@@ -259,6 +247,60 @@ pub struct CodexModelConfig {
 pub struct GeminiModelConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+}
+
+/// OpenCode provider settings structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenCodeProviderConfig {
+    pub npm: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub options: OpenCodeProviderOptions,
+    #[serde(default)]
+    pub models: HashMap<String, OpenCodeModel>,
+}
+
+impl Default for OpenCodeProviderConfig {
+    fn default() -> Self {
+        Self {
+            npm: "@ai-sdk/openai-compatible".to_string(),
+            name: None,
+            options: OpenCodeProviderOptions::default(),
+            models: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenCodeProviderOptions {
+    #[serde(rename = "baseURL", skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(rename = "apiKey", skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenCodeModel {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<OpenCodeModelLimit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<HashMap<String, Value>>,
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenCodeModelLimit {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<u64>,
 }
 
 /// Universal provider models

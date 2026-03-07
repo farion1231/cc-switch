@@ -2,14 +2,20 @@
 
 pub mod config;
 pub mod mcp;
+pub mod omo;
 pub mod prompt;
 pub mod provider;
 pub mod proxy;
 pub mod skill;
+pub mod usage;
+pub mod speedtest;
 
 pub use config::ConfigService;
 pub use mcp::McpService;
+pub use omo::OmoService;
 pub use prompt::PromptService;
 pub use provider::ProviderService;
 pub use proxy::ProxyService;
 pub use skill::SkillService;
+pub use usage::UsageService;
+pub use speedtest::SpeedtestService;

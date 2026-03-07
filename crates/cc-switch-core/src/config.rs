@@ -39,7 +39,7 @@ pub fn settings_path() -> PathBuf {
 
 /// Get Claude Code config directory
 pub fn get_claude_config_dir() -> PathBuf {
-    get_home_dir().join(".claude")
+    crate::settings::get_claude_override_dir().unwrap_or_else(|| get_home_dir().join(".claude"))
 }
 
 /// Get Claude Code settings path
@@ -61,9 +61,32 @@ pub fn get_default_claude_mcp_path() -> PathBuf {
     get_home_dir().join(".claude.json")
 }
 
+fn derive_mcp_path_from_override(dir: &Path) -> Option<PathBuf> {
+    let file_name = dir
+        .file_name()
+        .map(|name| name.to_string_lossy().trim().to_string())?;
+    if file_name.is_empty() {
+        return None;
+    }
+
+    let parent = dir.parent().unwrap_or_else(|| Path::new(""));
+    Some(parent.join(format!("{file_name}.json")))
+}
+
+/// Get Claude MCP config path, honoring override dir when present.
+pub fn get_claude_mcp_path() -> PathBuf {
+    if let Some(custom_dir) = crate::settings::get_claude_override_dir() {
+        if let Some(path) = derive_mcp_path_from_override(&custom_dir) {
+            return path;
+        }
+    }
+
+    get_default_claude_mcp_path()
+}
+
 /// Get Codex config directory
 pub fn get_codex_config_dir() -> PathBuf {
-    get_home_dir().join(".codex")
+    crate::settings::get_codex_override_dir().unwrap_or_else(|| get_home_dir().join(".codex"))
 }
 
 /// Get Codex auth.json path
@@ -73,7 +96,7 @@ pub fn get_codex_auth_path() -> PathBuf {
 
 /// Get Gemini CLI config directory
 pub fn get_gemini_config_dir() -> PathBuf {
-    get_home_dir().join(".gemini")
+    crate::settings::get_gemini_override_dir().unwrap_or_else(|| get_home_dir().join(".gemini"))
 }
 
 /// Get Gemini .env path
@@ -83,7 +106,13 @@ pub fn get_gemini_env_path() -> PathBuf {
 
 /// Get OpenCode config directory
 pub fn get_opencode_config_dir() -> PathBuf {
-    get_home_dir().join(".opencode")
+    crate::settings::get_opencode_override_dir()
+        .unwrap_or_else(|| get_home_dir().join(".config").join("opencode"))
+}
+
+/// Get OpenClaw config directory
+pub fn get_openclaw_config_dir() -> PathBuf {
+    crate::settings::get_openclaw_override_dir().unwrap_or_else(|| get_home_dir().join(".openclaw"))
 }
 
 /// Sanitize provider name for file name safety

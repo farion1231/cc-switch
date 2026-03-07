@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use crate::database::Database;
 use crate::error::AppError;
+use crate::settings;
 use crate::settings::AppSettings;
 
 /// Config business logic service
@@ -11,23 +12,67 @@ pub struct ConfigService;
 
 impl ConfigService {
     /// Get app settings
-    pub fn get_settings(db: &Database) -> Result<AppSettings, AppError> {
-        db.get_settings()
+    pub fn get_settings(_db: &Database) -> Result<AppSettings, AppError> {
+        Ok(settings::get_settings())
     }
 
     /// Get a single setting value
-    pub fn get_setting(db: &Database, key: &str) -> Result<Option<String>, AppError> {
-        db.get_setting(key)
+    pub fn get_setting(_db: &Database, key: &str) -> Result<Option<String>, AppError> {
+        let settings = settings::get_settings();
+        let value = match key {
+            "language" => settings.language,
+            "claudeConfigDir" => settings.claude_config_dir,
+            "codexConfigDir" => settings.codex_config_dir,
+            "geminiConfigDir" => settings.gemini_config_dir,
+            "opencodeConfigDir" => settings.opencode_config_dir,
+            "openclawConfigDir" => settings.openclaw_config_dir,
+            "currentProviderClaude" => settings.current_provider_claude,
+            "currentProviderCodex" => settings.current_provider_codex,
+            "currentProviderGemini" => settings.current_provider_gemini,
+            "currentProviderOpenCode" => settings.current_provider_opencode,
+            "currentProviderOpenClaw" => settings.current_provider_openclaw,
+            "skillSyncMethod" => Some(settings.skill_sync_method.to_string()),
+            "preferredTerminal" => settings.preferred_terminal,
+            _ => None,
+        };
+
+        Ok(value)
     }
 
     /// Set a setting value
-    pub fn set_setting(db: &Database, key: &str, value: &str) -> Result<(), AppError> {
-        db.set_setting(key, value)
+    pub fn set_setting(_db: &Database, key: &str, value: &str) -> Result<(), AppError> {
+        let mut settings = settings::get_settings();
+        match key {
+            "language" => settings.language = Some(value.to_string()),
+            "claudeConfigDir" => settings.claude_config_dir = Some(value.to_string()),
+            "codexConfigDir" => settings.codex_config_dir = Some(value.to_string()),
+            "geminiConfigDir" => settings.gemini_config_dir = Some(value.to_string()),
+            "opencodeConfigDir" => settings.opencode_config_dir = Some(value.to_string()),
+            "openclawConfigDir" => settings.openclaw_config_dir = Some(value.to_string()),
+            "currentProviderClaude" => settings.current_provider_claude = Some(value.to_string()),
+            "currentProviderCodex" => settings.current_provider_codex = Some(value.to_string()),
+            "currentProviderGemini" => settings.current_provider_gemini = Some(value.to_string()),
+            "currentProviderOpenCode" => {
+                settings.current_provider_opencode = Some(value.to_string())
+            }
+            "currentProviderOpenClaw" => {
+                settings.current_provider_openclaw = Some(value.to_string())
+            }
+            "skillSyncMethod" => settings.skill_sync_method = value.parse().unwrap_or_default(),
+            "preferredTerminal" => settings.preferred_terminal = Some(value.to_string()),
+            other => {
+                return Err(AppError::InvalidInput(format!(
+                    "Unsupported setting key: {other}"
+                )));
+            }
+        }
+
+        settings::update_settings(settings)
     }
 
     /// Export all configuration
     pub fn export_all(db: &Database) -> Result<Value, AppError> {
-        let settings = db.get_settings()?;
+        let settings = settings::get_settings();
         let providers = db.export_all_providers()?;
         let mcp_servers = db.export_all_mcp_servers()?;
         let prompts = db.export_all_prompts()?;
@@ -50,7 +95,7 @@ impl ConfigService {
 
         if let Some(settings) = data.get("settings") {
             if let Ok(s) = serde_json::from_value(settings.clone()) {
-                db.save_settings(&s)?;
+                settings::update_settings(s)?;
             }
         }
 
@@ -149,27 +194,39 @@ impl DeeplinkService {
 
         let id = uuid::Uuid::new_v4().to_string();
 
-        let settings_config = if app == "claude" {
-            serde_json::json!({
+        let settings_config = match app {
+            "claude" => serde_json::json!({
                 "env": {
                     "ANTHROPIC_BASE_URL": base_url,
                     "ANTHROPIC_AUTH_TOKEN": api_key,
                 }
-            })
-        } else if app == "codex" {
-            serde_json::json!({
+            }),
+            "codex" => serde_json::json!({
                 "auth": {
                     "OPENAI_API_KEY": api_key
                 },
                 "config": format!(r#"base_url = "{}""#, base_url)
-            })
-        } else {
-            serde_json::json!({
+            }),
+            "opencode" => serde_json::json!({
+                "npm": "@ai-sdk/openai-compatible",
+                "options": {
+                    "baseURL": base_url,
+                    "apiKey": api_key,
+                },
+                "models": {}
+            }),
+            "openclaw" => serde_json::json!({
+                "baseUrl": base_url,
+                "apiKey": api_key,
+                "api": "openai-completions",
+                "models": []
+            }),
+            _ => serde_json::json!({
                 "env": {
                     "GOOGLE_GEMINI_BASE_URL": base_url,
                     "GEMINI_API_KEY": api_key,
                 }
-            })
+            }),
         };
 
         let provider = crate::provider::Provider {
@@ -225,6 +282,7 @@ impl DeeplinkService {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                openclaw: false,
             },
             description: None,
             homepage: None,
@@ -240,7 +298,7 @@ impl DeeplinkService {
         })
     }
 
-    fn import_skill(url: &url::Url, db: &Database) -> Result<DeeplinkImportResult, AppError> {
+    fn import_skill(_url: &url::Url, _db: &Database) -> Result<DeeplinkImportResult, AppError> {
         Err(AppError::Message(
             "Skill import not implemented".to_string(),
         ))

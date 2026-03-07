@@ -67,7 +67,7 @@ pub struct ProxyService;
 
 impl ProxyService {
     /// Get proxy status
-    pub fn get_status(state: &AppState) -> Result<ProxyStatus, AppError> {
+    pub fn get_status(_state: &AppState) -> Result<ProxyStatus, AppError> {
         Ok(ProxyStatus {
             running: false,
             listen_addr: None,
