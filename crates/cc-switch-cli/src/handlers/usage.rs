@@ -1,8 +1,9 @@
 //! Usage command handlers
 
 use crate::cli::UsageCommands;
+use crate::handlers::common::parse_app_type;
 use crate::output::Printer;
-use cc_switch_core::{AppState, UsageStatsService};
+use cc_switch_core::{AppState, UsageService};
 
 pub async fn handle(cmd: UsageCommands, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
     match cmd {
@@ -20,7 +21,8 @@ async fn handle_summary(
     state: &AppState,
     printer: &Printer,
 ) -> anyhow::Result<()> {
-    let summary = UsageStatsService::get_summary(&state.db, app, days)?;
+    let app = parse_app_type(app)?;
+    let summary = UsageService::get_summary(&state.db, app.as_str(), days)?;
     printer.print_usage_summary(&summary)?;
     Ok(())
 }
@@ -32,7 +34,8 @@ async fn handle_logs(
     state: &AppState,
     printer: &Printer,
 ) -> anyhow::Result<()> {
-    let logs = UsageStatsService::get_logs(&state.db, app, from, to)?;
+    let app = parse_app_type(app)?;
+    let logs = UsageService::get_request_logs(&state.db, app.as_str(), from, to)?;
     printer.print_usage_logs(&logs)?;
     Ok(())
 }
@@ -43,7 +46,8 @@ async fn handle_export(
     state: &AppState,
     _printer: &Printer,
 ) -> anyhow::Result<()> {
-    let path = UsageStatsService::export_csv(&state.db, app, output)?;
-    println!("✓ Exported usage data to {}", path);
+    let app = parse_app_type(app)?;
+    let path = UsageService::export_csv(&state.db, app.as_str(), output)?;
+    _printer.success(format!("✓ Exported usage data to {}", path));
     Ok(())
 }

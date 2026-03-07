@@ -276,35 +276,52 @@ pub fn print_proxy_status(status: &cc_switch_core::ProxyStatus) -> anyhow::Resul
             "No".yellow()
         }
     );
-    if let Some(addr) = &status.listen_addr {
-        println!("Address: {}", addr);
+    if status.running {
+        println!("Address: {}:{}", status.address, status.port);
+    }
+    if let Some(provider_name) = &status.current_provider {
+        println!("Current provider: {}", provider_name);
+    }
+    if !status.active_targets.is_empty() {
+        let targets = status
+            .active_targets
+            .iter()
+            .map(|target| format!("{} -> {} ({})", target.app_type, target.provider_name, target.provider_id))
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("Active targets: {}", targets);
     }
     Ok(())
 }
 
 pub fn print_proxy_config(config: &cc_switch_core::ProxyConfig) -> anyhow::Result<()> {
-    println!("Port: {}", config.port);
-    println!("Host: {}", config.host);
+    println!("Port: {}", config.listen_port);
+    println!("Host: {}", config.listen_address);
     println!(
         "Log enabled: {}",
-        if config.log_enabled { "Yes" } else { "No" }
+        if config.enable_logging { "Yes" } else { "No" }
     );
     Ok(())
 }
 
 pub fn print_takeover_status(status: &cc_switch_core::ProxyTakeoverStatus) -> anyhow::Result<()> {
-    let rows: Vec<TakeoverRow> = status
-        .apps
-        .iter()
-        .map(|(app, enabled)| TakeoverRow {
-            app: app.clone(),
-            enabled: if *enabled {
+    let rows = [
+        ("claude", status.claude),
+        ("codex", status.codex),
+        ("gemini", status.gemini),
+        ("opencode", status.opencode),
+        ("openclaw", status.openclaw),
+    ]
+    .into_iter()
+    .map(|(app, enabled)| TakeoverRow {
+            app: app.to_string(),
+            enabled: if enabled {
                 "Yes".green().to_string()
             } else {
                 "No".to_string()
             },
         })
-        .collect();
+        .collect::<Vec<_>>();
 
     let table = Table::new(rows)
         .with(Style::rounded())
@@ -357,18 +374,24 @@ struct FailoverRow {
 
 pub fn print_provider_health(health: &cc_switch_core::ProviderHealth) -> anyhow::Result<()> {
     println!("Provider: {}", health.provider_id);
+    println!("App: {}", health.app_type);
     println!(
-        "Status: {}",
-        match health.status.as_str() {
-            "closed" => "Closed (healthy)".green(),
-            "open" => "Open (failing)".red(),
-            "half_open" => "Half-open (recovering)".yellow(),
-            _ => health.status.normal(),
+        "Healthy: {}",
+        if health.is_healthy {
+            "Yes".green().to_string()
+        } else {
+            "No".red().to_string()
         }
     );
-    println!("Failure count: {}", health.failure_count);
-    if let Some(time) = &health.last_failure_time {
+    println!("Consecutive failures: {}", health.consecutive_failures);
+    if let Some(time) = &health.last_failure_at {
         println!("Last failure: {}", time);
+    }
+    if let Some(time) = &health.last_success_at {
+        println!("Last success: {}", time);
+    }
+    if let Some(error) = &health.last_error {
+        println!("Last error: {}", error);
     }
     Ok(())
 }
@@ -377,8 +400,10 @@ pub fn print_circuit_breaker_config(
     config: &cc_switch_core::CircuitBreakerConfig,
 ) -> anyhow::Result<()> {
     println!("Failure threshold: {}", config.failure_threshold);
-    println!("Recovery timeout: {}s", config.recovery_timeout);
-    println!("Half-open requests: {}", config.half_open_requests);
+    println!("Success threshold: {}", config.success_threshold);
+    println!("Recovery timeout: {}s", config.timeout_seconds);
+    println!("Error rate threshold: {:.2}", config.error_rate_threshold);
+    println!("Minimum requests: {}", config.min_requests);
     Ok(())
 }
 

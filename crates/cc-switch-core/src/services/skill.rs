@@ -283,6 +283,15 @@ impl SkillService {
         Ok(skills.into_values().collect())
     }
 
+    pub fn get_repos_or_default(db: &Arc<Database>) -> Result<Vec<SkillRepo>, AppError> {
+        let repos = db.get_skill_repos()?;
+        if repos.is_empty() {
+            Ok(SkillStore::default().repos)
+        } else {
+            Ok(repos)
+        }
+    }
+
     pub fn get_skill(db: &Arc<Database>, id: &str) -> Result<Option<InstalledSkill>, AppError> {
         db.get_installed_skill(id)
     }

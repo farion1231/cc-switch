@@ -132,6 +132,10 @@ pub struct ProviderLimitStatus {
 pub struct UsageService;
 
 impl UsageService {
+    pub fn get_summary(db: &Database, app: &str, days: u32) -> Result<UsageSummary, AppError> {
+        db.get_usage_summary(app, days)
+    }
+
     pub fn get_trends(
         db: &Database,
         start_date: Option<i64>,
@@ -146,6 +150,15 @@ impl UsageService {
 
     pub fn get_model_stats(db: &Database) -> Result<Vec<UsageModelStat>, AppError> {
         db.get_usage_model_stats()
+    }
+
+    pub fn get_request_logs(
+        db: &Database,
+        app: &str,
+        from: Option<&str>,
+        to: Option<&str>,
+    ) -> Result<Vec<RequestLog>, AppError> {
+        db.get_request_logs(app, from, to)
     }
 
     pub fn get_logs(
@@ -174,6 +187,50 @@ impl UsageService {
 
     pub fn delete_model_pricing(db: &Database, model_id: &str) -> Result<(), AppError> {
         db.delete_model_pricing(model_id)
+    }
+
+    pub fn export_csv(db: &Database, app: &str, output: &str) -> Result<String, AppError> {
+        let logs = Self::get_request_logs(db, app, None, None)?;
+
+        let output_path = std::path::PathBuf::from(output);
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        }
+
+        let mut writer = csv::Writer::from_path(&output_path).map_err(|e| {
+            AppError::IoContext {
+                context: format!("Failed to create CSV at {}", output_path.display()),
+                source: std::io::Error::other(e.to_string()),
+            }
+        })?;
+
+        writer
+            .write_record(["timestamp", "model", "total_tokens", "cost"])
+            .map_err(|e| AppError::IoContext {
+                context: format!("Failed to write CSV header to {}", output_path.display()),
+                source: std::io::Error::other(e.to_string()),
+            })?;
+
+        for log in logs {
+            writer
+                .write_record([
+                    log.timestamp,
+                    log.model,
+                    log.total_tokens.to_string(),
+                    format!("{:.4}", log.cost),
+                ])
+                .map_err(|e| AppError::IoContext {
+                    context: format!("Failed to write CSV row to {}", output_path.display()),
+                    source: std::io::Error::other(e.to_string()),
+                })?;
+        }
+
+        writer.flush().map_err(|e| AppError::IoContext {
+            context: format!("Failed to flush CSV {}", output_path.display()),
+            source: e,
+        })?;
+
+        Ok(output_path.to_string_lossy().to_string())
     }
 
     pub fn check_provider_limits(

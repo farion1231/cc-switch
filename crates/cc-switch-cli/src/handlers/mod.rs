@@ -1,5 +1,6 @@
 //! CLI Command Handlers
 
+mod common;
 mod config;
 mod import_export;
 mod mcp;
@@ -14,7 +15,12 @@ use crate::output::Printer;
 use cc_switch_core::AppState;
 
 pub async fn dispatch(cli: Cli, state: AppState) -> anyhow::Result<()> {
-    let printer = Printer::new(cli.format);
+    let printer = Printer::new(cli.format, cli.quiet, cli.verbose);
+    printer.verbose(format!(
+        "Executing {} command (format: {:?})",
+        command_name(&cli.command),
+        cli.format
+    ));
 
     match cli.command {
         Commands::Provider { cmd } => provider::handle(cmd, &state, &printer).await,
@@ -33,5 +39,20 @@ pub async fn dispatch(cli: Cli, state: AppState) -> anyhow::Result<()> {
         Commands::ImportDeeplink { url } => {
             import_export::handle_deeplink(&url, &state, &printer).await
         }
+    }
+}
+
+fn command_name(command: &Commands) -> &'static str {
+    match command {
+        Commands::Provider { .. } => "provider",
+        Commands::Mcp { .. } => "mcp",
+        Commands::Proxy { .. } => "proxy",
+        Commands::Prompt { .. } => "prompt",
+        Commands::Skill { .. } => "skill",
+        Commands::Config { .. } => "config",
+        Commands::Usage { .. } => "usage",
+        Commands::Export { .. } => "export",
+        Commands::Import { .. } => "import",
+        Commands::ImportDeeplink { .. } => "import-deeplink",
     }
 }

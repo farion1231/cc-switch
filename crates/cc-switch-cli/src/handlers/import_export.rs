@@ -11,7 +11,7 @@ pub async fn handle_export(
     let data = cc_switch_core::ConfigService::export_all(&state.db)?;
     let json = serde_json::to_string_pretty(&data)?;
     std::fs::write(output, json)?;
-    println!("✓ Exported configuration to {}", output);
+    printer.success(format!("✓ Exported configuration to {}", output));
     Ok(())
 }
 
@@ -24,16 +24,20 @@ pub async fn handle_import(
     let json = std::fs::read_to_string(input)?;
     let data: serde_json::Value = serde_json::from_str(&json)?;
     cc_switch_core::ConfigService::import_all(&state.db, &data, merge)?;
-    println!("✓ Imported configuration from {}", input);
+    printer.success(format!("✓ Imported configuration from {}", input));
     Ok(())
 }
 
-pub async fn handle_deeplink(url: &str, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
+pub async fn handle_deeplink(
+    url: &str,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
     let result = cc_switch_core::DeeplinkService::import(url, &state.db)?;
-    println!("✓ Imported {} from deeplink", result.item_type);
+    printer.success(format!("✓ Imported {} from deeplink", result.item_type));
     if !result.warnings.is_empty() {
         for warning in &result.warnings {
-            eprintln!("  Warning: {}", warning);
+            printer.warn(format!("  Warning: {}", warning));
         }
     }
     Ok(())

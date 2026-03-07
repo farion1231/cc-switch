@@ -1857,6 +1857,60 @@ impl ProxyService {
         self.server.read().await.is_some()
     }
 
+    pub async fn get_failover_queue(&self, app_type: &str) -> Result<Vec<FailoverQueueItem>, String> {
+        self.db
+            .get_failover_queue(app_type)
+            .map_err(|e| format!("获取故障转移队列失败: {e}"))
+    }
+
+    pub async fn add_to_failover_queue(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+    ) -> Result<(), String> {
+        self.db
+            .add_to_failover_queue(app_type, provider_id)
+            .map_err(|e| format!("添加故障转移 Provider 失败: {e}"))
+    }
+
+    pub async fn remove_from_failover_queue(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+    ) -> Result<(), String> {
+        self.db
+            .remove_from_failover_queue(app_type, provider_id)
+            .map_err(|e| format!("移除故障转移 Provider 失败: {e}"))
+    }
+
+    pub async fn get_provider_health(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<ProviderHealth, String> {
+        self.db
+            .get_provider_health(provider_id, app_type)
+            .map_err(|e| format!("获取 Provider 熔断状态失败: {e}"))
+    }
+
+    pub async fn get_circuit_breaker_config(
+        &self,
+    ) -> Result<crate::proxy::CircuitBreakerConfig, String> {
+        self.db
+            .get_circuit_breaker_config()
+            .map_err(|e| format!("获取熔断器配置失败: {e}"))
+    }
+
+    pub async fn save_circuit_breaker_config(
+        &self,
+        config: crate::proxy::CircuitBreakerConfig,
+    ) -> Result<(), String> {
+        self.db
+            .update_circuit_breaker_config(&config)
+            .map_err(|e| format!("保存熔断器配置失败: {e}"))?;
+        self.update_circuit_breaker_configs(config).await
+    }
+
     /// 热更新熔断器配置
     ///
     /// 如果代理服务器正在运行，将新配置应用到所有已创建的熔断器实例
@@ -1888,6 +1942,18 @@ impl ProxyService {
             log::info!("已重置 Provider {provider_id} (app: {app_type}) 的熔断器");
         }
         Ok(())
+    }
+
+    pub async fn reset_provider_circuit(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<(), String> {
+        self.db
+            .reset_provider_health(provider_id, app_type)
+            .map_err(|e| format!("重置 Provider 熔断状态失败: {e}"))?;
+        self.reset_provider_circuit_breaker(provider_id, app_type)
+            .await
     }
 }
 

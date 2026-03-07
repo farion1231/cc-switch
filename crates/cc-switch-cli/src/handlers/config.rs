@@ -26,8 +26,7 @@ async fn handle_show(state: &AppState, printer: &Printer) -> anyhow::Result<()> 
 async fn handle_get(key: &str, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
     let value = cc_switch_core::ConfigService::get_setting(&state.db, key)?
         .ok_or_else(|| anyhow::anyhow!("Setting not found: {}", key))?;
-    println!("{}", value);
-    Ok(())
+    printer.print_value(&serde_json::json!({ key: value }))
 }
 
 async fn handle_set(
@@ -37,22 +36,14 @@ async fn handle_set(
     printer: &Printer,
 ) -> anyhow::Result<()> {
     cc_switch_core::ConfigService::set_setting(&state.db, key, value)?;
-    println!("✓ Set {} = {}", key, value);
+    printer.success(format!("✓ Set {} = {}", key, value));
     Ok(())
 }
 
-async fn handle_path(state: &AppState, printer: &Printer) -> anyhow::Result<()> {
-    println!(
-        "Config directory: {}",
-        cc_switch_core::config::config_dir().display()
-    );
-    println!(
-        "Database: {}",
-        cc_switch_core::config::database_path().display()
-    );
-    println!(
-        "Settings: {}",
-        cc_switch_core::config::settings_path().display()
-    );
-    Ok(())
+async fn handle_path(_state: &AppState, printer: &Printer) -> anyhow::Result<()> {
+    printer.print_value(&serde_json::json!({
+        "configDir": cc_switch_core::config::config_dir(),
+        "database": cc_switch_core::config::database_path(),
+        "settings": cc_switch_core::config::settings_path(),
+    }))
 }

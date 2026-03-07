@@ -23,7 +23,7 @@ pub struct Cli {
     pub verbose: bool,
 }
 
-#[derive(Clone, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum OutputFormat {
     Table,
     Json,

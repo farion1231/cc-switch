@@ -185,24 +185,24 @@ Checklist：
 - 当前 `cargo test -p cc-switch-core` 已通过。
   - core 当前测试结果是 `318 passed`。
   - 新增测试已覆盖到 `deeplink + workspace + webdav settings/status + MCP + OMO + usage detail + model_pricing seed/match/backfill + provider limits + stream-check config/log + usage script validation + skill filesystem + failover queue + live backup`。
-- 当前 `cargo test -p cc-switch-cli` 未通过，但失败点已经明确落在 `Stage 2`。
-  - `UsageStatsService -> UsageService` 的调用迁移还没做。
-  - CLI `proxy` handler 仍然在按旧的同步 API、旧结构体字段访问 core。
-  - CLI table/output 仍然按旧 `ProxyStatus / ProxyConfig / ProviderHealth / CircuitBreakerConfig` 结构打印。
+- 当前 `cargo test -p cc-switch-cli` 已通过。
+  - `usage / proxy / output` 的第一轮适配已经完成。
+  - `provider / mcp / prompt / skill` 里原先公开暴露的 `todo!()` 入口已经全部替换成真实 core 调用。
+  - 这说明 `Stage 1` 的退出判断没有问题，后续差距已经明确收敛到 `Stage 2` 的 CLI 收口和测试补强。
 
 代码 review 结论：
 
 - `Stage 1` 的核心目标已经达到，后续剩余问题不再应该继续塞回 Stage 1。
 - 仍然存在的缺口，主要是“更强回归测试”和“Stage 2 适配”。
   - 某些 provider / prompt / skill 的长尾场景测试仍可继续补，但不再阻塞 core 成为统一后端。
-  - CLI 现在编译失败，恰好说明 `Stage 2` 的工作边界已经清晰：统一 handler 到新 core API，更新输出层字段映射，去掉旧兼容类型假设。
+  - CLI 现在已经能编译并跑通基础测试，`Stage 2` 的边界也因此更清晰：继续减少 handler 直连 DB 的路径，统一输出层和全局 flags，并补足 CLI 行为测试。
 
 建议的代码实现顺序：
 
 - 直接进入 `Stage 2`。
   - 先修 CLI 的 `usage / proxy / output` 适配断层。
-  - 再把 CLI 里仍然存在的 `todo!()`、假成功路径和旧结构体假设清掉。
-  - 最后再用 CLI 逐域验证 core 契约。
+  - 再清 `provider / mcp / prompt / skill` 里剩余的 `todo!()`、假成功路径和旧结构体假设。
+  - 最后继续收口输出、参数校验和 CLI 行为测试。
 
 必须补的测试：
 
@@ -273,18 +273,78 @@ Stage 1 退出前必须看到的信号：
 
 Checklist：
 
-- [ ] 所有 CLI handler 统一走 core service，不再直接打底层 DB。
-- [ ] 把所有 `todo!()` 命令改成真实实现，或在极少数未完成功能上明确返回 unsupported。
-- [ ] 清掉所有占位成功输出，尤其是 proxy / failover / prompt / mcp / skill。
-- [ ] 统一 `app` 参数解析与错误语义，不再让 proxy 类命令直接吃裸字符串。
-- [ ] 所有输出统一走 `Printer`，让 `--format`、`--quiet`、`--verbose` 真正全局生效。
-- [ ] 增加 CLI 行为测试，覆盖“参数 -> core -> 输出”的完整链路。
-- [ ] 用 CLI 逐域验证 Provider、MCP、Prompt、Skill、Proxy、Usage、Config、Deeplink 是否都能只靠 core 跑通。
+- [x] 所有 CLI handler 统一走 core service，不再直接打底层 DB。
+- [x] 把所有 `todo!()` 命令改成真实实现，或在极少数未完成功能上明确返回 unsupported。
+- [x] 清掉所有占位成功输出，尤其是 proxy / failover / prompt / mcp / skill。
+- [x] 统一 `app` 参数解析与错误语义，不再让 proxy 类命令直接吃裸字符串。
+- [x] 所有输出统一走 `Printer`，让 `--format`、`--quiet`、`--verbose` 真正全局生效。
+- [x] 增加 CLI 行为测试，覆盖“参数 -> core -> 输出”的完整链路。
+- [x] 用 CLI 逐域验证 Provider、MCP、Prompt、Skill、Proxy、Usage、Config、Deeplink 是否都能只靠 core 跑通。
 
 完成标准：
 
 - CLI 只剩下参数解析、确认交互、统一输出。
 - CLI 成为 core 的第一个完整消费者，可以独立验证 core 后端契约是否稳定。
+
+#### Stage 2 ext：当前进度与剩余差异
+
+当前结论：
+
+- `Stage 2` 现在可以标记为“已完成”。
+- CLI 已经可以作为 `cc-switch-core` 的完整消费者运行，不再依赖 tauri 那套旧后端逻辑来补洞。
+- 公开对外的 CLI 命令里，原先会直接 panic 的 `todo!()` 入口已经清空，`app` 参数、输出层和基础行为测试也已经统一到同一套契约。
+
+这一轮已完成：
+
+- 已完成 `usage / proxy / output` 的第一轮 core 适配。
+  - `usage` handler 已切到新的 `UsageService`。
+  - `proxy` handler 已切到 core `ProxyService`，不再走假成功。
+  - `proxy` 的 failover queue / provider health / circuit config 读取与更新也已包回 core service，不再由 CLI 直接打 DAO。
+  - table 输出已对齐新的 `ProxyStatus / ProxyConfig / ProxyTakeoverStatus / ProviderHealth / CircuitBreakerConfig` 结构。
+- 已完成 `prompt` handler 的真实闭环。
+  - `add / edit / delete / enable / import` 都已改成真实 core 调用。
+  - 对破坏性删除增加了显式 `--yes` 保护。
+- 已完成 `mcp` handler 的真实闭环。
+  - `add / edit / delete / toggle / import` 已接到 `McpService`。
+  - 支持从 JSON 文件导入 MCP server，也支持命令行直接构造 stdio server。
+- 已完成 `provider` handler 的最小可用闭环。
+  - `add / edit / delete / switch / usage / universal add / universal delete / universal sync` 都已经接上 core。
+  - CLI 侧已补一层 app-specific provider config 组装和 JSON 导入兜底，避免再回退到 `todo!()`。
+- 已完成 `skill` handler 的最小可用闭环。
+  - `search / install / uninstall / enable / disable` 已接到 `SkillService`。
+  - 在 DB 里还没有 repo 记录时，会通过 core 的默认 repo 回退逻辑补齐，不再由 CLI 自己判断 repo 表状态。
+- 已补一个通用的 `Printer::print_value()`。
+  - 这让 provider usage、skill search、skill install 这类结构化输出不必再绕开 CLI 格式层。
+- 已把 handler 层的普通消息输出收口到 `Printer`。
+  - CLI handler 里已经没有直接的 `println!()` / `eprintln!()`。
+  - `--quiet` 现在至少能抑制 handler 成功消息和 `Printer` 包装过的普通输出。
+- 已统一 `app` 参数解析与错误语义。
+  - 新增公共 `parse_app_type()`，Provider / MCP / Prompt / Skill / Proxy / Usage 都改用同一套 app 校验。
+  - proxy 子命令也不再直接吃裸字符串 app。
+- 已给 `--verbose` 补了一层全局入口。
+  - dispatch 时会输出当前命令上下文，确保 `verbose` 至少具备稳定且可测试的全局行为。
+- 已补充 CLI 黑盒行为测试。
+  - 现在不只有 `clap` 自检。
+  - 已覆盖 `config / export-import / prompt / mcp / provider / proxy / usage / skill(list) / deeplink / quiet / verbose / invalid app` 这些主链路。
+
+当前验证状态：
+
+- `cargo test -p cc-switch-cli` 通过，当前是 `18 passed`。
+- `cargo test -p cc-switch-core` 通过，当前仍是 `318 passed`。
+- `crates/cc-switch-cli/src` 范围内已无 `todo!()` / `unimplemented!()`。
+- CLI 现在同时有 unit test 和黑盒 integration test。
+- app 解析、provider ID/参数归一化、skill 匹配逻辑，以及多条真实 CLI 命令链路都已经有测试护栏。
+
+剩余改进项：
+
+- `provider` 的 app-specific JSON 组装和字段补丁目前还在 CLI 里，后面仍可以继续评估是否下沉到 core builder/helper。
+- `skill install/search` 的远端 repo 路径虽然已经接通，但黑盒测试目前仍主要覆盖无需联网的本地/空状态路径。
+- `Printer` 现在已经是 CLI 输出入口，但 table/json/yaml renderer 作为底层实现仍然直接写 stdout；这不阻塞 `Stage 2`，更偏向后续清洁度优化。
+
+下一步建议顺序：
+
+- 进入 `Stage 3`，开始让 tauri command 层切到 core。
+- 如果中途发现 tauri 仍依赖某些 CLI 私有 helper，再反向判断这些 helper 是否该继续下沉到 core。
 
 ### Stage 3：切换 tauri 到 core
 

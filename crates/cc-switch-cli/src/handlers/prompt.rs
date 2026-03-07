@@ -1,8 +1,12 @@
 //! Prompt command handlers
 
 use crate::cli::PromptCommands;
+use crate::handlers::common::parse_app_type;
 use crate::output::Printer;
-use cc_switch_core::AppState;
+use anyhow::Context;
+use cc_switch_core::{AppState, Prompt};
+use std::fs;
+use std::path::Path;
 
 pub async fn handle(
     cmd: PromptCommands,
@@ -55,7 +59,32 @@ async fn handle_add(
     state: &AppState,
     printer: &Printer,
 ) -> anyhow::Result<()> {
-    todo!("Implement prompt add")
+    let app_type = parse_app_type(app)?;
+    let file = file.ok_or_else(|| anyhow::anyhow!("Prompt add requires --file"))?;
+    let content = read_text_file(file)?;
+    let prompt_id = id
+        .map(ToOwned::to_owned)
+        .or_else(|| file_stem(file))
+        .unwrap_or_else(|| format!("prompt-{}", chrono::Utc::now().timestamp()));
+
+    if cc_switch_core::PromptService::get(state, app_type.clone(), &prompt_id)?.is_some() {
+        anyhow::bail!("Prompt already exists: {}. Use `prompt edit` instead.", prompt_id);
+    }
+
+    let now = now_seconds();
+    let prompt = Prompt {
+        id: prompt_id.clone(),
+        name: prompt_id.clone(),
+        content,
+        description: Some(format!("Imported from {}", file)),
+        enabled: false,
+        created_at: Some(now),
+        updated_at: Some(now),
+    };
+
+    cc_switch_core::PromptService::upsert_prompt(state, app_type, &prompt_id, prompt)?;
+    printer.success(format!("✓ Added prompt '{}' for {}", prompt_id, app));
+    Ok(())
 }
 
 async fn handle_edit(
@@ -65,7 +94,18 @@ async fn handle_edit(
     state: &AppState,
     printer: &Printer,
 ) -> anyhow::Result<()> {
-    todo!("Implement prompt edit")
+    let app_type = parse_app_type(app)?;
+    let file = file.ok_or_else(|| anyhow::anyhow!("Prompt edit requires --file"))?;
+    let content = read_text_file(file)?;
+    let mut prompt = cc_switch_core::PromptService::get(state, app_type.clone(), id)?
+        .ok_or_else(|| anyhow::anyhow!("Prompt not found: {}", id))?;
+
+    prompt.content = content;
+    prompt.updated_at = Some(now_seconds());
+
+    cc_switch_core::PromptService::upsert_prompt(state, app_type, id, prompt)?;
+    printer.success(format!("✓ Updated prompt '{}' for {}", id, app));
+    Ok(())
 }
 
 async fn handle_delete(
@@ -75,7 +115,14 @@ async fn handle_delete(
     state: &AppState,
     printer: &Printer,
 ) -> anyhow::Result<()> {
-    todo!("Implement prompt delete")
+    if !yes {
+        anyhow::bail!("Prompt delete is destructive. Re-run with --yes to confirm.");
+    }
+
+    let app_type = parse_app_type(app)?;
+    cc_switch_core::PromptService::delete_prompt(state, app_type, id)?;
+    printer.success(format!("✓ Deleted prompt '{}' for {}", id, app));
+    Ok(())
 }
 
 async fn handle_enable(
@@ -86,22 +133,28 @@ async fn handle_enable(
 ) -> anyhow::Result<()> {
     let app_type = parse_app_type(app)?;
     cc_switch_core::PromptService::enable(state, app_type, id)?;
-    println!("✓ Enabled prompt '{}' for {}", id, app);
+    printer.success(format!("✓ Enabled prompt '{}' for {}", id, app));
     Ok(())
 }
 
 async fn handle_import(app: &str, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
     let app_type = parse_app_type(app)?;
     let count = cc_switch_core::PromptService::import_from_files(state, app_type)?;
-    println!("✓ Imported {} prompts for {}", count, app);
+    printer.success(format!("✓ Imported {} prompts for {}", count, app));
     Ok(())
 }
 
-fn parse_app_type(s: &str) -> anyhow::Result<cc_switch_core::AppType> {
-    s.parse().map_err(|_| {
-        anyhow::anyhow!(
-            "Invalid app type: {}. Valid values: claude, codex, gemini, opencode",
-            s
-        )
-    })
+fn read_text_file(path: &str) -> anyhow::Result<String> {
+    fs::read_to_string(path).with_context(|| format!("Failed to read file: {}", path))
+}
+
+fn file_stem(path: &str) -> Option<String> {
+    Path::new(path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_string())
+}
+
+fn now_seconds() -> i64 {
+    chrono::Utc::now().timestamp()
 }

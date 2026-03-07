@@ -1,13 +1,14 @@
 //! Proxy command handlers
 
+use anyhow::{anyhow, Error};
+
 use crate::cli::{
     ProxyCircuitCommands, ProxyCircuitConfigCommands, ProxyCommands, ProxyConfigCommands,
     ProxyFailoverCommands, ProxyTakeoverCommands,
 };
+use crate::handlers::common::parse_app_type;
 use crate::output::Printer;
-use cc_switch_core::{
-    AppState, CircuitBreakerConfig, ProxyService,
-};
+use cc_switch_core::{AppState, CircuitBreakerConfig};
 
 pub async fn handle(cmd: ProxyCommands, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
     match cmd {
@@ -22,22 +23,59 @@ pub async fn handle(cmd: ProxyCommands, state: &AppState, printer: &Printer) -> 
 }
 
 async fn handle_start(
-    _port: u16,
-    _host: &str,
-    _state: &AppState,
-    _printer: &Printer,
+    port: u16,
+    host: &str,
+    state: &AppState,
+    printer: &Printer,
 ) -> anyhow::Result<()> {
-    println!("✓ Proxy server started (not implemented in CLI mode)");
+    let mut config = state
+        .proxy_service
+        .get_config()
+        .await
+        .map_err(Error::msg)?;
+
+    let mut changed = false;
+    if config.listen_port != port {
+        config.listen_port = port;
+        changed = true;
+    }
+    if config.listen_address != host {
+        config.listen_address = host.to_string();
+        changed = true;
+    }
+
+    if changed {
+        state
+            .proxy_service
+            .update_config(&config)
+            .await
+            .map_err(Error::msg)?;
+    }
+
+    let info = state.proxy_service.start().await.map_err(Error::msg)?;
+    printer.success(format!(
+        "✓ Proxy server started at {}:{}",
+        info.address, info.port
+    ));
     Ok(())
 }
 
-async fn handle_stop(_state: &AppState, _printer: &Printer) -> anyhow::Result<()> {
-    println!("✓ Proxy server stopped");
-    Ok(())
+async fn handle_stop(state: &AppState, printer: &Printer) -> anyhow::Result<()> {
+    match state.proxy_service.stop().await {
+        Ok(()) => {
+            printer.success("✓ Proxy server stopped");
+            Ok(())
+        }
+        Err(err) if err.contains("未运行") || err.contains("not running") => {
+            printer.print_text("Proxy server is not running.")?;
+            Ok(())
+        }
+        Err(err) => Err(anyhow!(err)),
+    }
 }
 
 async fn handle_status(state: &AppState, printer: &Printer) -> anyhow::Result<()> {
-    let status = ProxyService::get_status(state)?;
+    let status = state.proxy_service.get_status().await.map_err(Error::msg)?;
     printer.print_proxy_status(&status)?;
     Ok(())
 }
@@ -49,7 +87,7 @@ async fn handle_config(
 ) -> anyhow::Result<()> {
     match cmd {
         ProxyConfigCommands::Show => {
-            let config = ProxyService::get_config(state)?;
+            let config = state.proxy_service.get_config().await.map_err(Error::msg)?;
             printer.print_proxy_config(&config)?;
         }
         ProxyConfigCommands::Set {
@@ -57,7 +95,24 @@ async fn handle_config(
             host,
             log_enabled,
         } => {
-            println!("✓ Proxy config updated (not fully implemented)");
+            let mut config = state.proxy_service.get_config().await.map_err(Error::msg)?;
+
+            if let Some(port) = port {
+                config.listen_port = port;
+            }
+            if let Some(host) = host {
+                config.listen_address = host;
+            }
+            if let Some(log_enabled) = log_enabled {
+                config.enable_logging = log_enabled;
+            }
+
+            state
+                .proxy_service
+                .update_config(&config)
+                .await
+                .map_err(Error::msg)?;
+            printer.print_proxy_config(&config)?;
         }
     }
     Ok(())
@@ -70,16 +125,30 @@ async fn handle_takeover(
 ) -> anyhow::Result<()> {
     match cmd {
         ProxyTakeoverCommands::Status => {
-            let status = ProxyService::get_takeover_status(state)?;
+            let status = state
+                .proxy_service
+                .get_takeover_status()
+                .await
+                .map_err(Error::msg)?;
             printer.print_takeover_status(&status)?;
         }
         ProxyTakeoverCommands::Enable { app } => {
-            ProxyService::set_takeover_for_app(state, &app, true)?;
-            println!("✓ Enabled takeover for {}", app);
+            let app = parse_app_type(&app)?;
+            state
+                .proxy_service
+                .set_takeover_for_app(app.as_str(), true)
+                .await
+                .map_err(Error::msg)?;
+            printer.success(format!("✓ Enabled takeover for {}", app.as_str()));
         }
         ProxyTakeoverCommands::Disable { app } => {
-            ProxyService::set_takeover_for_app(state, &app, false)?;
-            println!("✓ Disabled takeover for {}", app);
+            let app = parse_app_type(&app)?;
+            state
+                .proxy_service
+                .set_takeover_for_app(app.as_str(), false)
+                .await
+                .map_err(Error::msg)?;
+            printer.success(format!("✓ Disabled takeover for {}", app.as_str()));
         }
     }
     Ok(())
@@ -92,17 +161,57 @@ async fn handle_failover(
 ) -> anyhow::Result<()> {
     match cmd {
         ProxyFailoverCommands::Queue { app } => {
-            println!("Failover queue for {} (not implemented)", app);
+            let app = parse_app_type(&app)?;
+            let queue = state
+                .proxy_service
+                .get_failover_queue(app.as_str())
+                .await
+                .map_err(Error::msg)?;
+            printer.print_failover_queue(&queue)?;
         }
         ProxyFailoverCommands::Add { id, app, priority } => {
-            println!("✓ Added provider to failover queue (not implemented)");
+            let app = parse_app_type(&app)?;
+            state
+                .proxy_service
+                .add_to_failover_queue(app.as_str(), &id)
+                .await
+                .map_err(Error::msg)?;
+            if priority.is_some() {
+                printer.verbose(
+                    "Note: --priority is not yet mapped; queue order follows provider sort order.",
+                );
+            }
+            printer.success(format!(
+                "✓ Added provider '{}' to failover queue for {}",
+                id,
+                app.as_str()
+            ));
         }
         ProxyFailoverCommands::Remove { id, app } => {
-            println!("✓ Removed provider from failover queue");
+            let app = parse_app_type(&app)?;
+            state
+                .proxy_service
+                .remove_from_failover_queue(app.as_str(), &id)
+                .await
+                .map_err(Error::msg)?;
+            printer.success(format!(
+                "✓ Removed provider '{}' from failover queue for {}",
+                id,
+                app.as_str()
+            ));
         }
         ProxyFailoverCommands::Switch { id, app } => {
-            state.db.switch_proxy_target(&app, &id)?;
-            println!("✓ Switched to provider '{}' for {}", id, app);
+            let app = parse_app_type(&app)?;
+            state
+                .proxy_service
+                .switch_proxy_target(app.as_str(), &id)
+                .await
+                .map_err(Error::msg)?;
+            printer.success(format!(
+                "✓ Switched to provider '{}' for {}",
+                id,
+                app.as_str()
+            ));
         }
     }
     Ok(())
@@ -115,14 +224,26 @@ async fn handle_circuit(
 ) -> anyhow::Result<()> {
     match cmd {
         ProxyCircuitCommands::Show { id, app } => {
-            println!(
-                "Circuit breaker status for {} in {} (not implemented)",
-                id, app
-            );
+            let app = parse_app_type(&app)?;
+            let health = state
+                .proxy_service
+                .get_provider_health(&id, app.as_str())
+                .await
+                .map_err(Error::msg)?;
+            printer.print_provider_health(&health)?;
         }
         ProxyCircuitCommands::Reset { id, app } => {
-            state.db.reset_provider_health(&id, &app)?;
-            println!("✓ Reset circuit breaker for provider '{}' in {}", id, app);
+            let app = parse_app_type(&app)?;
+            state
+                .proxy_service
+                .reset_provider_circuit(&id, app.as_str())
+                .await
+                .map_err(Error::msg)?;
+            printer.success(format!(
+                "✓ Reset circuit breaker for provider '{}' in {}",
+                id,
+                app.as_str()
+            ));
         }
         ProxyCircuitCommands::Config(cmd) => {
             handle_circuit_config(cmd, state, printer).await?;
@@ -133,16 +254,16 @@ async fn handle_circuit(
 
 async fn handle_circuit_config(
     cmd: ProxyCircuitConfigCommands,
-    _state: &AppState,
+    state: &AppState,
     printer: &Printer,
 ) -> anyhow::Result<()> {
     match cmd {
         ProxyCircuitConfigCommands::Show => {
-            let config = CircuitBreakerConfig {
-                failure_threshold: 4,
-                recovery_timeout: 60,
-                half_open_requests: 2,
-            };
+            let config = state
+                .proxy_service
+                .get_circuit_breaker_config()
+                .await
+                .map_err(Error::msg)?;
             printer.print_circuit_breaker_config(&config)?;
         }
         ProxyCircuitConfigCommands::Set {
@@ -150,7 +271,30 @@ async fn handle_circuit_config(
             recovery_timeout,
             half_open_requests,
         } => {
-            println!("✓ Circuit breaker config updated");
+            if half_open_requests.is_some() {
+                return Err(anyhow!(
+                    "`--half-open-requests` is not supported by the current core circuit breaker model"
+                ));
+            }
+
+            let mut config: CircuitBreakerConfig = state
+                .proxy_service
+                .get_circuit_breaker_config()
+                .await
+                .map_err(Error::msg)?;
+            if let Some(failure_threshold) = failure_threshold {
+                config.failure_threshold = failure_threshold;
+            }
+            if let Some(recovery_timeout) = recovery_timeout {
+                config.timeout_seconds = recovery_timeout;
+            }
+
+            state
+                .proxy_service
+                .save_circuit_breaker_config(config.clone())
+                .await
+                .map_err(Error::msg)?;
+            printer.print_circuit_breaker_config(&config)?;
         }
     }
     Ok(())
