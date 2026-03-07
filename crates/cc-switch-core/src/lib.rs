@@ -19,6 +19,7 @@ pub mod proxy;
 pub mod services;
 pub mod settings;
 pub mod store;
+pub mod usage_script;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, SkillApps, UnmanagedSkill};
 pub use database::Database;
@@ -35,9 +36,12 @@ pub use services::proxy::{
 pub use services::skill::{
     migrate_skills_to_ssot, DiscoverableSkill, Skill, SkillRepo, SkillStore,
 };
+pub use services::stream_check::{
+    HealthStatus, StreamCheckConfig, StreamCheckResult, StreamCheckService,
+};
 pub use services::usage::{
-    PaginatedUsageLogs, UsageLogDetail, UsageLogFilters, UsageModelStat, UsageProviderStat,
-    UsageService, UsageTrendPoint,
+    ModelPricingInfo, PaginatedUsageLogs, ProviderLimitStatus, UsageLogDetail, UsageLogFilters,
+    UsageModelStat, UsageProviderStat, UsageService, UsageTrendPoint,
 };
 pub use services::{
     ConfigService, McpService, PromptService, ProviderService, ProxyService, SkillService,

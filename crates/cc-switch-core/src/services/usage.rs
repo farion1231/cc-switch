@@ -88,6 +88,29 @@ pub struct PaginatedUsageLogs {
     pub page_size: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPricingInfo {
+    pub model_id: String,
+    pub display_name: String,
+    pub input_cost_per_million: String,
+    pub output_cost_per_million: String,
+    pub cache_read_cost_per_million: String,
+    pub cache_creation_cost_per_million: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLimitStatus {
+    pub provider_id: String,
+    pub daily_usage: String,
+    pub daily_limit: Option<String>,
+    pub daily_exceeded: bool,
+    pub monthly_usage: String,
+    pub monthly_limit: Option<String>,
+    pub monthly_exceeded: bool,
+}
+
 pub struct UsageService;
 
 impl UsageService {
@@ -121,5 +144,25 @@ impl UsageService {
         request_id: &str,
     ) -> Result<Option<UsageLogDetail>, AppError> {
         db.get_usage_request_detail(request_id)
+    }
+
+    pub fn get_model_pricing(db: &Database) -> Result<Vec<ModelPricingInfo>, AppError> {
+        db.get_model_pricing()
+    }
+
+    pub fn update_model_pricing(db: &Database, pricing: ModelPricingInfo) -> Result<(), AppError> {
+        db.upsert_model_pricing(&pricing)
+    }
+
+    pub fn delete_model_pricing(db: &Database, model_id: &str) -> Result<(), AppError> {
+        db.delete_model_pricing(model_id)
+    }
+
+    pub fn check_provider_limits(
+        db: &Database,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<ProviderLimitStatus, AppError> {
+        db.check_provider_limits(provider_id, app_type)
     }
 }

@@ -3,6 +3,7 @@
 mod endpoints;
 mod gemini_auth;
 mod live;
+mod usage;
 
 use indexmap::IndexMap;
 use regex::Regex;
@@ -21,6 +22,7 @@ use live::{
     remove_openclaw_provider_from_live, remove_opencode_provider_from_live,
     sanitize_claude_settings_for_live, write_gemini_live,
 };
+use usage::validate_usage_script;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProviderSortUpdate {
@@ -256,6 +258,42 @@ impl ProviderService {
         live::import_openclaw_providers_from_live(state)
     }
 
+    pub async fn query_usage(
+        state: &AppState,
+        app_type: AppType,
+        provider_id: &str,
+    ) -> Result<crate::provider::UsageResult, AppError> {
+        usage::query_usage(state, app_type, provider_id).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn test_usage_script(
+        state: &AppState,
+        app_type: AppType,
+        provider_id: &str,
+        script_code: &str,
+        timeout: u64,
+        api_key: Option<&str>,
+        base_url: Option<&str>,
+        access_token: Option<&str>,
+        user_id: Option<&str>,
+        template_type: Option<&str>,
+    ) -> Result<crate::provider::UsageResult, AppError> {
+        usage::test_usage_script(
+            state,
+            app_type,
+            provider_id,
+            script_code,
+            timeout,
+            api_key,
+            base_url,
+            access_token,
+            user_id,
+            template_type,
+        )
+        .await
+    }
+
     pub fn get_custom_endpoints(
         state: &AppState,
         app_type: AppType,
@@ -456,6 +494,14 @@ impl ProviderService {
             }
             AppType::OpenClaw => Ok(()),
         }
+        .and_then(|_| {
+            if let Some(meta) = &provider.meta {
+                if let Some(script) = &meta.usage_script {
+                    validate_usage_script(script)?;
+                }
+            }
+            Ok(())
+        })
     }
 
     fn omo_variant_for(
@@ -1006,6 +1052,42 @@ mod tests {
             .is_some_and(|plugins| plugins
                 .iter()
                 .any(|item| item.as_str() == Some("oh-my-opencode@latest"))));
+
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_usage_script_interval_is_rejected() -> Result<(), AppError> {
+        let state = AppState::new(Database::memory()?);
+        let mut provider = Provider::with_id(
+            "claude-usage".to_string(),
+            "Claude Usage".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            usage_script: Some(crate::provider::UsageScript {
+                enabled: true,
+                language: "javascript".to_string(),
+                code: "({ request: {}, extractor() { return {}; } })".to_string(),
+                timeout: Some(10),
+                api_key: None,
+                base_url: None,
+                access_token: None,
+                user_id: None,
+                template_type: None,
+                auto_query_interval: Some(1441),
+            }),
+            ..Default::default()
+        });
+
+        let result = ProviderService::add(&state, AppType::Claude, provider);
+        assert!(result.is_err());
 
         Ok(())
     }

@@ -1,9 +1,11 @@
 //! Database DAO (Data Access Object) methods
 
 use indexmap::IndexMap;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use crate::app_config::{InstalledSkill, McpApps, McpServer, SkillApps};
 use crate::error::AppError;
@@ -13,9 +15,10 @@ use crate::services::proxy::{
     FailoverQueueItem, LiveBackup, ProxyConfig, ProxyTakeoverStatus, RequestLog, UsageSummary,
 };
 use crate::services::skill::SkillRepo;
+use crate::services::stream_check::{StreamCheckConfig, StreamCheckResult};
 use crate::services::usage::{
-    PaginatedUsageLogs, UsageLogDetail, UsageLogFilters, UsageModelStat, UsageProviderStat,
-    UsageTrendPoint,
+    ModelPricingInfo, PaginatedUsageLogs, ProviderLimitStatus, UsageLogDetail, UsageLogFilters,
+    UsageModelStat, UsageProviderStat, UsageTrendPoint,
 };
 use crate::settings::AppSettings;
 
@@ -1569,11 +1572,76 @@ impl Database {
              LIMIT ? OFFSET ?"
         );
 
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        let rows = stmt
-            .query_map(params_refs.as_slice(), |row| {
+        let mut data = {
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map(params_refs.as_slice(), |row| {
+                    Ok(UsageLogDetail {
+                        request_id: row.get(0)?,
+                        provider_id: row.get(1)?,
+                        provider_name: row.get(2)?,
+                        app_type: row.get(3)?,
+                        model: row.get(4)?,
+                        request_model: row.get(5)?,
+                        cost_multiplier: row.get(6)?,
+                        input_tokens: row.get::<_, i64>(7)? as u32,
+                        output_tokens: row.get::<_, i64>(8)? as u32,
+                        cache_read_tokens: row.get::<_, i64>(9)? as u32,
+                        cache_creation_tokens: row.get::<_, i64>(10)? as u32,
+                        input_cost_usd: row.get(11)?,
+                        output_cost_usd: row.get(12)?,
+                        cache_read_cost_usd: row.get(13)?,
+                        cache_creation_cost_usd: row.get(14)?,
+                        total_cost_usd: row.get(15)?,
+                        is_streaming: row.get::<_, i64>(16)? != 0,
+                        latency_ms: row.get::<_, i64>(17)? as u64,
+                        first_token_ms: row.get::<_, Option<i64>>(18)?.map(|value| value as u64),
+                        duration_ms: row.get::<_, Option<i64>>(19)?.map(|value| value as u64),
+                        status_code: row.get::<_, i64>(20)? as u16,
+                        error_message: row.get(21)?,
+                        created_at: row.get(22)?,
+                    })
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| AppError::Database(e.to_string()))?
+        };
+
+        let mut provider_cache = HashMap::new();
+        let mut pricing_cache = HashMap::new();
+        for item in &mut data {
+            Self::maybe_backfill_log_costs(&conn, item, &mut provider_cache, &mut pricing_cache)?;
+        }
+
+        Ok(PaginatedUsageLogs {
+            data,
+            total,
+            page,
+            page_size,
+        })
+    }
+
+    pub fn get_usage_request_detail(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<UsageLogDetail>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let sql = "SELECT l.request_id, l.provider_id, p.name, l.app_type, l.model, l.request_model,
+                    COALESCE(l.cost_multiplier, '1'),
+                    l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
+                    l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
+                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
+                    l.status_code, l.error_message, l.created_at
+             FROM proxy_request_logs l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             WHERE l.request_id = ?1
+             LIMIT 1";
+
+        let result = conn
+            .query_row(sql, [request_id], |row| {
                 Ok(UsageLogDetail {
                     request_id: row.get(0)?,
                     provider_id: row.get(1)?,
@@ -1600,65 +1668,186 @@ impl Database {
                     created_at: row.get(22)?,
                 })
             })
+            .optional()
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let data = rows
-            .collect::<Result<Vec<_>, _>>()
+        match result {
+            Some(mut detail) => {
+                let mut provider_cache = HashMap::new();
+                let mut pricing_cache = HashMap::new();
+                Self::maybe_backfill_log_costs(
+                    &conn,
+                    &mut detail,
+                    &mut provider_cache,
+                    &mut pricing_cache,
+                )?;
+                Ok(Some(detail))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_model_pricing(&self) -> Result<Vec<ModelPricingInfo>, AppError> {
+        self.ensure_model_pricing_seeded()?;
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT model_id, display_name, input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing
+                 ORDER BY display_name, model_id",
+            )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        Ok(PaginatedUsageLogs {
-            data,
-            total,
-            page,
-            page_size,
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ModelPricingInfo {
+                    model_id: row.get(0)?,
+                    display_name: row.get(1)?,
+                    input_cost_per_million: row.get(2)?,
+                    output_cost_per_million: row.get(3)?,
+                    cache_read_cost_per_million: row.get(4)?,
+                    cache_creation_cost_per_million: row.get(5)?,
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub fn upsert_model_pricing(&self, pricing: &ModelPricingInfo) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "INSERT OR REPLACE INTO model_pricing (
+                model_id, display_name, input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                pricing.model_id,
+                pricing.display_name,
+                pricing.input_cost_per_million,
+                pricing.output_cost_per_million,
+                pricing.cache_read_cost_per_million,
+                pricing.cache_creation_cost_per_million
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("更新模型定价失败: {e}")))?;
+        Ok(())
+    }
+
+    pub fn delete_model_pricing(&self, model_id: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute("DELETE FROM model_pricing WHERE model_id = ?1", [model_id])
+            .map_err(|e| AppError::Database(format!("删除模型定价失败: {e}")))?;
+        Ok(())
+    }
+
+    pub fn check_provider_limits(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<ProviderLimitStatus, AppError> {
+        let conn = lock_conn!(self.conn);
+        let (limit_daily, limit_monthly) = conn
+            .query_row(
+                "SELECT meta FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![provider_id, app_type],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(format!("查询 provider meta 失败: {e}")))?
+            .and_then(|meta| serde_json::from_str::<Value>(&meta).ok())
+            .map(|meta| {
+                let daily = meta
+                    .get("limitDailyUsd")
+                    .and_then(|value| value.as_str())
+                    .and_then(|value| value.parse::<f64>().ok());
+                let monthly = meta
+                    .get("limitMonthlyUsd")
+                    .and_then(|value| value.as_str())
+                    .and_then(|value| value.parse::<f64>().ok());
+                (daily, monthly)
+            })
+            .unwrap_or((None, None));
+
+        let daily_usage: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
+                 FROM proxy_request_logs
+                 WHERE provider_id = ?1 AND app_type = ?2
+                   AND date(datetime(created_at / 1000, 'unixepoch', 'localtime')) = date('now', 'localtime')",
+                params![provider_id, app_type],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+
+        let monthly_usage: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
+                 FROM proxy_request_logs
+                 WHERE provider_id = ?1 AND app_type = ?2
+                   AND strftime('%Y-%m', datetime(created_at / 1000, 'unixepoch', 'localtime')) = strftime('%Y-%m', 'now', 'localtime')",
+                params![provider_id, app_type],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+
+        Ok(ProviderLimitStatus {
+            provider_id: provider_id.to_string(),
+            daily_usage: format!("{daily_usage:.6}"),
+            daily_limit: limit_daily.map(|value| format!("{value:.2}")),
+            daily_exceeded: limit_daily.is_some_and(|limit| daily_usage >= limit),
+            monthly_usage: format!("{monthly_usage:.6}"),
+            monthly_limit: limit_monthly.map(|value| format!("{value:.2}")),
+            monthly_exceeded: limit_monthly.is_some_and(|limit| monthly_usage >= limit),
         })
     }
 
-    pub fn get_usage_request_detail(
+    pub fn save_stream_check_log(
         &self,
-        request_id: &str,
-    ) -> Result<Option<UsageLogDetail>, AppError> {
+        provider_id: &str,
+        provider_name: &str,
+        app_type: &str,
+        result: &StreamCheckResult,
+    ) -> Result<i64, AppError> {
         let conn = lock_conn!(self.conn);
-        let sql = "SELECT l.request_id, l.provider_id, p.name, l.app_type, l.model, l.request_model,
-                    COALESCE(l.cost_multiplier, '1'),
-                    l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
-                    l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
-                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
-                    l.status_code, l.error_message, l.created_at
-             FROM proxy_request_logs l
-             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
-             WHERE l.request_id = ?1
-             LIMIT 1";
+        conn.execute(
+            "INSERT INTO stream_check_logs
+             (provider_id, provider_name, app_type, status, success, message,
+              response_time_ms, http_status, model_used, retry_count, tested_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                provider_id,
+                provider_name,
+                app_type,
+                format!("{:?}", result.status).to_lowercase(),
+                result.success,
+                result.message,
+                result.response_time_ms.map(|value| value as i64),
+                result.http_status.map(|value| value as i64),
+                result.model_used,
+                result.retry_count as i64,
+                result.tested_at,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
 
-        conn.query_row(sql, [request_id], |row| {
-            Ok(UsageLogDetail {
-                request_id: row.get(0)?,
-                provider_id: row.get(1)?,
-                provider_name: row.get(2)?,
-                app_type: row.get(3)?,
-                model: row.get(4)?,
-                request_model: row.get(5)?,
-                cost_multiplier: row.get(6)?,
-                input_tokens: row.get::<_, i64>(7)? as u32,
-                output_tokens: row.get::<_, i64>(8)? as u32,
-                cache_read_tokens: row.get::<_, i64>(9)? as u32,
-                cache_creation_tokens: row.get::<_, i64>(10)? as u32,
-                input_cost_usd: row.get(11)?,
-                output_cost_usd: row.get(12)?,
-                cache_read_cost_usd: row.get(13)?,
-                cache_creation_cost_usd: row.get(14)?,
-                total_cost_usd: row.get(15)?,
-                is_streaming: row.get::<_, i64>(16)? != 0,
-                latency_ms: row.get::<_, i64>(17)? as u64,
-                first_token_ms: row.get::<_, Option<i64>>(18)?.map(|value| value as u64),
-                duration_ms: row.get::<_, Option<i64>>(19)?.map(|value| value as u64),
-                status_code: row.get::<_, i64>(20)? as u16,
-                error_message: row.get(21)?,
-                created_at: row.get(22)?,
-            })
-        })
-        .optional()
-        .map_err(|e| AppError::Database(e.to_string()))
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn get_stream_check_config(&self) -> Result<StreamCheckConfig, AppError> {
+        match self.get_setting("stream_check_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Message(format!("解析配置失败: {e}"))),
+            None => Ok(StreamCheckConfig::default()),
+        }
+    }
+
+    pub fn save_stream_check_config(&self, config: &StreamCheckConfig) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Message(format!("序列化配置失败: {e}")))?;
+        self.set_setting("stream_check_config", &json)
     }
 
     // ========== Export Methods ==========
@@ -1713,6 +1902,191 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
+}
+
+#[derive(Clone)]
+struct PricingInfo {
+    input: rust_decimal::Decimal,
+    output: rust_decimal::Decimal,
+    cache_read: rust_decimal::Decimal,
+    cache_creation: rust_decimal::Decimal,
+}
+
+impl Database {
+    fn maybe_backfill_log_costs(
+        conn: &Connection,
+        log: &mut UsageLogDetail,
+        provider_cache: &mut HashMap<(String, String), rust_decimal::Decimal>,
+        pricing_cache: &mut HashMap<String, PricingInfo>,
+    ) -> Result<(), AppError> {
+        let total_cost = rust_decimal::Decimal::from_str(&log.total_cost_usd)
+            .unwrap_or(rust_decimal::Decimal::ZERO);
+        let has_cost = total_cost > rust_decimal::Decimal::ZERO;
+        let has_usage = log.input_tokens > 0
+            || log.output_tokens > 0
+            || log.cache_read_tokens > 0
+            || log.cache_creation_tokens > 0;
+
+        if has_cost || !has_usage {
+            return Ok(());
+        }
+
+        let pricing = match Self::get_model_pricing_cached(conn, pricing_cache, &log.model)? {
+            Some(info) => info,
+            None => return Ok(()),
+        };
+        let multiplier = Self::get_cost_multiplier_cached(
+            conn,
+            provider_cache,
+            &log.provider_id,
+            &log.app_type,
+        )?;
+
+        let million = rust_decimal::Decimal::from(1_000_000u64);
+        let billable_input_tokens =
+            (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64);
+        let input_cost =
+            rust_decimal::Decimal::from(billable_input_tokens) * pricing.input / million;
+        let output_cost =
+            rust_decimal::Decimal::from(log.output_tokens as u64) * pricing.output / million;
+        let cache_read_cost = rust_decimal::Decimal::from(log.cache_read_tokens as u64)
+            * pricing.cache_read
+            / million;
+        let cache_creation_cost = rust_decimal::Decimal::from(log.cache_creation_tokens as u64)
+            * pricing.cache_creation
+            / million;
+        let base_total = input_cost + output_cost + cache_read_cost + cache_creation_cost;
+        let total_cost = base_total * multiplier;
+
+        log.input_cost_usd = format!("{input_cost:.6}");
+        log.output_cost_usd = format!("{output_cost:.6}");
+        log.cache_read_cost_usd = format!("{cache_read_cost:.6}");
+        log.cache_creation_cost_usd = format!("{cache_creation_cost:.6}");
+        log.total_cost_usd = format!("{total_cost:.6}");
+
+        conn.execute(
+            "UPDATE proxy_request_logs
+             SET input_cost_usd = ?1,
+                 output_cost_usd = ?2,
+                 cache_read_cost_usd = ?3,
+                 cache_creation_cost_usd = ?4,
+                 total_cost_usd = ?5
+             WHERE request_id = ?6",
+            params![
+                log.input_cost_usd,
+                log.output_cost_usd,
+                log.cache_read_cost_usd,
+                log.cache_creation_cost_usd,
+                log.total_cost_usd,
+                log.request_id
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("更新请求成本失败: {e}")))?;
+
+        Ok(())
+    }
+
+    fn get_cost_multiplier_cached(
+        conn: &Connection,
+        cache: &mut HashMap<(String, String), rust_decimal::Decimal>,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<rust_decimal::Decimal, AppError> {
+        let key = (provider_id.to_string(), app_type.to_string());
+        if let Some(multiplier) = cache.get(&key) {
+            return Ok(*multiplier);
+        }
+
+        let meta_json: Option<String> = conn
+            .query_row(
+                "SELECT meta FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![provider_id, app_type],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(format!("查询 provider meta 失败: {e}")))?;
+
+        let multiplier = meta_json
+            .and_then(|meta| serde_json::from_str::<Value>(&meta).ok())
+            .and_then(|value| value.get("costMultiplier").cloned())
+            .and_then(|value| {
+                value
+                    .as_str()
+                    .and_then(|s| rust_decimal::Decimal::from_str(s).ok())
+            })
+            .unwrap_or(rust_decimal::Decimal::ONE);
+
+        cache.insert(key, multiplier);
+        Ok(multiplier)
+    }
+
+    fn get_model_pricing_cached(
+        conn: &Connection,
+        cache: &mut HashMap<String, PricingInfo>,
+        model: &str,
+    ) -> Result<Option<PricingInfo>, AppError> {
+        if let Some(info) = cache.get(model) {
+            return Ok(Some(info.clone()));
+        }
+
+        let row = find_model_pricing_row(conn, model)?;
+        let Some((input, output, cache_read, cache_creation)) = row else {
+            return Ok(None);
+        };
+
+        let pricing = PricingInfo {
+            input: rust_decimal::Decimal::from_str(&input)
+                .map_err(|e| AppError::Database(format!("解析输入价格失败: {e}")))?,
+            output: rust_decimal::Decimal::from_str(&output)
+                .map_err(|e| AppError::Database(format!("解析输出价格失败: {e}")))?,
+            cache_read: rust_decimal::Decimal::from_str(&cache_read)
+                .map_err(|e| AppError::Database(format!("解析缓存读取价格失败: {e}")))?,
+            cache_creation: rust_decimal::Decimal::from_str(&cache_creation)
+                .map_err(|e| AppError::Database(format!("解析缓存写入价格失败: {e}")))?,
+        };
+
+        cache.insert(model.to_string(), pricing.clone());
+        Ok(Some(pricing))
+    }
+}
+
+pub(crate) fn find_model_pricing_row(
+    conn: &Connection,
+    model_id: &str,
+) -> Result<Option<(String, String, String, String)>, AppError> {
+    let cleaned = model_id
+        .rsplit_once('/')
+        .map_or(model_id, |(_, rest)| rest)
+        .split(':')
+        .next()
+        .unwrap_or(model_id)
+        .trim()
+        .replace('@', "-");
+
+    let exact = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing
+             WHERE model_id = ?1",
+            [&cleaned],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| AppError::Database(format!("查询模型定价失败: {e}")))?;
+
+    if exact.is_none() {
+        log::warn!("模型 {model_id}（清洗后: {cleaned}）未找到定价信息，成本将记录为 0");
+    }
+
+    Ok(exact)
 }
 
 fn parse_json<T: DeserializeOwned>(json: String) -> T {
@@ -2155,6 +2529,190 @@ mod tests {
         assert_eq!(detail.provider_name.as_deref(), Some("Gemini Alpha"));
         assert!(detail.is_streaming);
         assert_eq!(detail.total_cost_usd, "0.033000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn model_pricing_is_seeded_on_database_init() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let pricing = db.get_model_pricing()?;
+        assert!(!pricing.is_empty());
+        assert!(pricing
+            .iter()
+            .any(|item| item.model_id == "claude-sonnet-4-5-20250929"));
+        Ok(())
+    }
+
+    #[test]
+    fn model_pricing_matching_normalizes_vendor_prefix_and_effort_suffix() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let matched = find_model_pricing_row(&conn, "moonshotai/gpt-5.2-codex@low:v2")?;
+        assert!(matched.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn request_detail_backfills_costs_from_model_pricing() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    "p-cost",
+                    "claude",
+                    "Claude Cost",
+                    "{}",
+                    "{\"costMultiplier\":\"2\"}"
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                    latency_ms, first_token_ms, duration_ms, status_code, error_message, is_streaming, cost_multiplier, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-backfill",
+                    "p-cost",
+                    "claude",
+                    "claude-sonnet-4-5-20250929",
+                    "claude-sonnet-4-5-20250929",
+                    1_000_000i64,
+                    500_000i64,
+                    100_000i64,
+                    50_000i64,
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                    123,
+                    Option::<i64>::None,
+                    Option::<i64>::None,
+                    200,
+                    Option::<String>::None,
+                    1,
+                    "2",
+                    1_741_000_300_000i64
+                ],
+            )?;
+        }
+
+        let detail = db
+            .get_usage_request_detail("req-backfill")?
+            .expect("detail should exist");
+        assert_eq!(detail.input_cost_usd, "2.700000");
+        assert_eq!(detail.output_cost_usd, "7.500000");
+        assert_eq!(detail.cache_read_cost_usd, "0.030000");
+        assert_eq!(detail.cache_creation_cost_usd, "0.187500");
+        assert_eq!(detail.total_cost_usd, "20.835000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn provider_limits_aggregate_daily_and_monthly_costs() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    "p-limit",
+                    "claude",
+                    "Claude Limit",
+                    "{}",
+                    "{\"limitDailyUsd\":\"1.00\",\"limitMonthlyUsd\":\"5.00\"}"
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-limit-1",
+                    "p-limit",
+                    "claude",
+                    "claude-sonnet",
+                    10,
+                    5,
+                    "0.60",
+                    100,
+                    200,
+                    now
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-limit-2",
+                    "p-limit",
+                    "claude",
+                    "claude-haiku",
+                    10,
+                    5,
+                    "0.50",
+                    100,
+                    200,
+                    now
+                ],
+            )?;
+        }
+
+        let status = db.check_provider_limits("p-limit", "claude")?;
+        assert_eq!(status.daily_usage, "1.100000");
+        assert_eq!(status.monthly_usage, "1.100000");
+        assert!(status.daily_exceeded);
+        assert!(!status.monthly_exceeded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn stream_check_config_round_trip_through_settings() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let config = StreamCheckConfig {
+            timeout_secs: 12,
+            max_retries: 3,
+            degraded_threshold_ms: 999,
+            claude_model: "claude-custom".to_string(),
+            codex_model: "gpt-custom".to_string(),
+            gemini_model: "gemini-custom".to_string(),
+            test_prompt: "ping".to_string(),
+        };
+
+        db.save_stream_check_config(&config)?;
+        let saved = db.get_stream_check_config()?;
+        assert_eq!(saved.timeout_secs, 12);
+        assert_eq!(saved.test_prompt, "ping");
+
+        let result = StreamCheckResult {
+            status: crate::services::stream_check::HealthStatus::Operational,
+            success: true,
+            message: "ok".to_string(),
+            response_time_ms: Some(42),
+            http_status: Some(200),
+            model_used: "claude-custom".to_string(),
+            tested_at: 1_741_000_400,
+            retry_count: 1,
+        };
+        let id = db.save_stream_check_log("p-limit", "Claude Limit", "claude", &result)?;
+        assert!(id > 0);
 
         Ok(())
     }

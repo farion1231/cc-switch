@@ -126,8 +126,8 @@ Checklist：
 当前结论：
 
 - `Stage 1` 仍然不能被标记为“已完成”，但 core 已经不再只有 provider 骨架，而是具备了一条能被 CLI 和 tauri 共用的后端主链。
-- `cc-switch-core` 当前已经覆盖的主线是：`AppType/OpenClaw/OpenCode -> 文件型 settings -> app config adapter -> provider live read/write/import/sync -> MCP live sync/import -> Prompt 文件同步 -> Skill SSOT/导入/ZIP 安装 -> OMO 独占配置 -> usage 聚合查询 -> proxy schema/DAO 契约`。
-- 当前最大的剩余阻塞，已经进一步收缩到真正的 runtime 和计费外围：`Proxy runtime 与 takeover/failover / usage script 与 provider limits / model_pricing & stream_check / deeplink merge / env & workspace & webdav 等系统域`。
+- `cc-switch-core` 当前已经覆盖的主线是：`AppType/OpenClaw/OpenCode -> 文件型 settings -> app config adapter -> provider live read/write/import/sync -> MCP live sync/import -> Prompt 文件同步 -> Skill SSOT/导入/ZIP 安装 -> OMO 独占配置 -> usage 聚合查询 -> usage script / model_pricing / provider limits -> stream-check service -> proxy schema/DAO 契约`。
+- 当前最大的剩余阻塞，已经进一步收缩到真正的 runtime 和少数外围域：`Proxy runtime 与 takeover/failover/recover / deeplink merge / env & workspace & webdav 等系统域`。
 
 本轮已完成：
 
@@ -153,6 +153,13 @@ Checklist：
 - 已把 usage 聚合查询往 core 继续下沉。
   - 新增 `services/usage.rs`。
   - DAO 已支持 `usage_trends`、`provider_stats`、`model_stats`、`paginated logs`、`request detail`。
+- 已把 provider usage script 链路迁回 core。
+  - 新增 `usage_script.rs`，已支持脚本执行、模板变量替换、返回值校验、基础 SSRF / 同源 / HTTPS 防护。
+  - `ProviderService` 已接入 `query_usage()`、`test_usage_script()`、`validate_usage_script()`，CLI 和 tauri 后续都可以直接走 core。
+- 已把 pricing / provider limits / stream-check 服务层补齐到 core。
+  - `model_pricing` 现在不只是建表，core 启库时会自动 seed 默认定价数据。
+  - DAO / `UsageService` 已支持 `get/update/delete model pricing`、`check_provider_limits()`、请求详情成本回填。
+  - 新增 `services/stream_check.rs`，已支持配置读写、单 provider 检查、批量检查、日志落库，以及 Claude / Codex / Gemini 的真实流式探测。
 - 已把 Skill 从“只改 DB”补成真实文件链。
   - core `services/skill.rs` 现在已经支持 `SSOT (~/.cc-switch/skills)`、`sync_to_app_dir()`、`remove_from_app()`、`sync_to_app()`。
   - 已支持 `scan_unmanaged()`、`import_from_apps()`、`install_from_zip()`、`migrate_skills_to_ssot()`。
@@ -168,12 +175,14 @@ Checklist：
 - 已把 proxy 的一部分“假成功”语义收掉。
   - `switch_proxy_target()` 现在不再只是切 DB current，还会同步设备级 current provider。
   - 当存在 live backup 时，`switch_proxy_target()` 会同步更新 backup 内容，作为后续真正 `stop_with_restore` / `recover` 的基础。
-- 当前 `cargo test -p cc-switch-core` 已通过，新增测试已覆盖到 `MCP + OMO + usage detail + skill filesystem + failover queue + live backup`。
+- 当前 `cargo test -p cc-switch-core` 与 `cargo test -p cc-switch-cli` 已通过。
+  - core 当前测试结果是 `50 passed`。
+  - 新增测试已覆盖到 `MCP + OMO + usage detail + model_pricing seed/match/backfill + provider limits + stream-check config/log + usage script validation + skill filesystem + failover queue + live backup`。
 
 代码 review 结论：
 
 - provider 主链已经能跑，但还没有完全达到 tauri 等价。
-  - usage script 的执行与测试链路还没迁回 core。
+  - usage script 的执行与测试链路已经迁回 core。
   - 普通 provider 的 remove/import/sync 回归测试仍不够完整。
 - Prompt 已经不是纯 DB stub，但 Stage 1 还不能算收尾。
   - Prompt 已具备文件启用、当前文件读取、首次导入基础能力。
@@ -183,20 +192,20 @@ Checklist：
   - 剩余差距主要是 repo discover/install 的完整远程生态、默认 repo 初始化后的 CLI/tauri 接入，以及更完整的回归测试。
 - Proxy / Failover / Usage 仍是 Stage 1 后半段的主阻塞。
   - `services/proxy.rs` 仍然不是 tauri 那种可运行 runtime。
-  - 当前只补到了 schema/DAO 和 `switch_proxy_target()` 的 backup 回写语义，还没有 `start/stop/status/takeover/recover` 运行态。
-  - `model_pricing`、`stream_check_logs` 虽然已建表，但计费匹配、seed、stream-check service 还没真正迁完。
+  - 当前只补到了 schema/DAO、`switch_proxy_target()` 的 backup 回写，以及 usage / pricing / stream-check 的服务层。
+  - 真正还没迁完的是 `start/stop/status/takeover/recover/failover` 运行态。
 - core runtime boundary 仍未完成。
   - 当前 `AppState` 仍然只有 `db`。
   - 如果要承接 tauri 的 proxy / failover / usage runtime，后面必须把纯后端运行态正式抽到 core。
 
 建议的代码实现顺序：
 
-- 先收掉 provider 余项。
-  - 补 `usage script`，并把 provider 行为回归测试补满。
-- 再把 usage / pricing / stream-check 的服务层补齐。
-  - 现在 schema 已经到位，下一步应该把 `model_pricing`、`provider limits`、`stream-check` 真的跑起来。
-- 最后集中迁 proxy runtime / takeover / recover / failover。
-  - 这是 Stage 1 最重的一段，也是当前真正的退出线阻塞。
+- 先把 proxy runtime 主链真正下沉。
+  - `start / stop / status / takeover / recover / failover` 现在是 Stage 1 的第一阻塞项。
+- 再收 deeplink merge。
+  - provider deeplink 里的 `usageScript`、meta merge、导入语义需要从 tauri 收到 core。
+- 最后处理外围系统域。
+  - `env / workspace / webdav` 这些不是 provider 主链阻塞，但会影响 Stage 1 是否能被定义成“后端能力完整迁入 core”。
 
 必须补的测试：
 
@@ -214,7 +223,9 @@ Checklist：
   - [ ] add / update / delete / switch 在普通模式和 additive mode 下的行为测试还要继续补。
   - [x] `switch()` 的 OMO 独占链路基础测试已补。
   - [ ] `sync_current_to_live()`、`import_default_config()`、`read_live_settings()` 的回归测试还要补。
-  - [ ] `remove_from_live_config()`、custom endpoint CRUD、usage script 校验与执行测试还要补。
+  - [ ] `remove_from_live_config()`、custom endpoint CRUD 回归测试还要补。
+  - [x] usage script 校验基础测试已补。
+  - [ ] usage script 实际联网执行链路测试仍可继续补。
   - [x] OpenClaw / OpenCode 导入 live providers 的测试已具备基础覆盖，仍需补删除与重入场景。
 - MCP
   - [x] `sync_all_enabled()` 真实写入 live 配置的测试已补基础覆盖。
@@ -228,14 +239,16 @@ Checklist：
   - [ ] repo discover/install、默认 repo 初始化、冲突目录名与重复安装测试还要补。
 - Proxy / Failover / Usage
   - [x] usage summary / logs / trends / provider stats / model stats / request detail 基础测试已补到 DAO 层。
-  - [ ] schema 迁移后 `model_pricing` seed 测试。
+  - [x] schema 迁移后 `model_pricing` seed 测试。
   - [x] failover queue 增删改查基础测试已补。
   - [x] `switch_proxy_target()` 更新 live backup 的基础测试已补。
   - [ ] proxy start / stop / status / takeover / recover 测试。
-  - [ ] model pricing 匹配和计费回填测试。
-  - [ ] provider limits / pricing / usage script / speedtest 测试。
+  - [x] model pricing 匹配和计费回填测试。
+  - [x] provider limits / pricing 基础测试已补。
+  - [ ] usage script 实际执行 / speedtest 更完整测试还要补。
 - 外围后端域
-  - [ ] stream check 配置、日志、provider 级检查测试。
+  - [x] stream check 配置、日志基础测试已补。
+  - [ ] stream check provider 级真实请求测试还要补。
   - [ ] global proxy 配置校验、保存、连通性测试。
   - [ ] workspace 文件读写与搜索测试。
   - [ ] env checker / env manager 备份、删除、恢复测试。
@@ -245,6 +258,7 @@ Stage 1 退出前必须看到的信号：
 
 - `cargo test -p cc-switch-core` 持续为绿，并且新增域不会再回退已迁入的 provider 基础链。
 - core 可以独立完成 provider live 操作、MCP 同步、OMO 切换和 usage 查询，而不依赖 tauri command 层兜底。
+- core 可以独立完成 usage script、model pricing、provider limits、stream-check，而不依赖 tauri command 层兜底。
 - skill 的安装/扫描/同步不再只能依赖 tauri。
 - proxy 切换不再只是改 DB current，而能承接 takeover / backup / recover 语义。
 - 进入 Stage 2 时，CLI 不需要再自带任何“临时补丁逻辑”来绕过 core 缺口。
@@ -293,8 +307,8 @@ Checklist：
 
 为避免迁移后继续把逻辑堆进现有几个大文件，建议预留这些落点：
 
-- [ ] `crates/cc-switch-core/src/services/usage.rs`
-- [ ] `crates/cc-switch-core/src/services/stream_check.rs`
+- [x] `crates/cc-switch-core/src/services/usage.rs`
+- [x] `crates/cc-switch-core/src/services/stream_check.rs`
 - [ ] `crates/cc-switch-core/src/services/webdav.rs`
 - [ ] `crates/cc-switch-core/src/services/env.rs`
 - [ ] `crates/cc-switch-core/src/services/workspace.rs`
