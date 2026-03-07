@@ -127,6 +127,8 @@ impl FailoverSwitchManager {
                         if let Err(e) = tray.set_menu(Some(new_menu)) {
                             log::error!("[Failover] 更新托盘菜单失败: {e}");
                         }
+                        #[cfg(target_os = "macos")]
+                        crate::tray::apply_alternate_menu_items(app);
                     }
                 }
             }
