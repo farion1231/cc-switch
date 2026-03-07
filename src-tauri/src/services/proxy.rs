@@ -2314,4 +2314,83 @@ model = "gpt-5.1-codex"
         assert!(backup_config.contains("@upstash/context7-mcp"));
         assert!(backup_config.contains("[projects.\"/tmp/demo\"]"));
     }
+
+    #[tokio::test]
+    #[serial]
+    async fn switch_proxy_target_ignores_malformed_codex_live_backup_when_merging() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "a-key"
+                },
+                "config": "model_provider = \"custom\"\nmodel = \"gpt-5\"\n\n[model_providers.custom]\nbase_url = \"https://provider-a.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "b-key"
+                },
+                "config": "model_provider = \"custom\"\nmodel = \"gpt-5\"\n\n[model_providers.custom]\nbase_url = \"https://provider-b.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider_a)
+            .expect("save provider a");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("codex", "a")
+            .expect("set current provider");
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": {
+                    "OPENAI_API_KEY": "a-key"
+                },
+                "config": "model_provider = \"custom\"\n\n[mcp_servers.context7\ncommand = \"npx\"\n"
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        service
+            .switch_proxy_target("codex", "b")
+            .await
+            .expect("switch proxy target");
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+        let backup_config = backup_value
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("codex config text");
+
+        assert_eq!(
+            backup_value
+                .get("auth")
+                .and_then(|value| value.get("OPENAI_API_KEY"))
+                .and_then(|value| value.as_str()),
+            Some("b-key")
+        );
+        assert!(backup_config.contains("https://provider-b.example/v1"));
+        assert!(!backup_config.contains("[mcp_servers.context7]"));
+    }
 }

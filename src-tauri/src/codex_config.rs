@@ -138,12 +138,16 @@ pub fn merge_codex_live_config(
         return Ok(provider_doc.to_string());
     }
 
-    let existing_doc = existing_live_text.parse::<DocumentMut>().map_err(|e| {
-        AppError::Config(format!(
-            "解析现有 Codex config.toml 失败 ({}): {e}",
-            config_path.display()
-        ))
-    })?;
+    let existing_doc = match existing_live_text.parse::<DocumentMut>() {
+        Ok(doc) => doc,
+        Err(e) => {
+            log::warn!(
+                "解析现有 Codex config.toml 失败 ({}): {e}; 将跳过保留的 live 表并继续写入 provider 配置",
+                config_path.display()
+            );
+            return Ok(provider_doc.to_string());
+        }
+    };
 
     for key in PRESERVED_LIVE_TABLES {
         if let Some(item) = existing_doc.get(key) {
@@ -218,5 +222,29 @@ trust_level = "trusted"
         assert!(merged.contains("[mcp_servers.context7]"));
         assert!(merged.contains("@upstash/context7-mcp"));
         assert!(merged.contains("[projects.\"/tmp/demo\"]"));
+    }
+
+    #[test]
+    fn merge_codex_live_config_falls_back_when_existing_live_is_malformed() {
+        let provider = r#"model_provider = "custom"
+model = "gpt-5"
+
+[model_providers.custom]
+base_url = "https://provider-b.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let malformed_existing = r#"model_provider = "custom"
+
+[mcp_servers.context7
+command = "npx"
+"#;
+
+        let merged =
+            merge_codex_live_config(provider, Some(malformed_existing)).expect("merge config");
+
+        assert!(merged.contains("base_url = \"https://provider-b.example/v1\""));
+        assert!(!merged.contains("[mcp_servers.context7]"));
     }
 }
