@@ -27,6 +27,7 @@ mod settings;
 mod store;
 mod tray;
 mod usage_script;
+mod utils;
 
 pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
