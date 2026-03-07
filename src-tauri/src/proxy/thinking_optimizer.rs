@@ -40,7 +40,7 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
         .and_then(|v| v.as_u64())
         .unwrap_or(16384);
 
-    let budget_target = max_tokens - 1;
+    let budget_target = max_tokens.saturating_sub(1);
 
     let thinking_type = body
         .get("thinking")

@@ -257,6 +257,18 @@
         "thinkingBudget": "Thinking Budget Rectification",
         "thinkingBudgetDescription": "When an Anthropic-type provider returns budget_tokens constraint errors (such as at least 1024), automatically normalizes thinking to enabled, sets thinking budget to 32000, and raises max_tokens to 64000 if needed, then retries once"
       },
+      "optimizer": {
+        "title": "Bedrock Request Optimizer",
+        "description": "Automatically optimize Thinking and Cache configuration before sending requests (only applies to Bedrock providers)",
+        "enabled": "Enable Optimizer",
+        "thinkingOptimizer": "Thinking Optimization",
+        "thinkingOptimizerDescription": "Automatically enable Adaptive Thinking for Opus/Sonnet, and inject Extended Thinking for legacy models",
+        "cacheInjection": "Cache Injection",
+        "cacheInjectionDescription": "Automatically inject cache breakpoints at key positions in requests to reduce duplicate token billing",
+        "cacheTtl": "Cache TTL",
+        "cacheTtl5m": "5 minutes",
+        "cacheTtl1h": "1 hour"
+      },
       "logConfig": {
         "title": "Log Management",
         "description": "Control log output level",

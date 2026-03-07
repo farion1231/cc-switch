@@ -159,6 +159,15 @@ pub async fn set_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::OptimizerConfig,
 ) -> Result<bool, String> {
+    // Validate cache_ttl: only allow known values
+    match config.cache_ttl.as_str() {
+        "5m" | "1h" => {}
+        other => {
+            return Err(format!(
+                "Invalid cache_ttl value: '{other}'. Allowed values: '5m', '1h'"
+            ))
+        }
+    }
     state
         .db
         .set_optimizer_config(&config)

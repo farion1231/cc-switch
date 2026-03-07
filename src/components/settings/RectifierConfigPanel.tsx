@@ -3,7 +3,11 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { settingsApi, type RectifierConfig, type OptimizerConfig } from "@/lib/api/settings";
+import {
+  settingsApi,
+  type RectifierConfig,
+  type OptimizerConfig,
+} from "@/lib/api/settings";
 
 export function RectifierConfigPanel() {
   const { t } = useTranslation();
@@ -111,16 +115,18 @@ export function RectifierConfigPanel() {
 
       <div className="border-t pt-6 mt-6">
         <div className="space-y-1 mb-4">
-          <h3 className="text-sm font-medium">Bedrock 请求优化器</h3>
+          <h3 className="text-sm font-medium">
+            {t("settings.advanced.optimizer.title")}
+          </h3>
           <p className="text-xs text-muted-foreground">
-            在请求发送前自动优化 Thinking 和 Cache 配置（仅 Bedrock 供应商生效）
+            {t("settings.advanced.optimizer.description")}
           </p>
         </div>
 
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
-              <Label>启用优化器</Label>
+              <Label>{t("settings.advanced.optimizer.enabled")}</Label>
             </div>
             <Switch
               checked={optimizerConfig.enabled}
@@ -133,9 +139,13 @@ export function RectifierConfigPanel() {
           <div className="space-y-4 pl-4">
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
-                <Label>Thinking 优化</Label>
+                <Label>
+                  {t("settings.advanced.optimizer.thinkingOptimizer")}
+                </Label>
                 <p className="text-xs text-muted-foreground">
-                  自动为 Opus/Sonnet 启用 Adaptive Thinking，为旧模型注入 Extended Thinking
+                  {t(
+                    "settings.advanced.optimizer.thinkingOptimizerDescription",
+                  )}
                 </p>
               </div>
               <Switch
@@ -149,9 +159,9 @@ export function RectifierConfigPanel() {
 
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
-                <Label>Cache 注入</Label>
+                <Label>{t("settings.advanced.optimizer.cacheInjection")}</Label>
                 <p className="text-xs text-muted-foreground">
-                  自动在请求关键位置注入 Cache 断点，减少重复 token 计费
+                  {t("settings.advanced.optimizer.cacheInjectionDescription")}
                 </p>
               </div>
               <Switch
@@ -166,18 +176,24 @@ export function RectifierConfigPanel() {
             {optimizerConfig.cacheInjection && (
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
-                  <Label>Cache TTL</Label>
+                  <Label>{t("settings.advanced.optimizer.cacheTtl")}</Label>
                 </div>
                 <select
                   className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                   value={optimizerConfig.cacheTtl}
-                  disabled={!optimizerConfig.enabled || !optimizerConfig.cacheInjection}
+                  disabled={
+                    !optimizerConfig.enabled || !optimizerConfig.cacheInjection
+                  }
                   onChange={(e) =>
                     handleOptimizerChange({ cacheTtl: e.target.value })
                   }
                 >
-                  <option value="5m">5 分钟</option>
-                  <option value="1h">1 小时</option>
+                  <option value="5m">
+                    {t("settings.advanced.optimizer.cacheTtl5m")}
+                  </option>
+                  <option value="1h">
+                    {t("settings.advanced.optimizer.cacheTtl1h")}
+                  </option>
                 </select>
               </div>
             )}

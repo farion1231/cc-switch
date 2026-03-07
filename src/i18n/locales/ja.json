@@ -257,6 +257,18 @@
         "thinkingBudget": "Thinking Budget 整流",
         "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします"
       },
+      "optimizer": {
+        "title": "Bedrock リクエストオプティマイザー",
+        "description": "リクエスト送信前に Thinking と Cache の設定を自動最適化（Bedrock プロバイダーのみ有効）",
+        "enabled": "オプティマイザーを有効化",
+        "thinkingOptimizer": "Thinking 最適化",
+        "thinkingOptimizerDescription": "Opus/Sonnet に Adaptive Thinking を自動的に有効化し、レガシーモデルに Extended Thinking を注入",
+        "cacheInjection": "Cache 注入",
+        "cacheInjectionDescription": "リクエストの重要な位置に Cache ブレークポイントを自動注入し、重複トークンの課金を削減",
+        "cacheTtl": "Cache TTL",
+        "cacheTtl5m": "5 分",
+        "cacheTtl1h": "1 時間"
+      },
       "logConfig": {
         "title": "ログ管理",
         "description": "ログ出力レベルを制御",

@@ -19,7 +19,10 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
     let mut budget = 4_usize.saturating_sub(existing);
     if budget == 0 {
         if existing > 0 {
-            log::info!("[OPT] cache: ttl-upgrade({existing}->{},existing={existing})", config.cache_ttl);
+            log::info!(
+                "[OPT] cache: ttl-upgrade({existing}->{},existing={existing})",
+                config.cache_ttl
+            );
         } else {
             log::info!("[OPT] cache: no-op(existing={existing})");
         }
@@ -33,9 +36,12 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
         if let Some(tools) = body.get_mut("tools").and_then(|t| t.as_array_mut()) {
             if let Some(last) = tools.last_mut() {
                 if last.get("cache_control").is_none() {
-                    last.as_object_mut().map(|o| {
-                        o.insert("cache_control".to_string(), make_cache_control(&config.cache_ttl));
-                    });
+                    if let Some(o) = last.as_object_mut() {
+                        o.insert(
+                            "cache_control".to_string(),
+                            make_cache_control(&config.cache_ttl),
+                        );
+                    }
                     budget -= 1;
                     injected.push("tools");
                 }
@@ -54,9 +60,12 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
         if let Some(system) = body.get_mut("system").and_then(|s| s.as_array_mut()) {
             if let Some(last) = system.last_mut() {
                 if last.get("cache_control").is_none() {
-                    last.as_object_mut().map(|o| {
-                        o.insert("cache_control".to_string(), make_cache_control(&config.cache_ttl));
-                    });
+                    if let Some(o) = last.as_object_mut() {
+                        o.insert(
+                            "cache_control".to_string(),
+                            make_cache_control(&config.cache_ttl),
+                        );
+                    }
                     budget -= 1;
                     injected.push("system");
                 }
@@ -67,21 +76,27 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
     // (c) 最后一条 assistant 消息的最后一个非 thinking block
     if budget > 0 {
         if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
-            if let Some(assistant_msg) = messages.iter_mut().rev().find(|m| {
-                m.get("role").and_then(|r| r.as_str()) == Some("assistant")
-            }) {
-                if let Some(content) = assistant_msg.get_mut("content").and_then(|c| c.as_array_mut()) {
+            if let Some(assistant_msg) = messages
+                .iter_mut()
+                .rev()
+                .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+            {
+                if let Some(content) = assistant_msg
+                    .get_mut("content")
+                    .and_then(|c| c.as_array_mut())
+                {
                     // 逆序找最后一个非 thinking/redacted_thinking block
                     if let Some(block) = content.iter_mut().rev().find(|b| {
                         let bt = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
                         bt != "thinking" && bt != "redacted_thinking"
                     }) {
                         if block.get("cache_control").is_none() {
-                            block.as_object_mut().map(|o| {
-                                o.insert("cache_control".to_string(), make_cache_control(&config.cache_ttl));
-                            });
-                            #[allow(unused_assignments)]
-                            { budget -= 1; }
+                            if let Some(o) = block.as_object_mut() {
+                                o.insert(
+                                    "cache_control".to_string(),
+                                    make_cache_control(&config.cache_ttl),
+                                );
+                            }
                             injected.push("msgs");
                         }
                     }
@@ -110,17 +125,26 @@ fn count_existing(body: &Value) -> usize {
     let mut count = 0;
 
     if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
-        count += tools.iter().filter(|t| t.get("cache_control").is_some()).count();
+        count += tools
+            .iter()
+            .filter(|t| t.get("cache_control").is_some())
+            .count();
     }
 
     if let Some(system) = body.get("system").and_then(|s| s.as_array()) {
-        count += system.iter().filter(|b| b.get("cache_control").is_some()).count();
+        count += system
+            .iter()
+            .filter(|b| b.get("cache_control").is_some())
+            .count();
     }
 
     if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
         for msg in messages {
             if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
-                count += content.iter().filter(|b| b.get("cache_control").is_some()).count();
+                count += content
+                    .iter()
+                    .filter(|b| b.get("cache_control").is_some())
+                    .count();
             }
         }
     }
@@ -140,17 +164,23 @@ fn upgrade_existing_ttl(body: &mut Value, ttl: &str) {
     };
 
     if let Some(tools) = body.get_mut("tools").and_then(|t| t.as_array_mut()) {
-        for tool in tools.iter_mut() { upgrade(tool); }
+        for tool in tools.iter_mut() {
+            upgrade(tool);
+        }
     }
 
     if let Some(system) = body.get_mut("system").and_then(|s| s.as_array_mut()) {
-        for block in system.iter_mut() { upgrade(block); }
+        for block in system.iter_mut() {
+            upgrade(block);
+        }
     }
 
     if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
         for msg in messages.iter_mut() {
             if let Some(content) = msg.get_mut("content").and_then(|c| c.as_array_mut()) {
-                for block in content.iter_mut() { upgrade(block); }
+                for block in content.iter_mut() {
+                    upgrade(block);
+                }
             }
         }
     }
@@ -201,7 +231,9 @@ mod tests {
         // system last element
         assert!(body["system"][0].get("cache_control").is_some());
         // assistant last non-thinking block
-        assert!(body["messages"][1]["content"][0].get("cache_control").is_some());
+        assert!(body["messages"][1]["content"][0]
+            .get("cache_control")
+            .is_some());
     }
 
     #[test]
@@ -228,7 +260,10 @@ mod tests {
         assert_eq!(body["tools"][0]["cache_control"]["ttl"], "1h");
         assert_eq!(body["tools"][1]["cache_control"]["ttl"], "1h");
         assert_eq!(body["system"][0]["cache_control"]["ttl"], "1h");
-        assert_eq!(body["messages"][0]["content"][0]["cache_control"]["ttl"], "1h");
+        assert_eq!(
+            body["messages"][0]["content"][0]["cache_control"]["ttl"],
+            "1h"
+        );
     }
 
     #[test]
@@ -249,7 +284,9 @@ mod tests {
 
         // budget = 4 - 2 = 2, inject system + msgs
         assert!(body["system"][0].get("cache_control").is_some());
-        assert!(body["messages"][0]["content"][0].get("cache_control").is_some());
+        assert!(body["messages"][0]["content"][0]
+            .get("cache_control")
+            .is_some());
     }
 
     #[test]
@@ -324,8 +361,14 @@ mod tests {
         inject(&mut body, &default_config());
 
         // Should inject on "text" block (last non-thinking), not on thinking/redacted_thinking
-        assert!(body["messages"][0]["content"][1].get("cache_control").is_some());
-        assert!(body["messages"][0]["content"][0].get("cache_control").is_none());
-        assert!(body["messages"][0]["content"][2].get("cache_control").is_none());
+        assert!(body["messages"][0]["content"][1]
+            .get("cache_control")
+            .is_some());
+        assert!(body["messages"][0]["content"][0]
+            .get("cache_control")
+            .is_none());
+        assert!(body["messages"][0]["content"][2]
+            .get("cache_control")
+            .is_none());
     }
 }

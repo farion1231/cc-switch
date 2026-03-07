@@ -257,6 +257,18 @@
         "thinkingBudget": "Thinking Budget 整流",
         "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次"
       },
+      "optimizer": {
+        "title": "Bedrock 请求优化器",
+        "description": "在请求发送前自动优化 Thinking 和 Cache 配置（仅 Bedrock 供应商生效）",
+        "enabled": "启用优化器",
+        "thinkingOptimizer": "Thinking 优化",
+        "thinkingOptimizerDescription": "自动为 Opus/Sonnet 启用 Adaptive Thinking，为旧模型注入 Extended Thinking",
+        "cacheInjection": "Cache 注入",
+        "cacheInjectionDescription": "自动在请求关键位置注入 Cache 断点，减少重复 token 计费",
+        "cacheTtl": "Cache TTL",
+        "cacheTtl5m": "5 分钟",
+        "cacheTtl1h": "1 小时"
+      },
       "logConfig": {
         "title": "日志管理",
         "description": "控制日志输出级别",
