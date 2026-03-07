@@ -153,7 +153,22 @@ impl ConfigService {
         }
         let cfg_text = settings.get("config").and_then(Value::as_str);
 
-        crate::codex_config::write_codex_live_atomic(auth, cfg_text)?;
+        let mut auth_live = auth.clone();
+        if let Some(auth_obj) = auth_live.as_object_mut() {
+            let openai = auth_obj
+                .get("OPENAI_API_KEY")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string);
+            if let Some(value) = openai.as_ref() {
+                auth_obj.insert("OPENAI_API_KEY".to_string(), Value::String(value.clone()));
+            }
+        }
+
+        let normalized_cfg_text = cfg_text.map(Self::normalize_codex_env_key);
+
+        crate::codex_config::write_codex_live_atomic(&auth_live, normalized_cfg_text.as_deref())?;
         // 注意：MCP 同步在 v3.7.0 中已通过 McpService 进行，不再在此调用
         // sync_enabled_to_codex 使用旧的 config.mcp.codex 结构，在新架构中为空
         // MCP 的启用/禁用应通过 McpService::toggle_app 进行
@@ -171,6 +186,31 @@ impl ConfigService {
         }
 
         Ok(())
+    }
+
+    /// 统一将 Codex config.toml 的 env_key 规范化为 OPENAI_API_KEY。
+    fn normalize_codex_env_key(config_toml: &str) -> String {
+        use toml_edit::DocumentMut;
+
+        let mut doc = match config_toml.parse::<DocumentMut>() {
+            Ok(doc) => doc,
+            Err(_) => return config_toml.to_string(),
+        };
+
+        if let Some(model_providers) = doc.get_mut("model_providers").and_then(|v| v.as_table_like_mut()) {
+            for (_, item) in model_providers.iter_mut() {
+                let Some(table) = item.as_table_like_mut() else {
+                    continue;
+                };
+
+                let key = table.get("env_key").and_then(|v| v.as_str());
+                if matches!(key, Some("OPENAI_API_KEY")) {
+                    table.insert("env_key", toml_edit::value("OPENAI_API_KEY"));
+                }
+            }
+        }
+
+        doc.to_string()
     }
 
     fn sync_claude_live(

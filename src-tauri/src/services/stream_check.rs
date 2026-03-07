@@ -3,7 +3,6 @@
 //! 使用流式 API 进行快速健康检查，只需接收首个 chunk 即判定成功。
 
 use futures::StreamExt;
-use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -658,18 +657,49 @@ impl StreamCheckService {
     }
 
     fn extract_codex_model(provider: &Provider) -> Option<String> {
-        let config_text = provider
+        // 兼容旧格式：model 可能直接放在 settings_config 根节点
+        if let Some(model) = provider
             .settings_config
-            .get("config")
-            .and_then(|value| value.as_str())?;
-        if config_text.trim().is_empty() {
-            return None;
+            .get("model")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            return Some(model);
         }
 
-        let re = Regex::new(r#"^model\s*=\s*["']([^"']+)["']"#).ok()?;
-        re.captures(config_text)
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().trim().to_string())
+        let config_value = provider.settings_config.get("config")?;
+
+        // 优先按 TOML 语义解析，避免因为 model 不在首行导致解析失败
+        if let Some(config_text) = config_value.as_str() {
+            if config_text.trim().is_empty() {
+                return None;
+            }
+
+            if let Ok(toml_value) = toml::from_str::<toml::Value>(config_text) {
+                if let Some(model) = toml_value
+                    .get("model")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                {
+                    return Some(model);
+                }
+            }
+
+            // 兜底：支持非严格 TOML 文本，按多行正则提取 model
+            let re = regex::Regex::new(r#"(?m)^\s*model\s*=\s*["']([^"']+)["']"#).ok()?;
+            return re
+                .captures(config_text)
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().trim().to_string())
+                .filter(|value| !value.is_empty());
+        }
+
+        config_value
+            .get("model")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
     }
 
@@ -793,5 +823,54 @@ mod tests {
         assert_eq!(anthropic, AuthStrategy::Anthropic);
         assert_eq!(claude_auth, AuthStrategy::ClaudeAuth);
         assert_eq!(bearer, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_extract_codex_model_from_toml_when_model_not_first_line() {
+        let provider = Provider {
+            id: "codex-test".to_string(),
+            name: "Codex Test".to_string(),
+            settings_config: json!({
+                "config": r#"model_provider = "azure"
+model = "my-azure-deployment"
+model_reasoning_effort = "medium"
+"#
+            }),
+            website_url: None,
+            category: Some("codex".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let model = StreamCheckService::extract_codex_model(&provider);
+        assert_eq!(model.as_deref(), Some("my-azure-deployment"));
+    }
+
+    #[test]
+    fn test_extract_codex_model_from_multiline_text_fallback() {
+        let provider = Provider {
+            id: "codex-test-fallback".to_string(),
+            name: "Codex Test Fallback".to_string(),
+            settings_config: json!({
+                "config": "\n# some preface\nmodel = \"deployment-v2\"\n"
+            }),
+            website_url: None,
+            category: Some("codex".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let model = StreamCheckService::extract_codex_model(&provider);
+        assert_eq!(model.as_deref(), Some("deployment-v2"));
     }
 }

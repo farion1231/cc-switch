@@ -732,7 +732,8 @@
     "pleaseAddEndpoint": "请先添加端点",
     "testUnavailable": "测速功能不可用",
     "noResult": "未返回结果",
-    "testFailed": "测速失败: {{error}}"
+    "testFailed": "测速失败: {{error}}",
+    "statusCode": "状态码"
   },
   "providerAdvanced": {
     "testConfig": "模型测试配置",

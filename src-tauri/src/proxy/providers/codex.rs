@@ -35,16 +35,24 @@ impl CodexAdapter {
 
     /// 从 Provider 配置中提取 API Key
     fn extract_key(&self, provider: &Provider) -> Option<String> {
+        const KEY_NAMES: [&str; 1] = ["OPENAI_API_KEY"];
+
         // 1. 尝试从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
-            if let Some(key) = env.get("OPENAI_API_KEY").and_then(|v| v.as_str()) {
+            if let Some(key) = KEY_NAMES
+                .iter()
+                .find_map(|name| env.get(name).and_then(|v| v.as_str()))
+            {
                 return Some(key.to_string());
             }
         }
 
         // 2. 尝试从 auth 中获取 (Codex CLI 格式)
         if let Some(auth) = provider.settings_config.get("auth") {
-            if let Some(key) = auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) {
+            if let Some(key) = KEY_NAMES
+                .iter()
+                .find_map(|name| auth.get(name).and_then(|v| v.as_str()))
+            {
                 return Some(key.to_string());
             }
         }

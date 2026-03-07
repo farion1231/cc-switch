@@ -328,6 +328,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     try {
       const results = await vscodeApi.testApiEndpoints(urls, {
         timeoutSecs: ENDPOINT_TIMEOUT_SECS[appId],
+        app: appId,
       });
 
       const resultMap = new Map(
@@ -360,7 +361,13 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
       if (autoSelect) {
         const successful = results
           .filter(
-            (item) => typeof item.latency === "number" && item.latency !== null,
+            (item) =>
+              typeof item.latency === "number" &&
+              item.latency !== null &&
+              typeof item.status === "number" &&
+              item.status >= 200 &&
+              item.status < 300 &&
+              !item.error,
           )
           .sort((a, b) => (a.latency! || 0) - (b.latency! || 0));
         const best = successful[0];
@@ -561,6 +568,19 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
             {sortedEntries.map((entry) => {
               const isSelected = normalizedSelected === entry.url;
               const latency = entry.latency;
+              const status = entry.status;
+              const hasStatusCode = typeof status === "number";
+              const isSuccessStatus = hasStatusCode && status >= 200 && status < 300;
+              const isReachableStatus =
+                isSuccessStatus ||
+                (hasStatusCode &&
+                  !entry.error &&
+                  (status === 401 || status === 403 || status === 405));
+              const statusClass = isSuccessStatus
+                ? "text-emerald-600 dark:text-emerald-400"
+                : isReachableStatus
+                  ? "text-amber-600 dark:text-amber-400"
+                  : "text-red-600 dark:text-red-400";
 
               return (
                 <div
@@ -592,27 +612,38 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
 
                   {/* 右侧信息 */}
                   <div className="flex items-center gap-2">
-                    {latency !== null ? (
-                      <div className="text-right">
-                        <div
-                          className={`font-mono text-sm font-medium ${
-                            latency < 300
-                              ? "text-emerald-600 dark:text-emerald-400"
-                              : latency < 500
-                                ? "text-yellow-600 dark:text-yellow-400"
-                                : latency < 800
-                                  ? "text-orange-600 dark:text-orange-400"
-                                  : "text-red-600 dark:text-red-400"
-                          }`}
-                        >
-                          {latency}ms
-                        </div>
-                      </div>
-                    ) : isTesting ? (
+                    {isTesting ? (
                       <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-                    ) : entry.error ? (
-                      <div className="text-xs text-gray-400">
-                        {t("endpointTest.failed")}
+                    ) : latency !== null || entry.error || hasStatusCode ? (
+                      <div className="text-right">
+                        {latency !== null ? (
+                          <div
+                            className={`font-mono text-sm font-medium ${
+                              latency < 300
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : latency < 500
+                                  ? "text-yellow-600 dark:text-yellow-400"
+                                  : latency < 800
+                                    ? "text-orange-600 dark:text-orange-400"
+                                    : "text-red-600 dark:text-red-400"
+                            }`}
+                          >
+                            {latency}ms
+                          </div>
+                        ) : entry.error ? (
+                          <div className="text-xs text-gray-400">
+                            {t("endpointTest.failed")}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400">—</div>
+                        )}
+                        {hasStatusCode && (
+                          <div
+                            className={`font-mono text-xs ${statusClass}`}
+                          >
+                            {t("endpointTest.statusCode")}: {status}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="text-xs text-gray-400">—</div>

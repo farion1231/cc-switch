@@ -744,6 +744,14 @@ fn extract_env_vars_from_config(
     config: &serde_json::Value,
     app_type: &AppType,
 ) -> Vec<(String, String)> {
+    fn upsert_env_var(env_vars: &mut Vec<(String, String)>, key: &str, value: String) {
+        if let Some((_, existing)) = env_vars.iter_mut().find(|(k, _)| k == key) {
+            *existing = value;
+        } else {
+            env_vars.push((key.to_string(), value));
+        }
+    }
+
     let mut env_vars = Vec::new();
 
     let Some(obj) = config.as_object() else {
@@ -772,10 +780,22 @@ fn extract_env_vars_from_config(
         }
     }
 
-    // Codex 使用 auth 字段转换为 OPENAI_API_KEY
+    // Codex: 从 auth 字段提取 OPENAI_API_KEY 并注入环境变量。
     if *app_type == AppType::Codex {
-        if let Some(auth) = obj.get("auth").and_then(|v| v.as_str()) {
-            env_vars.push(("OPENAI_API_KEY".to_string(), auth.to_string()));
+        if let Some(auth) = obj.get("auth").and_then(|v| v.as_object()) {
+            let openai = auth
+                .get("OPENAI_API_KEY")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty());
+            if let Some(value) = openai {
+                upsert_env_var(&mut env_vars, "OPENAI_API_KEY", value.to_string());
+            }
+        } else if let Some(auth) = obj.get("auth").and_then(|v| v.as_str()) {
+            let token = auth.trim();
+            if !token.is_empty() {
+                upsert_env_var(&mut env_vars, "OPENAI_API_KEY", token.to_string());
+            }
         }
     }
 
