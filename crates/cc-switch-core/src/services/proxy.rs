@@ -1868,6 +1868,17 @@ impl ProxyService {
         app_type: &str,
         provider_id: &str,
     ) -> Result<(), String> {
+        if self
+            .db
+            .get_provider_by_id(provider_id, app_type)
+            .map_err(|e| format!("检查故障转移 Provider 失败: {e}"))?
+            .is_none()
+        {
+            return Err(format!(
+                "Provider '{provider_id}' not found for app '{app_type}'"
+            ));
+        }
+
         self.db
             .add_to_failover_queue(app_type, provider_id)
             .map_err(|e| format!("添加故障转移 Provider 失败: {e}"))
@@ -1878,6 +1889,17 @@ impl ProxyService {
         app_type: &str,
         provider_id: &str,
     ) -> Result<(), String> {
+        if self
+            .db
+            .get_provider_by_id(provider_id, app_type)
+            .map_err(|e| format!("检查故障转移 Provider 失败: {e}"))?
+            .is_none()
+        {
+            return Err(format!(
+                "Provider '{provider_id}' not found for app '{app_type}'"
+            ));
+        }
+
         self.db
             .remove_from_failover_queue(app_type, provider_id)
             .map_err(|e| format!("移除故障转移 Provider 失败: {e}"))

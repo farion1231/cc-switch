@@ -256,3 +256,54 @@ fn extract_server_spec(value: Value) -> anyhow::Result<Value> {
     }
     Ok(value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn load_mcp_server_from_file_requires_id_for_raw_spec() {
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("mcp.json");
+        fs::write(&file, r#"{"type":"stdio","command":"npx"}"#).expect("write mcp json");
+
+        let err = load_mcp_server_from_file(
+            file.to_str().expect("utf-8 path"),
+            None,
+            None,
+        )
+        .expect_err("raw spec without id should fail");
+
+        assert!(err.to_string().contains("needs --id"));
+    }
+
+    #[test]
+    fn load_mcp_server_from_file_applies_apps_override_to_raw_spec() {
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("mcp.json");
+        fs::write(
+            &file,
+            r#"{"type":"stdio","command":"npx","args":["foo","bar"]}"#,
+        )
+        .expect("write mcp json");
+
+        let server = load_mcp_server_from_file(
+            file.to_str().expect("utf-8 path"),
+            Some("demo"),
+            Some("claude,codex"),
+        )
+        .expect("mcp server should load");
+
+        assert_eq!(server.id, "demo");
+        assert_eq!(server.name, "demo");
+        assert_eq!(
+            server.server.get("command").and_then(Value::as_str),
+            Some("npx")
+        );
+        assert_eq!(server.apps.claude, true);
+        assert_eq!(server.apps.codex, true);
+        assert_eq!(server.apps.gemini, false);
+    }
+}

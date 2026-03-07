@@ -552,6 +552,8 @@ fn file_stem(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn provider_id_from_name_normalizes_whitespace_and_case() {
@@ -573,5 +575,44 @@ mod tests {
     fn parse_universal_apps_rejects_unsupported_targets() {
         let err = parse_universal_apps("claude,opencode").expect_err("should reject opencode");
         assert!(err.to_string().contains("claude,codex,gemini"));
+    }
+
+    #[test]
+    fn load_provider_from_file_builds_raw_settings_with_overrides() {
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("provider.json");
+        fs::write(
+            &file,
+            r#"{"env":{"ANTHROPIC_BASE_URL":"https://old.example","ANTHROPIC_AUTH_TOKEN":"sk-old"}}"#,
+        )
+        .expect("write provider json");
+
+        let provider = load_provider_from_file(
+            file.to_str().expect("utf-8 path"),
+            &AppType::Claude,
+            Some("Imported Router"),
+            Some("https://new.example"),
+            Some("sk-new"),
+        )
+        .expect("provider should load");
+
+        assert_eq!(provider.id, "imported-router");
+        assert_eq!(provider.name, "Imported Router");
+        assert_eq!(
+            provider
+                .settings_config
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+                .and_then(Value::as_str),
+            Some("https://new.example")
+        );
+        assert_eq!(
+            provider
+                .settings_config
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_AUTH_TOKEN"))
+                .and_then(Value::as_str),
+            Some("sk-new")
+        );
     }
 }

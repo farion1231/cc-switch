@@ -6,9 +6,9 @@ use crate::cli::{
     ProxyCircuitCommands, ProxyCircuitConfigCommands, ProxyCommands, ProxyConfigCommands,
     ProxyFailoverCommands, ProxyTakeoverCommands,
 };
-use crate::handlers::common::parse_app_type;
+use crate::handlers::common::parse_proxy_app_type;
 use crate::output::Printer;
-use cc_switch_core::{AppState, CircuitBreakerConfig};
+use cc_switch_core::{AppState, CircuitBreakerConfig, ProviderSortUpdate, ProviderService};
 
 pub async fn handle(cmd: ProxyCommands, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
     match cmd {
@@ -133,7 +133,7 @@ async fn handle_takeover(
             printer.print_takeover_status(&status)?;
         }
         ProxyTakeoverCommands::Enable { app } => {
-            let app = parse_app_type(&app)?;
+            let app = parse_proxy_app_type(&app)?;
             state
                 .proxy_service
                 .set_takeover_for_app(app.as_str(), true)
@@ -142,7 +142,7 @@ async fn handle_takeover(
             printer.success(format!("✓ Enabled takeover for {}", app.as_str()));
         }
         ProxyTakeoverCommands::Disable { app } => {
-            let app = parse_app_type(&app)?;
+            let app = parse_proxy_app_type(&app)?;
             state
                 .proxy_service
                 .set_takeover_for_app(app.as_str(), false)
@@ -161,7 +161,7 @@ async fn handle_failover(
 ) -> anyhow::Result<()> {
     match cmd {
         ProxyFailoverCommands::Queue { app } => {
-            let app = parse_app_type(&app)?;
+            let app = parse_proxy_app_type(&app)?;
             let queue = state
                 .proxy_service
                 .get_failover_queue(app.as_str())
@@ -170,17 +170,25 @@ async fn handle_failover(
             printer.print_failover_queue(&queue)?;
         }
         ProxyFailoverCommands::Add { id, app, priority } => {
-            let app = parse_app_type(&app)?;
+            let app = parse_proxy_app_type(&app)?;
+            if let Some(priority) = priority {
+                let sort_index = usize::try_from(priority)
+                    .map_err(|_| anyhow!("Failover priority must be zero or greater"))?;
+                ProviderService::update_sort_order(
+                    state,
+                    app.clone(),
+                    vec![ProviderSortUpdate {
+                        id: id.clone(),
+                        sort_index,
+                    }],
+                )
+                .map_err(Error::msg)?;
+            }
             state
                 .proxy_service
                 .add_to_failover_queue(app.as_str(), &id)
                 .await
                 .map_err(Error::msg)?;
-            if priority.is_some() {
-                printer.verbose(
-                    "Note: --priority is not yet mapped; queue order follows provider sort order.",
-                );
-            }
             printer.success(format!(
                 "✓ Added provider '{}' to failover queue for {}",
                 id,
@@ -188,7 +196,7 @@ async fn handle_failover(
             ));
         }
         ProxyFailoverCommands::Remove { id, app } => {
-            let app = parse_app_type(&app)?;
+            let app = parse_proxy_app_type(&app)?;
             state
                 .proxy_service
                 .remove_from_failover_queue(app.as_str(), &id)
@@ -201,7 +209,7 @@ async fn handle_failover(
             ));
         }
         ProxyFailoverCommands::Switch { id, app } => {
-            let app = parse_app_type(&app)?;
+            let app = parse_proxy_app_type(&app)?;
             state
                 .proxy_service
                 .switch_proxy_target(app.as_str(), &id)
@@ -224,7 +232,7 @@ async fn handle_circuit(
 ) -> anyhow::Result<()> {
     match cmd {
         ProxyCircuitCommands::Show { id, app } => {
-            let app = parse_app_type(&app)?;
+            let app = parse_proxy_app_type(&app)?;
             let health = state
                 .proxy_service
                 .get_provider_health(&id, app.as_str())
@@ -233,7 +241,7 @@ async fn handle_circuit(
             printer.print_provider_health(&health)?;
         }
         ProxyCircuitCommands::Reset { id, app } => {
-            let app = parse_app_type(&app)?;
+            let app = parse_proxy_app_type(&app)?;
             state
                 .proxy_service
                 .reset_provider_circuit(&id, app.as_str())
