@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cc-switch-core",
+    "crates/cc-switch-cli",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "3.10.3"
+edition = "2021"
+rust-version = "1.85"
+authors = ["Jason Young"]
+license = "MIT"
+repository = "https://github.com/farion1231/cc-switch"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+anyhow = "1.0"
+thiserror = "2.0"
+chrono = { version = "0.4", features = ["serde"] }
+indexmap = { version = "2", features = ["serde"] }
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "stream", "socks"] }
+dirs = "5.0"
+toml = "0.8"
+toml_edit = "0.22"
+regex = "1.10"
+futures = "0.3"
+async-stream = "0.3"
+bytes = "1.5"
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+hyper = { version = "1.0", features = ["full"] }
+url = "2.5"
+once_cell = "1.21"
+base64 = "0.22"
+uuid = { version = "1.11", features = ["v4"] }
+rust_decimal = "1.33"
+tempfile = "3"
+log = "0.4"
+
+cc-switch-core = { path = "crates/cc-switch-core" }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+panic = "unwind"
+strip = "symbols"

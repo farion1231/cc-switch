@@ -1,0 +1,6 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://seed-claude.example/v1",
+    "ANTHROPIC_AUTH_TOKEN": "seed-claude-key"
+  }
+}

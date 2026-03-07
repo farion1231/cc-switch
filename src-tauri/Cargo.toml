@@ -77,15 +77,6 @@ winreg = "0.52"
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 
-# Optimize release binary size to help reduce AppImage footprint
-[profile.release]
-codegen-units = 1
-lto = "thin"
-opt-level = "s"
-# 使用 unwind 以便 panic hook 能捕获 backtrace（abort 会直接终止无法捕获）
-panic = "unwind"
-strip = "symbols"
-
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"

@@ -1,0 +1,28 @@
+{
+  "id": "demo-mcp",
+  "name": "demo-mcp",
+  "server": {
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@demo/mcp-server"
+    ],
+    "env": {
+      "DEMO_TOKEN": "fixture-token"
+    }
+  },
+  "apps": {
+    "claude": true,
+    "codex": true,
+    "gemini": true,
+    "opencode": true,
+    "openclaw": false
+  },
+  "description": "Fixture MCP server",
+  "homepage": "https://example.com/mcp",
+  "docs": "https://example.com/mcp/docs",
+  "tags": [
+    "fixture"
+  ]
+}

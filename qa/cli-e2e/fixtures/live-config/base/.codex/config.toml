@@ -1,0 +1,2 @@
+model = "gpt-5"
+base_url = "https://seed-codex.example/v1"

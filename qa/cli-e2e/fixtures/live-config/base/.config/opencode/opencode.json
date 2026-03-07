@@ -1,0 +1,10 @@
+{
+  "provider": {
+    "id": "seed-opencode",
+    "options": {
+      "baseURL": "https://seed-opencode.example/v1",
+      "apiKey": "seed-opencode-key"
+    }
+  },
+  "mcp": {}
+}
