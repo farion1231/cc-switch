@@ -9,6 +9,9 @@ use crate::error::AppError;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
+use toml_edit::DocumentMut;
+
+const PRESERVED_LIVE_TABLES: &[&str] = &["mcp_servers", "projects"];
 
 /// 获取 Codex 配置目录路径
 pub fn get_codex_config_dir() -> PathBuf {
@@ -109,6 +112,48 @@ pub fn write_codex_live_atomic(
     Ok(())
 }
 
+/// Merge provider-owned Codex config with the current live config while preserving
+/// user-managed tables such as `mcp_servers` and `projects`.
+pub fn merge_codex_live_config(
+    provider_config_text: &str,
+    existing_live_text: Option<&str>,
+) -> Result<String, AppError> {
+    let config_path = get_codex_config_path();
+    let mut provider_doc = if provider_config_text.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        provider_config_text.parse::<DocumentMut>().map_err(|e| {
+            AppError::Config(format!(
+                "解析 Codex provider config.toml 失败 ({}): {e}",
+                config_path.display()
+            ))
+        })?
+    };
+
+    let Some(existing_live_text) = existing_live_text else {
+        return Ok(provider_doc.to_string());
+    };
+
+    if existing_live_text.trim().is_empty() {
+        return Ok(provider_doc.to_string());
+    }
+
+    let existing_doc = existing_live_text.parse::<DocumentMut>().map_err(|e| {
+        AppError::Config(format!(
+            "解析现有 Codex config.toml 失败 ({}): {e}",
+            config_path.display()
+        ))
+    })?;
+
+    for key in PRESERVED_LIVE_TABLES {
+        if let Some(item) = existing_doc.get(key) {
+            provider_doc[key] = item.clone();
+        }
+    }
+
+    Ok(provider_doc.to_string())
+}
+
 /// 读取 `~/.codex/config.toml`，若不存在返回空字符串
 pub fn read_codex_config_text() -> Result<String, AppError> {
     let path = get_codex_config_path();
@@ -134,4 +179,44 @@ pub fn read_and_validate_codex_config_text() -> Result<String, AppError> {
     let s = read_codex_config_text()?;
     validate_config_toml(&s)?;
     Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_codex_live_config_preserves_mcp_servers_and_projects() {
+        let provider = r#"model_provider = "custom"
+model = "gpt-5"
+
+[model_providers.custom]
+base_url = "https://provider-b.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let existing = r#"model_provider = "custom"
+model = "gpt-4o"
+
+[model_providers.custom]
+base_url = "http://127.0.0.1:5000/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+
+[projects."/tmp/demo"]
+trust_level = "trusted"
+"#;
+
+        let merged = merge_codex_live_config(provider, Some(existing)).expect("merge config");
+
+        assert!(merged.contains("base_url = \"https://provider-b.example/v1\""));
+        assert!(merged.contains("[mcp_servers.context7]"));
+        assert!(merged.contains("@upstash/context7-mcp"));
+        assert!(merged.contains("[projects.\"/tmp/demo\"]"));
+    }
 }
