@@ -286,7 +286,12 @@ pub fn print_proxy_status(status: &cc_switch_core::ProxyStatus) -> anyhow::Resul
         let targets = status
             .active_targets
             .iter()
-            .map(|target| format!("{} -> {} ({})", target.app_type, target.provider_name, target.provider_id))
+            .map(|target| {
+                format!(
+                    "{} -> {} ({})",
+                    target.app_type, target.provider_name, target.provider_id
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         println!("Active targets: {}", targets);
@@ -314,14 +319,14 @@ pub fn print_takeover_status(status: &cc_switch_core::ProxyTakeoverStatus) -> an
     ]
     .into_iter()
     .map(|(app, enabled)| TakeoverRow {
-            app: app.to_string(),
-            enabled: if enabled {
-                "Yes".green().to_string()
-            } else {
-                "No".to_string()
-            },
-        })
-        .collect::<Vec<_>>();
+        app: app.to_string(),
+        enabled: if enabled {
+            "Yes".green().to_string()
+        } else {
+            "No".to_string()
+        },
+    })
+    .collect::<Vec<_>>();
 
     let table = Table::new(rows)
         .with(Style::rounded())

@@ -148,15 +148,13 @@ impl ProviderRouter {
         }
 
         // 3. 更新数据库健康状态（使用配置的阈值）
-        self.db
-            .update_provider_health_with_threshold(
-                provider_id,
-                app_type,
-                success,
-                error_msg.clone(),
-                failure_threshold,
-            )
-            ?;
+        self.db.update_provider_health_with_threshold(
+            provider_id,
+            app_type,
+            success,
+            error_msg.clone(),
+            failure_threshold,
+        )?;
 
         Ok(())
     }

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "imported-mcp": {
+      "command": "node",
+      "args": [
+        "fixtures/imported.js"
+      ]
+    }
+  }
+}

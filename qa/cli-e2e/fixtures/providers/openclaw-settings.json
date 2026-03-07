@@ -1,0 +1,6 @@
+{
+  "baseUrl": "",
+  "apiKey": "",
+  "api": "openai-completions",
+  "models": []
+}

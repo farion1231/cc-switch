@@ -197,11 +197,9 @@ impl UsageService {
             std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
 
-        let mut writer = csv::Writer::from_path(&output_path).map_err(|e| {
-            AppError::IoContext {
-                context: format!("Failed to create CSV at {}", output_path.display()),
-                source: std::io::Error::other(e.to_string()),
-            }
+        let mut writer = csv::Writer::from_path(&output_path).map_err(|e| AppError::IoContext {
+            context: format!("Failed to create CSV at {}", output_path.display()),
+            source: std::io::Error::other(e.to_string()),
         })?;
 
         writer

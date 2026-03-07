@@ -28,11 +28,7 @@ pub async fn handle_import(
     Ok(())
 }
 
-pub async fn handle_deeplink(
-    url: &str,
-    state: &AppState,
-    printer: &Printer,
-) -> anyhow::Result<()> {
+pub async fn handle_deeplink(url: &str, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
     let result = cc_switch_core::DeeplinkService::import(url, &state.db)?;
     printer.success(format!("✓ Imported {} from deeplink", result.item_type));
     if !result.warnings.is_empty() {

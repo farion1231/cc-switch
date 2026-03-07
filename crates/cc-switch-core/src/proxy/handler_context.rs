@@ -88,7 +88,6 @@ impl RequestContext {
         let app_config = state
             .db
             .get_proxy_config_for_app(app_type_str)
-            
             .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
         // 从数据库读取整流器配置

@@ -2,8 +2,8 @@
 
 use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
 use super::parser::TokenUsage;
-use crate::database::Database;
 use crate::database::dao::find_model_pricing_row;
+use crate::database::Database;
 use crate::error::AppError;
 use rust_decimal::Decimal;
 use std::{str::FromStr, time::SystemTime};
@@ -66,7 +66,7 @@ impl<'a> UsageLogger<'a> {
 
         let created_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
+            .map(|d| d.as_millis() as i64)
             .unwrap_or_else(|e| {
                 log::warn!("SystemTime is before UNIX_EPOCH, falling back to 0: {e}");
                 0

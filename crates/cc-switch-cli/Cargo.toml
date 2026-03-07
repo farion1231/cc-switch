@@ -25,6 +25,7 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 indexmap = { workspace = true }
+gag = "1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

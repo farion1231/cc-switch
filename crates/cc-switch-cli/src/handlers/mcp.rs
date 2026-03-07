@@ -211,7 +211,8 @@ fn load_mcp_server_from_file(
     id_override: Option<&str>,
     apps_override: Option<&str>,
 ) -> anyhow::Result<McpServer> {
-    let content = fs::read_to_string(path).with_context(|| format!("Failed to read file: {}", path))?;
+    let content =
+        fs::read_to_string(path).with_context(|| format!("Failed to read file: {}", path))?;
     let value: Value =
         serde_json::from_str(&content).with_context(|| format!("Invalid JSON file: {}", path))?;
 
@@ -219,7 +220,9 @@ fn load_mcp_server_from_file(
         Ok(server) => server,
         Err(_) => {
             let id = id_override.ok_or_else(|| {
-                anyhow::anyhow!("MCP JSON spec needs --id when the file does not contain a full server object")
+                anyhow::anyhow!(
+                    "MCP JSON spec needs --id when the file does not contain a full server object"
+                )
             })?;
             McpServer {
                 id: id.to_string(),
@@ -269,12 +272,8 @@ mod tests {
         let file = temp.path().join("mcp.json");
         fs::write(&file, r#"{"type":"stdio","command":"npx"}"#).expect("write mcp json");
 
-        let err = load_mcp_server_from_file(
-            file.to_str().expect("utf-8 path"),
-            None,
-            None,
-        )
-        .expect_err("raw spec without id should fail");
+        let err = load_mcp_server_from_file(file.to_str().expect("utf-8 path"), None, None)
+            .expect_err("raw spec without id should fail");
 
         assert!(err.to_string().contains("needs --id"));
     }

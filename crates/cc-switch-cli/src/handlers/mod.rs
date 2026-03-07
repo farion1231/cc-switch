@@ -39,6 +39,7 @@ pub async fn dispatch(cli: Cli, state: AppState) -> anyhow::Result<()> {
         Commands::ImportDeeplink { url } => {
             import_export::handle_deeplink(&url, &state, &printer).await
         }
+        Commands::E2eSession => Ok(()),
     }
 }
 
@@ -54,5 +55,6 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Export { .. } => "export",
         Commands::Import { .. } => "import",
         Commands::ImportDeeplink { .. } => "import-deeplink",
+        Commands::E2eSession => "e2e-session",
     }
 }

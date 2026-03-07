@@ -76,7 +76,6 @@ impl ProxyService {
         let mut global_config = self
             .db
             .get_global_proxy_config()
-            
             .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
 
         if !global_config.proxy_enabled {
@@ -90,7 +89,6 @@ impl ProxyService {
         let config = self
             .db
             .get_proxy_config("claude")
-            
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
         // 3. 若已在运行：确保持久化状态（如需要）并返回当前信息
@@ -183,19 +181,16 @@ impl ProxyService {
         let claude_enabled = self
             .db
             .get_proxy_config_for_app("claude")
-            
             .map(|c| c.enabled)
             .unwrap_or(false);
         let codex_enabled = self
             .db
             .get_proxy_config_for_app("codex")
-            
             .map(|c| c.enabled)
             .unwrap_or(false);
         let gemini_enabled = self
             .db
             .get_proxy_config_for_app("gemini")
-            
             .map(|c| c.enabled)
             .unwrap_or(false);
         // OpenCode and OpenClaw don't support proxy features, always return false
@@ -229,7 +224,6 @@ impl ProxyService {
             let current_config = self
                 .db
                 .get_proxy_config_for_app(app_type_str)
-                
                 .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
 
             if current_config.enabled {
@@ -281,12 +275,10 @@ impl ProxyService {
             let mut updated_config = self
                 .db
                 .get_proxy_config_for_app(app_type_str)
-                
                 .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
             updated_config.enabled = true;
             self.db
                 .update_proxy_config_for_app(updated_config)
-                
                 .map_err(|e| format!("设置 {app_type_str} enabled 状态失败: {e}"))?;
 
             // 7) 兼容旧逻辑：写入 any-of 标志（失败不影响功能）
@@ -298,7 +290,6 @@ impl ProxyService {
         let current_config = self
             .db
             .get_proxy_config_for_app(app_type_str)
-            
             .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
 
         if !current_config.enabled {
@@ -311,25 +302,21 @@ impl ProxyService {
         // 2) 删除该 app 的备份（避免长期存储敏感 Token）
         self.db
             .delete_live_backup(app_type_str)
-            
             .map_err(|e| format!("删除 {app_type_str} Live 备份失败: {e}"))?;
 
         // 3) 设置 proxy_config.enabled = false
         let mut updated_config = self
             .db
             .get_proxy_config_for_app(app_type_str)
-            
             .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
         updated_config.enabled = false;
         self.db
             .update_proxy_config_for_app(updated_config)
-            
             .map_err(|e| format!("清除 {app_type_str} enabled 状态失败: {e}"))?;
 
         // 4) 清除该应用的健康状态（关闭代理时重置队列状态）
         self.db
             .clear_provider_health_for_app(app_type_str)
-            
             .map_err(|e| format!("清除 {app_type_str} 健康状态失败: {e}"))?;
 
         // 5) 若无其它接管，更新旧标志，并停止代理服务
@@ -337,7 +324,6 @@ impl ProxyService {
         let any_enabled = self
             .db
             .is_live_takeover_active()
-            
             .map_err(|e| format!("检查接管状态失败: {e}"))?;
 
         if !any_enabled {
@@ -625,7 +611,6 @@ impl ProxyService {
             let mut global_config = self
                 .db
                 .get_global_proxy_config()
-                
                 .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
 
             if global_config.proxy_enabled {
@@ -657,7 +642,6 @@ impl ProxyService {
         // 3. 清除 proxy_config 表中的接管状态（兼容旧版）
         self.db
             .set_live_takeover_active(false)
-            
             .map_err(|e| format!("清除接管状态失败: {e}"))?;
 
         // 4. 清除所有应用的 enabled 状态（用户手动关闭，不需要下次自动恢复）
@@ -675,13 +659,11 @@ impl ProxyService {
         // 5. 删除备份
         self.db
             .delete_all_live_backups()
-            
             .map_err(|e| format!("删除备份失败: {e}"))?;
 
         // 6. 重置健康状态（让健康徽章恢复为正常）
         self.db
             .clear_all_provider_health()
-            
             .map_err(|e| format!("重置健康状态失败: {e}"))?;
 
         // 注意：不清除故障转移队列和开关状态，保留供下次开启代理时使用
@@ -711,13 +693,11 @@ impl ProxyService {
         // 4. 删除备份（Live 配置已恢复，备份不再需要）
         self.db
             .delete_all_live_backups()
-            
             .map_err(|e| format!("删除备份失败: {e}"))?;
 
         // 5. 重置健康状态
         self.db
             .clear_all_provider_health()
-            
             .map_err(|e| format!("重置健康状态失败: {e}"))?;
 
         log::info!("代理已停止，Live 配置已恢复（保留代理状态，下次启动将自动恢复）");
@@ -787,7 +767,6 @@ impl ProxyService {
         let config = self
             .db
             .get_proxy_config("claude")
-            
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
         // listen_address 可能是 0.0.0.0（用于监听所有网卡），但客户端无法用 0.0.0.0 连接；
@@ -1148,7 +1127,6 @@ impl ProxyService {
         let backup = self
             .db
             .get_live_backup(app_type_str)
-            
             .map_err(|e| format!("获取 {app_type_str} Live 备份失败: {e}"))?;
         if let Some(backup) = backup {
             let config: Value = serde_json::from_str(&backup.original_config)
@@ -1428,13 +1406,11 @@ impl ProxyService {
         // 2. 清除接管标志
         self.db
             .set_live_takeover_active(false)
-            
             .map_err(|e| format!("清除接管状态失败: {e}"))?;
 
         // 3. 删除备份
         self.db
             .delete_all_live_backups()
-            
             .map_err(|e| format!("删除备份失败: {e}"))?;
 
         log::info!("已从异常退出中恢复 Live 配置");
@@ -1769,7 +1745,6 @@ impl ProxyService {
     pub async fn get_config(&self) -> Result<ProxyConfig, String> {
         self.db
             .get_proxy_config("claude")
-            
             .map_err(|e| format!("获取代理配置失败: {e}"))
     }
 
@@ -1779,7 +1754,6 @@ impl ProxyService {
         let previous = self
             .db
             .get_proxy_config("claude")
-            
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
         // 保存到数据库（保持 live_takeover_active 状态不变）
@@ -1857,7 +1831,10 @@ impl ProxyService {
         self.server.read().await.is_some()
     }
 
-    pub async fn get_failover_queue(&self, app_type: &str) -> Result<Vec<FailoverQueueItem>, String> {
+    pub async fn get_failover_queue(
+        &self,
+        app_type: &str,
+    ) -> Result<Vec<FailoverQueueItem>, String> {
         self.db
             .get_failover_queue(app_type)
             .map_err(|e| format!("获取故障转移队列失败: {e}"))
@@ -2252,7 +2229,6 @@ model = "gpt-5.1-codex"
         // 断言：Live 备份已更新为目标供应商配置（用于 stop_with_restore 恢复）
         let backup = db
             .get_live_backup("claude")
-            
             .expect("get live backup")
             .expect("backup exists");
         let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");

@@ -5,13 +5,8 @@ const VALID_APP_TYPES: &str = "claude, codex, gemini, opencode, openclaw";
 const PROXY_APP_TYPES: &str = "claude, codex, gemini";
 
 pub(crate) fn parse_app_type(s: &str) -> anyhow::Result<AppType> {
-    s.parse().map_err(|_| {
-        anyhow!(
-            "Invalid app type: {}. Valid values: {}",
-            s,
-            VALID_APP_TYPES
-        )
-    })
+    s.parse()
+        .map_err(|_| anyhow!("Invalid app type: {}. Valid values: {}", s, VALID_APP_TYPES))
 }
 
 pub(crate) fn parse_proxy_app_type(s: &str) -> anyhow::Result<AppType> {

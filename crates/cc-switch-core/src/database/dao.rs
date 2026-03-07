@@ -12,8 +12,8 @@ use crate::error::AppError;
 use crate::prompt::Prompt;
 use crate::provider::{Provider, UniversalProvider};
 use crate::proxy::types::{
-    AppProxyConfig, FailoverQueueItem, GlobalProxyConfig, LiveBackup, LogConfig, ProxyConfig,
-    ProxyTakeoverStatus, ProviderHealth, RectifierConfig,
+    AppProxyConfig, FailoverQueueItem, GlobalProxyConfig, LiveBackup, LogConfig, ProviderHealth,
+    ProxyConfig, ProxyTakeoverStatus, RectifierConfig,
 };
 use crate::proxy::CircuitBreakerConfig;
 use crate::services::skill::SkillRepo;
@@ -1661,11 +1661,7 @@ impl Database {
         }
     }
 
-    pub fn set_default_cost_multiplier(
-        &self,
-        app_type: &str,
-        value: &str,
-    ) -> Result<(), AppError> {
+    pub fn set_default_cost_multiplier(&self, app_type: &str, value: &str) -> Result<(), AppError> {
         let trimmed = value.trim();
         if trimmed.is_empty() {
             return Err(AppError::localized(

@@ -85,6 +85,8 @@ pub enum Commands {
         /// Deeplink URL
         url: String,
     },
+    #[command(name = "__e2e-session", hide = true)]
+    E2eSession,
 }
 
 #[derive(Subcommand)]

@@ -68,7 +68,10 @@ async fn handle_add(
         .unwrap_or_else(|| format!("prompt-{}", chrono::Utc::now().timestamp()));
 
     if cc_switch_core::PromptService::get(state, app_type.clone(), &prompt_id)?.is_some() {
-        anyhow::bail!("Prompt already exists: {}. Use `prompt edit` instead.", prompt_id);
+        anyhow::bail!(
+            "Prompt already exists: {}. Use `prompt edit` instead.",
+            prompt_id
+        );
     }
 
     let now = now_seconds();

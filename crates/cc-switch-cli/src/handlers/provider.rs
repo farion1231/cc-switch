@@ -100,7 +100,8 @@ async fn handle_add(
         load_provider_from_file(path, &app_type, name, base_url, api_key)?
     } else {
         let name = name.ok_or_else(|| anyhow::anyhow!("Provider add requires --name"))?;
-        let base_url = base_url.ok_or_else(|| anyhow::anyhow!("Provider add requires --base-url"))?;
+        let base_url =
+            base_url.ok_or_else(|| anyhow::anyhow!("Provider add requires --base-url"))?;
         let api_key = api_key.ok_or_else(|| anyhow::anyhow!("Provider add requires --api-key"))?;
         build_provider(&app_type, name, base_url, api_key)
     };
@@ -128,7 +129,9 @@ async fn handle_edit(
     printer: &Printer,
 ) -> anyhow::Result<()> {
     if set_api_key.is_none() && set_base_url.is_none() && set_name.is_none() {
-        anyhow::bail!("Provider edit requires at least one of --set-name, --set-base-url or --set-api-key");
+        anyhow::bail!(
+            "Provider edit requires at least one of --set-name, --set-base-url or --set-api-key"
+        );
     }
 
     let app_type = parse_app_type(app)?;
@@ -208,10 +211,10 @@ async fn handle_universal(
             base_url,
             api_key,
         } => {
-            let base_url =
-                base_url.ok_or_else(|| anyhow::anyhow!("Universal provider add requires --base-url"))?;
-            let api_key =
-                api_key.ok_or_else(|| anyhow::anyhow!("Universal provider add requires --api-key"))?;
+            let base_url = base_url
+                .ok_or_else(|| anyhow::anyhow!("Universal provider add requires --base-url"))?;
+            let api_key = api_key
+                .ok_or_else(|| anyhow::anyhow!("Universal provider add requires --api-key"))?;
             let id = provider_id_from_name(&name);
 
             if cc_switch_core::ProviderService::list_universal(state)?.contains_key(&id) {
@@ -275,7 +278,8 @@ fn load_provider_from_file(
     base_url_override: Option<&str>,
     api_key_override: Option<&str>,
 ) -> anyhow::Result<Provider> {
-    let content = fs::read_to_string(path).with_context(|| format!("Failed to read file: {}", path))?;
+    let content =
+        fs::read_to_string(path).with_context(|| format!("Failed to read file: {}", path))?;
     let value: Value =
         serde_json::from_str(&content).with_context(|| format!("Invalid JSON file: {}", path))?;
 
@@ -452,9 +456,7 @@ fn set_provider_api_key(
     Ok(())
 }
 
-fn ensure_root_object(
-    value: &mut Value,
-) -> anyhow::Result<&mut serde_json::Map<String, Value>> {
+fn ensure_root_object(value: &mut Value) -> anyhow::Result<&mut serde_json::Map<String, Value>> {
     if !value.is_object() {
         *value = json!({});
     }
@@ -503,11 +505,17 @@ fn upsert_codex_base_url(config_text: &str, base_url: &str) -> String {
     }
 }
 
-fn parse_universal_apps(apps: &str) -> anyhow::Result<cc_switch_core::provider::UniversalProviderApps> {
+fn parse_universal_apps(
+    apps: &str,
+) -> anyhow::Result<cc_switch_core::provider::UniversalProviderApps> {
     let mut result = cc_switch_core::provider::UniversalProviderApps::default();
     let mut has_any = false;
 
-    for app in apps.split(',').map(str::trim).filter(|item| !item.is_empty()) {
+    for app in apps
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
         has_any = true;
         match app {
             "claude" => result.claude = true,

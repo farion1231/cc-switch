@@ -1,0 +1,18 @@
+{
+  "skills": [
+    {
+      "id": "local:demo-skill",
+      "name": "Demo Skill",
+      "description": "Local skill fixture",
+      "directory": "demo-skill",
+      "apps": {
+        "claude": false,
+        "codex": false,
+        "gemini": false,
+        "opencode": false,
+        "openclaw": false
+      },
+      "installedAt": 1700000000
+    }
+  ]
+}

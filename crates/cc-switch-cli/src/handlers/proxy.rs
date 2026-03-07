@@ -8,7 +8,7 @@ use crate::cli::{
 };
 use crate::handlers::common::parse_proxy_app_type;
 use crate::output::Printer;
-use cc_switch_core::{AppState, CircuitBreakerConfig, ProviderSortUpdate, ProviderService};
+use cc_switch_core::{AppState, CircuitBreakerConfig, ProviderService, ProviderSortUpdate};
 
 pub async fn handle(cmd: ProxyCommands, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
     match cmd {
@@ -28,11 +28,7 @@ async fn handle_start(
     state: &AppState,
     printer: &Printer,
 ) -> anyhow::Result<()> {
-    let mut config = state
-        .proxy_service
-        .get_config()
-        .await
-        .map_err(Error::msg)?;
+    let mut config = state.proxy_service.get_config().await.map_err(Error::msg)?;
 
     let mut changed = false;
     if config.listen_port != port {
@@ -61,7 +57,7 @@ async fn handle_start(
 }
 
 async fn handle_stop(state: &AppState, printer: &Printer) -> anyhow::Result<()> {
-    match state.proxy_service.stop().await {
+    match state.proxy_service.stop_with_restore().await {
         Ok(()) => {
             printer.success("✓ Proxy server stopped");
             Ok(())

@@ -833,7 +833,10 @@ impl ProviderService {
         }
     }
 
-    pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+    pub(crate) fn write_live_snapshot(
+        app_type: &AppType,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
         match app_type {
             AppType::Claude => {
                 let path = crate::config::get_claude_settings_path();
