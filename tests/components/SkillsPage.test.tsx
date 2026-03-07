@@ -18,6 +18,10 @@ const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastInfoMock = vi.fn();
 const toastWarningMock = vi.fn();
+const tMock = vi.fn(
+  (key: string, options?: Record<string, unknown>) =>
+    options ? JSON.stringify({ key, options }) : key,
+);
 
 const useDiscoverableSkillsMock = vi.fn();
 const useInstalledSkillsMock = vi.fn();
@@ -36,6 +40,12 @@ vi.mock("sonner", () => ({
     info: (...args: unknown[]) => toastInfoMock(...args),
     warning: (...args: unknown[]) => toastWarningMock(...args),
   },
+}));
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: tMock,
+  }),
 }));
 
 vi.mock("@/components/skills/SkillCard", () => ({
@@ -115,6 +125,7 @@ describe("SkillsPage", () => {
     toastErrorMock.mockReset();
     toastInfoMock.mockReset();
     toastWarningMock.mockReset();
+    tMock.mockClear();
     discoverAvailableMock.mockReset();
 
     useDiscoverableSkillsMock.mockReturnValue({
@@ -139,6 +150,35 @@ describe("SkillsPage", () => {
     const ref = createRef<SkillsPageHandle>();
     const addRepoMutateAsync = vi.fn().mockResolvedValue(true);
     useAddSkillRepoMock.mockReturnValue({ mutateAsync: addRepoMutateAsync });
+    discoverAvailableMock.mockResolvedValue([
+      {
+        key: "octo/skills:skill-1",
+        name: "Skill One",
+        directory: "skill-one",
+        description: "",
+        repoOwner: "octo",
+        repoName: "skills",
+        repoBranch: "main",
+      },
+      {
+        key: "octo/skills:skill-2",
+        name: "Skill Two",
+        directory: "skill-two",
+        description: "",
+        repoOwner: "octo",
+        repoName: "skills",
+        repoBranch: "main",
+      },
+      {
+        key: "other/repo:skill-3",
+        name: "Skill Three",
+        directory: "skill-three",
+        description: "",
+        repoOwner: "other",
+        repoName: "repo",
+        repoBranch: "main",
+      },
+    ]);
 
     renderWithQueryClient(<SkillsPage ref={ref} />);
 
@@ -156,6 +196,75 @@ describe("SkillsPage", () => {
         enabled: true,
       });
       expect(discoverAvailableMock).toHaveBeenCalledWith(true);
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        JSON.stringify({
+          key: "skills.repo.addSuccess",
+          options: {
+            owner: "octo",
+            name: "skills",
+            count: 2,
+          },
+        }),
+        { closeButton: true },
+      );
+    });
+  });
+
+  it("uses the latest forced discover result to compute added repo count", async () => {
+    const ref = createRef<SkillsPageHandle>();
+    useAddSkillRepoMock.mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue(true),
+    });
+    discoverAvailableMock.mockResolvedValue([
+      {
+        key: "octo/skills:skill-1",
+        name: "Skill One",
+        directory: "skill-one",
+        description: "",
+        repoOwner: "octo",
+        repoName: "skills",
+        repoBranch: "main",
+      },
+      {
+        key: "octo/skills:skill-2",
+        name: "Skill Two",
+        directory: "skill-two",
+        description: "",
+        repoOwner: "octo",
+        repoName: "skills",
+        repoBranch: "main",
+      },
+      {
+        key: "octo/skills:skill-dev",
+        name: "Skill Dev",
+        directory: "skill-dev",
+        description: "",
+        repoOwner: "octo",
+        repoName: "skills",
+        repoBranch: "dev",
+      },
+    ]);
+
+    renderWithQueryClient(<SkillsPage ref={ref} />);
+
+    await act(async () => {
+      ref.current?.openRepoManager();
+    });
+
+    fireEvent.click(await screen.findByText("add-repo"));
+
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        JSON.stringify({
+          key: "skills.repo.addSuccess",
+          options: {
+            owner: "octo",
+            name: "skills",
+            count: 2,
+          },
+        }),
+        { closeButton: true },
+      );
     });
   });
 
