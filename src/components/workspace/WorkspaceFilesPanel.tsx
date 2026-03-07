@@ -56,6 +56,7 @@ const WorkspaceFilesPanel: React.FC = () => {
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [fileExists, setFileExists] = useState<Record<string, boolean>>({});
   const [showDailyMemory, setShowDailyMemory] = useState(false);
+  const [workspaceRoot, setWorkspaceRoot] = useState("~/.openclaw/workspace");
 
   const checkFileExistence = async () => {
     const results: Record<string, boolean> = {};
@@ -76,6 +77,13 @@ const WorkspaceFilesPanel: React.FC = () => {
     void checkFileExistence();
   }, []);
 
+  useEffect(() => {
+    void workspaceApi
+      .getRootDirectory()
+      .then(setWorkspaceRoot)
+      .catch(() => undefined);
+  }, []);
+
   const handleEditorClose = () => {
     setEditingFile(null);
     // Re-check file existence after closing editor (file may have been created)
@@ -89,7 +97,7 @@ const WorkspaceFilesPanel: React.FC = () => {
         onClick={() => workspaceApi.openDirectory("workspace")}
         title={t("workspace.openDirectory")}
       >
-        ~/.openclaw/workspace/
+        {workspaceRoot}/
         <FolderOpen className="w-3.5 h-3.5" />
       </p>
 
