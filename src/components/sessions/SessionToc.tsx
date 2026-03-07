@@ -31,7 +31,7 @@ export function SessionTocSidebar({
   if (items.length <= 2) return null;
 
   return (
-    <div className="w-64 border-l shrink-0 hidden xl:block">
+    <div className="w-48 border-l shrink-0 hidden xl:block">
       <div className="p-3 border-b">
         <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
           <List className="size-3.5" />

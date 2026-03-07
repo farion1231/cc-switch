@@ -34,6 +34,8 @@ pub struct SessionMessage {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ts: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {

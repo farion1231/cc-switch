@@ -613,7 +613,28 @@
     "daysAgo": "{{count}} days ago",
     "roleUser": "User",
     "roleSystem": "System",
-    "roleTool": "Tool"
+    "roleTool": "Tool",
+    "showRawText": "Raw Text",
+    "showMarkdown": "Markdown",
+    "rename": "Rename",
+    "resetName": "Reset Name",
+    "renameSuccess": "Session renamed",
+    "resetNameSuccess": "Name reset to default",
+    "filterRenamed": "Show only renamed sessions",
+    "settings": "Session settings",
+    "resumeExtraArgs": "Resume extra arguments",
+    "resumeExtraArgsHint": "Arguments appended when resuming sessions, e.g. --model opus",
+    "settingsSaved": "Settings saved",
+    "skipPermissionsTitle": "Skip permission prompts",
+    "skipPermissionsHint": "Automatically add --dangerously-skip-permissions when resuming sessions, skipping tool call permission prompts",
+    "defaultRenderMdTitle": "Default Markdown rendering",
+    "defaultRenderMdHint": "Show messages in Markdown format by default when switching sessions. Disable to show raw text instead",
+    "defaultCollapseTitle": "Collapse long messages by default",
+    "defaultCollapseHint": "Long messages are collapsed by default. Click to expand and view the full content",
+    "showMessageIndexTitle": "Show message index",
+    "showMessageIndexHint": "Display index number before each message for easy navigation",
+    "expandMessage": "Show more",
+    "collapseMessage": "Show less"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
@@ -1987,7 +2008,11 @@
       "explorer": "Regex search, AST pattern matching, file discovery (read-only)",
       "designer": "Modern responsive design, CSS/Tailwind expertise",
       "fixer": "Code implementation, refactoring, testing, verification"
-    }
+    },
+    "writeCommonConfig": "Write to common config",
+    "editCommonConfig": "Edit common config",
+    "editCommonConfigTitle": "Common Config",
+    "commonConfigHint": "OMO common config will be merged into all OMO configs that enable it"
   },
   "openclawConfig": {
     "defaultModel": {

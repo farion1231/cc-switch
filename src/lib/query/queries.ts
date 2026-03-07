@@ -137,7 +137,7 @@ export const useSessionsQuery = () => {
   return useQuery<SessionMeta[]>({
     queryKey: ["sessions"],
     queryFn: async () => sessionsApi.list(),
-    staleTime: 30 * 1000,
+    staleTime: 2 * 60 * 1000,
   });
 };
 
@@ -150,5 +150,21 @@ export const useSessionMessagesQuery = (
     queryFn: async () => sessionsApi.getMessages(providerId!, sourcePath!),
     enabled: Boolean(providerId && sourcePath),
     staleTime: 30 * 1000,
+  });
+};
+
+export const useSessionAliasesQuery = () => {
+  return useQuery<Record<string, string>>({
+    queryKey: ["sessionAliases"],
+    queryFn: async () => sessionsApi.getAllAliases(),
+    staleTime: 60 * 1000,
+  });
+};
+
+export const useSessionConfigQuery = (key: string) => {
+  return useQuery<string | null>({
+    queryKey: ["sessionConfig", key],
+    queryFn: async () => sessionsApi.getConfig(key),
+    staleTime: 5 * 60 * 1000,
   });
 };

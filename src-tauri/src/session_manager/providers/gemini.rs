@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{parse_timestamp_to_ms, truncate_summary};
+use super::utils::parse_timestamp_to_ms;
 
 const PROVIDER_ID: &str = "gemini";
 
@@ -17,7 +17,6 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 
     let mut sessions = Vec::new();
 
-    // Iterate over project hash directories: tmp/<project_hash>/chats/session-*.json
     let project_dirs = match std::fs::read_dir(&tmp_dir) {
         Ok(entries) => entries,
         Err(_) => return Vec::new(),
@@ -39,7 +38,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            if let Some(meta) = parse_session(&path) {
+            if let Some(meta) = parse_session_from_path(&path) {
                 sessions.push(meta);
             }
         }
@@ -49,7 +48,8 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    let data = std::fs::read_to_string(path).map_err(|e| format!("Failed to read session: {e}"))?;
+    let data =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read session: {e}"))?;
     let value: Value =
         serde_json::from_str(&data).map_err(|e| format!("Failed to parse session JSON: {e}"))?;
 
@@ -74,44 +74,62 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         let ts = msg.get("timestamp").and_then(parse_timestamp_to_ms);
 
-        result.push(SessionMessage { role, content, ts });
+        result.push(SessionMessage {
+            role,
+            content,
+            ts,
+            tool_name: None,
+        });
     }
 
     Ok(result)
 }
 
-fn parse_session(path: &Path) -> Option<SessionMeta> {
-    let data = std::fs::read_to_string(path).ok()?;
-    let value: Value = serde_json::from_str(&data).ok()?;
+/// 从文件路径和 stat 信息推导会话元数据，不读文件内容
+fn parse_session_from_path(path: &Path) -> Option<SessionMeta> {
+    // 文件名格式: session-<sessionId>.json
+    let file_name = path.file_stem()?.to_str()?;
+    let session_id = file_name.strip_prefix("session-")
+        .unwrap_or(file_name)
+        .to_string();
 
-    let session_id = value.get("sessionId").and_then(Value::as_str)?.to_string();
+    if session_id.is_empty() {
+        return None;
+    }
 
-    let created_at = value.get("startTime").and_then(parse_timestamp_to_ms);
-    let last_active_at = value.get("lastUpdated").and_then(parse_timestamp_to_ms);
-
-    // Derive title from first user message
-    let title = value
-        .get("messages")
-        .and_then(Value::as_array)
-        .and_then(|msgs| {
-            msgs.iter()
-                .find(|m| m.get("type").and_then(Value::as_str) == Some("user"))
-                .and_then(|m| m.get("content").and_then(Value::as_str))
-                .filter(|s| !s.trim().is_empty())
-                .map(|s| truncate_summary(s, 160))
-        });
-
-    let source_path = path.to_string_lossy().to_string();
+    let (created_at, last_active_at) = get_file_timestamps(path);
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
-        title: title.clone(),
-        summary: title,
-        project_dir: None, // project hash is not reversible
+        title: None,
+        summary: None,
+        project_dir: None,
         created_at,
         last_active_at: last_active_at.or(created_at),
-        source_path: Some(source_path),
+        source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("gemini --resume {session_id}")),
     })
+}
+
+/// 从文件 metadata 获取创建时间和修改时间（毫秒）
+fn get_file_timestamps(path: &Path) -> (Option<i64>, Option<i64>) {
+    let md = match std::fs::metadata(path) {
+        Ok(md) => md,
+        Err(_) => return (None, None),
+    };
+
+    let mtime = md
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64);
+
+    let ctime = md
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64);
+
+    (ctime, mtime)
 }

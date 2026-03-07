@@ -1231,9 +1231,13 @@ export function ProviderForm({
           <ClaudeFormFields
             providerId={providerId}
             shouldShowApiKey={
-              (category !== "cloud_provider" ||
+              (selectedPresetId === "custom" ||
+                category !== "cloud_provider" ||
                 hasApiKeyField(form.getValues("settingsConfig"), "claude")) &&
-              shouldShowApiKey(form.getValues("settingsConfig"), isEditMode)
+              shouldShowApiKey(
+                form.getValues("settingsConfig"),
+                isEditMode,
+              )
             }
             apiKey={apiKey}
             onApiKeyChange={handleApiKeyChange}

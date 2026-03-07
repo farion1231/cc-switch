@@ -1,0 +1,140 @@
+/* Markdown 渲染样式 */
+.markdown-body {
+    overflow-wrap: break-word;
+    word-break: break-word;
+    max-width: 100%;
+}
+
+.markdown-body pre {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    font-weight: 600;
+    line-height: 1.4;
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+}
+
+.markdown-body h1 { font-size: 1.25em; }
+.markdown-body h2 { font-size: 1.125em; }
+.markdown-body h3 { font-size: 1em; }
+
+.markdown-body p {
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+}
+
+.markdown-body > :first-child {
+    margin-top: 0;
+}
+
+.markdown-body > :last-child {
+    margin-bottom: 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+    padding-left: 1.5em;
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+}
+
+.markdown-body ul { list-style-type: disc; }
+.markdown-body ol { list-style-type: decimal; }
+
+.markdown-body li {
+    margin-top: 0.25em;
+    margin-bottom: 0.25em;
+}
+
+.markdown-body blockquote {
+    border-left: 3px solid hsl(var(--border));
+    padding-left: 1em;
+    margin: 0.5em 0;
+    color: hsl(var(--muted-foreground));
+}
+
+.markdown-body table {
+    border-collapse: collapse;
+    display: block;
+    overflow-x: auto;
+    max-width: 100%;
+    margin: 0.5em 0;
+    font-size: 0.875em;
+}
+
+.markdown-body th,
+.markdown-body td {
+    border: 1px solid hsl(var(--border));
+    padding: 0.375em 0.75em;
+    text-align: left;
+}
+
+.markdown-body th {
+    background: hsl(var(--muted));
+    font-weight: 600;
+}
+
+.markdown-body hr {
+    border: none;
+    border-top: 1px solid hsl(var(--border));
+    margin: 1em 0;
+}
+
+/* 代码块 */
+.markdown-body pre code.hljs {
+    background: transparent;
+    padding: 0;
+}
+
+/* highlight.js token 颜色 */
+.markdown-body .hljs {
+    color: hsl(var(--foreground));
+}
+
+.markdown-body .hljs-keyword,
+.markdown-body .hljs-selector-tag { color: #8b5cf6; }
+.dark .markdown-body .hljs-keyword,
+.dark .markdown-body .hljs-selector-tag { color: #a78bfa; }
+
+.markdown-body .hljs-string,
+.markdown-body .hljs-addition { color: #059669; }
+.dark .markdown-body .hljs-string,
+.dark .markdown-body .hljs-addition { color: #34d399; }
+
+.markdown-body .hljs-comment { color: hsl(var(--muted-foreground)); }
+
+.markdown-body .hljs-number,
+.markdown-body .hljs-literal { color: #d97706; }
+.dark .markdown-body .hljs-number,
+.dark .markdown-body .hljs-literal { color: #fbbf24; }
+
+.markdown-body .hljs-title,
+.markdown-body .hljs-function { color: #2563eb; }
+.dark .markdown-body .hljs-title,
+.dark .markdown-body .hljs-function { color: #60a5fa; }
+
+.markdown-body .hljs-built_in { color: #0891b2; }
+.dark .markdown-body .hljs-built_in { color: #22d3ee; }
+
+.markdown-body .hljs-type,
+.markdown-body .hljs-class { color: #0d9488; }
+.dark .markdown-body .hljs-type,
+.dark .markdown-body .hljs-class { color: #2dd4bf; }
+
+.markdown-body .hljs-attr,
+.markdown-body .hljs-attribute { color: #ca8a04; }
+.dark .markdown-body .hljs-attr,
+.dark .markdown-body .hljs-attribute { color: #facc15; }
+
+.markdown-body .hljs-deletion { color: #dc2626; }
+.dark .markdown-body .hljs-deletion { color: #f87171; }
+
+.markdown-body .hljs-meta { color: hsl(var(--muted-foreground)); }

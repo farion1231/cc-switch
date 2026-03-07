@@ -613,7 +613,28 @@
     "daysAgo": "{{count}}日前",
     "roleUser": "ユーザー",
     "roleSystem": "システム",
-    "roleTool": "ツール"
+    "roleTool": "ツール",
+    "showRawText": "原文表示",
+    "showMarkdown": "Markdown 表示",
+    "rename": "名前を変更",
+    "resetName": "デフォルト名に戻す",
+    "renameSuccess": "セッション名を変更しました",
+    "resetNameSuccess": "デフォルト名に戻しました",
+    "filterRenamed": "名前変更済みのみ表示",
+    "settings": "セッション設定",
+    "resumeExtraArgs": "再開時の追加引数",
+    "resumeExtraArgsHint": "セッション再開時に自動的に追加される引数（例: --model opus）",
+    "settingsSaved": "設定を保存しました",
+    "skipPermissionsTitle": "権限確認をスキップ",
+    "skipPermissionsHint": "セッション再開時に --dangerously-skip-permissions を自動追加し、ツール呼び出しの権限確認をスキップします",
+    "defaultRenderMdTitle": "デフォルト Markdown 表示",
+    "defaultRenderMdHint": "セッション切り替え時にデフォルトで Markdown 形式で表示します。無効にすると原文表示になります",
+    "defaultCollapseTitle": "長いメッセージをデフォルトで折りたたむ",
+    "defaultCollapseHint": "長いメッセージはデフォルトで折りたたまれます。クリックで全文を表示できます",
+    "showMessageIndexTitle": "メッセージ番号を表示",
+    "showMessageIndexHint": "各メッセージの前に番号を表示して、位置を把握しやすくします",
+    "expandMessage": "全文を表示",
+    "collapseMessage": "折りたたむ"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",
@@ -1987,7 +2008,11 @@
       "explorer": "正規表現検索、ASTパターンマッチング、ファイル検出（読み取り専用）",
       "designer": "モダンなレスポンシブデザイン、CSS/Tailwindの専門知識",
       "fixer": "コード実装、リファクタリング、テスト、検証"
-    }
+    },
+    "writeCommonConfig": "共通設定に書き込む",
+    "editCommonConfig": "共通設定を編集",
+    "editCommonConfigTitle": "共通設定",
+    "commonConfigHint": "OMO 共通設定は有効にしたすべての OMO 設定に統合されます"
   },
   "openclawConfig": {
     "defaultModel": {

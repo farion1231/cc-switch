@@ -306,10 +306,29 @@ impl Database {
             [],
         );
 
+        // 17. Session Aliases 表（会话自定义别名）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_aliases (
+            session_key TEXT PRIMARY KEY,
+            alias TEXT NOT NULL
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 18. Session Config 表（会话管理配置，key-value）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(())
     }
 
-    /// 应用 Schema 迁移
     pub(crate) fn apply_schema_migrations(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         Self::apply_schema_migrations_on_conn(&conn)

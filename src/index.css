@@ -149,6 +149,29 @@ html.dark {
   display: none;
 }
 
+.virtual-message-list {
+  scrollbar-width: thin;
+  -ms-overflow-style: auto;
+}
+
+.virtual-message-list::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+}
+
+.virtual-message-list::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 3px;
+}
+
+.virtual-message-list::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / 0.5);
+}
+
+.virtual-message-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 *:focus-visible {
   @apply outline-2 outline-blue-500 outline-offset-2;
 }
