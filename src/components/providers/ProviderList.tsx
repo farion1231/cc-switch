@@ -41,6 +41,14 @@ import {
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api/settings";
 
@@ -178,6 +186,8 @@ export function ProviderList({
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [showAliasDialog, setShowAliasDialog] = useState(false);
+  const [aliasScript, setAliasScript] = useState("");
   const [showStreamCheckConfirm, setShowStreamCheckConfirm] = useState(false);
   const [pendingTestProvider, setPendingTestProvider] =
     useState<Provider | null>(null);
@@ -242,6 +252,16 @@ export function ProviderList({
       toast.error(error.message);
     },
   });
+
+  const handleExportAliases = async () => {
+    try {
+      const script = await providersApi.exportAliases();
+      setAliasScript(script);
+      setShowAliasDialog(true);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -376,6 +396,13 @@ export function ProviderList({
 
   return (
     <div className="mt-4 space-y-4">
+      {appId === "claude" && (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={handleExportAliases}>
+            {t("provider.exportAliases")}
+          </Button>
+        </div>
+      )}
       <AnimatePresence>
         {isSearchOpen && (
           <motion.div
@@ -449,6 +476,31 @@ export function ProviderList({
       ) : (
         renderProviderList()
       )}
+
+      <Dialog open={showAliasDialog} onOpenChange={setShowAliasDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t("provider.exportAliasesTitle")}</DialogTitle>
+            <DialogDescription>
+              {t("provider.exportAliasesDesc")}
+            </DialogDescription>
+          </DialogHeader>
+          <pre className="bg-muted rounded p-4 text-sm font-mono overflow-x-auto whitespace-pre-wrap break-all">
+            {aliasScript}
+          </pre>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                navigator.clipboard.writeText(aliasScript);
+                toast.success(t("provider.exportAliasesCopied"));
+              }}
+            >
+              {t("common.copy")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         isOpen={showStreamCheckConfirm}

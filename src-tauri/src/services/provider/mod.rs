@@ -4,6 +4,7 @@
 
 mod endpoints;
 mod gemini_auth;
+pub(crate) mod instance;
 mod live;
 mod usage;
 
@@ -171,6 +172,14 @@ impl ProviderService {
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
+        // Create/update instance directory for multi-instance support (Claude only)
+        if matches!(app_type, AppType::Claude) {
+            let settings = instance::sanitize_for_instance(&provider.settings_config);
+            if let Err(e) = instance::ensure_instance_dir(&provider.id, &settings) {
+                log::warn!("Failed to create instance dir for '{}': {e}", provider.id);
+            }
+        }
+
         // Additive mode apps (OpenCode, OpenClaw) - always write to live config
         if app_type.is_additive_mode() {
             // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
@@ -211,6 +220,14 @@ impl ProviderService {
 
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
+
+        // Sync instance directory settings for multi-instance support (Claude only)
+        if matches!(app_type, AppType::Claude) {
+            let settings = instance::sanitize_for_instance(&provider.settings_config);
+            if let Err(e) = instance::sync_instance_settings(&provider.id, &settings) {
+                log::warn!("Failed to sync instance dir for '{}': {e}", provider.id);
+            }
+        }
 
         // Additive mode apps (OpenCode, OpenClaw) - always update in live config
         if app_type.is_additive_mode() {
@@ -346,7 +363,16 @@ impl ProviderService {
             ));
         }
 
-        state.db.delete_provider(app_type.as_str(), id)
+        state.db.delete_provider(app_type.as_str(), id)?;
+
+        // Remove instance directory for multi-instance support (Claude only)
+        if matches!(app_type, AppType::Claude) {
+            if let Err(e) = instance::remove_instance_dir(id) {
+                log::warn!("Failed to remove instance dir for '{id}': {e}");
+            }
+        }
+
+        Ok(())
     }
 
     /// Remove provider from live config only (for additive mode apps like OpenCode, OpenClaw)

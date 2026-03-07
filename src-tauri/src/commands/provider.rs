@@ -345,6 +345,24 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Export shell aliases for all Claude providers.
+/// Returns a script string suitable for sourcing in ~/.zshrc or ~/.bashrc.
+#[tauri::command]
+pub fn export_provider_aliases(state: State<'_, AppState>) -> Result<String, String> {
+    use crate::app_config::AppType;
+    use crate::services::provider::instance;
+
+    let providers = ProviderService::list(state.inner(), AppType::Claude)
+        .map_err(|e| e.to_string())?;
+
+    let pairs: Vec<(String, String)> = providers
+        .into_iter()
+        .map(|(id, p)| (id, p.name))
+        .collect();
+
+    Ok(instance::export_aliases(&pairs))
+}
+
 // ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================
