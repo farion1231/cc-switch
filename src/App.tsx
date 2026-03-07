@@ -146,6 +146,8 @@ function App() {
   const [currentView, setCurrentView] = useState<View>(getInitialView);
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isRefreshingSkillsDiscovery, setIsRefreshingSkillsDiscovery] =
+    useState(false);
 
   useEffect(() => {
     localStorage.setItem(VIEW_STORAGE_KEY, currentView);
@@ -1067,11 +1069,29 @@ function App() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => skillsPageRef.current?.refresh()}
+                      onClick={async () => {
+                        if (!skillsPageRef.current || isRefreshingSkillsDiscovery) {
+                          return;
+                        }
+                        setIsRefreshingSkillsDiscovery(true);
+                        try {
+                          await skillsPageRef.current.refresh();
+                        } finally {
+                          setIsRefreshingSkillsDiscovery(false);
+                        }
+                      }}
+                      disabled={isRefreshingSkillsDiscovery}
                       className="hover:bg-black/5 dark:hover:bg-white/5"
                     >
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                      {t("skills.refresh")}
+                      <RefreshCw
+                        className={cn(
+                          "w-4 h-4 mr-2",
+                          isRefreshingSkillsDiscovery && "animate-spin",
+                        )}
+                      />
+                      {isRefreshingSkillsDiscovery
+                        ? t("skills.refreshing", { defaultValue: "Refreshing..." })
+                        : t("skills.refresh")}
                     </Button>
                     <Button
                       variant="ghost"

@@ -23,6 +23,7 @@ export interface InstalledSkill {
   repoName?: string;
   repoBranch?: string;
   readmeUrl?: string;
+  contentHash?: string;
   apps: SkillApps;
   installedAt: number;
 }
@@ -37,6 +38,7 @@ export interface DiscoverableSkill {
   repoOwner: string;
   repoName: string;
   repoBranch: string;
+  contentHash?: string;
 }
 
 /** 未管理的 Skill（用于导入） */
@@ -69,6 +71,22 @@ export interface SkillRepo {
   enabled: boolean;
 }
 
+export interface SkillBatchFailure {
+  key: string;
+  error: string;
+}
+
+export interface SkillBatchInstallResult {
+  installed: InstalledSkill[];
+  failed: SkillBatchFailure[];
+}
+
+export interface SkillUpdateStatus {
+  id: string;
+  state: "update_available" | "up_to_date" | "unknown" | "not_found";
+  latest?: DiscoverableSkill | null;
+}
+
 // ========== API ==========
 
 export const skillsApi = {
@@ -85,6 +103,14 @@ export const skillsApi = {
     currentApp: AppId,
   ): Promise<InstalledSkill> {
     return await invoke("install_skill_unified", { skill, currentApp });
+  },
+
+  /** 批量安装 Skills（统一安装） */
+  async installUnifiedBatch(
+    skills: DiscoverableSkill[],
+    currentApp: AppId,
+  ): Promise<SkillBatchInstallResult> {
+    return await invoke("install_skills_unified_batch", { skills, currentApp });
   },
 
   /** 卸载 Skill（统一卸载） */
@@ -108,8 +134,21 @@ export const skillsApi = {
   },
 
   /** 发现可安装的 Skills（从仓库获取） */
-  async discoverAvailable(): Promise<DiscoverableSkill[]> {
-    return await invoke("discover_available_skills");
+  async discoverAvailable(forceRefresh = false): Promise<DiscoverableSkill[]> {
+    return await invoke("discover_available_skills", { forceRefresh });
+  },
+
+  /** 检查已安装 Skills 是否有更新 */
+  async checkInstalledUpdates(forceRefresh = false): Promise<SkillUpdateStatus[]> {
+    return await invoke("check_installed_skill_updates", { forceRefresh });
+  },
+
+  /** 批量更新已安装 Skills */
+  async updateUnifiedBatch(
+    ids: string[],
+    forceRefresh = false,
+  ): Promise<SkillBatchInstallResult> {
+    return await invoke("update_skills_unified_batch", { ids, forceRefresh });
   },
 
   // ========== 兼容旧 API ==========

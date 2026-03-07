@@ -967,11 +967,14 @@ pub fn run() {
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
             commands::install_skill_unified,
+            commands::install_skills_unified_batch,
             commands::uninstall_skill_unified,
             commands::toggle_skill_app,
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
             commands::discover_available_skills,
+            commands::check_installed_skill_updates,
+            commands::update_skills_unified_batch,
             // Skill management (legacy API compatibility)
             commands::get_skills,
             commands::get_skills_for_app,

@@ -8,6 +8,7 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -57,6 +58,60 @@ pub struct DiscoverableSkill {
     /// 分支名称
     #[serde(rename = "repoBranch")]
     pub repo_branch: String,
+    /// 目录内容哈希（用于检测是否有更新）
+    #[serde(rename = "contentHash", skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DiscoveryCache {
+    updated_at: i64,
+    skills: Vec<DiscoverableSkill>,
+}
+
+#[derive(Debug)]
+struct AtomicReplaceGuard {
+    dest: PathBuf,
+    backup: Option<PathBuf>,
+    committed: bool,
+}
+
+impl AtomicReplaceGuard {
+    fn new(dest: PathBuf, backup: Option<PathBuf>) -> Self {
+        Self {
+            dest,
+            backup,
+            committed: false,
+        }
+    }
+
+    fn commit(mut self) -> Result<()> {
+        if let Some(backup) = self.backup.take() {
+            if backup.exists() {
+                fs::remove_dir_all(backup)?;
+            }
+        }
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for AtomicReplaceGuard {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+
+        if self.dest.exists() {
+            let _ = fs::remove_dir_all(&self.dest);
+        }
+
+        if let Some(backup) = self.backup.take() {
+            if backup.exists() {
+                let _ = fs::rename(&backup, &self.dest);
+            }
+        }
+    }
 }
 
 /// 技能对象（兼容旧 API，内部使用 DiscoverableSkill）
@@ -318,6 +373,8 @@ impl Default for SkillService {
 }
 
 impl SkillService {
+    const DISCOVERY_CACHE_KEY: &'static str = "skills_discovery_cache_v1";
+
     pub fn new() -> Self {
         Self
     }
@@ -407,6 +464,16 @@ impl SkillService {
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
         let skills = db.get_all_installed_skills()?;
         Ok(skills.into_values().collect())
+    }
+
+    /// 获取已安装技能当前 SSOT 目录的内容哈希。
+    ///
+    /// 用于兼容旧数据库缺少 `content_hash` 列的情况，避免更新状态永久停留在 unknown。
+    pub fn get_installed_content_hash(directory: &str) -> Result<String> {
+        let install_name =
+            Self::sanitize_install_name(directory).ok_or_else(|| anyhow!("无效的安装目录"))?;
+        let skill_dir = Self::get_ssot_dir()?.join(install_name);
+        Self::hash_directory(&skill_dir)
     }
 
     /// 安装 Skill
@@ -596,6 +663,7 @@ impl SkillService {
             repo_name: Some(skill.repo_name.clone()),
             repo_branch: Some(repo_branch),
             readme_url,
+            content_hash: skill.content_hash.clone(),
             apps: SkillApps::only(current_app),
             installed_at: chrono::Utc::now().timestamp(),
         };
@@ -613,6 +681,149 @@ impl SkillService {
         );
 
         Ok(installed_skill)
+    }
+
+    fn source_rel_from_skill_id(id: &str, fallback_dir: &str) -> Result<PathBuf> {
+        if let Some((_, rel)) = id.split_once(':') {
+            if let Some(path) = Self::sanitize_skill_source_path(rel) {
+                return Ok(path);
+            }
+        }
+        Self::sanitize_skill_source_path(fallback_dir).ok_or_else(|| anyhow!("无效的 skill 目录"))
+    }
+
+    fn atomic_replace_directory(source: &Path, dest: &Path) -> Result<AtomicReplaceGuard> {
+        let parent = dest
+            .parent()
+            .ok_or_else(|| anyhow!("无效的目标目录: {}", dest.display()))?;
+        fs::create_dir_all(parent)?;
+
+        let stamp = Utc::now().timestamp_millis();
+        let file_name = dest
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| anyhow!("无效的目标目录名: {}", dest.display()))?;
+        let staging = parent.join(format!(".{file_name}.tmp-{stamp}"));
+        let backup = parent.join(format!(".{file_name}.bak-{stamp}"));
+
+        if staging.exists() {
+            fs::remove_dir_all(&staging)?;
+        }
+        if backup.exists() {
+            fs::remove_dir_all(&backup)?;
+        }
+
+        if let Err(err) = Self::copy_dir_recursive(source, &staging) {
+            if staging.exists() {
+                let _ = fs::remove_dir_all(&staging);
+            }
+            return Err(err);
+        }
+
+        let backup_path = if dest.exists() {
+            fs::rename(dest, &backup)?;
+            Some(backup)
+        } else {
+            None
+        };
+
+        if let Err(err) = fs::rename(&staging, dest) {
+            if staging.exists() {
+                let _ = fs::remove_dir_all(&staging);
+            }
+            if let Some(ref backup_path) = backup_path {
+                let _ = fs::rename(backup_path, dest);
+            }
+            return Err(err.into());
+        }
+
+        Ok(AtomicReplaceGuard::new(dest.to_path_buf(), backup_path))
+    }
+
+    pub async fn update_installed(
+        &self,
+        db: &Arc<Database>,
+        installed: &InstalledSkill,
+        latest: &DiscoverableSkill,
+    ) -> Result<InstalledSkill> {
+        let ssot_dir = Self::get_ssot_dir()?;
+        let install_name = Self::sanitize_install_name(&installed.directory)
+            .ok_or_else(|| anyhow!("无效的安装目录: {}", installed.directory))?;
+        let source_rel = Self::source_rel_from_skill_id(&installed.id, &install_name)?;
+
+        let repo = SkillRepo {
+            owner: latest.repo_owner.clone(),
+            name: latest.repo_name.clone(),
+            branch: latest.repo_branch.clone(),
+            enabled: true,
+        };
+
+        let (temp_dir, used_branch) = timeout(
+            std::time::Duration::from_secs(60),
+            self.download_repo(&repo),
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(format_skill_error(
+                "DOWNLOAD_TIMEOUT",
+                &[
+                    ("owner", &repo.owner),
+                    ("name", &repo.name),
+                    ("timeout", "60")
+                ],
+                Some("checkNetwork"),
+            ))
+        })??;
+
+        let source = temp_dir.join(&source_rel);
+        if !source.exists() || !source.is_dir() {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(anyhow!(format_skill_error(
+                "SKILL_DIR_NOT_FOUND",
+                &[("path", &source.display().to_string())],
+                Some("checkRepoUrl"),
+            )));
+        }
+
+        let dest = ssot_dir.join(&install_name);
+        let replace_guard = match Self::atomic_replace_directory(&source, &dest) {
+            Ok(guard) => guard,
+            Err(err) => {
+                let _ = fs::remove_dir_all(&temp_dir);
+                return Err(err);
+            }
+        };
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let mut updated = installed.clone();
+        updated.name = latest.name.clone();
+        updated.description = if latest.description.is_empty() {
+            None
+        } else {
+            Some(latest.description.clone())
+        };
+        updated.repo_owner = Some(latest.repo_owner.clone());
+        updated.repo_name = Some(latest.repo_name.clone());
+        updated.repo_branch = Some(used_branch.clone());
+        updated.readme_url = latest.readme_url.clone();
+        updated.content_hash = latest
+            .content_hash
+            .clone()
+            .or_else(|| Self::hash_directory(&dest).ok());
+        updated.installed_at = Utc::now().timestamp();
+
+        db.save_skill(&updated)?;
+        for app in AppType::all() {
+            if updated.apps.is_enabled_for(&app) {
+                Self::sync_to_app_dir(&updated.directory, &app)?;
+            } else {
+                let _ = Self::remove_from_app(&updated.directory, &app);
+            }
+        }
+
+        replace_guard.commit()?;
+
+        Ok(updated)
     }
 
     /// 卸载 Skill
@@ -808,6 +1019,7 @@ impl SkillService {
                 repo_name,
                 repo_branch,
                 readme_url,
+                content_hash: Self::hash_directory(&dest).ok(),
                 apps,
                 installed_at: chrono::Utc::now().timestamp(),
             };
@@ -959,6 +1171,92 @@ impl SkillService {
         }
 
         Ok(())
+    }
+
+    fn hash_directory(dir: &Path) -> Result<String> {
+        let mut files = Vec::new();
+        Self::collect_files(dir, dir, &mut files)?;
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut hasher = Sha256::new();
+        for (rel, path) in files {
+            hasher.update(rel.as_bytes());
+            hasher.update([0u8]);
+            let bytes = fs::read(path)?;
+            hasher.update(bytes);
+            hasher.update([0u8]);
+        }
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+
+    fn collect_files(base: &Path, current: &Path, out: &mut Vec<(String, PathBuf)>) -> Result<()> {
+        for entry in fs::read_dir(current)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                Self::collect_files(base, &path, out)?;
+            } else if path.is_file() {
+                let rel = path
+                    .strip_prefix(base)
+                    .unwrap_or(path.as_path())
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                out.push((rel, path));
+            }
+        }
+        Ok(())
+    }
+
+    fn read_discovery_cache(db: &Arc<Database>) -> Result<Option<DiscoveryCache>> {
+        let raw = match db.get_setting(Self::DISCOVERY_CACHE_KEY)? {
+            Some(value) => value,
+            None => return Ok(None),
+        };
+        let parsed = serde_json::from_str::<DiscoveryCache>(&raw)
+            .map_err(|e| anyhow!("解析 skills discovery 缓存失败: {e}"))?;
+        Ok(Some(parsed))
+    }
+
+    fn write_discovery_cache(db: &Arc<Database>, skills: &[DiscoverableSkill]) -> Result<()> {
+        let cache = DiscoveryCache {
+            updated_at: Utc::now().timestamp(),
+            skills: skills.to_vec(),
+        };
+        let value = serde_json::to_string(&cache)?;
+        db.set_setting(Self::DISCOVERY_CACHE_KEY, &value)?;
+        Ok(())
+    }
+
+    pub async fn discover_available_with_policy(
+        &self,
+        repos: Vec<SkillRepo>,
+        db: &Arc<Database>,
+        force_refresh: bool,
+    ) -> Result<Vec<DiscoverableSkill>> {
+        let cache = Self::read_discovery_cache(db)?;
+
+        if !force_refresh {
+            // 统一策略：缓存优先，首次无缓存时才自动拉取一次。
+            if let Some(cached) = &cache {
+                return Ok(cached.skills.clone());
+            }
+        }
+
+        match self.discover_available(repos).await {
+            Ok(skills) => {
+                let _ = Self::write_discovery_cache(db, &skills);
+                Ok(skills)
+            }
+            Err(err) => {
+                if !force_refresh {
+                    if let Some(cached) = cache {
+                        log::warn!("刷新 skills 发现失败，回退缓存: {err:#}");
+                        return Ok(cached.skills);
+                    }
+                }
+                Err(err)
+            }
+        }
     }
 
     // ========== 发现功能（保留原有逻辑）==========
@@ -1117,7 +1415,7 @@ impl SkillService {
                 .replace('\\', "/");
 
             if let Ok(skill) =
-                self.build_skill_from_metadata(&skill_md, &directory, &doc_path, repo)
+                self.build_skill_from_metadata(&skill_md, current_dir, &directory, &doc_path, repo)
             {
                 skills.push(skill);
             }
@@ -1141,11 +1439,13 @@ impl SkillService {
     fn build_skill_from_metadata(
         &self,
         skill_md: &Path,
+        skill_dir: &Path,
         directory: &str,
         doc_path: &str,
         repo: &SkillRepo,
     ) -> Result<DiscoverableSkill> {
         let meta = self.parse_skill_metadata(skill_md)?;
+        let content_hash = Self::hash_directory(skill_dir).ok();
 
         Ok(DiscoverableSkill {
             key: format!("{}/{}:{}", repo.owner, repo.name, directory),
@@ -1161,6 +1461,7 @@ impl SkillService {
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
             repo_branch: repo.branch.clone(),
+            content_hash,
         })
     }
 
@@ -1587,6 +1888,7 @@ impl SkillService {
                 repo_name: None,
                 repo_branch: None,
                 readme_url: None,
+                content_hash: Self::hash_directory(&dest).ok(),
                 apps: SkillApps::only(current_app),
                 installed_at: chrono::Utc::now().timestamp(),
             };
@@ -1877,6 +2179,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             repo_name,
             repo_branch,
             readme_url,
+            content_hash: SkillService::hash_directory(&ssot_path).ok(),
             apps,
             installed_at: chrono::Utc::now().timestamp(),
         };
@@ -1888,4 +2191,178 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
     log::info!("Skills 迁移完成，共 {count} 个");
 
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SkillService;
+    use super::{DiscoverableSkill, SkillRepo};
+    use crate::database::Database;
+    use serial_test::serial;
+    use std::env;
+    use std::fs;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let original_home = env::var("HOME").ok();
+            let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+            match &self.original_userprofile {
+                Some(value) => env::set_var("USERPROFILE", value),
+                None => env::remove_var("USERPROFILE"),
+            }
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn create_db() -> Arc<Database> {
+        Arc::new(Database::init().expect("init db"))
+    }
+
+    fn cached_skill() -> DiscoverableSkill {
+        DiscoverableSkill {
+            key: "owner/repo:skill-a".to_string(),
+            name: "Skill A".to_string(),
+            description: "cached".to_string(),
+            directory: "skill-a".to_string(),
+            readme_url: Some("https://example.com".to_string()),
+            repo_owner: "owner".to_string(),
+            repo_name: "repo".to_string(),
+            repo_branch: "main".to_string(),
+            content_hash: Some("hash-a".to_string()),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn atomic_replace_directory_commit_swaps_contents() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+        fs::write(source.join("skill.txt"), "new-content").expect("write source");
+        fs::write(dest.join("skill.txt"), "old-content").expect("write dest");
+
+        let guard =
+            SkillService::atomic_replace_directory(&source, &dest).expect("replace directory");
+
+        assert_eq!(
+            fs::read_to_string(dest.join("skill.txt")).expect("read replaced"),
+            "new-content"
+        );
+
+        guard.commit().expect("commit replace");
+
+        assert_eq!(
+            fs::read_to_string(dest.join("skill.txt")).expect("read committed"),
+            "new-content"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn atomic_replace_directory_drop_restores_original_contents() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+        fs::write(source.join("skill.txt"), "new-content").expect("write source");
+        fs::write(dest.join("skill.txt"), "old-content").expect("write dest");
+
+        let guard =
+            SkillService::atomic_replace_directory(&source, &dest).expect("replace directory");
+
+        assert_eq!(
+            fs::read_to_string(dest.join("skill.txt")).expect("read replaced"),
+            "new-content"
+        );
+
+        drop(guard);
+
+        assert_eq!(
+            fs::read_to_string(dest.join("skill.txt")).expect("read restored"),
+            "old-content"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn discover_available_with_policy_prefers_cached_results() {
+        let _home = TempHome::new();
+        let db = create_db();
+        let service = SkillService::new();
+        let expected = cached_skill();
+
+        SkillService::write_discovery_cache(&db, std::slice::from_ref(&expected))
+            .expect("write cache");
+
+        let result = service
+            .discover_available_with_policy(Vec::<SkillRepo>::new(), &db, false)
+            .await
+            .expect("discover from cache");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].key, expected.key);
+        assert_eq!(result[0].content_hash, expected.content_hash);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn discover_available_with_policy_force_refresh_ignores_cached_results() {
+        let _home = TempHome::new();
+        let db = create_db();
+        let service = SkillService::new();
+
+        SkillService::write_discovery_cache(&db, &[cached_skill()]).expect("write cache");
+
+        let result = service
+            .discover_available_with_policy(Vec::<SkillRepo>::new(), &db, true)
+            .await
+            .expect("force refresh");
+
+        assert!(result.is_empty());
+
+        let cached = SkillService::read_discovery_cache(&db)
+            .expect("read cache")
+            .expect("cache exists");
+        assert!(cached.skills.is_empty());
+    }
 }
