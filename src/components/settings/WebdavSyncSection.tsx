@@ -164,6 +164,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     remoteRoot: config?.remoteRoot ?? "cc-switch-sync",
     profile: config?.profile ?? "default",
     autoSync: config?.autoSync ?? false,
+    userAgent: config?.userAgent ?? "",
   }));
 
   // Preset selector — derived from initial URL, updated on user selection
@@ -199,6 +200,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
       remoteRoot: config.remoteRoot ?? "cc-switch-sync",
       profile: config.profile ?? "default",
       autoSync: config.autoSync ?? false,
+      userAgent: config.userAgent ?? "",
     });
     setPasswordTouched(false);
     setPresetId(detectPreset(config.baseUrl ?? ""));
@@ -261,6 +263,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
       remoteRoot: form.remoteRoot.trim() || "cc-switch-sync",
       profile: form.profile.trim() || "default",
       autoSync: form.autoSync,
+      userAgent: form.userAgent.trim() || undefined,
     };
   }, [form]);
 
@@ -572,6 +575,22 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
               value={form.profile}
               onChange={(e) => updateField("profile", e.target.value)}
               placeholder="default"
+              className="text-xs flex-1"
+              disabled={isLoading}
+            />
+          </div>
+
+          <div className="flex items-center gap-4">
+            <label className="w-40 text-xs font-medium text-foreground shrink-0">
+              {t("settings.webdavSync.userAgent")}
+              <span className="block text-[10px] font-normal text-muted-foreground">
+                {t("settings.webdavSync.userAgentDefault")}
+              </span>
+            </label>
+            <Input
+              value={form.userAgent}
+              onChange={(e) => updateField("userAgent", e.target.value)}
+              placeholder={t("settings.webdavSync.userAgentPlaceholder")}
               className="text-xs flex-1"
               disabled={isLoading}
             />

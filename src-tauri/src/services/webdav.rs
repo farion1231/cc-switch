@@ -101,6 +101,13 @@ fn apply_auth(builder: RequestBuilder, auth: &WebDavAuth) -> RequestBuilder {
     }
 }
 
+fn apply_user_agent(builder: RequestBuilder, user_agent: Option<&str>) -> RequestBuilder {
+    match user_agent.filter(|s| !s.trim().is_empty()) {
+        Some(ua) => builder.header(reqwest::header::USER_AGENT, ua),
+        None => builder,
+    }
+}
+
 fn webdav_transport_error(
     key: &'static str,
     op_zh: &str,
@@ -129,16 +136,19 @@ fn webdav_transport_error(
 // ─── HTTP operations ─────────────────────────────────────────
 
 /// Test WebDAV connectivity via PROPFIND Depth=0 on the base URL.
-pub async fn test_connection(base_url: &str, auth: &WebDavAuth) -> Result<(), AppError> {
+pub async fn test_connection(base_url: &str, auth: &WebDavAuth, user_agent: Option<&str>) -> Result<(), AppError> {
     let url = parse_base_url(base_url)?;
     let client = http_client::get();
 
-    let resp = apply_auth(
-        client
-            .request(method_propfind(), url)
-            .header("Depth", "0")
-            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
-        auth,
+    let resp = apply_user_agent(
+        apply_auth(
+            client
+                .request(method_propfind(), url)
+                .header("Depth", "0")
+                .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+            auth,
+        ),
+        user_agent,
     )
     .send()
     .await
@@ -166,6 +176,7 @@ pub async fn ensure_remote_directories(
     base_url: &str,
     segments: &[String],
     auth: &WebDavAuth,
+    user_agent: Option<&str>,
 ) -> Result<(), AppError> {
     if segments.is_empty() {
         return Ok(());
@@ -181,11 +192,14 @@ pub async fn ensure_remote_directories(
             format!("{url}/")
         };
 
-        let resp = apply_auth(
-            client
-                .request(method_mkcol(), &dir_url)
-                .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
-            auth,
+        let resp = apply_user_agent(
+            apply_auth(
+                client
+                    .request(method_mkcol(), &dir_url)
+                    .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+                auth,
+            ),
+            user_agent,
         )
         .send()
         .await
@@ -208,7 +222,7 @@ pub async fn ensure_remote_directories(
             StatusCode::METHOD_NOT_ALLOWED => {}
             // Ambiguous — verify directory actually exists via PROPFIND
             s if s == StatusCode::CONFLICT || s.is_redirection() => {
-                if !propfind_exists(&client, &dir_url, auth).await? {
+                if !propfind_exists(&client, &dir_url, auth, user_agent).await? {
                     return Err(webdav_status_error("MKCOL", status, &dir_url));
                 }
             }
@@ -226,15 +240,19 @@ pub async fn put_bytes(
     auth: &WebDavAuth,
     bytes: Vec<u8>,
     content_type: &str,
+    user_agent: Option<&str>,
 ) -> Result<(), AppError> {
     let client = http_client::get();
-    let resp = apply_auth(
-        client
-            .put(url)
-            .header("Content-Type", content_type)
-            .body(bytes)
-            .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
-        auth,
+    let resp = apply_user_agent(
+        apply_auth(
+            client
+                .put(url)
+                .header("Content-Type", content_type)
+                .body(bytes)
+                .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
+            auth,
+        ),
+        user_agent,
     )
     .send()
     .await
@@ -253,13 +271,17 @@ pub async fn get_bytes(
     url: &str,
     auth: &WebDavAuth,
     max_bytes: usize,
+    user_agent: Option<&str>,
 ) -> Result<Option<(Vec<u8>, Option<String>)>, AppError> {
     let client = http_client::get();
-    let resp = apply_auth(
-        client
-            .get(url)
-            .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
-        auth,
+    let resp = apply_user_agent(
+        apply_auth(
+            client
+                .get(url)
+                .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
+            auth,
+        ),
+        user_agent,
     )
     .send()
     .await
@@ -297,13 +319,16 @@ pub async fn get_bytes(
 }
 
 /// HEAD request to retrieve the ETag. Returns `None` on 404.
-pub async fn head_etag(url: &str, auth: &WebDavAuth) -> Result<Option<String>, AppError> {
+pub async fn head_etag(url: &str, auth: &WebDavAuth, user_agent: Option<&str>) -> Result<Option<String>, AppError> {
     let client = http_client::get();
-    let resp = apply_auth(
-        client
-            .head(url)
-            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
-        auth,
+    let resp = apply_user_agent(
+        apply_auth(
+            client
+                .head(url)
+                .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+            auth,
+        ),
+        user_agent,
     )
     .send()
     .await
@@ -331,13 +356,17 @@ async fn propfind_exists(
     client: &reqwest::Client,
     url: &str,
     auth: &WebDavAuth,
+    user_agent: Option<&str>,
 ) -> Result<bool, AppError> {
-    let resp = apply_auth(
-        client
-            .request(method_propfind(), url)
-            .header("Depth", "0")
-            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
-        auth,
+    let resp = apply_user_agent(
+        apply_auth(
+            client
+                .request(method_propfind(), url)
+                .header("Depth", "0")
+                .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+            auth,
+        ),
+        user_agent,
     )
     .send()
     .await;

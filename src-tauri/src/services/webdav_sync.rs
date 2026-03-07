@@ -101,9 +101,10 @@ struct LocalSnapshot {
 pub async fn check_connection(settings: &WebDavSyncSettings) -> Result<(), AppError> {
     settings.validate()?;
     let auth = auth_for(settings);
-    test_connection(&settings.base_url, &auth).await?;
+    let ua = settings.user_agent.as_deref();
+    test_connection(&settings.base_url, &auth, ua).await?;
     let dir_segs = remote_dir_segments(settings);
-    ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
+    ensure_remote_directories(&settings.base_url, &dir_segs, &auth, ua).await?;
     Ok(())
 }
 
@@ -114,17 +115,17 @@ pub async fn upload(
 ) -> Result<Value, AppError> {
     settings.validate()?;
     let auth = auth_for(settings);
+    let ua = settings.user_agent.as_deref();
     let dir_segs = remote_dir_segments(settings);
-    ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
+    ensure_remote_directories(&settings.base_url, &dir_segs, &auth, ua).await?;
 
     let snapshot = build_local_snapshot(db, settings)?;
 
-    // Upload order: artifacts first, manifest last (best-effort consistency)
     let db_url = remote_file_url(settings, REMOTE_DB_SQL)?;
-    put_bytes(&db_url, &auth, snapshot.db_sql, "application/sql").await?;
+    put_bytes(&db_url, &auth, snapshot.db_sql, "application/sql", ua).await?;
 
     let skills_url = remote_file_url(settings, REMOTE_SKILLS_ZIP)?;
-    put_bytes(&skills_url, &auth, snapshot.skills_zip, "application/zip").await?;
+    put_bytes(&skills_url, &auth, snapshot.skills_zip, "application/zip", ua).await?;
 
     let manifest_url = remote_file_url(settings, REMOTE_MANIFEST)?;
     put_bytes(
@@ -132,11 +133,11 @@ pub async fn upload(
         &auth,
         snapshot.manifest_bytes,
         "application/json",
+        ua,
     )
     .await?;
 
-    // Fetch etag (best-effort, don't fail the upload)
-    let etag = match head_etag(&manifest_url, &auth).await {
+    let etag = match head_etag(&manifest_url, &auth, ua).await {
         Ok(e) => e,
         Err(e) => {
             log::debug!("[WebDAV] Failed to fetch ETag after upload: {e}");
@@ -160,9 +161,10 @@ pub async fn download(
 ) -> Result<Value, AppError> {
     settings.validate()?;
     let auth = auth_for(settings);
+    let ua = settings.user_agent.as_deref();
 
     let manifest_url = remote_file_url(settings, REMOTE_MANIFEST)?;
-    let (manifest_bytes, etag) = get_bytes(&manifest_url, &auth, MAX_MANIFEST_BYTES)
+    let (manifest_bytes, etag) = get_bytes(&manifest_url, &auth, MAX_MANIFEST_BYTES, ua)
         .await?
         .ok_or_else(|| {
             localized(
@@ -180,12 +182,10 @@ pub async fn download(
 
     validate_manifest_compat(&manifest)?;
 
-    // Download and verify artifacts
-    let db_sql = download_and_verify(settings, &auth, REMOTE_DB_SQL, &manifest.artifacts).await?;
+    let db_sql = download_and_verify(settings, &auth, ua, REMOTE_DB_SQL, &manifest.artifacts).await?;
     let skills_zip =
-        download_and_verify(settings, &auth, REMOTE_SKILLS_ZIP, &manifest.artifacts).await?;
+        download_and_verify(settings, &auth, ua, REMOTE_SKILLS_ZIP, &manifest.artifacts).await?;
 
-    // Apply snapshot
     apply_snapshot(db, &db_sql, &skills_zip)?;
 
     let manifest_hash = sha256_hex(&manifest_bytes);
@@ -198,9 +198,10 @@ pub async fn download(
 pub async fn fetch_remote_info(settings: &WebDavSyncSettings) -> Result<Option<Value>, AppError> {
     settings.validate()?;
     let auth = auth_for(settings);
+    let ua = settings.user_agent.as_deref();
     let manifest_url = remote_file_url(settings, REMOTE_MANIFEST)?;
 
-    let Some((bytes, _)) = get_bytes(&manifest_url, &auth, MAX_MANIFEST_BYTES).await? else {
+    let Some((bytes, _)) = get_bytes(&manifest_url, &auth, MAX_MANIFEST_BYTES, ua).await? else {
         return Ok(None);
     };
 
@@ -416,6 +417,7 @@ fn validate_manifest_compat(manifest: &SyncManifest) -> Result<(), AppError> {
 async fn download_and_verify(
     settings: &WebDavSyncSettings,
     auth: &WebDavAuth,
+    user_agent: Option<&str>,
     artifact_name: &str,
     artifacts: &BTreeMap<String, ArtifactMeta>,
 ) -> Result<Vec<u8>, AppError> {
@@ -429,7 +431,7 @@ async fn download_and_verify(
     validate_artifact_size_limit(artifact_name, meta.size)?;
 
     let url = remote_file_url(settings, artifact_name)?;
-    let (bytes, _) = get_bytes(&url, auth, MAX_SYNC_ARTIFACT_BYTES as usize)
+    let (bytes, _) = get_bytes(&url, auth, MAX_SYNC_ARTIFACT_BYTES as usize, user_agent)
         .await?
         .ok_or_else(|| {
             localized(

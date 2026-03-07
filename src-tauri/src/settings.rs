@@ -106,6 +106,8 @@ pub struct WebDavSyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -120,6 +122,7 @@ impl Default for WebDavSyncSettings {
             password: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            user_agent: None,
             status: WebDavSyncStatus::default(),
         }
     }

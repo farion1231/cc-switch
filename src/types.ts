@@ -184,6 +184,7 @@ export interface WebDavSyncSettings {
   password?: string;
   remoteRoot?: string;
   profile?: string;
+  userAgent?: string;
   status?: WebDavSyncStatus;
 }
 
