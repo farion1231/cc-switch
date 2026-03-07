@@ -775,7 +775,8 @@
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
     "extractFailed": "抽出に失敗しました: {{error}}",
-    "saveFailed": "保存に失敗しました: {{error}}"
+    "saveFailed": "保存に失敗しました: {{error}}",
+    "modelNameHint": "使用するモデルを指定します。config.toml に自動更新されます"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",

@@ -775,7 +775,8 @@
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
-    "saveFailed": "保存失败: {{error}}"
+    "saveFailed": "保存失败: {{error}}",
+    "modelNameHint": "指定使用的模型，将自动更新到 config.toml 中"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",

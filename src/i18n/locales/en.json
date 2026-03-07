@@ -775,7 +775,8 @@
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}"
+    "saveFailed": "Save failed: {{error}}",
+    "modelNameHint": "Specify the model to use, will be auto-updated in config.toml"
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
