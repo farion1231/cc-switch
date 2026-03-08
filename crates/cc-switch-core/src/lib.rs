@@ -29,6 +29,10 @@ pub use deeplink::{
     import_skill_from_deeplink, parse_and_merge_config, parse_deeplink_url, DeepLinkImportRequest,
 };
 pub use error::AppError;
+pub use openclaw_config::{
+    OpenClawAgentsDefaults, OpenClawDefaultModel, OpenClawEnvConfig,
+    OpenClawModelCatalogEntry, OpenClawProviderConfig, OpenClawToolsConfig,
+};
 pub use prompt::Prompt;
 pub use provider::{Provider, UniversalProvider};
 pub use proxy::{

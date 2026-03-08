@@ -3,6 +3,7 @@ mod config_smoke;
 mod env_conflict_flow;
 mod import_export_deeplink;
 mod mcp_sync;
+mod openclaw_config_flow;
 mod prompt_live_sync;
 mod provider_endpoints;
 mod provider_common_config;
@@ -33,6 +34,7 @@ pub fn all() -> Vec<Scenario> {
         provider_stream_check::scenario(),
         provider_universal_flow::scenario(),
         proxy_advanced_config::scenario(),
+        openclaw_config_flow::scenario(),
         prompt_live_sync::scenario(),
         mcp_sync::scenario(),
         import_export_deeplink::scenario(),

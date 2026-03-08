@@ -6,6 +6,7 @@ mod config;
 mod env;
 mod import_export;
 mod mcp;
+mod openclaw;
 mod prompt;
 mod provider;
 mod proxy;
@@ -35,6 +36,7 @@ pub async fn dispatch(cli: Cli, state: AppState) -> anyhow::Result<()> {
         Commands::Usage { cmd } => usage::handle(cmd, &state, &printer).await,
         Commands::Backup { cmd } => backup::handle(cmd, &state, &printer).await,
         Commands::Env { cmd } => env::handle(cmd, &printer).await,
+        Commands::Openclaw { cmd } => openclaw::handle(cmd, &printer).await,
         Commands::Workspace { cmd } => workspace::handle(cmd, &printer).await,
         Commands::Deeplink { cmd } => match cmd {
             DeeplinkCommands::Parse { url } => {
@@ -71,6 +73,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Usage { .. } => "usage",
         Commands::Backup { .. } => "backup",
         Commands::Env { .. } => "env",
+        Commands::Openclaw { .. } => "openclaw",
         Commands::Workspace { .. } => "workspace",
         Commands::Deeplink { .. } => "deeplink",
         Commands::Export { .. } => "export",

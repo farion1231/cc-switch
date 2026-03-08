@@ -68,6 +68,10 @@ fn openclaw_workspace_file_path(home: &Path, filename: &str) -> PathBuf {
     home.join(".openclaw").join("workspace").join(filename)
 }
 
+fn openclaw_config_path(home: &Path) -> PathBuf {
+    home.join(".openclaw").join("openclaw.json")
+}
+
 fn openclaw_memory_file_path(home: &Path, filename: &str) -> PathBuf {
     home.join(".openclaw")
         .join("workspace")
@@ -705,6 +709,179 @@ fn env_delete_and_restore_round_trip_shell_file_conflicts() {
         restored_text.contains("export ANTHROPIC_E2E_TOKEN=sk-env"),
         "restore should put the target export line back into the shell file"
     );
+}
+
+#[test]
+#[serial]
+fn openclaw_env_tools_default_model_and_catalog_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    let model_catalog_file = temp.path().join("model-catalog.json");
+    fs::write(
+        &model_catalog_file,
+        r#"{
+  "demo/gpt-5": {
+    "alias": "GPT-5",
+    "contextWindow": 200000
+  }
+}"#,
+    )
+    .expect("write model catalog json");
+
+    let set_env = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "openclaw",
+            "env",
+            "set",
+            "--value",
+            r#"{"OPENAI_API_KEY":"sk-openclaw","OPENCLAW_FEATURE":"enabled"}"#,
+        ],
+    );
+    assert!(set_env.status.success(), "stderr: {}", stderr_text(&set_env));
+
+    let set_tools = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "openclaw",
+            "tools",
+            "set",
+            "--value",
+            r#"{"profile":"strict","allow":["read:*"],"deny":["write:*"]}"#,
+        ],
+    );
+    assert!(set_tools.status.success(), "stderr: {}", stderr_text(&set_tools));
+
+    let set_default_model = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "openclaw",
+            "default-model",
+            "set",
+            "--value",
+            r#"{"primary":"demo/gpt-5","fallbacks":["demo/gpt-4.1"]}"#,
+        ],
+    );
+    assert!(
+        set_default_model.status.success(),
+        "stderr: {}",
+        stderr_text(&set_default_model)
+    );
+
+    let set_model_catalog = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "openclaw",
+            "model-catalog",
+            "set",
+            "--file",
+            model_catalog_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        set_model_catalog.status.success(),
+        "stderr: {}",
+        stderr_text(&set_model_catalog)
+    );
+
+    let set_agents_defaults = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "openclaw",
+            "agents-defaults",
+            "set",
+            "--value",
+            r#"{
+  "model": {
+    "primary": "demo/gpt-5",
+    "fallbacks": ["demo/gpt-4.1"]
+  },
+  "models": {
+    "demo/gpt-5": {
+      "alias": "GPT-5"
+    }
+  }
+}"#,
+        ],
+    );
+    assert!(
+        set_agents_defaults.status.success(),
+        "stderr: {}",
+        stderr_text(&set_agents_defaults)
+    );
+
+    let env_output = run_cli(
+        temp.path(),
+        &["--format", "json", "openclaw", "env", "get"],
+    );
+    let env_json: Value =
+        serde_json::from_slice(&env_output.stdout).expect("openclaw env get should return json");
+    assert_eq!(
+        env_json.get("OPENAI_API_KEY").and_then(Value::as_str),
+        Some("sk-openclaw")
+    );
+
+    let tools_output = run_cli(
+        temp.path(),
+        &["--format", "json", "openclaw", "tools", "get"],
+    );
+    let tools_json: Value =
+        serde_json::from_slice(&tools_output.stdout).expect("openclaw tools get should return json");
+    assert_eq!(tools_json.get("profile").and_then(Value::as_str), Some("strict"));
+
+    let default_model_output = run_cli(
+        temp.path(),
+        &["--format", "json", "openclaw", "default-model", "get"],
+    );
+    let default_model_json: Value = serde_json::from_slice(&default_model_output.stdout)
+        .expect("openclaw default-model get should return json");
+    assert_eq!(
+        default_model_json.get("primary").and_then(Value::as_str),
+        Some("demo/gpt-5")
+    );
+
+    let model_catalog_output = run_cli(
+        temp.path(),
+        &["--format", "json", "openclaw", "model-catalog", "get"],
+    );
+    let model_catalog_json: Value = serde_json::from_slice(&model_catalog_output.stdout)
+        .expect("openclaw model-catalog get should return json");
+    assert_eq!(
+        model_catalog_json
+            .get("demo/gpt-5")
+            .and_then(|entry| entry.get("alias"))
+            .and_then(Value::as_str),
+        Some("GPT-5")
+    );
+
+    let agents_defaults_output = run_cli(
+        temp.path(),
+        &["--format", "json", "openclaw", "agents-defaults", "get"],
+    );
+    let agents_defaults_json: Value = serde_json::from_slice(&agents_defaults_output.stdout)
+        .expect("openclaw agents-defaults get should return json");
+    assert_eq!(
+        agents_defaults_json
+            .get("model")
+            .and_then(|model| model.get("primary"))
+            .and_then(Value::as_str),
+        Some("demo/gpt-5")
+    );
+
+    let live_config = fs::read_to_string(openclaw_config_path(temp.path()))
+        .expect("openclaw config file should exist");
+    assert!(live_config.contains("\"env\""));
+    assert!(live_config.contains("\"tools\""));
+    assert!(live_config.contains("\"agents\""));
 }
 
 #[test]

@@ -77,6 +77,11 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: EnvCommands,
     },
+    /// OpenClaw-specific configuration
+    Openclaw {
+        #[command(subcommand)]
+        cmd: OpenClawCommands,
+    },
     /// OpenClaw workspace and daily memory files
     Workspace {
         #[command(subcommand)]
@@ -1014,6 +1019,53 @@ pub enum EnvCommands {
     Restore {
         /// Backup file path
         backup_path: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum OpenClawCommands {
+    /// Manage OpenClaw env config
+    Env {
+        #[command(subcommand)]
+        cmd: OpenClawConfigCommands,
+    },
+    /// Manage OpenClaw tools config
+    Tools {
+        #[command(subcommand)]
+        cmd: OpenClawConfigCommands,
+    },
+    /// Manage OpenClaw agents.defaults
+    #[command(name = "agents-defaults")]
+    AgentsDefaults {
+        #[command(subcommand)]
+        cmd: OpenClawConfigCommands,
+    },
+    /// Manage OpenClaw default model
+    #[command(name = "default-model")]
+    DefaultModel {
+        #[command(subcommand)]
+        cmd: OpenClawConfigCommands,
+    },
+    /// Manage OpenClaw model catalog
+    #[command(name = "model-catalog")]
+    ModelCatalog {
+        #[command(subcommand)]
+        cmd: OpenClawConfigCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum OpenClawConfigCommands {
+    /// Read current config
+    Get,
+    /// Save config from JSON
+    Set {
+        /// Read JSON from a file
+        #[arg(long, conflicts_with = "value")]
+        file: Option<String>,
+        /// Inline JSON content
+        #[arg(long, conflicts_with = "file")]
+        value: Option<String>,
     },
 }
 
