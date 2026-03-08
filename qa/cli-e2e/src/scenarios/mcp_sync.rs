@@ -25,6 +25,8 @@ async fn run(env: HarnessEnv) -> Result<()> {
         let full_server = sandbox.fixture_path("mcp/full-server.json");
         sandbox
             .run_ok(&vec![
+                "--format".to_string(),
+                "json".to_string(),
                 "mcp".to_string(),
                 "add".to_string(),
                 "--from-json".to_string(),
@@ -54,8 +56,10 @@ async fn run(env: HarnessEnv) -> Result<()> {
             "opencode MCP config",
         )?;
 
-        sandbox
+        let edit_output = sandbox
             .run_ok(&args(&[
+                "--format",
+                "json",
                 "mcp",
                 "edit",
                 "demo-mcp",
@@ -63,10 +67,37 @@ async fn run(env: HarnessEnv) -> Result<()> {
                 "gemini",
             ]))
             .await?;
+        let edit_json = stdout_json(&edit_output)?;
+        ensure(
+            edit_json["apps"]["gemini"] == false,
+            "mcp edit did not return the updated app toggles",
+        )?;
         let gemini_settings = read_json(&sandbox.home_path(".gemini/settings.json"))?;
         ensure(
             gemini_settings["mcpServers"].get("demo-mcp").is_none(),
             "gemini MCP entry should be removed after disable-app",
+        )?;
+
+        let validate_output = sandbox
+            .run_ok(&args(&["--format", "json", "mcp", "validate", "demo-mcp"]))
+            .await?;
+        let validate_json = stdout_json(&validate_output)?;
+        ensure(
+            validate_json["valid"] == true,
+            "mcp validate should mark demo-mcp as valid",
+        )?;
+
+        let docs_output = sandbox
+            .run_ok(&args(&["--format", "json", "mcp", "docs-link", "demo-mcp"]))
+            .await?;
+        let docs_json = stdout_json(&docs_output)?;
+        ensure(
+            docs_json["homepage"] == "https://example.com/mcp",
+            "mcp docs-link should expose homepage",
+        )?;
+        ensure(
+            docs_json["docs"] == "https://example.com/mcp/docs",
+            "mcp docs-link should expose docs url",
         )?;
 
         let delete_without_yes = sandbox.run(&args(&["mcp", "delete", "demo-mcp"])).await?;

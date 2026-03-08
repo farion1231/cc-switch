@@ -390,6 +390,26 @@ fn copy_dir_contents(source: &Path, destination: &Path) -> Result<()> {
         if entry.file_type().is_dir() {
             fs::create_dir_all(&target)
                 .with_context(|| format!("failed to create {}", target.display()))?;
+        } else if entry.file_type().is_symlink() {
+            let resolved = fs::canonicalize(entry.path())
+                .with_context(|| format!("failed to resolve symlink {}", entry.path().display()))?;
+            let metadata = fs::metadata(&resolved)
+                .with_context(|| format!("failed to inspect resolved {}", resolved.display()))?;
+            if metadata.is_dir() {
+                copy_dir_contents(&resolved, &target)?;
+            } else {
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent)
+                        .with_context(|| format!("failed to create {}", parent.display()))?;
+                }
+                fs::copy(&resolved, &target).with_context(|| {
+                    format!(
+                        "failed to copy resolved {} to {}",
+                        resolved.display(),
+                        target.display()
+                    )
+                })?;
+            }
         } else {
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)

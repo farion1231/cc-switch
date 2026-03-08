@@ -1831,6 +1831,129 @@ impl ProxyService {
         self.server.read().await.is_some()
     }
 
+    pub async fn get_global_proxy_config(&self) -> Result<GlobalProxyConfig, String> {
+        self.db
+            .get_global_proxy_config()
+            .map_err(|e| format!("获取全局代理配置失败: {e}"))
+    }
+
+    pub async fn update_global_proxy_config(&self, config: GlobalProxyConfig) -> Result<(), String> {
+        self.db
+            .update_global_proxy_config(config)
+            .map_err(|e| format!("更新全局代理配置失败: {e}"))
+    }
+
+    pub async fn get_app_proxy_config(&self, app_type: &str) -> Result<AppProxyConfig, String> {
+        self.db
+            .get_proxy_config_for_app(app_type)
+            .map_err(|e| format!("获取应用代理配置失败: {e}"))
+    }
+
+    pub async fn update_app_proxy_config(&self, config: AppProxyConfig) -> Result<(), String> {
+        self.db
+            .update_proxy_config_for_app(config)
+            .map_err(|e| format!("更新应用代理配置失败: {e}"))
+    }
+
+    pub async fn get_available_providers_for_failover(
+        &self,
+        app_type: &str,
+    ) -> Result<Vec<Provider>, String> {
+        self.db
+            .get_available_providers_for_failover(app_type)
+            .map_err(|e| format!("获取可用故障转移 Provider 失败: {e}"))
+    }
+
+    pub async fn get_auto_failover_enabled(&self, app_type: &str) -> Result<bool, String> {
+        self.get_app_proxy_config(app_type)
+            .await
+            .map(|config| config.auto_failover_enabled)
+    }
+
+    pub async fn set_auto_failover_enabled(
+        &self,
+        app_type: &str,
+        enabled: bool,
+    ) -> Result<Option<String>, String> {
+        let app = AppType::from_str(app_type)
+            .map_err(|_| format!("无效的应用类型: {app_type}"))?;
+
+        let switched_provider_id = if enabled {
+            let mut queue = self
+                .db
+                .get_failover_queue(app_type)
+                .map_err(|e| format!("获取故障转移队列失败: {e}"))?;
+
+            if queue.is_empty() {
+                let current_id = crate::settings::get_effective_current_provider(&self.db, &app)
+                    .map_err(|e| e.to_string())?;
+                let Some(current_id) = current_id else {
+                    return Err("故障转移队列为空，且未设置当前供应商，无法开启故障转移".to_string());
+                };
+
+                self.db
+                    .add_to_failover_queue(app_type, &current_id)
+                    .map_err(|e| format!("添加当前 Provider 到故障转移队列失败: {e}"))?;
+
+                queue = self
+                    .db
+                    .get_failover_queue(app_type)
+                    .map_err(|e| format!("获取故障转移队列失败: {e}"))?;
+            }
+
+            Some(
+                queue
+                    .first()
+                    .map(|item| item.provider_id.clone())
+                    .ok_or_else(|| "故障转移队列为空，无法开启故障转移".to_string())?,
+            )
+        } else {
+            None
+        };
+
+        let mut config = self.get_app_proxy_config(app_type).await?;
+        config.auto_failover_enabled = enabled;
+        self.update_app_proxy_config(config).await?;
+
+        if let Some(provider_id) = switched_provider_id.as_deref() {
+            self.switch_proxy_target(app_type, provider_id).await?;
+        }
+
+        Ok(switched_provider_id)
+    }
+
+    pub async fn get_default_cost_multiplier(&self, app_type: &str) -> Result<String, String> {
+        self.db
+            .get_default_cost_multiplier(app_type)
+            .map_err(|e| format!("获取默认成本倍率失败: {e}"))
+    }
+
+    pub async fn set_default_cost_multiplier(
+        &self,
+        app_type: &str,
+        value: &str,
+    ) -> Result<(), String> {
+        self.db
+            .set_default_cost_multiplier(app_type, value)
+            .map_err(|e| format!("设置默认成本倍率失败: {e}"))
+    }
+
+    pub async fn get_pricing_model_source(&self, app_type: &str) -> Result<String, String> {
+        self.db
+            .get_pricing_model_source(app_type)
+            .map_err(|e| format!("获取计费模型来源失败: {e}"))
+    }
+
+    pub async fn set_pricing_model_source(
+        &self,
+        app_type: &str,
+        value: &str,
+    ) -> Result<(), String> {
+        self.db
+            .set_pricing_model_source(app_type, value)
+            .map_err(|e| format!("设置计费模型来源失败: {e}"))
+    }
+
     pub async fn get_failover_queue(
         &self,
         app_type: &str,
@@ -1890,6 +2013,19 @@ impl ProxyService {
         self.db
             .get_provider_health(provider_id, app_type)
             .map_err(|e| format!("获取 Provider 熔断状态失败: {e}"))
+    }
+
+    pub async fn get_circuit_breaker_stats(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<Option<crate::proxy::CircuitBreakerStats>, String> {
+        let server_guard = self.server.read().await;
+        if let Some(server) = server_guard.as_ref() {
+            Ok(server.get_circuit_breaker_stats(provider_id, app_type).await)
+        } else {
+            Ok(None)
+        }
     }
 
     pub async fn get_circuit_breaker_config(

@@ -10,6 +10,7 @@ publish = false
 anyhow = "1"
 async-stream = "0.3"
 axum = "0.7"
+base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -20,3 +21,4 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-
 toml = "0.8"
 url = "2.5"
 walkdir = "2"
+zip = "2.2"

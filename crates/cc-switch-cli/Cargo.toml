@@ -31,3 +31,5 @@ gag = "1"
 tempfile = { workspace = true }
 serial_test = "3"
 rusqlite = { workspace = true }
+base64 = { workspace = true }
+zip = "2.2"

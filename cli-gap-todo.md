@@ -11,23 +11,23 @@
 
 - [x] 给 `provider` 增加 duplicate / sort-order / remove-from-live / import-live / read-live 子命令。
 - [x] 给 `provider` 增加 custom-endpoints / endpoint-last-used / endpoint-speedtest 子命令。
-- [ ] 给 `provider` 增加 common-config-snippet extract/get/set 子命令。
-- [ ] 给 `provider` 增加 usage-script save/test/query 的完整子命令面。
-- [ ] 给 `provider` 增加 stream-check single/all/config 子命令。
+- [x] 给 `provider` 增加 common-config-snippet extract/get/set 子命令。
+- [x] 给 `provider` 增加 usage-script save/test/query 的完整子命令面。
+- [x] 给 `provider` 增加 stream-check single/all/config 子命令。
 - [ ] 给 `provider` 增加 OpenClaw default-model / model-catalog 相关子命令或单独的 `openclaw` 命令组。
-- [ ] 给 `provider universal` 增加 edit / save-and-sync / 更完整结果回显。
-- [ ] 给 `usage` 增加 trends / provider-stats / model-stats / request-detail 子命令。
-- [ ] 给 `usage` 增加 model-pricing list/update/delete 子命令。
-- [ ] 给 `usage` 增加 provider-limits check 子命令。
-- [ ] 给 `skill` 增加 unmanaged scan/import 子命令。
-- [ ] 给 `skill` 增加 repo list/add/remove 子命令。
-- [ ] 给 `skill` 增加 zip-install 子命令。
-- [ ] 给 `proxy` 增加 auto-failover enable/config 子命令。
-- [ ] 给 `proxy` 增加 provider-health / circuit-stats / available-providers 子命令。
-- [ ] 给 `proxy` 增加 default-cost-multiplier / pricing-model-source / global-proxy-config 子命令。
-- [ ] 给 `mcp` 补 validate / docs-link / richer app toggle 输出，做到和 GUI 操作闭环一致。
-- [ ] 给 `prompt` 增加 current-live-file-content 查看能力。
-- [ ] 给 `deeplink` 增加 parse / merge / preview 子命令，不再只有最终 import。
+- [x] 给 `provider universal` 增加 edit / save-and-sync / 更完整结果回显。
+- [x] 给 `usage` 增加 trends / provider-stats / model-stats / request-detail 子命令。
+- [x] 给 `usage` 增加 model-pricing list/update/delete 子命令。
+- [x] 给 `usage` 增加 provider-limits check 子命令。
+- [x] 给 `skill` 增加 unmanaged scan/import 子命令。
+- [x] 给 `skill` 增加 repo list/add/remove 子命令。
+- [x] 给 `skill` 增加 zip-install 子命令。
+- [x] 给 `proxy` 增加 auto-failover enable/config 子命令。
+- [x] 给 `proxy` 增加 provider-health / circuit-stats / available-providers 子命令。
+- [x] 给 `proxy` 增加 default-cost-multiplier / pricing-model-source / global-proxy-config 子命令。
+- [x] 给 `mcp` 补 validate / docs-link / richer app toggle 输出，做到和 GUI 操作闭环一致。
+- [x] 给 `prompt` 增加 current-live-file-content 查看能力。
+- [x] 给 `deeplink` 增加 parse / merge / preview 子命令，不再只有最终 import。
 - [ ] 给 `workspace` 增加 read/write/list-memory/search-memory/delete-memory/open-dir 子命令。
 - [ ] 给 `webdav` 增加 test/save/upload/download/fetch-remote-info 子命令。
 - [ ] 给 `backup` 增加 create/list/restore/rename/delete 子命令。

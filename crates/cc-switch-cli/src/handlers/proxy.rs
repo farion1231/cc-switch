@@ -3,12 +3,18 @@
 use anyhow::{anyhow, Error};
 
 use crate::cli::{
-    ProxyCircuitCommands, ProxyCircuitConfigCommands, ProxyCommands, ProxyConfigCommands,
-    ProxyFailoverCommands, ProxyTakeoverCommands,
+    ProxyAppConfigCommands, ProxyAutoFailoverCommands, ProxyCircuitCommands,
+    ProxyCircuitConfigCommands, ProxyCommands, ProxyConfigCommands,
+    ProxyDefaultCostMultiplierCommands, ProxyFailoverCommands, ProxyGlobalConfigCommands,
+    ProxyPricingModelSourceCommands, ProxyTakeoverCommands,
 };
 use crate::handlers::common::parse_proxy_app_type;
 use crate::output::Printer;
-use cc_switch_core::{AppState, CircuitBreakerConfig, ProviderService, ProviderSortUpdate};
+use cc_switch_core::{
+    AppProxyConfig, AppState, CircuitBreakerConfig, GlobalProxyConfig, ProviderService,
+    ProviderSortUpdate,
+};
+use serde_json::json;
 
 pub async fn handle(cmd: ProxyCommands, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
     match cmd {
@@ -16,6 +22,21 @@ pub async fn handle(cmd: ProxyCommands, state: &AppState, printer: &Printer) -> 
         ProxyCommands::Stop => handle_stop(state, printer).await,
         ProxyCommands::Status => handle_status(state, printer).await,
         ProxyCommands::Config(cmd) => handle_config(cmd, state, printer).await,
+        ProxyCommands::GlobalConfig(cmd) => handle_global_config(cmd, state, printer).await,
+        ProxyCommands::AppConfig(cmd) => handle_app_config(cmd, state, printer).await,
+        ProxyCommands::AutoFailover(cmd) => handle_auto_failover(cmd, state, printer).await,
+        ProxyCommands::AvailableProviders { app } => {
+            handle_available_providers(&app, state, printer).await
+        }
+        ProxyCommands::ProviderHealth { id, app } => {
+            handle_provider_health(&id, &app, state, printer).await
+        }
+        ProxyCommands::DefaultCostMultiplier(cmd) => {
+            handle_default_cost_multiplier(cmd, state, printer).await
+        }
+        ProxyCommands::PricingModelSource(cmd) => {
+            handle_pricing_model_source(cmd, state, printer).await
+        }
         ProxyCommands::Takeover(cmd) => handle_takeover(cmd, state, printer).await,
         ProxyCommands::Failover(cmd) => handle_failover(cmd, state, printer).await,
         ProxyCommands::Circuit(cmd) => handle_circuit(cmd, state, printer).await,
@@ -111,6 +132,292 @@ async fn handle_config(
             printer.print_proxy_config(&config)?;
         }
     }
+    Ok(())
+}
+
+async fn handle_global_config(
+    cmd: ProxyGlobalConfigCommands,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    match cmd {
+        ProxyGlobalConfigCommands::Show => {
+            let config = state
+                .proxy_service
+                .get_global_proxy_config()
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&config)?;
+        }
+        ProxyGlobalConfigCommands::Set {
+            proxy_enabled,
+            host,
+            port,
+            log_enabled,
+        } => {
+            let mut config: GlobalProxyConfig = state
+                .proxy_service
+                .get_global_proxy_config()
+                .await
+                .map_err(Error::msg)?;
+
+            if let Some(proxy_enabled) = proxy_enabled {
+                config.proxy_enabled = proxy_enabled;
+            }
+            if let Some(host) = host {
+                config.listen_address = host;
+            }
+            if let Some(port) = port {
+                config.listen_port = port;
+            }
+            if let Some(log_enabled) = log_enabled {
+                config.enable_logging = log_enabled;
+            }
+
+            state
+                .proxy_service
+                .update_global_proxy_config(config.clone())
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&config)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_app_config(
+    cmd: ProxyAppConfigCommands,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    match cmd {
+        ProxyAppConfigCommands::Show { app } => {
+            let app = parse_proxy_app_type(&app)?;
+            let config = state
+                .proxy_service
+                .get_app_proxy_config(app.as_str())
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&config)?;
+        }
+        ProxyAppConfigCommands::Set {
+            app,
+            enabled,
+            auto_failover_enabled,
+            max_retries,
+            streaming_first_byte_timeout,
+            streaming_idle_timeout,
+            non_streaming_timeout,
+            circuit_failure_threshold,
+            circuit_success_threshold,
+            circuit_timeout_seconds,
+            circuit_error_rate_threshold,
+            circuit_min_requests,
+        } => {
+            let app = parse_proxy_app_type(&app)?;
+            let mut config: AppProxyConfig = state
+                .proxy_service
+                .get_app_proxy_config(app.as_str())
+                .await
+                .map_err(Error::msg)?;
+
+            if let Some(enabled) = enabled {
+                config.enabled = enabled;
+            }
+            if let Some(auto_failover_enabled) = auto_failover_enabled {
+                config.auto_failover_enabled = auto_failover_enabled;
+            }
+            if let Some(max_retries) = max_retries {
+                config.max_retries = max_retries;
+            }
+            if let Some(streaming_first_byte_timeout) = streaming_first_byte_timeout {
+                config.streaming_first_byte_timeout = streaming_first_byte_timeout;
+            }
+            if let Some(streaming_idle_timeout) = streaming_idle_timeout {
+                config.streaming_idle_timeout = streaming_idle_timeout;
+            }
+            if let Some(non_streaming_timeout) = non_streaming_timeout {
+                config.non_streaming_timeout = non_streaming_timeout;
+            }
+            if let Some(circuit_failure_threshold) = circuit_failure_threshold {
+                config.circuit_failure_threshold = circuit_failure_threshold;
+            }
+            if let Some(circuit_success_threshold) = circuit_success_threshold {
+                config.circuit_success_threshold = circuit_success_threshold;
+            }
+            if let Some(circuit_timeout_seconds) = circuit_timeout_seconds {
+                config.circuit_timeout_seconds = circuit_timeout_seconds;
+            }
+            if let Some(circuit_error_rate_threshold) = circuit_error_rate_threshold {
+                config.circuit_error_rate_threshold = circuit_error_rate_threshold;
+            }
+            if let Some(circuit_min_requests) = circuit_min_requests {
+                config.circuit_min_requests = circuit_min_requests;
+            }
+
+            state
+                .proxy_service
+                .update_app_proxy_config(config.clone())
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&config)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_auto_failover(
+    cmd: ProxyAutoFailoverCommands,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    match cmd {
+        ProxyAutoFailoverCommands::Show { app } => {
+            let app = parse_proxy_app_type(&app)?;
+            let enabled = state
+                .proxy_service
+                .get_auto_failover_enabled(app.as_str())
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&json!({
+                "app": app.as_str(),
+                "enabled": enabled,
+            }))?;
+        }
+        ProxyAutoFailoverCommands::Enable { app } => {
+            let app = parse_proxy_app_type(&app)?;
+            let active_provider_id = state
+                .proxy_service
+                .set_auto_failover_enabled(app.as_str(), true)
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&json!({
+                "app": app.as_str(),
+                "enabled": true,
+                "activeProviderId": active_provider_id,
+            }))?;
+        }
+        ProxyAutoFailoverCommands::Disable { app } => {
+            let app = parse_proxy_app_type(&app)?;
+            state
+                .proxy_service
+                .set_auto_failover_enabled(app.as_str(), false)
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&json!({
+                "app": app.as_str(),
+                "enabled": false,
+            }))?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_available_providers(
+    app: &str,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    let app = parse_proxy_app_type(app)?;
+    let providers = state
+        .proxy_service
+        .get_available_providers_for_failover(app.as_str())
+        .await
+        .map_err(Error::msg)?;
+    let providers = providers
+        .into_iter()
+        .map(|provider| (provider.id.clone(), provider))
+        .collect();
+    printer.print_providers(&providers)?;
+    Ok(())
+}
+
+async fn handle_provider_health(
+    id: &str,
+    app: &str,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    let app = parse_proxy_app_type(app)?;
+    let health = state
+        .proxy_service
+        .get_provider_health(id, app.as_str())
+        .await
+        .map_err(Error::msg)?;
+    printer.print_provider_health(&health)?;
+    Ok(())
+}
+
+async fn handle_default_cost_multiplier(
+    cmd: ProxyDefaultCostMultiplierCommands,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    match cmd {
+        ProxyDefaultCostMultiplierCommands::Get { app } => {
+            let app = parse_proxy_app_type(&app)?;
+            let value = state
+                .proxy_service
+                .get_default_cost_multiplier(app.as_str())
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&json!({
+                "app": app.as_str(),
+                "value": value,
+            }))?;
+        }
+        ProxyDefaultCostMultiplierCommands::Set { app, value } => {
+            let app = parse_proxy_app_type(&app)?;
+            state
+                .proxy_service
+                .set_default_cost_multiplier(app.as_str(), &value)
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&json!({
+                "app": app.as_str(),
+                "value": value,
+            }))?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_pricing_model_source(
+    cmd: ProxyPricingModelSourceCommands,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    match cmd {
+        ProxyPricingModelSourceCommands::Get { app } => {
+            let app = parse_proxy_app_type(&app)?;
+            let value = state
+                .proxy_service
+                .get_pricing_model_source(app.as_str())
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&json!({
+                "app": app.as_str(),
+                "value": value,
+            }))?;
+        }
+        ProxyPricingModelSourceCommands::Set { app, value } => {
+            let app = parse_proxy_app_type(&app)?;
+            state
+                .proxy_service
+                .set_pricing_model_source(app.as_str(), &value)
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&json!({
+                "app": app.as_str(),
+                "value": value,
+            }))?;
+        }
+    }
+
     Ok(())
 }
 
@@ -228,13 +535,7 @@ async fn handle_circuit(
 ) -> anyhow::Result<()> {
     match cmd {
         ProxyCircuitCommands::Show { id, app } => {
-            let app = parse_proxy_app_type(&app)?;
-            let health = state
-                .proxy_service
-                .get_provider_health(&id, app.as_str())
-                .await
-                .map_err(Error::msg)?;
-            printer.print_provider_health(&health)?;
+            handle_provider_health(&id, &app, state, printer).await?;
         }
         ProxyCircuitCommands::Reset { id, app } => {
             let app = parse_proxy_app_type(&app)?;
@@ -248,6 +549,19 @@ async fn handle_circuit(
                 id,
                 app.as_str()
             ));
+        }
+        ProxyCircuitCommands::Stats { id, app } => {
+            let app = parse_proxy_app_type(&app)?;
+            let stats = state
+                .proxy_service
+                .get_circuit_breaker_stats(&id, app.as_str())
+                .await
+                .map_err(Error::msg)?;
+            printer.print_value(&json!({
+                "app": app.as_str(),
+                "providerId": id,
+                "stats": stats,
+            }))?;
         }
         ProxyCircuitCommands::Config(cmd) => {
             handle_circuit_config(cmd, state, printer).await?;

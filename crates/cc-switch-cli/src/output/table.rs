@@ -237,6 +237,13 @@ pub fn print_prompt_detail(prompt: &cc_switch_core::Prompt) -> anyhow::Result<()
     Ok(())
 }
 
+pub fn print_common_config_snippet(app: &str, snippet: Option<&str>) -> anyhow::Result<()> {
+    println!("App: {}", app.cyan());
+    println!("Snippet:");
+    println!("{}", snippet.unwrap_or("(empty)"));
+    Ok(())
+}
+
 pub fn print_skills(skills: &[cc_switch_core::InstalledSkill]) -> anyhow::Result<()> {
     if skills.is_empty() {
         println!("No skills installed.");

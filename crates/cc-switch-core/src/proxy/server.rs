@@ -198,6 +198,17 @@ impl ProxyServer {
         );
     }
 
+    pub async fn get_circuit_breaker_stats(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Option<super::CircuitBreakerStats> {
+        self.state
+            .provider_router
+            .get_circuit_breaker_stats(provider_id, app_type)
+            .await
+    }
+
     fn build_router(&self) -> Router {
         let cors = CorsLayer::new()
             .allow_origin(Any)

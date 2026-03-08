@@ -1,4 +1,5 @@
 use anyhow::Result;
+use base64::prelude::*;
 
 use crate::asserts::{ensure, read_json, stdout_json};
 use crate::runner::{HarnessEnv, Scenario};
@@ -118,6 +119,60 @@ async fn run(env: HarnessEnv) -> Result<()> {
         ensure(
             stdout_json(&imported_prompt)?["id"] == "merged-guide",
             "merge import did not create claude prompt",
+        )?;
+
+        let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1","ANTHROPIC_MODEL":"claude-sonnet-4.5"}}"#;
+        let config_b64 = BASE64_STANDARD
+            .encode(config_json.as_bytes())
+            .replace('+', "%2B")
+            .replace('/', "%2F")
+            .replace('=', "%3D");
+        let preview_url = format!(
+            "ccswitch://v1/import?resource=provider&app=claude&name=Preview%20Provider&config={config_b64}&configFormat=json"
+        );
+
+        let parsed_output = sandbox
+            .run_ok(&vec![
+                "--format".to_string(),
+                "json".to_string(),
+                "deeplink".to_string(),
+                "parse".to_string(),
+                preview_url.clone(),
+            ])
+            .await?;
+        ensure(
+            stdout_json(&parsed_output)?["name"] == "Preview Provider",
+            "deeplink parse did not expose the parsed request",
+        )?;
+
+        let merged_output = sandbox
+            .run_ok(&vec![
+                "--format".to_string(),
+                "json".to_string(),
+                "deeplink".to_string(),
+                "merge".to_string(),
+                preview_url.clone(),
+            ])
+            .await?;
+        let merged_json = stdout_json(&merged_output)?;
+        ensure(
+            merged_json["apiKey"] == "sk-ant-xxx"
+                && merged_json["endpoint"] == "https://api.anthropic.com/v1",
+            "deeplink merge did not fill config-derived provider fields",
+        )?;
+
+        let preview_output = sandbox
+            .run_ok(&vec![
+                "--format".to_string(),
+                "json".to_string(),
+                "deeplink".to_string(),
+                "preview".to_string(),
+                preview_url,
+            ])
+            .await?;
+        ensure(
+            stdout_json(&preview_output)?["merged"]["model"] == "claude-sonnet-4.5",
+            "deeplink preview did not expose the merged request view",
         )?;
 
         let deeplink_url = std::fs::read_to_string(sandbox.fixture_path("deeplink/provider.url"))?;

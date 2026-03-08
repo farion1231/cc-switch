@@ -142,6 +142,93 @@ async fn run(env: HarnessEnv) -> Result<()> {
             "usage logs did not include proxy requests",
         )?;
 
+        let trends = sandbox
+            .run_ok(&vec![
+                "usage".to_string(),
+                "trends".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
+            ])
+            .await?;
+        let trends_json = stdout_json(&trends)?;
+        ensure(
+            trends_json.as_array().is_some_and(|items| !items.is_empty()),
+            "usage trends should contain at least one point",
+        )?;
+
+        let provider_stats = sandbox
+            .run_ok(&vec![
+                "usage".to_string(),
+                "provider-stats".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
+            ])
+            .await?;
+        let provider_stats_json = stdout_json(&provider_stats)?;
+        ensure(
+            provider_stats_json.as_array().is_some_and(|items| !items.is_empty()),
+            "usage provider-stats should contain at least one row",
+        )?;
+
+        let model_stats = sandbox
+            .run_ok(&vec![
+                "usage".to_string(),
+                "model-stats".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
+            ])
+            .await?;
+        let model_stats_json = stdout_json(&model_stats)?;
+        ensure(
+            model_stats_json.as_array().is_some_and(|items| !items.is_empty()),
+            "usage model-stats should contain at least one row",
+        )?;
+
+        sandbox
+            .run_ok(&vec![
+                "usage".to_string(),
+                "model-pricing".to_string(),
+                "update".to_string(),
+                "e2e-custom-model".to_string(),
+                "--display-name".to_string(),
+                "E2E Custom Model".to_string(),
+                "--input-cost".to_string(),
+                "1.11".to_string(),
+                "--output-cost".to_string(),
+                "2.22".to_string(),
+                "--cache-read-cost".to_string(),
+                "0.11".to_string(),
+                "--cache-creation-cost".to_string(),
+                "0.22".to_string(),
+            ])
+            .await?;
+
+        let pricing_list = sandbox
+            .run_ok(&vec![
+                "usage".to_string(),
+                "model-pricing".to_string(),
+                "list".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
+            ])
+            .await?;
+        let pricing_json = stdout_json(&pricing_list)?;
+        ensure(
+            pricing_json.as_array().is_some_and(|items| items.iter().any(|item| {
+                item["modelId"] == "e2e-custom-model"
+            })),
+            "usage model-pricing list should include the newly upserted row",
+        )?;
+
+        sandbox
+            .run_ok(&vec![
+                "usage".to_string(),
+                "model-pricing".to_string(),
+                "delete".to_string(),
+                "e2e-custom-model".to_string(),
+            ])
+            .await?;
+
         let export_path = sandbox.work_path("usage.csv");
         sandbox
             .run_ok(&vec![

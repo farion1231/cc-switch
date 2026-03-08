@@ -67,6 +67,11 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: UsageCommands,
     },
+    /// Deep link tooling
+    Deeplink {
+        #[command(subcommand)]
+        cmd: DeeplinkCommands,
+    },
     /// Import/Export operations
     Export {
         /// Output file path
@@ -217,6 +222,24 @@ pub enum ProviderCommands {
         #[command(subcommand)]
         cmd: ProviderEndpointCommands,
     },
+    /// Manage provider common config snippets
+    #[command(name = "common-config-snippet")]
+    CommonConfigSnippet {
+        #[command(subcommand)]
+        cmd: ProviderCommonConfigSnippetCommands,
+    },
+    /// Manage provider usage scripts
+    #[command(name = "usage-script")]
+    UsageScript {
+        #[command(subcommand)]
+        cmd: ProviderUsageScriptCommands,
+    },
+    /// Run provider stream checks
+    #[command(name = "stream-check")]
+    StreamCheck {
+        #[command(subcommand)]
+        cmd: ProviderStreamCheckCommands,
+    },
     /// Universal provider management (cross-app)
     #[command(subcommand)]
     Universal(UniversalProviderCommands),
@@ -279,9 +302,138 @@ pub enum ProviderEndpointCommands {
 }
 
 #[derive(Subcommand)]
+pub enum ProviderCommonConfigSnippetCommands {
+    /// Show the saved common config snippet for an app
+    Get {
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+    /// Save or clear the common config snippet for an app
+    Set {
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+        /// Read snippet content from a file
+        #[arg(long, conflicts_with_all = ["value", "clear"])]
+        file: Option<String>,
+        /// Inline snippet content
+        #[arg(long, conflicts_with_all = ["file", "clear"])]
+        value: Option<String>,
+        /// Clear the saved snippet
+        #[arg(long, conflicts_with_all = ["file", "value"])]
+        clear: bool,
+    },
+    /// Extract a snippet from the current provider for an app
+    Extract {
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProviderUsageScriptCommands {
+    /// Show the saved usage script for a provider
+    Show {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+    /// Save or clear the usage script for a provider
+    Save {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+        /// Read usage script JSON from a file
+        #[arg(long, conflicts_with_all = ["value", "clear"])]
+        file: Option<String>,
+        /// Inline usage script JSON
+        #[arg(long, conflicts_with_all = ["file", "clear"])]
+        value: Option<String>,
+        /// Clear the saved usage script
+        #[arg(long, conflicts_with_all = ["file", "value"])]
+        clear: bool,
+    },
+    /// Test a saved or temporary usage script
+    Test {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+        /// Read temporary usage script JSON from a file
+        #[arg(long, conflicts_with = "value")]
+        file: Option<String>,
+        /// Inline temporary usage script JSON
+        #[arg(long, conflicts_with = "file")]
+        value: Option<String>,
+    },
+    /// Query usage directly through the saved usage script
+    Query {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProviderStreamCheckCommands {
+    /// Run a stream check for a single provider
+    Run {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+    /// Run stream checks for all providers of an app
+    #[command(name = "run-all")]
+    RunAll {
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+        /// Only check the current provider and failover targets
+        #[arg(long)]
+        proxy_targets_only: bool,
+    },
+    /// Manage stream-check configuration
+    Config {
+        #[command(subcommand)]
+        cmd: ProviderStreamCheckConfigCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProviderStreamCheckConfigCommands {
+    /// Show the current stream-check configuration
+    Get,
+    /// Save stream-check configuration from JSON
+    Set {
+        /// Read config JSON from a file
+        #[arg(long, conflicts_with = "value")]
+        file: Option<String>,
+        /// Inline config JSON
+        #[arg(long, conflicts_with = "file")]
+        value: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum UniversalProviderCommands {
     /// List universal providers
     List,
+    /// Show a universal provider
+    Show {
+        /// Provider ID
+        id: String,
+    },
     /// Add a universal provider
     Add {
         /// Provider name
@@ -296,6 +448,42 @@ pub enum UniversalProviderCommands {
         /// API key
         #[arg(short = 'k', long)]
         api_key: Option<String>,
+    },
+    /// Edit a universal provider
+    Edit {
+        /// Provider ID
+        id: String,
+        /// Set a new provider name
+        #[arg(long)]
+        set_name: Option<String>,
+        /// Replace the enabled app list
+        #[arg(long)]
+        set_apps: Option<String>,
+        /// Set a new base URL
+        #[arg(long)]
+        set_base_url: Option<String>,
+        /// Set a new API key
+        #[arg(long)]
+        set_api_key: Option<String>,
+    },
+    /// Save a universal provider and immediately sync it to enabled apps
+    #[command(name = "save-and-sync")]
+    SaveAndSync {
+        /// Provider name
+        #[arg(short, long)]
+        name: String,
+        /// Optional explicit provider ID
+        #[arg(long)]
+        id: Option<String>,
+        /// Comma-separated list of apps
+        #[arg(short, long)]
+        apps: String,
+        /// Base URL
+        #[arg(short = 'u', long)]
+        base_url: String,
+        /// API key
+        #[arg(short = 'k', long)]
+        api_key: String,
     },
     /// Sync universal provider to apps
     Sync {
@@ -376,6 +564,17 @@ pub enum McpCommands {
     },
     /// Import MCP servers from apps
     Import,
+    /// Validate an MCP server spec already saved in SSOT
+    Validate {
+        /// Server ID
+        id: String,
+    },
+    /// Show homepage / docs links for an MCP server
+    #[command(name = "docs-link")]
+    DocsLink {
+        /// Server ID
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -396,6 +595,37 @@ pub enum ProxyCommands {
     /// Proxy configuration
     #[command(subcommand)]
     Config(ProxyConfigCommands),
+    /// Global proxy configuration
+    #[command(name = "global-config", subcommand)]
+    GlobalConfig(ProxyGlobalConfigCommands),
+    /// Per-app proxy configuration
+    #[command(name = "app-config", subcommand)]
+    AppConfig(ProxyAppConfigCommands),
+    /// Auto failover management
+    #[command(name = "auto-failover", subcommand)]
+    AutoFailover(ProxyAutoFailoverCommands),
+    /// List providers that can still be added into failover queue
+    #[command(name = "available-providers")]
+    AvailableProviders {
+        /// App type
+        #[arg(short, long)]
+        app: String,
+    },
+    /// Show provider health tracked by the proxy
+    #[command(name = "provider-health")]
+    ProviderHealth {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long)]
+        app: String,
+    },
+    /// Default cost multiplier
+    #[command(name = "default-cost-multiplier", subcommand)]
+    DefaultCostMultiplier(ProxyDefaultCostMultiplierCommands),
+    /// Pricing model source
+    #[command(name = "pricing-model-source", subcommand)]
+    PricingModelSource(ProxyPricingModelSourceCommands),
     /// Takeover management
     #[command(subcommand)]
     Takeover(ProxyTakeoverCommands),
@@ -422,6 +652,98 @@ pub enum ProxyConfigCommands {
         /// Enable logging
         #[arg(long)]
         log_enabled: Option<bool>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProxyGlobalConfigCommands {
+    /// Show global proxy configuration
+    Show,
+    /// Update global proxy configuration
+    Set {
+        /// Toggle the global proxy switch
+        #[arg(long)]
+        proxy_enabled: Option<bool>,
+        /// Host to bind to
+        #[arg(long)]
+        host: Option<String>,
+        /// Port to listen on
+        #[arg(long)]
+        port: Option<u16>,
+        /// Enable logging
+        #[arg(long)]
+        log_enabled: Option<bool>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProxyAppConfigCommands {
+    /// Show per-app proxy configuration
+    Show {
+        /// App type
+        #[arg(short, long)]
+        app: String,
+    },
+    /// Update per-app proxy configuration
+    Set {
+        /// App type
+        #[arg(short, long)]
+        app: String,
+        /// Whether proxy takeover is enabled for this app
+        #[arg(long)]
+        enabled: Option<bool>,
+        /// Whether automatic failover is enabled for this app
+        #[arg(long)]
+        auto_failover_enabled: Option<bool>,
+        /// Maximum retries
+        #[arg(long)]
+        max_retries: Option<u32>,
+        /// Streaming first-byte timeout in seconds
+        #[arg(long)]
+        streaming_first_byte_timeout: Option<u32>,
+        /// Streaming idle timeout in seconds
+        #[arg(long)]
+        streaming_idle_timeout: Option<u32>,
+        /// Non-streaming timeout in seconds
+        #[arg(long)]
+        non_streaming_timeout: Option<u32>,
+        /// Circuit breaker failure threshold
+        #[arg(long)]
+        circuit_failure_threshold: Option<u32>,
+        /// Circuit breaker success threshold
+        #[arg(long)]
+        circuit_success_threshold: Option<u32>,
+        /// Circuit breaker timeout in seconds
+        #[arg(long)]
+        circuit_timeout_seconds: Option<u32>,
+        /// Circuit breaker error rate threshold
+        #[arg(long)]
+        circuit_error_rate_threshold: Option<f64>,
+        /// Circuit breaker minimum requests
+        #[arg(long)]
+        circuit_min_requests: Option<u32>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProxyAutoFailoverCommands {
+    /// Show whether auto failover is enabled for an app
+    Show {
+        /// App type
+        #[arg(short, long)]
+        app: String,
+    },
+    /// Enable auto failover for an app
+    Enable {
+        /// App type
+        #[arg(short, long)]
+        app: String,
+    },
+    /// Disable auto failover for an app
+    Disable {
+        /// App type
+        #[arg(short, long)]
+        app: String,
     },
 }
 
@@ -498,6 +820,14 @@ pub enum ProxyCircuitCommands {
         #[arg(short, long)]
         app: String,
     },
+    /// Show circuit breaker runtime stats
+    Stats {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long)]
+        app: String,
+    },
     /// Circuit breaker configuration
     #[command(subcommand)]
     Config(ProxyCircuitConfigCommands),
@@ -518,6 +848,42 @@ pub enum ProxyCircuitConfigCommands {
         /// Half-open requests
         #[arg(long)]
         half_open_requests: Option<u32>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProxyDefaultCostMultiplierCommands {
+    /// Show default cost multiplier for an app
+    Get {
+        /// App type
+        #[arg(short, long)]
+        app: String,
+    },
+    /// Set default cost multiplier for an app
+    Set {
+        /// App type
+        #[arg(short, long)]
+        app: String,
+        /// Multiplier value
+        value: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProxyPricingModelSourceCommands {
+    /// Show pricing model source for an app
+    Get {
+        /// App type
+        #[arg(short, long)]
+        app: String,
+    },
+    /// Set pricing model source for an app
+    Set {
+        /// App type
+        #[arg(short, long)]
+        app: String,
+        /// Source value: request or response
+        value: String,
     },
 }
 
@@ -585,6 +951,32 @@ pub enum PromptCommands {
         #[arg(short, long, default_value = "claude")]
         app: String,
     },
+    /// Show the current live prompt file content
+    #[command(name = "current-live-file-content")]
+    CurrentLiveFileContent {
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DeeplinkCommands {
+    /// Parse a ccswitch:// URL into a structured request
+    Parse {
+        /// Deeplink URL
+        url: String,
+    },
+    /// Parse and merge inline config carried by a deeplink URL
+    Merge {
+        /// Deeplink URL
+        url: String,
+    },
+    /// Show both the parsed and merged view of a deeplink URL
+    Preview {
+        /// Deeplink URL
+        url: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -627,6 +1019,59 @@ pub enum SkillCommands {
         /// App type
         #[arg(short, long)]
         app: String,
+    },
+    /// Manage unmanaged skills discovered from live app directories
+    Unmanaged {
+        #[command(subcommand)]
+        cmd: SkillUnmanagedCommands,
+    },
+    /// Manage skill repositories
+    Repo {
+        #[command(subcommand)]
+        cmd: SkillRepoCommands,
+    },
+    /// Install local skills from a ZIP archive
+    #[command(name = "zip-install")]
+    ZipInstall {
+        /// ZIP file path
+        #[arg(long)]
+        file: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SkillUnmanagedCommands {
+    /// Scan unmanaged skills in live app directories
+    Scan,
+    /// Import unmanaged skills into CC-Switch tracking
+    Import {
+        /// Skill directory names to import
+        directories: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SkillRepoCommands {
+    /// List skill repositories
+    List,
+    /// Add or update a skill repository
+    Add {
+        /// GitHub repo URL or owner/name
+        repo: String,
+        /// Branch name
+        #[arg(short, long, default_value = "main")]
+        branch: String,
+        /// Add the repo as disabled
+        #[arg(long)]
+        disabled: bool,
+    },
+    /// Remove a skill repository
+    Remove {
+        /// GitHub repo URL or owner/name
+        repo: String,
     },
 }
 
@@ -678,6 +1123,82 @@ pub enum UsageCommands {
         /// Output file path
         #[arg(short, long)]
         output: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+    /// Show daily usage trends
+    Trends {
+        /// From date (YYYY-MM-DD)
+        #[arg(long)]
+        from: Option<String>,
+        /// To date (YYYY-MM-DD)
+        #[arg(long)]
+        to: Option<String>,
+    },
+    /// Show aggregated provider usage stats
+    #[command(name = "provider-stats")]
+    ProviderStats,
+    /// Show aggregated model usage stats
+    #[command(name = "model-stats")]
+    ModelStats,
+    /// Show one request detail
+    #[command(name = "request-detail")]
+    RequestDetail {
+        /// Request ID
+        request_id: String,
+    },
+    /// Manage model pricing records
+    #[command(name = "model-pricing")]
+    ModelPricing {
+        #[command(subcommand)]
+        cmd: UsageModelPricingCommands,
+    },
+    /// Check provider usage limits
+    #[command(name = "provider-limits")]
+    ProviderLimits {
+        #[command(subcommand)]
+        cmd: UsageProviderLimitsCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum UsageModelPricingCommands {
+    /// List model pricing rows
+    List,
+    /// Upsert one model pricing row
+    Update {
+        /// Model ID
+        model_id: String,
+        /// Display name
+        #[arg(long)]
+        display_name: String,
+        /// Input cost per million tokens
+        #[arg(long)]
+        input_cost: String,
+        /// Output cost per million tokens
+        #[arg(long)]
+        output_cost: String,
+        /// Cache read cost per million tokens
+        #[arg(long)]
+        cache_read_cost: String,
+        /// Cache creation cost per million tokens
+        #[arg(long)]
+        cache_creation_cost: String,
+    },
+    /// Delete one model pricing row
+    Delete {
+        /// Model ID
+        model_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum UsageProviderLimitsCommands {
+    /// Check limit status for one provider
+    Check {
+        /// Provider ID
+        provider_id: String,
         /// App type
         #[arg(short, long, default_value = "claude")]
         app: String,

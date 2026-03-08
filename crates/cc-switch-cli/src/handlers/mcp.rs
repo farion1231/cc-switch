@@ -48,6 +48,8 @@ pub async fn handle(cmd: McpCommands, state: &AppState, printer: &Printer) -> an
         McpCommands::Enable { id, app } => handle_toggle(&id, &app, true, state, printer).await,
         McpCommands::Disable { id, app } => handle_toggle(&id, &app, false, state, printer).await,
         McpCommands::Import => handle_import(state, printer).await,
+        McpCommands::Validate { id } => handle_validate(&id, state, printer).await,
+        McpCommands::DocsLink { id } => handle_docs_link(&id, state, printer).await,
     }
 }
 
@@ -98,7 +100,9 @@ async fn handle_add(
     };
 
     cc_switch_core::McpService::upsert_server(state, server.clone())?;
-    printer.success(format!("✓ Added MCP server '{}'", server.id));
+    let saved = cc_switch_core::McpService::get_server(state, &server.id)?
+        .ok_or_else(|| anyhow::anyhow!("MCP server not found after save: {}", server.id))?;
+    printer.print_value(&saved)?;
     Ok(())
 }
 
@@ -120,7 +124,9 @@ async fn handle_edit(
         cc_switch_core::McpService::toggle_app(state, id, app.clone(), false)?;
     }
 
-    printer.success(format!("✓ Updated MCP server '{}'", id));
+    let saved = cc_switch_core::McpService::get_server(state, id)?
+        .ok_or_else(|| anyhow::anyhow!("MCP server not found after update: {}", id))?;
+    printer.print_value(&saved)?;
     Ok(())
 }
 
@@ -152,8 +158,9 @@ async fn handle_toggle(
 ) -> anyhow::Result<()> {
     let app_type = parse_app_type(app)?;
     cc_switch_core::McpService::toggle_app(state, id, app_type, enabled)?;
-    let action = if enabled { "enabled" } else { "disabled" };
-    printer.success(format!("✓ {} MCP server '{}' for {}", action, id, app));
+    let saved = cc_switch_core::McpService::get_server(state, id)?
+        .ok_or_else(|| anyhow::anyhow!("MCP server not found after toggle: {}", id))?;
+    printer.print_value(&saved)?;
     Ok(())
 }
 
@@ -162,10 +169,30 @@ async fn handle_import(state: &AppState, printer: &Printer) -> anyhow::Result<()
         + cc_switch_core::McpService::import_from_codex(state)?
         + cc_switch_core::McpService::import_from_gemini(state)?
         + cc_switch_core::McpService::import_from_opencode(state)?;
-    printer.success(format!(
-        "✓ Imported {} MCP servers from live app configs",
-        count
-    ));
+    printer.print_value(&json!({ "imported": count }))?;
+    Ok(())
+}
+
+async fn handle_validate(id: &str, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
+    let server = cc_switch_core::McpService::get_server(state, id)?
+        .ok_or_else(|| anyhow::anyhow!("MCP server not found: {}", id))?;
+    cc_switch_core::mcp::validation::validate_server_spec(&server.server)?;
+    printer.print_value(&json!({
+        "id": server.id,
+        "valid": true,
+        "apps": server.apps,
+    }))?;
+    Ok(())
+}
+
+async fn handle_docs_link(id: &str, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
+    let server = cc_switch_core::McpService::get_server(state, id)?
+        .ok_or_else(|| anyhow::anyhow!("MCP server not found: {}", id))?;
+    printer.print_value(&json!({
+        "id": server.id,
+        "homepage": server.homepage,
+        "docs": server.docs,
+    }))?;
     Ok(())
 }
 
@@ -301,8 +328,8 @@ mod tests {
             server.server.get("command").and_then(Value::as_str),
             Some("npx")
         );
-        assert_eq!(server.apps.claude, true);
-        assert_eq!(server.apps.codex, true);
-        assert_eq!(server.apps.gemini, false);
+        assert!(server.apps.claude);
+        assert!(server.apps.codex);
+        assert!(!server.apps.gemini);
     }
 }

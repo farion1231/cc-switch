@@ -38,3 +38,26 @@ pub async fn handle_deeplink(url: &str, state: &AppState, printer: &Printer) -> 
     }
     Ok(())
 }
+
+pub async fn handle_deeplink_parse(url: &str, printer: &Printer) -> anyhow::Result<()> {
+    let parsed = cc_switch_core::parse_deeplink_url(url)?;
+    printer.print_value(&parsed)?;
+    Ok(())
+}
+
+pub async fn handle_deeplink_merge(url: &str, printer: &Printer) -> anyhow::Result<()> {
+    let parsed = cc_switch_core::parse_deeplink_url(url)?;
+    let merged = cc_switch_core::parse_and_merge_config(&parsed)?;
+    printer.print_value(&merged)?;
+    Ok(())
+}
+
+pub async fn handle_deeplink_preview(url: &str, printer: &Printer) -> anyhow::Result<()> {
+    let parsed = cc_switch_core::parse_deeplink_url(url)?;
+    let merged = cc_switch_core::parse_and_merge_config(&parsed)?;
+    printer.print_value(&serde_json::json!({
+        "parsed": parsed,
+        "merged": merged,
+    }))?;
+    Ok(())
+}

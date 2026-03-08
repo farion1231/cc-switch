@@ -57,6 +57,20 @@ async fn run(env: HarnessEnv) -> Result<()> {
             read_text(&sandbox.home_path(".claude/CLAUDE.md"))? == read_text(&primary)?,
             "enabled prompt did not sync to CLAUDE.md",
         )?;
+        let live_content = sandbox
+            .run_ok(&args(&[
+                "--format",
+                "json",
+                "prompt",
+                "current-live-file-content",
+                "--app",
+                "claude",
+            ]))
+            .await?;
+        ensure(
+            stdout_json(&live_content)?["content"] == read_text(&primary)?,
+            "prompt current-live-file-content did not read the live prompt file",
+        )?;
 
         sandbox
             .run_ok(&vec![

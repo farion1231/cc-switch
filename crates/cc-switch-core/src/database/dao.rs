@@ -981,6 +981,29 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_setting(&self, key: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute("DELETE FROM settings WHERE key = ?1", [key])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn get_config_snippet(&self, app_type: &str) -> Result<Option<String>, AppError> {
+        self.get_setting(&format!("common_config_{app_type}"))
+    }
+
+    pub fn set_config_snippet(
+        &self,
+        app_type: &str,
+        snippet: Option<String>,
+    ) -> Result<(), AppError> {
+        let key = format!("common_config_{app_type}");
+        match snippet {
+            Some(value) if !value.trim().is_empty() => self.set_setting(&key, &value),
+            _ => self.delete_setting(&key),
+        }
+    }
+
     const GLOBAL_PROXY_URL_KEY: &'static str = "global_proxy_url";
 
     pub fn get_global_proxy_url(&self) -> Result<Option<String>, AppError> {
@@ -992,15 +1015,7 @@ impl Database {
             Some(value) if !value.trim().is_empty() => {
                 self.set_setting(Self::GLOBAL_PROXY_URL_KEY, value.trim())
             }
-            _ => {
-                let conn = lock_conn!(self.conn);
-                conn.execute(
-                    "DELETE FROM settings WHERE key = ?1",
-                    [Self::GLOBAL_PROXY_URL_KEY],
-                )
-                .map_err(|e| AppError::Database(e.to_string()))?;
-                Ok(())
-            }
+            _ => self.delete_setting(Self::GLOBAL_PROXY_URL_KEY),
         }
     }
 
@@ -1434,7 +1449,18 @@ impl Database {
         )
         .optional()
         .map(|value| value.unwrap_or(false))
-        .map_err(|e| AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub fn get_available_providers_for_failover(
+        &self,
+        app_type: &str,
+    ) -> Result<Vec<Provider>, AppError> {
+        let all_providers = self.get_all_providers(app_type)?;
+        Ok(all_providers
+            .into_values()
+            .filter(|provider| !provider.in_failover_queue)
+            .collect())
     }
 
     pub fn reset_provider_health(&self, provider_id: &str, app: &str) -> Result<(), AppError> {
@@ -3418,6 +3444,20 @@ mod tests {
         };
         let id = db.save_stream_check_log("p-limit", "Claude Limit", "claude", &result)?;
         assert!(id > 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_snippet_round_trip_and_clear() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let snippet = r#"{"env":{"HTTPS_PROXY":"http://127.0.0.1:8080"}}"#.to_string();
+
+        db.set_config_snippet("claude", Some(snippet.clone()))?;
+        assert_eq!(db.get_config_snippet("claude")?, Some(snippet));
+
+        db.set_config_snippet("claude", None)?;
+        assert_eq!(db.get_config_snippet("claude")?, None);
 
         Ok(())
     }

@@ -1,10 +1,10 @@
 //! Skill command handlers
 
-use crate::cli::SkillCommands;
+use crate::cli::{SkillCommands, SkillRepoCommands, SkillUnmanagedCommands};
 use crate::handlers::common::parse_app_type;
 use crate::output::Printer;
-use cc_switch_core::{AppState, DiscoverableSkill, Skill, SkillService};
-use std::path::Path;
+use cc_switch_core::{AppState, DiscoverableSkill, Skill, SkillRepo, SkillService};
+use std::path::{Path, PathBuf};
 
 pub async fn handle(cmd: SkillCommands, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
     match cmd {
@@ -14,6 +14,11 @@ pub async fn handle(cmd: SkillCommands, state: &AppState, printer: &Printer) -> 
         SkillCommands::Uninstall { id, yes } => handle_uninstall(&id, yes, state, printer).await,
         SkillCommands::Enable { id, app } => handle_toggle(&id, &app, true, state, printer).await,
         SkillCommands::Disable { id, app } => handle_toggle(&id, &app, false, state, printer).await,
+        SkillCommands::Unmanaged { cmd } => handle_unmanaged(cmd, state, printer).await,
+        SkillCommands::Repo { cmd } => handle_repo(cmd, state, printer).await,
+        SkillCommands::ZipInstall { file, app } => {
+            handle_zip_install(&file, &app, state, printer).await
+        }
     }
 }
 
@@ -56,6 +61,80 @@ async fn handle_install(
     Ok(())
 }
 
+async fn handle_unmanaged(
+    cmd: SkillUnmanagedCommands,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    match cmd {
+        SkillUnmanagedCommands::Scan => {
+            let skills = SkillService::scan_unmanaged(&state.db)?;
+            printer.print_value(&skills)?;
+        }
+        SkillUnmanagedCommands::Import { directories } => {
+            anyhow::ensure!(
+                !directories.is_empty(),
+                "Please provide at least one unmanaged skill directory to import."
+            );
+            let imported = SkillService::import_from_apps(&state.db, directories)?;
+            printer.print_value(&imported)?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_repo(
+    cmd: SkillRepoCommands,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    ensure_skill_repo_store_initialized(state)?;
+
+    match cmd {
+        SkillRepoCommands::List => {
+            let repos = state.db.get_skill_repos()?;
+            printer.print_value(&repos)?;
+        }
+        SkillRepoCommands::Add {
+            repo,
+            branch,
+            disabled,
+        } => {
+            let (owner, name) = parse_repo_spec(&repo)?;
+            let repo = SkillRepo {
+                owner,
+                name,
+                branch,
+                enabled: !disabled,
+            };
+            state.db.save_skill_repo(&repo)?;
+            printer.print_value(&repo)?;
+        }
+        SkillRepoCommands::Remove { repo } => {
+            let (owner, name) = parse_repo_spec(&repo)?;
+            state.db.delete_skill_repo(&owner, &name)?;
+            printer.success(format!("✓ Removed skill repo {owner}/{name}"));
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_zip_install(
+    file: &str,
+    app: &str,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    let app_type = parse_app_type(app)?;
+    let path = PathBuf::from(file);
+    anyhow::ensure!(path.exists(), "ZIP file not found: {}", path.display());
+
+    let installed = SkillService::install_from_zip(&state.db, &path, &app_type)?;
+    printer.print_value(&installed)?;
+    Ok(())
+}
+
 async fn handle_uninstall(
     id: &str,
     yes: bool,
@@ -86,6 +165,7 @@ async fn handle_toggle(
 }
 
 fn skill_repos_or_default(state: &AppState) -> anyhow::Result<Vec<cc_switch_core::SkillRepo>> {
+    ensure_skill_repo_store_initialized(state)?;
     cc_switch_core::SkillService::get_repos_or_default(&state.db).map_err(Into::into)
 }
 
@@ -126,6 +206,38 @@ fn install_name(directory: &str) -> Option<String> {
         .map(|value| value.to_string())
 }
 
+fn ensure_skill_repo_store_initialized(state: &AppState) -> anyhow::Result<()> {
+    state.db.init_default_skill_repos()?;
+    Ok(())
+}
+
+fn parse_repo_spec(spec: &str) -> anyhow::Result<(String, String)> {
+    let trimmed = spec.trim();
+    anyhow::ensure!(
+        !trimmed.is_empty(),
+        "Skill repo cannot be empty. Use owner/name or https://github.com/owner/name."
+    );
+
+    let without_scheme = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))
+        .or_else(|| trimmed.strip_prefix("github.com/"))
+        .unwrap_or(trimmed)
+        .trim_end_matches('/')
+        .trim_end_matches(".git");
+
+    let parts: Vec<_> = without_scheme
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    anyhow::ensure!(
+        parts.len() == 2,
+        "Invalid skill repo '{trimmed}'. Use owner/name or https://github.com/owner/name."
+    );
+
+    Ok((parts[0].to_string(), parts[1].to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +257,32 @@ mod tests {
 
         let found = find_discoverable_skill(&skills, "code-review").expect("skill should match");
         assert_eq!(found.key, "repo:code-review");
+    }
+
+    #[test]
+    fn parse_repo_spec_accepts_owner_name_and_github_url() {
+        assert_eq!(
+            parse_repo_spec("owner/repo").expect("owner/name"),
+            ("owner".to_string(), "repo".to_string())
+        );
+        assert_eq!(
+            parse_repo_spec("https://github.com/owner/repo.git").expect("github url"),
+            ("owner".to_string(), "repo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_spec_accepts_github_host_without_scheme() {
+        assert_eq!(
+            parse_repo_spec("github.com/owner/repo").expect("github.com path"),
+            ("owner".to_string(), "repo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_spec_rejects_invalid_inputs() {
+        assert!(parse_repo_spec("").is_err());
+        assert!(parse_repo_spec("owner").is_err());
+        assert!(parse_repo_spec("owner/repo/extra").is_err());
     }
 }

@@ -27,6 +27,9 @@ pub async fn handle(
         }
         PromptCommands::Enable { id, app } => handle_enable(&id, &app, state, printer).await,
         PromptCommands::Import { app } => handle_import(&app, state, printer).await,
+        PromptCommands::CurrentLiveFileContent { app } => {
+            handle_current_live_file_content(&app, printer).await
+        }
     }
 }
 
@@ -144,6 +147,16 @@ async fn handle_import(app: &str, state: &AppState, printer: &Printer) -> anyhow
     let app_type = parse_app_type(app)?;
     let count = cc_switch_core::PromptService::import_from_files(state, app_type)?;
     printer.success(format!("✓ Imported {} prompts for {}", count, app));
+    Ok(())
+}
+
+async fn handle_current_live_file_content(app: &str, printer: &Printer) -> anyhow::Result<()> {
+    let app_type = parse_app_type(app)?;
+    let content = cc_switch_core::PromptService::get_current_file_content(app_type)?;
+    printer.print_value(&serde_json::json!({
+        "app": app,
+        "content": content,
+    }))?;
     Ok(())
 }
 

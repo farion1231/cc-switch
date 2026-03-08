@@ -10,7 +10,7 @@ mod proxy;
 mod skill;
 mod usage;
 
-use crate::cli::{Cli, Commands};
+use crate::cli::{Cli, Commands, DeeplinkCommands};
 use crate::output::Printer;
 use cc_switch_core::AppState;
 
@@ -30,6 +30,17 @@ pub async fn dispatch(cli: Cli, state: AppState) -> anyhow::Result<()> {
         Commands::Skill { cmd } => skill::handle(cmd, &state, &printer).await,
         Commands::Config { cmd } => config::handle(cmd, &state, &printer).await,
         Commands::Usage { cmd } => usage::handle(cmd, &state, &printer).await,
+        Commands::Deeplink { cmd } => match cmd {
+            DeeplinkCommands::Parse { url } => {
+                import_export::handle_deeplink_parse(&url, &printer).await
+            }
+            DeeplinkCommands::Merge { url } => {
+                import_export::handle_deeplink_merge(&url, &printer).await
+            }
+            DeeplinkCommands::Preview { url } => {
+                import_export::handle_deeplink_preview(&url, &printer).await
+            }
+        },
         Commands::Export { output } => {
             import_export::handle_export(&output, &state, &printer).await
         }
@@ -52,6 +63,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Skill { .. } => "skill",
         Commands::Config { .. } => "config",
         Commands::Usage { .. } => "usage",
+        Commands::Deeplink { .. } => "deeplink",
         Commands::Export { .. } => "export",
         Commands::Import { .. } => "import",
         Commands::ImportDeeplink { .. } => "import-deeplink",

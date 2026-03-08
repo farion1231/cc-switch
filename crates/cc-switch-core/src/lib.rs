@@ -32,8 +32,8 @@ pub use error::AppError;
 pub use prompt::Prompt;
 pub use provider::{Provider, UniversalProvider};
 pub use proxy::{
-    CircuitBreakerConfig, FailoverQueueItem, LiveBackup, ProviderHealth, ProxyConfig, ProxyStatus,
-    ProxyTakeoverStatus,
+    AppProxyConfig, CircuitBreakerConfig, CircuitBreakerStats, FailoverQueueItem,
+    GlobalProxyConfig, LiveBackup, ProviderHealth, ProxyConfig, ProxyStatus, ProxyTakeoverStatus,
 };
 pub use services::config::{DeeplinkImportResult, DeeplinkService};
 pub use services::global_proxy::{

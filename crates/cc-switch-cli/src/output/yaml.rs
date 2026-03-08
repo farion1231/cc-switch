@@ -108,3 +108,14 @@ pub fn print_endpoint_latencies(
     println!("{}", serde_yaml::to_string(latencies)?);
     Ok(())
 }
+
+pub fn print_common_config_snippet(app: &str, snippet: Option<&str>) -> anyhow::Result<()> {
+    println!(
+        "{}",
+        serde_yaml::to_string(&serde_json::json!({
+            "app": app,
+            "snippet": snippet,
+        }))?
+    );
+    Ok(())
+}

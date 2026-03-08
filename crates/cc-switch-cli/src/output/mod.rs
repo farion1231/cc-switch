@@ -296,6 +296,21 @@ impl Printer {
         }
     }
 
+    pub fn print_common_config_snippet(
+        &self,
+        app: &str,
+        snippet: Option<&str>,
+    ) -> anyhow::Result<()> {
+        if self.is_quiet() {
+            return Ok(());
+        }
+        match self.format {
+            OutputFormat::Table => table::print_common_config_snippet(app, snippet),
+            OutputFormat::Json => json::print_common_config_snippet(app, snippet),
+            OutputFormat::Yaml => yaml::print_common_config_snippet(app, snippet),
+        }
+    }
+
     pub fn print_value<T: Serialize>(&self, value: &T) -> anyhow::Result<()> {
         if self.is_quiet() {
             return Ok(());

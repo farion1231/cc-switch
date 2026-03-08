@@ -1,16 +1,31 @@
 //! Provider command handlers
 
-use crate::cli::{ProviderCommands, ProviderEndpointCommands, UniversalProviderCommands};
+use crate::cli::{
+    ProviderCommands, ProviderCommonConfigSnippetCommands, ProviderEndpointCommands,
+    ProviderStreamCheckCommands, ProviderStreamCheckConfigCommands, ProviderUsageScriptCommands,
+    UniversalProviderCommands,
+};
 use crate::handlers::common::parse_app_type;
 use crate::output::Printer;
 use anyhow::Context;
 use cc_switch_core::{
-    config::sanitize_provider_name, AppState, AppType, Provider, ProviderSortUpdate,
-    SpeedtestService, UniversalProvider, UsageService,
+    config::sanitize_provider_name,
+    provider::{ProviderMeta, UsageScript},
+    AppState, AppType, Provider, ProviderSortUpdate, SpeedtestService, StreamCheckConfig,
+    StreamCheckResult, StreamCheckService, UniversalProvider, UsageService,
 };
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NamedStreamCheckResult {
+    provider_id: String,
+    #[serde(flatten)]
+    result: StreamCheckResult,
+}
 
 pub async fn handle(
     cmd: ProviderCommands,
@@ -86,6 +101,11 @@ pub async fn handle(
         }
         ProviderCommands::Usage { id, app } => handle_usage(&id, &app, state, printer).await,
         ProviderCommands::Endpoint { cmd } => handle_endpoint(cmd, state, printer).await,
+        ProviderCommands::CommonConfigSnippet { cmd } => {
+            handle_common_config_snippet(cmd, state, printer).await
+        }
+        ProviderCommands::UsageScript { cmd } => handle_usage_script(cmd, state, printer).await,
+        ProviderCommands::StreamCheck { cmd } => handle_stream_check(cmd, state, printer).await,
         ProviderCommands::Universal(cmd) => handle_universal(cmd, state, printer).await,
     }
 }
@@ -517,6 +537,100 @@ fn extract_provider_base_url(
     }))
 }
 
+fn resolve_common_config_input(
+    file: Option<&str>,
+    value: Option<&str>,
+    clear: bool,
+) -> anyhow::Result<Option<String>> {
+    if clear {
+        return Ok(None);
+    }
+
+    if let Some(path) = file {
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read snippet file: {path}"))?;
+        return Ok(Some(content));
+    }
+
+    if let Some(value) = value {
+        return Ok(Some(value.to_string()));
+    }
+
+    anyhow::bail!("Provider common-config-snippet set requires one of --file, --value or --clear");
+}
+
+fn validate_common_config_snippet(app_type: &AppType, snippet: &str) -> anyhow::Result<()> {
+    let trimmed = snippet.trim();
+    if trimmed.is_empty() || matches!(app_type, AppType::Codex) {
+        return Ok(());
+    }
+
+    serde_json::from_str::<Value>(trimmed)
+        .with_context(|| format!("Invalid {} common config snippet JSON", app_type.as_str()))?;
+    Ok(())
+}
+
+fn load_usage_script_input(file: Option<&str>, value: Option<&str>) -> anyhow::Result<UsageScript> {
+    let raw = if let Some(path) = file {
+        fs::read_to_string(path)
+            .with_context(|| format!("Failed to read usage script file: {path}"))?
+    } else if let Some(value) = value {
+        value.to_string()
+    } else {
+        anyhow::bail!("Provider usage-script requires either --file or --value");
+    };
+
+    serde_json::from_str::<UsageScript>(&raw)
+        .with_context(|| "Invalid usage script JSON".to_string())
+}
+
+fn load_stream_check_config_input(
+    file: Option<&str>,
+    value: Option<&str>,
+) -> anyhow::Result<StreamCheckConfig> {
+    let raw = if let Some(path) = file {
+        fs::read_to_string(path)
+            .with_context(|| format!("Failed to read stream-check config file: {path}"))?
+    } else if let Some(value) = value {
+        value.to_string()
+    } else {
+        anyhow::bail!("Provider stream-check config set requires either --file or --value");
+    };
+
+    serde_json::from_str::<StreamCheckConfig>(&raw)
+        .with_context(|| "Invalid stream-check config JSON".to_string())
+}
+
+fn saved_usage_script(provider: &Provider, id: &str) -> anyhow::Result<UsageScript> {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("Provider '{}' has no saved usage script", id))
+}
+
+fn normalize_provider_meta(provider: &mut Provider) {
+    if provider.meta.as_ref().is_some_and(provider_meta_is_empty) {
+        provider.meta = None;
+    }
+}
+
+fn provider_meta_is_empty(meta: &ProviderMeta) -> bool {
+    meta.custom_endpoints.is_empty()
+        && meta.usage_script.is_none()
+        && meta.endpoint_auto_select.is_none()
+        && meta.is_partner.is_none()
+        && meta.partner_promotion_key.is_none()
+        && meta.cost_multiplier.is_none()
+        && meta.pricing_model_source.is_none()
+        && meta.limit_daily_usd.is_none()
+        && meta.limit_monthly_usd.is_none()
+        && meta.test_config.is_none()
+        && meta.proxy_config.is_none()
+        && meta.api_format.is_none()
+}
+
 async fn handle_usage(
     id: &str,
     app: &str,
@@ -548,6 +662,186 @@ async fn handle_usage(
     Ok(())
 }
 
+async fn handle_common_config_snippet(
+    cmd: ProviderCommonConfigSnippetCommands,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    match cmd {
+        ProviderCommonConfigSnippetCommands::Get { app } => {
+            let app_type = parse_app_type(&app)?;
+            let snippet = state.db.get_config_snippet(app_type.as_str())?;
+            printer.print_common_config_snippet(app_type.as_str(), snippet.as_deref())?;
+        }
+        ProviderCommonConfigSnippetCommands::Set {
+            app,
+            file,
+            value,
+            clear,
+        } => {
+            let app_type = parse_app_type(&app)?;
+            let snippet = resolve_common_config_input(file.as_deref(), value.as_deref(), clear)?;
+            if let Some(ref snippet) = snippet {
+                validate_common_config_snippet(&app_type, snippet)?;
+            }
+            let clear_effective =
+                clear || snippet.as_ref().is_some_and(|item| item.trim().is_empty());
+            state.db.set_config_snippet(app_type.as_str(), snippet)?;
+            if clear_effective {
+                printer.success(format!(
+                    "✓ Cleared common config snippet for {}",
+                    app_type.as_str()
+                ));
+            } else {
+                printer.success(format!(
+                    "✓ Saved common config snippet for {}",
+                    app_type.as_str()
+                ));
+            }
+        }
+        ProviderCommonConfigSnippetCommands::Extract { app } => {
+            let app_type = parse_app_type(&app)?;
+            let snippet = cc_switch_core::ProviderService::extract_common_config_snippet(
+                state,
+                app_type.clone(),
+            )?;
+            printer.print_common_config_snippet(app_type.as_str(), Some(&snippet))?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_usage_script(
+    cmd: ProviderUsageScriptCommands,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    match cmd {
+        ProviderUsageScriptCommands::Show { id, app } => {
+            let app_type = parse_app_type(&app)?;
+            let provider = load_provider(state, &app_type, &id)?;
+            printer.print_value(&serde_json::json!({
+                "app": app_type.as_str(),
+                "providerId": id,
+                "usageScript": provider.meta.and_then(|meta| meta.usage_script),
+            }))?;
+        }
+        ProviderUsageScriptCommands::Save {
+            id,
+            app,
+            file,
+            value,
+            clear,
+        } => {
+            let app_type = parse_app_type(&app)?;
+            let mut provider = load_provider(state, &app_type, &id)?;
+            if clear {
+                if let Some(meta) = provider.meta.as_mut() {
+                    meta.usage_script = None;
+                }
+            } else {
+                let script = load_usage_script_input(file.as_deref(), value.as_deref())?;
+                let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
+                meta.usage_script = Some(script);
+            }
+            normalize_provider_meta(&mut provider);
+            cc_switch_core::ProviderService::update(state, app_type, provider)?;
+            if clear {
+                printer.success(format!(
+                    "✓ Cleared usage script for provider '{}' in {}",
+                    id, app
+                ));
+            } else {
+                printer.success(format!(
+                    "✓ Saved usage script for provider '{}' in {}",
+                    id, app
+                ));
+            }
+        }
+        ProviderUsageScriptCommands::Test {
+            id,
+            app,
+            file,
+            value,
+        } => {
+            let app_type = parse_app_type(&app)?;
+            let provider = load_provider(state, &app_type, &id)?;
+            let script = if file.is_some() || value.is_some() {
+                load_usage_script_input(file.as_deref(), value.as_deref())?
+            } else {
+                saved_usage_script(&provider, &id)?
+            };
+            let result = cc_switch_core::ProviderService::test_usage_script(
+                state,
+                app_type,
+                &id,
+                &script.code,
+                script.timeout.unwrap_or(10),
+                script.api_key.as_deref(),
+                script.base_url.as_deref(),
+                script.access_token.as_deref(),
+                script.user_id.as_deref(),
+                script.template_type.as_deref(),
+            )
+            .await?;
+            printer.print_value(&result)?;
+        }
+        ProviderUsageScriptCommands::Query { id, app } => {
+            let app_type = parse_app_type(&app)?;
+            ensure_provider_exists(state, &app_type, &id)?;
+            let result = cc_switch_core::ProviderService::query_usage(state, app_type, &id).await?;
+            printer.print_value(&result)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_stream_check(
+    cmd: ProviderStreamCheckCommands,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    match cmd {
+        ProviderStreamCheckCommands::Run { id, app } => {
+            let app_type = parse_app_type(&app)?;
+            let result = StreamCheckService::check_provider(state, app_type, &id).await?;
+            printer.print_value(&result)?;
+        }
+        ProviderStreamCheckCommands::RunAll {
+            app,
+            proxy_targets_only,
+        } => {
+            let app_type = parse_app_type(&app)?;
+            let results =
+                StreamCheckService::check_all_providers(state, app_type, proxy_targets_only)
+                    .await?;
+            let rows: Vec<NamedStreamCheckResult> = results
+                .into_iter()
+                .map(|(provider_id, result)| NamedStreamCheckResult {
+                    provider_id,
+                    result,
+                })
+                .collect();
+            printer.print_value(&rows)?;
+        }
+        ProviderStreamCheckCommands::Config { cmd } => match cmd {
+            ProviderStreamCheckConfigCommands::Get => {
+                let config = StreamCheckService::get_config(state)?;
+                printer.print_value(&config)?;
+            }
+            ProviderStreamCheckConfigCommands::Set { file, value } => {
+                let config = load_stream_check_config_input(file.as_deref(), value.as_deref())?;
+                StreamCheckService::save_config(state, &config)?;
+                printer.success("✓ Saved stream-check config");
+            }
+        },
+    }
+
+    Ok(())
+}
+
 async fn handle_universal(
     cmd: UniversalProviderCommands,
     state: &AppState,
@@ -557,6 +851,11 @@ async fn handle_universal(
         UniversalProviderCommands::List => {
             let providers = cc_switch_core::ProviderService::list_universal(state)?;
             printer.print_universal_providers(&providers)?;
+        }
+        UniversalProviderCommands::Show { id } => {
+            let provider = cc_switch_core::ProviderService::get_universal(state, &id)?
+                .ok_or_else(|| anyhow::anyhow!("Universal provider not found: {}", id))?;
+            printer.print_value(&provider)?;
         }
         UniversalProviderCommands::Add {
             name,
@@ -587,11 +886,83 @@ async fn handle_universal(
             provider.apps = parse_universal_apps(&apps)?;
 
             cc_switch_core::ProviderService::upsert_universal(state, provider)?;
-            printer.success(format!("✓ Added universal provider '{}'", id));
+            let saved = cc_switch_core::ProviderService::get_universal(state, &id)?
+                .ok_or_else(|| anyhow::anyhow!("Universal provider not found after add: {}", id))?;
+            printer.print_value(&saved)?;
+        }
+        UniversalProviderCommands::Edit {
+            id,
+            set_name,
+            set_apps,
+            set_base_url,
+            set_api_key,
+        } => {
+            if set_name.is_none()
+                && set_apps.is_none()
+                && set_base_url.is_none()
+                && set_api_key.is_none()
+            {
+                anyhow::bail!(
+                    "Universal provider edit requires at least one of --set-name, --set-apps, --set-base-url or --set-api-key"
+                );
+            }
+
+            let mut provider = cc_switch_core::ProviderService::get_universal(state, &id)?
+                .ok_or_else(|| anyhow::anyhow!("Universal provider not found: {}", id))?;
+
+            if let Some(name) = set_name {
+                provider.name = name;
+            }
+            if let Some(apps) = set_apps {
+                provider.apps = parse_universal_apps(&apps)?;
+            }
+            if let Some(base_url) = set_base_url {
+                provider.base_url = base_url;
+            }
+            if let Some(api_key) = set_api_key {
+                provider.api_key = api_key;
+            }
+
+            cc_switch_core::ProviderService::upsert_universal(state, provider)?;
+            let saved = cc_switch_core::ProviderService::get_universal(state, &id)?
+                .ok_or_else(|| anyhow::anyhow!("Universal provider not found after edit: {}", id))?;
+            printer.print_value(&saved)?;
+        }
+        UniversalProviderCommands::SaveAndSync {
+            name,
+            id,
+            apps,
+            base_url,
+            api_key,
+        } => {
+            let id = id.unwrap_or_else(|| provider_id_from_name(&name));
+            let mut provider = UniversalProvider::new(
+                id.clone(),
+                name,
+                "openai-compatible".to_string(),
+                base_url,
+                api_key,
+            );
+            provider.apps = parse_universal_apps(&apps)?;
+
+            cc_switch_core::ProviderService::upsert_universal(state, provider)?;
+            cc_switch_core::ProviderService::sync_universal_to_apps(state, &id)?;
+            let saved = cc_switch_core::ProviderService::get_universal(state, &id)?.ok_or_else(
+                || anyhow::anyhow!("Universal provider not found after save-and-sync: {}", id),
+            )?;
+            printer.print_value(&json!({
+                "provider": saved,
+                "syncedApps": enabled_universal_apps(&saved.apps),
+            }))?;
         }
         UniversalProviderCommands::Sync { id } => {
             cc_switch_core::ProviderService::sync_universal_to_apps(state, &id)?;
-            printer.success(format!("✓ Synced universal provider '{}' to apps", id));
+            let provider = cc_switch_core::ProviderService::get_universal(state, &id)?
+                .ok_or_else(|| anyhow::anyhow!("Universal provider not found: {}", id))?;
+            printer.print_value(&json!({
+                "provider": provider,
+                "syncedApps": enabled_universal_apps(&provider.apps),
+            }))?;
         }
         UniversalProviderCommands::Delete { id, yes } => {
             if !yes {
@@ -605,6 +976,20 @@ async fn handle_universal(
         }
     }
     Ok(())
+}
+
+fn enabled_universal_apps(apps: &cc_switch_core::provider::UniversalProviderApps) -> Vec<String> {
+    let mut result = Vec::new();
+    if apps.claude {
+        result.push("claude".to_string());
+    }
+    if apps.codex {
+        result.push("codex".to_string());
+    }
+    if apps.gemini {
+        result.push("gemini".to_string());
+    }
+    result
 }
 
 fn build_provider(app_type: &AppType, name: &str, base_url: &str, api_key: &str) -> Provider {

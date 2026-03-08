@@ -1,9 +1,15 @@
 use std::env;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::Duration;
 
-use cc_switch_core::{AppSettings, AppState, Database, InstalledSkill, SkillApps};
+use base64::prelude::*;
+use cc_switch_core::{
+    provider::ProviderMeta, AppSettings, AppState, Database, InstalledSkill, Provider, SkillApps,
+};
 use rusqlite::{params, Connection};
 use serde_json::Value;
 use serial_test::serial;
@@ -108,6 +114,49 @@ fn seed_installed_skill(home: &Path, id: &str, directory: &str) {
     });
 }
 
+fn seed_unmanaged_skill(home: &Path, relative_dir: &str, name: &str, description: &str) {
+    let dir = home.join(relative_dir);
+    fs::create_dir_all(&dir).expect("create unmanaged skill dir");
+    fs::write(
+        dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: {description}\n---\n"),
+    )
+    .expect("write unmanaged skill");
+}
+
+fn create_skill_zip(zip_path: &Path, root_dir: &str, name: &str, description: &str) {
+    let zip_file = fs::File::create(zip_path).expect("create zip file");
+    let mut writer = zip::ZipWriter::new(zip_file);
+    let options = zip::write::SimpleFileOptions::default();
+
+    writer
+        .add_directory(root_dir, options)
+        .expect("add zip root dir");
+    writer
+        .start_file(format!("{root_dir}/SKILL.md"), options)
+        .expect("start SKILL.md");
+    writer
+        .write_all(
+            format!("---\nname: {name}\ndescription: {description}\n---\n").as_bytes(),
+        )
+        .expect("write SKILL.md");
+    writer
+        .start_file(format!("{root_dir}/notes.txt"), options)
+        .expect("start notes file");
+    writer.write_all(b"zip body").expect("write notes");
+    writer.finish().expect("finish zip");
+}
+
+fn seed_provider(home: &Path, app_type: &str, provider: Provider) {
+    with_seeded_state(home, |state| {
+        state
+            .db
+            .save_provider(app_type, &provider)
+            .expect("save provider");
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
 fn insert_usage_log(
     home: &Path,
     request_id: &str,
@@ -141,6 +190,32 @@ fn insert_usage_log(
         ],
     )
     .expect("insert usage log");
+}
+
+fn spawn_json_server(response_body: String, expected_requests: usize) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+    let addr = listener.local_addr().expect("server addr");
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(expected_requests) {
+            let Ok(mut stream) = stream else {
+                continue;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+            let mut buffer = [0_u8; 4096];
+            let _ = stream.read(&mut buffer);
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+
+    format!("http://{}", addr)
 }
 
 #[test]
@@ -315,6 +390,36 @@ fn prompt_import_reads_live_file_on_first_launch() {
 
 #[test]
 #[serial]
+fn prompt_current_live_file_content_reads_live_prompt_file() {
+    let temp = tempdir().expect("tempdir");
+    let live_path = claude_prompt_path(temp.path());
+    fs::create_dir_all(live_path.parent().expect("claude dir")).expect("claude dir");
+    fs::write(&live_path, "Current live prompt.\n").expect("write live prompt");
+
+    let output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "prompt",
+            "current-live-file-content",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(output.status.success(), "stderr: {}", stderr_text(&output));
+
+    let value: Value =
+        serde_json::from_slice(&output.stdout).expect("current live prompt should return json");
+    assert_eq!(value.get("app").and_then(Value::as_str), Some("claude"));
+    assert_eq!(
+        value.get("content").and_then(Value::as_str),
+        Some("Current live prompt.\n")
+    );
+}
+
+#[test]
+#[serial]
 fn mcp_add_from_json_edit_and_delete_round_trip_with_live_sync() {
     let temp = tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join(".claude")).expect("claude dir");
@@ -448,6 +553,98 @@ args = ["codex"]
         value
             .get("from_codex")
             .and_then(|item| item.get("apps"))
+            .and_then(|apps| apps.get("codex"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+}
+
+#[test]
+#[serial]
+fn mcp_validate_docs_link_and_toggle_output_are_structured() {
+    let temp = tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join(".claude")).expect("claude dir");
+    let mcp_file = temp.path().join("mcp-full.json");
+    fs::write(
+        &mcp_file,
+        r#"{
+  "id": "docs-mcp",
+  "name": "docs-mcp",
+  "server": { "type": "stdio", "command": "npx", "args": ["docs"] },
+  "apps": { "claude": true, "codex": false, "gemini": false, "opencode": false, "openclaw": false },
+  "homepage": "https://example.com/mcp",
+  "docs": "https://example.com/mcp/docs",
+  "tags": ["fixture"]
+}"#,
+    )
+    .expect("write mcp full json");
+
+    let add_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "mcp",
+            "add",
+            "--from-json",
+            mcp_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(add_output.status.success(), "stderr: {}", stderr_text(&add_output));
+    let added: Value = serde_json::from_slice(&add_output.stdout).expect("mcp add should return json");
+    assert_eq!(added.get("id").and_then(Value::as_str), Some("docs-mcp"));
+
+    let validate_output = run_cli(
+        temp.path(),
+        &["--format", "json", "mcp", "validate", "docs-mcp"],
+    );
+    assert!(
+        validate_output.status.success(),
+        "stderr: {}",
+        stderr_text(&validate_output)
+    );
+    let validated: Value =
+        serde_json::from_slice(&validate_output.stdout).expect("mcp validate should return json");
+    assert_eq!(validated.get("valid").and_then(Value::as_bool), Some(true));
+
+    let docs_output = run_cli(
+        temp.path(),
+        &["--format", "json", "mcp", "docs-link", "docs-mcp"],
+    );
+    assert!(docs_output.status.success(), "stderr: {}", stderr_text(&docs_output));
+    let docs: Value =
+        serde_json::from_slice(&docs_output.stdout).expect("mcp docs-link should return json");
+    assert_eq!(
+        docs.get("homepage").and_then(Value::as_str),
+        Some("https://example.com/mcp")
+    );
+    assert_eq!(
+        docs.get("docs").and_then(Value::as_str),
+        Some("https://example.com/mcp/docs")
+    );
+
+    let enable_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "mcp",
+            "enable",
+            "docs-mcp",
+            "--app",
+            "codex",
+        ],
+    );
+    assert!(
+        enable_output.status.success(),
+        "stderr: {}",
+        stderr_text(&enable_output)
+    );
+    let enabled: Value =
+        serde_json::from_slice(&enable_output.stdout).expect("mcp enable should return json");
+    assert_eq!(
+        enabled
+            .get("apps")
             .and_then(|apps| apps.get("codex"))
             .and_then(Value::as_bool),
         Some(true)
@@ -1157,12 +1354,845 @@ fn provider_endpoint_lifecycle_and_speedtest_round_trip() {
 
 #[test]
 #[serial]
+fn provider_common_config_snippet_extract_get_set_and_clear_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    let provider_file = temp.path().join("provider.json");
+    fs::write(
+        &provider_file,
+        r#"{"env":{"ANTHROPIC_BASE_URL":"https://extract.example","ANTHROPIC_AUTH_TOKEN":"sk-extract","HTTPS_PROXY":"http://127.0.0.1:8080"},"permissions":{"allow":["Bash"]}}"#,
+    )
+    .expect("write provider json");
+
+    let add_provider = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "add",
+            "--app",
+            "claude",
+            "--name",
+            "Snippet Provider",
+            "--base-url",
+            "https://extract.example",
+            "--api-key",
+            "sk-extract",
+            "--from-json",
+            provider_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        add_provider.status.success(),
+        "stderr: {}",
+        stderr_text(&add_provider)
+    );
+
+    let switch_output = run_cli(
+        temp.path(),
+        &["provider", "switch", "snippet-provider", "--app", "claude"],
+    );
+    assert!(
+        switch_output.status.success(),
+        "stderr: {}",
+        stderr_text(&switch_output)
+    );
+
+    let extract_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "common-config-snippet",
+            "extract",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        extract_output.status.success(),
+        "stderr: {}",
+        stderr_text(&extract_output)
+    );
+    let extracted: Value =
+        serde_json::from_slice(&extract_output.stdout).expect("extract should return json");
+    let snippet = extracted
+        .get("snippet")
+        .and_then(Value::as_str)
+        .expect("snippet should exist");
+    let snippet_json: Value =
+        serde_json::from_str(snippet).expect("snippet should be valid json content");
+    assert_eq!(
+        snippet_json
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL")),
+        None
+    );
+    assert_eq!(
+        snippet_json
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_AUTH_TOKEN")),
+        None
+    );
+    assert_eq!(
+        snippet_json
+            .get("env")
+            .and_then(|env| env.get("HTTPS_PROXY"))
+            .and_then(Value::as_str),
+        Some("http://127.0.0.1:8080")
+    );
+    assert_eq!(
+        snippet_json
+            .get("permissions")
+            .and_then(|value| value.get("allow"))
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(Value::as_str),
+        Some("Bash")
+    );
+
+    let snippet_file = temp.path().join("snippet.json");
+    let saved_snippet =
+        r#"{"env":{"HTTPS_PROXY":"http://10.0.0.2:8080"},"permissions":{"allow":["Read"]}}"#;
+    fs::write(&snippet_file, saved_snippet).expect("write snippet file");
+
+    let set_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "common-config-snippet",
+            "set",
+            "--app",
+            "claude",
+            "--file",
+            snippet_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        set_output.status.success(),
+        "stderr: {}",
+        stderr_text(&set_output)
+    );
+
+    let get_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "common-config-snippet",
+            "get",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        get_output.status.success(),
+        "stderr: {}",
+        stderr_text(&get_output)
+    );
+    let saved: Value = serde_json::from_slice(&get_output.stdout).expect("get should return json");
+    assert_eq!(
+        saved.get("snippet").and_then(Value::as_str),
+        Some(saved_snippet)
+    );
+
+    let invalid_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "common-config-snippet",
+            "set",
+            "--app",
+            "claude",
+            "--value",
+            "{not-json}",
+        ],
+    );
+    assert!(!invalid_output.status.success(), "invalid json should fail");
+    assert!(stderr_text(&invalid_output).contains("Invalid claude common config snippet JSON"));
+
+    let clear_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "common-config-snippet",
+            "set",
+            "--app",
+            "claude",
+            "--clear",
+        ],
+    );
+    assert!(
+        clear_output.status.success(),
+        "stderr: {}",
+        stderr_text(&clear_output)
+    );
+
+    let get_after_clear = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "common-config-snippet",
+            "get",
+            "--app",
+            "claude",
+        ],
+    );
+    let cleared: Value =
+        serde_json::from_slice(&get_after_clear.stdout).expect("get should return json");
+    assert!(cleared.get("snippet").is_some_and(Value::is_null));
+}
+
+#[test]
+#[serial]
+fn provider_common_config_snippet_allows_codex_toml() {
+    let temp = tempdir().expect("tempdir");
+    let snippet = "approval_policy = \"on-request\"\n";
+
+    let set_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "common-config-snippet",
+            "set",
+            "--app",
+            "codex",
+            "--value",
+            snippet,
+        ],
+    );
+    assert!(
+        set_output.status.success(),
+        "stderr: {}",
+        stderr_text(&set_output)
+    );
+
+    let get_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "common-config-snippet",
+            "get",
+            "--app",
+            "codex",
+        ],
+    );
+    assert!(
+        get_output.status.success(),
+        "stderr: {}",
+        stderr_text(&get_output)
+    );
+    let saved: Value = serde_json::from_slice(&get_output.stdout).expect("get should return json");
+    assert_eq!(saved.get("snippet").and_then(Value::as_str), Some(snippet));
+}
+
+#[test]
+#[serial]
+fn provider_usage_script_save_show_test_query_and_clear_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    let provider_file = temp.path().join("provider.json");
+    fs::write(
+        &provider_file,
+        r#"{"env":{"ANTHROPIC_BASE_URL":"https://unused.example","ANTHROPIC_AUTH_TOKEN":"sk-usage-script"}}"#,
+    )
+    .expect("write provider json");
+
+    let add_provider = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "add",
+            "--app",
+            "claude",
+            "--name",
+            "Usage Script Provider",
+            "--base-url",
+            "https://unused.example",
+            "--api-key",
+            "sk-usage-script",
+            "--from-json",
+            provider_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        add_provider.status.success(),
+        "stderr: {}",
+        stderr_text(&add_provider)
+    );
+
+    let server_url = spawn_json_server(r#"{"balance":42}"#.to_string(), 2);
+    let script_file = temp.path().join("usage-script.json");
+    let script = serde_json::json!({
+        "enabled": true,
+        "language": "javascript",
+        "code": format!(
+            "({{ request: {{ url: \"{server_url}/usage\", method: \"GET\", headers: {{}} }}, extractor: function(response) {{ return {{ isValid: true, remaining: response.balance, unit: \"USD\" }}; }} }})"
+        ),
+        "timeout": 5,
+        "templateType": "custom",
+    });
+    fs::write(
+        &script_file,
+        serde_json::to_string_pretty(&script).expect("serialize usage script"),
+    )
+    .expect("write usage script");
+
+    let save_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "usage-script",
+            "save",
+            "usage-script-provider",
+            "--app",
+            "claude",
+            "--file",
+            script_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        save_output.status.success(),
+        "stderr: {}",
+        stderr_text(&save_output)
+    );
+
+    let show_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "usage-script",
+            "show",
+            "usage-script-provider",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        show_output.status.success(),
+        "stderr: {}",
+        stderr_text(&show_output)
+    );
+    let shown: Value =
+        serde_json::from_slice(&show_output.stdout).expect("usage-script show should return json");
+    assert_eq!(
+        shown
+            .get("usageScript")
+            .and_then(|value| value.get("enabled"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let test_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "usage-script",
+            "test",
+            "usage-script-provider",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        test_output.status.success(),
+        "stderr: {}",
+        stderr_text(&test_output)
+    );
+    let tested: Value =
+        serde_json::from_slice(&test_output.stdout).expect("usage-script test should return json");
+    assert_eq!(tested.get("success").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        tested
+            .get("data")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("remaining"))
+            .and_then(Value::as_f64),
+        Some(42.0)
+    );
+
+    let query_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "usage-script",
+            "query",
+            "usage-script-provider",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        query_output.status.success(),
+        "stderr: {}",
+        stderr_text(&query_output)
+    );
+    let queried: Value = serde_json::from_slice(&query_output.stdout)
+        .expect("usage-script query should return json");
+    assert_eq!(queried.get("success").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        queried
+            .get("data")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("remaining"))
+            .and_then(Value::as_f64),
+        Some(42.0)
+    );
+
+    let clear_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "usage-script",
+            "save",
+            "usage-script-provider",
+            "--app",
+            "claude",
+            "--clear",
+        ],
+    );
+    assert!(
+        clear_output.status.success(),
+        "stderr: {}",
+        stderr_text(&clear_output)
+    );
+
+    let show_after_clear = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "usage-script",
+            "show",
+            "usage-script-provider",
+            "--app",
+            "claude",
+        ],
+    );
+    let shown_after_clear: Value = serde_json::from_slice(&show_after_clear.stdout)
+        .expect("usage-script show should return json");
+    assert!(shown_after_clear
+        .get("usageScript")
+        .is_some_and(Value::is_null));
+}
+
+#[test]
+#[serial]
+fn provider_stream_check_run_all_and_config_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    let valid_provider_file = temp.path().join("valid-provider.json");
+    let broken_provider_file = temp.path().join("broken-provider.json");
+    let mock_response = serde_json::json!({
+        "id": "msg_mock_123",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-5",
+        "content": [{ "type": "text", "text": "mock anthropic ok" }],
+        "stop_reason": "end_turn",
+        "usage": {
+            "input_tokens": 12,
+            "output_tokens": 34
+        }
+    });
+    let server_url = spawn_json_server(mock_response.to_string(), 2);
+
+    fs::write(
+        &valid_provider_file,
+        format!(
+            r#"{{"env":{{"ANTHROPIC_BASE_URL":"{server_url}","ANTHROPIC_AUTH_TOKEN":"sk-stream-ok"}}}}"#
+        ),
+    )
+    .expect("write valid provider json");
+    fs::write(
+        &broken_provider_file,
+        r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9","ANTHROPIC_AUTH_TOKEN":"sk-stream-bad"}}"#,
+    )
+    .expect("write broken provider json");
+
+    for (name, file, base_url, api_key) in [
+        (
+            "Healthy Stream",
+            &valid_provider_file,
+            server_url.as_str(),
+            "sk-stream-ok",
+        ),
+        (
+            "Broken Stream",
+            &broken_provider_file,
+            "http://127.0.0.1:9",
+            "sk-stream-bad",
+        ),
+    ] {
+        let add_output = run_cli(
+            temp.path(),
+            &[
+                "provider",
+                "add",
+                "--app",
+                "claude",
+                "--name",
+                name,
+                "--base-url",
+                base_url,
+                "--api-key",
+                api_key,
+                "--from-json",
+                file.to_str().expect("utf-8 path"),
+            ],
+        );
+        assert!(
+            add_output.status.success(),
+            "stderr: {}",
+            stderr_text(&add_output)
+        );
+    }
+
+    let config_file = temp.path().join("stream-check.json");
+    let config = serde_json::json!({
+        "timeoutSecs": 2,
+        "maxRetries": 0,
+        "degradedThresholdMs": 9999,
+        "claudeModel": "claude-haiku-4-5-20251001",
+        "codexModel": "gpt-5.1-codex@low",
+        "geminiModel": "gemini-3-pro-preview",
+        "testPrompt": "hello stream check"
+    });
+    fs::write(
+        &config_file,
+        serde_json::to_string_pretty(&config).expect("serialize stream check config"),
+    )
+    .expect("write config");
+
+    let set_config = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "stream-check",
+            "config",
+            "set",
+            "--file",
+            config_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        set_config.status.success(),
+        "stderr: {}",
+        stderr_text(&set_config)
+    );
+
+    let get_config = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "stream-check",
+            "config",
+            "get",
+        ],
+    );
+    assert!(
+        get_config.status.success(),
+        "stderr: {}",
+        stderr_text(&get_config)
+    );
+    let saved_config: Value =
+        serde_json::from_slice(&get_config.stdout).expect("config should return json");
+    assert_eq!(
+        saved_config.get("timeoutSecs").and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let run_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "stream-check",
+            "run",
+            "healthy-stream",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        run_output.status.success(),
+        "stderr: {}",
+        stderr_text(&run_output)
+    );
+    let run_json: Value =
+        serde_json::from_slice(&run_output.stdout).expect("run should return json");
+    assert_eq!(run_json.get("success").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        run_json.get("status").and_then(Value::as_str),
+        Some("operational")
+    );
+
+    let run_all_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "stream-check",
+            "run-all",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        run_all_output.status.success(),
+        "stderr: {}",
+        stderr_text(&run_all_output)
+    );
+    let run_all: Value =
+        serde_json::from_slice(&run_all_output.stdout).expect("run-all should return json");
+    assert_eq!(run_all.as_array().map(Vec::len), Some(2));
+    let healthy = run_all
+        .as_array()
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item.get("providerId") == Some(&Value::String("healthy-stream".to_string()))
+            })
+        })
+        .expect("healthy stream provider should exist");
+    assert_eq!(healthy.get("success").and_then(Value::as_bool), Some(true));
+    let broken = run_all
+        .as_array()
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item.get("providerId") == Some(&Value::String("broken-stream".to_string()))
+            })
+        })
+        .expect("broken stream provider should exist");
+    assert_eq!(broken.get("success").and_then(Value::as_bool), Some(false));
+}
+
+#[test]
+#[serial]
+fn usage_advanced_queries_model_pricing_and_limits_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    let mut provider = Provider::with_id(
+        "limit-provider".to_string(),
+        "Limit Provider".to_string(),
+        serde_json::json!({}),
+        None,
+    );
+    provider.meta = Some(ProviderMeta {
+        limit_daily_usd: Some("1.00".to_string()),
+        limit_monthly_usd: Some("10.00".to_string()),
+        ..ProviderMeta::default()
+    });
+    seed_provider(temp.path(), "claude", provider);
+
+    let now = chrono::Utc::now().timestamp_millis();
+    insert_usage_log(
+        temp.path(),
+        "req-usage-1",
+        "claude",
+        "limit-provider",
+        "claude-haiku-4-5-20251001",
+        100,
+        50,
+        "0.75",
+        now,
+    );
+    insert_usage_log(
+        temp.path(),
+        "req-usage-2",
+        "claude",
+        "limit-provider",
+        "claude-haiku-4-5-20251001",
+        80,
+        20,
+        "0.50",
+        now + 1_000,
+    );
+
+    let trends_output = run_cli(temp.path(), &["--format", "json", "usage", "trends"]);
+    assert!(
+        trends_output.status.success(),
+        "stderr: {}",
+        stderr_text(&trends_output)
+    );
+    let trends: Value =
+        serde_json::from_slice(&trends_output.stdout).expect("trends should return json");
+    assert!(trends.as_array().is_some_and(|items| !items.is_empty()));
+
+    let provider_stats_output = run_cli(
+        temp.path(),
+        &["--format", "json", "usage", "provider-stats"],
+    );
+    assert!(
+        provider_stats_output.status.success(),
+        "stderr: {}",
+        stderr_text(&provider_stats_output)
+    );
+    let provider_stats: Value = serde_json::from_slice(&provider_stats_output.stdout)
+        .expect("provider stats should return json");
+    let provider_row = provider_stats
+        .as_array()
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item.get("providerId") == Some(&Value::String("limit-provider".to_string()))
+            })
+        })
+        .expect("provider stats should include limit-provider");
+    assert_eq!(
+        provider_row.get("requestCount").and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let model_stats_output = run_cli(temp.path(), &["--format", "json", "usage", "model-stats"]);
+    assert!(
+        model_stats_output.status.success(),
+        "stderr: {}",
+        stderr_text(&model_stats_output)
+    );
+    let model_stats: Value =
+        serde_json::from_slice(&model_stats_output.stdout).expect("model stats should return json");
+    let model_row = model_stats
+        .as_array()
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item.get("model") == Some(&Value::String("claude-haiku-4-5-20251001".to_string()))
+            })
+        })
+        .expect("model stats should include seeded model");
+    assert_eq!(
+        model_row.get("requestCount").and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let detail_output = run_cli(
+        temp.path(),
+        &["--format", "json", "usage", "request-detail", "req-usage-1"],
+    );
+    assert!(
+        detail_output.status.success(),
+        "stderr: {}",
+        stderr_text(&detail_output)
+    );
+    let detail: Value =
+        serde_json::from_slice(&detail_output.stdout).expect("request detail should return json");
+    assert_eq!(
+        detail.get("requestId").and_then(Value::as_str),
+        Some("req-usage-1")
+    );
+
+    let update_pricing = run_cli(
+        temp.path(),
+        &[
+            "usage",
+            "model-pricing",
+            "update",
+            "custom-model",
+            "--display-name",
+            "Custom Model",
+            "--input-cost",
+            "1.23",
+            "--output-cost",
+            "4.56",
+            "--cache-read-cost",
+            "0.11",
+            "--cache-creation-cost",
+            "0.22",
+        ],
+    );
+    assert!(
+        update_pricing.status.success(),
+        "stderr: {}",
+        stderr_text(&update_pricing)
+    );
+
+    let pricing_list = run_cli(
+        temp.path(),
+        &["--format", "json", "usage", "model-pricing", "list"],
+    );
+    assert!(
+        pricing_list.status.success(),
+        "stderr: {}",
+        stderr_text(&pricing_list)
+    );
+    let pricing: Value =
+        serde_json::from_slice(&pricing_list.stdout).expect("pricing list should return json");
+    assert!(pricing.as_array().is_some_and(|items| items
+        .iter()
+        .any(|item| { item.get("modelId") == Some(&Value::String("custom-model".to_string())) })));
+
+    let limits_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "usage",
+            "provider-limits",
+            "check",
+            "limit-provider",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        limits_output.status.success(),
+        "stderr: {}",
+        stderr_text(&limits_output)
+    );
+    let limits: Value =
+        serde_json::from_slice(&limits_output.stdout).expect("limits should return json");
+    assert_eq!(
+        limits.get("dailyExceeded").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        limits.get("monthlyExceeded").and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let delete_pricing = run_cli(
+        temp.path(),
+        &["usage", "model-pricing", "delete", "custom-model"],
+    );
+    assert!(
+        delete_pricing.status.success(),
+        "stderr: {}",
+        stderr_text(&delete_pricing)
+    );
+
+    let pricing_after_delete = run_cli(
+        temp.path(),
+        &["--format", "json", "usage", "model-pricing", "list"],
+    );
+    let pricing_after: Value = serde_json::from_slice(&pricing_after_delete.stdout)
+        .expect("pricing list should return json");
+    assert!(pricing_after.as_array().is_some_and(|items| items
+        .iter()
+        .all(|item| item.get("modelId") != Some(&Value::String("custom-model".to_string())))));
+}
+
+#[test]
+#[serial]
 fn universal_provider_sync_adds_target_app_providers() {
     let temp = tempdir().expect("tempdir");
 
     let add_output = run_cli(
         temp.path(),
         &[
+            "--format",
+            "json",
             "provider",
             "universal",
             "add",
@@ -1181,12 +2211,79 @@ fn universal_provider_sync_adds_target_app_providers() {
         "stderr: {}",
         stderr_text(&add_output)
     );
+    let added: Value =
+        serde_json::from_slice(&add_output.stdout).expect("universal add should return json");
+    assert_eq!(added.get("id").and_then(Value::as_str), Some("omni"));
 
-    let sync_output = run_cli(temp.path(), &["provider", "universal", "sync", "omni"]);
+    let show_output = run_cli(
+        temp.path(),
+        &["--format", "json", "provider", "universal", "show", "omni"],
+    );
+    assert!(
+        show_output.status.success(),
+        "stderr: {}",
+        stderr_text(&show_output)
+    );
+    let shown: Value =
+        serde_json::from_slice(&show_output.stdout).expect("universal show should return json");
+    assert_eq!(shown.get("name").and_then(Value::as_str), Some("Omni"));
+
+    let edit_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "universal",
+            "edit",
+            "omni",
+            "--set-name",
+            "Omni Prime",
+            "--set-apps",
+            "claude,codex,gemini",
+            "--set-base-url",
+            "https://api2.example.com",
+            "--set-api-key",
+            "sk-prime",
+        ],
+    );
+    assert!(
+        edit_output.status.success(),
+        "stderr: {}",
+        stderr_text(&edit_output)
+    );
+    let edited: Value =
+        serde_json::from_slice(&edit_output.stdout).expect("universal edit should return json");
+    assert_eq!(edited.get("name").and_then(Value::as_str), Some("Omni Prime"));
+    assert_eq!(
+        edited.get("baseUrl").and_then(Value::as_str),
+        Some("https://api2.example.com")
+    );
+    assert_eq!(
+        edited
+            .get("apps")
+            .and_then(|apps| apps.get("gemini"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let sync_output = run_cli(
+        temp.path(),
+        &["--format", "json", "provider", "universal", "sync", "omni"],
+    );
     assert!(
         sync_output.status.success(),
         "stderr: {}",
         stderr_text(&sync_output)
+    );
+    let synced: Value =
+        serde_json::from_slice(&sync_output.stdout).expect("universal sync should return json");
+    assert_eq!(
+        synced
+            .get("syncedApps")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(3)
     );
 
     let claude_output = run_cli(
@@ -1205,6 +2302,55 @@ fn universal_provider_sync_adds_target_app_providers() {
         serde_json::from_slice(&codex_output.stdout).expect("provider list should return json");
     assert!(codex_providers.get("universal-codex-omni").is_some());
 
+    let gemini_output = run_cli(
+        temp.path(),
+        &["--format", "json", "provider", "list", "--app", "gemini"],
+    );
+    let gemini_providers: Value =
+        serde_json::from_slice(&gemini_output.stdout).expect("provider list should return json");
+    assert!(gemini_providers.get("universal-gemini-omni").is_some());
+
+    let save_and_sync_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "universal",
+            "save-and-sync",
+            "--name",
+            "Nova",
+            "--apps",
+            "claude,gemini",
+            "--base-url",
+            "https://nova.example.com",
+            "--api-key",
+            "sk-nova",
+        ],
+    );
+    assert!(
+        save_and_sync_output.status.success(),
+        "stderr: {}",
+        stderr_text(&save_and_sync_output)
+    );
+    let save_and_sync: Value = serde_json::from_slice(&save_and_sync_output.stdout)
+        .expect("save-and-sync should return json");
+    assert_eq!(
+        save_and_sync
+            .get("provider")
+            .and_then(|provider| provider.get("id"))
+            .and_then(Value::as_str),
+        Some("nova")
+    );
+
+    let claude_after_save = run_cli(
+        temp.path(),
+        &["--format", "json", "provider", "list", "--app", "claude"],
+    );
+    let claude_after_save_json: Value = serde_json::from_slice(&claude_after_save.stdout)
+        .expect("provider list should return json");
+    assert!(claude_after_save_json.get("universal-claude-nova").is_some());
+
     let delete_without_yes = run_cli(temp.path(), &["provider", "universal", "delete", "omni"]);
     assert!(!delete_without_yes.status.success(), "delete should fail");
     assert!(stderr_text(&delete_without_yes).contains("Re-run with --yes"));
@@ -1218,6 +2364,8 @@ fn universal_provider_sync_adds_target_app_providers() {
         "stderr: {}",
         stderr_text(&delete_with_yes)
     );
+    let delete_nova = run_cli(temp.path(), &["provider", "universal", "delete", "nova", "--yes"]);
+    assert!(delete_nova.status.success(), "stderr: {}", stderr_text(&delete_nova));
 
     let list_output = run_cli(
         temp.path(),
@@ -1462,6 +2610,544 @@ fn proxy_circuit_config_rejects_half_open_requests() {
     );
     assert!(!output.status.success(), "command should fail");
     assert!(stderr_text(&output).contains("not supported"));
+}
+
+#[test]
+#[serial]
+fn proxy_global_and_app_config_round_trip() {
+    let temp = tempdir().expect("tempdir");
+
+    let global_set = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "global-config",
+            "set",
+            "--proxy-enabled",
+            "true",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "18080",
+            "--log-enabled",
+            "false",
+        ],
+    );
+    assert!(
+        global_set.status.success(),
+        "stderr: {}",
+        stderr_text(&global_set)
+    );
+    let global_set_json: Value =
+        serde_json::from_slice(&global_set.stdout).expect("global-config set should return json");
+    assert_eq!(
+        global_set_json
+            .get("proxyEnabled")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        global_set_json
+            .get("listenAddress")
+            .and_then(Value::as_str),
+        Some("0.0.0.0")
+    );
+    assert_eq!(
+        global_set_json.get("listenPort").and_then(Value::as_u64),
+        Some(18080)
+    );
+    assert_eq!(
+        global_set_json
+            .get("enableLogging")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let global_show = run_cli(
+        temp.path(),
+        &["--format", "json", "proxy", "global-config", "show"],
+    );
+    assert!(
+        global_show.status.success(),
+        "stderr: {}",
+        stderr_text(&global_show)
+    );
+    let global_show_json: Value = serde_json::from_slice(&global_show.stdout)
+        .expect("global-config show should return json");
+    assert_eq!(
+        global_show_json
+            .get("listenAddress")
+            .and_then(Value::as_str),
+        Some("0.0.0.0")
+    );
+
+    let app_set = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "app-config",
+            "set",
+            "--app",
+            "claude",
+            "--enabled",
+            "true",
+            "--auto-failover-enabled",
+            "true",
+            "--max-retries",
+            "8",
+            "--streaming-first-byte-timeout",
+            "11",
+            "--streaming-idle-timeout",
+            "22",
+            "--non-streaming-timeout",
+            "33",
+            "--circuit-failure-threshold",
+            "7",
+            "--circuit-success-threshold",
+            "3",
+            "--circuit-timeout-seconds",
+            "44",
+            "--circuit-error-rate-threshold",
+            "0.75",
+            "--circuit-min-requests",
+            "15",
+        ],
+    );
+    assert!(app_set.status.success(), "stderr: {}", stderr_text(&app_set));
+    let app_set_json: Value =
+        serde_json::from_slice(&app_set.stdout).expect("app-config set should return json");
+    assert_eq!(app_set_json.get("appType").and_then(Value::as_str), Some("claude"));
+    assert_eq!(app_set_json.get("enabled").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        app_set_json
+            .get("autoFailoverEnabled")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(app_set_json.get("maxRetries").and_then(Value::as_u64), Some(8));
+    assert_eq!(
+        app_set_json
+            .get("streamingFirstByteTimeout")
+            .and_then(Value::as_u64),
+        Some(11)
+    );
+    assert_eq!(
+        app_set_json
+            .get("streamingIdleTimeout")
+            .and_then(Value::as_u64),
+        Some(22)
+    );
+    assert_eq!(
+        app_set_json
+            .get("nonStreamingTimeout")
+            .and_then(Value::as_u64),
+        Some(33)
+    );
+    assert_eq!(
+        app_set_json
+            .get("circuitFailureThreshold")
+            .and_then(Value::as_u64),
+        Some(7)
+    );
+    assert_eq!(
+        app_set_json
+            .get("circuitSuccessThreshold")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        app_set_json
+            .get("circuitTimeoutSeconds")
+            .and_then(Value::as_u64),
+        Some(44)
+    );
+    assert_eq!(
+        app_set_json
+            .get("circuitErrorRateThreshold")
+            .and_then(Value::as_f64),
+        Some(0.75)
+    );
+    assert_eq!(
+        app_set_json
+            .get("circuitMinRequests")
+            .and_then(Value::as_u64),
+        Some(15)
+    );
+
+    let app_show = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "app-config",
+            "show",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(app_show.status.success(), "stderr: {}", stderr_text(&app_show));
+    let app_show_json: Value =
+        serde_json::from_slice(&app_show.stdout).expect("app-config show should return json");
+    assert_eq!(
+        app_show_json
+            .get("autoFailoverEnabled")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        app_show_json
+            .get("circuitMinRequests")
+            .and_then(Value::as_u64),
+        Some(15)
+    );
+}
+
+#[test]
+#[serial]
+fn proxy_auto_failover_available_providers_and_cost_settings_round_trip() {
+    let temp = tempdir().expect("tempdir");
+
+    for (name, base_url, api_key) in [
+        ("Alpha", "https://alpha.example", "sk-alpha"),
+        ("Beta", "https://beta.example", "sk-beta"),
+    ] {
+        let output = run_cli(
+            temp.path(),
+            &[
+                "provider",
+                "add",
+                "--app",
+                "claude",
+                "--name",
+                name,
+                "--base-url",
+                base_url,
+                "--api-key",
+                api_key,
+            ],
+        );
+        assert!(output.status.success(), "stderr: {}", stderr_text(&output));
+    }
+
+    let switch_output = run_cli(
+        temp.path(),
+        &["provider", "switch", "alpha", "--app", "claude"],
+    );
+    assert!(
+        switch_output.status.success(),
+        "stderr: {}",
+        stderr_text(&switch_output)
+    );
+
+    let auto_failover_show = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "auto-failover",
+            "show",
+            "--app",
+            "claude",
+        ],
+    );
+    let auto_failover_show_json: Value = serde_json::from_slice(&auto_failover_show.stdout)
+        .expect("auto-failover show should return json");
+    assert_eq!(
+        auto_failover_show_json
+            .get("enabled")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let enable_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "auto-failover",
+            "enable",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        enable_output.status.success(),
+        "stderr: {}",
+        stderr_text(&enable_output)
+    );
+    let enable_json: Value =
+        serde_json::from_slice(&enable_output.stdout).expect("enable should return json");
+    assert_eq!(enable_json.get("enabled").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        enable_json
+            .get("activeProviderId")
+            .and_then(Value::as_str),
+        Some("alpha")
+    );
+
+    let queue_output = run_cli(
+        temp.path(),
+        &[
+            "--format", "json", "proxy", "failover", "queue", "--app", "claude",
+        ],
+    );
+    let queue: Value =
+        serde_json::from_slice(&queue_output.stdout).expect("queue should return json");
+    assert_eq!(queue.as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        queue[0].get("providerId").and_then(Value::as_str),
+        Some("alpha")
+    );
+
+    let available_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "available-providers",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        available_output.status.success(),
+        "stderr: {}",
+        stderr_text(&available_output)
+    );
+    let available_json: Value = serde_json::from_slice(&available_output.stdout)
+        .expect("available providers should return json");
+    assert!(available_json.get("alpha").is_none());
+    assert!(available_json.get("beta").is_some());
+
+    let multiplier_get = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "default-cost-multiplier",
+            "get",
+            "--app",
+            "claude",
+        ],
+    );
+    let multiplier_get_json: Value = serde_json::from_slice(&multiplier_get.stdout)
+        .expect("default-cost-multiplier get should return json");
+    assert_eq!(
+        multiplier_get_json.get("value").and_then(Value::as_str),
+        Some("1")
+    );
+
+    let multiplier_set = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "default-cost-multiplier",
+            "set",
+            "--app",
+            "claude",
+            "1.5",
+        ],
+    );
+    assert!(
+        multiplier_set.status.success(),
+        "stderr: {}",
+        stderr_text(&multiplier_set)
+    );
+    let multiplier_set_json: Value = serde_json::from_slice(&multiplier_set.stdout)
+        .expect("default-cost-multiplier set should return json");
+    assert_eq!(
+        multiplier_set_json.get("value").and_then(Value::as_str),
+        Some("1.5")
+    );
+
+    let pricing_get = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "pricing-model-source",
+            "get",
+            "--app",
+            "claude",
+        ],
+    );
+    let pricing_get_json: Value = serde_json::from_slice(&pricing_get.stdout)
+        .expect("pricing-model-source get should return json");
+    assert_eq!(
+        pricing_get_json.get("value").and_then(Value::as_str),
+        Some("response")
+    );
+
+    let pricing_set = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "pricing-model-source",
+            "set",
+            "--app",
+            "claude",
+            "request",
+        ],
+    );
+    assert!(
+        pricing_set.status.success(),
+        "stderr: {}",
+        stderr_text(&pricing_set)
+    );
+    let pricing_set_json: Value = serde_json::from_slice(&pricing_set.stdout)
+        .expect("pricing-model-source set should return json");
+    assert_eq!(
+        pricing_set_json.get("value").and_then(Value::as_str),
+        Some("request")
+    );
+
+    let disable_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "auto-failover",
+            "disable",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        disable_output.status.success(),
+        "stderr: {}",
+        stderr_text(&disable_output)
+    );
+    let disable_json: Value =
+        serde_json::from_slice(&disable_output.stdout).expect("disable should return json");
+    assert_eq!(disable_json.get("enabled").and_then(Value::as_bool), Some(false));
+}
+
+#[test]
+#[serial]
+fn proxy_provider_health_and_circuit_stats_are_exposed() {
+    let temp = tempdir().expect("tempdir");
+
+    let add_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "add",
+            "--app",
+            "claude",
+            "--name",
+            "Healthy Provider",
+            "--base-url",
+            "https://healthy.example",
+            "--api-key",
+            "sk-health",
+        ],
+    );
+    assert!(add_output.status.success(), "stderr: {}", stderr_text(&add_output));
+
+    let health_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "provider-health",
+            "healthy-provider",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        health_output.status.success(),
+        "stderr: {}",
+        stderr_text(&health_output)
+    );
+    let health_json: Value =
+        serde_json::from_slice(&health_output.stdout).expect("provider-health should return json");
+    assert_eq!(
+        health_json.get("provider_id").and_then(Value::as_str),
+        Some("healthy-provider")
+    );
+    assert_eq!(
+        health_json.get("is_healthy").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let stats_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "proxy",
+            "circuit",
+            "stats",
+            "healthy-provider",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        stats_output.status.success(),
+        "stderr: {}",
+        stderr_text(&stats_output)
+    );
+    let stats_json: Value =
+        serde_json::from_slice(&stats_output.stdout).expect("circuit stats should return json");
+    assert_eq!(stats_json.get("providerId").and_then(Value::as_str), Some("healthy-provider"));
+    assert!(
+        stats_json
+            .get("stats")
+            .is_some_and(serde_json::Value::is_null),
+        "circuit stats should be null when proxy is not running"
+    );
+}
+
+#[test]
+#[serial]
+fn proxy_cost_and_pricing_validation_errors_surface_to_cli() {
+    let temp = tempdir().expect("tempdir");
+
+    let invalid_multiplier = run_cli(
+        temp.path(),
+        &[
+            "proxy",
+            "default-cost-multiplier",
+            "set",
+            "--app",
+            "claude",
+            "not-a-number",
+        ],
+    );
+    assert!(!invalid_multiplier.status.success(), "command should fail");
+    assert!(stderr_text(&invalid_multiplier).contains("Invalid multiplier"));
+
+    let invalid_pricing_source = run_cli(
+        temp.path(),
+        &[
+            "proxy",
+            "pricing-model-source",
+            "set",
+            "--app",
+            "claude",
+            "invalid",
+        ],
+    );
+    assert!(!invalid_pricing_source.status.success(), "command should fail");
+    assert!(stderr_text(&invalid_pricing_source).contains("Invalid pricing mode"));
 }
 
 #[test]
@@ -1711,6 +3397,168 @@ fn skill_enable_disable_and_uninstall_round_trip() {
 
 #[test]
 #[serial]
+fn skill_unmanaged_scan_import_and_repo_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    seed_unmanaged_skill(
+        temp.path(),
+        ".codex/skills/unmanaged-skill",
+        "Unmanaged Skill",
+        "from live config",
+    );
+
+    let scan_output = run_cli(
+        temp.path(),
+        &["--format", "json", "skill", "unmanaged", "scan"],
+    );
+    assert!(
+        scan_output.status.success(),
+        "stderr: {}",
+        stderr_text(&scan_output)
+    );
+    let unmanaged: Value =
+        serde_json::from_slice(&scan_output.stdout).expect("unmanaged scan should return json");
+    let entries = unmanaged.as_array().expect("scan result should be an array");
+    assert!(entries.iter().any(|item| {
+        item.get("directory").and_then(Value::as_str) == Some("unmanaged-skill")
+            && item
+                .get("foundIn")
+                .and_then(Value::as_array)
+                .is_some_and(|labels| labels.iter().any(|label| label == "codex"))
+    }));
+
+    let import_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "skill",
+            "unmanaged",
+            "import",
+            "unmanaged-skill",
+        ],
+    );
+    assert!(
+        import_output.status.success(),
+        "stderr: {}",
+        stderr_text(&import_output)
+    );
+    let imported: Value =
+        serde_json::from_slice(&import_output.stdout).expect("import should return json");
+    let imported_items = imported.as_array().expect("import result should be an array");
+    assert_eq!(imported_items.len(), 1);
+    assert_eq!(
+        imported_items[0].get("id").and_then(Value::as_str),
+        Some("local:unmanaged-skill")
+    );
+    assert!(skill_ssot_dir(temp.path(), "unmanaged-skill").exists());
+
+    let repo_list_output = run_cli(temp.path(), &["--format", "json", "skill", "repo", "list"]);
+    assert!(
+        repo_list_output.status.success(),
+        "stderr: {}",
+        stderr_text(&repo_list_output)
+    );
+    let default_repos: Value =
+        serde_json::from_slice(&repo_list_output.stdout).expect("repo list should return json");
+    assert!(
+        default_repos.as_array().is_some_and(|items| !items.is_empty()),
+        "default skill repos should be materialized for repo commands"
+    );
+
+    let repo_add_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "skill",
+            "repo",
+            "add",
+            "https://github.com/example/demo.git",
+            "--branch",
+            "develop",
+        ],
+    );
+    assert!(
+        repo_add_output.status.success(),
+        "stderr: {}",
+        stderr_text(&repo_add_output)
+    );
+    let added_repo: Value =
+        serde_json::from_slice(&repo_add_output.stdout).expect("repo add should return json");
+    assert_eq!(
+        added_repo.get("owner").and_then(Value::as_str),
+        Some("example")
+    );
+    assert_eq!(
+        added_repo.get("name").and_then(Value::as_str),
+        Some("demo")
+    );
+    assert_eq!(
+        added_repo.get("branch").and_then(Value::as_str),
+        Some("develop")
+    );
+
+    let repo_remove_output = run_cli(temp.path(), &["skill", "repo", "remove", "example/demo"]);
+    assert!(
+        repo_remove_output.status.success(),
+        "stderr: {}",
+        stderr_text(&repo_remove_output)
+    );
+
+    let repo_list_after_remove = run_cli(
+        temp.path(),
+        &["--format", "json", "skill", "repo", "list"],
+    );
+    let repos_after_remove: Value =
+        serde_json::from_slice(&repo_list_after_remove.stdout).expect("repo list should return json");
+    assert!(
+        repos_after_remove
+            .as_array()
+            .is_some_and(|items| items.iter().all(|item| {
+                item.get("owner").and_then(Value::as_str) != Some("example")
+                    || item.get("name").and_then(Value::as_str) != Some("demo")
+            })),
+        "removed repo should not remain in repo list"
+    );
+}
+
+#[test]
+#[serial]
+fn skill_zip_install_imports_archive_and_syncs_to_app_dir() {
+    let temp = tempdir().expect("tempdir");
+    let zip_path = temp.path().join("zip-skill.zip");
+    create_skill_zip(&zip_path, "zip-skill", "Zip Skill", "from zip");
+
+    let install_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "skill",
+            "zip-install",
+            "--file",
+            zip_path.to_str().expect("utf-8 path"),
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        install_output.status.success(),
+        "stderr: {}",
+        stderr_text(&install_output)
+    );
+
+    let installed: Value =
+        serde_json::from_slice(&install_output.stdout).expect("zip install should return json");
+    let items = installed.as_array().expect("zip install should return an array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].get("id").and_then(Value::as_str), Some("local:zip-skill"));
+    assert!(skill_ssot_dir(temp.path(), "zip-skill").join("SKILL.md").exists());
+    assert!(exists_or_symlink(&claude_skill_dir(temp.path(), "zip-skill")));
+}
+
+#[test]
+#[serial]
 fn import_deeplink_provider_populates_provider_list() {
     let temp = tempdir().expect("tempdir");
     let deeplink =
@@ -1743,6 +3591,87 @@ fn import_deeplink_provider_populates_provider_list() {
     assert!(
         has_router,
         "imported provider should exist in provider list"
+    );
+}
+
+#[test]
+#[serial]
+fn deeplink_parse_merge_and_preview_expose_structured_requests() {
+    let temp = tempdir().expect("tempdir");
+    let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1","ANTHROPIC_MODEL":"claude-sonnet-4.5"}}"#;
+    let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
+    let config_b64 = config_b64
+        .replace('+', "%2B")
+        .replace('/', "%2F")
+        .replace('=', "%3D");
+    let deeplink = format!(
+        "ccswitch://v1/import?resource=provider&app=claude&name=Test%20Provider&config={}&configFormat=json",
+        config_b64
+    );
+
+    let parse_output = run_cli(
+        temp.path(),
+        &["--format", "json", "deeplink", "parse", deeplink.as_str()],
+    );
+    assert!(
+        parse_output.status.success(),
+        "stderr: {}",
+        stderr_text(&parse_output)
+    );
+    let parsed: Value =
+        serde_json::from_slice(&parse_output.stdout).expect("deeplink parse should return json");
+    assert_eq!(parsed.get("resource").and_then(Value::as_str), Some("provider"));
+    assert_eq!(parsed.get("app").and_then(Value::as_str), Some("claude"));
+    assert_eq!(
+        parsed.get("apiKey").and_then(Value::as_str),
+        None,
+        "raw parse should not auto-fill config-derived apiKey"
+    );
+
+    let merge_output = run_cli(
+        temp.path(),
+        &["--format", "json", "deeplink", "merge", deeplink.as_str()],
+    );
+    assert!(
+        merge_output.status.success(),
+        "stderr: {}",
+        stderr_text(&merge_output)
+    );
+    let merged: Value =
+        serde_json::from_slice(&merge_output.stdout).expect("deeplink merge should return json");
+    assert_eq!(
+        merged.get("apiKey").and_then(Value::as_str),
+        Some("sk-ant-xxx")
+    );
+    assert_eq!(
+        merged.get("endpoint").and_then(Value::as_str),
+        Some("https://api.anthropic.com/v1")
+    );
+
+    let preview_output = run_cli(
+        temp.path(),
+        &["--format", "json", "deeplink", "preview", deeplink.as_str()],
+    );
+    assert!(
+        preview_output.status.success(),
+        "stderr: {}",
+        stderr_text(&preview_output)
+    );
+    let preview: Value = serde_json::from_slice(&preview_output.stdout)
+        .expect("deeplink preview should return json");
+    assert_eq!(
+        preview
+            .get("parsed")
+            .and_then(|item| item.get("name"))
+            .and_then(Value::as_str),
+        Some("Test Provider")
+    );
+    assert_eq!(
+        preview
+            .get("merged")
+            .and_then(|item| item.get("model"))
+            .and_then(Value::as_str),
+        Some("claude-sonnet-4.5")
     );
 }
 
