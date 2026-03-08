@@ -163,6 +163,106 @@ impl WebDavSyncSettings {
     }
 }
 
+/// S3 同步设置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3SyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_sync: bool,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default)]
+    pub bucket: String,
+    #[serde(default)]
+    pub access_key_id: String,
+    #[serde(default)]
+    pub secret_access_key: String,
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default = "default_remote_root")]
+    pub remote_root: String,
+    #[serde(default = "default_profile")]
+    pub profile: String,
+    #[serde(default)]
+    pub status: WebDavSyncStatus,
+}
+
+impl Default for S3SyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_sync: false,
+            region: String::new(),
+            bucket: String::new(),
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            endpoint: String::new(),
+            remote_root: default_remote_root(),
+            profile: default_profile(),
+            status: WebDavSyncStatus::default(),
+        }
+    }
+}
+
+impl S3SyncSettings {
+    pub fn validate(&self) -> Result<(), crate::error::AppError> {
+        if self.bucket.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.bucket.required",
+                "S3 存储桶不能为空",
+                "S3 bucket is required.",
+            ));
+        }
+        if self.region.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.region.required",
+                "S3 区域不能为空",
+                "S3 region is required.",
+            ));
+        }
+        if self.access_key_id.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.access_key_id.required",
+                "S3 Access Key ID 不能为空",
+                "S3 Access Key ID is required.",
+            ));
+        }
+        if self.secret_access_key.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.secret_access_key.required",
+                "S3 Secret Access Key 不能为空",
+                "S3 Secret Access Key is required.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn normalize(&mut self) {
+        self.region = self.region.trim().to_string();
+        self.bucket = self.bucket.trim().to_string();
+        self.access_key_id = self.access_key_id.trim().to_string();
+        self.endpoint = self.endpoint.trim().to_string();
+        self.remote_root = self.remote_root.trim().to_string();
+        self.profile = self.profile.trim().to_string();
+        if self.remote_root.is_empty() {
+            self.remote_root = default_remote_root();
+        }
+        if self.profile.is_empty() {
+            self.profile = default_profile();
+        }
+    }
+
+    /// Returns true if all credential fields are blank (no config to persist).
+    fn is_empty(&self) -> bool {
+        self.bucket.is_empty()
+            && self.region.is_empty()
+            && self.access_key_id.is_empty()
+            && self.secret_access_key.is_empty()
+    }
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -244,6 +344,10 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_sync: Option<WebDavSyncSettings>,
 
+    // ===== S3 同步设置 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3_sync: Option<S3SyncSettings>,
+
     // ===== WebDAV 备份设置（旧版，保留向后兼容）=====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_backup: Option<serde_json::Value>,
@@ -300,6 +404,7 @@ impl Default for AppSettings {
             current_provider_openclaw: None,
             skill_sync_method: SyncMethod::default(),
             webdav_sync: None,
+            s3_sync: None,
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
@@ -365,6 +470,13 @@ impl AppSettings {
             sync.normalize();
             if sync.is_empty() {
                 self.webdav_sync = None;
+            }
+        }
+
+        if let Some(s3) = &mut self.s3_sync {
+            s3.normalize();
+            if s3.is_empty() {
+                self.s3_sync = None;
             }
         }
     }
@@ -469,6 +581,9 @@ pub fn get_settings_for_frontend() -> AppSettings {
     let mut settings = get_settings();
     if let Some(sync) = &mut settings.webdav_sync {
         sync.password.clear();
+    }
+    if let Some(s3) = &mut settings.s3_sync {
+        s3.secret_access_key.clear();
     }
     settings.webdav_backup = None;
     settings
@@ -697,6 +812,26 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
     mutate_settings(|current| {
         if let Some(sync) = current.webdav_sync.as_mut() {
             sync.status = status;
+        }
+    })
+}
+
+// ===== S3 同步设置管理函数 =====
+
+pub fn get_s3_sync_settings() -> Option<S3SyncSettings> {
+    settings_store().read().ok()?.s3_sync.clone()
+}
+
+pub fn set_s3_sync_settings(settings: Option<S3SyncSettings>) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        current.s3_sync = settings;
+    })
+}
+
+pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        if let Some(s3) = current.s3_sync.as_mut() {
+            s3.status = status;
         }
     })
 }
