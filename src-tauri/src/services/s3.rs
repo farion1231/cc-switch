@@ -45,6 +45,27 @@ fn normalize_endpoint(endpoint: &str) -> &str {
         .trim_end_matches('/')
 }
 
+/// Split an endpoint into its scheme and host-with-port parts.
+///
+/// Preserves the original scheme when one is provided, defaulting to `"https"`
+/// when the endpoint is bare (no `://` prefix).
+///
+/// ```text
+/// "http://minio:9000"           → ("http",  "minio:9000")
+/// "https://storage.example.com" → ("https", "storage.example.com")
+/// "minio:9000"                  → ("https", "minio:9000")
+/// "storage.example.com"         → ("https", "storage.example.com")
+/// ```
+fn split_scheme_host(endpoint: &str) -> (&str, &str) {
+    if let Some(rest) = endpoint.strip_prefix("http://") {
+        ("http", rest.trim_end_matches('/'))
+    } else if let Some(rest) = endpoint.strip_prefix("https://") {
+        ("https", rest.trim_end_matches('/'))
+    } else {
+        ("https", endpoint.trim_end_matches('/'))
+    }
+}
+
 /// Build the full URL for an S3 object.
 ///
 /// - AWS endpoints use virtual-hosted style: `https://{bucket}.s3.{region}.amazonaws.com/{key}`
@@ -57,8 +78,8 @@ fn build_object_url(creds: &S3Credentials, key: &str) -> String {
             creds.bucket, creds.region, key
         )
     } else {
-        let ep = normalize_endpoint(&creds.endpoint);
-        format!("https://{}/{}/{}", ep, creds.bucket, key)
+        let (scheme, host) = split_scheme_host(&creds.endpoint);
+        format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
     }
 }
 
@@ -70,8 +91,8 @@ fn build_bucket_url(creds: &S3Credentials) -> String {
             creds.bucket, creds.region
         )
     } else {
-        let ep = normalize_endpoint(&creds.endpoint);
-        format!("https://{}/{}/", ep, creds.bucket)
+        let (scheme, host) = split_scheme_host(&creds.endpoint);
+        format!("{}://{}/{}/", scheme, host, creds.bucket)
     }
 }
 
@@ -592,6 +613,55 @@ mod tests {
     fn build_object_url_endpoint_with_scheme_prefix() {
         let creds = test_creds("https://minio.local:9000", "us-east-1", "b");
         assert_eq!(build_object_url(&creds, "k"), "https://minio.local:9000/b/k");
+    }
+
+    // ── HTTP scheme preservation (MinIO support) ──
+
+    #[test]
+    fn build_object_url_preserves_http_scheme() {
+        let creds = test_creds("http://minio:9000", "us-east-1", "mybucket");
+        let url = build_object_url(&creds, "path/to/file.json");
+        assert!(
+            url.starts_with("http://"),
+            "expected http:// scheme, got: {url}"
+        );
+        assert_eq!(url, "http://minio:9000/mybucket/path/to/file.json");
+    }
+
+    #[test]
+    fn build_object_url_preserves_https_scheme() {
+        let creds = test_creds("https://storage.example.com", "us-east-1", "mybucket");
+        let url = build_object_url(&creds, "path/to/file.json");
+        assert!(
+            url.starts_with("https://"),
+            "expected https:// scheme, got: {url}"
+        );
+        assert_eq!(
+            url,
+            "https://storage.example.com/mybucket/path/to/file.json"
+        );
+    }
+
+    #[test]
+    fn build_object_url_bare_endpoint_defaults_to_https() {
+        let creds = test_creds("minio:9000", "us-east-1", "mybucket");
+        let url = build_object_url(&creds, "path/to/file.json");
+        assert!(
+            url.starts_with("https://"),
+            "bare endpoint should default to https://, got: {url}"
+        );
+        assert_eq!(url, "https://minio:9000/mybucket/path/to/file.json");
+    }
+
+    #[test]
+    fn build_bucket_url_preserves_http_scheme() {
+        let creds = test_creds("http://minio:9000", "us-east-1", "data");
+        let url = build_bucket_url(&creds);
+        assert!(
+            url.starts_with("http://"),
+            "expected http:// scheme, got: {url}"
+        );
+        assert_eq!(url, "http://minio:9000/data/");
     }
 
     // ── Endpoint detection ──
