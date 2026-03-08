@@ -18,6 +18,7 @@ mod proxy_takeover_restore;
 mod skill_local_lifecycle;
 mod skill_repo_and_import;
 mod usage_via_real_proxy_traffic;
+mod webdav_sync_flow;
 mod util;
 mod workspace_memory_flow;
 
@@ -43,6 +44,7 @@ pub fn all() -> Vec<Scenario> {
         proxy_takeover_restore::scenario(),
         proxy_failover_runtime::scenario(),
         usage_via_real_proxy_traffic::scenario(),
+        webdav_sync_flow::scenario(),
         skill_local_lifecycle::scenario(),
         skill_repo_and_import::scenario(),
         workspace_memory_flow::scenario(),

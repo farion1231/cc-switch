@@ -18,6 +18,25 @@ pub fn scenario() -> Scenario {
 async fn run(env: HarnessEnv) -> Result<()> {
     let mut sandbox = Sandbox::new(&env, NAME)?;
     let result = async {
+        let workspace_path = sandbox
+            .run_ok(&args(&[
+                "--format",
+                "json",
+                "workspace",
+                "path",
+                "workspace",
+            ]))
+            .await?;
+        let workspace_path_json = stdout_json(&workspace_path)?;
+        ensure(
+            workspace_path_json["path"]
+                == sandbox
+                    .home_path(".openclaw/workspace")
+                    .display()
+                    .to_string(),
+            "workspace path should point at the sandbox workspace directory",
+        )?;
+
         let workspace_write = sandbox
             .run_ok(&args(&[
                 "--format",
@@ -75,6 +94,19 @@ async fn run(env: HarnessEnv) -> Result<()> {
                 items.iter().any(|item| item["filename"] == "2026-03-08.md")
             }),
             "memory list should contain the written file",
+        )?;
+
+        let memory_path = sandbox
+            .run_ok(&args(&["--format", "json", "workspace", "path", "memory"]))
+            .await?;
+        let memory_path_json = stdout_json(&memory_path)?;
+        ensure(
+            memory_path_json["path"]
+                == sandbox
+                    .home_path(".openclaw/workspace/memory")
+                    .display()
+                    .to_string(),
+            "memory path should point at the sandbox memory directory",
         )?;
 
         let search_output = sandbox

@@ -29,8 +29,8 @@
 - [x] 给 `prompt` 增加 current-live-file-content 查看能力。
 - [x] 给 `deeplink` 增加 parse / merge / preview 子命令，不再只有最终 import。
 - [x] 给 `workspace` 增加 read/write/list-memory/search-memory/delete-memory 子命令。
-- [ ] 给 `workspace` 补 open-dir 或等价的显式路径能力。
-- [ ] 给 `webdav` 增加 test/save/upload/download/fetch-remote-info 子命令。
+- [x] 给 `workspace` 补 open-dir 或等价的显式路径能力。
+- [x] 给 `webdav` 增加 test/save/upload/download/fetch-remote-info 子命令。
 - [x] 给 `backup` 增加 create/list/restore/rename/delete 子命令。
 - [x] 给 `env` 增加 check/delete/restore 子命令。
 - [x] 给 `omo` / `omo-slim` 增加 read-local / import-local / current / disable-current 子命令。

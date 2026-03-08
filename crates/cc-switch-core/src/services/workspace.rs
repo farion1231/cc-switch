@@ -44,6 +44,14 @@ pub struct DailyMemorySearchResult {
 pub struct WorkspaceService;
 
 impl WorkspaceService {
+    pub fn workspace_directory() -> std::path::PathBuf {
+        workspace_dir()
+    }
+
+    pub fn memory_directory() -> std::path::PathBuf {
+        memory_dir()
+    }
+
     pub fn list_daily_memory_files() -> Result<Vec<DailyMemoryFileInfo>, AppError> {
         let memory_dir = memory_dir();
         if !memory_dir.exists() {

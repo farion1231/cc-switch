@@ -1,9 +1,11 @@
 use std::env;
 use std::fs;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::prelude::*;
@@ -260,6 +262,222 @@ fn spawn_json_server(response_body: String, expected_requests: usize) -> String 
     format!("http://{}", addr)
 }
 
+struct TestWebDavServer {
+    base_url: String,
+}
+
+type RawHttpRequest = (String, String, HashMap<String, String>, Vec<u8>);
+
+impl TestWebDavServer {
+    fn base_url(&self) -> &str {
+        &self.base_url
+    }
+}
+
+fn spawn_webdav_server() -> TestWebDavServer {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind webdav server");
+    let addr = listener.local_addr().expect("webdav addr");
+    let files = Arc::new(Mutex::new(HashMap::<String, Vec<u8>>::new()));
+    let etags = Arc::new(Mutex::new(HashMap::<String, String>::new()));
+    let directories = Arc::new(Mutex::new(HashSet::<String>::from([normalize_webdav_path(
+        "/dav",
+    )])));
+
+    let files_for_thread = files.clone();
+    let etags_for_thread = etags.clone();
+    let directories_for_thread = directories.clone();
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else {
+                continue;
+            };
+            let _ = handle_webdav_connection(
+                &mut stream,
+                &files_for_thread,
+                &etags_for_thread,
+                &directories_for_thread,
+            );
+        }
+    });
+
+    TestWebDavServer {
+        base_url: format!("http://{addr}/dav"),
+    }
+}
+
+fn handle_webdav_connection(
+    stream: &mut TcpStream,
+    files: &Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    etags: &Arc<Mutex<HashMap<String, String>>>,
+    directories: &Arc<Mutex<HashSet<String>>>,
+) -> std::io::Result<()> {
+    let Some((method, raw_target, headers, body)) = read_http_request(stream)? else {
+        return Ok(());
+    };
+    let path = normalize_webdav_path(&raw_target);
+
+    match method.as_str() {
+        "PROPFIND" => write_response(
+            stream,
+            207,
+            "Multi-Status",
+            &[("content-type", "application/xml")],
+            b"<?xml version=\"1.0\"?><multistatus xmlns=\"DAV:\"/>",
+        ),
+        "MKCOL" => {
+            directories.lock().expect("directories lock").insert(path);
+            write_response(stream, 201, "Created", &[], b"")
+        }
+        "PUT" => {
+            let etag = format!("\"{}-{}\"", raw_target.len(), body.len());
+            files.lock().expect("files lock").insert(path.clone(), body);
+            etags.lock().expect("etags lock").insert(path, etag.clone());
+            write_response(stream, 201, "Created", &[("etag", &etag)], b"")
+        }
+        "HEAD" => {
+            if let Some(file) = files.lock().expect("files lock").get(&path).cloned() {
+                let etag = etags
+                    .lock()
+                    .expect("etags lock")
+                    .get(&path)
+                    .cloned()
+                    .unwrap_or_else(|| "\"etag\"".to_string());
+                let content_length = file.len().to_string();
+                write_response(
+                    stream,
+                    200,
+                    "OK",
+                    &[("etag", &etag), ("content-length", &content_length)],
+                    b"",
+                )
+            } else {
+                write_response(stream, 404, "Not Found", &[], b"")
+            }
+        }
+        "GET" => {
+            if let Some(file) = files.lock().expect("files lock").get(&path).cloned() {
+                let etag = etags
+                    .lock()
+                    .expect("etags lock")
+                    .get(&path)
+                    .cloned()
+                    .unwrap_or_else(|| "\"etag\"".to_string());
+                write_response(
+                    stream,
+                    200,
+                    "OK",
+                    &[
+                        ("etag", &etag),
+                        ("content-type", content_type_for_path(&path)),
+                    ],
+                    &file,
+                )
+            } else {
+                write_response(stream, 404, "Not Found", &[], b"")
+            }
+        }
+        _ => {
+            let _depth = headers.get("depth").cloned().unwrap_or_default();
+            write_response(stream, 405, "Method Not Allowed", &[], b"")
+        }
+    }
+}
+
+fn read_http_request(stream: &mut TcpStream) -> std::io::Result<Option<RawHttpRequest>> {
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+
+    let mut buffer = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    let header_end = loop {
+        let read = stream.read(&mut chunk)?;
+        if read == 0 {
+            return Ok(None);
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+        if let Some(index) = find_header_end(&buffer) {
+            break index;
+        }
+    };
+
+    let header_bytes = &buffer[..header_end];
+    let mut body = buffer[header_end + 4..].to_vec();
+    let header_text = String::from_utf8_lossy(header_bytes);
+    let mut lines = header_text.lines();
+    let request_line = lines.next().unwrap_or_default();
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or_default().to_string();
+    let target = parts.next().unwrap_or("/").to_string();
+    let headers = lines
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            Some((name.trim().to_ascii_lowercase(), value.trim().to_string()))
+        })
+        .collect::<HashMap<_, _>>();
+
+    let content_length = headers
+        .get("content-length")
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(0);
+    while body.len() < content_length {
+        let read = stream.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..read]);
+    }
+    body.truncate(content_length);
+
+    Ok(Some((method, target, headers, body)))
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn normalize_webdav_path(raw_target: &str) -> String {
+    let path = raw_target.split('?').next().unwrap_or(raw_target);
+    if path.len() > 1 {
+        path.trim_end_matches('/').to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+fn content_type_for_path(path: &str) -> &'static str {
+    if path.ends_with(".json") {
+        "application/json"
+    } else if path.ends_with(".zip") {
+        "application/zip"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+fn write_response(
+    stream: &mut TcpStream,
+    status_code: u16,
+    reason: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> std::io::Result<()> {
+    let mut response = format!(
+        "HTTP/1.1 {status_code} {reason}\r\ncontent-length: {}\r\nconnection: close\r\n",
+        body.len()
+    );
+    for (name, value) in headers {
+        response.push_str(name);
+        response.push_str(": ");
+        response.push_str(value);
+        response.push_str("\r\n");
+    }
+    response.push_str("\r\n");
+
+    stream.write_all(response.as_bytes())?;
+    stream.write_all(body)?;
+    stream.flush()
+}
+
 #[test]
 #[serial]
 fn quiet_mode_suppresses_success_output_and_config_get_returns_json() {
@@ -466,6 +684,247 @@ fn workspace_memory_list_search_read_write_and_delete_round_trip() {
         stderr_text(&delete_output)
     );
     assert!(!openclaw_memory_file_path(temp.path(), "2026-03-08.md").exists());
+}
+
+#[test]
+#[serial]
+fn workspace_path_returns_explicit_workspace_and_memory_paths() {
+    let temp = tempdir().expect("tempdir");
+
+    let workspace_output = run_cli(
+        temp.path(),
+        &["--format", "json", "workspace", "path", "workspace"],
+    );
+    assert!(
+        workspace_output.status.success(),
+        "stderr: {}",
+        stderr_text(&workspace_output)
+    );
+    let workspace: Value = serde_json::from_slice(&workspace_output.stdout)
+        .expect("workspace path should return json");
+    assert_eq!(workspace.get("target").and_then(Value::as_str), Some("workspace"));
+    assert_eq!(
+        workspace.get("path").and_then(Value::as_str),
+        Some(
+            temp.path()
+                .join(".openclaw")
+                .join("workspace")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+
+    let memory_output = run_cli(
+        temp.path(),
+        &["--format", "json", "workspace", "path", "memory"],
+    );
+    assert!(
+        memory_output.status.success(),
+        "stderr: {}",
+        stderr_text(&memory_output)
+    );
+    let memory: Value =
+        serde_json::from_slice(&memory_output.stdout).expect("memory path should return json");
+    assert_eq!(memory.get("target").and_then(Value::as_str), Some("memory"));
+    assert_eq!(
+        memory.get("path").and_then(Value::as_str),
+        Some(
+            temp.path()
+                .join(".openclaw")
+                .join("workspace")
+                .join("memory")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn webdav_show_save_test_remote_info_upload_and_download_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    let server = spawn_webdav_server();
+
+    let show_before = run_cli(temp.path(), &["--format", "json", "webdav", "show"]);
+    assert!(
+        show_before.status.success(),
+        "stderr: {}",
+        stderr_text(&show_before)
+    );
+    let empty: Value =
+        serde_json::from_slice(&show_before.stdout).expect("webdav show should return json");
+    assert_eq!(empty.get("configured").and_then(Value::as_bool), Some(false));
+
+    let save_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "webdav",
+            "save",
+            "--base-url",
+            server.base_url(),
+            "--username",
+            "alice",
+            "--password",
+            "secret",
+            "--remote-root",
+            "sync-root",
+            "--profile",
+            "stage-two",
+            "--enable",
+            "--auto-sync",
+        ],
+    );
+    assert!(
+        save_output.status.success(),
+        "stderr: {}",
+        stderr_text(&save_output)
+    );
+    let saved: Value =
+        serde_json::from_slice(&save_output.stdout).expect("webdav save should return json");
+    assert_eq!(saved.get("success").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        saved["settings"].get("baseUrl").and_then(Value::as_str),
+        Some(server.base_url())
+    );
+    assert_eq!(
+        saved["settings"]
+            .get("passwordConfigured")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let preserve_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "webdav",
+            "save",
+            "--profile",
+            "stage-three",
+        ],
+    );
+    assert!(
+        preserve_output.status.success(),
+        "stderr: {}",
+        stderr_text(&preserve_output)
+    );
+    let preserved: Value = serde_json::from_slice(&preserve_output.stdout)
+        .expect("webdav preserve save should return json");
+    assert_eq!(
+        preserved["settings"].get("profile").and_then(Value::as_str),
+        Some("stage-three")
+    );
+    assert_eq!(
+        preserved["settings"]
+            .get("passwordConfigured")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let test_output = run_cli(temp.path(), &["--format", "json", "webdav", "test"]);
+    assert!(
+        test_output.status.success(),
+        "stderr: {}",
+        stderr_text(&test_output)
+    );
+    let tested: Value =
+        serde_json::from_slice(&test_output.stdout).expect("webdav test should return json");
+    assert_eq!(tested.get("success").and_then(Value::as_bool), Some(true));
+
+    let add_before = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "add",
+            "--app",
+            "claude",
+            "--name",
+            "before-webdav",
+            "--base-url",
+            "https://before.example.com",
+            "--api-key",
+            "sk-before",
+        ],
+    );
+    assert!(add_before.status.success(), "stderr: {}", stderr_text(&add_before));
+
+    let upload_output = run_cli(temp.path(), &["--format", "json", "webdav", "upload"]);
+    assert!(
+        upload_output.status.success(),
+        "stderr: {}",
+        stderr_text(&upload_output)
+    );
+    let uploaded: Value =
+        serde_json::from_slice(&upload_output.stdout).expect("webdav upload should return json");
+    assert_eq!(uploaded.get("status").and_then(Value::as_str), Some("uploaded"));
+
+    let remote_info_output = run_cli(temp.path(), &["--format", "json", "webdav", "remote-info"]);
+    assert!(
+        remote_info_output.status.success(),
+        "stderr: {}",
+        stderr_text(&remote_info_output)
+    );
+    let remote_info: Value = serde_json::from_slice(&remote_info_output.stdout)
+        .expect("webdav remote-info should return json");
+    assert_eq!(
+        remote_info.get("compatible").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(remote_info.get("version").and_then(Value::as_u64), Some(2));
+
+    let add_after = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "add",
+            "--app",
+            "claude",
+            "--name",
+            "after-webdav",
+            "--base-url",
+            "https://after.example.com",
+            "--api-key",
+            "sk-after",
+        ],
+    );
+    assert!(add_after.status.success(), "stderr: {}", stderr_text(&add_after));
+
+    let download_output = run_cli(temp.path(), &["--format", "json", "webdav", "download"]);
+    assert!(
+        download_output.status.success(),
+        "stderr: {}",
+        stderr_text(&download_output)
+    );
+    let downloaded: Value = serde_json::from_slice(&download_output.stdout)
+        .expect("webdav download should return json");
+    assert_eq!(
+        downloaded.get("status").and_then(Value::as_str),
+        Some("downloaded")
+    );
+
+    let provider_list = run_cli(
+        temp.path(),
+        &["--format", "json", "provider", "list", "--app", "claude"],
+    );
+    assert!(
+        provider_list.status.success(),
+        "stderr: {}",
+        stderr_text(&provider_list)
+    );
+    let providers: Value = serde_json::from_slice(&provider_list.stdout)
+        .expect("provider list should return json");
+    assert!(
+        providers.as_object().is_some_and(|items| {
+            items.len() == 1
+                && items
+                    .values()
+                    .any(|provider| provider.get("name").and_then(Value::as_str) == Some("before-webdav"))
+        }),
+        "webdav download should restore the uploaded database snapshot"
+    );
 }
 
 #[test]

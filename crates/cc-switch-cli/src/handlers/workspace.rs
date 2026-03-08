@@ -5,12 +5,13 @@ use std::fs;
 use anyhow::Context;
 use serde_json::json;
 
-use crate::cli::{WorkspaceCommands, WorkspaceMemoryCommands};
+use crate::cli::{WorkspaceCommands, WorkspaceMemoryCommands, WorkspacePathTarget};
 use crate::output::Printer;
 use cc_switch_core::WorkspaceService;
 
 pub async fn handle(cmd: WorkspaceCommands, printer: &Printer) -> anyhow::Result<()> {
     match cmd {
+        WorkspaceCommands::Path { target } => handle_path(target, printer),
         WorkspaceCommands::Read { filename } => handle_read(&filename, printer),
         WorkspaceCommands::Write {
             filename,
@@ -19,6 +20,19 @@ pub async fn handle(cmd: WorkspaceCommands, printer: &Printer) -> anyhow::Result
         } => handle_write(&filename, file.as_deref(), value.as_deref(), printer),
         WorkspaceCommands::Memory { cmd } => handle_memory(cmd, printer),
     }
+}
+
+fn handle_path(target: WorkspacePathTarget, printer: &Printer) -> anyhow::Result<()> {
+    let (target, path) = match target {
+        WorkspacePathTarget::Workspace => ("workspace", WorkspaceService::workspace_directory()),
+        WorkspacePathTarget::Memory => ("memory", WorkspaceService::memory_directory()),
+    };
+
+    printer.print_value(&json!({
+        "target": target,
+        "path": path,
+    }))?;
+    Ok(())
 }
 
 fn handle_read(filename: &str, printer: &Printer) -> anyhow::Result<()> {

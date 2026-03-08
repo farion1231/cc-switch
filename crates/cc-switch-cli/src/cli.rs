@@ -98,6 +98,11 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: WorkspaceCommands,
     },
+    /// WebDAV sync management
+    Webdav {
+        #[command(subcommand)]
+        cmd: WebDavCommands,
+    },
     /// Deep link tooling
     Deeplink {
         #[command(subcommand)]
@@ -920,6 +925,12 @@ pub enum ProxyPricingModelSourceCommands {
 
 #[derive(Subcommand)]
 pub enum WorkspaceCommands {
+    /// Show the workspace or memory directory path
+    Path {
+        /// Path target
+        #[arg(value_enum, default_value = "workspace")]
+        target: WorkspacePathTarget,
+    },
     /// Read an OpenClaw workspace file
     Read {
         /// Workspace filename
@@ -973,6 +984,79 @@ pub enum WorkspaceMemoryCommands {
         /// Daily memory filename in YYYY-MM-DD.md format
         filename: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum WorkspacePathTarget {
+    Workspace,
+    Memory,
+}
+
+#[derive(Subcommand)]
+pub enum WebDavCommands {
+    /// Show current WebDAV sync settings
+    Show,
+    /// Save WebDAV sync settings
+    Save {
+        /// Base WebDAV URL
+        #[arg(long)]
+        base_url: Option<String>,
+        /// WebDAV username
+        #[arg(long)]
+        username: Option<String>,
+        /// WebDAV password
+        #[arg(long, conflicts_with = "clear_password")]
+        password: Option<String>,
+        /// Clear the saved password
+        #[arg(long, conflicts_with = "password")]
+        clear_password: bool,
+        /// Remote root directory
+        #[arg(long)]
+        remote_root: Option<String>,
+        /// Sync profile name
+        #[arg(long)]
+        profile: Option<String>,
+        /// Enable WebDAV sync
+        #[arg(long, conflicts_with = "disable")]
+        enable: bool,
+        /// Disable WebDAV sync
+        #[arg(long, conflicts_with = "enable")]
+        disable: bool,
+        /// Enable auto sync
+        #[arg(long, conflicts_with = "no_auto_sync")]
+        auto_sync: bool,
+        /// Disable auto sync
+        #[arg(long, conflicts_with = "auto_sync")]
+        no_auto_sync: bool,
+    },
+    /// Test WebDAV connectivity with saved or overridden settings
+    Test {
+        /// Base WebDAV URL
+        #[arg(long)]
+        base_url: Option<String>,
+        /// WebDAV username
+        #[arg(long)]
+        username: Option<String>,
+        /// WebDAV password
+        #[arg(long, conflicts_with = "clear_password")]
+        password: Option<String>,
+        /// Clear the password for this test request
+        #[arg(long, conflicts_with = "password")]
+        clear_password: bool,
+        /// Remote root directory
+        #[arg(long)]
+        remote_root: Option<String>,
+        /// Sync profile name
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Upload the current snapshot to WebDAV
+    Upload,
+    /// Download the remote snapshot from WebDAV
+    Download,
+    /// Fetch remote snapshot metadata
+    #[command(name = "remote-info")]
+    RemoteInfo,
 }
 
 #[derive(Subcommand)]

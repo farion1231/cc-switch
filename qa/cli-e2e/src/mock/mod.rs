@@ -1,3 +1,5 @@
+pub mod webdav;
+
 use anyhow::{Context, Result};
 use async_stream::stream;
 use axum::body::Body;
@@ -12,6 +14,8 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex, RwLock};
+
+pub use webdav::WebDavServer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "camelCase")]

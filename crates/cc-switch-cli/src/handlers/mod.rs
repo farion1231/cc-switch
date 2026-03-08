@@ -13,6 +13,7 @@ mod provider;
 mod proxy;
 mod skill;
 mod usage;
+mod webdav;
 mod workspace;
 
 use crate::cli::{Cli, Commands, DeeplinkCommands};
@@ -41,6 +42,7 @@ pub async fn dispatch(cli: Cli, state: AppState) -> anyhow::Result<()> {
         Commands::Omo { cmd } => omo::handle_standard(cmd, &state, &printer).await,
         Commands::OmoSlim { cmd } => omo::handle_slim(cmd, &state, &printer).await,
         Commands::Workspace { cmd } => workspace::handle(cmd, &printer).await,
+        Commands::Webdav { cmd } => webdav::handle(cmd, &state, &printer).await,
         Commands::Deeplink { cmd } => match cmd {
             DeeplinkCommands::Parse { url } => {
                 import_export::handle_deeplink_parse(&url, &printer).await
@@ -80,6 +82,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Omo { .. } => "omo",
         Commands::OmoSlim { .. } => "omo-slim",
         Commands::Workspace { .. } => "workspace",
+        Commands::Webdav { .. } => "webdav",
         Commands::Deeplink { .. } => "deeplink",
         Commands::Export { .. } => "export",
         Commands::Import { .. } => "import",
