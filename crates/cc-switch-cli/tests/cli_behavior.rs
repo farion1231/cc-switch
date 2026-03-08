@@ -963,6 +963,200 @@ fn provider_sort_order_and_remove_from_live_require_existing_provider() {
 
 #[test]
 #[serial]
+fn provider_endpoint_lifecycle_and_speedtest_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    let provider_file = temp.path().join("provider.json");
+    fs::write(
+        &provider_file,
+        r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9/v1","ANTHROPIC_AUTH_TOKEN":"sk-endpoint"}}"#,
+    )
+    .expect("write provider json");
+
+    let add_provider = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "add",
+            "--app",
+            "claude",
+            "--name",
+            "Endpoint Provider",
+            "--base-url",
+            "http://127.0.0.1:9/v1",
+            "--api-key",
+            "sk-endpoint",
+            "--from-json",
+            provider_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        add_provider.status.success(),
+        "stderr: {}",
+        stderr_text(&add_provider)
+    );
+
+    let add_invalid = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "endpoint",
+            "add",
+            "endpoint-provider",
+            "--app",
+            "claude",
+            "--url",
+            "not-a-url",
+        ],
+    );
+    assert!(
+        add_invalid.status.success(),
+        "stderr: {}",
+        stderr_text(&add_invalid)
+    );
+
+    let add_secondary = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "endpoint",
+            "add",
+            "endpoint-provider",
+            "--app",
+            "claude",
+            "--url",
+            "http://127.0.0.1:9/secondary/",
+        ],
+    );
+    assert!(
+        add_secondary.status.success(),
+        "stderr: {}",
+        stderr_text(&add_secondary)
+    );
+
+    let mark_used = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "endpoint",
+            "mark-used",
+            "endpoint-provider",
+            "--app",
+            "claude",
+            "--url",
+            "http://127.0.0.1:9/secondary",
+        ],
+    );
+    assert!(
+        mark_used.status.success(),
+        "stderr: {}",
+        stderr_text(&mark_used)
+    );
+
+    let list_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "endpoint",
+            "list",
+            "endpoint-provider",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        list_output.status.success(),
+        "stderr: {}",
+        stderr_text(&list_output)
+    );
+    let endpoints: Value =
+        serde_json::from_slice(&list_output.stdout).expect("endpoint list should return json");
+    assert_eq!(endpoints.as_array().map(Vec::len), Some(2));
+    assert!(endpoints
+        .as_array()
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item.get("url") == Some(&Value::String("http://127.0.0.1:9/secondary".to_string()))
+            })
+        })
+        .and_then(|item| item.get("lastUsed"))
+        .and_then(Value::as_i64)
+        .is_some());
+
+    let speedtest_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "endpoint",
+            "speedtest",
+            "endpoint-provider",
+            "--app",
+            "claude",
+            "--timeout",
+            "2",
+        ],
+    );
+    assert!(
+        speedtest_output.status.success(),
+        "stderr: {}",
+        stderr_text(&speedtest_output)
+    );
+    let speedtest: Value =
+        serde_json::from_slice(&speedtest_output.stdout).expect("speedtest should return json");
+    assert!(speedtest
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item.get("url")
+            == Some(&Value::String("not-a-url".to_string()))
+            && item
+                .get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.starts_with("URL 无效")))));
+
+    let remove_endpoint = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "endpoint",
+            "remove",
+            "endpoint-provider",
+            "--app",
+            "claude",
+            "--url",
+            "not-a-url",
+        ],
+    );
+    assert!(
+        remove_endpoint.status.success(),
+        "stderr: {}",
+        stderr_text(&remove_endpoint)
+    );
+
+    let list_after_remove = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "endpoint",
+            "list",
+            "endpoint-provider",
+            "--app",
+            "claude",
+        ],
+    );
+    let endpoints_after_remove: Value = serde_json::from_slice(&list_after_remove.stdout)
+        .expect("endpoint list should return json");
+    assert_eq!(endpoints_after_remove.as_array().map(Vec::len), Some(1));
+    assert!(endpoints_after_remove.as_array().is_some_and(|items| items
+        .iter()
+        .all(|item| item.get("url") != Some(&Value::String("not-a-url".to_string())))));
+}
+
+#[test]
+#[serial]
 fn universal_provider_sync_adds_target_app_providers() {
     let temp = tempdir().expect("tempdir");
 

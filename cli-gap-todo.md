@@ -10,7 +10,7 @@
 ## P1 CLI 直接接现有 Core
 
 - [x] 给 `provider` 增加 duplicate / sort-order / remove-from-live / import-live / read-live 子命令。
-- [ ] 给 `provider` 增加 custom-endpoints / endpoint-last-used / endpoint-speedtest 子命令。
+- [x] 给 `provider` 增加 custom-endpoints / endpoint-last-used / endpoint-speedtest 子命令。
 - [ ] 给 `provider` 增加 common-config-snippet extract/get/set 子命令。
 - [ ] 给 `provider` 增加 usage-script save/test/query 的完整子命令面。
 - [ ] 给 `provider` 增加 stream-check single/all/config 子命令。

@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 /// Current schema version
 #[allow(dead_code)]
-pub const SCHEMA_VERSION: i32 = 9;
+pub const SCHEMA_VERSION: i32 = 10;
 
 impl Database {
     /// Create all database tables
@@ -47,6 +47,7 @@ impl Database {
                 app_type TEXT NOT NULL,
                 url TEXT NOT NULL,
                 added_at INTEGER,
+                last_used INTEGER,
                 FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
             )",
             [],
@@ -323,6 +324,7 @@ impl Database {
     }
 
     pub(crate) fn apply_schema_migrations_on_conn(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(conn, "provider_endpoints", "last_used", "INTEGER")?;
         Self::add_column_if_missing(
             conn,
             "mcp_servers",

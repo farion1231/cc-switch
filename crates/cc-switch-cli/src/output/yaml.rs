@@ -94,3 +94,17 @@ pub fn print_usage_logs(logs: &[cc_switch_core::RequestLog]) -> anyhow::Result<(
     println!("{}", serde_yaml::to_string(logs)?);
     Ok(())
 }
+
+pub fn print_custom_endpoints(
+    endpoints: &[cc_switch_core::settings::CustomEndpoint],
+) -> anyhow::Result<()> {
+    println!("{}", serde_yaml::to_string(endpoints)?);
+    Ok(())
+}
+
+pub fn print_endpoint_latencies(
+    latencies: &[cc_switch_core::EndpointLatency],
+) -> anyhow::Result<()> {
+    println!("{}", serde_yaml::to_string(latencies)?);
+    Ok(())
+}

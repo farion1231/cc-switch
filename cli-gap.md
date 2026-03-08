@@ -170,6 +170,7 @@
 
 - `provider list/show/add/edit/delete/switch`
 - `provider duplicate/sort-order/read-live/import-live/remove-from-live`
+- `provider endpoint list/add/remove/mark-used/speedtest`
 - `provider usage`
 - `provider universal list/add/sync/delete`
 
@@ -186,10 +187,7 @@
 
 - Provider 高级配置
   - 提取与保存 common config snippet
-  - 自定义 endpoints 的增删改查
-  - endpoint 最近使用时间更新
   - endpoint 自动选择策略
-  - endpoint speed test
   - provider 测试配置
   - usage script 的配置、保存与测试
   - pricingConfig、proxyConfig、testConfig 等高级表单能力
@@ -590,7 +588,6 @@ CLI 的 config 现在更偏“原始设置读写器”，而 GUI 已经把设置
 ### P0：如果目标是让 CLI 成为完整后端验证入口，优先补
 
 - Provider 高级能力
-  - custom endpoints
   - import/remove live config
   - duplicate / sort order
   - common config snippet

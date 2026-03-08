@@ -63,7 +63,7 @@ impl Database {
         let mut map = IndexMap::new();
         for mut provider in providers {
             let mut stmt_endpoints = conn.prepare(
-                "SELECT url, added_at FROM provider_endpoints
+                "SELECT url, added_at, last_used FROM provider_endpoints
                  WHERE provider_id = ?1 AND app_type = ?2
                  ORDER BY added_at ASC, url ASC",
             )?;
@@ -73,7 +73,7 @@ impl Database {
                     Ok(crate::settings::CustomEndpoint {
                         url: row.get(0)?,
                         added_at: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
-                        last_used: None,
+                        last_used: row.get(2)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -162,9 +162,15 @@ impl Database {
 
         for (url, endpoint) in endpoints {
             tx.execute(
-                "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![provider.id, app_type, url, endpoint.added_at],
+                "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at, last_used)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    provider.id,
+                    app_type,
+                    url,
+                    endpoint.added_at,
+                    endpoint.last_used
+                ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         }
@@ -2803,6 +2809,7 @@ mod tests {
     use crate::provider::{Provider, UniversalProvider};
     use rusqlite::params;
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn universal_providers_round_trip_through_database() -> Result<(), AppError> {
@@ -2828,6 +2835,47 @@ mod tests {
         assert!(saved.apps.claude);
         assert!(saved.apps.codex);
         assert!(!saved.apps.gemini);
+
+        Ok(())
+    }
+
+    #[test]
+    fn provider_custom_endpoints_round_trip_last_used() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut provider = Provider::with_id(
+            "provider-a".to_string(),
+            "Provider A".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test"
+                }
+            }),
+            None,
+        );
+
+        let mut meta = provider.meta.take().unwrap_or_default();
+        meta.custom_endpoints = HashMap::from([(
+            "https://edge.example.com/v1".to_string(),
+            crate::settings::CustomEndpoint {
+                url: "https://edge.example.com/v1".to_string(),
+                added_at: 123,
+                last_used: Some(456),
+            },
+        )]);
+        provider.meta = Some(meta);
+
+        db.save_provider("claude", &provider)?;
+
+        let providers = db.get_all_providers("claude")?;
+        let saved = providers.get("provider-a").expect("provider should exist");
+        let endpoint = saved
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.custom_endpoints.get("https://edge.example.com/v1"))
+            .expect("custom endpoint should exist");
+        assert_eq!(endpoint.added_at, 123);
+        assert_eq!(endpoint.last_used, Some(456));
 
         Ok(())
     }

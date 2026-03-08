@@ -1,12 +1,12 @@
 //! Provider command handlers
 
-use crate::cli::{ProviderCommands, UniversalProviderCommands};
+use crate::cli::{ProviderCommands, ProviderEndpointCommands, UniversalProviderCommands};
 use crate::handlers::common::parse_app_type;
 use crate::output::Printer;
 use anyhow::Context;
 use cc_switch_core::{
     config::sanitize_provider_name, AppState, AppType, Provider, ProviderSortUpdate,
-    UniversalProvider, UsageService,
+    SpeedtestService, UniversalProvider, UsageService,
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -85,6 +85,7 @@ pub async fn handle(
             handle_sort_order(&id, &app, index, state, printer).await
         }
         ProviderCommands::Usage { id, app } => handle_usage(&id, &app, state, printer).await,
+        ProviderCommands::Endpoint { cmd } => handle_endpoint(cmd, state, printer).await,
         ProviderCommands::Universal(cmd) => handle_universal(cmd, state, printer).await,
     }
 }
@@ -350,6 +351,170 @@ fn ensure_provider_exists(state: &AppState, app_type: &AppType, id: &str) -> any
     } else {
         Err(anyhow::anyhow!("Provider not found: {}", id))
     }
+}
+
+fn load_provider(state: &AppState, app_type: &AppType, id: &str) -> anyhow::Result<Provider> {
+    cc_switch_core::ProviderService::list(state, app_type.clone())?
+        .shift_remove(id)
+        .ok_or_else(|| anyhow::anyhow!("Provider not found: {}", id))
+}
+
+async fn handle_endpoint(
+    cmd: ProviderEndpointCommands,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    match cmd {
+        ProviderEndpointCommands::List { id, app } => {
+            let app_type = parse_app_type(&app)?;
+            ensure_provider_exists(state, &app_type, &id)?;
+            let endpoints =
+                cc_switch_core::ProviderService::get_custom_endpoints(state, app_type, &id)?;
+            printer.print_custom_endpoints(&endpoints)?;
+        }
+        ProviderEndpointCommands::Add { id, app, url } => {
+            let app_type = parse_app_type(&app)?;
+            ensure_provider_exists(state, &app_type, &id)?;
+            cc_switch_core::ProviderService::add_custom_endpoint(
+                state,
+                app_type,
+                &id,
+                url.clone(),
+            )?;
+            printer.success(format!(
+                "✓ Added custom endpoint '{}' for provider '{}' in {}",
+                url, id, app
+            ));
+        }
+        ProviderEndpointCommands::Remove { id, app, url } => {
+            let app_type = parse_app_type(&app)?;
+            ensure_provider_exists(state, &app_type, &id)?;
+            cc_switch_core::ProviderService::remove_custom_endpoint(
+                state,
+                app_type,
+                &id,
+                url.clone(),
+            )?;
+            printer.success(format!(
+                "✓ Removed custom endpoint '{}' from provider '{}' in {}",
+                url, id, app
+            ));
+        }
+        ProviderEndpointCommands::MarkUsed { id, app, url } => {
+            let app_type = parse_app_type(&app)?;
+            ensure_provider_exists(state, &app_type, &id)?;
+            cc_switch_core::ProviderService::update_endpoint_last_used(
+                state,
+                app_type,
+                &id,
+                url.clone(),
+            )?;
+            printer.success(format!(
+                "✓ Marked endpoint '{}' as last used for provider '{}' in {}",
+                url, id, app
+            ));
+        }
+        ProviderEndpointCommands::Speedtest { id, app, timeout } => {
+            let app_type = parse_app_type(&app)?;
+            let provider = load_provider(state, &app_type, &id)?;
+            let urls = collect_endpoint_urls(&provider, &app_type, state)?;
+            if urls.is_empty() {
+                anyhow::bail!("No primary or custom endpoints found for provider '{}'", id);
+            }
+            let results = SpeedtestService::test_endpoints(urls, timeout).await?;
+            printer.print_endpoint_latencies(&results)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_endpoint_urls(
+    provider: &Provider,
+    app_type: &AppType,
+    state: &AppState,
+) -> anyhow::Result<Vec<String>> {
+    let mut urls = Vec::new();
+
+    if let Some(primary) = extract_provider_base_url(&provider.settings_config, app_type)? {
+        push_unique_endpoint(&mut urls, primary);
+    }
+
+    for endpoint in cc_switch_core::ProviderService::get_custom_endpoints(
+        state,
+        app_type.clone(),
+        &provider.id,
+    )? {
+        push_unique_endpoint(&mut urls, endpoint.url);
+    }
+
+    Ok(urls)
+}
+
+fn push_unique_endpoint(urls: &mut Vec<String>, url: String) {
+    let normalized = url.trim().trim_end_matches('/').to_string();
+    if normalized.is_empty() || urls.iter().any(|item| item == &normalized) {
+        return;
+    }
+    urls.push(normalized);
+}
+
+fn extract_provider_base_url(
+    settings_config: &Value,
+    app_type: &AppType,
+) -> anyhow::Result<Option<String>> {
+    let value = match app_type {
+        AppType::Claude => settings_config
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(Value::as_str)
+            .map(|item| item.to_string()),
+        AppType::Codex => {
+            let config_text = settings_config
+                .get("config")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            config_text.lines().find_map(|line| {
+                let trimmed = line.trim();
+                if !trimmed.starts_with("base_url") {
+                    return None;
+                }
+                let value = trimmed.split_once('=')?.1.trim();
+                value
+                    .strip_prefix('"')
+                    .and_then(|item| item.strip_suffix('"'))
+                    .or_else(|| {
+                        value
+                            .strip_prefix('\'')
+                            .and_then(|item| item.strip_suffix('\''))
+                    })
+                    .map(|item| item.to_string())
+            })
+        }
+        AppType::Gemini => settings_config
+            .get("env")
+            .and_then(|env| env.get("GOOGLE_GEMINI_BASE_URL"))
+            .and_then(Value::as_str)
+            .map(|item| item.to_string()),
+        AppType::OpenCode => settings_config
+            .get("options")
+            .and_then(|options| options.get("baseURL"))
+            .and_then(Value::as_str)
+            .map(|item| item.to_string()),
+        AppType::OpenClaw => settings_config
+            .get("baseUrl")
+            .and_then(Value::as_str)
+            .map(|item| item.to_string()),
+    };
+
+    Ok(value.and_then(|item| {
+        let trimmed = item.trim().trim_end_matches('/').to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    }))
 }
 
 async fn handle_usage(
@@ -836,5 +1001,19 @@ mod tests {
         assert_eq!(duplicated.name, "Claude Source Copy");
         assert_eq!(duplicated.id, "claude-source-copy");
         assert_ne!(duplicated.id, source.id);
+    }
+
+    #[test]
+    fn extract_provider_base_url_reads_codex_toml() {
+        let settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test"
+            },
+            "config": "model = \"gpt-5\"\nbase_url = \"https://codex.example/v1\"\n"
+        });
+
+        let base_url = extract_provider_base_url(&settings, &AppType::Codex)
+            .expect("codex base url should parse");
+        assert_eq!(base_url.as_deref(), Some("https://codex.example/v1"));
     }
 }

@@ -212,9 +212,70 @@ pub enum ProviderCommands {
         #[arg(short, long, default_value = "claude")]
         app: String,
     },
+    /// Manage provider endpoints
+    Endpoint {
+        #[command(subcommand)]
+        cmd: ProviderEndpointCommands,
+    },
     /// Universal provider management (cross-app)
     #[command(subcommand)]
     Universal(UniversalProviderCommands),
+}
+
+#[derive(Subcommand)]
+pub enum ProviderEndpointCommands {
+    /// List custom endpoints for a provider
+    List {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+    /// Add a custom endpoint for a provider
+    Add {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+        /// Endpoint URL
+        #[arg(short = 'u', long)]
+        url: String,
+    },
+    /// Remove a custom endpoint from a provider
+    Remove {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+        /// Endpoint URL
+        #[arg(short = 'u', long)]
+        url: String,
+    },
+    /// Mark an endpoint as last used for a provider
+    MarkUsed {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+        /// Endpoint URL
+        #[arg(short = 'u', long)]
+        url: String,
+    },
+    /// Run latency checks for the provider primary endpoint and custom endpoints
+    Speedtest {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+        /// Timeout in seconds
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
 }
 
 #[derive(Subcommand)]

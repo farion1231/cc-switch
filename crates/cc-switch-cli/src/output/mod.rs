@@ -268,6 +268,34 @@ impl Printer {
         }
     }
 
+    pub fn print_custom_endpoints(
+        &self,
+        endpoints: &[cc_switch_core::settings::CustomEndpoint],
+    ) -> anyhow::Result<()> {
+        if self.is_quiet() {
+            return Ok(());
+        }
+        match self.format {
+            OutputFormat::Table => table::print_custom_endpoints(endpoints),
+            OutputFormat::Json => json::print_custom_endpoints(endpoints),
+            OutputFormat::Yaml => yaml::print_custom_endpoints(endpoints),
+        }
+    }
+
+    pub fn print_endpoint_latencies(
+        &self,
+        latencies: &[cc_switch_core::EndpointLatency],
+    ) -> anyhow::Result<()> {
+        if self.is_quiet() {
+            return Ok(());
+        }
+        match self.format {
+            OutputFormat::Table => table::print_endpoint_latencies(latencies),
+            OutputFormat::Json => json::print_endpoint_latencies(latencies),
+            OutputFormat::Yaml => yaml::print_endpoint_latencies(latencies),
+        }
+    }
+
     pub fn print_value<T: Serialize>(&self, value: &T) -> anyhow::Result<()> {
         if self.is_quiet() {
             return Ok(());

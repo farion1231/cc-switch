@@ -377,6 +377,95 @@ struct FailoverRow {
     provider_name: String,
 }
 
+pub fn print_custom_endpoints(
+    endpoints: &[cc_switch_core::settings::CustomEndpoint],
+) -> anyhow::Result<()> {
+    if endpoints.is_empty() {
+        println!("No custom endpoints found.");
+        return Ok(());
+    }
+
+    let rows: Vec<CustomEndpointRow> = endpoints
+        .iter()
+        .map(|item| CustomEndpointRow {
+            url: item.url.clone(),
+            added_at: format_timestamp(item.added_at),
+            last_used: item
+                .last_used
+                .map(format_timestamp)
+                .unwrap_or_else(|| "-".to_string()),
+        })
+        .collect();
+
+    let table = Table::new(rows)
+        .with(Style::rounded())
+        .with(Modify::new(Rows::new(1..)).with(Alignment::left()))
+        .to_string();
+    println!("{table}");
+    Ok(())
+}
+
+#[derive(Tabled)]
+struct CustomEndpointRow {
+    #[tabled(rename = "URL")]
+    url: String,
+    #[tabled(rename = "Added At")]
+    added_at: String,
+    #[tabled(rename = "Last Used")]
+    last_used: String,
+}
+
+pub fn print_endpoint_latencies(
+    latencies: &[cc_switch_core::EndpointLatency],
+) -> anyhow::Result<()> {
+    if latencies.is_empty() {
+        println!("No endpoints to test.");
+        return Ok(());
+    }
+
+    let rows: Vec<EndpointLatencyRow> = latencies
+        .iter()
+        .map(|item| EndpointLatencyRow {
+            url: item.url.clone(),
+            latency_ms: item
+                .latency_ms
+                .map(|value| format!("{value} ms"))
+                .unwrap_or_else(|| "-".to_string()),
+            status: if item.error.is_some() {
+                "Error".red().to_string()
+            } else {
+                "OK".green().to_string()
+            },
+            detail: item.error.clone().unwrap_or_else(|| "-".to_string()),
+        })
+        .collect();
+
+    let table = Table::new(rows)
+        .with(Style::rounded())
+        .with(Modify::new(Rows::new(1..)).with(Alignment::left()))
+        .to_string();
+    println!("{table}");
+    Ok(())
+}
+
+#[derive(Tabled)]
+struct EndpointLatencyRow {
+    #[tabled(rename = "URL")]
+    url: String,
+    #[tabled(rename = "Latency")]
+    latency_ms: String,
+    #[tabled(rename = "Status")]
+    status: String,
+    #[tabled(rename = "Detail")]
+    detail: String,
+}
+
+fn format_timestamp(timestamp_ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(timestamp_ms)
+        .map(|value| value.to_rfc3339())
+        .unwrap_or_else(|| timestamp_ms.to_string())
+}
+
 pub fn print_provider_health(health: &cc_switch_core::ProviderHealth) -> anyhow::Result<()> {
     println!("Provider: {}", health.provider_id);
     println!("App: {}", health.app_type);

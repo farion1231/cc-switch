@@ -2,6 +2,7 @@ mod config_smoke;
 mod import_export_deeplink;
 mod mcp_sync;
 mod prompt_live_sync;
+mod provider_endpoints;
 mod provider_live_switch;
 mod proxy_failover_runtime;
 mod proxy_takeover_restore;
@@ -15,6 +16,7 @@ pub fn all() -> Vec<Scenario> {
     vec![
         config_smoke::scenario(),
         provider_live_switch::scenario(),
+        provider_endpoints::scenario(),
         prompt_live_sync::scenario(),
         mcp_sync::scenario(),
         import_export_deeplink::scenario(),
