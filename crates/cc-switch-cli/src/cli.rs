@@ -57,6 +57,11 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: SkillCommands,
     },
+    /// Structured settings management
+    Settings {
+        #[command(subcommand)]
+        cmd: SettingsCommands,
+    },
     /// Configuration management
     Config {
         #[command(subcommand)]
@@ -81,6 +86,11 @@ pub enum Commands {
     Openclaw {
         #[command(subcommand)]
         cmd: OpenClawCommands,
+    },
+    /// Session management
+    Sessions {
+        #[command(subcommand)]
+        cmd: SessionCommands,
     },
     /// OMO configuration management
     Omo {
@@ -1118,6 +1128,40 @@ pub enum EnvCommands {
 }
 
 #[derive(Subcommand)]
+pub enum SessionCommands {
+    /// List discovered sessions
+    List {
+        /// Filter by provider
+        #[arg(long)]
+        provider: Option<String>,
+        /// Case-insensitive keyword filter across title, summary, project path and session id
+        #[arg(long)]
+        query: Option<String>,
+    },
+    /// Read messages from one session source file
+    Messages {
+        /// Provider id
+        #[arg(long)]
+        provider: String,
+        /// Session source file path
+        #[arg(long)]
+        source_path: String,
+    },
+    /// Print the resume command for one session
+    #[command(name = "resume-command")]
+    ResumeCommand {
+        /// Session id
+        session_id: String,
+        /// Filter by provider
+        #[arg(long)]
+        provider: Option<String>,
+        /// Exact session source file path
+        #[arg(long)]
+        source_path: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum OpenClawCommands {
     /// Manage OpenClaw env config
     Env {
@@ -1365,6 +1409,123 @@ pub enum SkillRepoCommands {
         /// GitHub repo URL or owner/name
         repo: String,
     },
+}
+
+#[derive(Subcommand)]
+pub enum SettingsCommands {
+    /// Show frontend-facing settings
+    Show,
+    /// Manage language setting
+    Language {
+        #[command(subcommand)]
+        cmd: SettingsValueCommands,
+    },
+    /// Manage visible apps
+    #[command(name = "visible-apps")]
+    VisibleApps {
+        #[command(subcommand)]
+        cmd: SettingsVisibleAppsCommands,
+    },
+    /// Manage preferred terminal
+    Terminal {
+        #[command(subcommand)]
+        cmd: SettingsValueCommands,
+    },
+    /// Manage startup-related preferences
+    Startup {
+        #[command(subcommand)]
+        cmd: SettingsStartupCommands,
+    },
+    /// Manage Claude plugin integration
+    Plugin {
+        #[command(subcommand)]
+        cmd: SettingsToggleCommands,
+    },
+    /// Manage Claude onboarding skip state
+    Onboarding {
+        #[command(subcommand)]
+        cmd: SettingsOnboardingCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SettingsValueCommands {
+    /// Read the current value
+    Get,
+    /// Set a new value
+    Set {
+        /// New value
+        value: String,
+    },
+    /// Clear the current value
+    Clear,
+}
+
+#[derive(Subcommand)]
+pub enum SettingsVisibleAppsCommands {
+    /// Read visible app flags
+    Get,
+    /// Update visible app flags
+    Set {
+        /// Show Claude
+        #[arg(long)]
+        claude: Option<bool>,
+        /// Show Codex
+        #[arg(long)]
+        codex: Option<bool>,
+        /// Show Gemini
+        #[arg(long)]
+        gemini: Option<bool>,
+        /// Show OpenCode
+        #[arg(long)]
+        opencode: Option<bool>,
+        /// Show OpenClaw
+        #[arg(long)]
+        openclaw: Option<bool>,
+    },
+    /// Clear custom visible app flags and fall back to defaults
+    Clear,
+}
+
+#[derive(Subcommand)]
+pub enum SettingsStartupCommands {
+    /// Read startup-related preferences
+    Show,
+    /// Update startup-related preferences
+    Set {
+        /// Show tray icon
+        #[arg(long)]
+        show_in_tray: Option<bool>,
+        /// Minimize to tray when closing
+        #[arg(long)]
+        minimize_to_tray_on_close: Option<bool>,
+        /// Remember launch-on-startup preference
+        #[arg(long)]
+        launch_on_startup: Option<bool>,
+        /// Remember silent-startup preference
+        #[arg(long)]
+        silent_startup: Option<bool>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SettingsToggleCommands {
+    /// Show current status
+    Status,
+    /// Enable the feature
+    Enable,
+    /// Disable the feature
+    Disable,
+}
+
+#[derive(Subcommand)]
+pub enum SettingsOnboardingCommands {
+    /// Show current onboarding skip status
+    Status,
+    /// Mark onboarding as completed
+    Skip,
+    /// Clear the onboarding completion marker
+    Clear,
 }
 
 #[derive(Subcommand)]

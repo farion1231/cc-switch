@@ -15,6 +15,8 @@ mod provider_universal_flow;
 mod proxy_advanced_config;
 mod proxy_failover_runtime;
 mod proxy_takeover_restore;
+mod session_flow;
+mod settings_structured_flow;
 mod skill_local_lifecycle;
 mod skill_repo_and_import;
 mod usage_via_real_proxy_traffic;
@@ -43,6 +45,8 @@ pub fn all() -> Vec<Scenario> {
         import_export_deeplink::scenario(),
         proxy_takeover_restore::scenario(),
         proxy_failover_runtime::scenario(),
+        session_flow::scenario(),
+        settings_structured_flow::scenario(),
         usage_via_real_proxy_traffic::scenario(),
         webdav_sync_flow::scenario(),
         skill_local_lifecycle::scenario(),

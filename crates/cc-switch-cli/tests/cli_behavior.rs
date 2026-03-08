@@ -46,6 +46,10 @@ fn claude_settings_path(home: &Path) -> PathBuf {
     home.join(".claude").join("settings.json")
 }
 
+fn claude_plugin_config_path(home: &Path) -> PathBuf {
+    home.join(".claude").join("config.json")
+}
+
 fn zshrc_path(home: &Path) -> PathBuf {
     home.join(".zshrc")
 }
@@ -90,6 +94,13 @@ fn openclaw_memory_file_path(home: &Path, filename: &str) -> PathBuf {
     home.join(".openclaw")
         .join("workspace")
         .join("memory")
+        .join(filename)
+}
+
+fn claude_session_path(home: &Path, project: &str, filename: &str) -> PathBuf {
+    home.join(".claude")
+        .join("projects")
+        .join(project)
         .join(filename)
 }
 
@@ -198,6 +209,25 @@ fn seed_provider(home: &Path, app_type: &str, provider: Provider) {
             .save_provider(app_type, &provider)
             .expect("save provider");
     });
+}
+
+fn seed_claude_session(home: &Path, project: &str, filename: &str) -> PathBuf {
+    let path = claude_session_path(home, project, filename);
+    fs::create_dir_all(
+        path.parent()
+            .expect("claude session file should have a parent directory"),
+    )
+    .expect("create claude session directory");
+    fs::write(
+        &path,
+        concat!(
+            "{\"sessionId\":\"session-1\",\"cwd\":\"/work/demo-project\",\"timestamp\":\"2026-03-08T10:00:00Z\",\"isMeta\":true}\n",
+            "{\"message\":{\"role\":\"user\",\"content\":\"hello from claude\"},\"timestamp\":\"2026-03-08T10:01:00Z\"}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"done\"},\"timestamp\":\"2026-03-08T10:02:00Z\"}\n"
+        ),
+    )
+    .expect("write claude session fixture");
+    path
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -925,6 +955,289 @@ async fn webdav_show_save_test_remote_info_upload_and_download_round_trip() {
         }),
         "webdav download should restore the uploaded database snapshot"
     );
+}
+
+#[test]
+#[serial]
+fn sessions_list_messages_and_resume_command_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    let session_path = seed_claude_session(temp.path(), "demo-project", "session-1.jsonl");
+
+    let list_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "sessions",
+            "list",
+            "--provider",
+            "claude",
+            "--query",
+            "demo-project",
+        ],
+    );
+    assert!(
+        list_output.status.success(),
+        "stderr: {}",
+        stderr_text(&list_output)
+    );
+    let sessions: Value =
+        serde_json::from_slice(&list_output.stdout).expect("sessions list should return json");
+    assert_eq!(sessions.as_array().map(Vec::len), Some(1));
+    assert_eq!(sessions[0].get("providerId").and_then(Value::as_str), Some("claude"));
+    assert_eq!(
+        sessions[0].get("resumeCommand").and_then(Value::as_str),
+        Some("claude --resume session-1")
+    );
+
+    let messages_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "sessions",
+            "messages",
+            "--provider",
+            "claude",
+            "--source-path",
+            session_path.to_str().expect("utf-8 source path"),
+        ],
+    );
+    assert!(
+        messages_output.status.success(),
+        "stderr: {}",
+        stderr_text(&messages_output)
+    );
+    let messages: Value = serde_json::from_slice(&messages_output.stdout)
+        .expect("sessions messages should return json");
+    assert_eq!(messages.as_array().map(Vec::len), Some(2));
+    assert_eq!(messages[0].get("role").and_then(Value::as_str), Some("user"));
+    assert_eq!(
+        messages[0].get("content").and_then(Value::as_str),
+        Some("hello from claude")
+    );
+
+    let resume_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "sessions",
+            "resume-command",
+            "session-1",
+            "--provider",
+            "claude",
+        ],
+    );
+    assert!(
+        resume_output.status.success(),
+        "stderr: {}",
+        stderr_text(&resume_output)
+    );
+    let resume: Value = serde_json::from_slice(&resume_output.stdout)
+        .expect("sessions resume-command should return json");
+    assert_eq!(
+        resume.get("resumeCommand").and_then(Value::as_str),
+        Some("claude --resume session-1")
+    );
+    assert_eq!(
+        resume.get("sourcePath").and_then(Value::as_str),
+        Some(session_path.to_str().expect("utf-8 source path"))
+    );
+}
+
+#[test]
+#[serial]
+fn settings_structured_commands_round_trip() {
+    let temp = tempdir().expect("tempdir");
+
+    let language_set = run_cli(
+        temp.path(),
+        &["--format", "json", "settings", "language", "set", "zh"],
+    );
+    assert!(language_set.status.success(), "stderr: {}", stderr_text(&language_set));
+
+    let language_get = run_cli(
+        temp.path(),
+        &["--format", "json", "settings", "language", "get"],
+    );
+    assert!(language_get.status.success(), "stderr: {}", stderr_text(&language_get));
+    let language: Value =
+        serde_json::from_slice(&language_get.stdout).expect("language get should return json");
+    assert_eq!(language.get("language").and_then(Value::as_str), Some("zh"));
+
+    let visible_apps_set = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "settings",
+            "visible-apps",
+            "set",
+            "--codex",
+            "false",
+            "--openclaw",
+            "false",
+        ],
+    );
+    assert!(
+        visible_apps_set.status.success(),
+        "stderr: {}",
+        stderr_text(&visible_apps_set)
+    );
+    let visible_apps: Value = serde_json::from_slice(&visible_apps_set.stdout)
+        .expect("visible apps should return json");
+    assert_eq!(
+        visible_apps["visibleApps"]
+            .get("codex")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        visible_apps["visibleApps"]
+            .get("openclaw")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let terminal_set = run_cli(
+        temp.path(),
+        &["--format", "json", "settings", "terminal", "set", "wezterm"],
+    );
+    assert!(terminal_set.status.success(), "stderr: {}", stderr_text(&terminal_set));
+    let terminal: Value =
+        serde_json::from_slice(&terminal_set.stdout).expect("terminal set should return json");
+    assert_eq!(
+        terminal.get("preferredTerminal").and_then(Value::as_str),
+        Some("wezterm")
+    );
+
+    let startup_set = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "settings",
+            "startup",
+            "set",
+            "--show-in-tray",
+            "false",
+            "--minimize-to-tray-on-close",
+            "false",
+            "--launch-on-startup",
+            "true",
+            "--silent-startup",
+            "true",
+        ],
+    );
+    assert!(startup_set.status.success(), "stderr: {}", stderr_text(&startup_set));
+    let startup: Value =
+        serde_json::from_slice(&startup_set.stdout).expect("startup set should return json");
+    assert_eq!(startup.get("showInTray").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        startup
+            .get("minimizeToTrayOnClose")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        startup.get("launchOnStartup").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        startup.get("silentStartup").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let plugin_enable = run_cli(
+        temp.path(),
+        &["--format", "json", "settings", "plugin", "enable"],
+    );
+    assert!(plugin_enable.status.success(), "stderr: {}", stderr_text(&plugin_enable));
+    let plugin: Value =
+        serde_json::from_slice(&plugin_enable.stdout).expect("plugin enable should return json");
+    assert_eq!(
+        plugin.get("enabledInSettings").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(plugin.get("applied").and_then(Value::as_bool), Some(true));
+    assert!(claude_plugin_config_path(temp.path()).exists());
+
+    let onboarding_skip = run_cli(
+        temp.path(),
+        &["--format", "json", "settings", "onboarding", "skip"],
+    );
+    assert!(
+        onboarding_skip.status.success(),
+        "stderr: {}",
+        stderr_text(&onboarding_skip)
+    );
+    let onboarding: Value = serde_json::from_slice(&onboarding_skip.stdout)
+        .expect("onboarding skip should return json");
+    assert_eq!(
+        onboarding.get("skipInSettings").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(onboarding.get("applied").and_then(Value::as_bool), Some(true));
+    assert!(
+        fs::read_to_string(claude_mcp_path(temp.path()))
+            .expect("onboarding file should exist")
+            .contains("hasCompletedOnboarding")
+    );
+
+    let onboarding_clear = run_cli(
+        temp.path(),
+        &["--format", "json", "settings", "onboarding", "clear"],
+    );
+    assert!(
+        onboarding_clear.status.success(),
+        "stderr: {}",
+        stderr_text(&onboarding_clear)
+    );
+    let onboarding_after: Value = serde_json::from_slice(&onboarding_clear.stdout)
+        .expect("onboarding clear should return json");
+    assert_eq!(
+        onboarding_after.get("skipInSettings").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        onboarding_after.get("applied").and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let plugin_disable = run_cli(
+        temp.path(),
+        &["--format", "json", "settings", "plugin", "disable"],
+    );
+    assert!(plugin_disable.status.success(), "stderr: {}", stderr_text(&plugin_disable));
+    let plugin_after: Value = serde_json::from_slice(&plugin_disable.stdout)
+        .expect("plugin disable should return json");
+    assert_eq!(
+        plugin_after.get("enabledInSettings").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        plugin_after.get("applied").and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let terminal_clear = run_cli(
+        temp.path(),
+        &["--format", "json", "settings", "terminal", "clear"],
+    );
+    assert!(terminal_clear.status.success(), "stderr: {}", stderr_text(&terminal_clear));
+    let terminal_after: Value = serde_json::from_slice(&terminal_clear.stdout)
+        .expect("terminal clear should return json");
+    assert!(terminal_after.get("preferredTerminal").is_some_and(Value::is_null));
+
+    let language_clear = run_cli(
+        temp.path(),
+        &["--format", "json", "settings", "language", "clear"],
+    );
+    assert!(language_clear.status.success(), "stderr: {}", stderr_text(&language_clear));
+    let language_after: Value = serde_json::from_slice(&language_clear.stdout)
+        .expect("language clear should return json");
+    assert!(language_after.get("language").is_some_and(Value::is_null));
 }
 
 #[test]

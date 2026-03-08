@@ -38,8 +38,9 @@
 
 ## P2 壳层能力与信息面
 
-- [ ] 给 CLI 增加 sessions list/messages/resume-command 能力，并在可行时接 terminal launch。
-- [ ] 给 CLI 增加 settings structured subcommands，覆盖 language / visible-apps / terminal / startup / plugin / onboarding。
+- [x] 给 CLI 增加 sessions list/messages/resume-command 能力。
+- [ ] 评估并在合适时补 sessions terminal launch。
+- [x] 给 CLI 增加 settings structured subcommands，覆盖 language / visible-apps / terminal / startup / plugin / onboarding。
 - [ ] 给 CLI 增加 auto-launch / portable-mode / tool-versions 命令。
 - [ ] 给 CLI 增加 update / release-notes / about 信息命令。
 - [ ] 评估哪些 GUI 的文件对话框能力在 CLI 中应改成显式路径参数，哪些不需要做 1:1 复刻。

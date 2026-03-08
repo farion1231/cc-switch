@@ -11,6 +11,8 @@ mod omo;
 mod prompt;
 mod provider;
 mod proxy;
+mod session;
+mod settings;
 mod skill;
 mod usage;
 mod webdav;
@@ -34,11 +36,13 @@ pub async fn dispatch(cli: Cli, state: AppState) -> anyhow::Result<()> {
         Commands::Proxy { cmd } => proxy::handle(cmd, &state, &printer).await,
         Commands::Prompt { cmd } => prompt::handle(cmd, &state, &printer).await,
         Commands::Skill { cmd } => skill::handle(cmd, &state, &printer).await,
+        Commands::Settings { cmd } => settings::handle(cmd, &state, &printer).await,
         Commands::Config { cmd } => config::handle(cmd, &state, &printer).await,
         Commands::Usage { cmd } => usage::handle(cmd, &state, &printer).await,
         Commands::Backup { cmd } => backup::handle(cmd, &state, &printer).await,
         Commands::Env { cmd } => env::handle(cmd, &printer).await,
         Commands::Openclaw { cmd } => openclaw::handle(cmd, &printer).await,
+        Commands::Sessions { cmd } => session::handle(cmd, &printer).await,
         Commands::Omo { cmd } => omo::handle_standard(cmd, &state, &printer).await,
         Commands::OmoSlim { cmd } => omo::handle_slim(cmd, &state, &printer).await,
         Commands::Workspace { cmd } => workspace::handle(cmd, &printer).await,
@@ -74,11 +78,13 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Proxy { .. } => "proxy",
         Commands::Prompt { .. } => "prompt",
         Commands::Skill { .. } => "skill",
+        Commands::Settings { .. } => "settings",
         Commands::Config { .. } => "config",
         Commands::Usage { .. } => "usage",
         Commands::Backup { .. } => "backup",
         Commands::Env { .. } => "env",
         Commands::Openclaw { .. } => "openclaw",
+        Commands::Sessions { .. } => "sessions",
         Commands::Omo { .. } => "omo",
         Commands::OmoSlim { .. } => "omo-slim",
         Commands::Workspace { .. } => "workspace",
