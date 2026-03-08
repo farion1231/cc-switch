@@ -215,6 +215,28 @@ impl OmoService {
         Ok(provider)
     }
 
+    pub fn get_current_provider_id(
+        state: &AppState,
+        variant: &OmoVariant,
+    ) -> Result<Option<String>, AppError> {
+        Ok(state
+            .db
+            .get_current_omo_provider("opencode", variant.category)?
+            .map(|provider| provider.id))
+    }
+
+    pub fn disable_current(state: &AppState, variant: &OmoVariant) -> Result<(), AppError> {
+        if let Some(provider) = state
+            .db
+            .get_current_omo_provider("opencode", variant.category)?
+        {
+            state
+                .db
+                .clear_omo_provider_current("opencode", &provider.id, variant.category)?;
+        }
+        Self::delete_config_file(variant)
+    }
+
     pub fn read_local_file(variant: &OmoVariant) -> Result<OmoLocalFileData, AppError> {
         let actual_path = Self::resolve_local_config_path(variant)?;
         let metadata = std::fs::metadata(&actual_path).ok();
@@ -384,6 +406,43 @@ mod tests {
         let written: Value = crate::config::read_json_file(&path)?;
         assert!(written.get("agents").is_some());
         assert!(written.get("categories").is_some());
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn disable_current_clears_provider_and_deletes_config_file() -> Result<(), AppError> {
+        let temp = tempdir().expect("tempdir");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let state = AppState::new(Database::memory()?);
+
+        let provider = crate::provider::Provider::with_id(
+            "omo-demo".into(),
+            "OMO Demo".into(),
+            serde_json::json!({
+                "agents": { "demo": { "prompt": "hi" } },
+                "categories": ["tools"]
+            }),
+            None,
+        );
+        let mut provider = provider;
+        provider.category = Some("omo".into());
+        state.db.save_provider("opencode", &provider)?;
+        state
+            .db
+            .set_omo_provider_current("opencode", "omo-demo", "omo")?;
+        OmoService::write_config_to_file(&state, &STANDARD)?;
+
+        assert_eq!(
+            OmoService::get_current_provider_id(&state, &STANDARD)?,
+            Some("omo-demo".to_string())
+        );
+
+        OmoService::disable_current(&state, &STANDARD)?;
+
+        let path = temp.path().join(".config/opencode/oh-my-opencode.jsonc");
+        assert_eq!(OmoService::get_current_provider_id(&state, &STANDARD)?, None);
+        assert!(!path.exists());
         Ok(())
     }
 }

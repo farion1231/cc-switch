@@ -64,6 +64,18 @@ fn opencode_config_path(home: &Path) -> PathBuf {
     home.join(".config").join("opencode").join("opencode.json")
 }
 
+fn omo_local_path(home: &Path) -> PathBuf {
+    home.join(".config")
+        .join("opencode")
+        .join("oh-my-opencode.jsonc")
+}
+
+fn omo_slim_local_path(home: &Path) -> PathBuf {
+    home.join(".config")
+        .join("opencode")
+        .join("oh-my-opencode-slim.jsonc")
+}
+
 fn openclaw_workspace_file_path(home: &Path, filename: &str) -> PathBuf {
     home.join(".openclaw").join("workspace").join(filename)
 }
@@ -882,6 +894,121 @@ fn openclaw_env_tools_default_model_and_catalog_round_trip() {
     assert!(live_config.contains("\"env\""));
     assert!(live_config.contains("\"tools\""));
     assert!(live_config.contains("\"agents\""));
+}
+
+#[test]
+#[serial]
+fn omo_and_omo_slim_read_import_current_and_disable_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join(".config").join("opencode")).expect("create opencode dir");
+    fs::write(
+        omo_local_path(temp.path()),
+        r#"{
+  // comment
+  "agents": { "writer": { "prompt": "hi" } },
+  "categories": { "default": ["writer"] },
+  "theme": "default"
+}"#,
+    )
+    .expect("write omo jsonc");
+    fs::write(
+        omo_slim_local_path(temp.path()),
+        r#"{
+  "agents": { "reviewer": { "prompt": "ship it" } },
+  "theme": "slim"
+}"#,
+    )
+    .expect("write omo slim jsonc");
+
+    let read_omo = run_cli(temp.path(), &["--format", "json", "omo", "read-local"]);
+    assert!(read_omo.status.success(), "stderr: {}", stderr_text(&read_omo));
+    let read_omo_json: Value =
+        serde_json::from_slice(&read_omo.stdout).expect("omo read-local should return json");
+    assert!(read_omo_json.get("agents").is_some());
+    assert!(read_omo_json.get("categories").is_some());
+
+    let import_omo = run_cli(temp.path(), &["--format", "json", "omo", "import-local"]);
+    assert!(
+        import_omo.status.success(),
+        "stderr: {}",
+        stderr_text(&import_omo)
+    );
+    let imported_omo: Value =
+        serde_json::from_slice(&import_omo.stdout).expect("omo import-local should return json");
+    let imported_omo_id = imported_omo
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("omo import-local should return provider id");
+
+    let current_omo = run_cli(temp.path(), &["--format", "json", "omo", "current"]);
+    let current_omo_json: Value =
+        serde_json::from_slice(&current_omo.stdout).expect("omo current should return json");
+    assert_eq!(
+        current_omo_json.get("providerId").and_then(Value::as_str),
+        Some(imported_omo_id)
+    );
+
+    let disable_omo = run_cli(
+        temp.path(),
+        &["--format", "json", "omo", "disable-current"],
+    );
+    assert!(
+        disable_omo.status.success(),
+        "stderr: {}",
+        stderr_text(&disable_omo)
+    );
+    assert!(!omo_local_path(temp.path()).exists());
+
+    let read_omo_slim = run_cli(temp.path(), &["--format", "json", "omo-slim", "read-local"]);
+    assert!(
+        read_omo_slim.status.success(),
+        "stderr: {}",
+        stderr_text(&read_omo_slim)
+    );
+    let read_omo_slim_json: Value = serde_json::from_slice(&read_omo_slim.stdout)
+        .expect("omo-slim read-local should return json");
+    assert!(read_omo_slim_json.get("agents").is_some());
+    assert!(
+        read_omo_slim_json.get("categories").is_none()
+            || read_omo_slim_json
+                .get("categories")
+                .is_some_and(Value::is_null)
+    );
+
+    let import_omo_slim =
+        run_cli(temp.path(), &["--format", "json", "omo-slim", "import-local"]);
+    assert!(
+        import_omo_slim.status.success(),
+        "stderr: {}",
+        stderr_text(&import_omo_slim)
+    );
+    let imported_omo_slim: Value = serde_json::from_slice(&import_omo_slim.stdout)
+        .expect("omo-slim import-local should return json");
+    let imported_omo_slim_id = imported_omo_slim
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("omo-slim import-local should return provider id");
+
+    let current_omo_slim = run_cli(temp.path(), &["--format", "json", "omo-slim", "current"]);
+    let current_omo_slim_json: Value = serde_json::from_slice(&current_omo_slim.stdout)
+        .expect("omo-slim current should return json");
+    assert_eq!(
+        current_omo_slim_json
+            .get("providerId")
+            .and_then(Value::as_str),
+        Some(imported_omo_slim_id)
+    );
+
+    let disable_omo_slim = run_cli(
+        temp.path(),
+        &["--format", "json", "omo-slim", "disable-current"],
+    );
+    assert!(
+        disable_omo_slim.status.success(),
+        "stderr: {}",
+        stderr_text(&disable_omo_slim)
+    );
+    assert!(!omo_slim_local_path(temp.path()).exists());
 }
 
 #[test]

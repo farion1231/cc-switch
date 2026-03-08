@@ -33,7 +33,7 @@
 - [ ] 给 `webdav` 增加 test/save/upload/download/fetch-remote-info 子命令。
 - [x] 给 `backup` 增加 create/list/restore/rename/delete 子命令。
 - [x] 给 `env` 增加 check/delete/restore 子命令。
-- [ ] 给 `omo` / `omo-slim` 增加 read-local / import-local / current / disable-current 子命令。
+- [x] 给 `omo` / `omo-slim` 增加 read-local / import-local / current / disable-current 子命令。
 - [x] 给 `openclaw` 增加 env / tools / agents-defaults / default-model / model-catalog 子命令。
 
 ## P2 壳层能力与信息面

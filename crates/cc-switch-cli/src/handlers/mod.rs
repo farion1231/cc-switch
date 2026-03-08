@@ -7,6 +7,7 @@ mod env;
 mod import_export;
 mod mcp;
 mod openclaw;
+mod omo;
 mod prompt;
 mod provider;
 mod proxy;
@@ -37,6 +38,8 @@ pub async fn dispatch(cli: Cli, state: AppState) -> anyhow::Result<()> {
         Commands::Backup { cmd } => backup::handle(cmd, &state, &printer).await,
         Commands::Env { cmd } => env::handle(cmd, &printer).await,
         Commands::Openclaw { cmd } => openclaw::handle(cmd, &printer).await,
+        Commands::Omo { cmd } => omo::handle_standard(cmd, &state, &printer).await,
+        Commands::OmoSlim { cmd } => omo::handle_slim(cmd, &state, &printer).await,
         Commands::Workspace { cmd } => workspace::handle(cmd, &printer).await,
         Commands::Deeplink { cmd } => match cmd {
             DeeplinkCommands::Parse { url } => {
@@ -74,6 +77,8 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Backup { .. } => "backup",
         Commands::Env { .. } => "env",
         Commands::Openclaw { .. } => "openclaw",
+        Commands::Omo { .. } => "omo",
+        Commands::OmoSlim { .. } => "omo-slim",
         Commands::Workspace { .. } => "workspace",
         Commands::Deeplink { .. } => "deeplink",
         Commands::Export { .. } => "export",

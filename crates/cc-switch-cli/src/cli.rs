@@ -82,6 +82,17 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: OpenClawCommands,
     },
+    /// OMO configuration management
+    Omo {
+        #[command(subcommand)]
+        cmd: OmoCommands,
+    },
+    /// OMO Slim configuration management
+    #[command(name = "omo-slim")]
+    OmoSlim {
+        #[command(subcommand)]
+        cmd: OmoCommands,
+    },
     /// OpenClaw workspace and daily memory files
     Workspace {
         #[command(subcommand)]
@@ -1067,6 +1078,21 @@ pub enum OpenClawConfigCommands {
         #[arg(long, conflicts_with = "file")]
         value: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+pub enum OmoCommands {
+    /// Read the local OMO config file
+    #[command(name = "read-local")]
+    ReadLocal,
+    /// Import the local OMO config as the current provider
+    #[command(name = "import-local")]
+    ImportLocal,
+    /// Show the current OMO provider id
+    Current,
+    /// Disable the current OMO provider and remove the generated config file
+    #[command(name = "disable-current")]
+    DisableCurrent,
 }
 
 #[derive(Subcommand)]
