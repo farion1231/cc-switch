@@ -412,6 +412,47 @@
         "confirm": "アップロードを実行"
       }
     },
+    "syncType": {
+      "label": "同期方式",
+      "webdav": "WebDAV",
+      "s3": "S3互換ストレージ"
+    },
+    "s3Sync": {
+      "presets": {
+        "awsS3": "AWS S3",
+        "awsS3Hint": "IAM Access Keyを使用。s3:PutObject/GetObject/HeadObject権限が必要です。Region例: us-east-1, ap-northeast-1",
+        "minio": "MinIO",
+        "minioHint": "カスタムEndpointが必要です（例: http://minio.local:9000）。Regionは us-east-1 に設定可能",
+        "r2": "Cloudflare R2",
+        "r2Hint": "Endpoint: https://<account_id>.r2.cloudflarestorage.com、Regionは auto に設定",
+        "oss": "Alibaba Cloud OSS",
+        "ossHint": "Endpoint: https://oss-<region>.aliyuncs.com、Region例: cn-hangzhou, cn-shanghai",
+        "cos": "Tencent Cloud COS",
+        "cosHint": "Endpoint: https://cos.<region>.myqcloud.com、Region例: ap-guangzhou, ap-beijing",
+        "obs": "Huawei OBS",
+        "obsHint": "Endpoint: https://obs.<region>.myhuaweicloud.com、Region例: cn-north-4, cn-east-3",
+        "custom": "S3互換サービス（カスタム）",
+        "customHint": "任意のS3互換サービス。カスタムEndpointが必要です"
+      },
+      "region": "リージョン",
+      "regionPlaceholder": "例: us-east-1",
+      "bucket": "バケット",
+      "bucketPlaceholder": "例: my-cc-switch-bucket",
+      "accessKeyId": "Access Key ID",
+      "secretAccessKey": "Secret Access Key",
+      "endpoint": "エンドポイント（AWSは空欄可）",
+      "endpointPlaceholder": "例: https://s3-compatible.example.com",
+      "mutualExclusionTitle": "同期方式の切り替え",
+      "mutualExclusionMessage": "S3同期を有効にすると、現在のWebDAV同期が無効になります。続行しますか？",
+      "mutualExclusionMessageReverse": "WebDAV同期を有効にすると、現在のS3同期が無効になります。続行しますか？",
+      "testConnection": "接続テスト",
+      "connectionOk": "S3接続成功",
+      "upload": "アップロード",
+      "download": "ダウンロード",
+      "save": "保存",
+      "notConfigured": "S3同期が設定されていません",
+      "disabled": "S3同期が無効です"
+    },
     "autoReload": "データを更新しました",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
