@@ -39,16 +39,19 @@
 ## P2 壳层能力与信息面
 
 - [x] 给 CLI 增加 sessions list/messages/resume-command 能力。
-- [ ] 评估并在合适时补 sessions terminal launch。
 - [x] 给 CLI 增加 settings structured subcommands，覆盖 language / visible-apps / terminal / startup / plugin / onboarding。
 - [x] 给 CLI 增加 auto-launch / portable-mode / tool-versions 命令。
 - [x] 给 CLI 增加 update / release-notes / about 信息命令。
-- [ ] 评估哪些 GUI 的文件对话框能力在 CLI 中应改成显式路径参数，哪些不需要做 1:1 复刻。
-- [ ] 评估哪些 open-external / open-folder / terminal-launch 能力应保留为壳层命令而不是 core 能力。
+
+## 当前阶段明确后置
+
+- [ ] `sessions terminal launch` 继续留在壳层，不纳入当前 `core + CLI` 收口范围。
+- [ ] GUI 文件对话框能力不做 CLI 1:1 复刻，后续只在确有必要时补显式路径参数。
+- [ ] `open-external / open-folder / terminal-launch` 继续视为壳层能力，不下沉到 `core`。
 
 ## 通用收尾
 
-- [ ] 每补完一个功能域就补对应的 CLI 黑盒测试和 `qa/cli-e2e` 场景。
-- [ ] 每补完一个功能域就回写 `cli-gap.md` 的状态，避免文档和代码漂移。
-- [ ] 每一批命令补完后都跑 `cargo test -p cc-switch-core`、`cargo test -p cc-switch-cli`、`qa/cli-e2e`。
-- [ ] 在进入 Tauri 迁移前，先把这份 checklist 中的 P0 和 P1 清空。
+- [x] 每补完一个功能域就补对应的 CLI 黑盒测试和 `qa/cli-e2e` 场景。
+- [x] 每补完一个功能域就回写 `cli-gap.md` 的状态，避免文档和代码漂移。
+- [x] 每一批命令补完后都跑 `cargo test -p cc-switch-core`、`cargo test -p cc-switch-cli`、`qa/cli-e2e`。
+- [x] 在进入 Tauri 迁移前，先把这份 checklist 中的 P0 和 P1 清空。
