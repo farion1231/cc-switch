@@ -45,6 +45,10 @@ fn codex_config_path(home: &Path) -> PathBuf {
     home.join(".codex").join("config.toml")
 }
 
+fn opencode_config_path(home: &Path) -> PathBuf {
+    home.join(".config").join("opencode").join("opencode.json")
+}
+
 fn skill_ssot_dir(home: &Path, directory: &str) -> PathBuf {
     home.join(".cc-switch").join("skills").join(directory)
 }
@@ -665,6 +669,296 @@ fn provider_usage_without_script_falls_back_to_local_summary() {
             .and_then(Value::as_u64),
         Some(1)
     );
+}
+
+#[test]
+#[serial]
+fn provider_duplicate_sort_order_and_read_live_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    let provider_file = temp.path().join("provider.json");
+    fs::write(
+        &provider_file,
+        r#"{"env":{"ANTHROPIC_BASE_URL":"https://dup.example","ANTHROPIC_AUTH_TOKEN":"sk-dup"}}"#,
+    )
+    .expect("write provider json");
+
+    let add_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "add",
+            "--app",
+            "claude",
+            "--name",
+            "Primary Provider",
+            "--base-url",
+            "https://dup.example",
+            "--api-key",
+            "sk-dup",
+            "--from-json",
+            provider_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        add_output.status.success(),
+        "stderr: {}",
+        stderr_text(&add_output)
+    );
+
+    let duplicate_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "duplicate",
+            "primary-provider",
+            "--app",
+            "claude",
+            "--name",
+            "Primary Provider Backup",
+        ],
+    );
+    assert!(
+        duplicate_output.status.success(),
+        "stderr: {}",
+        stderr_text(&duplicate_output)
+    );
+
+    let sort_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "sort-order",
+            "primary-provider-backup",
+            "--app",
+            "claude",
+            "--index",
+            "7",
+        ],
+    );
+    assert!(
+        sort_output.status.success(),
+        "stderr: {}",
+        stderr_text(&sort_output)
+    );
+
+    let providers_output = run_cli(
+        temp.path(),
+        &["--format", "json", "provider", "list", "--app", "claude"],
+    );
+    assert!(
+        providers_output.status.success(),
+        "stderr: {}",
+        stderr_text(&providers_output)
+    );
+    let providers: Value =
+        serde_json::from_slice(&providers_output.stdout).expect("provider list should return json");
+    assert!(providers.get("primary-provider").is_some());
+    assert_eq!(
+        providers
+            .get("primary-provider-backup")
+            .and_then(|item| item.get("sortIndex"))
+            .and_then(Value::as_u64),
+        Some(7)
+    );
+
+    let switch_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "switch",
+            "primary-provider-backup",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        switch_output.status.success(),
+        "stderr: {}",
+        stderr_text(&switch_output)
+    );
+
+    let read_live_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "provider",
+            "read-live",
+            "--app",
+            "claude",
+        ],
+    );
+    assert!(
+        read_live_output.status.success(),
+        "stderr: {}",
+        stderr_text(&read_live_output)
+    );
+    let live: Value =
+        serde_json::from_slice(&read_live_output.stdout).expect("read-live should return json");
+    assert_eq!(
+        live.get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(Value::as_str),
+        Some("https://dup.example")
+    );
+}
+
+#[test]
+#[serial]
+fn provider_import_live_and_remove_from_live_round_trip() {
+    let temp = tempdir().expect("tempdir");
+
+    let claude_live = claude_settings_path(temp.path());
+    fs::create_dir_all(claude_live.parent().expect("parent")).expect("claude dir");
+    fs::write(
+        &claude_live,
+        r#"{"env":{"ANTHROPIC_BASE_URL":"https://live.example","ANTHROPIC_AUTH_TOKEN":"sk-live"}}"#,
+    )
+    .expect("write claude live config");
+
+    let import_claude = run_cli(temp.path(), &["provider", "import-live", "--app", "claude"]);
+    assert!(
+        import_claude.status.success(),
+        "stderr: {}",
+        stderr_text(&import_claude)
+    );
+
+    let show_default = run_cli(
+        temp.path(),
+        &[
+            "--format", "json", "provider", "show", "default", "--app", "claude",
+        ],
+    );
+    assert!(
+        show_default.status.success(),
+        "stderr: {}",
+        stderr_text(&show_default)
+    );
+    let default_provider: Value =
+        serde_json::from_slice(&show_default.stdout).expect("provider show should return json");
+    assert_eq!(
+        default_provider
+            .get("settingsConfig")
+            .and_then(|config| config.get("env"))
+            .and_then(|env| env.get("ANTHROPIC_AUTH_TOKEN"))
+            .and_then(Value::as_str),
+        Some("sk-live")
+    );
+
+    let opencode_file = temp.path().join("opencode-provider.json");
+    fs::write(
+        &opencode_file,
+        r#"{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://open.live","apiKey":"sk-open"},"models":{}}"#,
+    )
+    .expect("write opencode provider");
+
+    let add_opencode = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "add",
+            "--app",
+            "opencode",
+            "--name",
+            "Open Live",
+            "--from-json",
+            opencode_file.to_str().expect("utf-8 path"),
+            "--base-url",
+            "https://open.live",
+            "--api-key",
+            "sk-open",
+        ],
+    );
+    assert!(
+        add_opencode.status.success(),
+        "stderr: {}",
+        stderr_text(&add_opencode)
+    );
+
+    let opencode_live_before: Value = serde_json::from_str(
+        &fs::read_to_string(opencode_config_path(temp.path())).expect("opencode config"),
+    )
+    .expect("opencode json");
+    assert!(opencode_live_before
+        .get("provider")
+        .and_then(|providers| providers.get("open-live"))
+        .is_some());
+
+    let remove_live = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "remove-from-live",
+            "open-live",
+            "--app",
+            "opencode",
+        ],
+    );
+    assert!(
+        remove_live.status.success(),
+        "stderr: {}",
+        stderr_text(&remove_live)
+    );
+
+    let providers_output = run_cli(
+        temp.path(),
+        &["--format", "json", "provider", "list", "--app", "opencode"],
+    );
+    let providers: Value =
+        serde_json::from_slice(&providers_output.stdout).expect("provider list should return json");
+    assert!(
+        providers.get("open-live").is_some(),
+        "db record should remain"
+    );
+
+    let opencode_live_after: Value = serde_json::from_str(
+        &fs::read_to_string(opencode_config_path(temp.path())).expect("opencode config"),
+    )
+    .expect("opencode json");
+    assert!(
+        opencode_live_after
+            .get("provider")
+            .and_then(|providers| providers.get("open-live"))
+            .is_none(),
+        "live config should no longer contain removed provider"
+    );
+}
+
+#[test]
+#[serial]
+fn provider_sort_order_and_remove_from_live_require_existing_provider() {
+    let temp = tempdir().expect("tempdir");
+
+    let sort_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "sort-order",
+            "missing-provider",
+            "--app",
+            "claude",
+            "--index",
+            "1",
+        ],
+    );
+    assert!(!sort_output.status.success(), "sort-order should fail");
+    assert!(stderr_text(&sort_output).contains("Provider not found"));
+
+    let remove_output = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "remove-from-live",
+            "missing-provider",
+            "--app",
+            "opencode",
+        ],
+    );
+    assert!(
+        !remove_output.status.success(),
+        "remove-from-live should fail"
+    );
+    assert!(stderr_text(&remove_output).contains("Provider not found"));
 }
 
 #[test]

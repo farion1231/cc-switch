@@ -151,6 +151,20 @@ pub enum ProviderCommands {
         #[arg(short, long)]
         yes: bool,
     },
+    /// Duplicate an existing provider
+    Duplicate {
+        /// Source provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+        /// New provider name
+        #[arg(short, long)]
+        name: Option<String>,
+        /// New provider ID
+        #[arg(long)]
+        new_id: Option<String>,
+    },
     /// Switch current provider
     Switch {
         /// Provider ID
@@ -158,6 +172,37 @@ pub enum ProviderCommands {
         /// App type
         #[arg(short, long, default_value = "claude")]
         app: String,
+    },
+    /// Show the current live config for an app
+    ReadLive {
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+    /// Import provider config from current live files
+    ImportLive {
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+    /// Remove an additive-mode provider from live config without deleting the DB record
+    RemoveFromLive {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "opencode")]
+        app: String,
+    },
+    /// Update a provider sort order index
+    SortOrder {
+        /// Provider ID
+        id: String,
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+        /// New sort index
+        #[arg(short, long)]
+        index: usize,
     },
     /// Query provider usage
     Usage {

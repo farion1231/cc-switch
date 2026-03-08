@@ -5,7 +5,8 @@ use crate::handlers::common::parse_app_type;
 use crate::output::Printer;
 use anyhow::Context;
 use cc_switch_core::{
-    config::sanitize_provider_name, AppState, AppType, Provider, UniversalProvider, UsageService,
+    config::sanitize_provider_name, AppState, AppType, Provider, ProviderSortUpdate,
+    UniversalProvider, UsageService,
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -58,7 +59,31 @@ pub async fn handle(
         ProviderCommands::Delete { id, app, yes } => {
             handle_delete(&id, &app, yes, state, printer).await
         }
+        ProviderCommands::Duplicate {
+            id,
+            app,
+            name,
+            new_id,
+        } => {
+            handle_duplicate(
+                &id,
+                &app,
+                name.as_deref(),
+                new_id.as_deref(),
+                state,
+                printer,
+            )
+            .await
+        }
         ProviderCommands::Switch { id, app } => handle_switch(&id, &app, state, printer).await,
+        ProviderCommands::ReadLive { app } => handle_read_live(&app, printer).await,
+        ProviderCommands::ImportLive { app } => handle_import_live(&app, state, printer).await,
+        ProviderCommands::RemoveFromLive { id, app } => {
+            handle_remove_from_live(&id, &app, state, printer).await
+        }
+        ProviderCommands::SortOrder { id, app, index } => {
+            handle_sort_order(&id, &app, index, state, printer).await
+        }
         ProviderCommands::Usage { id, app } => handle_usage(&id, &app, state, printer).await,
         ProviderCommands::Universal(cmd) => handle_universal(cmd, state, printer).await,
     }
@@ -171,6 +196,48 @@ async fn handle_delete(
     Ok(())
 }
 
+async fn handle_duplicate(
+    id: &str,
+    app: &str,
+    new_name: Option<&str>,
+    new_id: Option<&str>,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    let app_type = parse_app_type(app)?;
+    let providers = cc_switch_core::ProviderService::list(state, app_type.clone())?;
+    let source = providers
+        .get(id)
+        .ok_or_else(|| anyhow::anyhow!("Provider not found: {}", id))?;
+
+    let mut duplicated = source.clone();
+    duplicated.name = new_name
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("{} Copy", source.name));
+    duplicated.id = new_id
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| provider_id_from_name(&duplicated.name));
+    duplicated.created_at = Some(chrono::Utc::now().timestamp_millis());
+
+    if duplicated.id == id {
+        anyhow::bail!("Duplicated provider ID must differ from the source provider ID");
+    }
+    if providers.contains_key(&duplicated.id) {
+        anyhow::bail!(
+            "Provider '{}' already exists for {}. Choose a different --name or --new-id.",
+            duplicated.id,
+            app
+        );
+    }
+
+    cc_switch_core::ProviderService::add(state, app_type, duplicated.clone())?;
+    printer.success(format!(
+        "✓ Duplicated provider '{}' to '{}' for {}",
+        id, duplicated.id, app
+    ));
+    Ok(())
+}
+
 async fn handle_switch(
     id: &str,
     app: &str,
@@ -181,6 +248,108 @@ async fn handle_switch(
     cc_switch_core::ProviderService::switch(state, app_type, id)?;
     printer.success(format!("✓ Switched to provider '{}' for {}", id, app));
     Ok(())
+}
+
+async fn handle_read_live(app: &str, printer: &Printer) -> anyhow::Result<()> {
+    let app_type = parse_app_type(app)?;
+    let live = cc_switch_core::ProviderService::read_live_settings(app_type)?;
+    printer.print_value(&live)?;
+    Ok(())
+}
+
+async fn handle_import_live(app: &str, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
+    let app_type = parse_app_type(app)?;
+
+    match app_type {
+        AppType::OpenCode => {
+            let imported =
+                cc_switch_core::ProviderService::import_opencode_providers_from_live(state)?;
+            if imported == 0 {
+                printer.warn("No OpenCode live providers were imported.");
+            } else {
+                printer.success(format!(
+                    "✓ Imported {} provider(s) from OpenCode live config",
+                    imported
+                ));
+            }
+        }
+        AppType::OpenClaw => {
+            let imported =
+                cc_switch_core::ProviderService::import_openclaw_providers_from_live(state)?;
+            if imported == 0 {
+                printer.warn("No OpenClaw live providers were imported.");
+            } else {
+                printer.success(format!(
+                    "✓ Imported {} provider(s) from OpenClaw live config",
+                    imported
+                ));
+            }
+        }
+        _ => {
+            let imported = cc_switch_core::ProviderService::import_default_config(state, app_type)?;
+            if imported {
+                printer.success(format!(
+                    "✓ Imported current live config as the default {}",
+                    app
+                ));
+            } else {
+                printer.warn(format!(
+                    "Skipped importing live config for {} because providers already exist.",
+                    app
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_remove_from_live(
+    id: &str,
+    app: &str,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    let app_type = parse_app_type(app)?;
+    ensure_provider_exists(state, &app_type, id)?;
+    cc_switch_core::ProviderService::remove_from_live_config(state, app_type, id)?;
+    printer.success(format!(
+        "✓ Removed provider '{}' from live config for {} (database record kept)",
+        id, app
+    ));
+    Ok(())
+}
+
+async fn handle_sort_order(
+    id: &str,
+    app: &str,
+    index: usize,
+    state: &AppState,
+    printer: &Printer,
+) -> anyhow::Result<()> {
+    let app_type = parse_app_type(app)?;
+    ensure_provider_exists(state, &app_type, id)?;
+    cc_switch_core::ProviderService::update_sort_order(
+        state,
+        app_type,
+        vec![ProviderSortUpdate {
+            id: id.to_string(),
+            sort_index: index,
+        }],
+    )?;
+    printer.success(format!(
+        "✓ Updated sort order for provider '{}' to {} in {}",
+        id, index, app
+    ));
+    Ok(())
+}
+
+fn ensure_provider_exists(state: &AppState, app_type: &AppType, id: &str) -> anyhow::Result<()> {
+    if cc_switch_core::ProviderService::list(state, app_type.clone())?.contains_key(id) {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Provider not found: {}", id))
+    }
 }
 
 async fn handle_usage(
@@ -641,5 +810,31 @@ mod tests {
                 .and_then(Value::as_str),
             Some("sk-new")
         );
+    }
+
+    #[test]
+    fn duplicate_uses_copy_suffix_and_regenerates_id() {
+        let source = Provider {
+            id: "claude-source".to_string(),
+            name: "Claude Source".to_string(),
+            settings_config: json!({"env": {}}),
+            website_url: None,
+            category: None,
+            created_at: Some(1),
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let mut duplicated = source.clone();
+        duplicated.name = format!("{} Copy", source.name);
+        duplicated.id = provider_id_from_name(&duplicated.name);
+
+        assert_eq!(duplicated.name, "Claude Source Copy");
+        assert_eq!(duplicated.id, "claude-source-copy");
+        assert_ne!(duplicated.id, source.id);
     }
 }

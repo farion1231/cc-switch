@@ -169,25 +169,20 @@
 #### CLI 已有
 
 - `provider list/show/add/edit/delete/switch`
+- `provider duplicate/sort-order/read-live/import-live/remove-from-live`
 - `provider usage`
 - `provider universal list/add/sync/delete`
 
 #### GUI 已有但 CLI 缺失或明显偏薄
 
 - Provider 卡片层动作
-  - 复制 provider
-  - 拖拽排序与持久化 sort order
   - 打开官网
   - Claude 专属的打开 provider 终端
   - OMO / OMO Slim 的禁用当前 provider 动作
   - OpenClaw 设置默认模型
 
 - Provider 数据来源管理
-  - 从当前 live config 导入默认配置
-  - 读取 live provider settings 作为编辑/校验依据
-  - 从 OpenCode live config 导入 provider
-  - 从 OpenClaw live config 导入 provider
-  - 对 additive app 仅从 live config 中移除 provider，而不删数据库记录
+  - 更细粒度的 live config 编辑 / 校验辅助
 
 - Provider 高级配置
   - 提取与保存 common config snippet
