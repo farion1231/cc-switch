@@ -40,7 +40,10 @@ async fn handle_delete(
     let selected: Vec<_> = if include_system {
         #[cfg(not(target_os = "windows"))]
         {
-            if conflicts.iter().any(|conflict| conflict.source_type == "system") {
+            if conflicts
+                .iter()
+                .any(|conflict| conflict.source_type == "system")
+            {
                 anyhow::bail!(
                     "System environment conflicts cannot be safely restored on this platform. Re-run without --include-system."
                 );
@@ -63,8 +66,8 @@ async fn handle_delete(
         }));
     }
 
-    let backup =
-        cc_switch_core::services::env_manager::delete_env_vars(selected).map_err(anyhow::Error::msg)?;
+    let backup = cc_switch_core::services::env_manager::delete_env_vars(selected)
+        .map_err(anyhow::Error::msg)?;
     let deleted = backup.conflicts.len();
     printer.print_value(&json!({
         "app": app,

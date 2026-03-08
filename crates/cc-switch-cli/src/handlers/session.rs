@@ -11,15 +11,19 @@ use cc_switch_core::{SessionMeta, SessionService};
 pub async fn handle(cmd: SessionCommands, printer: &Printer) -> anyhow::Result<()> {
     match cmd {
         SessionCommands::List { provider, query } => {
-            let provider = provider
+            let provider = provider.as_deref().map(normalize_provider).transpose()?;
+            let query = query
                 .as_deref()
-                .map(normalize_provider)
-                .transpose()?;
-            let query = query.as_deref().map(str::trim).filter(|value| !value.is_empty());
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
 
             let sessions = SessionService::list_sessions()
                 .into_iter()
-                .filter(|session| provider.as_deref().is_none_or(|value| session.provider_id == value))
+                .filter(|session| {
+                    provider
+                        .as_deref()
+                        .is_none_or(|value| session.provider_id == value)
+                })
                 .filter(|session| query.is_none_or(|value| matches_query(session, value)))
                 .collect::<Vec<_>>();
             printer.print_value(&sessions)?;
@@ -39,11 +43,9 @@ pub async fn handle(cmd: SessionCommands, printer: &Printer) -> anyhow::Result<(
             provider,
             source_path,
         } => {
-            let provider = provider
-                .as_deref()
-                .map(normalize_provider)
-                .transpose()?;
-            let session = resolve_session(&session_id, provider.as_deref(), source_path.as_deref())?;
+            let provider = provider.as_deref().map(normalize_provider).transpose()?;
+            let session =
+                resolve_session(&session_id, provider.as_deref(), source_path.as_deref())?;
             let resume_command = session.resume_command.clone().ok_or_else(|| {
                 anyhow!(
                     "No resume command is available for provider '{}' and session '{}'",

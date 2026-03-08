@@ -32,6 +32,16 @@ pub enum OutputFormat {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Generate shell completion scripts
+    Completions {
+        /// Target shell
+        shell: CompletionShell,
+    },
+    /// Installation helpers
+    Install {
+        #[command(subcommand)]
+        cmd: InstallCommands,
+    },
     /// Manage API providers
     Provider {
         #[command(subcommand)]
@@ -89,6 +99,18 @@ pub enum Commands {
     },
     /// Show app metadata and useful links
     About,
+    /// Diagnose runtime, tools and live config health
+    Doctor {
+        /// Restrict diagnosis to specific apps
+        #[arg(long = "app")]
+        apps: Vec<String>,
+        /// Also fetch latest published versions for local tools
+        #[arg(long)]
+        latest: bool,
+        /// Also query the latest published CC-Switch release metadata
+        #[arg(long = "check-updates")]
+        check_updates: bool,
+    },
     /// Update information
     Update {
         #[command(subcommand)]
@@ -1578,9 +1600,36 @@ pub enum AutoLaunchCommands {
 }
 
 #[derive(Subcommand)]
+pub enum InstallCommands {
+    /// Show recommended installation methods and completion setup hints
+    Guide {
+        /// Focus completion hints on one shell
+        #[arg(long)]
+        shell: Option<CompletionShell>,
+    },
+    /// Write a completion script to the default shell directory or a custom one
+    Completions {
+        /// Target shell
+        shell: CompletionShell,
+        /// Override the output directory
+        #[arg(long)]
+        dir: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
+#[derive(Subcommand)]
 pub enum UpdateCommands {
     /// Check the latest published version
     Check,
+    /// Show recommended update steps for the current installation style
+    Guide,
 }
 
 #[derive(Subcommand)]

@@ -6,7 +6,7 @@ mod schema;
 
 use crate::config::database_path;
 use crate::error::AppError;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use std::sync::Mutex;
 
@@ -35,6 +35,20 @@ impl Database {
         db.create_tables()?;
 
         Ok(db)
+    }
+
+    /// Open an existing file-backed database in read-only mode.
+    pub fn open_read_only() -> Result<Self, AppError> {
+        let db_path = database_path();
+        let conn = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute("PRAGMA foreign_keys = ON;", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// Create in-memory database (for testing)

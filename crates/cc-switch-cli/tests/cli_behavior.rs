@@ -1,6 +1,6 @@
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 #[cfg(unix)]
@@ -198,9 +198,7 @@ fn create_skill_zip(zip_path: &Path, root_dir: &str, name: &str, description: &s
         .start_file(format!("{root_dir}/SKILL.md"), options)
         .expect("start SKILL.md");
     writer
-        .write_all(
-            format!("---\nname: {name}\ndescription: {description}\n---\n").as_bytes(),
-        )
+        .write_all(format!("---\nname: {name}\ndescription: {description}\n---\n").as_bytes())
         .expect("write SKILL.md");
     writer
         .start_file(format!("{root_dir}/notes.txt"), options)
@@ -274,10 +272,7 @@ fn insert_usage_log(
 }
 
 fn spawn_json_server(response_body: String, expected_requests: usize) -> String {
-    spawn_routing_json_server(
-        vec![("/".to_string(), response_body)],
-        expected_requests,
-    )
+    spawn_routing_json_server(vec![("/".to_string(), response_body)], expected_requests)
 }
 
 fn spawn_routing_json_server(routes: Vec<(String, String)>, expected_requests: usize) -> String {
@@ -321,9 +316,7 @@ fn spawn_routing_json_server(routes: Vec<(String, String)>, expected_requests: u
 #[cfg(unix)]
 fn write_executable(path: &Path, content: &str) {
     fs::write(path, content).expect("write executable");
-    let mut perms = fs::metadata(path)
-        .expect("metadata")
-        .permissions();
+    let mut perms = fs::metadata(path).expect("metadata").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(path, perms).expect("set permissions");
 }
@@ -356,9 +349,9 @@ fn spawn_webdav_server() -> TestWebDavServer {
     let addr = listener.local_addr().expect("webdav addr");
     let files = Arc::new(Mutex::new(HashMap::<String, Vec<u8>>::new()));
     let etags = Arc::new(Mutex::new(HashMap::<String, String>::new()));
-    let directories = Arc::new(Mutex::new(HashSet::<String>::from([normalize_webdav_path(
-        "/dav",
-    )])));
+    let directories = Arc::new(Mutex::new(HashSet::<String>::from([
+        normalize_webdav_path("/dav"),
+    ])));
 
     let files_for_thread = files.clone();
     let etags_for_thread = etags.clone();
@@ -639,7 +632,10 @@ fn workspace_read_write_round_trip() {
     );
     let read: Value =
         serde_json::from_slice(&read_output.stdout).expect("workspace read should return json");
-    assert_eq!(read.get("filename").and_then(Value::as_str), Some("AGENTS.md"));
+    assert_eq!(
+        read.get("filename").and_then(Value::as_str),
+        Some("AGENTS.md")
+    );
     assert_eq!(
         read.get("content").and_then(Value::as_str),
         Some("workspace hello")
@@ -779,7 +775,10 @@ fn workspace_path_returns_explicit_workspace_and_memory_paths() {
     );
     let workspace: Value = serde_json::from_slice(&workspace_output.stdout)
         .expect("workspace path should return json");
-    assert_eq!(workspace.get("target").and_then(Value::as_str), Some("workspace"));
+    assert_eq!(
+        workspace.get("target").and_then(Value::as_str),
+        Some("workspace")
+    );
     assert_eq!(
         workspace.get("path").and_then(Value::as_str),
         Some(
@@ -830,7 +829,10 @@ async fn webdav_show_save_test_remote_info_upload_and_download_round_trip() {
     );
     let empty: Value =
         serde_json::from_slice(&show_before.stdout).expect("webdav show should return json");
-    assert_eq!(empty.get("configured").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        empty.get("configured").and_then(Value::as_bool),
+        Some(false)
+    );
 
     let save_output = run_cli(
         temp.path(),
@@ -926,7 +928,11 @@ async fn webdav_show_save_test_remote_info_upload_and_download_round_trip() {
             "sk-before",
         ],
     );
-    assert!(add_before.status.success(), "stderr: {}", stderr_text(&add_before));
+    assert!(
+        add_before.status.success(),
+        "stderr: {}",
+        stderr_text(&add_before)
+    );
 
     let upload_output = run_cli(temp.path(), &["--format", "json", "webdav", "upload"]);
     assert!(
@@ -936,7 +942,10 @@ async fn webdav_show_save_test_remote_info_upload_and_download_round_trip() {
     );
     let uploaded: Value =
         serde_json::from_slice(&upload_output.stdout).expect("webdav upload should return json");
-    assert_eq!(uploaded.get("status").and_then(Value::as_str), Some("uploaded"));
+    assert_eq!(
+        uploaded.get("status").and_then(Value::as_str),
+        Some("uploaded")
+    );
 
     let remote_info_output = run_cli(temp.path(), &["--format", "json", "webdav", "remote-info"]);
     assert!(
@@ -967,7 +976,11 @@ async fn webdav_show_save_test_remote_info_upload_and_download_round_trip() {
             "sk-after",
         ],
     );
-    assert!(add_after.status.success(), "stderr: {}", stderr_text(&add_after));
+    assert!(
+        add_after.status.success(),
+        "stderr: {}",
+        stderr_text(&add_after)
+    );
 
     let download_output = run_cli(temp.path(), &["--format", "json", "webdav", "download"]);
     assert!(
@@ -991,14 +1004,14 @@ async fn webdav_show_save_test_remote_info_upload_and_download_round_trip() {
         "stderr: {}",
         stderr_text(&provider_list)
     );
-    let providers: Value = serde_json::from_slice(&provider_list.stdout)
-        .expect("provider list should return json");
+    let providers: Value =
+        serde_json::from_slice(&provider_list.stdout).expect("provider list should return json");
     assert!(
         providers.as_object().is_some_and(|items| {
             items.len() == 1
-                && items
-                    .values()
-                    .any(|provider| provider.get("name").and_then(Value::as_str) == Some("before-webdav"))
+                && items.values().any(|provider| {
+                    provider.get("name").and_then(Value::as_str) == Some("before-webdav")
+                })
         }),
         "webdav download should restore the uploaded database snapshot"
     );
@@ -1031,7 +1044,10 @@ fn sessions_list_messages_and_resume_command_round_trip() {
     let sessions: Value =
         serde_json::from_slice(&list_output.stdout).expect("sessions list should return json");
     assert_eq!(sessions.as_array().map(Vec::len), Some(1));
-    assert_eq!(sessions[0].get("providerId").and_then(Value::as_str), Some("claude"));
+    assert_eq!(
+        sessions[0].get("providerId").and_then(Value::as_str),
+        Some("claude")
+    );
     assert_eq!(
         sessions[0].get("resumeCommand").and_then(Value::as_str),
         Some("claude --resume session-1")
@@ -1058,7 +1074,10 @@ fn sessions_list_messages_and_resume_command_round_trip() {
     let messages: Value = serde_json::from_slice(&messages_output.stdout)
         .expect("sessions messages should return json");
     assert_eq!(messages.as_array().map(Vec::len), Some(2));
-    assert_eq!(messages[0].get("role").and_then(Value::as_str), Some("user"));
+    assert_eq!(
+        messages[0].get("role").and_then(Value::as_str),
+        Some("user")
+    );
     assert_eq!(
         messages[0].get("content").and_then(Value::as_str),
         Some("hello from claude")
@@ -1102,13 +1121,21 @@ fn settings_structured_commands_round_trip() {
         temp.path(),
         &["--format", "json", "settings", "language", "set", "zh"],
     );
-    assert!(language_set.status.success(), "stderr: {}", stderr_text(&language_set));
+    assert!(
+        language_set.status.success(),
+        "stderr: {}",
+        stderr_text(&language_set)
+    );
 
     let language_get = run_cli(
         temp.path(),
         &["--format", "json", "settings", "language", "get"],
     );
-    assert!(language_get.status.success(), "stderr: {}", stderr_text(&language_get));
+    assert!(
+        language_get.status.success(),
+        "stderr: {}",
+        stderr_text(&language_get)
+    );
     let language: Value =
         serde_json::from_slice(&language_get.stdout).expect("language get should return json");
     assert_eq!(language.get("language").and_then(Value::as_str), Some("zh"));
@@ -1132,8 +1159,8 @@ fn settings_structured_commands_round_trip() {
         "stderr: {}",
         stderr_text(&visible_apps_set)
     );
-    let visible_apps: Value = serde_json::from_slice(&visible_apps_set.stdout)
-        .expect("visible apps should return json");
+    let visible_apps: Value =
+        serde_json::from_slice(&visible_apps_set.stdout).expect("visible apps should return json");
     assert_eq!(
         visible_apps["visibleApps"]
             .get("codex")
@@ -1151,7 +1178,11 @@ fn settings_structured_commands_round_trip() {
         temp.path(),
         &["--format", "json", "settings", "terminal", "set", "wezterm"],
     );
-    assert!(terminal_set.status.success(), "stderr: {}", stderr_text(&terminal_set));
+    assert!(
+        terminal_set.status.success(),
+        "stderr: {}",
+        stderr_text(&terminal_set)
+    );
     let terminal: Value =
         serde_json::from_slice(&terminal_set.stdout).expect("terminal set should return json");
     assert_eq!(
@@ -1177,10 +1208,17 @@ fn settings_structured_commands_round_trip() {
             "true",
         ],
     );
-    assert!(startup_set.status.success(), "stderr: {}", stderr_text(&startup_set));
+    assert!(
+        startup_set.status.success(),
+        "stderr: {}",
+        stderr_text(&startup_set)
+    );
     let startup: Value =
         serde_json::from_slice(&startup_set.stdout).expect("startup set should return json");
-    assert_eq!(startup.get("showInTray").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        startup.get("showInTray").and_then(Value::as_bool),
+        Some(false)
+    );
     assert_eq!(
         startup
             .get("minimizeToTrayOnClose")
@@ -1200,7 +1238,11 @@ fn settings_structured_commands_round_trip() {
         temp.path(),
         &["--format", "json", "settings", "plugin", "enable"],
     );
-    assert!(plugin_enable.status.success(), "stderr: {}", stderr_text(&plugin_enable));
+    assert!(
+        plugin_enable.status.success(),
+        "stderr: {}",
+        stderr_text(&plugin_enable)
+    );
     let plugin: Value =
         serde_json::from_slice(&plugin_enable.stdout).expect("plugin enable should return json");
     assert_eq!(
@@ -1225,12 +1267,13 @@ fn settings_structured_commands_round_trip() {
         onboarding.get("skipInSettings").and_then(Value::as_bool),
         Some(true)
     );
-    assert_eq!(onboarding.get("applied").and_then(Value::as_bool), Some(true));
-    assert!(
-        fs::read_to_string(claude_mcp_path(temp.path()))
-            .expect("onboarding file should exist")
-            .contains("hasCompletedOnboarding")
+    assert_eq!(
+        onboarding.get("applied").and_then(Value::as_bool),
+        Some(true)
     );
+    assert!(fs::read_to_string(claude_mcp_path(temp.path()))
+        .expect("onboarding file should exist")
+        .contains("hasCompletedOnboarding"));
 
     let onboarding_clear = run_cli(
         temp.path(),
@@ -1244,7 +1287,9 @@ fn settings_structured_commands_round_trip() {
     let onboarding_after: Value = serde_json::from_slice(&onboarding_clear.stdout)
         .expect("onboarding clear should return json");
     assert_eq!(
-        onboarding_after.get("skipInSettings").and_then(Value::as_bool),
+        onboarding_after
+            .get("skipInSettings")
+            .and_then(Value::as_bool),
         Some(false)
     );
     assert_eq!(
@@ -1256,11 +1301,17 @@ fn settings_structured_commands_round_trip() {
         temp.path(),
         &["--format", "json", "settings", "plugin", "disable"],
     );
-    assert!(plugin_disable.status.success(), "stderr: {}", stderr_text(&plugin_disable));
-    let plugin_after: Value = serde_json::from_slice(&plugin_disable.stdout)
-        .expect("plugin disable should return json");
+    assert!(
+        plugin_disable.status.success(),
+        "stderr: {}",
+        stderr_text(&plugin_disable)
+    );
+    let plugin_after: Value =
+        serde_json::from_slice(&plugin_disable.stdout).expect("plugin disable should return json");
     assert_eq!(
-        plugin_after.get("enabledInSettings").and_then(Value::as_bool),
+        plugin_after
+            .get("enabledInSettings")
+            .and_then(Value::as_bool),
         Some(false)
     );
     assert_eq!(
@@ -1272,18 +1323,28 @@ fn settings_structured_commands_round_trip() {
         temp.path(),
         &["--format", "json", "settings", "terminal", "clear"],
     );
-    assert!(terminal_clear.status.success(), "stderr: {}", stderr_text(&terminal_clear));
-    let terminal_after: Value = serde_json::from_slice(&terminal_clear.stdout)
-        .expect("terminal clear should return json");
-    assert!(terminal_after.get("preferredTerminal").is_some_and(Value::is_null));
+    assert!(
+        terminal_clear.status.success(),
+        "stderr: {}",
+        stderr_text(&terminal_clear)
+    );
+    let terminal_after: Value =
+        serde_json::from_slice(&terminal_clear.stdout).expect("terminal clear should return json");
+    assert!(terminal_after
+        .get("preferredTerminal")
+        .is_some_and(Value::is_null));
 
     let language_clear = run_cli(
         temp.path(),
         &["--format", "json", "settings", "language", "clear"],
     );
-    assert!(language_clear.status.success(), "stderr: {}", stderr_text(&language_clear));
-    let language_after: Value = serde_json::from_slice(&language_clear.stdout)
-        .expect("language clear should return json");
+    assert!(
+        language_clear.status.success(),
+        "stderr: {}",
+        stderr_text(&language_clear)
+    );
+    let language_after: Value =
+        serde_json::from_slice(&language_clear.stdout).expect("language clear should return json");
     assert!(language_after.get("language").is_some_and(Value::is_null));
 }
 
@@ -1293,7 +1354,11 @@ fn backup_create_list_rename_and_delete_round_trip() {
     let temp = tempdir().expect("tempdir");
 
     let seed_output = run_cli(temp.path(), &["config", "set", "language", "zh"]);
-    assert!(seed_output.status.success(), "stderr: {}", stderr_text(&seed_output));
+    assert!(
+        seed_output.status.success(),
+        "stderr: {}",
+        stderr_text(&seed_output)
+    );
 
     let create_output = run_cli(temp.path(), &["--format", "json", "backup", "create"]);
     assert!(
@@ -1310,19 +1375,32 @@ fn backup_create_list_rename_and_delete_round_trip() {
     assert!(backup_dir(temp.path()).join(filename).exists());
 
     let list_output = run_cli(temp.path(), &["--format", "json", "backup", "list"]);
-    assert!(list_output.status.success(), "stderr: {}", stderr_text(&list_output));
+    assert!(
+        list_output.status.success(),
+        "stderr: {}",
+        stderr_text(&list_output)
+    );
     let backups: Value =
         serde_json::from_slice(&list_output.stdout).expect("backup list should return json");
     assert!(
         backups.as_array().is_some_and(|items| {
-            items.iter().any(|item| item.get("filename").and_then(Value::as_str) == Some(filename))
+            items
+                .iter()
+                .any(|item| item.get("filename").and_then(Value::as_str) == Some(filename))
         }),
         "created backup should appear in list"
     );
 
     let rename_output = run_cli(
         temp.path(),
-        &["--format", "json", "backup", "rename", filename, "phase-one-smoke"],
+        &[
+            "--format",
+            "json",
+            "backup",
+            "rename",
+            filename,
+            "phase-one-smoke",
+        ],
     );
     assert!(
         rename_output.status.success(),
@@ -1338,12 +1416,22 @@ fn backup_create_list_rename_and_delete_round_trip() {
     assert!(backup_dir(temp.path()).join(renamed_filename).exists());
 
     let delete_without_yes = run_cli(temp.path(), &["backup", "delete", renamed_filename]);
-    assert!(!delete_without_yes.status.success(), "delete should fail without --yes");
+    assert!(
+        !delete_without_yes.status.success(),
+        "delete should fail without --yes"
+    );
     assert!(stderr_text(&delete_without_yes).contains("Re-run with --yes"));
 
     let delete_output = run_cli(
         temp.path(),
-        &["--format", "json", "backup", "delete", renamed_filename, "--yes"],
+        &[
+            "--format",
+            "json",
+            "backup",
+            "delete",
+            renamed_filename,
+            "--yes",
+        ],
     );
     assert!(
         delete_output.status.success(),
@@ -1431,8 +1519,14 @@ fn backup_restore_round_trip_restores_previous_state() {
     );
     let restored: Value =
         serde_json::from_slice(&restore_output.stdout).expect("backup restore should return json");
-    assert_eq!(restored.get("filename").and_then(Value::as_str), Some(filename));
-    assert!(restored.get("safetyBackupId").and_then(Value::as_str).is_some());
+    assert_eq!(
+        restored.get("filename").and_then(Value::as_str),
+        Some(filename)
+    );
+    assert!(restored
+        .get("safetyBackupId")
+        .and_then(Value::as_str)
+        .is_some());
 
     let list_output = run_cli(
         temp.path(),
@@ -1472,7 +1566,10 @@ fn env_check_reports_file_conflicts() {
     )
     .expect("write zshrc");
 
-    let check_output = run_cli(temp.path(), &["--format", "json", "env", "check", "--app", "claude"]);
+    let check_output = run_cli(
+        temp.path(),
+        &["--format", "json", "env", "check", "--app", "claude"],
+    );
     assert!(
         check_output.status.success(),
         "stderr: {}",
@@ -1508,7 +1605,9 @@ fn env_delete_and_restore_round_trip_shell_file_conflicts() {
 
     let delete_output = run_cli(
         temp.path(),
-        &["--format", "json", "env", "delete", "--app", "claude", "--yes"],
+        &[
+            "--format", "json", "env", "delete", "--app", "claude", "--yes",
+        ],
     );
     assert!(
         delete_output.status.success(),
@@ -1529,13 +1628,17 @@ fn env_delete_and_restore_round_trip_shell_file_conflicts() {
         "delete should remove the target export line from the shell file"
     );
 
-    let restore_output = run_cli(temp.path(), &["--format", "json", "env", "restore", backup_path]);
+    let restore_output = run_cli(
+        temp.path(),
+        &["--format", "json", "env", "restore", backup_path],
+    );
     assert!(
         restore_output.status.success(),
         "stderr: {}",
         stderr_text(&restore_output)
     );
-    let restored_text = fs::read_to_string(zshrc_path(temp.path())).expect("read zshrc after restore");
+    let restored_text =
+        fs::read_to_string(zshrc_path(temp.path())).expect("read zshrc after restore");
     assert!(
         restored_text.contains("export ANTHROPIC_E2E_TOKEN=sk-env"),
         "restore should put the target export line back into the shell file"
@@ -1570,7 +1673,11 @@ fn openclaw_env_tools_default_model_and_catalog_round_trip() {
             r#"{"OPENAI_API_KEY":"sk-openclaw","OPENCLAW_FEATURE":"enabled"}"#,
         ],
     );
-    assert!(set_env.status.success(), "stderr: {}", stderr_text(&set_env));
+    assert!(
+        set_env.status.success(),
+        "stderr: {}",
+        stderr_text(&set_env)
+    );
 
     let set_tools = run_cli(
         temp.path(),
@@ -1584,7 +1691,11 @@ fn openclaw_env_tools_default_model_and_catalog_round_trip() {
             r#"{"profile":"strict","allow":["read:*"],"deny":["write:*"]}"#,
         ],
     );
-    assert!(set_tools.status.success(), "stderr: {}", stderr_text(&set_tools));
+    assert!(
+        set_tools.status.success(),
+        "stderr: {}",
+        stderr_text(&set_tools)
+    );
 
     let set_default_model = run_cli(
         temp.path(),
@@ -1650,10 +1761,7 @@ fn openclaw_env_tools_default_model_and_catalog_round_trip() {
         stderr_text(&set_agents_defaults)
     );
 
-    let env_output = run_cli(
-        temp.path(),
-        &["--format", "json", "openclaw", "env", "get"],
-    );
+    let env_output = run_cli(temp.path(), &["--format", "json", "openclaw", "env", "get"]);
     let env_json: Value =
         serde_json::from_slice(&env_output.stdout).expect("openclaw env get should return json");
     assert_eq!(
@@ -1665,9 +1773,12 @@ fn openclaw_env_tools_default_model_and_catalog_round_trip() {
         temp.path(),
         &["--format", "json", "openclaw", "tools", "get"],
     );
-    let tools_json: Value =
-        serde_json::from_slice(&tools_output.stdout).expect("openclaw tools get should return json");
-    assert_eq!(tools_json.get("profile").and_then(Value::as_str), Some("strict"));
+    let tools_json: Value = serde_json::from_slice(&tools_output.stdout)
+        .expect("openclaw tools get should return json");
+    assert_eq!(
+        tools_json.get("profile").and_then(Value::as_str),
+        Some("strict")
+    );
 
     let default_model_output = run_cli(
         temp.path(),
@@ -1740,7 +1851,11 @@ fn omo_and_omo_slim_read_import_current_and_disable_round_trip() {
     .expect("write omo slim jsonc");
 
     let read_omo = run_cli(temp.path(), &["--format", "json", "omo", "read-local"]);
-    assert!(read_omo.status.success(), "stderr: {}", stderr_text(&read_omo));
+    assert!(
+        read_omo.status.success(),
+        "stderr: {}",
+        stderr_text(&read_omo)
+    );
     let read_omo_json: Value =
         serde_json::from_slice(&read_omo.stdout).expect("omo read-local should return json");
     assert!(read_omo_json.get("agents").is_some());
@@ -1767,10 +1882,7 @@ fn omo_and_omo_slim_read_import_current_and_disable_round_trip() {
         Some(imported_omo_id)
     );
 
-    let disable_omo = run_cli(
-        temp.path(),
-        &["--format", "json", "omo", "disable-current"],
-    );
+    let disable_omo = run_cli(temp.path(), &["--format", "json", "omo", "disable-current"]);
     assert!(
         disable_omo.status.success(),
         "stderr: {}",
@@ -1794,8 +1906,10 @@ fn omo_and_omo_slim_read_import_current_and_disable_round_trip() {
                 .is_some_and(Value::is_null)
     );
 
-    let import_omo_slim =
-        run_cli(temp.path(), &["--format", "json", "omo-slim", "import-local"]);
+    let import_omo_slim = run_cli(
+        temp.path(),
+        &["--format", "json", "omo-slim", "import-local"],
+    );
     assert!(
         import_omo_slim.status.success(),
         "stderr: {}",
@@ -2160,8 +2274,13 @@ fn mcp_validate_docs_link_and_toggle_output_are_structured() {
             mcp_file.to_str().expect("utf-8 path"),
         ],
     );
-    assert!(add_output.status.success(), "stderr: {}", stderr_text(&add_output));
-    let added: Value = serde_json::from_slice(&add_output.stdout).expect("mcp add should return json");
+    assert!(
+        add_output.status.success(),
+        "stderr: {}",
+        stderr_text(&add_output)
+    );
+    let added: Value =
+        serde_json::from_slice(&add_output.stdout).expect("mcp add should return json");
     assert_eq!(added.get("id").and_then(Value::as_str), Some("docs-mcp"));
 
     let validate_output = run_cli(
@@ -2181,7 +2300,11 @@ fn mcp_validate_docs_link_and_toggle_output_are_structured() {
         temp.path(),
         &["--format", "json", "mcp", "docs-link", "docs-mcp"],
     );
-    assert!(docs_output.status.success(), "stderr: {}", stderr_text(&docs_output));
+    assert!(
+        docs_output.status.success(),
+        "stderr: {}",
+        stderr_text(&docs_output)
+    );
     let docs: Value =
         serde_json::from_slice(&docs_output.stdout).expect("mcp docs-link should return json");
     assert_eq!(
@@ -2196,13 +2319,7 @@ fn mcp_validate_docs_link_and_toggle_output_are_structured() {
     let enable_output = run_cli(
         temp.path(),
         &[
-            "--format",
-            "json",
-            "mcp",
-            "enable",
-            "docs-mcp",
-            "--app",
-            "codex",
+            "--format", "json", "mcp", "enable", "docs-mcp", "--app", "codex",
         ],
     );
     assert!(
@@ -3824,7 +3941,10 @@ fn universal_provider_sync_adds_target_app_providers() {
     );
     let edited: Value =
         serde_json::from_slice(&edit_output.stdout).expect("universal edit should return json");
-    assert_eq!(edited.get("name").and_then(Value::as_str), Some("Omni Prime"));
+    assert_eq!(
+        edited.get("name").and_then(Value::as_str),
+        Some("Omni Prime")
+    );
     assert_eq!(
         edited.get("baseUrl").and_then(Value::as_str),
         Some("https://api2.example.com")
@@ -3919,7 +4039,9 @@ fn universal_provider_sync_adds_target_app_providers() {
     );
     let claude_after_save_json: Value = serde_json::from_slice(&claude_after_save.stdout)
         .expect("provider list should return json");
-    assert!(claude_after_save_json.get("universal-claude-nova").is_some());
+    assert!(claude_after_save_json
+        .get("universal-claude-nova")
+        .is_some());
 
     let delete_without_yes = run_cli(temp.path(), &["provider", "universal", "delete", "omni"]);
     assert!(!delete_without_yes.status.success(), "delete should fail");
@@ -3934,8 +4056,15 @@ fn universal_provider_sync_adds_target_app_providers() {
         "stderr: {}",
         stderr_text(&delete_with_yes)
     );
-    let delete_nova = run_cli(temp.path(), &["provider", "universal", "delete", "nova", "--yes"]);
-    assert!(delete_nova.status.success(), "stderr: {}", stderr_text(&delete_nova));
+    let delete_nova = run_cli(
+        temp.path(),
+        &["provider", "universal", "delete", "nova", "--yes"],
+    );
+    assert!(
+        delete_nova.status.success(),
+        "stderr: {}",
+        stderr_text(&delete_nova)
+    );
 
     let list_output = run_cli(
         temp.path(),
@@ -4213,15 +4342,11 @@ fn proxy_global_and_app_config_round_trip() {
     let global_set_json: Value =
         serde_json::from_slice(&global_set.stdout).expect("global-config set should return json");
     assert_eq!(
-        global_set_json
-            .get("proxyEnabled")
-            .and_then(Value::as_bool),
+        global_set_json.get("proxyEnabled").and_then(Value::as_bool),
         Some(true)
     );
     assert_eq!(
-        global_set_json
-            .get("listenAddress")
-            .and_then(Value::as_str),
+        global_set_json.get("listenAddress").and_then(Value::as_str),
         Some("0.0.0.0")
     );
     assert_eq!(
@@ -4244,8 +4369,8 @@ fn proxy_global_and_app_config_round_trip() {
         "stderr: {}",
         stderr_text(&global_show)
     );
-    let global_show_json: Value = serde_json::from_slice(&global_show.stdout)
-        .expect("global-config show should return json");
+    let global_show_json: Value =
+        serde_json::from_slice(&global_show.stdout).expect("global-config show should return json");
     assert_eq!(
         global_show_json
             .get("listenAddress")
@@ -4287,18 +4412,31 @@ fn proxy_global_and_app_config_round_trip() {
             "15",
         ],
     );
-    assert!(app_set.status.success(), "stderr: {}", stderr_text(&app_set));
+    assert!(
+        app_set.status.success(),
+        "stderr: {}",
+        stderr_text(&app_set)
+    );
     let app_set_json: Value =
         serde_json::from_slice(&app_set.stdout).expect("app-config set should return json");
-    assert_eq!(app_set_json.get("appType").and_then(Value::as_str), Some("claude"));
-    assert_eq!(app_set_json.get("enabled").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        app_set_json.get("appType").and_then(Value::as_str),
+        Some("claude")
+    );
+    assert_eq!(
+        app_set_json.get("enabled").and_then(Value::as_bool),
+        Some(true)
+    );
     assert_eq!(
         app_set_json
             .get("autoFailoverEnabled")
             .and_then(Value::as_bool),
         Some(true)
     );
-    assert_eq!(app_set_json.get("maxRetries").and_then(Value::as_u64), Some(8));
+    assert_eq!(
+        app_set_json.get("maxRetries").and_then(Value::as_u64),
+        Some(8)
+    );
     assert_eq!(
         app_set_json
             .get("streamingFirstByteTimeout")
@@ -4360,7 +4498,11 @@ fn proxy_global_and_app_config_round_trip() {
             "claude",
         ],
     );
-    assert!(app_show.status.success(), "stderr: {}", stderr_text(&app_show));
+    assert!(
+        app_show.status.success(),
+        "stderr: {}",
+        stderr_text(&app_show)
+    );
     let app_show_json: Value =
         serde_json::from_slice(&app_show.stdout).expect("app-config show should return json");
     assert_eq!(
@@ -4454,11 +4596,12 @@ fn proxy_auto_failover_available_providers_and_cost_settings_round_trip() {
     );
     let enable_json: Value =
         serde_json::from_slice(&enable_output.stdout).expect("enable should return json");
-    assert_eq!(enable_json.get("enabled").and_then(Value::as_bool), Some(true));
     assert_eq!(
-        enable_json
-            .get("activeProviderId")
-            .and_then(Value::as_str),
+        enable_json.get("enabled").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        enable_json.get("activeProviderId").and_then(Value::as_str),
         Some("alpha")
     );
 
@@ -4604,7 +4747,10 @@ fn proxy_auto_failover_available_providers_and_cost_settings_round_trip() {
     );
     let disable_json: Value =
         serde_json::from_slice(&disable_output.stdout).expect("disable should return json");
-    assert_eq!(disable_json.get("enabled").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        disable_json.get("enabled").and_then(Value::as_bool),
+        Some(false)
+    );
 }
 
 #[test]
@@ -4627,7 +4773,11 @@ fn proxy_provider_health_and_circuit_stats_are_exposed() {
             "sk-health",
         ],
     );
-    assert!(add_output.status.success(), "stderr: {}", stderr_text(&add_output));
+    assert!(
+        add_output.status.success(),
+        "stderr: {}",
+        stderr_text(&add_output)
+    );
 
     let health_output = run_cli(
         temp.path(),
@@ -4677,7 +4827,10 @@ fn proxy_provider_health_and_circuit_stats_are_exposed() {
     );
     let stats_json: Value =
         serde_json::from_slice(&stats_output.stdout).expect("circuit stats should return json");
-    assert_eq!(stats_json.get("providerId").and_then(Value::as_str), Some("healthy-provider"));
+    assert_eq!(
+        stats_json.get("providerId").and_then(Value::as_str),
+        Some("healthy-provider")
+    );
     assert!(
         stats_json
             .get("stats")
@@ -4716,7 +4869,10 @@ fn proxy_cost_and_pricing_validation_errors_surface_to_cli() {
             "invalid",
         ],
     );
-    assert!(!invalid_pricing_source.status.success(), "command should fail");
+    assert!(
+        !invalid_pricing_source.status.success(),
+        "command should fail"
+    );
     assert!(stderr_text(&invalid_pricing_source).contains("Invalid pricing mode"));
 }
 
@@ -4987,7 +5143,9 @@ fn skill_unmanaged_scan_import_and_repo_round_trip() {
     );
     let unmanaged: Value =
         serde_json::from_slice(&scan_output.stdout).expect("unmanaged scan should return json");
-    let entries = unmanaged.as_array().expect("scan result should be an array");
+    let entries = unmanaged
+        .as_array()
+        .expect("scan result should be an array");
     assert!(entries.iter().any(|item| {
         item.get("directory").and_then(Value::as_str) == Some("unmanaged-skill")
             && item
@@ -5014,7 +5172,9 @@ fn skill_unmanaged_scan_import_and_repo_round_trip() {
     );
     let imported: Value =
         serde_json::from_slice(&import_output.stdout).expect("import should return json");
-    let imported_items = imported.as_array().expect("import result should be an array");
+    let imported_items = imported
+        .as_array()
+        .expect("import result should be an array");
     assert_eq!(imported_items.len(), 1);
     assert_eq!(
         imported_items[0].get("id").and_then(Value::as_str),
@@ -5031,7 +5191,9 @@ fn skill_unmanaged_scan_import_and_repo_round_trip() {
     let default_repos: Value =
         serde_json::from_slice(&repo_list_output.stdout).expect("repo list should return json");
     assert!(
-        default_repos.as_array().is_some_and(|items| !items.is_empty()),
+        default_repos
+            .as_array()
+            .is_some_and(|items| !items.is_empty()),
         "default skill repos should be materialized for repo commands"
     );
 
@@ -5059,10 +5221,7 @@ fn skill_unmanaged_scan_import_and_repo_round_trip() {
         added_repo.get("owner").and_then(Value::as_str),
         Some("example")
     );
-    assert_eq!(
-        added_repo.get("name").and_then(Value::as_str),
-        Some("demo")
-    );
+    assert_eq!(added_repo.get("name").and_then(Value::as_str), Some("demo"));
     assert_eq!(
         added_repo.get("branch").and_then(Value::as_str),
         Some("develop")
@@ -5075,12 +5234,10 @@ fn skill_unmanaged_scan_import_and_repo_round_trip() {
         stderr_text(&repo_remove_output)
     );
 
-    let repo_list_after_remove = run_cli(
-        temp.path(),
-        &["--format", "json", "skill", "repo", "list"],
-    );
-    let repos_after_remove: Value =
-        serde_json::from_slice(&repo_list_after_remove.stdout).expect("repo list should return json");
+    let repo_list_after_remove =
+        run_cli(temp.path(), &["--format", "json", "skill", "repo", "list"]);
+    let repos_after_remove: Value = serde_json::from_slice(&repo_list_after_remove.stdout)
+        .expect("repo list should return json");
     assert!(
         repos_after_remove
             .as_array()
@@ -5120,11 +5277,21 @@ fn skill_zip_install_imports_archive_and_syncs_to_app_dir() {
 
     let installed: Value =
         serde_json::from_slice(&install_output.stdout).expect("zip install should return json");
-    let items = installed.as_array().expect("zip install should return an array");
+    let items = installed
+        .as_array()
+        .expect("zip install should return an array");
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0].get("id").and_then(Value::as_str), Some("local:zip-skill"));
-    assert!(skill_ssot_dir(temp.path(), "zip-skill").join("SKILL.md").exists());
-    assert!(exists_or_symlink(&claude_skill_dir(temp.path(), "zip-skill")));
+    assert_eq!(
+        items[0].get("id").and_then(Value::as_str),
+        Some("local:zip-skill")
+    );
+    assert!(skill_ssot_dir(temp.path(), "zip-skill")
+        .join("SKILL.md")
+        .exists());
+    assert!(exists_or_symlink(&claude_skill_dir(
+        temp.path(),
+        "zip-skill"
+    )));
 }
 
 #[test]
@@ -5190,7 +5357,10 @@ fn deeplink_parse_merge_and_preview_expose_structured_requests() {
     );
     let parsed: Value =
         serde_json::from_slice(&parse_output.stdout).expect("deeplink parse should return json");
-    assert_eq!(parsed.get("resource").and_then(Value::as_str), Some("provider"));
+    assert_eq!(
+        parsed.get("resource").and_then(Value::as_str),
+        Some("provider")
+    );
     assert_eq!(parsed.get("app").and_then(Value::as_str), Some("claude"));
     assert_eq!(
         parsed.get("apiKey").and_then(Value::as_str),
@@ -5433,7 +5603,10 @@ fn auto_launch_commands_round_trip_with_test_state_file() {
     let status = run_cli_with_env(
         temp.path(),
         &["--format", "json", "auto-launch", "status"],
-        &[("CC_SWITCH_TEST_AUTO_LAUNCH_STATE_FILE", state_file_str.as_str())],
+        &[(
+            "CC_SWITCH_TEST_AUTO_LAUNCH_STATE_FILE",
+            state_file_str.as_str(),
+        )],
     );
     assert!(status.status.success(), "stderr: {}", stderr_text(&status));
     let status_json: Value =
@@ -5444,7 +5617,10 @@ fn auto_launch_commands_round_trip_with_test_state_file() {
     let enable = run_cli_with_env(
         temp.path(),
         &["--format", "json", "auto-launch", "enable"],
-        &[("CC_SWITCH_TEST_AUTO_LAUNCH_STATE_FILE", state_file_str.as_str())],
+        &[(
+            "CC_SWITCH_TEST_AUTO_LAUNCH_STATE_FILE",
+            state_file_str.as_str(),
+        )],
     );
     assert!(enable.status.success(), "stderr: {}", stderr_text(&enable));
     let enable_json: Value =
@@ -5455,9 +5631,16 @@ fn auto_launch_commands_round_trip_with_test_state_file() {
     let disable = run_cli_with_env(
         temp.path(),
         &["--format", "json", "auto-launch", "disable"],
-        &[("CC_SWITCH_TEST_AUTO_LAUNCH_STATE_FILE", state_file_str.as_str())],
+        &[(
+            "CC_SWITCH_TEST_AUTO_LAUNCH_STATE_FILE",
+            state_file_str.as_str(),
+        )],
     );
-    assert!(disable.status.success(), "stderr: {}", stderr_text(&disable));
+    assert!(
+        disable.status.success(),
+        "stderr: {}",
+        stderr_text(&disable)
+    );
     let disable_json: Value =
         serde_json::from_slice(&disable.stdout).expect("disable should return json");
     assert_eq!(disable_json["enabled"], false);
@@ -5480,7 +5663,11 @@ fn portable_mode_and_about_commands_report_runtime_metadata() {
         &["--format", "json", "portable-mode"],
         &[("CC_SWITCH_TEST_CURRENT_EXE", fake_exe_str.as_str())],
     );
-    assert!(portable.status.success(), "stderr: {}", stderr_text(&portable));
+    assert!(
+        portable.status.success(),
+        "stderr: {}",
+        stderr_text(&portable)
+    );
     let portable_json: Value =
         serde_json::from_slice(&portable.stdout).expect("portable-mode should return json");
     assert_eq!(portable_json["portableMode"], true);
@@ -5495,11 +5682,9 @@ fn portable_mode_and_about_commands_report_runtime_metadata() {
     assert_eq!(about_json["name"], "CC Switch");
     assert_eq!(about_json["portableMode"], true);
     assert_eq!(about_json["version"], env!("CARGO_PKG_VERSION"));
-    assert!(
-        about_json["currentReleaseNotesUrl"]
-            .as_str()
-            .is_some_and(|value| value.ends_with(&format!("/releases/tag/v{}", env!("CARGO_PKG_VERSION"))))
-    );
+    assert!(about_json["currentReleaseNotesUrl"].as_str().is_some_and(
+        |value| value.ends_with(&format!("/releases/tag/v{}", env!("CARGO_PKG_VERSION")))
+    ));
 }
 
 #[test]
@@ -5568,16 +5753,11 @@ fn update_and_release_notes_commands_report_expected_urls() {
     let update_json: Value = serde_json::from_slice(&update.stdout).expect("update json");
     assert_eq!(update_json["latestVersion"], "99.1.0");
     assert_eq!(update_json["hasUpdate"], true);
-    assert!(
-        update_json["releaseNotesUrl"]
-            .as_str()
-            .is_some_and(|value| value.ends_with("/releases/tag/v99.1.0"))
-    );
+    assert!(update_json["releaseNotesUrl"]
+        .as_str()
+        .is_some_and(|value| value.ends_with("/releases/tag/v99.1.0")));
 
-    let current_release_notes = run_cli(
-        temp.path(),
-        &["--format", "json", "release-notes"],
-    );
+    let current_release_notes = run_cli(temp.path(), &["--format", "json", "release-notes"]);
     assert!(
         current_release_notes.status.success(),
         "stderr: {}",
@@ -5585,11 +5765,9 @@ fn update_and_release_notes_commands_report_expected_urls() {
     );
     let current_json: Value = serde_json::from_slice(&current_release_notes.stdout)
         .expect("release-notes should return json");
-    assert!(
-        current_json["url"]
-            .as_str()
-            .is_some_and(|value| value.ends_with(&format!("/releases/tag/v{}", env!("CARGO_PKG_VERSION"))))
-    );
+    assert!(current_json["url"].as_str().is_some_and(
+        |value| value.ends_with(&format!("/releases/tag/v{}", env!("CARGO_PKG_VERSION")))
+    ));
 
     let latest_release_notes = run_cli(
         temp.path(),
@@ -5602,9 +5780,202 @@ fn update_and_release_notes_commands_report_expected_urls() {
     );
     let latest_json: Value = serde_json::from_slice(&latest_release_notes.stdout)
         .expect("latest release-notes should return json");
-    assert!(
-        latest_json["url"]
-            .as_str()
-            .is_some_and(|value| value.ends_with("/releases/latest"))
+    assert!(latest_json["url"]
+        .as_str()
+        .is_some_and(|value| value.ends_with("/releases/latest")));
+}
+
+#[test]
+#[serial]
+fn completions_command_outputs_script_and_install_writes_target_file() {
+    let temp = tempdir().expect("tempdir");
+
+    let zsh = run_cli(temp.path(), &["completions", "zsh"]);
+    assert!(zsh.status.success(), "stderr: {}", stderr_text(&zsh));
+    let zsh_stdout = stdout_text(&zsh);
+    assert!(zsh_stdout.contains("_cc-switch"));
+    assert!(zsh_stdout.contains("provider"));
+
+    let install_dir = temp.path().join("completions");
+    let install_dir_str = install_dir.display().to_string();
+    let installed = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "install",
+            "completions",
+            "zsh",
+            "--dir",
+            install_dir_str.as_str(),
+        ],
     );
+    assert!(
+        installed.status.success(),
+        "stderr: {}",
+        stderr_text(&installed)
+    );
+    let installed_json: Value =
+        serde_json::from_slice(&installed.stdout).expect("install completions json");
+    let installed_path = install_dir.join("_cc-switch");
+    assert_eq!(installed_json["path"], installed_path.display().to_string());
+    let content = fs::read_to_string(&installed_path).expect("installed completion file");
+    assert!(content.contains("_cc-switch"));
+}
+
+#[test]
+#[serial]
+fn install_guide_and_update_guide_surface_actionable_commands() {
+    let temp = tempdir().expect("tempdir");
+    let github_base = spawn_routing_json_server(
+        vec![(
+            "/repos/farion1231/cc-switch/releases/latest".to_string(),
+            r#"{"tag_name":"v99.1.0"}"#.to_string(),
+        )],
+        1,
+    );
+
+    let install = run_cli(
+        temp.path(),
+        &["--format", "json", "install", "guide", "--shell", "fish"],
+    );
+    assert!(
+        install.status.success(),
+        "stderr: {}",
+        stderr_text(&install)
+    );
+    let install_json: Value = serde_json::from_slice(&install.stdout).expect("install guide json");
+    assert_eq!(install_json["recommendedMethod"], "cargo-git");
+    assert!(install_json["methods"]
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| {
+            item["id"] == "cargo-git"
+                && item["commands"].as_array().is_some_and(|commands| {
+                    commands.iter().any(|value| {
+                        value
+                            .as_str()
+                            .is_some_and(|text| text.contains("cargo install --git"))
+                    })
+                })
+        })));
+    assert_eq!(install_json["completionHints"][0]["shell"], "fish");
+
+    let update = run_cli_with_env(
+        temp.path(),
+        &["--format", "json", "update", "guide"],
+        &[("CC_SWITCH_TEST_GITHUB_API_BASE_URL", github_base.as_str())],
+    );
+    assert!(update.status.success(), "stderr: {}", stderr_text(&update));
+    let update_json: Value = serde_json::from_slice(&update.stdout).expect("update guide json");
+    assert_eq!(update_json["latestVersion"], "99.1.0");
+    assert_eq!(update_json["hasUpdate"], true);
+    assert!(update_json["steps"]
+        .as_array()
+        .is_some_and(|items| items.iter().any(|value| {
+            value
+                .as_str()
+                .is_some_and(|text| text.contains("git -C") || text.contains("cargo install --git"))
+        })));
+}
+
+#[test]
+#[serial]
+fn doctor_reports_runtime_and_selected_app_state() {
+    let temp = tempdir().expect("tempdir");
+    seed_provider(
+        temp.path(),
+        "claude",
+        Provider::with_id(
+            "doctor-provider".to_string(),
+            "Doctor Provider".to_string(),
+            serde_json::json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.example.com"
+                }
+            }),
+            None,
+        ),
+    );
+    with_seeded_state(temp.path(), |_| {
+        cc_switch_core::settings::set_current_provider(
+            &cc_switch_core::AppType::Claude,
+            Some("doctor-provider"),
+        )
+        .expect("set current provider");
+    });
+
+    let output = run_cli(
+        temp.path(),
+        &["--format", "json", "doctor", "--app", "claude"],
+    );
+    assert!(output.status.success(), "stderr: {}", stderr_text(&output));
+    let doctor_json: Value = serde_json::from_slice(&output.stdout).expect("doctor json");
+    assert!(doctor_json["runtime"]["databasePath"]
+        .as_str()
+        .is_some_and(|value| value.ends_with(".cc-switch/cc-switch.db")));
+    assert_eq!(doctor_json["apps"][0]["app"], "claude");
+    assert_eq!(doctor_json["apps"][0]["currentProvider"], "doctor-provider");
+    assert_eq!(doctor_json["apps"][0]["providerCount"], 1);
+    assert!(doctor_json["apps"][0]["livePaths"]
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item["label"] == "prompt")));
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn doctor_falls_back_to_read_only_database_when_writes_are_unavailable() {
+    let temp = tempdir().expect("tempdir");
+    seed_provider(
+        temp.path(),
+        "claude",
+        Provider::with_id(
+            "readonly-provider".to_string(),
+            "Readonly Provider".to_string(),
+            serde_json::json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-b",
+                    "ANTHROPIC_BASE_URL": "https://api.example.com"
+                }
+            }),
+            None,
+        ),
+    );
+    with_seeded_state(temp.path(), |_| {
+        cc_switch_core::settings::set_current_provider(
+            &cc_switch_core::AppType::Claude,
+            Some("readonly-provider"),
+        )
+        .expect("set current provider");
+    });
+
+    let db_path = database_path(temp.path());
+    let config_dir = temp.path().join(".cc-switch");
+    let original_db_permissions = fs::metadata(&db_path)
+        .expect("database metadata")
+        .permissions();
+    let original_dir_permissions = fs::metadata(&config_dir)
+        .expect("config dir metadata")
+        .permissions();
+
+    fs::set_permissions(&db_path, fs::Permissions::from_mode(0o444)).expect("readonly db");
+    fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o555)).expect("readonly dir");
+
+    let output = run_cli(
+        temp.path(),
+        &["--format", "json", "doctor", "--app", "claude"],
+    );
+
+    fs::set_permissions(&config_dir, original_dir_permissions).expect("restore dir permissions");
+    fs::set_permissions(&db_path, original_db_permissions).expect("restore db permissions");
+
+    assert!(output.status.success(), "stderr: {}", stderr_text(&output));
+    let doctor_json: Value = serde_json::from_slice(&output.stdout).expect("doctor json");
+    assert_eq!(doctor_json["apps"][0]["app"], "claude");
+    assert_eq!(
+        doctor_json["apps"][0]["currentProvider"],
+        "readonly-provider"
+    );
+    assert_eq!(doctor_json["apps"][0]["providerCount"], 1);
 }

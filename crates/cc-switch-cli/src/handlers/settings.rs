@@ -4,8 +4,8 @@ use anyhow::anyhow;
 use serde_json::json;
 
 use crate::cli::{
-    SettingsCommands, SettingsOnboardingCommands, SettingsStartupCommands,
-    SettingsToggleCommands, SettingsValueCommands, SettingsVisibleAppsCommands,
+    SettingsCommands, SettingsOnboardingCommands, SettingsStartupCommands, SettingsToggleCommands,
+    SettingsValueCommands, SettingsVisibleAppsCommands,
 };
 use crate::output::Printer;
 use cc_switch_core::settings::{self, VisibleApps};
@@ -58,10 +58,7 @@ fn handle_language(cmd: SettingsValueCommands, printer: &Printer) -> anyhow::Res
     Ok(())
 }
 
-fn handle_visible_apps(
-    cmd: SettingsVisibleAppsCommands,
-    printer: &Printer,
-) -> anyhow::Result<()> {
+fn handle_visible_apps(cmd: SettingsVisibleAppsCommands, printer: &Printer) -> anyhow::Result<()> {
     match cmd {
         SettingsVisibleAppsCommands::Get => {
             let current = settings::get_settings();

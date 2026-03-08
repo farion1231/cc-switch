@@ -924,8 +924,10 @@ async fn handle_universal(
             }
 
             cc_switch_core::ProviderService::upsert_universal(state, provider)?;
-            let saved = cc_switch_core::ProviderService::get_universal(state, &id)?
-                .ok_or_else(|| anyhow::anyhow!("Universal provider not found after edit: {}", id))?;
+            let saved =
+                cc_switch_core::ProviderService::get_universal(state, &id)?.ok_or_else(|| {
+                    anyhow::anyhow!("Universal provider not found after edit: {}", id)
+                })?;
             printer.print_value(&saved)?;
         }
         UniversalProviderCommands::SaveAndSync {
@@ -947,9 +949,10 @@ async fn handle_universal(
 
             cc_switch_core::ProviderService::upsert_universal(state, provider)?;
             cc_switch_core::ProviderService::sync_universal_to_apps(state, &id)?;
-            let saved = cc_switch_core::ProviderService::get_universal(state, &id)?.ok_or_else(
-                || anyhow::anyhow!("Universal provider not found after save-and-sync: {}", id),
-            )?;
+            let saved =
+                cc_switch_core::ProviderService::get_universal(state, &id)?.ok_or_else(|| {
+                    anyhow::anyhow!("Universal provider not found after save-and-sync: {}", id)
+                })?;
             printer.print_value(&json!({
                 "provider": saved,
                 "syncedApps": enabled_universal_apps(&saved.apps),

@@ -1,4 +1,5 @@
 mod backup_round_trip;
+mod cli_productization;
 mod config_smoke;
 mod env_conflict_flow;
 mod host_runtime_info;
@@ -30,6 +31,7 @@ use crate::runner::Scenario;
 pub fn all() -> Vec<Scenario> {
     vec![
         backup_round_trip::scenario(),
+        cli_productization::scenario(),
         config_smoke::scenario(),
         env_conflict_flow::scenario(),
         host_runtime_info::scenario(),

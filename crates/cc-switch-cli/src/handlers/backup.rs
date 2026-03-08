@@ -16,7 +16,10 @@ pub async fn handle(
             let filename = state
                 .db
                 .create_backup()?
-                .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
+                .and_then(|path| {
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                })
                 .ok_or_else(|| anyhow::anyhow!("Database file not found, backup skipped"))?;
             printer.print_value(&json!({ "filename": filename }))?;
         }

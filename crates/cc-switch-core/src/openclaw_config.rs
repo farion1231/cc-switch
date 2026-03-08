@@ -214,8 +214,7 @@ pub fn set_default_model(model: &OpenClawDefaultModel) -> Result<(), AppError> {
     write_openclaw_config(&config)
 }
 
-pub fn get_model_catalog() -> Result<Option<HashMap<String, OpenClawModelCatalogEntry>>, AppError>
-{
+pub fn get_model_catalog() -> Result<Option<HashMap<String, OpenClawModelCatalogEntry>>, AppError> {
     let config = read_openclaw_config()?;
     let Some(models_value) = config
         .get("agents")
@@ -243,7 +242,9 @@ pub fn set_model_catalog(
 
 pub fn get_agents_defaults() -> Result<Option<OpenClawAgentsDefaults>, AppError> {
     let config = read_openclaw_config()?;
-    let Some(defaults_value) = config.get("agents").and_then(|agents| agents.get("defaults"))
+    let Some(defaults_value) = config
+        .get("agents")
+        .and_then(|agents| agents.get("defaults"))
     else {
         return Ok(None);
     };
@@ -385,10 +386,7 @@ mod tests {
 
         let defaults = get_agents_defaults()?.expect("agents defaults should exist");
         assert_eq!(
-            defaults
-                .model
-                .as_ref()
-                .map(|model| model.primary.as_str()),
+            defaults.model.as_ref().map(|model| model.primary.as_str()),
             Some("demo/gpt-5")
         );
         assert_eq!(
@@ -410,7 +408,10 @@ mod tests {
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
 
         let mut env_vars = HashMap::new();
-        env_vars.insert("OPENAI_API_KEY".to_string(), Value::String("sk-openclaw".to_string()));
+        env_vars.insert(
+            "OPENAI_API_KEY".to_string(),
+            Value::String("sk-openclaw".to_string()),
+        );
         set_env_config(&OpenClawEnvConfig { vars: env_vars })?;
 
         set_tools_config(&OpenClawToolsConfig {

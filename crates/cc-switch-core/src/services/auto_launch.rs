@@ -98,9 +98,9 @@ fn macos_app_bundle_path(exe_path: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::AutoLaunchService;
     #[cfg(target_os = "macos")]
     use super::macos_app_bundle_path;
+    use super::AutoLaunchService;
     use serial_test::serial;
     use tempfile::tempdir;
 

@@ -1837,7 +1837,10 @@ impl ProxyService {
             .map_err(|e| format!("获取全局代理配置失败: {e}"))
     }
 
-    pub async fn update_global_proxy_config(&self, config: GlobalProxyConfig) -> Result<(), String> {
+    pub async fn update_global_proxy_config(
+        &self,
+        config: GlobalProxyConfig,
+    ) -> Result<(), String> {
         self.db
             .update_global_proxy_config(config)
             .map_err(|e| format!("更新全局代理配置失败: {e}"))
@@ -1875,8 +1878,7 @@ impl ProxyService {
         app_type: &str,
         enabled: bool,
     ) -> Result<Option<String>, String> {
-        let app = AppType::from_str(app_type)
-            .map_err(|_| format!("无效的应用类型: {app_type}"))?;
+        let app = AppType::from_str(app_type).map_err(|_| format!("无效的应用类型: {app_type}"))?;
 
         let switched_provider_id = if enabled {
             let mut queue = self
@@ -1888,7 +1890,9 @@ impl ProxyService {
                 let current_id = crate::settings::get_effective_current_provider(&self.db, &app)
                     .map_err(|e| e.to_string())?;
                 let Some(current_id) = current_id else {
-                    return Err("故障转移队列为空，且未设置当前供应商，无法开启故障转移".to_string());
+                    return Err(
+                        "故障转移队列为空，且未设置当前供应商，无法开启故障转移".to_string()
+                    );
                 };
 
                 self.db
@@ -2022,7 +2026,9 @@ impl ProxyService {
     ) -> Result<Option<crate::proxy::CircuitBreakerStats>, String> {
         let server_guard = self.server.read().await;
         if let Some(server) = server_guard.as_ref() {
-            Ok(server.get_circuit_breaker_stats(provider_id, app_type).await)
+            Ok(server
+                .get_circuit_breaker_stats(provider_id, app_type)
+                .await)
         } else {
             Ok(None)
         }

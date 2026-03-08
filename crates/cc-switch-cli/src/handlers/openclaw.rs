@@ -115,18 +115,13 @@ fn handle_model_catalog(cmd: OpenClawConfigCommands, printer: &Printer) -> anyho
     }
 }
 
-fn parse_json_input<T>(
-    label: &str,
-    file: Option<&str>,
-    value: Option<&str>,
-) -> anyhow::Result<T>
+fn parse_json_input<T>(label: &str, file: Option<&str>, value: Option<&str>) -> anyhow::Result<T>
 where
     T: DeserializeOwned,
 {
     let raw = match (file, value) {
-        (Some(path), None) => {
-            fs::read_to_string(path).with_context(|| format!("{label} failed to read file: {path}"))?
-        }
+        (Some(path), None) => fs::read_to_string(path)
+            .with_context(|| format!("{label} failed to read file: {path}"))?,
         (None, Some(value)) => value.to_string(),
         _ => anyhow::bail!("{label} requires either --file or --value"),
     };

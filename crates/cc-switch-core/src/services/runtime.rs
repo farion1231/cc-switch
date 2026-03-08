@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
@@ -28,6 +29,8 @@ curl -fsSL https://opencode.ai/install | bash";
 const TEST_CURRENT_EXE_ENV: &str = "CC_SWITCH_TEST_CURRENT_EXE";
 const TEST_GITHUB_API_BASE_URL_ENV: &str = "CC_SWITCH_TEST_GITHUB_API_BASE_URL";
 const TEST_NPM_REGISTRY_BASE_URL_ENV: &str = "CC_SWITCH_TEST_NPM_REGISTRY_BASE_URL";
+const VERSION_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
+const VERSION_COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 static VERSION_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?").expect("valid version regex"));
@@ -78,6 +81,10 @@ pub struct UpdateInfo {
 pub struct RuntimeService;
 
 impl RuntimeService {
+    pub fn current_executable_path() -> Result<PathBuf, AppError> {
+        current_exe_path()
+    }
+
     pub fn about() -> Result<AppInfo, AppError> {
         Ok(AppInfo {
             name: APP_NAME.to_string(),
@@ -121,8 +128,14 @@ impl RuntimeService {
                 let tool_wsl_shell_flag = pref.and_then(|value| value.wsl_shell_flag.as_deref());
 
                 results.push(
-                    get_single_tool_version(tool, tool_wsl_shell, tool_wsl_shell_flag, include_latest, &client)
-                        .await,
+                    get_single_tool_version(
+                        tool,
+                        tool_wsl_shell,
+                        tool_wsl_shell_flag,
+                        include_latest,
+                        &client,
+                    )
+                    .await,
                 );
             }
 
@@ -263,7 +276,9 @@ async fn fetch_latest_tool_version(client: &reqwest::Client, tool: &str) -> Opti
     }
 }
 
-async fn fetch_latest_release_version(client: &reqwest::Client) -> Result<Option<String>, AppError> {
+async fn fetch_latest_release_version(
+    client: &reqwest::Client,
+) -> Result<Option<String>, AppError> {
     let url = github_api_url(&format!("/repos/{}/releases/latest", github_repo_slug()));
     let response = client
         .get(url)
@@ -362,19 +377,20 @@ fn tool_env_type_and_wsl_distro(_tool: &str) -> (String, Option<String>) {
 }
 
 fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
-    use std::process::Command;
-
     #[cfg(target_os = "windows")]
-    let output = Command::new("cmd")
-        .args(["/C", &format!("{tool} --version")])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
+    let output = run_command_with_timeout({
+        let mut command = Command::new("cmd");
+        command.args(["/C", &format!("{tool} --version")]);
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    });
 
     #[cfg(not(target_os = "windows"))]
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(format!("{tool} --version"))
-        .output();
+    let output = run_command_with_timeout({
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(format!("{tool} --version"));
+        command
+    });
 
     match output {
         Ok(out) => {
@@ -410,8 +426,6 @@ fn try_get_version_wsl(
     force_shell: Option<&str>,
     force_shell_flag: Option<&str>,
 ) -> (Option<String>, Option<String>) {
-    use std::process::Command;
-
     if !is_valid_wsl_distro_name(distro) {
         return (None, Some(format!("[WSL:{distro}] invalid distro name")));
     }
@@ -450,10 +464,12 @@ fn try_get_version_wsl(
         ("sh".to_string(), "-c", cmd)
     };
 
-    let output = Command::new("wsl.exe")
-        .args(["-d", distro, "--", &shell, flag, &cmd])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
+    let output = run_command_with_timeout({
+        let mut command = Command::new("wsl.exe");
+        command.args(["-d", distro, "--", &shell, flag, &cmd]);
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    });
 
     match output {
         Ok(out) => {
@@ -505,9 +521,9 @@ fn try_get_version_wsl(
 fn is_valid_wsl_distro_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
-        && name
-            .chars()
-            .all(|value| value.is_ascii_alphanumeric() || value == '-' || value == '_' || value == '.')
+        && name.chars().all(|value| {
+            value.is_ascii_alphanumeric() || value == '-' || value == '_' || value == '.'
+        })
 }
 
 #[cfg(target_os = "windows")]
@@ -602,8 +618,6 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<PathBuf> {
 }
 
 fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
-    use std::process::Command;
-
     let home = dirs::home_dir().unwrap_or_default();
     let mut search_paths = Vec::new();
 
@@ -631,7 +645,10 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         if let Some(appdata) = dirs::data_dir() {
             push_unique_path(&mut search_paths, appdata.join("npm"));
         }
-        push_unique_path(&mut search_paths, PathBuf::from("C:\\Program Files\\nodejs"));
+        push_unique_path(
+            &mut search_paths,
+            PathBuf::from("C:\\Program Files\\nodejs"),
+        );
     }
 
     let fnm_base = home.join(".local/state/fnm_multishells");
@@ -684,17 +701,21 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
             }
 
             #[cfg(target_os = "windows")]
-            let output = Command::new("cmd")
-                .args(["/C", &format!("\"{}\" --version", tool_path.display())])
-                .env("PATH", &new_path)
-                .creation_flags(CREATE_NO_WINDOW)
-                .output();
+            let output = run_command_with_timeout({
+                let mut command = Command::new("cmd");
+                command
+                    .args(["/C", &format!("\"{}\" --version", tool_path.display())])
+                    .env("PATH", &new_path);
+                command.creation_flags(CREATE_NO_WINDOW);
+                command
+            });
 
             #[cfg(not(target_os = "windows"))]
-            let output = Command::new(&tool_path)
-                .arg("--version")
-                .env("PATH", &new_path)
-                .output();
+            let output = run_command_with_timeout({
+                let mut command = Command::new(&tool_path);
+                command.arg("--version").env("PATH", &new_path);
+                command
+            });
 
             if let Ok(out) = output {
                 let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -710,6 +731,37 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     }
 
     (None, Some("not installed or not executable".to_string()))
+}
+
+fn run_command_with_timeout(mut command: Command) -> Result<Output, String> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| err.to_string())?;
+    let start = std::time::Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child.wait_with_output().map_err(|err| err.to_string());
+            }
+            Ok(None) if start.elapsed() >= VERSION_COMMAND_TIMEOUT => {
+                let _ = child.kill();
+                let _ = child.wait_with_output();
+                return Err(format!(
+                    "command timed out after {}s",
+                    VERSION_COMMAND_TIMEOUT.as_secs()
+                ));
+            }
+            Ok(None) => std::thread::sleep(VERSION_COMMAND_POLL_INTERVAL),
+            Err(err) => {
+                let _ = child.kill();
+                return Err(err.to_string());
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -758,14 +810,17 @@ mod tests {
     use std::net::TcpListener;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+    use std::process::Command;
     use std::thread;
+    use std::time::{Duration, Instant};
 
     use serial_test::serial;
     use tempfile::tempdir;
 
     use super::{
-        current_version, normalize_version_tag, AppInfo, RuntimeService, WslShellPreference,
-        TEST_CURRENT_EXE_ENV, TEST_GITHUB_API_BASE_URL_ENV, TEST_NPM_REGISTRY_BASE_URL_ENV,
+        current_version, normalize_version_tag, run_command_with_timeout, AppInfo, RuntimeService,
+        WslShellPreference, TEST_CURRENT_EXE_ENV, TEST_GITHUB_API_BASE_URL_ENV,
+        TEST_NPM_REGISTRY_BASE_URL_ENV,
     };
 
     #[test]
@@ -840,8 +895,7 @@ mod tests {
         std::env::set_var(TEST_NPM_REGISTRY_BASE_URL_ENV, server);
 
         let versions =
-            RuntimeService::get_tool_versions(Some(vec!["claude".to_string()]), None, true)
-                .await?;
+            RuntimeService::get_tool_versions(Some(vec!["claude".to_string()]), None, true).await?;
         assert_eq!(versions[0].version.as_deref(), Some("1.2.3"));
         assert_eq!(versions[0].latest_version.as_deref(), Some("9.9.9"));
 
@@ -906,6 +960,28 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn tool_version_detection_times_out_hung_commands() -> Result<(), crate::error::AppError>
+    {
+        let temp = tempdir().expect("tempdir");
+        let bin = temp.path().join("bin");
+        fs::create_dir_all(&bin).expect("create bin dir");
+        let script = bin.join("hung-version-tool");
+        write_sleep_then_version_script(&script, 4, "hung-tool 9.9.9")?;
+
+        let start = Instant::now();
+        let mut command = Command::new(&script);
+        command.arg("--version");
+        let error = run_command_with_timeout(command).expect_err("command should time out");
+        let elapsed = start.elapsed();
+
+        assert!(error.contains("timed out"));
+        assert!(elapsed < Duration::from_secs(8));
+
+        Ok(())
+    }
+
     fn write_version_script(path: &Path, stdout: &str) -> Result<(), crate::error::AppError> {
         fs::write(path, format!("#!/bin/sh\necho '{stdout}'\n")).map_err(|source| {
             crate::error::AppError::Io {
@@ -926,9 +1002,37 @@ mod tests {
         })
     }
 
+    fn write_sleep_then_version_script(
+        path: &Path,
+        sleep_seconds: u64,
+        stdout: &str,
+    ) -> Result<(), crate::error::AppError> {
+        fs::write(
+            path,
+            format!("#!/bin/sh\nsleep {sleep_seconds}\necho '{stdout}'\n"),
+        )
+        .map_err(|source| crate::error::AppError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+        let mut perms = fs::metadata(path)
+            .map_err(|source| crate::error::AppError::Io {
+                path: path.display().to_string(),
+                source,
+            })?
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).map_err(|source| crate::error::AppError::Io {
+            path: path.display().to_string(),
+            source,
+        })
+    }
+
     fn join_path(bin: &Path, original: Option<&std::ffi::OsStr>) -> String {
         match original {
-            Some(value) if !value.is_empty() => format!("{}:{}", bin.display(), value.to_string_lossy()),
+            Some(value) if !value.is_empty() => {
+                format!("{}:{}", bin.display(), value.to_string_lossy())
+            }
             _ => bin.display().to_string(),
         }
     }

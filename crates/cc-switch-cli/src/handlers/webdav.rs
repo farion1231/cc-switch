@@ -79,8 +79,9 @@ pub async fn handle(
         }
         WebDavCommands::Upload => {
             let mut settings = require_enabled_settings()?;
-            let result = webdav_sync::run_with_sync_lock(webdav_sync::upload(&state.db, &mut settings))
-                .await;
+            let result =
+                webdav_sync::run_with_sync_lock(webdav_sync::upload(&state.db, &mut settings))
+                    .await;
             match result {
                 Ok(value) => {
                     printer.print_value(&value)?;
@@ -94,9 +95,11 @@ pub async fn handle(
         }
         WebDavCommands::Download => {
             let mut sync_settings = require_enabled_settings()?;
-            let result =
-                webdav_sync::run_with_sync_lock(webdav_sync::download(&state.db, &mut sync_settings))
-                    .await;
+            let result = webdav_sync::run_with_sync_lock(webdav_sync::download(
+                &state.db,
+                &mut sync_settings,
+            ))
+            .await;
             let mut value = match result {
                 Ok(value) => value,
                 Err(err) => {

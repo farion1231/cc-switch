@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 cc-switch-core = { path = "../cc-switch-core" }
 clap = { version = "4", features = ["derive", "string"] }
+clap_complete = "4"
 dialoguer = "0.11"
 tabled = "0.17"
 colored = "3"

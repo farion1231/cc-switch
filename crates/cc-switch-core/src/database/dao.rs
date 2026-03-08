@@ -62,21 +62,7 @@ impl Database {
 
         let mut map = IndexMap::new();
         for mut provider in providers {
-            let mut stmt_endpoints = conn.prepare(
-                "SELECT url, added_at, last_used FROM provider_endpoints
-                 WHERE provider_id = ?1 AND app_type = ?2
-                 ORDER BY added_at ASC, url ASC",
-            )?;
-
-            let endpoints = stmt_endpoints
-                .query_map(params![&provider.id, app_type], |row| {
-                    Ok(crate::settings::CustomEndpoint {
-                        url: row.get(0)?,
-                        added_at: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
-                        last_used: row.get(2)?,
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
+            let endpoints = load_provider_endpoints(&conn, &provider.id, app_type)?;
 
             let mut meta = provider.meta.take().unwrap_or_default();
             meta.custom_endpoints = endpoints
@@ -1449,7 +1435,7 @@ impl Database {
         )
         .optional()
         .map(|value| value.unwrap_or(false))
-            .map_err(|e| AppError::Database(e.to_string()))
+        .map_err(|e| AppError::Database(e.to_string()))
     }
 
     pub fn get_available_providers_for_failover(
@@ -2721,6 +2707,62 @@ fn parse_json<T: DeserializeOwned>(json: String) -> T {
     serde_json::from_str(&json).unwrap_or_else(|_| panic!("Failed to parse JSON: {}", json))
 }
 
+fn load_provider_endpoints(
+    conn: &Connection,
+    provider_id: &str,
+    app_type: &str,
+) -> Result<Vec<crate::settings::CustomEndpoint>, AppError> {
+    let query_with_last_used = || -> Result<Vec<crate::settings::CustomEndpoint>, AppError> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT url, added_at, last_used FROM provider_endpoints
+                 WHERE provider_id = ?1 AND app_type = ?2
+                 ORDER BY added_at ASC, url ASC",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![provider_id, app_type], |row| {
+                Ok(crate::settings::CustomEndpoint {
+                    url: row.get(0)?,
+                    added_at: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                    last_used: row.get(2)?,
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))
+    };
+
+    match query_with_last_used() {
+        Ok(endpoints) => Ok(endpoints),
+        Err(AppError::Database(message)) if message.contains("no such column: last_used") => {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT url, added_at FROM provider_endpoints
+                     WHERE provider_id = ?1 AND app_type = ?2
+                     ORDER BY added_at ASC, url ASC",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+
+            let rows = stmt
+                .query_map(params![provider_id, app_type], |row| {
+                    Ok(crate::settings::CustomEndpoint {
+                        url: row.get(0)?,
+                        added_at: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                        last_used: None,
+                    })
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| AppError::Database(e.to_string()))
+        }
+        Err(err) => Err(err),
+    }
+}
+
 fn parse_json_opt<T: DeserializeOwned>(json: Option<String>) -> Option<T> {
     json.and_then(|s| serde_json::from_str(&s).ok())
 }
@@ -2902,6 +2944,69 @@ mod tests {
             .expect("custom endpoint should exist");
         assert_eq!(endpoint.added_at, 123);
         assert_eq!(endpoint.last_used, Some(456));
+
+        Ok(())
+    }
+
+    #[test]
+    fn provider_custom_endpoints_legacy_schema_without_last_used_still_loads(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("DROP TABLE provider_endpoints", [])?;
+            conn.execute(
+                "CREATE TABLE provider_endpoints (
+                    provider_id TEXT NOT NULL,
+                    app_type TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    added_at INTEGER NOT NULL DEFAULT (unixepoch())
+                )",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO providers (
+                    id, app_type, name, settings_config, website_url, category, is_current,
+                    created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+                ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, 0, ?5, NULL, NULL, NULL, NULL, ?6, 0)",
+                params![
+                    "legacy-provider",
+                    "claude",
+                    "Legacy Provider",
+                    json!({
+                        "env": {
+                            "ANTHROPIC_BASE_URL": "https://legacy.example.com",
+                            "ANTHROPIC_AUTH_TOKEN": "sk-legacy"
+                        }
+                    })
+                    .to_string(),
+                    123_i64,
+                    "{}"
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    "legacy-provider",
+                    "claude",
+                    "https://legacy.example.com/v1",
+                    456_i64
+                ],
+            )?;
+        }
+
+        let providers = db.get_all_providers("claude")?;
+        let saved = providers
+            .get("legacy-provider")
+            .expect("legacy provider should exist");
+        let endpoint = saved
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.custom_endpoints.get("https://legacy.example.com/v1"))
+            .expect("legacy endpoint should exist");
+        assert_eq!(endpoint.added_at, 456);
+        assert_eq!(endpoint.last_used, None);
 
         Ok(())
     }

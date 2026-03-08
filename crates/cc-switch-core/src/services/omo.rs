@@ -441,7 +441,10 @@ mod tests {
         OmoService::disable_current(&state, &STANDARD)?;
 
         let path = temp.path().join(".config/opencode/oh-my-opencode.jsonc");
-        assert_eq!(OmoService::get_current_provider_id(&state, &STANDARD)?, None);
+        assert_eq!(
+            OmoService::get_current_provider_id(&state, &STANDARD)?,
+            None
+        );
         assert!(!path.exists());
         Ok(())
     }

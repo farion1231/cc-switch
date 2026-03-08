@@ -77,7 +77,8 @@ fn handle_memory(cmd: WorkspaceMemoryCommands, printer: &Printer) -> anyhow::Res
             file,
             value,
         } => {
-            let content = resolve_content("workspace memory write", file.as_deref(), value.as_deref())?;
+            let content =
+                resolve_content("workspace memory write", file.as_deref(), value.as_deref())?;
             WorkspaceService::write_daily_memory_file(&filename, &content)?;
             printer.print_value(&json!({
                 "filename": filename,
