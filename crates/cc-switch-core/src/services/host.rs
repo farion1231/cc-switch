@@ -67,6 +67,12 @@ impl HostService {
         settings.visible_apps = value;
         settings::update_settings(settings)
     }
+
+    pub fn set_launch_on_startup(value: bool) -> Result<(), AppError> {
+        let mut settings = settings::get_settings();
+        settings.launch_on_startup = value;
+        settings::update_settings(settings)
+    }
 }
 
 #[cfg(test)]
@@ -132,6 +138,9 @@ mod tests {
 
         HostService::set_visible_apps(None)?;
         assert_eq!(HostService::get_preferences()?.visible_apps, None);
+
+        HostService::set_launch_on_startup(true)?;
+        assert!(HostService::get_preferences()?.launch_on_startup);
 
         Ok(())
     }

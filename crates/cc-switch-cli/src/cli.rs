@@ -62,6 +62,45 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: SettingsCommands,
     },
+    /// System auto-launch management
+    #[command(name = "auto-launch")]
+    AutoLaunch {
+        #[command(subcommand)]
+        cmd: AutoLaunchCommands,
+    },
+    /// Detect whether the current binary is running in portable mode
+    #[command(name = "portable-mode")]
+    PortableMode,
+    /// Inspect local tool versions
+    #[command(name = "tool-versions")]
+    ToolVersions {
+        /// Restrict output to specific tools
+        #[arg(long = "tool")]
+        tools: Vec<String>,
+        /// Also fetch latest published versions
+        #[arg(long)]
+        latest: bool,
+        /// Override WSL shell per tool, e.g. claude=bash
+        #[arg(long = "wsl-shell")]
+        wsl_shell: Vec<String>,
+        /// Override WSL shell flag per tool, e.g. claude=-lc
+        #[arg(long = "wsl-shell-flag", allow_hyphen_values = true)]
+        wsl_shell_flag: Vec<String>,
+    },
+    /// Show app metadata and useful links
+    About,
+    /// Update information
+    Update {
+        #[command(subcommand)]
+        cmd: UpdateCommands,
+    },
+    /// Print release notes links
+    #[command(name = "release-notes")]
+    ReleaseNotes {
+        /// Print the latest release page instead of the current version page
+        #[arg(long)]
+        latest: bool,
+    },
     /// Configuration management
     Config {
         #[command(subcommand)]
@@ -1526,6 +1565,22 @@ pub enum SettingsOnboardingCommands {
     Skip,
     /// Clear the onboarding completion marker
     Clear,
+}
+
+#[derive(Subcommand)]
+pub enum AutoLaunchCommands {
+    /// Show current auto-launch status
+    Status,
+    /// Enable auto-launch
+    Enable,
+    /// Disable auto-launch
+    Disable,
+}
+
+#[derive(Subcommand)]
+pub enum UpdateCommands {
+    /// Check the latest published version
+    Check,
 }
 
 #[derive(Subcommand)]

@@ -46,6 +46,7 @@ json5 = "0.4"
 serde_yaml = "0.9"
 zip = "2.2"
 sha2 = "0.10"
+auto-launch = "0.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"

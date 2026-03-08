@@ -3,6 +3,8 @@ use std::fs;
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Arc, Mutex};
@@ -18,10 +20,15 @@ use serial_test::serial;
 use tempfile::tempdir;
 
 fn run_cli(home: &Path, args: &[&str]) -> Output {
+    run_cli_with_env(home, args, &[])
+}
+
+fn run_cli_with_env(home: &Path, args: &[&str], envs: &[(&str, &str)]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_cc-switch"))
         .args(args)
         .env("HOME", home)
         .env("CC_SWITCH_TEST_HOME", home)
+        .envs(envs.iter().copied())
         .output()
         .expect("cli command should run")
 }
@@ -267,6 +274,13 @@ fn insert_usage_log(
 }
 
 fn spawn_json_server(response_body: String, expected_requests: usize) -> String {
+    spawn_routing_json_server(
+        vec![("/".to_string(), response_body)],
+        expected_requests,
+    )
+}
+
+fn spawn_routing_json_server(routes: Vec<(String, String)>, expected_requests: usize) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
     let addr = listener.local_addr().expect("server addr");
 
@@ -278,11 +292,23 @@ fn spawn_json_server(response_body: String, expected_requests: usize) -> String 
             let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
             let mut buffer = [0_u8; 4096];
             let _ = stream.read(&mut buffer);
+            let request = String::from_utf8_lossy(&buffer);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("/");
+            let body = routes
+                .iter()
+                .find(|(candidate, _)| candidate == path)
+                .or_else(|| routes.iter().find(|(candidate, _)| candidate == "/"))
+                .map(|(_, body)| body.as_str())
+                .unwrap_or("{}");
 
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                response_body.len(),
-                response_body
+                body.len(),
+                body
             );
             let _ = stream.write_all(response.as_bytes());
             let _ = stream.flush();
@@ -290,6 +316,27 @@ fn spawn_json_server(response_body: String, expected_requests: usize) -> String 
     });
 
     format!("http://{}", addr)
+}
+
+#[cfg(unix)]
+fn write_executable(path: &Path, content: &str) {
+    fs::write(path, content).expect("write executable");
+    let mut perms = fs::metadata(path)
+        .expect("metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("set permissions");
+}
+
+fn prepend_path(dir: &Path) -> String {
+    let mut paths = vec![dir.to_path_buf()];
+    if let Some(existing) = env::var_os("PATH") {
+        paths.extend(env::split_paths(&existing));
+    }
+    env::join_paths(paths)
+        .expect("join PATH")
+        .to_string_lossy()
+        .into_owned()
 }
 
 struct TestWebDavServer {
@@ -5374,4 +5421,190 @@ fn verbose_mode_emits_command_context_on_stderr() {
     let value: Value =
         serde_json::from_slice(&output.stdout).expect("config path should still return json");
     assert!(value.get("configDir").is_some());
+}
+
+#[test]
+#[serial]
+fn auto_launch_commands_round_trip_with_test_state_file() {
+    let temp = tempdir().expect("tempdir");
+    let state_file = temp.path().join("auto-launch.state");
+    let state_file_str = state_file.display().to_string();
+
+    let status = run_cli_with_env(
+        temp.path(),
+        &["--format", "json", "auto-launch", "status"],
+        &[("CC_SWITCH_TEST_AUTO_LAUNCH_STATE_FILE", state_file_str.as_str())],
+    );
+    assert!(status.status.success(), "stderr: {}", stderr_text(&status));
+    let status_json: Value =
+        serde_json::from_slice(&status.stdout).expect("auto-launch status should return json");
+    assert_eq!(status_json["enabled"], false);
+    assert_eq!(status_json["launchOnStartup"], false);
+
+    let enable = run_cli_with_env(
+        temp.path(),
+        &["--format", "json", "auto-launch", "enable"],
+        &[("CC_SWITCH_TEST_AUTO_LAUNCH_STATE_FILE", state_file_str.as_str())],
+    );
+    assert!(enable.status.success(), "stderr: {}", stderr_text(&enable));
+    let enable_json: Value =
+        serde_json::from_slice(&enable.stdout).expect("enable should return json");
+    assert_eq!(enable_json["enabled"], true);
+    assert_eq!(enable_json["launchOnStartup"], true);
+
+    let disable = run_cli_with_env(
+        temp.path(),
+        &["--format", "json", "auto-launch", "disable"],
+        &[("CC_SWITCH_TEST_AUTO_LAUNCH_STATE_FILE", state_file_str.as_str())],
+    );
+    assert!(disable.status.success(), "stderr: {}", stderr_text(&disable));
+    let disable_json: Value =
+        serde_json::from_slice(&disable.stdout).expect("disable should return json");
+    assert_eq!(disable_json["enabled"], false);
+    assert_eq!(disable_json["launchOnStartup"], false);
+}
+
+#[test]
+#[serial]
+fn portable_mode_and_about_commands_report_runtime_metadata() {
+    let temp = tempdir().expect("tempdir");
+    let portable_root = temp.path().join("portable-app");
+    fs::create_dir_all(&portable_root).expect("create portable dir");
+    fs::write(portable_root.join("portable.ini"), "").expect("write portable marker");
+    let fake_exe = portable_root.join("cc-switch");
+    fs::write(&fake_exe, "").expect("write fake exe");
+    let fake_exe_str = fake_exe.display().to_string();
+
+    let portable = run_cli_with_env(
+        temp.path(),
+        &["--format", "json", "portable-mode"],
+        &[("CC_SWITCH_TEST_CURRENT_EXE", fake_exe_str.as_str())],
+    );
+    assert!(portable.status.success(), "stderr: {}", stderr_text(&portable));
+    let portable_json: Value =
+        serde_json::from_slice(&portable.stdout).expect("portable-mode should return json");
+    assert_eq!(portable_json["portableMode"], true);
+
+    let about = run_cli_with_env(
+        temp.path(),
+        &["--format", "json", "about"],
+        &[("CC_SWITCH_TEST_CURRENT_EXE", fake_exe_str.as_str())],
+    );
+    assert!(about.status.success(), "stderr: {}", stderr_text(&about));
+    let about_json: Value = serde_json::from_slice(&about.stdout).expect("about json");
+    assert_eq!(about_json["name"], "CC Switch");
+    assert_eq!(about_json["portableMode"], true);
+    assert_eq!(about_json["version"], env!("CARGO_PKG_VERSION"));
+    assert!(
+        about_json["currentReleaseNotesUrl"]
+            .as_str()
+            .is_some_and(|value| value.ends_with(&format!("/releases/tag/v{}", env!("CARGO_PKG_VERSION"))))
+    );
+}
+
+#[test]
+#[serial]
+fn tool_versions_can_report_local_and_latest_versions() {
+    let temp = tempdir().expect("tempdir");
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("create bin dir");
+    #[cfg(unix)]
+    write_executable(&bin_dir.join("claude"), "#!/bin/sh\necho 'claude 1.2.3'\n");
+
+    let npm_base = spawn_routing_json_server(
+        vec![(
+            "/@anthropic-ai/claude-code".to_string(),
+            r#"{"dist-tags":{"latest":"9.9.9"}}"#.to_string(),
+        )],
+        1,
+    );
+    let path_value = prepend_path(&bin_dir);
+
+    let output = run_cli_with_env(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "tool-versions",
+            "--tool",
+            "claude",
+            "--latest",
+        ],
+        &[
+            ("PATH", path_value.as_str()),
+            ("CC_SWITCH_TEST_NPM_REGISTRY_BASE_URL", npm_base.as_str()),
+        ],
+    );
+    assert!(output.status.success(), "stderr: {}", stderr_text(&output));
+    let versions: Value =
+        serde_json::from_slice(&output.stdout).expect("tool-versions should return json");
+    let claude = versions
+        .as_array()
+        .and_then(|items| items.first())
+        .expect("expected one tool version");
+    assert_eq!(claude["name"], "claude");
+    assert_eq!(claude["version"], "1.2.3");
+    assert_eq!(claude["latestVersion"], "9.9.9");
+}
+
+#[test]
+#[serial]
+fn update_and_release_notes_commands_report_expected_urls() {
+    let temp = tempdir().expect("tempdir");
+    let github_base = spawn_routing_json_server(
+        vec![(
+            "/repos/farion1231/cc-switch/releases/latest".to_string(),
+            r#"{"tag_name":"v99.1.0"}"#.to_string(),
+        )],
+        1,
+    );
+
+    let update = run_cli_with_env(
+        temp.path(),
+        &["--format", "json", "update", "check"],
+        &[("CC_SWITCH_TEST_GITHUB_API_BASE_URL", github_base.as_str())],
+    );
+    assert!(update.status.success(), "stderr: {}", stderr_text(&update));
+    let update_json: Value = serde_json::from_slice(&update.stdout).expect("update json");
+    assert_eq!(update_json["latestVersion"], "99.1.0");
+    assert_eq!(update_json["hasUpdate"], true);
+    assert!(
+        update_json["releaseNotesUrl"]
+            .as_str()
+            .is_some_and(|value| value.ends_with("/releases/tag/v99.1.0"))
+    );
+
+    let current_release_notes = run_cli(
+        temp.path(),
+        &["--format", "json", "release-notes"],
+    );
+    assert!(
+        current_release_notes.status.success(),
+        "stderr: {}",
+        stderr_text(&current_release_notes)
+    );
+    let current_json: Value = serde_json::from_slice(&current_release_notes.stdout)
+        .expect("release-notes should return json");
+    assert!(
+        current_json["url"]
+            .as_str()
+            .is_some_and(|value| value.ends_with(&format!("/releases/tag/v{}", env!("CARGO_PKG_VERSION"))))
+    );
+
+    let latest_release_notes = run_cli(
+        temp.path(),
+        &["--format", "json", "release-notes", "--latest"],
+    );
+    assert!(
+        latest_release_notes.status.success(),
+        "stderr: {}",
+        stderr_text(&latest_release_notes)
+    );
+    let latest_json: Value = serde_json::from_slice(&latest_release_notes.stdout)
+        .expect("latest release-notes should return json");
+    assert!(
+        latest_json["url"]
+            .as_str()
+            .is_some_and(|value| value.ends_with("/releases/latest"))
+    );
 }

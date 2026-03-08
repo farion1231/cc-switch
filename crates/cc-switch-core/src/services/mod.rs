@@ -1,5 +1,6 @@
 //! Services module - business logic layer
 
+pub mod auto_launch;
 pub mod config;
 pub mod env_checker;
 pub mod env_manager;
@@ -16,11 +17,13 @@ pub mod settings;
 pub mod skill;
 pub mod speedtest;
 pub mod stream_check;
+pub mod runtime;
 pub mod usage;
 pub mod webdav;
 pub mod webdav_sync;
 pub mod workspace;
 
+pub use auto_launch::AutoLaunchService;
 pub use config::ConfigService;
 pub use global_proxy::GlobalProxyService;
 pub use host::HostService;
@@ -35,5 +38,6 @@ pub use settings::SettingsService;
 pub use skill::SkillService;
 pub use speedtest::SpeedtestService;
 pub use stream_check::StreamCheckService;
+pub use runtime::RuntimeService;
 pub use usage::UsageService;
 pub use workspace::WorkspaceService;

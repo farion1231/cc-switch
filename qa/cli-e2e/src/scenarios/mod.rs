@@ -1,6 +1,7 @@
 mod backup_round_trip;
 mod config_smoke;
 mod env_conflict_flow;
+mod host_runtime_info;
 mod import_export_deeplink;
 mod mcp_sync;
 mod openclaw_config_flow;
@@ -31,6 +32,7 @@ pub fn all() -> Vec<Scenario> {
         backup_round_trip::scenario(),
         config_smoke::scenario(),
         env_conflict_flow::scenario(),
+        host_runtime_info::scenario(),
         provider_live_switch::scenario(),
         provider_endpoints::scenario(),
         provider_common_config::scenario(),

@@ -44,9 +44,11 @@ pub use services::global_proxy::{
     DetectedProxy, GlobalProxyService, ProxyTestResult, UpstreamProxyStatus,
 };
 pub use services::host::{HostPreferences, HostService};
+pub use services::auto_launch::AutoLaunchService;
 pub use services::omo::{OmoLocalFileData, OmoService, OmoVariant, SLIM, STANDARD};
 pub use services::plugin::ClaudePluginService;
 pub use services::provider::{EndpointLatency, ProviderSortUpdate};
+pub use services::runtime::{AppInfo, RuntimeService, ToolVersionInfo, UpdateInfo, WslShellPreference};
 pub use services::session::{SessionMessage, SessionMeta, SessionService};
 pub use services::settings::{SettingsSaveResult, SettingsService};
 pub use services::skill::{

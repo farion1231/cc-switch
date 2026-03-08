@@ -130,6 +130,14 @@ impl Sandbox {
     }
 
     pub async fn run(&mut self, args: &[String]) -> Result<CommandOutput> {
+        self.run_with_env(args, &[]).await
+    }
+
+    pub async fn run_with_env(
+        &mut self,
+        args: &[String],
+        extra_envs: &[(&str, &str)],
+    ) -> Result<CommandOutput> {
         self.log_command(args, None)?;
 
         let output = Command::new(&self.env.bin_path)
@@ -138,6 +146,7 @@ impl Sandbox {
             .env("HOME", &self.home_dir)
             .env("CC_SWITCH_TEST_HOME", &self.home_dir)
             .env("NO_COLOR", "1")
+            .envs(extra_envs.iter().copied())
             .output()
             .await
             .with_context(|| format!("failed to run {}", self.env.bin_path.display()))?;
@@ -152,7 +161,15 @@ impl Sandbox {
     }
 
     pub async fn run_ok(&mut self, args: &[String]) -> Result<CommandOutput> {
-        let output = self.run(args).await?;
+        self.run_ok_with_env(args, &[]).await
+    }
+
+    pub async fn run_ok_with_env(
+        &mut self,
+        args: &[String],
+        extra_envs: &[(&str, &str)],
+    ) -> Result<CommandOutput> {
+        let output = self.run_with_env(args, extra_envs).await?;
         if output.success() {
             Ok(output)
         } else {

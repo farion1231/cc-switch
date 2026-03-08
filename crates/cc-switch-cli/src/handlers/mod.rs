@@ -4,6 +4,7 @@ mod backup;
 mod common;
 mod config;
 mod env;
+mod host;
 mod import_export;
 mod mcp;
 mod openclaw;
@@ -18,7 +19,7 @@ mod usage;
 mod webdav;
 mod workspace;
 
-use crate::cli::{Cli, Commands, DeeplinkCommands};
+use crate::cli::{Cli, Commands, DeeplinkCommands, UpdateCommands};
 use crate::output::Printer;
 use cc_switch_core::AppState;
 
@@ -37,6 +38,19 @@ pub async fn dispatch(cli: Cli, state: AppState) -> anyhow::Result<()> {
         Commands::Prompt { cmd } => prompt::handle(cmd, &state, &printer).await,
         Commands::Skill { cmd } => skill::handle(cmd, &state, &printer).await,
         Commands::Settings { cmd } => settings::handle(cmd, &state, &printer).await,
+        Commands::AutoLaunch { cmd } => host::handle_auto_launch(cmd, &printer).await,
+        Commands::PortableMode => host::handle_portable_mode(&printer).await,
+        Commands::ToolVersions {
+            tools,
+            latest,
+            wsl_shell,
+            wsl_shell_flag,
+        } => host::handle_tool_versions(tools, latest, wsl_shell, wsl_shell_flag, &printer).await,
+        Commands::About => host::handle_about(&printer).await,
+        Commands::Update { cmd } => match cmd {
+            UpdateCommands::Check => host::handle_update_check(&printer).await,
+        },
+        Commands::ReleaseNotes { latest } => host::handle_release_notes(latest, &printer).await,
         Commands::Config { cmd } => config::handle(cmd, &state, &printer).await,
         Commands::Usage { cmd } => usage::handle(cmd, &state, &printer).await,
         Commands::Backup { cmd } => backup::handle(cmd, &state, &printer).await,
@@ -79,6 +93,12 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Prompt { .. } => "prompt",
         Commands::Skill { .. } => "skill",
         Commands::Settings { .. } => "settings",
+        Commands::AutoLaunch { .. } => "auto-launch",
+        Commands::PortableMode => "portable-mode",
+        Commands::ToolVersions { .. } => "tool-versions",
+        Commands::About => "about",
+        Commands::Update { .. } => "update",
+        Commands::ReleaseNotes { .. } => "release-notes",
         Commands::Config { .. } => "config",
         Commands::Usage { .. } => "usage",
         Commands::Backup { .. } => "backup",
