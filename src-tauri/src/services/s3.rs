@@ -844,3 +844,65 @@ mod tests {
         }
     }
 }
+
+// ─── Live integration tests (run with --ignored) ─────────────
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    fn test_creds() -> S3Credentials {
+        S3Credentials {
+            access_key_id: std::env::var("S3_TEST_AK").expect("S3_TEST_AK env required"),
+            secret_access_key: std::env::var("S3_TEST_SK").expect("S3_TEST_SK env required"),
+            region: std::env::var("S3_TEST_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
+            bucket: std::env::var("S3_TEST_BUCKET").expect("S3_TEST_BUCKET env required"),
+            endpoint: std::env::var("S3_TEST_ENDPOINT").unwrap_or_default(),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn live_s3_connection() {
+        crate::proxy::http_client::init(None).ok();
+        let creds = test_creds();
+        let result = test_connection(&creds).await;
+        assert!(result.is_ok(), "Connection failed: {:?}", result.err());
+        println!("PASS: test_connection OK");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn live_s3_put_get_head_roundtrip() {
+        crate::proxy::http_client::init(None).ok();
+        let creds = test_creds();
+        let key = "cc-switch-sync/v2/default/_integration_test.json";
+        let data = br#"{"test":true,"ts":12345}"#;
+
+        // PUT
+        let r = put_object(&creds, key, data.to_vec(), "application/json").await;
+        assert!(r.is_ok(), "PUT failed: {:?}", r.err());
+        println!("PASS: put_object {} bytes", data.len());
+
+        // GET
+        let r = get_object(&creds, key, 1 << 20).await;
+        assert!(r.is_ok(), "GET failed: {:?}", r.err());
+        let (body, etag) = r.unwrap().expect("should exist");
+        assert_eq!(body, data);
+        println!("PASS: get_object {} bytes, etag={:?}", body.len(), etag);
+
+        // HEAD
+        let r = head_object(&creds, key).await;
+        assert!(r.is_ok(), "HEAD failed: {:?}", r.err());
+        assert!(r.unwrap().is_some());
+        println!("PASS: head_object OK");
+
+        // 404
+        let r = get_object(&creds, "cc-switch-sync/_no_such_key", 1024).await;
+        assert!(r.is_ok());
+        assert!(r.unwrap().is_none());
+        println!("PASS: get_object(404) returned None");
+
+        println!("ALL LIVE S3 TESTS PASSED");
+    }
+}
