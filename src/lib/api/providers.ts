@@ -34,10 +34,7 @@ export const providersApi = {
     return await invoke("get_current_provider", { app: appId });
   },
 
-  async add(
-    provider: Provider,
-    appId: AppId,
-  ): Promise<ProviderMutationResult> {
+  async add(provider: Provider, appId: AppId): Promise<ProviderMutationResult> {
     return await invoke("add_provider", { provider, app: appId });
   },
 
