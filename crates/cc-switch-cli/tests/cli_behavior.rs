@@ -18,6 +18,7 @@ use tempfile::tempdir;
 fn run_cli(home: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_cc-switch"))
         .args(args)
+        .env("HOME", home)
         .env("CC_SWITCH_TEST_HOME", home)
         .output()
         .expect("cli command should run")
@@ -35,8 +36,16 @@ fn database_path(home: &Path) -> PathBuf {
     home.join(".cc-switch").join("cc-switch.db")
 }
 
+fn backup_dir(home: &Path) -> PathBuf {
+    home.join(".cc-switch").join("backups")
+}
+
 fn claude_settings_path(home: &Path) -> PathBuf {
     home.join(".claude").join("settings.json")
+}
+
+fn zshrc_path(home: &Path) -> PathBuf {
+    home.join(".zshrc")
 }
 
 fn claude_prompt_path(home: &Path) -> PathBuf {
@@ -53,6 +62,17 @@ fn codex_config_path(home: &Path) -> PathBuf {
 
 fn opencode_config_path(home: &Path) -> PathBuf {
     home.join(".config").join("opencode").join("opencode.json")
+}
+
+fn openclaw_workspace_file_path(home: &Path, filename: &str) -> PathBuf {
+    home.join(".openclaw").join("workspace").join(filename)
+}
+
+fn openclaw_memory_file_path(home: &Path, filename: &str) -> PathBuf {
+    home.join(".openclaw")
+        .join("workspace")
+        .join("memory")
+        .join(filename)
 }
 
 fn skill_ssot_dir(home: &Path, directory: &str) -> PathBuf {
@@ -72,6 +92,8 @@ fn exists_or_symlink(path: &Path) -> bool {
 
 fn with_seeded_state<T>(home: &Path, f: impl FnOnce(&AppState) -> T) -> T {
     let previous = env::var("CC_SWITCH_TEST_HOME").ok();
+    let previous_home = env::var("HOME").ok();
+    env::set_var("HOME", home);
     env::set_var("CC_SWITCH_TEST_HOME", home);
     cc_switch_core::settings::update_settings(AppSettings::default()).expect("default settings");
     let state = AppState::new(Database::new().expect("file database"));
@@ -79,6 +101,10 @@ fn with_seeded_state<T>(home: &Path, f: impl FnOnce(&AppState) -> T) -> T {
     match previous {
         Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
         None => env::remove_var("CC_SWITCH_TEST_HOME"),
+    }
+    match previous_home {
+        Some(value) => env::set_var("HOME", value),
+        None => env::remove_var("HOME"),
     }
     result
 }
@@ -258,6 +284,427 @@ fn quiet_mode_overrides_verbose_output_for_value_commands() {
     assert!(output.status.success(), "stderr: {}", stderr_text(&output));
     assert!(stdout_text(&output).trim().is_empty());
     assert!(stderr_text(&output).trim().is_empty());
+}
+
+#[test]
+#[serial]
+fn workspace_read_write_round_trip() {
+    let temp = tempdir().expect("tempdir");
+
+    let write_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "workspace",
+            "write",
+            "AGENTS.md",
+            "--value",
+            "workspace hello",
+        ],
+    );
+    assert!(
+        write_output.status.success(),
+        "stderr: {}",
+        stderr_text(&write_output)
+    );
+    let written: Value =
+        serde_json::from_slice(&write_output.stdout).expect("workspace write should return json");
+    assert_eq!(written.get("written").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        fs::read_to_string(openclaw_workspace_file_path(temp.path(), "AGENTS.md"))
+            .expect("workspace file should exist"),
+        "workspace hello"
+    );
+
+    let read_output = run_cli(
+        temp.path(),
+        &["--format", "json", "workspace", "read", "AGENTS.md"],
+    );
+    assert!(
+        read_output.status.success(),
+        "stderr: {}",
+        stderr_text(&read_output)
+    );
+    let read: Value =
+        serde_json::from_slice(&read_output.stdout).expect("workspace read should return json");
+    assert_eq!(read.get("filename").and_then(Value::as_str), Some("AGENTS.md"));
+    assert_eq!(
+        read.get("content").and_then(Value::as_str),
+        Some("workspace hello")
+    );
+}
+
+#[test]
+#[serial]
+fn workspace_memory_list_search_read_write_and_delete_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    let memory_source = temp.path().join("memory.md");
+    fs::write(&memory_source, "Phase one notes\nWorkspace migration\n").expect("write memory");
+
+    let write_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "workspace",
+            "memory",
+            "write",
+            "2026-03-08.md",
+            "--file",
+            memory_source.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        write_output.status.success(),
+        "stderr: {}",
+        stderr_text(&write_output)
+    );
+    assert_eq!(
+        fs::read_to_string(openclaw_memory_file_path(temp.path(), "2026-03-08.md"))
+            .expect("memory file should exist"),
+        "Phase one notes\nWorkspace migration\n"
+    );
+
+    let list_output = run_cli(
+        temp.path(),
+        &["--format", "json", "workspace", "memory", "list"],
+    );
+    assert!(
+        list_output.status.success(),
+        "stderr: {}",
+        stderr_text(&list_output)
+    );
+    let listed: Value =
+        serde_json::from_slice(&list_output.stdout).expect("memory list should return json");
+    assert_eq!(listed.as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        listed[0].get("filename").and_then(Value::as_str),
+        Some("2026-03-08.md")
+    );
+
+    let search_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "workspace",
+            "memory",
+            "search",
+            "phase one",
+        ],
+    );
+    assert!(
+        search_output.status.success(),
+        "stderr: {}",
+        stderr_text(&search_output)
+    );
+    let searched: Value =
+        serde_json::from_slice(&search_output.stdout).expect("memory search should return json");
+    assert_eq!(searched.as_array().map(Vec::len), Some(1));
+    assert!(
+        searched[0]
+            .get("snippet")
+            .and_then(Value::as_str)
+            .is_some_and(|snippet| snippet.contains("Phase one")),
+        "search result should include content snippet"
+    );
+
+    let read_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "workspace",
+            "memory",
+            "read",
+            "2026-03-08.md",
+        ],
+    );
+    assert!(
+        read_output.status.success(),
+        "stderr: {}",
+        stderr_text(&read_output)
+    );
+    let read: Value =
+        serde_json::from_slice(&read_output.stdout).expect("memory read should return json");
+    assert_eq!(
+        read.get("content").and_then(Value::as_str),
+        Some("Phase one notes\nWorkspace migration\n")
+    );
+
+    let delete_output = run_cli(
+        temp.path(),
+        &[
+            "--format",
+            "json",
+            "workspace",
+            "memory",
+            "delete",
+            "2026-03-08.md",
+        ],
+    );
+    assert!(
+        delete_output.status.success(),
+        "stderr: {}",
+        stderr_text(&delete_output)
+    );
+    assert!(!openclaw_memory_file_path(temp.path(), "2026-03-08.md").exists());
+}
+
+#[test]
+#[serial]
+fn backup_create_list_rename_and_delete_round_trip() {
+    let temp = tempdir().expect("tempdir");
+
+    let seed_output = run_cli(temp.path(), &["config", "set", "language", "zh"]);
+    assert!(seed_output.status.success(), "stderr: {}", stderr_text(&seed_output));
+
+    let create_output = run_cli(temp.path(), &["--format", "json", "backup", "create"]);
+    assert!(
+        create_output.status.success(),
+        "stderr: {}",
+        stderr_text(&create_output)
+    );
+    let created: Value =
+        serde_json::from_slice(&create_output.stdout).expect("backup create should return json");
+    let filename = created
+        .get("filename")
+        .and_then(Value::as_str)
+        .expect("backup filename");
+    assert!(backup_dir(temp.path()).join(filename).exists());
+
+    let list_output = run_cli(temp.path(), &["--format", "json", "backup", "list"]);
+    assert!(list_output.status.success(), "stderr: {}", stderr_text(&list_output));
+    let backups: Value =
+        serde_json::from_slice(&list_output.stdout).expect("backup list should return json");
+    assert!(
+        backups.as_array().is_some_and(|items| {
+            items.iter().any(|item| item.get("filename").and_then(Value::as_str) == Some(filename))
+        }),
+        "created backup should appear in list"
+    );
+
+    let rename_output = run_cli(
+        temp.path(),
+        &["--format", "json", "backup", "rename", filename, "phase-one-smoke"],
+    );
+    assert!(
+        rename_output.status.success(),
+        "stderr: {}",
+        stderr_text(&rename_output)
+    );
+    let renamed: Value =
+        serde_json::from_slice(&rename_output.stdout).expect("backup rename should return json");
+    let renamed_filename = renamed
+        .get("renamedTo")
+        .and_then(Value::as_str)
+        .expect("renamed filename");
+    assert!(backup_dir(temp.path()).join(renamed_filename).exists());
+
+    let delete_without_yes = run_cli(temp.path(), &["backup", "delete", renamed_filename]);
+    assert!(!delete_without_yes.status.success(), "delete should fail without --yes");
+    assert!(stderr_text(&delete_without_yes).contains("Re-run with --yes"));
+
+    let delete_output = run_cli(
+        temp.path(),
+        &["--format", "json", "backup", "delete", renamed_filename, "--yes"],
+    );
+    assert!(
+        delete_output.status.success(),
+        "stderr: {}",
+        stderr_text(&delete_output)
+    );
+    assert!(!backup_dir(temp.path()).join(renamed_filename).exists());
+}
+
+#[test]
+#[serial]
+fn backup_restore_round_trip_restores_previous_state() {
+    let temp = tempdir().expect("tempdir");
+
+    let add_before = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "add",
+            "--app",
+            "claude",
+            "--name",
+            "before-backup",
+            "--base-url",
+            "https://before.example.com",
+            "--api-key",
+            "sk-before",
+        ],
+    );
+    assert!(
+        add_before.status.success(),
+        "stderr: {}",
+        stderr_text(&add_before)
+    );
+
+    let create_output = run_cli(temp.path(), &["--format", "json", "backup", "create"]);
+    assert!(
+        create_output.status.success(),
+        "stderr: {}",
+        stderr_text(&create_output)
+    );
+    let created: Value =
+        serde_json::from_slice(&create_output.stdout).expect("backup create should return json");
+    let filename = created
+        .get("filename")
+        .and_then(Value::as_str)
+        .expect("backup filename");
+
+    let add_after = run_cli(
+        temp.path(),
+        &[
+            "provider",
+            "add",
+            "--app",
+            "claude",
+            "--name",
+            "after-backup",
+            "--base-url",
+            "https://after.example.com",
+            "--api-key",
+            "sk-after",
+        ],
+    );
+    assert!(
+        add_after.status.success(),
+        "stderr: {}",
+        stderr_text(&add_after)
+    );
+
+    let restore_without_yes = run_cli(temp.path(), &["backup", "restore", filename]);
+    assert!(
+        !restore_without_yes.status.success(),
+        "restore should fail without --yes"
+    );
+    assert!(stderr_text(&restore_without_yes).contains("Re-run with --yes"));
+
+    let restore_output = run_cli(
+        temp.path(),
+        &["--format", "json", "backup", "restore", filename, "--yes"],
+    );
+    assert!(
+        restore_output.status.success(),
+        "stderr: {}",
+        stderr_text(&restore_output)
+    );
+    let restored: Value =
+        serde_json::from_slice(&restore_output.stdout).expect("backup restore should return json");
+    assert_eq!(restored.get("filename").and_then(Value::as_str), Some(filename));
+    assert!(restored.get("safetyBackupId").and_then(Value::as_str).is_some());
+
+    let list_output = run_cli(
+        temp.path(),
+        &["--format", "json", "provider", "list", "--app", "claude"],
+    );
+    assert!(
+        list_output.status.success(),
+        "stderr: {}",
+        stderr_text(&list_output)
+    );
+    let providers: Value =
+        serde_json::from_slice(&list_output.stdout).expect("provider list should return json");
+    let providers = providers
+        .as_object()
+        .expect("provider list should be an object");
+    assert_eq!(
+        providers.len(),
+        1,
+        "restored snapshot should only contain one provider"
+    );
+    assert_eq!(
+        providers
+            .get("before-backup")
+            .and_then(|provider| provider.get("name"))
+            .and_then(Value::as_str),
+        Some("before-backup")
+    );
+}
+
+#[test]
+#[serial]
+fn env_check_reports_file_conflicts() {
+    let temp = tempdir().expect("tempdir");
+    fs::write(
+        zshrc_path(temp.path()),
+        "export ANTHROPIC_E2E_TOKEN=sk-env\nexport OTHER_VAR=ok\n",
+    )
+    .expect("write zshrc");
+
+    let check_output = run_cli(temp.path(), &["--format", "json", "env", "check", "--app", "claude"]);
+    assert!(
+        check_output.status.success(),
+        "stderr: {}",
+        stderr_text(&check_output)
+    );
+
+    let conflicts: Value =
+        serde_json::from_slice(&check_output.stdout).expect("env check should return json");
+    assert!(conflicts.as_array().is_some_and(|items| {
+        items.iter().any(|item| {
+            item.get("varName").and_then(Value::as_str) == Some("ANTHROPIC_E2E_TOKEN")
+                && item.get("sourceType").and_then(Value::as_str) == Some("file")
+        })
+    }));
+}
+
+#[test]
+#[serial]
+fn env_delete_and_restore_round_trip_shell_file_conflicts() {
+    let temp = tempdir().expect("tempdir");
+    fs::write(
+        zshrc_path(temp.path()),
+        "export ANTHROPIC_E2E_TOKEN=sk-env\nexport OTHER_VAR=ok\n",
+    )
+    .expect("write zshrc");
+
+    let delete_without_yes = run_cli(temp.path(), &["env", "delete", "--app", "claude"]);
+    assert!(
+        !delete_without_yes.status.success(),
+        "delete should fail without --yes"
+    );
+    assert!(stderr_text(&delete_without_yes).contains("Re-run with --yes"));
+
+    let delete_output = run_cli(
+        temp.path(),
+        &["--format", "json", "env", "delete", "--app", "claude", "--yes"],
+    );
+    assert!(
+        delete_output.status.success(),
+        "stderr: {}",
+        stderr_text(&delete_output)
+    );
+    let deleted: Value =
+        serde_json::from_slice(&delete_output.stdout).expect("env delete should return json");
+    let backup_path = deleted
+        .get("backupPath")
+        .and_then(Value::as_str)
+        .expect("env delete should return backup path");
+    assert!(
+        fs::read_to_string(zshrc_path(temp.path()))
+            .expect("read zshrc after delete")
+            .lines()
+            .all(|line| !line.contains("ANTHROPIC_E2E_TOKEN")),
+        "delete should remove the target export line from the shell file"
+    );
+
+    let restore_output = run_cli(temp.path(), &["--format", "json", "env", "restore", backup_path]);
+    assert!(
+        restore_output.status.success(),
+        "stderr: {}",
+        stderr_text(&restore_output)
+    );
+    let restored_text = fs::read_to_string(zshrc_path(temp.path())).expect("read zshrc after restore");
+    assert!(
+        restored_text.contains("export ANTHROPIC_E2E_TOKEN=sk-env"),
+        "restore should put the target export line back into the shell file"
+    );
 }
 
 #[test]

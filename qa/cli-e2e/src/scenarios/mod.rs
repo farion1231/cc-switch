@@ -1,4 +1,6 @@
+mod backup_round_trip;
 mod config_smoke;
+mod env_conflict_flow;
 mod import_export_deeplink;
 mod mcp_sync;
 mod prompt_live_sync;
@@ -15,12 +17,15 @@ mod skill_local_lifecycle;
 mod skill_repo_and_import;
 mod usage_via_real_proxy_traffic;
 mod util;
+mod workspace_memory_flow;
 
 use crate::runner::Scenario;
 
 pub fn all() -> Vec<Scenario> {
     vec![
+        backup_round_trip::scenario(),
         config_smoke::scenario(),
+        env_conflict_flow::scenario(),
         provider_live_switch::scenario(),
         provider_endpoints::scenario(),
         provider_common_config::scenario(),
@@ -36,5 +41,6 @@ pub fn all() -> Vec<Scenario> {
         usage_via_real_proxy_traffic::scenario(),
         skill_local_lifecycle::scenario(),
         skill_repo_and_import::scenario(),
+        workspace_memory_flow::scenario(),
     ]
 }

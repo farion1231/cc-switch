@@ -67,6 +67,21 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: UsageCommands,
     },
+    /// Database backup management
+    Backup {
+        #[command(subcommand)]
+        cmd: BackupCommands,
+    },
+    /// Environment conflict management
+    Env {
+        #[command(subcommand)]
+        cmd: EnvCommands,
+    },
+    /// OpenClaw workspace and daily memory files
+    Workspace {
+        #[command(subcommand)]
+        cmd: WorkspaceCommands,
+    },
     /// Deep link tooling
     Deeplink {
         #[command(subcommand)]
@@ -884,6 +899,121 @@ pub enum ProxyPricingModelSourceCommands {
         app: String,
         /// Source value: request or response
         value: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WorkspaceCommands {
+    /// Read an OpenClaw workspace file
+    Read {
+        /// Workspace filename
+        filename: String,
+    },
+    /// Write an OpenClaw workspace file
+    Write {
+        /// Workspace filename
+        filename: String,
+        /// Read content from a file
+        #[arg(long, conflicts_with = "value")]
+        file: Option<String>,
+        /// Inline content
+        #[arg(long, conflicts_with = "file")]
+        value: Option<String>,
+    },
+    /// Daily memory file operations
+    Memory {
+        #[command(subcommand)]
+        cmd: WorkspaceMemoryCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WorkspaceMemoryCommands {
+    /// List daily memory files
+    List,
+    /// Read a daily memory file
+    Read {
+        /// Daily memory filename in YYYY-MM-DD.md format
+        filename: String,
+    },
+    /// Write a daily memory file
+    Write {
+        /// Daily memory filename in YYYY-MM-DD.md format
+        filename: String,
+        /// Read content from a file
+        #[arg(long, conflicts_with = "value")]
+        file: Option<String>,
+        /// Inline content
+        #[arg(long, conflicts_with = "file")]
+        value: Option<String>,
+    },
+    /// Search daily memory files
+    Search {
+        /// Search query
+        query: String,
+    },
+    /// Delete a daily memory file
+    Delete {
+        /// Daily memory filename in YYYY-MM-DD.md format
+        filename: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BackupCommands {
+    /// Create a database backup
+    Create,
+    /// List database backups
+    List,
+    /// Restore the database from a backup
+    Restore {
+        /// Backup filename
+        filename: String,
+        /// Skip confirmation
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Rename a backup file
+    Rename {
+        /// Existing backup filename
+        filename: String,
+        /// New backup name without extension
+        new_name: String,
+    },
+    /// Delete a backup file
+    Delete {
+        /// Backup filename
+        filename: String,
+        /// Skip confirmation
+        #[arg(short, long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum EnvCommands {
+    /// Check environment variable conflicts for an app
+    Check {
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+    },
+    /// Delete detected environment conflicts for an app with a backup
+    Delete {
+        /// App type
+        #[arg(short, long, default_value = "claude")]
+        app: String,
+        /// Also include system-level conflicts when supported
+        #[arg(long)]
+        include_system: bool,
+        /// Skip confirmation
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Restore environment variables from a backup file
+    Restore {
+        /// Backup file path
+        backup_path: String,
     },
 }
 

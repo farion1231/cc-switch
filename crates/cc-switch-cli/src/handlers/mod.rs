@@ -1,7 +1,9 @@
 //! CLI Command Handlers
 
+mod backup;
 mod common;
 mod config;
+mod env;
 mod import_export;
 mod mcp;
 mod prompt;
@@ -9,6 +11,7 @@ mod provider;
 mod proxy;
 mod skill;
 mod usage;
+mod workspace;
 
 use crate::cli::{Cli, Commands, DeeplinkCommands};
 use crate::output::Printer;
@@ -30,6 +33,9 @@ pub async fn dispatch(cli: Cli, state: AppState) -> anyhow::Result<()> {
         Commands::Skill { cmd } => skill::handle(cmd, &state, &printer).await,
         Commands::Config { cmd } => config::handle(cmd, &state, &printer).await,
         Commands::Usage { cmd } => usage::handle(cmd, &state, &printer).await,
+        Commands::Backup { cmd } => backup::handle(cmd, &state, &printer).await,
+        Commands::Env { cmd } => env::handle(cmd, &printer).await,
+        Commands::Workspace { cmd } => workspace::handle(cmd, &printer).await,
         Commands::Deeplink { cmd } => match cmd {
             DeeplinkCommands::Parse { url } => {
                 import_export::handle_deeplink_parse(&url, &printer).await
@@ -63,6 +69,9 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Skill { .. } => "skill",
         Commands::Config { .. } => "config",
         Commands::Usage { .. } => "usage",
+        Commands::Backup { .. } => "backup",
+        Commands::Env { .. } => "env",
+        Commands::Workspace { .. } => "workspace",
         Commands::Deeplink { .. } => "deeplink",
         Commands::Export { .. } => "export",
         Commands::Import { .. } => "import",

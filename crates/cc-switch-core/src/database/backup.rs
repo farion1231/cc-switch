@@ -168,6 +168,11 @@ impl Database {
         Ok(())
     }
 
+    /// Create a binary database backup and return its path.
+    pub fn create_backup(&self) -> Result<Option<PathBuf>, AppError> {
+        self.backup_database_file()
+    }
+
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
         let db_path = get_app_config_dir().join("cc-switch.db");
