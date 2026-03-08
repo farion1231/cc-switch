@@ -975,6 +975,29 @@ impl Database {
         Ok(())
     }
 
+    const GLOBAL_PROXY_URL_KEY: &'static str = "global_proxy_url";
+
+    pub fn get_global_proxy_url(&self) -> Result<Option<String>, AppError> {
+        self.get_setting(Self::GLOBAL_PROXY_URL_KEY)
+    }
+
+    pub fn set_global_proxy_url(&self, url: Option<&str>) -> Result<(), AppError> {
+        match url {
+            Some(value) if !value.trim().is_empty() => {
+                self.set_setting(Self::GLOBAL_PROXY_URL_KEY, value.trim())
+            }
+            _ => {
+                let conn = lock_conn!(self.conn);
+                conn.execute(
+                    "DELETE FROM settings WHERE key = ?1",
+                    [Self::GLOBAL_PROXY_URL_KEY],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+                Ok(())
+            }
+        }
+    }
+
     pub fn save_settings(&self, settings: &AppSettings) -> Result<(), AppError> {
         if let Some(v) = &settings.language {
             self.set_setting("language", v)?;

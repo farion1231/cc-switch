@@ -1021,14 +1021,7 @@ fn usage_summary_defaults_to_all_history_and_days_filters_when_requested() {
     let recent_only_output = run_cli(
         temp.path(),
         &[
-            "--format",
-            "json",
-            "usage",
-            "summary",
-            "--app",
-            "claude",
-            "--days",
-            "7",
+            "--format", "json", "usage", "summary", "--app", "claude", "--days", "7",
         ],
     );
     assert!(

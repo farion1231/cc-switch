@@ -1,0 +1,52 @@
+# CLI Gap Todo
+
+## P0 Core 先补
+
+- [x] 把 Sessions 能力下沉到 `cc-switch-core`，提供统一的 `SessionService` 用于扫描会话和读取消息。
+- [x] 把 Global Outbound Proxy 的 `get/set/test/scan` 收口到 `cc-switch-core`，不要继续只挂在 Tauri command 上。
+- [x] 给 `cc-switch-core` 增加 Claude plugin integration / skip onboarding 的 adapter 或 service 边界。
+- [x] 给 `cc-switch-core` 增加真正可复用的 `SettingsService` / `HostService`，统一承接 GUI 结构化设置流程。
+
+## P1 CLI 直接接现有 Core
+
+- [ ] 给 `provider` 增加 duplicate / sort-order / remove-from-live / import-live / read-live 子命令。
+- [ ] 给 `provider` 增加 custom-endpoints / endpoint-last-used / endpoint-speedtest 子命令。
+- [ ] 给 `provider` 增加 common-config-snippet extract/get/set 子命令。
+- [ ] 给 `provider` 增加 usage-script save/test/query 的完整子命令面。
+- [ ] 给 `provider` 增加 stream-check single/all/config 子命令。
+- [ ] 给 `provider` 增加 OpenClaw default-model / model-catalog 相关子命令或单独的 `openclaw` 命令组。
+- [ ] 给 `provider universal` 增加 edit / save-and-sync / 更完整结果回显。
+- [ ] 给 `usage` 增加 trends / provider-stats / model-stats / request-detail 子命令。
+- [ ] 给 `usage` 增加 model-pricing list/update/delete 子命令。
+- [ ] 给 `usage` 增加 provider-limits check 子命令。
+- [ ] 给 `skill` 增加 unmanaged scan/import 子命令。
+- [ ] 给 `skill` 增加 repo list/add/remove 子命令。
+- [ ] 给 `skill` 增加 zip-install 子命令。
+- [ ] 给 `proxy` 增加 auto-failover enable/config 子命令。
+- [ ] 给 `proxy` 增加 provider-health / circuit-stats / available-providers 子命令。
+- [ ] 给 `proxy` 增加 default-cost-multiplier / pricing-model-source / global-proxy-config 子命令。
+- [ ] 给 `mcp` 补 validate / docs-link / richer app toggle 输出，做到和 GUI 操作闭环一致。
+- [ ] 给 `prompt` 增加 current-live-file-content 查看能力。
+- [ ] 给 `deeplink` 增加 parse / merge / preview 子命令，不再只有最终 import。
+- [ ] 给 `workspace` 增加 read/write/list-memory/search-memory/delete-memory/open-dir 子命令。
+- [ ] 给 `webdav` 增加 test/save/upload/download/fetch-remote-info 子命令。
+- [ ] 给 `backup` 增加 create/list/restore/rename/delete 子命令。
+- [ ] 给 `env` 增加 check/delete/restore 子命令。
+- [ ] 给 `omo` / `omo-slim` 增加 read-local / import-local / current / disable-current 子命令。
+- [ ] 给 `openclaw` 增加 env / tools / agents-defaults / default-model / model-catalog 子命令。
+
+## P2 壳层能力与信息面
+
+- [ ] 给 CLI 增加 sessions list/messages/resume-command 能力，并在可行时接 terminal launch。
+- [ ] 给 CLI 增加 settings structured subcommands，覆盖 language / visible-apps / terminal / startup / plugin / onboarding。
+- [ ] 给 CLI 增加 auto-launch / portable-mode / tool-versions 命令。
+- [ ] 给 CLI 增加 update / release-notes / about 信息命令。
+- [ ] 评估哪些 GUI 的文件对话框能力在 CLI 中应改成显式路径参数，哪些不需要做 1:1 复刻。
+- [ ] 评估哪些 open-external / open-folder / terminal-launch 能力应保留为壳层命令而不是 core 能力。
+
+## 通用收尾
+
+- [ ] 每补完一个功能域就补对应的 CLI 黑盒测试和 `qa/cli-e2e` 场景。
+- [ ] 每补完一个功能域就回写 `cli-gap.md` 的状态，避免文档和代码漂移。
+- [ ] 每一批命令补完后都跑 `cargo test -p cc-switch-core`、`cargo test -p cc-switch-cli`、`qa/cli-e2e`。
+- [ ] 在进入 Tauri 迁移前，先把这份 checklist 中的 P0 和 P1 清空。
