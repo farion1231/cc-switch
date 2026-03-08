@@ -20,6 +20,8 @@ pub(crate) use super::webdav_sync::archive::{
 
 // ─── Protocol constants ──────────────────────────────────────
 
+/// Wire-format identifier stored in remote manifests.
+/// Retains historic "webdav" naming for backward compatibility with existing remotes.
 pub(crate) const PROTOCOL_FORMAT: &str = "cc-switch-webdav-sync";
 pub(crate) const PROTOCOL_VERSION: u32 = 2;
 pub(crate) const REMOTE_DB_SQL: &str = "db.sql";
@@ -91,9 +93,9 @@ pub(crate) fn build_local_snapshot(
     // Pack skills into deterministic ZIP
     let tmp = tempdir().map_err(|e| {
         io_context_localized(
-            "webdav.sync.snapshot_tmpdir_failed",
-            "创建 WebDAV 快照临时目录失败",
-            "Failed to create temporary directory for WebDAV snapshot",
+            "sync.snapshot_tmpdir_failed",
+            "创建快照临时目录失败",
+            "Failed to create temporary directory for snapshot",
             e,
         )
     })?;
@@ -155,7 +157,7 @@ pub(crate) fn compute_snapshot_id(artifacts: &BTreeMap<String, ArtifactMeta>) ->
 pub(crate) fn validate_manifest_compat(manifest: &SyncManifest) -> Result<(), AppError> {
     if manifest.format != PROTOCOL_FORMAT {
         return Err(localized(
-            "webdav.sync.manifest_format_incompatible",
+            "sync.manifest_format_incompatible",
             format!("远端 manifest 格式不兼容: {}", manifest.format),
             format!(
                 "Remote manifest format is incompatible: {}",
@@ -165,7 +167,7 @@ pub(crate) fn validate_manifest_compat(manifest: &SyncManifest) -> Result<(), Ap
     }
     if manifest.version != PROTOCOL_VERSION {
         return Err(localized(
-            "webdav.sync.manifest_version_incompatible",
+            "sync.manifest_version_incompatible",
             format!(
                 "远端 manifest 协议版本不兼容: v{} (本地 v{PROTOCOL_VERSION})",
                 manifest.version
@@ -188,7 +190,7 @@ pub(crate) fn validate_artifact_size_limit(
     if size > MAX_SYNC_ARTIFACT_BYTES {
         let max_mb = MAX_SYNC_ARTIFACT_BYTES / 1024 / 1024;
         return Err(localized(
-            "webdav.sync.artifact_too_large",
+            "sync.artifact_too_large",
             format!("artifact {artifact_name} 超过下载上限（{} MB）", max_mb),
             format!(
                 "Artifact {artifact_name} exceeds download limit ({} MB)",
@@ -208,7 +210,7 @@ pub(crate) fn verify_artifact(
     // Quick size check before expensive hash
     if bytes.len() as u64 != meta.size {
         return Err(localized(
-            "webdav.sync.artifact_size_mismatch",
+            "sync.artifact_size_mismatch",
             format!(
                 "artifact {artifact_name} 大小不匹配 (expected: {}, got: {})",
                 meta.size,
@@ -225,7 +227,7 @@ pub(crate) fn verify_artifact(
     let actual_hash = sha256_hex(bytes);
     if actual_hash != meta.sha256 {
         return Err(localized(
-            "webdav.sync.artifact_hash_mismatch",
+            "sync.artifact_hash_mismatch",
             format!(
                 "artifact {artifact_name} SHA256 校验失败 (expected: {}..., got: {}...)",
                 meta.sha256.get(..8).unwrap_or(&meta.sha256),
@@ -250,7 +252,7 @@ pub(crate) fn apply_snapshot(
 ) -> Result<(), AppError> {
     let sql_str = std::str::from_utf8(db_sql).map_err(|e| {
         localized(
-            "webdav.sync.sql_not_utf8",
+            "sync.sql_not_utf8",
             format!("SQL 非 UTF-8: {e}"),
             format!("SQL is not valid UTF-8: {e}"),
         )
@@ -263,7 +265,7 @@ pub(crate) fn apply_snapshot(
     if let Err(db_err) = db.import_sql_string(sql_str) {
         if let Err(rollback_err) = restore_skills_from_backup(&skills_backup) {
             return Err(localized(
-                "webdav.sync.db_import_and_rollback_failed",
+                "sync.db_import_and_rollback_failed",
                 format!("导入数据库失败: {db_err}; 同时回滚 Skills 失败: {rollback_err}"),
                 format!(
                     "Database import failed: {db_err}; skills rollback also failed: {rollback_err}"
