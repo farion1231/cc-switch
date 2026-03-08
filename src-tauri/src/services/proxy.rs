@@ -3,7 +3,7 @@
 //! 提供代理服务器的启动、停止和配置管理
 
 use crate::app_config::AppType;
-use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
+use crate::config::{get_claude_settings_path, read_json_file, read_jsonc_file, write_json_file};
 use crate::database::Database;
 use crate::provider::Provider;
 use crate::proxy::server::ProxyServer;
@@ -1666,7 +1666,7 @@ impl ProxyService {
         }
 
         let mut value: Value =
-            read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))?;
+            read_jsonc_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))?;
 
         if value.is_null() {
             value = json!({});

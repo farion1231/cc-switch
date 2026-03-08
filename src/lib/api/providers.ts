@@ -21,6 +21,10 @@ export interface SwitchResult {
   warnings: string[];
 }
 
+export interface ProviderMutationResult {
+  warnings: string[];
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -30,11 +34,17 @@ export const providersApi = {
     return await invoke("get_current_provider", { app: appId });
   },
 
-  async add(provider: Provider, appId: AppId): Promise<boolean> {
+  async add(
+    provider: Provider,
+    appId: AppId,
+  ): Promise<ProviderMutationResult> {
     return await invoke("add_provider", { provider, app: appId });
   },
 
-  async update(provider: Provider, appId: AppId): Promise<boolean> {
+  async update(
+    provider: Provider,
+    appId: AppId,
+  ): Promise<ProviderMutationResult> {
     return await invoke("update_provider", { provider, app: appId });
   },
 

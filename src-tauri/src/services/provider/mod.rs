@@ -45,6 +45,13 @@ pub struct SwitchResult {
     pub warnings: Vec<String>,
 }
 
+/// Result of provider add/update, including non-fatal live sync warnings.
+#[derive(Debug, serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderMutationResult {
+    pub warnings: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +135,12 @@ base_url = "http://localhost:8080"
 }
 
 impl ProviderService {
+    fn push_non_fatal_warning(result: &mut ProviderMutationResult, action: &str, err: &AppError) {
+        let message = format!("已保存到 CC Switch，但 {action} 失败：{err}");
+        log::warn!("{message}");
+        result.warnings.push(message);
+    }
+
     fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
         if matches!(app_type, AppType::Claude) {
             let mut v = provider.settings_config.clone();
@@ -162,7 +175,12 @@ impl ProviderService {
     }
 
     /// Add a new provider
-    pub fn add(state: &AppState, app_type: AppType, provider: Provider) -> Result<bool, AppError> {
+    pub fn add(
+        state: &AppState,
+        app_type: AppType,
+        provider: Provider,
+    ) -> Result<ProviderMutationResult, AppError> {
+        let mut result = ProviderMutationResult::default();
         let mut provider = provider;
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
@@ -179,10 +197,16 @@ impl ProviderService {
             {
                 // Do not auto-enable newly added OMO / OMO Slim providers.
                 // Users must explicitly switch/apply an OMO provider to activate it.
-                return Ok(true);
+                return Ok(result);
             }
-            write_live_snapshot(&app_type, &provider)?;
-            return Ok(true);
+            if let Err(err) = write_live_snapshot(&app_type, &provider) {
+                Self::push_non_fatal_warning(
+                    &mut result,
+                    &format!("同步 {} live 配置", app_type.as_str()),
+                    &err,
+                );
+            }
+            return Ok(result);
         }
 
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
@@ -192,10 +216,16 @@ impl ProviderService {
             state
                 .db
                 .set_current_provider(app_type.as_str(), &provider.id)?;
-            write_live_snapshot(&app_type, &provider)?;
+            if let Err(err) = write_live_snapshot(&app_type, &provider) {
+                Self::push_non_fatal_warning(
+                    &mut result,
+                    &format!("同步 {} live 配置", app_type.as_str()),
+                    &err,
+                );
+            }
         }
 
-        Ok(true)
+        Ok(result)
     }
 
     /// Update a provider
@@ -203,7 +233,8 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
         provider: Provider,
-    ) -> Result<bool, AppError> {
+    ) -> Result<ProviderMutationResult, AppError> {
+        let mut result = ProviderMutationResult::default();
         let mut provider = provider;
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
@@ -226,7 +257,7 @@ impl ProviderService {
                         &crate::services::omo::STANDARD,
                     )?;
                 }
-                return Ok(true);
+                return Ok(result);
             }
             if matches!(app_type, AppType::OpenCode)
                 && provider.category.as_deref() == Some("omo-slim")
@@ -242,10 +273,16 @@ impl ProviderService {
                         &crate::services::omo::SLIM,
                     )?;
                 }
-                return Ok(true);
+                return Ok(result);
             }
-            write_live_snapshot(&app_type, &provider)?;
-            return Ok(true);
+            if let Err(err) = write_live_snapshot(&app_type, &provider) {
+                Self::push_non_fatal_warning(
+                    &mut result,
+                    &format!("同步 {} live 配置", app_type.as_str()),
+                    &err,
+                );
+            }
+            return Ok(result);
         }
 
         // For other apps: Check if this is current provider (use effective current, not just DB)
@@ -273,13 +310,19 @@ impl ProviderService {
                 )
                 .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
             } else {
-                write_live_snapshot(&app_type, &provider)?;
-                // Sync MCP
-                McpService::sync_all_enabled(state)?;
+                if let Err(err) = write_live_snapshot(&app_type, &provider) {
+                    Self::push_non_fatal_warning(
+                        &mut result,
+                        &format!("同步 {} live 配置", app_type.as_str()),
+                        &err,
+                    );
+                } else if let Err(err) = McpService::sync_all_enabled(state) {
+                    Self::push_non_fatal_warning(&mut result, "同步 MCP 到 live 配置", &err);
+                }
             }
         }
 
-        Ok(true)
+        Ok(result)
     }
 
     /// Delete a provider

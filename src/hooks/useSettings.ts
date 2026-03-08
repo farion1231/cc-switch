@@ -375,6 +375,17 @@ export function useSettings(): UseSettingsResult {
               "[useSettings] Failed to sync current providers after directory change",
               syncResult.error,
             );
+            toast.warning(
+              t("notifications.settingsSavedButLiveSyncFailed", {
+                defaultValue:
+                  "设置已保存到 CC Switch，但同步到应用配置失败：{{error}}",
+                error: syncResult.error?.message ?? t("common.unknown"),
+              }),
+              {
+                closeButton: true,
+                duration: 8000,
+              },
+            );
           }
         }
 

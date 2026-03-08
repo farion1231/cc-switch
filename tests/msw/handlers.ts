@@ -80,7 +80,7 @@ export const handlers = [
 
     const newId = provider.id ?? `mock-${Date.now()}`;
     addProvider(app, { ...provider, id: newId });
-    return success(true);
+    return success({ warnings: [] });
   }),
 
   http.post(`${TAURI_ENDPOINT}/update_provider`, async ({ request }) => {
@@ -89,7 +89,7 @@ export const handlers = [
       app: AppId;
     }>(request);
     updateProvider(app, provider);
-    return success(true);
+    return success({ warnings: [] });
   }),
 
   http.post(`${TAURI_ENDPOINT}/delete_provider`, async ({ request }) => {

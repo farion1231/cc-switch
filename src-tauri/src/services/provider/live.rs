@@ -8,7 +8,9 @@ use serde_json::{json, Value};
 
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
-use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
+use crate::config::{
+    delete_file, get_claude_settings_path, read_json_file, read_jsonc_file, write_json_file,
+};
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::mcp::McpService;
@@ -332,7 +334,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                     "Claude settings file is missing",
                 ));
             }
-            read_json_file(&path)
+            read_jsonc_file(&path)
         }
         AppType::Gemini => {
             use crate::gemini_config::{
@@ -441,7 +443,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                     "Claude settings file is missing",
                 ));
             }
-            let mut v = read_json_file::<Value>(&settings_path)?;
+            let mut v = read_jsonc_file::<Value>(&settings_path)?;
             let _ = normalize_claude_models_in_value(&mut v);
             v
         }
