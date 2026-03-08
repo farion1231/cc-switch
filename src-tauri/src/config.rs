@@ -159,6 +159,18 @@ pub fn read_json_file<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T, AppE
     serde_json::from_str(&content).map_err(|e| AppError::json(path, e))
 }
 
+/// 读取允许注释/尾随逗号的 JSON 配置文件（JSON5 兼容）
+pub fn read_jsonc_file<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T, AppError> {
+    if !path.exists() {
+        return Err(AppError::Config(format!("文件不存在: {}", path.display())));
+    }
+
+    let content = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
+
+    json5::from_str(&content)
+        .map_err(|e| AppError::Config(format!("JSON5 解析失败 ({}): {e}", path.display())))
+}
+
 /// 写入 JSON 配置文件
 pub fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), AppError> {
     // 确保目录存在

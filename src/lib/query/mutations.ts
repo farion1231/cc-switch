@@ -44,10 +44,13 @@ export const useAddProviderMutation = (appId: AppId) => {
       };
       delete (newProvider as any).providerKey;
 
-      await providersApi.add(newProvider, appId);
-      return newProvider;
+      const mutationResult = await providersApi.add(newProvider, appId);
+      return {
+        provider: newProvider,
+        warnings: mutationResult.warnings ?? [],
+      };
     },
-    onSuccess: async () => {
+    onSuccess: async ({ warnings }) => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
       if (appId === "opencode") {
@@ -82,6 +85,13 @@ export const useAddProviderMutation = (appId: AppId) => {
           closeButton: true,
         },
       );
+
+      if (warnings.length > 0) {
+        toast.warning(warnings.join("\n"), {
+          closeButton: true,
+          duration: 8000,
+        });
+      }
     },
     onError: (error: Error) => {
       const detail = extractErrorMessage(error) || t("common.unknown");
@@ -101,10 +111,13 @@ export const useUpdateProviderMutation = (appId: AppId) => {
 
   return useMutation({
     mutationFn: async (provider: Provider) => {
-      await providersApi.update(provider, appId);
-      return provider;
+      const mutationResult = await providersApi.update(provider, appId);
+      return {
+        provider,
+        warnings: mutationResult.warnings ?? [],
+      };
     },
-    onSuccess: async () => {
+    onSuccess: async ({ warnings }) => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
       toast.success(
         t("notifications.updateSuccess", {
@@ -114,6 +127,13 @@ export const useUpdateProviderMutation = (appId: AppId) => {
           closeButton: true,
         },
       );
+
+      if (warnings.length > 0) {
+        toast.warning(warnings.join("\n"), {
+          closeButton: true,
+          duration: 8000,
+        });
+      }
     },
     onError: (error: Error) => {
       const detail = extractErrorMessage(error) || t("common.unknown");

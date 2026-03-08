@@ -5,7 +5,8 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::{
-    EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
+    EndpointLatency, ProviderMutationResult, ProviderService, ProviderSortUpdate, SpeedtestService,
+    SwitchResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -30,7 +31,7 @@ pub fn add_provider(
     state: State<'_, AppState>,
     app: String,
     provider: Provider,
-) -> Result<bool, String> {
+) -> Result<ProviderMutationResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::add(state.inner(), app_type, provider).map_err(|e| e.to_string())
 }
@@ -40,7 +41,7 @@ pub fn update_provider(
     state: State<'_, AppState>,
     app: String,
     provider: Provider,
-) -> Result<bool, String> {
+) -> Result<ProviderMutationResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::update(state.inner(), app_type, provider).map_err(|e| e.to_string())
 }

@@ -208,7 +208,10 @@ export function useProviderActions(activeApp: AppId) {
           },
         };
 
-        await providersApi.update(updatedProvider, activeApp);
+        const updateResult = await providersApi.update(
+          updatedProvider,
+          activeApp,
+        );
         await queryClient.invalidateQueries({
           queryKey: ["providers", activeApp],
         });
@@ -223,6 +226,13 @@ export function useProviderActions(activeApp: AppId) {
           }),
           { closeButton: true },
         );
+
+        if (updateResult.warnings?.length) {
+          toast.warning(updateResult.warnings.join("\n"), {
+            closeButton: true,
+            duration: 8000,
+          });
+        }
       } catch (error) {
         const detail =
           extractErrorMessage(error) ||
