@@ -48,6 +48,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
   // List state
   const [files, setFiles] = useState<DailyMemoryFileInfo[]>([]);
   const [loadingList, setLoadingList] = useState(false);
+  const [workspaceRoot, setWorkspaceRoot] = useState("~/.openclaw/workspace");
 
   // Edit state
   const [editingFile, setEditingFile] = useState<string | null>(null);
@@ -176,6 +177,16 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
       }
     };
   }, []);
+
+  // Load file list
+  useEffect(() => {
+    if (!isOpen) return;
+
+    void workspaceApi
+      .getRootDirectory()
+      .then(setWorkspaceRoot)
+      .catch(() => undefined);
+  }, [isOpen]);
 
   // Load file list
   const loadFiles = useCallback(async () => {
@@ -357,7 +368,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
               onClick={() => workspaceApi.openDirectory("memory")}
               title={t("workspace.openDirectory")}
             >
-              ~/.openclaw/workspace/memory/
+              {workspaceRoot}/memory/
               <FolderOpen className="w-3.5 h-3.5" />
             </p>
             <div className="flex items-center gap-1.5">

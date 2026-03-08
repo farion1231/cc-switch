@@ -1081,6 +1081,7 @@ pub fn run() {
             // Workspace files (OpenClaw)
             commands::read_workspace_file,
             commands::write_workspace_file,
+            commands::get_workspace_root_directory,
             // Daily memory files (OpenClaw workspace)
             commands::list_daily_memory_files,
             commands::read_daily_memory_file,
