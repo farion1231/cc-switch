@@ -1,7 +1,16 @@
 import React, { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Server } from "lucide-react";
+import {
+  Server,
+  Edit3,
+  Trash2,
+  ExternalLink,
+  GitCommitHorizontal,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   useAllMcpServers,
@@ -13,8 +22,8 @@ import type { McpServer } from "@/types";
 import type { AppId } from "@/lib/api/types";
 import McpFormModal from "./McpFormModal";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { Edit3, Trash2, ExternalLink } from "lucide-react";
 import { settingsApi } from "@/lib/api";
+import { mcpApi } from "@/lib/api/mcp";
 import { mcpPresets } from "@/config/mcpPresets";
 import { toast } from "sonner";
 import { MCP_SKILLS_APP_IDS } from "@/config/appConfig";
@@ -36,8 +45,16 @@ const UnifiedMcpPanel = React.forwardRef<
   UnifiedMcpPanelProps
 >(({ onOpenChange: _onOpenChange }, ref) => {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+  const [isBatchTogglingApps, setIsBatchTogglingApps] = useState(false);
+  const [batchModeEnabled, setBatchModeEnabled] = useState(false);
+  const [pendingAppChanges, setPendingAppChanges] = useState<
+    Record<string, Partial<Record<AppId, boolean>>>
+  >({});
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     title: string;
@@ -65,6 +82,30 @@ const UnifiedMcpPanel = React.forwardRef<
     return counts;
   }, [serverEntries]);
 
+  const selectedCount = useMemo(
+    () => serverEntries.filter(([id]) => selected.has(id)).length,
+    [selected, serverEntries],
+  );
+
+  const selectedServerIds = useMemo(
+    () => serverEntries.filter(([id]) => selected.has(id)).map(([id]) => id),
+    [selected, serverEntries],
+  );
+
+  const pendingChangeCount = useMemo(
+    () =>
+      Object.values(pendingAppChanges).reduce(
+        (sum, appChanges) => sum + Object.keys(appChanges).length,
+        0,
+      ),
+    [pendingAppChanges],
+  );
+
+  const getEffectiveApps = (server: McpServer): Record<AppId, boolean> => ({
+    ...server.apps,
+    ...pendingAppChanges[server.id],
+  });
+
   const handleToggleApp = async (
     serverId: string,
     app: AppId,
@@ -75,6 +116,189 @@ const UnifiedMcpPanel = React.forwardRef<
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
     }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllVisible = () => {
+    if (serverEntries.length === 0) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      serverEntries.forEach(([id]) => next.add(id));
+      return next;
+    });
+  };
+
+  const handleClearSelection = () => setSelected(new Set());
+
+  const handleModeChange = (checked: boolean) => {
+    if (!checked && pendingChangeCount > 0) {
+      setConfirmDialog({
+        isOpen: true,
+        title: t("mcp.pendingDiscardTitle", {
+          defaultValue: "Discard pending changes?",
+        }),
+        message: t("mcp.pendingDiscardMessage", {
+          count: pendingChangeCount,
+          defaultValue:
+            "You have {{count}} pending app changes that have not been applied. Leaving batch mode will discard them.",
+        }),
+        onConfirm: () => {
+          setPendingAppChanges({});
+          setBatchModeEnabled(false);
+          setConfirmDialog(null);
+        },
+      });
+      return;
+    }
+
+    setBatchModeEnabled(checked);
+  };
+
+  const handleStageBatchToggle = (
+    serverId: string,
+    app: AppId,
+    enabled: boolean,
+  ) => {
+    const targetIds =
+      selectedServerIds.length === 0 || !selected.has(serverId)
+        ? Array.from(new Set([...selectedServerIds, serverId]))
+        : selectedServerIds;
+
+    if (!selected.has(serverId)) {
+      setSelected((prev) => new Set(prev).add(serverId));
+    }
+
+    setPendingAppChanges((prev) => {
+      const next = { ...prev };
+      targetIds.forEach((id) => {
+        next[id] = {
+          ...(next[id] ?? {}),
+          [app]: enabled,
+        };
+      });
+      return next;
+    });
+  };
+
+  const handleAppToggle = async (
+    server: McpServer,
+    app: AppId,
+    enabled: boolean,
+  ) => {
+    if (batchModeEnabled) {
+      handleStageBatchToggle(server.id, app, enabled);
+      return;
+    }
+    await handleToggleApp(server.id, app, enabled);
+  };
+
+  const handleApplyPendingChanges = () => {
+    if (pendingChangeCount === 0) return;
+
+    setConfirmDialog({
+      isOpen: true,
+      title: t("mcp.applyChangesTitle", {
+        count: pendingChangeCount,
+        defaultValue: `Apply changes (${pendingChangeCount})`,
+      }),
+      message: t("mcp.applyChangesMessage", {
+        count: pendingChangeCount,
+        defaultValue: `Apply ${pendingChangeCount} staged app changes now?`,
+      }),
+      onConfirm: async () => {
+        setIsBatchTogglingApps(true);
+        try {
+          const operations = Object.entries(pendingAppChanges).flatMap(
+            ([serverId, appChanges]) =>
+              Object.entries(appChanges).map(([app, enabled]) => ({
+                serverId,
+                app: app as AppId,
+                enabled: enabled as boolean,
+              })),
+          );
+
+          const results = await Promise.allSettled(
+            operations.map(({ serverId, app, enabled }) =>
+              mcpApi.toggleApp(serverId, app, enabled),
+            ),
+          );
+
+          const failedKeys = new Set<string>();
+          results.forEach((result, index) => {
+            if (result.status === "rejected") {
+              const operation = operations[index];
+              failedKeys.add(`${operation.serverId}:${operation.app}`);
+            }
+          });
+
+          const nextPending: Record<
+            string,
+            Partial<Record<AppId, boolean>>
+          > = {};
+          Object.entries(pendingAppChanges).forEach(([id, appChanges]) => {
+            const retainedEntries = Object.entries(appChanges).filter(([app]) =>
+              failedKeys.has(`${id}:${app}`),
+            );
+            if (retainedEntries.length > 0) {
+              nextPending[id] = Object.fromEntries(retainedEntries) as Partial<
+                Record<AppId, boolean>
+              >;
+            }
+          });
+
+          const success = results.filter(
+            (item) => item.status === "fulfilled",
+          ).length;
+          const failed = results.length - success;
+
+          await queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
+
+          setPendingAppChanges(nextPending);
+          setConfirmDialog(null);
+
+          if (failed === 0) {
+            toast.success(
+              t("mcp.applyChangesSuccess", {
+                count: success,
+                defaultValue: `Applied ${success} app changes`,
+              }),
+              { closeButton: true },
+            );
+          } else {
+            const firstFailure = results.find(
+              (item) => item.status === "rejected",
+            ) as PromiseRejectedResult | undefined;
+            toast.warning(
+              t("mcp.applyChangesPartial", {
+                success,
+                failed,
+                defaultValue: `Apply finished: ${success} succeeded, ${failed} failed`,
+              }),
+              {
+                description: firstFailure?.reason
+                  ? String(firstFailure.reason)
+                  : undefined,
+              },
+            );
+          }
+        } catch (error) {
+          toast.error(t("common.error"), { description: String(error) });
+        } finally {
+          setIsBatchTogglingApps(false);
+        }
+      },
+    });
   };
 
   const handleEdit = (id: string) => {
@@ -126,6 +350,78 @@ const UnifiedMcpPanel = React.forwardRef<
     });
   };
 
+  const handleBatchDelete = () => {
+    const targets = serverEntries.filter(([id]) => selected.has(id));
+    if (targets.length === 0) {
+      toast.info(
+        t("mcp.bulkDeleteNoop", {
+          defaultValue: "没有可删除的已选 MCP",
+        }),
+      );
+      return;
+    }
+
+    setConfirmDialog({
+      isOpen: true,
+      title: t("mcp.bulkDelete", {
+        defaultValue: "删除已选（{{count}}）",
+        count: targets.length,
+      }),
+      message: t("mcp.bulkDeleteConfirm", {
+        defaultValue:
+          "确定要删除已选的 {{count}} 个 MCP 服务器吗？此操作无法撤销。",
+        count: targets.length,
+      }),
+      onConfirm: async () => {
+        setIsBatchDeleting(true);
+        try {
+          const results = await Promise.allSettled(
+            targets.map(([id]) => mcpApi.deleteUnifiedServer(id)),
+          );
+          const success = results.filter(
+            (item) => item.status === "fulfilled",
+          ).length;
+          const failed = results.length - success;
+
+          await queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
+
+          setSelected(new Set());
+          setConfirmDialog(null);
+
+          if (failed === 0) {
+            toast.success(
+              t("mcp.bulkDeleteSuccess", {
+                count: success,
+                defaultValue: "已删除 {{count}} 个 MCP 服务器",
+              }),
+              { closeButton: true },
+            );
+          } else {
+            const firstFailure = results.find(
+              (item) => item.status === "rejected",
+            ) as PromiseRejectedResult | undefined;
+            toast.warning(
+              t("mcp.bulkDeletePartial", {
+                success,
+                failed,
+                defaultValue: "删除完成：成功 {{success}}，失败 {{failed}}",
+              }),
+              {
+                description: firstFailure?.reason
+                  ? String(firstFailure.reason)
+                  : undefined,
+              },
+            );
+          }
+        } catch (error) {
+          toast.error(t("common.error"), { description: String(error) });
+        } finally {
+          setIsBatchDeleting(false);
+        }
+      },
+    });
+  };
+
   const handleCloseForm = () => {
     setIsFormOpen(false);
     setEditingId(null);
@@ -158,19 +454,108 @@ const UnifiedMcpPanel = React.forwardRef<
           </div>
         ) : (
           <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
-              {serverEntries.map(([id, server], index) => (
-                <UnifiedMcpListItem
-                  key={id}
-                  id={id}
-                  server={server}
-                  onToggleApp={handleToggleApp}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
-                  isLast={index === serverEntries.length - 1}
-                />
-              ))}
-            </div>
+            <>
+              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="mr-2 flex items-center gap-2 rounded-lg border border-border-default px-3 py-1.5">
+                    <Label
+                      htmlFor="mcp-batch-mode"
+                      className="text-xs font-medium"
+                    >
+                      {t("mcp.batchMode", {
+                        defaultValue: "Batch mode",
+                      })}
+                    </Label>
+                    <Switch
+                      id="mcp-batch-mode"
+                      checked={batchModeEnabled}
+                      onCheckedChange={handleModeChange}
+                      disabled={isBatchTogglingApps}
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSelectAllVisible}
+                    disabled={serverEntries.length === 0}
+                  >
+                    {t("mcp.selectAllVisible", {
+                      defaultValue: "Select All Visible",
+                    })}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleClearSelection}
+                    disabled={selectedCount === 0}
+                  >
+                    {t("mcp.clearSelection", {
+                      defaultValue: "清空选择",
+                    })}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleApplyPendingChanges}
+                    disabled={
+                      !batchModeEnabled ||
+                      pendingChangeCount === 0 ||
+                      isBatchTogglingApps
+                    }
+                  >
+                    <GitCommitHorizontal size={14} />
+                    {t("mcp.applyChanges", {
+                      count: pendingChangeCount,
+                      defaultValue: `Apply changes (${pendingChangeCount})`,
+                    })}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleBatchDelete}
+                    disabled={
+                      selectedCount === 0 ||
+                      isBatchDeleting ||
+                      isBatchTogglingApps
+                    }
+                  >
+                    <Trash2 size={14} />
+                    {t("mcp.bulkDelete", {
+                      defaultValue: "删除已选（{{count}}）",
+                      count: selectedCount,
+                    })}
+                  </Button>
+                </div>
+              </div>
+              {batchModeEnabled && pendingChangeCount > 0 && (
+                <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-sky-300">
+                  {t("mcp.pendingHint", {
+                    count: pendingChangeCount,
+                    defaultValue: `${pendingChangeCount} staged app changes are waiting to be applied.`,
+                  })}
+                </div>
+              )}
+              <div className="rounded-xl border border-border-default overflow-hidden">
+                {serverEntries.map(([id, server], index) => (
+                  <UnifiedMcpListItem
+                    key={id}
+                    id={id}
+                    server={server}
+                    apps={getEffectiveApps(server)}
+                    pendingApps={pendingAppChanges[id]}
+                    selected={selected.has(id)}
+                    onToggleSelect={() => toggleSelect(id)}
+                    onToggleApp={(app, enabled) =>
+                      handleAppToggle(server, app, enabled)
+                    }
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    disableAppToggle={isBatchTogglingApps}
+                    isLast={index === serverEntries.length - 1}
+                  />
+                ))}
+              </div>
+            </>
           </TooltipProvider>
         )}
       </div>
@@ -209,18 +594,28 @@ UnifiedMcpPanel.displayName = "UnifiedMcpPanel";
 interface UnifiedMcpListItemProps {
   id: string;
   server: McpServer;
-  onToggleApp: (serverId: string, app: AppId, enabled: boolean) => void;
+  apps: Record<AppId, boolean>;
+  pendingApps?: Partial<Record<AppId, boolean>>;
+  selected: boolean;
+  onToggleSelect: () => void;
+  onToggleApp: (app: AppId, enabled: boolean) => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  disableAppToggle?: boolean;
   isLast?: boolean;
 }
 
 const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
   id,
   server,
+  apps,
+  pendingApps,
+  selected,
+  onToggleSelect,
   onToggleApp,
   onEdit,
   onDelete,
+  disableAppToggle = false,
   isLast,
 }) => {
   const { t } = useTranslation();
@@ -244,6 +639,16 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
 
   return (
     <ListItemRow isLast={isLast}>
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={onToggleSelect}
+        aria-label={t("mcp.selectServer", {
+          defaultValue: "Select MCP server {{name}}",
+          name,
+        })}
+        className="h-4 w-4 rounded border-border-default"
+      />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="font-medium text-sm text-foreground truncate">
@@ -276,9 +681,11 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
       </div>
 
       <AppToggleGroup
-        apps={server.apps}
-        onToggle={(app, enabled) => onToggleApp(id, app, enabled)}
+        apps={apps}
+        pendingApps={pendingApps}
+        onToggle={onToggleApp}
         appIds={MCP_SKILLS_APP_IDS}
+        disabled={disableAppToggle}
       />
 
       <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
