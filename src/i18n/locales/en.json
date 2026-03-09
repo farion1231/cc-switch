@@ -613,7 +613,19 @@
     "daysAgo": "{{count}} days ago",
     "roleUser": "User",
     "roleSystem": "System",
-    "roleTool": "Tool"
+    "roleTool": "Tool",
+    "exportCurrent": "Export current",
+    "exportSelected": "Export selected ({{count}})",
+    "exportFormat": "Export format",
+    "exportFormatMd": "Markdown (.md)",
+    "exportFormatJson": "JSON (.json)",
+    "exporting": "Exporting...",
+    "exportCurrentSuccess": "Current session exported",
+    "exportCurrentFailed": "Failed to export current session",
+    "exportBatchSuccess": "Exported {{count}} sessions",
+    "exportBatchFailed": "Failed to batch export sessions",
+    "noSelectedSessions": "Please select sessions first",
+    "selectForBatchExport": "Select for batch export"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",

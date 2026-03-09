@@ -5,6 +5,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import type { SessionMeta } from "@/types";
@@ -19,13 +20,17 @@ import {
 interface SessionItemProps {
   session: SessionMeta;
   isSelected: boolean;
+  isChecked: boolean;
   onSelect: (key: string) => void;
+  onToggleChecked: (key: string) => void;
 }
 
 export function SessionItem({
   session,
   isSelected,
+  isChecked,
   onSelect,
+  onToggleChecked,
 }: SessionItemProps) {
   const { t } = useTranslation();
   const title = formatSessionTitle(session);
@@ -33,17 +38,44 @@ export function SessionItem({
   const sessionKey = getSessionKey(session);
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(sessionKey)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(sessionKey);
+        }
+      }}
       className={cn(
-        "w-full text-left rounded-lg px-3 py-2.5 transition-all group",
+        "w-full text-left rounded-lg px-3 py-2.5 transition-all group cursor-pointer",
         isSelected
           ? "bg-primary/10 border border-primary/30"
           : "hover:bg-muted/60 border border-transparent",
       )}
     >
       <div className="flex items-center gap-2 mb-1">
+        <span
+          className="shrink-0"
+          onClick={(event) => {
+            event.stopPropagation();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.stopPropagation();
+            }
+          }}
+        >
+          <Checkbox
+            checked={isChecked}
+            onCheckedChange={() => onToggleChecked(sessionKey)}
+            aria-label={t("sessionManager.selectForBatchExport", {
+              defaultValue: "Select for batch export",
+            })}
+          />
+        </span>
+
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="shrink-0">
@@ -73,6 +105,6 @@ export function SessionItem({
           {lastActive ? formatRelativeTime(lastActive, t) : t("common.unknown")}
         </span>
       </div>
-    </button>
+    </div>
   );
 }

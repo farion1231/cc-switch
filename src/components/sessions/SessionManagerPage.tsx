@@ -11,6 +11,7 @@ import {
   Clock,
   FolderOpen,
   X,
+  Download,
 } from "lucide-react";
 import { useSessionMessagesQuery, useSessionsQuery } from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
@@ -34,6 +35,7 @@ import {
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import type { SessionExportFormat, SessionMeta } from "@/types";
 import { SessionItem } from "./SessionItem";
 import { SessionMessageItem } from "./SessionMessageItem";
 import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
@@ -73,6 +75,12 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     appId as ProviderFilter,
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedSessionKeys, setSelectedSessionKeys] = useState<Set<string>>(
+    new Set(),
+  );
+  const [exportFormat, setExportFormat] = useState<SessionExportFormat>("md");
+  const [isExportingCurrent, setIsExportingCurrent] = useState(false);
+  const [isExportingBatch, setIsExportingBatch] = useState(false);
 
   // 使用 FlexSearch 全文搜索
   const { search: searchSessions } = useSessionSearch({
@@ -101,12 +109,13 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
   const selectedSession = useMemo(() => {
     if (!selectedKey) return null;
-    return (
-      filteredSessions.find(
-        (session) => getSessionKey(session) === selectedKey,
-      ) || null
-    );
-  }, [filteredSessions, selectedKey]);
+    return sessions.find((session) => getSessionKey(session) === selectedKey) || null;
+  }, [sessions, selectedKey]);
+
+  const selectedExportSessions = useMemo(() => {
+    if (selectedSessionKeys.size === 0) return [] as SessionMeta[];
+    return sessions.filter((session) => selectedSessionKeys.has(getSessionKey(session)));
+  }, [sessions, selectedSessionKeys]);
 
   const { data: messages = [], isLoading: isLoadingMessages } =
     useSessionMessagesQuery(
@@ -181,6 +190,107 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       const fallback = selectedSession.resumeCommand;
       await handleCopy(fallback, t("sessionManager.resumeFallbackCopied"));
       toast.error(extractErrorMessage(error) || t("sessionManager.openFailed"));
+    }
+  };
+
+  const getDefaultExportName = (
+    session: SessionMeta,
+    format: SessionExportFormat,
+  ) => {
+    const base =
+      formatSessionTitle(session)
+        .trim()
+        .replace(/[\\/:*?"<>|]/g, "-")
+        .replace(/\s+/g, "-") || session.sessionId;
+    return `${base}.${format}`;
+  };
+
+  const toggleSessionChecked = (key: string) => {
+    setSelectedSessionKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const handleExportCurrent = async () => {
+    if (!selectedSession?.sourcePath || isExportingCurrent) return;
+
+    setIsExportingCurrent(true);
+    try {
+      const filePath = await sessionsApi.saveExportFileDialog({
+        defaultName: getDefaultExportName(selectedSession, exportFormat),
+        format: exportFormat,
+      });
+      if (!filePath) return;
+
+      await sessionsApi.exportSingle({
+        providerId: selectedSession.providerId,
+        sourcePath: selectedSession.sourcePath,
+        format: exportFormat,
+        filePath,
+        sessionId: selectedSession.sessionId,
+        title: selectedSession.title,
+      });
+      toast.success(t("sessionManager.exportCurrentSuccess"));
+    } catch (error) {
+      toast.error(
+        extractErrorMessage(error) ||
+          t("sessionManager.exportCurrentFailed", {
+            defaultValue: "Failed to export current session",
+          }),
+      );
+    } finally {
+      setIsExportingCurrent(false);
+    }
+  };
+
+  const handleExportBatch = async () => {
+    if (selectedExportSessions.length === 0 || isExportingBatch) {
+      if (selectedExportSessions.length === 0) {
+        toast.warning(t("sessionManager.noSelectedSessions"));
+      }
+      return;
+    }
+
+    setIsExportingBatch(true);
+    try {
+      const directoryPath = await sessionsApi.pickExportDirectoryDialog();
+      if (!directoryPath) return;
+
+      const exportTargets = selectedExportSessions
+        .filter((session) => Boolean(session.sourcePath))
+        .map((session) => ({
+          providerId: session.providerId,
+          sourcePath: session.sourcePath!,
+          sessionId: session.sessionId,
+          title: session.title,
+        }));
+
+      if (exportTargets.length === 0) {
+        toast.warning(t("sessionManager.noSelectedSessions"));
+        return;
+      }
+
+      const count = await sessionsApi.exportBatch({
+        sessions: exportTargets,
+        format: exportFormat,
+        directoryPath,
+      });
+      toast.success(t("sessionManager.exportBatchSuccess", { count }));
+    } catch (error) {
+      toast.error(
+        extractErrorMessage(error) ||
+          t("sessionManager.exportBatchFailed", {
+            defaultValue: "Failed to batch export sessions",
+          }),
+      );
+    } finally {
+      setIsExportingBatch(false);
     }
   };
 
@@ -348,6 +458,32 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         </SelectContent>
                       </Select>
 
+                      <Select
+                        value={exportFormat}
+                        onValueChange={(value) =>
+                          setExportFormat(value as SessionExportFormat)
+                        }
+                      >
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <SelectTrigger className="h-7 w-[72px] px-2 text-xs border-dashed">
+                              {exportFormat.toUpperCase()}
+                            </SelectTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t("sessionManager.exportFormat")}
+                          </TooltipContent>
+                        </Tooltip>
+                        <SelectContent>
+                          <SelectItem value="md">
+                            {t("sessionManager.exportFormatMd")}
+                          </SelectItem>
+                          <SelectItem value="json">
+                            {t("sessionManager.exportFormatJson")}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -366,7 +502,25 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                 )}
               </CardHeader>
               <CardContent className="flex-1 overflow-hidden p-0">
-                <ScrollArea className="h-full">
+                <div className="p-2 border-b">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full gap-1.5"
+                    onClick={() => void handleExportBatch()}
+                    disabled={selectedExportSessions.length === 0 || isExportingBatch}
+                  >
+                    <Download className="size-3.5" />
+                    <span>
+                      {isExportingBatch
+                        ? t("sessionManager.exporting")
+                        : t("sessionManager.exportSelected", {
+                            count: selectedExportSessions.length,
+                          })}
+                    </span>
+                  </Button>
+                </div>
+                <ScrollArea className="h-[calc(100%-48px)]">
                   <div className="p-2">
                     {isLoading ? (
                       <div className="flex items-center justify-center py-12">
@@ -382,16 +536,18 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     ) : (
                       <div className="space-y-1">
                         {filteredSessions.map((session) => {
+                          const key = getSessionKey(session);
                           const isSelected =
-                            selectedKey !== null &&
-                            getSessionKey(session) === selectedKey;
+                            selectedKey !== null && key === selectedKey;
 
                           return (
                             <SessionItem
-                              key={getSessionKey(session)}
+                              key={key}
                               session={session}
                               isSelected={isSelected}
+                              isChecked={selectedSessionKeys.has(key)}
                               onSelect={setSelectedKey}
+                              onToggleChecked={toggleSessionChecked}
                             />
                           );
                         })}
@@ -489,6 +645,21 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
                       {/* 右侧：操作按钮组 */}
                       <div className="flex items-center gap-2 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5"
+                          onClick={() => void handleExportCurrent()}
+                          disabled={!selectedSession.sourcePath || isExportingCurrent}
+                        >
+                          <Download className="size-3.5" />
+                          <span className="hidden sm:inline">
+                            {isExportingCurrent
+                              ? t("sessionManager.exporting")
+                              : t("sessionManager.exportCurrent")}
+                          </span>
+                        </Button>
+
                         {isMac() && (
                           <Tooltip>
                             <TooltipTrigger asChild>
