@@ -5,6 +5,7 @@
 //! - SSOT 存储在 ~/.cc-switch/skills/
 
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
+use crate::bridges::skill as skill_bridge;
 use crate::error::format_skill_error;
 use crate::services::skill::{DiscoverableSkill, Skill, SkillRepo, SkillService};
 use crate::store::AppState;
@@ -30,7 +31,8 @@ fn parse_app_type(app: &str) -> Result<AppType, String> {
 /// 获取所有已安装的 Skills
 #[tauri::command]
 pub fn get_installed_skills(app_state: State<'_, AppState>) -> Result<Vec<InstalledSkill>, String> {
-    SkillService::get_all_installed(&app_state.db).map_err(|e| e.to_string())
+    let _ = app_state;
+    skill_bridge::get_installed_skills().map_err(|e| e.to_string())
 }
 
 /// 安装 Skill（新版统一安装）
@@ -46,10 +48,9 @@ pub async fn install_skill_unified(
     app_state: State<'_, AppState>,
 ) -> Result<InstalledSkill, String> {
     let app_type = parse_app_type(&current_app)?;
-
-    service
-        .0
-        .install(&app_state.db, &skill, &app_type)
+    let _ = service;
+    let _ = app_state;
+    skill_bridge::install_skill_unified(skill, app_type)
         .await
         .map_err(|e| e.to_string())
 }
@@ -57,7 +58,8 @@ pub async fn install_skill_unified(
 /// 卸载 Skill（新版统一卸载）
 #[tauri::command]
 pub fn uninstall_skill_unified(id: String, app_state: State<'_, AppState>) -> Result<bool, String> {
-    SkillService::uninstall(&app_state.db, &id).map_err(|e| e.to_string())?;
+    let _ = app_state;
+    skill_bridge::uninstall_skill_unified(&id).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -70,7 +72,8 @@ pub fn toggle_skill_app(
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
     let app_type = parse_app_type(&app)?;
-    SkillService::toggle_app(&app_state.db, &id, &app_type, enabled).map_err(|e| e.to_string())?;
+    let _ = app_state;
+    skill_bridge::toggle_skill_app(&id, app_type, enabled).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -79,7 +82,8 @@ pub fn toggle_skill_app(
 pub fn scan_unmanaged_skills(
     app_state: State<'_, AppState>,
 ) -> Result<Vec<UnmanagedSkill>, String> {
-    SkillService::scan_unmanaged(&app_state.db).map_err(|e| e.to_string())
+    let _ = app_state;
+    skill_bridge::scan_unmanaged_skills().map_err(|e| e.to_string())
 }
 
 /// 从应用目录导入 Skills
@@ -88,7 +92,8 @@ pub fn import_skills_from_apps(
     directories: Vec<String>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<InstalledSkill>, String> {
-    SkillService::import_from_apps(&app_state.db, directories).map_err(|e| e.to_string())
+    let _ = app_state;
+    skill_bridge::import_skills_from_apps(directories).map_err(|e| e.to_string())
 }
 
 // ========== 发现功能命令 ==========
@@ -99,10 +104,9 @@ pub async fn discover_available_skills(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<DiscoverableSkill>, String> {
-    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
-    service
-        .0
-        .discover_available(repos)
+    let _ = service;
+    let _ = app_state;
+    skill_bridge::discover_available_skills()
         .await
         .map_err(|e| e.to_string())
 }
@@ -115,10 +119,9 @@ pub async fn get_skills(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<Skill>, String> {
-    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
-    service
-        .0
-        .list_skills(repos, &app_state.db)
+    let _ = service;
+    let _ = app_state;
+    skill_bridge::get_skills()
         .await
         .map_err(|e| e.to_string())
 }
@@ -223,16 +226,15 @@ pub fn uninstall_skill_for_app(
 /// 获取技能仓库列表
 #[tauri::command]
 pub fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<SkillRepo>, String> {
-    app_state.db.get_skill_repos().map_err(|e| e.to_string())
+    let _ = app_state;
+    skill_bridge::get_skill_repos().map_err(|e| e.to_string())
 }
 
 /// 添加技能仓库
 #[tauri::command]
 pub fn add_skill_repo(repo: SkillRepo, app_state: State<'_, AppState>) -> Result<bool, String> {
-    app_state
-        .db
-        .save_skill_repo(&repo)
-        .map_err(|e| e.to_string())?;
+    let _ = app_state;
+    skill_bridge::add_skill_repo(repo).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -243,10 +245,8 @@ pub fn remove_skill_repo(
     name: String,
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    app_state
-        .db
-        .delete_skill_repo(&owner, &name)
-        .map_err(|e| e.to_string())?;
+    let _ = app_state;
+    skill_bridge::remove_skill_repo(&owner, &name).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -258,7 +258,6 @@ pub fn install_skills_from_zip(
     app_state: State<'_, AppState>,
 ) -> Result<Vec<InstalledSkill>, String> {
     let app_type = parse_app_type(&current_app)?;
-    let path = std::path::Path::new(&file_path);
-
-    SkillService::install_from_zip(&app_state.db, path, &app_type).map_err(|e| e.to_string())
+    let _ = app_state;
+    skill_bridge::install_skills_from_zip(&file_path, app_type).map_err(|e| e.to_string())
 }

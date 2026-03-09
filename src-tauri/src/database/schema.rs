@@ -306,6 +306,8 @@ impl Database {
             [],
         );
 
+        Self::ensure_core_compat_schema(conn)?;
+
         Ok(())
     }
 
@@ -1384,5 +1386,44 @@ impl Database {
             .map_err(|e| AppError::Database(format!("为表 {table} 添加列 {column} 失败: {e}")))?;
         log::info!("已为表 {table} 添加缺失列 {column}");
         Ok(true)
+    }
+
+    fn ensure_core_compat_schema(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS universal_providers (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider_type TEXT NOT NULL,
+                apps TEXT NOT NULL DEFAULT '{}',
+                base_url TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                models TEXT NOT NULL DEFAULT '{}',
+                website_url TEXT,
+                notes TEXT,
+                icon TEXT,
+                icon_color TEXT,
+                meta TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER,
+                sort_index INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 universal_providers 表失败: {e}")))?;
+
+        Self::add_column_if_missing(conn, "provider_endpoints", "last_used", "INTEGER")?;
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_openclaw",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "skills",
+            "enabled_openclaw",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        Ok(())
     }
 }

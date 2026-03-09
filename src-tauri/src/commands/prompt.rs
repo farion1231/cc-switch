@@ -4,8 +4,8 @@ use std::str::FromStr;
 use tauri::State;
 
 use crate::app_config::AppType;
+use crate::bridges::prompt as prompt_bridge;
 use crate::prompt::Prompt;
-use crate::services::PromptService;
 use crate::store::AppState;
 
 #[tauri::command]
@@ -14,7 +14,8 @@ pub async fn get_prompts(
     state: State<'_, AppState>,
 ) -> Result<IndexMap<String, Prompt>, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    PromptService::get_prompts(&state, app_type).map_err(|e| e.to_string())
+    let _ = state;
+    prompt_bridge::get_prompts(app_type).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -25,7 +26,8 @@ pub async fn upsert_prompt(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    PromptService::upsert_prompt(&state, app_type, &id, prompt).map_err(|e| e.to_string())
+    let _ = state;
+    prompt_bridge::upsert_prompt(app_type, &id, prompt).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -35,7 +37,8 @@ pub async fn delete_prompt(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    PromptService::delete_prompt(&state, app_type, &id).map_err(|e| e.to_string())
+    let _ = state;
+    prompt_bridge::delete_prompt(app_type, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -45,7 +48,8 @@ pub async fn enable_prompt(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    PromptService::enable_prompt(&state, app_type, &id).map_err(|e| e.to_string())
+    let _ = state;
+    prompt_bridge::enable_prompt(app_type, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -54,11 +58,12 @@ pub async fn import_prompt_from_file(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    PromptService::import_from_file(&state, app_type).map_err(|e| e.to_string())
+    let _ = state;
+    prompt_bridge::import_prompt_from_file(app_type).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_current_prompt_file_content(app: String) -> Result<Option<String>, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    PromptService::get_current_file_content(app_type).map_err(|e| e.to_string())
+    prompt_bridge::get_current_prompt_file_content(app_type).map_err(|e| e.to_string())
 }
