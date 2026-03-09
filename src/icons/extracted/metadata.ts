@@ -387,6 +387,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["nvidia", "nim", "gpu"],
     defaultColor: "#74B71B",
   },
+  stepfun: {
+    name: "stepfun",
+    displayName: "StepFun",
+    category: "ai-provider",
+    keywords: ["stepfun", "step", "jieyue", "阶跃星辰"],
+    defaultColor: "#005AFF",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {
