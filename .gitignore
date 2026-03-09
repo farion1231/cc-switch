@@ -24,3 +24,4 @@ flatpak/cc-switch.deb
 flatpak-build/
 flatpak-repo/
 .worktrees/
+.spec-workflow/
