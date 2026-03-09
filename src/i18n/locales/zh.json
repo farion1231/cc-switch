@@ -424,6 +424,47 @@
         "confirm": "确认上传"
       }
     },
+    "syncType": {
+      "label": "同步方式",
+      "webdav": "WebDAV",
+      "s3": "S3 兼容存储"
+    },
+    "s3Sync": {
+      "presets": {
+        "awsS3": "AWS S3",
+        "awsS3Hint": "使用 IAM Access Key，需要 s3:PutObject/GetObject/HeadObject 权限。Region 示例：us-east-1, ap-northeast-1",
+        "minio": "MinIO",
+        "minioHint": "需要自定义 Endpoint，如 http://minio.local:9000。Region 可设为 us-east-1",
+        "r2": "Cloudflare R2",
+        "r2Hint": "Endpoint: https://<account_id>.r2.cloudflarestorage.com，Region 设为 auto",
+        "oss": "阿里云 OSS",
+        "ossHint": "Endpoint: https://oss-<region>.aliyuncs.com，Region 示例：cn-hangzhou, cn-shanghai",
+        "cos": "腾讯云 COS",
+        "cosHint": "Endpoint: https://cos.<region>.myqcloud.com，Region 示例：ap-guangzhou, ap-beijing",
+        "obs": "华为云 OBS",
+        "obsHint": "Endpoint: https://obs.<region>.myhuaweicloud.com，Region 示例：cn-north-4, cn-east-3",
+        "custom": "S3 兼容服务（自定义）",
+        "customHint": "任意 S3 兼容服务，需要自定义 Endpoint"
+      },
+      "region": "区域 (Region)",
+      "regionPlaceholder": "例如 us-east-1",
+      "bucket": "存储桶 (Bucket)",
+      "bucketPlaceholder": "例如 my-cc-switch-bucket",
+      "accessKeyId": "Access Key ID",
+      "secretAccessKey": "Secret Access Key",
+      "endpoint": "Endpoint（AWS 可留空）",
+      "endpointPlaceholder": "例如 https://s3-compatible.example.com",
+      "mutualExclusionTitle": "切换同步方式",
+      "mutualExclusionMessage": "启用 S3 同步将禁用当前的 WebDAV 同步，是否继续？",
+      "mutualExclusionMessageReverse": "启用 WebDAV 同步将禁用当前的 S3 同步，是否继续？",
+      "testConnection": "测试连接",
+      "connectionOk": "S3 连接成功",
+      "upload": "上传",
+      "download": "下载",
+      "save": "保存",
+      "notConfigured": "未配置 S3 同步",
+      "disabled": "S3 同步未启用"
+    },
     "autoReload": "数据已刷新",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",

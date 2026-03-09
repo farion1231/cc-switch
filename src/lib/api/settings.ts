@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Settings, WebDavSyncSettings, RemoteSnapshotInfo } from "@/types";
+import type { Settings, WebDavSyncSettings, S3SyncSettings, RemoteSnapshotInfo } from "@/types";
 import type { AppId } from "./types";
 
 export interface ConfigTransferResult {
@@ -136,6 +136,42 @@ export const settingsApi = {
     RemoteSnapshotInfo | { empty: true }
   > {
     return await invoke("webdav_sync_fetch_remote_info");
+  },
+
+  // ===== S3 Sync API =====
+
+  async s3TestConnection(
+    settings: S3SyncSettings,
+    preserveEmptyPassword = true,
+  ): Promise<WebDavTestResult> {
+    return await invoke("s3_test_connection", {
+      settings,
+      preserveEmptyPassword,
+    });
+  },
+
+  async s3SyncUpload(): Promise<WebDavSyncResult> {
+    return await invoke("s3_sync_upload");
+  },
+
+  async s3SyncDownload(): Promise<WebDavSyncResult> {
+    return await invoke("s3_sync_download");
+  },
+
+  async s3SyncSaveSettings(
+    settings: S3SyncSettings,
+    passwordTouched: boolean,
+  ): Promise<{ success: boolean }> {
+    return await invoke("s3_sync_save_settings", {
+      settings,
+      passwordTouched,
+    });
+  },
+
+  async s3SyncFetchRemoteInfo(): Promise<
+    RemoteSnapshotInfo | { empty: true }
+  > {
+    return await invoke("s3_sync_fetch_remote_info");
   },
 
   async syncCurrentProvidersLive(): Promise<void> {

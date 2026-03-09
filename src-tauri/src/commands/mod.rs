@@ -21,6 +21,7 @@ mod stream_check;
 mod sync_support;
 mod usage;
 mod webdav_sync;
+mod s3_sync;
 mod workspace;
 
 pub use config::*;
@@ -43,4 +44,5 @@ pub use skill::*;
 pub use stream_check::*;
 pub use usage::*;
 pub use webdav_sync::*;
+pub use s3_sync::*;
 pub use workspace::*;

@@ -424,6 +424,47 @@
         "confirm": "Confirm Upload"
       }
     },
+    "syncType": {
+      "label": "Sync Type",
+      "webdav": "WebDAV",
+      "s3": "S3 Compatible"
+    },
+    "s3Sync": {
+      "presets": {
+        "awsS3": "AWS S3",
+        "awsS3Hint": "Use IAM Access Key with s3:PutObject/GetObject/HeadObject permissions. Region: us-east-1, ap-northeast-1, etc.",
+        "minio": "MinIO",
+        "minioHint": "Custom endpoint required, e.g. http://minio.local:9000. Region can be 'us-east-1'.",
+        "r2": "Cloudflare R2",
+        "r2Hint": "Endpoint: https://<account_id>.r2.cloudflarestorage.com. Region: 'auto'.",
+        "oss": "Alibaba Cloud OSS",
+        "ossHint": "Endpoint: https://oss-<region>.aliyuncs.com. Region: cn-hangzhou, cn-shanghai, etc.",
+        "cos": "Tencent Cloud COS",
+        "cosHint": "Endpoint: https://cos.<region>.myqcloud.com. Region: ap-guangzhou, ap-beijing, etc.",
+        "obs": "Huawei OBS",
+        "obsHint": "Endpoint: https://obs.<region>.myhuaweicloud.com. Region: cn-north-4, cn-east-3, etc.",
+        "custom": "S3 Compatible (Custom)",
+        "customHint": "Any S3-compatible service. Custom endpoint required."
+      },
+      "region": "Region",
+      "regionPlaceholder": "e.g. us-east-1",
+      "bucket": "Bucket",
+      "bucketPlaceholder": "e.g. my-cc-switch-bucket",
+      "accessKeyId": "Access Key ID",
+      "secretAccessKey": "Secret Access Key",
+      "endpoint": "Endpoint (optional for AWS)",
+      "endpointPlaceholder": "e.g. https://s3-compatible.example.com",
+      "mutualExclusionTitle": "Switch Sync Type",
+      "mutualExclusionMessage": "Enabling S3 sync will disable the current WebDAV sync. Continue?",
+      "mutualExclusionMessageReverse": "Enabling WebDAV sync will disable the current S3 sync. Continue?",
+      "testConnection": "Test Connection",
+      "connectionOk": "S3 connection successful",
+      "upload": "Upload",
+      "download": "Download",
+      "save": "Save",
+      "notConfigured": "S3 sync is not configured",
+      "disabled": "S3 sync is disabled"
+    },
     "autoReload": "Data refreshed",
     "languageOptionChinese": "中文",
     "languageOptionEnglish": "English",
