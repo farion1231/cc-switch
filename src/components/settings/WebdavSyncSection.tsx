@@ -189,6 +189,13 @@ export function WebdavSyncSection({ config, s3Config }: WebdavSyncSectionProps) 
   );
   const [pendingSyncType, setPendingSyncType] = useState<SyncType | null>(null);
 
+  // Sync the selector when settings load asynchronously
+  useEffect(() => {
+    if (s3Config?.enabled) {
+      setSyncType("s3");
+    }
+  }, [s3Config?.enabled]);
+
   // Local form state — credentials are only persisted on explicit "Save".
   const [form, setForm] = useState(() => ({
     baseUrl: config?.baseUrl ?? "",
