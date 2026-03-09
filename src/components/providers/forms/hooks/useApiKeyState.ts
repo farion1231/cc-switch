@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import type { ProviderCategory } from "@/types";
+import type { ProviderCategory, ClaudeApiKeyField } from "@/types";
 import {
   getApiKeyFromConfig,
   setApiKeyInConfig,
@@ -12,7 +12,7 @@ interface UseApiKeyStateProps {
   selectedPresetId: string | null;
   category?: ProviderCategory;
   appType?: string;
-  apiKeyField?: string;
+  apiKeyField?: ClaudeApiKeyField;
 }
 
 /**
@@ -29,7 +29,7 @@ export function useApiKeyState({
 }: UseApiKeyStateProps) {
   const [apiKey, setApiKey] = useState(() => {
     if (initialConfig) {
-      return getApiKeyFromConfig(initialConfig, appType);
+      return getApiKeyFromConfig(initialConfig, appType, apiKeyField);
     }
     return "";
   });
@@ -46,11 +46,11 @@ export function useApiKeyState({
     }
 
     // 从配置中提取 API Key（如果不存在则返回空字符串）
-    const extracted = getApiKeyFromConfig(initialConfig, appType);
+    const extracted = getApiKeyFromConfig(initialConfig, appType, apiKeyField);
     if (extracted !== apiKey) {
       setApiKey(extracted);
     }
-  }, [initialConfig, appType, apiKey]);
+  }, [initialConfig, appType, apiKeyField, apiKey]);
 
   const handleApiKeyChange = useCallback(
     (key: string) => {
@@ -60,7 +60,7 @@ export function useApiKeyState({
         initialConfig || "{}",
         key.trim(),
         {
-          // 最佳实践：仅在"新增模式"且"非官方类别"时补齐缺失字段
+          // 最佳实践：仅在“新增模式”且“非官方类别”时补齐缺失字段
           // - 新增模式：selectedPresetId !== null
           // - 非官方类别：category !== undefined && category !== "official"
           // - 官方类别：不创建字段（UI 也会禁用输入框）

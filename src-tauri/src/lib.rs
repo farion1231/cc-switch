@@ -448,18 +448,7 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
             }
 
-            // 2. OpenCode 供应商导入（累加式模式，需特殊处理）
-            // OpenCode 与其他应用不同：配置文件中可同时存在多个供应商
-            // 需要遍历 provider 字段下的每个供应商并导入
-            match crate::services::provider::import_opencode_providers_from_live(&app_state) {
-                Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} OpenCode provider(s) from live config");
-                }
-                Ok(_) => log::debug!("○ No OpenCode providers found to import"),
-                Err(e) => log::warn!("○ Failed to import OpenCode providers: {e}"),
-            }
-
-            // 2.2 OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
+            // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
                 let has_omo = app_state
                     .db
@@ -508,17 +497,6 @@ pub fn run() {
                         }
                     }
                 }
-            }
-
-            // 2.4 OpenClaw 供应商导入（累加式模式，需特殊处理）
-            // OpenClaw 与 OpenCode 类似：配置文件中可同时存在多个供应商
-            // 需要遍历 models.providers 字段下的每个供应商并导入
-            match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
-                Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} OpenClaw provider(s) from live config");
-                }
-                Ok(_) => log::debug!("○ No OpenClaw providers found to import"),
-                Err(e) => log::warn!("○ Failed to import OpenClaw providers: {e}"),
             }
 
             // 3. 导入 MCP 服务器配置（表空时触发）
@@ -579,6 +557,59 @@ pub fn run() {
                         Ok(_) => log::debug!("○ No prompt file found for {}", app.as_str()),
                         Err(e) => log::warn!("✗ Failed to import prompt for {}: {e}", app.as_str()),
                     }
+                }
+            }
+
+            // 5. Auto-extract common config snippets from live files (when snippet is missing)
+            for app_type in crate::app_config::AppType::all() {
+                // Skip if snippet already exists
+                if app_state
+                    .db
+                    .get_config_snippet(app_type.as_str())
+                    .ok()
+                    .flatten()
+                    .is_some()
+                {
+                    continue;
+                }
+
+                // Try to read the live config file for this app type
+                let settings =
+                    match crate::services::provider::ProviderService::read_live_settings(
+                        app_type.clone(),
+                    ) {
+                        Ok(s) => s,
+                        Err(_) => continue, // No live config file, skip silently
+                    };
+
+                // Extract common config (strip provider-specific fields)
+                match crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
+                    app_type.clone(),
+                    &settings,
+                ) {
+                    Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
+                        match app_state
+                            .db
+                            .set_config_snippet(app_type.as_str(), Some(snippet))
+                        {
+                            Ok(()) => log::info!(
+                                "✓ Auto-extracted common config snippet for {}",
+                                app_type.as_str()
+                            ),
+                            Err(e) => log::warn!(
+                                "✗ Failed to save config snippet for {}: {e}",
+                                app_type.as_str()
+                            ),
+                        }
+                    }
+                    Ok(_) => log::debug!(
+                        "○ Live config for {} has no extractable common fields",
+                        app_type.as_str()
+                    ),
+                    Err(e) => log::warn!(
+                        "✗ Failed to extract config snippet for {}: {e}",
+                        app_type.as_str()
+                    ),
                 }
             }
 
@@ -845,12 +876,18 @@ pub fn run() {
             commands::get_skills_migration_result,
             commands::get_app_config_path,
             commands::open_app_config_folder,
+            commands::get_claude_common_config_snippet,
+            commands::set_claude_common_config_snippet,
+            commands::get_common_config_snippet,
+            commands::set_common_config_snippet,
+            commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
-            commands::patch_claude_live_settings,
             commands::get_settings,
             commands::save_settings,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
+            commands::get_optimizer_config,
+            commands::set_optimizer_config,
             commands::get_log_config,
             commands::set_log_config,
             commands::restart_app,
@@ -1059,9 +1096,18 @@ pub fn run() {
 
     app.run(|app_handle, event| {
         // 处理退出请求（所有平台）
-        if let RunEvent::ExitRequested { api, .. } = &event {
-            log::info!("收到退出请求，开始清理...");
-            // 阻止立即退出，执行清理
+        if let RunEvent::ExitRequested { api, code, .. } = &event {
+            // code 为 None 表示运行时自动触发（如隐藏窗口的 WebView 被回收导致无存活窗口），
+            // 此时应仅阻止退出、保持托盘后台运行；
+            // code 为 Some(_) 表示用户主动调用 app.exit() 退出（如托盘菜单"退出"），
+            // 此时执行清理后退出。
+            if code.is_none() {
+                log::info!("运行时触发退出请求（无存活窗口），阻止退出以保持托盘后台运行");
+                api.prevent_exit();
+                return;
+            }
+
+            log::info!("收到用户主动退出请求 (code={code:?})，开始清理...");
             api.prevent_exit();
 
             let app_handle = app_handle.clone();

@@ -192,7 +192,6 @@ export function EditProviderDialog({
         onCancel={() => onOpenChange(false)}
         initialData={initialData}
         showButtons={false}
-        isCurrent={liveSettings !== null}
       />
     </FullScreenPanel>
   );

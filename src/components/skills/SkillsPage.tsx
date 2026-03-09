@@ -164,10 +164,20 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const handleAddRepo = async (repo: SkillRepo) => {
       try {
         await addRepoMutation.mutateAsync(repo);
+        // Await discovery so we can report the real count
+        const { data: freshSkills } = await refetchDiscoverable();
+        const count =
+          freshSkills?.filter(
+            (s) =>
+              s.repoOwner === repo.owner &&
+              s.repoName === repo.name &&
+              (s.repoBranch || "main") === (repo.branch || "main"),
+          ).length ?? 0;
         toast.success(
           t("skills.repo.addSuccess", {
             owner: repo.owner,
             name: repo.name,
+            count,
           }),
           { closeButton: true },
         );

@@ -51,8 +51,15 @@
   },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
+    "writeCommonConfig": "共通設定を書き込む",
+    "editCommonConfig": "共通設定を編集",
+    "editCommonConfigTitle": "共通設定スニペットを編集",
+    "commonConfigHint": "「共通設定を書き込む」がオンのとき settings.json にマージされます",
     "fullSettingsHint": "Claude Code の settings.json 全文",
-    "fragmentSettingsHint": "このプロバイダーの設定スニペット。有効化時に settings.json に書き込まれます",
+    "extractFromCurrent": "編集内容から抽出",
+    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
+    "extractFailed": "抽出に失敗しました: {{error}}",
+    "saveFailed": "保存に失敗しました: {{error}}",
     "hideAttribution": "AI署名を非表示",
     "alwaysThinking": "拡張思考",
     "enableTeammates": "Teammates モード"
@@ -118,7 +125,11 @@
     "notes": "メモ",
     "notesPlaceholder": "例: 会社用アカウント",
     "configJson": "Config JSON",
+    "writeCommonConfig": "共通設定を書き込む",
+    "editCommonConfigButton": "共通設定を編集",
     "configJsonHint": "Claude Code の設定をすべて入力してください",
+    "editCommonConfigTitle": "共通設定スニペットを編集",
+    "editCommonConfigHint": "共通設定スニペットは、この機能をオンにしたすべてのプロバイダーへマージされます",
     "addProvider": "プロバイダーを追加",
     "sortUpdated": "並び順を更新しました",
     "usageSaved": "利用状況の設定を保存しました",
@@ -181,6 +192,11 @@
       "title": "使用量クエリの設定",
       "message": "使用量クエリにはカスタムスクリプトまたは API パラメータが必要です。プロバイダーから必要な情報を取得していることをご確認ください。\n\n設定方法が不明な場合は、プロバイダーのドキュメントを先にご確認ください。",
       "confirm": "理解しました、設定する"
+    },
+    "streamCheck": {
+      "title": "モデルヘルスチェック",
+      "message": "ヘルスチェックは API リクエストを直接送信してプロバイダーの接続性をテストします。以下の場合、チェックが失敗する可能性があります：\n\n• 公式プロバイダー（OAuth ログイン使用、独立した API キーなし）\n• 一部の中継サービス（リクエストが Claude Code CLI からのものか検証）\n• AWS Bedrock（IAM 署名認証を使用）\n\nチェック失敗はプロバイダーが使用不能であることを意味しません。独立したリクエストでの検証ができないことを示すだけです。アプリ内の実際の動作を基準にしてください。",
+      "confirm": "理解しました、続行する"
     }
   },
   "settings": {
@@ -241,6 +257,18 @@
         "thinkingSignatureDescription": "Anthropic タイプのプロバイダーが thinking 署名の非互換性や不正なリクエストエラーを返した場合、互換性のない thinking 関連ブロックを自動削除し、同じプロバイダーで 1 回リトライします",
         "thinkingBudget": "Thinking Budget 整流",
         "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします"
+      },
+      "optimizer": {
+        "title": "Bedrock リクエストオプティマイザー",
+        "description": "リクエスト送信前に Thinking と Cache の設定を自動最適化（Bedrock プロバイダーのみ有効）",
+        "enabled": "オプティマイザーを有効化",
+        "thinkingOptimizer": "Thinking 最適化",
+        "thinkingOptimizerDescription": "Opus/Sonnet に Adaptive Thinking を自動的に有効化し、レガシーモデルに Extended Thinking を注入",
+        "cacheInjection": "Cache 注入",
+        "cacheInjectionDescription": "リクエストの重要な位置に Cache ブレークポイントを自動注入し、重複トークンの課金を削減",
+        "cacheTtl": "Cache TTL",
+        "cacheTtl5m": "5 分",
+        "cacheTtl1h": "1 時間"
       },
       "logConfig": {
         "title": "ログ管理",
@@ -673,10 +701,6 @@
     "fullUrlHint": "プロキシはこの URL をそのまま使用",
     "apiFormatAnthropic": "Anthropic Messages（ネイティブ）",
     "apiFormatOpenAIChat": "OpenAI Chat Completions（プロキシが必要）",
-    "authField": "認証フィールド",
-    "authFieldAuthToken": "Auth Token（デフォルト）",
-    "authFieldApiKey": "API Key",
-    "authFieldHint": "ほとんどのサードパーティプロバイダーは Auth Token を使用します。一部は API Key が必要です",
     "anthropicDefaultHaikuModel": "既定 Haiku モデル",
     "anthropicDefaultSonnetModel": "既定 Sonnet モデル",
     "anthropicDefaultOpusModel": "既定 Opus モデル",
@@ -712,8 +736,7 @@
     "pleaseAddEndpoint": "まずエンドポイントを追加してください",
     "testUnavailable": "速度テストを実行できません",
     "noResult": "結果がありません",
-    "testFailed": "速度テストに失敗しました: {{error}}",
-    "status": "ステータス: {{code}}"
+    "testFailed": "速度テストに失敗しました: {{error}}"
   },
   "providerAdvanced": {
     "testConfig": "モデルテスト設定",
@@ -748,15 +771,34 @@
     "authJsonHint": "Codex の auth.json 設定内容",
     "configToml": "config.toml (TOML)",
     "configTomlHint": "Codex の config.toml 設定内容",
-    "apiUrlLabel": "API リクエスト URL"
+    "writeCommonConfig": "共通設定を書き込む",
+    "editCommonConfig": "共通設定を編集",
+    "editCommonConfigTitle": "Codex 共通設定スニペットを編集",
+    "commonConfigHint": "「共通設定を書き込む」がオンの場合、config.toml の末尾に追記されます",
+    "apiUrlLabel": "API リクエスト URL",
+    "extractFromCurrent": "編集内容から抽出",
+    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
+    "extractFailed": "抽出に失敗しました: {{error}}",
+    "saveFailed": "保存に失敗しました: {{error}}",
+    "modelNameHint": "使用するモデルを指定します。config.toml に自動更新されます"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
     "envFileHint": ".env 形式で Gemini の環境変数を設定",
     "configJson": "設定ファイル (config.json)",
     "configJsonHint": "Gemini 拡張パラメーターを JSON 形式で設定（任意）",
+    "writeCommonConfig": "共通設定を書き込む",
+    "editCommonConfig": "共通設定を編集",
+    "editCommonConfigTitle": "Gemini 共通設定スニペットを編集",
+    "commonConfigHint": "このスニペットは Gemini の .env に書き込みます（GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY は使用できません）",
+    "extractFromCurrent": "編集内容から抽出",
+    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
+    "extractFailed": "抽出に失敗しました: {{error}}",
+    "saveFailed": "保存に失敗しました: {{error}}",
     "extractedConfigInvalid": "抽出した設定のフォーマットが不正です",
     "invalidJsonFormat": "共通設定スニペットの形式が不正です（有効な JSON でなければなりません）",
+    "commonConfigInvalidKeys": "共通設定スニペットに GOOGLE_GEMINI_BASE_URL または GEMINI_API_KEY を含めることはできません（検出: {{keys}}）",
+    "commonConfigInvalidValues": "共通設定スニペットの値は文字列である必要があります",
     "noCommonConfigToApply": "共通設定スニペットが空、または適用できる項目がありません",
     "configMergeFailed": "設定のマージに失敗しました: {{error}}",
     "configReplaceFailed": "設定の置換に失敗しました: {{error}}"
@@ -1267,11 +1309,14 @@
       "title": "Agents 設定",
       "description": "openclaw.json の agents.defaults 設定を管理（デフォルトモデル、ランタイムパラメータなど）",
       "modelSection": "モデル設定",
-      "primaryModel": "プライマリモデル",
-      "primaryModelHint": "プロバイダ一覧の「デフォルトモデルに設定」ボタンで設定します",
+      "primaryModel": "デフォルトモデル",
+      "primaryModelHint": "設定済みプロバイダのモデルから選択してください",
       "notSet": "未設定",
       "fallbackModels": "フォールバックモデル",
-      "fallbackModelsHint": "カンマ区切り、優先度順",
+      "fallbackModelsHint": "プライマリモデルが利用不可の場合、優先度順にフォールバックが試行されます",
+      "addFallback": "フォールバックモデルを追加",
+      "noModels": "設定済みのプロバイダモデルがありません。先に OpenClaw プロバイダを追加してください。",
+      "notInList": "{{value}} (未設定)",
       "runtimeSection": "ランタイムパラメータ",
       "workspace": "ワークスペースパス",
       "timeout": "タイムアウト（秒）",
@@ -1561,7 +1606,7 @@
       "currentProvider": "現在のプロバイダー:",
       "waitingFirstRequest": "現在のプロバイダー: 最初のリクエスト待ち...",
       "stoppedTitle": "プロキシサービス停止中",
-      "stoppedDescription": "右上のトグルでサービスを開始できます",
+      "stoppedDescription": "上のトグルでサービスを開始できます",
       "openSettings": "プロキシサービスを設定",
       "stats": {
         "activeConnections": "アクティブ接続",
@@ -1652,6 +1697,12 @@
       "restartRequired": "アドレスまたはポートの変更を反映するにはプロキシサービスの再起動が必要です"
     },
     "switchFailed": "切り替えに失敗しました: {{error}}",
+    "takeover": {
+      "hint": "テイクオーバーするアプリを選択します。有効にすると、そのアプリのリクエストはローカルプロキシ経由で転送されます",
+      "enabled": "{{app}} テイクオーバー有効",
+      "disabled": "{{app}} テイクオーバー無効",
+      "failed": "テイクオーバーの切り替えに失敗しました"
+    },
     "failover": {
       "proxyRequired": "フェイルオーバーを設定するには、プロキシサービスを先に起動する必要があります",
       "autoSwitch": "自動フェイルオーバー",

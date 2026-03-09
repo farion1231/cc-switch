@@ -196,6 +196,9 @@ pub struct AppSettings {
     /// User has confirmed the usage query first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_confirmed: Option<bool>,
+    /// User has confirmed the stream check first-run notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_check_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
@@ -282,6 +285,7 @@ impl Default for AppSettings {
             enable_local_proxy: false,
             proxy_confirmed: None,
             usage_confirmed: None,
+            stream_check_confirmed: None,
             language: None,
             visible_apps: None,
             claude_config_dir: None,

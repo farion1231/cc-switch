@@ -38,6 +38,31 @@ impl Database {
         Ok(())
     }
 
+    // --- 通用配置片段 (Common Config Snippet) ---
+
+    /// 获取通用配置片段
+    pub fn get_config_snippet(&self, app_type: &str) -> Result<Option<String>, AppError> {
+        self.get_setting(&format!("common_config_{app_type}"))
+    }
+
+    /// 设置通用配置片段
+    pub fn set_config_snippet(
+        &self,
+        app_type: &str,
+        snippet: Option<String>,
+    ) -> Result<(), AppError> {
+        let key = format!("common_config_{app_type}");
+        if let Some(value) = snippet {
+            self.set_setting(&key, &value)
+        } else {
+            // 如果为 None 则删除
+            let conn = lock_conn!(self.conn);
+            conn.execute("DELETE FROM settings WHERE key = ?1", params![key])
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            Ok(())
+        }
+    }
+
     // --- 全局出站代理 ---
 
     /// 全局代理 URL 的存储键名
@@ -160,6 +185,29 @@ impl Database {
         let json = serde_json::to_string(config)
             .map_err(|e| AppError::Database(format!("序列化整流器配置失败: {e}")))?;
         self.set_setting("rectifier_config", &json)
+    }
+
+    // --- 优化器配置 ---
+
+    /// 获取优化器配置
+    ///
+    /// 返回优化器配置，如果不存在则返回默认值（默认关闭）
+    pub fn get_optimizer_config(&self) -> Result<crate::proxy::types::OptimizerConfig, AppError> {
+        match self.get_setting("optimizer_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析优化器配置失败: {e}"))),
+            None => Ok(crate::proxy::types::OptimizerConfig::default()),
+        }
+    }
+
+    /// 更新优化器配置
+    pub fn set_optimizer_config(
+        &self,
+        config: &crate::proxy::types::OptimizerConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化优化器配置失败: {e}")))?;
+        self.set_setting("optimizer_config", &json)
     }
 
     // --- 日志配置 ---

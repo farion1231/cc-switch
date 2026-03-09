@@ -27,12 +27,11 @@ pub use live::{
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::sanitize_claude_settings_for_live;
-pub(crate) use live::write_live_partial;
+pub(crate) use live::write_live_snapshot;
 
 // Internal re-exports
 use live::{
-    backfill_key_fields, remove_openclaw_provider_from_live, remove_opencode_provider_from_live,
-    write_live_snapshot,
+    remove_openclaw_provider_from_live, remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -84,6 +83,47 @@ mod tests {
             ProviderService::extract_credentials(&provider, &AppType::Claude).unwrap();
         assert_eq!(api_key, "token");
         assert_eq!(base_url, "https://claude.example");
+    }
+
+    #[test]
+    fn extract_codex_common_config_preserves_mcp_servers_base_url() {
+        let config_toml = r#"model_provider = "azure"
+model = "gpt-4"
+disable_response_storage = true
+
+[model_providers.azure]
+name = "Azure OpenAI"
+base_url = "https://azure.example/v1"
+wire_api = "responses"
+
+[mcp_servers.my_server]
+base_url = "http://localhost:8080"
+"#;
+
+        let settings = json!({ "config": config_toml });
+        let extracted = ProviderService::extract_codex_common_config(&settings)
+            .expect("extract_codex_common_config should succeed");
+
+        assert!(
+            !extracted
+                .lines()
+                .any(|line| line.trim_start().starts_with("model_provider")),
+            "should remove top-level model_provider"
+        );
+        assert!(
+            !extracted
+                .lines()
+                .any(|line| line.trim_start().starts_with("model =")),
+            "should remove top-level model"
+        );
+        assert!(
+            !extracted.contains("[model_providers"),
+            "should remove entire model_providers table"
+        );
+        assert!(
+            extracted.contains("http://localhost:8080"),
+            "should keep mcp_servers.* base_url"
+        );
     }
 }
 
@@ -152,7 +192,7 @@ impl ProviderService {
             state
                 .db
                 .set_current_provider(app_type.as_str(), &provider.id)?;
-            write_live_partial(&app_type, &provider)?;
+            write_live_snapshot(&app_type, &provider)?;
         }
 
         Ok(true)
@@ -233,7 +273,7 @@ impl ProviderService {
                 )
                 .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
             } else {
-                write_live_partial(&app_type, &provider)?;
+                write_live_snapshot(&app_type, &provider)?;
                 // Sync MCP
                 McpService::sync_all_enabled(state)?;
             }
@@ -520,9 +560,7 @@ impl ProviderService {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
-                            // Only extract key fields from live config for backfill
-                            current_provider.settings_config =
-                                backfill_key_fields(&app_type, &live_config);
+                            current_provider.settings_config = live_config;
                             if let Err(e) =
                                 state.db.save_provider(app_type.as_str(), &current_provider)
                             {
@@ -546,8 +584,11 @@ impl ProviderService {
             state.db.set_current_provider(app_type.as_str(), id)?;
         }
 
-        // Sync to live (partial merge: only key fields, preserving user settings)
-        write_live_partial(&app_type, provider)?;
+        // Sync to live (write_gemini_live handles security flag internally for Gemini)
+        write_live_snapshot(&app_type, provider)?;
+
+        // Sync MCP
+        McpService::sync_all_enabled(state)?;
 
         Ok(result)
     }
@@ -555,6 +596,222 @@ impl ProviderService {
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)
+    }
+
+    /// Extract common config snippet from current provider
+    ///
+    /// Extracts the current provider's configuration and removes provider-specific fields
+    /// (API keys, model settings, endpoints) to create a reusable common config snippet.
+    pub fn extract_common_config_snippet(
+        state: &AppState,
+        app_type: AppType,
+    ) -> Result<String, AppError> {
+        // Get current provider
+        let current_id = Self::current(state, app_type.clone())?;
+        if current_id.is_empty() {
+            return Err(AppError::Message("No current provider".to_string()));
+        }
+
+        let providers = state.db.get_all_providers(app_type.as_str())?;
+        let provider = providers
+            .get(&current_id)
+            .ok_or_else(|| AppError::Message(format!("Provider {current_id} not found")))?;
+
+        match app_type {
+            AppType::Claude => Self::extract_claude_common_config(&provider.settings_config),
+            AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
+            AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
+            AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
+            AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
+        }
+    }
+
+    /// Extract common config snippet from a config value (e.g. editor content).
+    pub fn extract_common_config_snippet_from_settings(
+        app_type: AppType,
+        settings_config: &Value,
+    ) -> Result<String, AppError> {
+        match app_type {
+            AppType::Claude => Self::extract_claude_common_config(settings_config),
+            AppType::Codex => Self::extract_codex_common_config(settings_config),
+            AppType::Gemini => Self::extract_gemini_common_config(settings_config),
+            AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
+            AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
+        }
+    }
+
+    /// Extract common config for Claude (JSON format)
+    fn extract_claude_common_config(settings: &Value) -> Result<String, AppError> {
+        let mut config = settings.clone();
+
+        // Fields to exclude from common config
+        const ENV_EXCLUDES: &[&str] = &[
+            // Auth
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            // Models (5 fields)
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_REASONING_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            // Endpoint
+            "ANTHROPIC_BASE_URL",
+        ];
+
+        const TOP_LEVEL_EXCLUDES: &[&str] = &[
+            "apiBaseUrl",
+            // Legacy model fields
+            "primaryModel",
+            "smallFastModel",
+        ];
+
+        // Remove env fields
+        if let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) {
+            for key in ENV_EXCLUDES {
+                env.remove(*key);
+            }
+            // If env is empty after removal, remove the env object itself
+            if env.is_empty() {
+                config.as_object_mut().map(|obj| obj.remove("env"));
+            }
+        }
+
+        // Remove top-level fields
+        if let Some(obj) = config.as_object_mut() {
+            for key in TOP_LEVEL_EXCLUDES {
+                obj.remove(*key);
+            }
+        }
+
+        // Check if result is empty
+        if config.as_object().is_none_or(|obj| obj.is_empty()) {
+            return Ok("{}".to_string());
+        }
+
+        serde_json::to_string_pretty(&config)
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+    }
+
+    /// Extract common config for Codex (TOML format)
+    fn extract_codex_common_config(settings: &Value) -> Result<String, AppError> {
+        // Codex config is stored as { "auth": {...}, "config": "toml string" }
+        let config_toml = settings
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if config_toml.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut doc = config_toml
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| AppError::Message(format!("TOML parse error: {e}")))?;
+
+        // Remove provider-specific fields.
+        let root = doc.as_table_mut();
+        root.remove("model");
+        root.remove("model_provider");
+        // Legacy/alt formats might use a top-level base_url.
+        root.remove("base_url");
+
+        // Remove entire model_providers table (provider-specific configuration)
+        root.remove("model_providers");
+
+        // Clean up multiple empty lines (keep at most one blank line).
+        let mut cleaned = String::new();
+        let mut blank_run = 0usize;
+        for line in doc.to_string().lines() {
+            if line.trim().is_empty() {
+                blank_run += 1;
+                if blank_run <= 1 {
+                    cleaned.push('\n');
+                }
+                continue;
+            }
+            blank_run = 0;
+            cleaned.push_str(line);
+            cleaned.push('\n');
+        }
+
+        Ok(cleaned.trim().to_string())
+    }
+
+    /// Extract common config for Gemini (JSON format)
+    ///
+    /// Extracts `.env` values while excluding provider-specific credentials:
+    /// - GOOGLE_GEMINI_BASE_URL
+    /// - GEMINI_API_KEY
+    fn extract_gemini_common_config(settings: &Value) -> Result<String, AppError> {
+        let env = settings.get("env").and_then(|v| v.as_object());
+
+        let mut snippet = serde_json::Map::new();
+        if let Some(env) = env {
+            for (key, value) in env {
+                if key == "GOOGLE_GEMINI_BASE_URL" || key == "GEMINI_API_KEY" {
+                    continue;
+                }
+                let Value::String(v) = value else {
+                    continue;
+                };
+                let trimmed = v.trim();
+                if !trimmed.is_empty() {
+                    snippet.insert(key.to_string(), Value::String(trimmed.to_string()));
+                }
+            }
+        }
+
+        if snippet.is_empty() {
+            return Ok("{}".to_string());
+        }
+
+        serde_json::to_string_pretty(&Value::Object(snippet))
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+    }
+
+    /// Extract common config for OpenCode (JSON format)
+    fn extract_opencode_common_config(settings: &Value) -> Result<String, AppError> {
+        // OpenCode uses a different config structure with npm, options, models
+        // For common config, we exclude provider-specific fields like apiKey
+        let mut config = settings.clone();
+
+        // Remove provider-specific fields
+        if let Some(obj) = config.as_object_mut() {
+            if let Some(options) = obj.get_mut("options").and_then(|v| v.as_object_mut()) {
+                options.remove("apiKey");
+                options.remove("baseURL");
+            }
+            // Keep npm and models as they might be common
+        }
+
+        if config.is_null() || (config.is_object() && config.as_object().unwrap().is_empty()) {
+            return Ok("{}".to_string());
+        }
+
+        serde_json::to_string_pretty(&config)
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+    }
+
+    /// Extract common config for OpenClaw (JSON format)
+    fn extract_openclaw_common_config(settings: &Value) -> Result<String, AppError> {
+        // OpenClaw uses a different config structure with baseUrl, apiKey, api, models
+        // For common config, we exclude provider-specific fields like apiKey
+        let mut config = settings.clone();
+
+        // Remove provider-specific fields
+        if let Some(obj) = config.as_object_mut() {
+            obj.remove("apiKey");
+            obj.remove("baseUrl");
+            // Keep api and models as they might be common
+        }
+
+        if config.is_null() || (config.is_object() && config.as_object().unwrap().is_empty()) {
+            return Ok("{}".to_string());
+        }
+
+        serde_json::to_string_pretty(&config)
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
     }
 
     /// Import default configuration from live files (re-export)
@@ -567,11 +824,6 @@ impl ProviderService {
     /// Read current live settings (re-export)
     pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         read_live_settings(app_type)
-    }
-
-    /// Patch Claude live settings directly (user-level preferences)
-    pub fn patch_claude_live(patch: Value) -> Result<(), AppError> {
-        live::patch_claude_live(patch)
     }
 
     /// Get custom endpoints list (re-export)
@@ -667,6 +919,10 @@ impl ProviderService {
             template_type,
         )
         .await
+    }
+
+    pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
+        write_gemini_live(provider)
     }
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {

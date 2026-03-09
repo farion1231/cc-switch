@@ -12,7 +12,7 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{ProxyStatus, RectifierConfig},
+    types::{OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
 use crate::{app_config::AppType, provider::Provider};
@@ -97,6 +97,8 @@ pub struct RequestForwarder {
     current_provider_id_at_start: String,
     /// 整流器配置
     rectifier_config: RectifierConfig,
+    /// 优化器配置
+    optimizer_config: OptimizerConfig,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
 }
@@ -114,6 +116,7 @@ impl RequestForwarder {
         _streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
+        optimizer_config: OptimizerConfig,
     ) -> Self {
         Self {
             router,
@@ -123,6 +126,7 @@ impl RequestForwarder {
             app_handle,
             current_provider_id_at_start,
             rectifier_config,
+            optimizer_config,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
         }
     }
@@ -139,7 +143,7 @@ impl RequestForwarder {
         &self,
         app_type: &AppType,
         endpoint: &str,
-        mut body: Value,
+        body: Value,
         headers: axum::http::HeaderMap,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
@@ -183,6 +187,22 @@ impl RequestForwarder {
                 continue;
             }
 
+            // PRE-SEND 优化器：每个 provider 独立决定是否优化
+            // clone body 以避免 Bedrock 优化字段泄漏到非 Bedrock provider（failover 场景）
+            let mut provider_body =
+                if self.optimizer_config.enabled && is_bedrock_provider(provider) {
+                    let mut b = body.clone();
+                    if self.optimizer_config.thinking_optimizer {
+                        super::thinking_optimizer::optimize(&mut b, &self.optimizer_config);
+                    }
+                    if self.optimizer_config.cache_injection {
+                        super::cache_injector::inject(&mut b, &self.optimizer_config);
+                    }
+                    b
+                } else {
+                    body.clone()
+                };
+
             attempted_providers += 1;
 
             // 更新状态中的当前Provider信息
@@ -196,7 +216,13 @@ impl RequestForwarder {
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self
-                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                .forward(
+                    provider,
+                    endpoint,
+                    &provider_body,
+                    &headers,
+                    adapter.as_ref(),
+                )
                 .await
             {
                 Ok(response) => {
@@ -296,7 +322,7 @@ impl RequestForwarder {
                             }
 
                             // 首次触发：整流请求体
-                            let rectified = rectify_anthropic_request(&mut body);
+                            let rectified = rectify_anthropic_request(&mut provider_body);
 
                             // 整流未生效：继续尝试 budget 整流路径，避免误判后短路
                             if !rectified.applied {
@@ -318,7 +344,13 @@ impl RequestForwarder {
 
                                 // 使用同一供应商重试（不计入熔断器）
                                 match self
-                                    .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                                    .forward(
+                                        provider,
+                                        endpoint,
+                                        &provider_body,
+                                        &headers,
+                                        adapter.as_ref(),
+                                    )
                                     .await
                                 {
                                     Ok(response) => {
@@ -472,7 +504,7 @@ impl RequestForwarder {
                                 });
                             }
 
-                            let budget_rectified = rectify_thinking_budget(&mut body);
+                            let budget_rectified = rectify_thinking_budget(&mut provider_body);
                             if !budget_rectified.applied {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-014] budget 整流器触发但无可整流内容，不做无意义重试"
@@ -509,7 +541,13 @@ impl RequestForwarder {
 
                             // 使用同一供应商重试（不计入熔断器）
                             match self
-                                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                                .forward(
+                                    provider,
+                                    endpoint,
+                                    &provider_body,
+                                    &headers,
+                                    adapter.as_ref(),
+                                )
                                 .await
                             {
                                 Ok(response) => {
@@ -966,4 +1004,15 @@ fn extract_error_message(error: &ProxyError) -> Option<String> {
         ProxyError::UpstreamError { body, .. } => body.clone(),
         _ => Some(error.to_string()),
     }
+}
+
+/// 检测 Provider 是否为 Bedrock（通过 CLAUDE_CODE_USE_BEDROCK 环境变量判断）
+fn is_bedrock_provider(provider: &Provider) -> bool {
+    provider
+        .settings_config
+        .get("env")
+        .and_then(|e| e.get("CLAUDE_CODE_USE_BEDROCK"))
+        .and_then(|v| v.as_str())
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }

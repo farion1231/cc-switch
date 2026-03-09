@@ -51,8 +51,15 @@
   },
   "claudeConfig": {
     "configLabel": "Claude Code 配置 (JSON) *",
+    "writeCommonConfig": "写入通用配置",
+    "editCommonConfig": "编辑通用配置",
+    "editCommonConfigTitle": "编辑通用配置片段",
+    "commonConfigHint": "该片段会在勾选\"写入通用配置\"时合并到 settings.json 中",
     "fullSettingsHint": "完整的 Claude Code settings.json 配置内容",
-    "fragmentSettingsHint": "此供应商的配置片段，激活后将写入 settings.json",
+    "extractFromCurrent": "从编辑内容提取",
+    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
+    "extractFailed": "提取失败: {{error}}",
+    "saveFailed": "保存失败: {{error}}",
     "hideAttribution": "隐藏 AI 署名",
     "alwaysThinking": "扩展思考",
     "enableTeammates": "Teammates 模式"
@@ -118,7 +125,11 @@
     "notes": "备注",
     "notesPlaceholder": "例如：公司专用账号",
     "configJson": "配置 JSON",
+    "writeCommonConfig": "写入通用配置",
+    "editCommonConfigButton": "编辑通用配置",
     "configJsonHint": "请填写完整的 Claude Code 配置",
+    "editCommonConfigTitle": "编辑通用配置片段",
+    "editCommonConfigHint": "通用配置片段将合并到所有启用它的供应商配置中",
     "addProvider": "添加供应商",
     "sortUpdated": "排序已更新",
     "usageSaved": "用量查询配置已保存",
@@ -181,6 +192,11 @@
       "title": "配置用量查询",
       "message": "用量查询需要配置专用的查询脚本或 API 参数，请确保您已从供应商处获取相关信息。\n\n如不确定如何配置，请先查阅供应商文档。",
       "confirm": "我已了解，继续配置"
+    },
+    "streamCheck": {
+      "title": "模型健康检测",
+      "message": "健康检测通过直接发送 API 请求来测试供应商连通性，以下情况可能导致检测失败：\n\n• 官方供应商（使用 OAuth 登录，无独立 API Key）\n• 部分中转服务（会校验请求是否来自 Claude Code CLI）\n• AWS Bedrock（使用 IAM 签名认证）\n\n检测失败不代表供应商不可用，仅表示无法通过独立请求验证。请以应用内的实际情况为准。",
+      "confirm": "我已了解，继续检测"
     }
   },
   "settings": {
@@ -241,6 +257,18 @@
         "thinkingSignatureDescription": "当 Anthropic 类型供应商返回 thinking 签名不兼容或非法请求等错误时，自动移除不兼容的 thinking 相关块并对同一供应商重试一次",
         "thinkingBudget": "Thinking Budget 整流",
         "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次"
+      },
+      "optimizer": {
+        "title": "Bedrock 请求优化器",
+        "description": "在请求发送前自动优化 Thinking 和 Cache 配置（仅 Bedrock 供应商生效）",
+        "enabled": "启用优化器",
+        "thinkingOptimizer": "Thinking 优化",
+        "thinkingOptimizerDescription": "自动为 Opus/Sonnet 启用 Adaptive Thinking，为旧模型注入 Extended Thinking",
+        "cacheInjection": "Cache 注入",
+        "cacheInjectionDescription": "自动在请求关键位置注入 Cache 断点，减少重复 token 计费",
+        "cacheTtl": "Cache TTL",
+        "cacheTtl5m": "5 分钟",
+        "cacheTtl1h": "1 小时"
       },
       "logConfig": {
         "title": "日志管理",
@@ -673,10 +701,6 @@
     "fullUrlHint": "代理将直接使用此 URL，不拼接路径",
     "apiFormatAnthropic": "Anthropic Messages (原生)",
     "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启代理)",
-    "authField": "认证字段",
-    "authFieldAuthToken": "Auth Token (默认)",
-    "authFieldApiKey": "API Key",
-    "authFieldHint": "大多数第三方供应商使用 Auth Token；少数供应商需要 API Key",
     "anthropicDefaultHaikuModel": "Haiku 默认模型",
     "anthropicDefaultSonnetModel": "Sonnet 默认模型",
     "anthropicDefaultOpusModel": "Opus 默认模型",
@@ -712,8 +736,7 @@
     "pleaseAddEndpoint": "请先添加端点",
     "testUnavailable": "测速功能不可用",
     "noResult": "未返回结果",
-    "testFailed": "测速失败: {{error}}",
-    "status": "状态码：{{code}}"
+    "testFailed": "测速失败: {{error}}"
   },
   "providerAdvanced": {
     "testConfig": "模型测试配置",
@@ -748,15 +771,34 @@
     "authJsonHint": "Codex auth.json 配置内容",
     "configToml": "config.toml (TOML)",
     "configTomlHint": "Codex config.toml 配置内容",
-    "apiUrlLabel": "API 请求地址"
+    "writeCommonConfig": "写入通用配置",
+    "editCommonConfig": "编辑通用配置",
+    "editCommonConfigTitle": "编辑 Codex 通用配置片段",
+    "commonConfigHint": "该片段会在勾选'写入通用配置'时追加到 config.toml 末尾",
+    "apiUrlLabel": "API 请求地址",
+    "extractFromCurrent": "从编辑内容提取",
+    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
+    "extractFailed": "提取失败: {{error}}",
+    "saveFailed": "保存失败: {{error}}",
+    "modelNameHint": "指定使用的模型，将自动更新到 config.toml 中"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
     "envFileHint": "使用 .env 格式配置 Gemini 环境变量",
     "configJson": "配置文件 (config.json)",
     "configJsonHint": "使用 JSON 格式配置 Gemini 扩展参数（可选）",
+    "writeCommonConfig": "写入通用配置",
+    "editCommonConfig": "编辑通用配置",
+    "editCommonConfigTitle": "编辑 Gemini 通用配置片段",
+    "commonConfigHint": "该片段会写入 Gemini 的 .env（不允许包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
+    "extractFromCurrent": "从编辑内容提取",
+    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
+    "extractFailed": "提取失败: {{error}}",
+    "saveFailed": "保存失败: {{error}}",
     "extractedConfigInvalid": "提取的配置格式错误",
     "invalidJsonFormat": "通用配置片段格式错误（必须是有效的 JSON）",
+    "commonConfigInvalidKeys": "通用配置片段不能包含 GOOGLE_GEMINI_BASE_URL 或 GEMINI_API_KEY（发现：{{keys}}）",
+    "commonConfigInvalidValues": "通用配置片段的值必须是字符串",
     "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
     "configMergeFailed": "配置合并失败: {{error}}",
     "configReplaceFailed": "配置替换失败: {{error}}"
@@ -1267,11 +1309,14 @@
       "title": "Agents 配置",
       "description": "管理 openclaw.json 中的 agents.defaults 配置（默认模型、运行参数等）",
       "modelSection": "模型配置",
-      "primaryModel": "主模型",
-      "primaryModelHint": "在供应商列表中通过「设为默认模型」按钮设置",
+      "primaryModel": "默认模型",
+      "primaryModelHint": "从已配置供应商的模型中选择默认模型",
       "notSet": "未设置",
       "fallbackModels": "回退模型",
-      "fallbackModelsHint": "逗号分隔，按优先级排列",
+      "fallbackModelsHint": "当主模型不可用时，按优先级依次尝试以下回退模型",
+      "addFallback": "添加回退模型",
+      "noModels": "暂无已配置的供应商模型。请先添加 OpenClaw 供应商。",
+      "notInList": "{{value}} (供应商未配置)",
       "runtimeSection": "运行参数",
       "workspace": "工作区路径",
       "timeout": "超时时间（秒）",
@@ -1561,7 +1606,7 @@
       "currentProvider": "当前 Provider：",
       "waitingFirstRequest": "当前 Provider：等待首次请求…",
       "stoppedTitle": "代理服务已停止",
-      "stoppedDescription": "使用右上角开关即可启动服务",
+      "stoppedDescription": "使用上方开关即可启动服务",
       "openSettings": "配置代理服务",
       "stats": {
         "activeConnections": "活跃连接",
@@ -1652,6 +1697,12 @@
       "restartRequired": "修改地址或端口后需要重启代理服务才能生效"
     },
     "switchFailed": "切换失败: {{error}}",
+    "takeover": {
+      "hint": "选择要接管的应用，启用后该应用的请求将通过本地代理转发",
+      "enabled": "{{app}} 接管已启用",
+      "disabled": "{{app}} 接管已关闭",
+      "failed": "切换接管状态失败"
+    },
     "failover": {
       "proxyRequired": "需要先启动代理服务才能配置故障转移",
       "autoSwitch": "自动故障转移",

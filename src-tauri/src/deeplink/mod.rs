@@ -7,7 +7,6 @@
 //! - Prompts
 //! - Skills
 //!
-//! See docs/ccswitch-deeplink-design.md for detailed design.
 
 mod mcp;
 mod parser;

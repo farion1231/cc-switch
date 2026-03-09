@@ -960,6 +960,32 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Novita AI",
+    websiteUrl: "https://novita.ai",
+    apiKeyUrl: "https://novita.ai",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Novita AI",
+      options: {
+        baseURL: "https://api.novita.ai/openai",
+        apiKey: "",
+      },
+      models: {
+        "zai-org/glm-5": { name: "GLM-5" },
+      },
+    },
+    category: "aggregator",
+    icon: "novita",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

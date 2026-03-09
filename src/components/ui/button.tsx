@@ -16,7 +16,7 @@ const buttonVariants = cva(
           "bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700",
         // 轮廓按钮
         outline:
-          "border border-border-default bg-background hover:bg-gray-100 hover:border-border-hover dark:hover:bg-gray-800",
+          "border border-border-default bg-background text-muted-foreground hover:bg-gray-100 hover:text-gray-900 hover:border-border-hover dark:hover:bg-gray-800 dark:hover:text-gray-100",
         // 次按钮：灰色（对应旧版 secondary）
         secondary:
           "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200",
