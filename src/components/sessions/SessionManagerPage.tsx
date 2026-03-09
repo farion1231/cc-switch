@@ -7,13 +7,19 @@ import {
   RefreshCw,
   Search,
   Play,
+  Trash2,
   MessageSquare,
   Clock,
   FolderOpen,
   X,
 } from "lucide-react";
-import { useSessionMessagesQuery, useSessionsQuery } from "@/lib/query";
+import {
+  useDeleteSessionMutation,
+  useSessionMessagesQuery,
+  useSessionsQuery,
+} from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
+import type { SessionMeta } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   Tooltip,
   TooltipContent,
@@ -66,6 +73,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   );
   const [tocDialogOpen, setTocDialogOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = useState("");
@@ -113,6 +121,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       selectedSession?.providerId,
       selectedSession?.sourcePath,
     );
+  const deleteSessionMutation = useDeleteSessionMutation();
 
   // 提取用户消息用于目录
   const userMessagesToc = useMemo(() => {
@@ -182,6 +191,19 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       await handleCopy(fallback, t("sessionManager.resumeFallbackCopied"));
       toast.error(extractErrorMessage(error) || t("sessionManager.openFailed"));
     }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget?.sourcePath || deleteSessionMutation.isPending) {
+      return;
+    }
+
+    setDeleteTarget(null);
+    await deleteSessionMutation.mutateAsync({
+      providerId: deleteTarget.providerId,
+      sessionId: deleteTarget.sessionId,
+      sourcePath: deleteTarget.sourcePath,
+    });
   };
 
   return (
@@ -517,6 +539,36 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             </TooltipContent>
                           </Tooltip>
                         )}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              className="gap-1.5"
+                              onClick={() => setDeleteTarget(selectedSession)}
+                              disabled={
+                                !selectedSession.sourcePath ||
+                                deleteSessionMutation.isPending
+                              }
+                            >
+                              <Trash2 className="size-3.5" />
+                              <span className="hidden sm:inline">
+                                {deleteSessionMutation.isPending
+                                  ? t("sessionManager.deleting", {
+                                      defaultValue: "删除中...",
+                                    })
+                                  : t("sessionManager.delete", {
+                                      defaultValue: "删除会话",
+                                    })}
+                              </span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t("sessionManager.deleteTooltip", {
+                              defaultValue: "永久删除此本地会话记录",
+                            })}
+                          </TooltipContent>
+                        </Tooltip>
                       </div>
                     </div>
 
@@ -629,6 +681,33 @@ export function SessionManagerPage({ appId }: { appId: string }) {
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        isOpen={Boolean(deleteTarget)}
+        title={t("sessionManager.deleteConfirmTitle", {
+          defaultValue: "删除会话",
+        })}
+        message={
+          deleteTarget
+            ? t("sessionManager.deleteConfirmMessage", {
+                defaultValue:
+                  "将永久删除本地会话“{{title}}”\nSession ID: {{sessionId}}\n\n此操作不可恢复。",
+                title: formatSessionTitle(deleteTarget),
+                sessionId: deleteTarget.sessionId,
+              })
+            : ""
+        }
+        confirmText={t("sessionManager.deleteConfirmAction", {
+          defaultValue: "删除会话",
+        })}
+        cancelText={t("common.cancel", { defaultValue: "取消" })}
+        variant="destructive"
+        onConfirm={() => void handleDeleteConfirm()}
+        onCancel={() => {
+          if (!deleteSessionMutation.isPending) {
+            setDeleteTarget(null);
+          }
+        }}
+      />
     </TooltipProvider>
   );
 }

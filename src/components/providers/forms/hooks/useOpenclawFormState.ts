@@ -14,6 +14,9 @@ interface UseOpenclawFormStateParams {
   getSettingsConfig: () => string;
 }
 
+export const OPENCLAW_DEFAULT_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0";
+
 export interface OpenclawFormState {
   openclawProviderKey: string;
   setOpenclawProviderKey: (key: string) => void;
@@ -21,16 +24,19 @@ export interface OpenclawFormState {
   openclawApiKey: string;
   openclawApi: string;
   openclawModels: OpenClawModel[];
+  openclawUserAgent: boolean;
   existingOpenclawKeys: string[];
   handleOpenclawBaseUrlChange: (baseUrl: string) => void;
   handleOpenclawApiKeyChange: (apiKey: string) => void;
   handleOpenclawApiChange: (api: string) => void;
   handleOpenclawModelsChange: (models: OpenClawModel[]) => void;
+  handleOpenclawUserAgentChange: (enabled: boolean) => void;
   resetOpenclawState: (config?: {
     baseUrl?: string;
     apiKey?: string;
     api?: string;
     models?: OpenClawModel[];
+    headers?: Record<string, string>;
   }) => void;
 }
 
@@ -92,6 +98,16 @@ export function useOpenclawFormState({
     return parseOpenclawField<OpenClawModel[]>(initialData, "models", []);
   });
 
+  const [openclawUserAgent, setOpenclawUserAgent] = useState<boolean>(() => {
+    if (appId !== "openclaw") return true;
+    const headers = parseOpenclawField<Record<string, string>>(
+      initialData,
+      "headers",
+      {},
+    );
+    return "User-Agent" in headers;
+  });
+
   const updateOpenclawConfig = useCallback(
     (updater: (config: Record<string, any>) => void) => {
       try {
@@ -147,18 +163,35 @@ export function useOpenclawFormState({
     [updateOpenclawConfig],
   );
 
+  const handleOpenclawUserAgentChange = useCallback(
+    (enabled: boolean) => {
+      setOpenclawUserAgent(enabled);
+      updateOpenclawConfig((config) => {
+        if (enabled) {
+          config.headers = { "User-Agent": OPENCLAW_DEFAULT_USER_AGENT };
+        } else {
+          delete config.headers;
+        }
+      });
+    },
+    [updateOpenclawConfig],
+  );
+
   const resetOpenclawState = useCallback(
     (config?: {
       baseUrl?: string;
       apiKey?: string;
       api?: string;
       models?: OpenClawModel[];
+      headers?: Record<string, string>;
     }) => {
       setOpenclawProviderKey("");
       setOpenclawBaseUrl(config?.baseUrl || "");
       setOpenclawApiKey(config?.apiKey || "");
       setOpenclawApi(config?.api || "openai-completions");
       setOpenclawModels(config?.models || []);
+      const ua = config?.headers ? "User-Agent" in config.headers : false;
+      setOpenclawUserAgent(ua);
     },
     [],
   );
@@ -170,11 +203,13 @@ export function useOpenclawFormState({
     openclawApiKey,
     openclawApi,
     openclawModels,
+    openclawUserAgent,
     existingOpenclawKeys,
     handleOpenclawBaseUrlChange,
     handleOpenclawApiKeyChange,
     handleOpenclawApiChange,
     handleOpenclawModelsChange,
+    handleOpenclawUserAgentChange,
     resetOpenclawState,
   };
 }

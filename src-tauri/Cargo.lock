@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch"
-version = "3.11.1"
+version = "3.12.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -714,6 +714,7 @@ dependencies = [
  "futures",
  "hyper",
  "indexmap 2.11.4",
+ "json-five",
  "json5",
  "log",
  "objc2 0.5.2",
@@ -2508,6 +2509,16 @@ checksum = "ec48937a97411dcb524a265206ccd4c90bb711fca92b2792c407f268825b9305"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "json-five"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "865f2d01a4549c1fd8c60640c03ae5249eb374cd8cde8b905628d4b1af95c87c"
+dependencies = [
+ "serde",
+ "unicode-general-category",
 ]
 
 [[package]]
@@ -6000,6 +6011,12 @@ checksum = "96bd2f2237fe450fcd0a1d2f5f4e91711124f7857ba2e964247776ebeeb7b0c4"
 dependencies = [
  "unic-common",
 ]
+
+[[package]]
+name = "unicode-general-category"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b993bddc193ae5bd0d623b49ec06ac3e9312875fdae725a975c51db1cc1677f"
 
 [[package]]
 name = "unicode-ident"

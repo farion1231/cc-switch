@@ -38,7 +38,9 @@
     "reset": "重置",
     "actions": "操作",
     "deleting": "删除中...",
-    "auto": "自动"
+    "auto": "自动",
+    "enabled": "已开启",
+    "notSet": "未设置"
   },
   "apiKeyInput": {
     "placeholder": "请输入API Key",
@@ -170,6 +172,7 @@
     "settingsSaved": "设置已保存",
     "settingsSaveFailed": "保存设置失败：{{error}}",
     "openAIChatFormatHint": "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用",
+    "openAIFormatHint": "此供应商使用 OpenAI 兼容格式，需要开启代理服务才能正常使用",
     "proxyRequiredForSwitch": "此供应商需要代理服务，请先启动代理",
     "openLinkFailed": "链接打开失败",
     "openclawModelsRegistered": "模型已注册到 /model 列表",
@@ -188,6 +191,11 @@
       "message": "本地代理是一项高级功能，启用前请确保您已了解其工作原理。\n\n建议先查阅相关文档或咨询您的供应商，以获取正确的配置方式。",
       "confirm": "我已了解，继续启用"
     },
+    "failover": {
+      "title": "启用故障转移功能",
+      "message": "故障转移是一项高级功能，启用前请确保您已了解其工作原理。\n\n建议先在故障转移队列中配置好供应商优先级。",
+      "confirm": "我已了解，继续启用"
+    },
     "usage": {
       "title": "配置用量查询",
       "message": "用量查询需要配置专用的查询脚本或 API 参数，请确保您已从供应商处获取相关信息。\n\n如不确定如何配置，请先查阅供应商文档。",
@@ -197,6 +205,11 @@
       "title": "模型健康检测",
       "message": "健康检测通过直接发送 API 请求来测试供应商连通性，以下情况可能导致检测失败：\n\n• 官方供应商（使用 OAuth 登录，无独立 API Key）\n• 部分中转服务（会校验请求是否来自 Claude Code CLI）\n• AWS Bedrock（使用 IAM 签名认证）\n\n检测失败不代表供应商不可用，仅表示无法通过独立请求验证。请以应用内的实际情况为准。",
       "confirm": "我已了解，继续检测"
+    },
+    "autoSync": {
+      "title": "开启自动同步",
+      "message": "开启自动同步后，每次数据库变更都会自动上传到 WebDAV 服务器。\n\n这可能会产生较高的网络流量消耗，请确保您的网络环境和 WebDAV 服务支持频繁的数据传输。",
+      "confirm": "我已了解，继续开启"
     }
   },
   "settings": {
@@ -215,6 +228,8 @@
         "description": "控制代理服务开关、查看状态与端口信息",
         "enableFeature": "在主页面显示本地代理开关",
         "enableFeatureDescription": "开启后，主页面顶部将显示代理和故障转移开关",
+        "enableFailoverToggle": "在主页面显示故障转移开关",
+        "enableFailoverToggleDescription": "开启后，主页面顶部将独立显示故障转移开关",
         "running": "运行中",
         "stopped": "已停止"
       },
@@ -397,7 +412,7 @@
       "saveAndTestSuccess": "配置已保存，连接正常",
       "saveAndTestFailed": "配置已保存，但连接测试失败：{{error}}",
       "noRemoteData": "云端没有找到同步数据",
-      "incompatibleVersion": "远端数据版本不兼容（v{{version}}），当前支持 v2",
+      "incompatibleVersion": "远端数据版本不兼容（协议 v{{protocolVersion}}，数据库 {{dbCompatVersion}}），当前支持协议 v2 / db-v6",
       "unsaved": "未保存",
       "saved": "已保存",
       "unsavedChanges": "请先保存配置",
@@ -408,7 +423,10 @@
         "title": "从云端恢复",
         "deviceName": "上传设备",
         "createdAt": "上传时间",
+        "path": "远端路径",
+        "dbCompat": "数据库兼容层",
         "artifacts": "包含内容",
+        "legacyNotice": "检测到旧版云端路径。恢复完成后，下次上传将写入新路径 v2/db-v6。",
         "warning": "恢复将覆盖本地所有数据和技能配置",
         "confirm": "确认恢复"
       },
@@ -421,7 +439,10 @@
         "existingData": "云端已有数据",
         "deviceName": "上传设备",
         "createdAt": "上传时间",
+        "path": "远端路径",
+        "dbCompat": "数据库兼容层",
         "warning": "将覆盖云端已有的同步数据",
+        "legacyNotice": "检测到旧版云端路径数据。本次上传将写入新路径 v2/db-v6，不会覆盖旧路径。",
         "confirm": "确认上传"
       }
     },
@@ -568,7 +589,8 @@
       "pricingLoadFailed": "加载计费配置失败：{{error}}",
       "defaultCostMultiplierRequired": "默认倍率不能为空",
       "defaultCostMultiplierInvalid": "默认倍率格式不正确"
-    }
+    },
+    "saveFailedGeneric": "保存失败，请重试"
   },
   "apps": {
     "claude": "Claude",
@@ -604,6 +626,14 @@
     "projectDirCopied": "目录已复制",
     "copySourcePath": "复制原始文件",
     "sourcePathCopied": "原始文件已复制",
+    "delete": "删除会话",
+    "deleting": "删除中...",
+    "deleteTooltip": "永久删除此本地会话记录",
+    "deleteConfirmTitle": "删除会话",
+    "deleteConfirmMessage": "将永久删除本地会话“{{title}}”\nSession ID: {{sessionId}}\n\n此操作不可恢复。",
+    "deleteConfirmAction": "删除会话",
+    "sessionDeleted": "会话已删除",
+    "deleteFailed": "删除会话失败: {{error}}",
     "loadingMessages": "加载会话内容中...",
     "emptySession": "该会话暂无可展示内容",
     "clickToCopyPath": "点击复制路径",
@@ -614,7 +644,14 @@
     "daysAgo": "{{count}} 天前",
     "roleUser": "用户",
     "roleSystem": "系统",
-    "roleTool": "工具"
+    "roleTool": "工具",
+    "resume": "恢复会话",
+    "resumeTooltip": "在终端中恢复此会话",
+    "noResumeCommand": "此会话无法恢复",
+    "copyCommand": "复制命令",
+    "copyMessage": "复制消息",
+    "messageCopied": "已复制消息内容",
+    "conversationHistory": "对话记录"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",
@@ -668,7 +705,11 @@
       "aicodemirror": "AICodeMirror 是 CC Switch 的官方合作伙伴，使用此链接注册可享受8折优惠！",
       "aicoding": "AI Coding 为 CC Switch 的用户提供了特殊优惠，首次充值可以享受 9 折优惠！",
       "crazyrouter": "CrazyRouter 为 CC Switch 的用户提供了特殊优惠，首次充值赠予 30% 额外额度！",
-      "sssaicode": "SSAI Code 为 CC Switch 的用户提供了特殊优惠，每次充值赠予额外 $10 额度！"
+      "sssaicode": "SSAI Code 为 CC Switch 的用户提供了特殊优惠，每次充值赠予额外 $10 额度！",
+      "siliconflow": "硅基流动是 CC Switch 的官方合作伙伴",
+      "ucloud": "优云智算为CC Switch 的用户提供了特殊优惠，通过此链接注册，可以获得五元平台体验金！",
+      "micu": "Micu 是 CC Switch 的官方合作伙伴",
+      "x-code": "XCodeAPI 为CC Switch 的用户提供特别福利，使用此链接注册后首单加赠10%的额度(联系站长领取)"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -701,6 +742,12 @@
     "fullUrlHint": "代理将直接使用此 URL，不拼接路径",
     "apiFormatAnthropic": "Anthropic Messages (原生)",
     "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启代理)",
+    "apiFormatOpenAIResponses": "OpenAI Responses API (需开启代理)",
+    "authField": "认证字段",
+    "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（默认）",
+    "authFieldApiKey": "ANTHROPIC_API_KEY",
+    "authFieldHint": "选择写入配置的认证环境变量名",
+    "apiHintResponses": "💡 填写兼容 OpenAI Responses API 的服务端点地址，不要以斜杠结尾",
     "anthropicDefaultHaikuModel": "Haiku 默认模型",
     "anthropicDefaultSonnetModel": "Sonnet 默认模型",
     "anthropicDefaultOpusModel": "Opus 默认模型",
@@ -736,7 +783,8 @@
     "pleaseAddEndpoint": "请先添加端点",
     "testUnavailable": "测速功能不可用",
     "noResult": "未返回结果",
-    "testFailed": "测速失败: {{error}}"
+    "testFailed": "测速失败: {{error}}",
+    "empty": "暂无端点"
   },
   "providerAdvanced": {
     "testConfig": "模型测试配置",
@@ -780,7 +828,9 @@
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
     "extractFailed": "提取失败: {{error}}",
     "saveFailed": "保存失败: {{error}}",
-    "modelNameHint": "指定使用的模型，将自动更新到 config.toml 中"
+    "modelNameHint": "指定使用的模型，将自动更新到 config.toml 中",
+    "modelName": "模型名称",
+    "modelNamePlaceholder": "例如: gpt-5-codex"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
@@ -925,7 +975,28 @@
     "costBreakdown": "成本明细",
     "performance": "性能信息",
     "latency": "延迟",
-    "errorMessage": "错误信息"
+    "errorMessage": "错误信息",
+    "requests": "请求数",
+    "tokens": "Tokens",
+    "avgCost": "平均成本",
+    "avgLatency": "平均延迟",
+    "successRate": "成功率",
+    "requestId": "请求 ID",
+    "never": "从不",
+    "modelId": "模型 ID",
+    "modelIdRequired": "模型 ID 不能为空",
+    "inputCostPerMillion": "输入成本 (每百万 tokens, USD)",
+    "outputCostPerMillion": "输出成本 (每百万 tokens, USD)",
+    "invalidPrice": "价格必须为非负数",
+    "invalidTimeRange": "请选择完整的开始/结束时间",
+    "invalidTimeRangeOrder": "开始时间不能晚于结束时间",
+    "timeRangeTooLarge": "时间范围过大，请缩小范围",
+    "addPricing": "新增定价",
+    "editPricing": "编辑定价",
+    "pricingAdded": "定价已添加",
+    "pricingUpdated": "定价已更新",
+    "cacheReadCostPerMillion": "缓存读取成本 (每百万 tokens, USD)",
+    "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -1245,6 +1316,7 @@
     }
   },
   "openclaw": {
+    "backupCreated": "已创建备份：{{path}}",
     "providerKey": "供应商标识",
     "providerKeyPlaceholder": "my-provider",
     "providerKeyHint": "配置文件中的唯一标识符，创建后无法修改，只能使用小写字母、数字和连字符",
@@ -1275,9 +1347,15 @@
     "cacheWriteCost": "缓存写入价格 ($/M tokens)",
     "cacheCostHint": "缓存价格用于计算 Prompt Caching 的成本。如不使用缓存可留空。",
     "modelsHint": "配置该供应商支持的模型。模型 ID 用于 API 调用，显示名称用于界面展示。",
+    "userAgent": "发送 User-Agent",
+    "userAgentHint": "部分供应商需要浏览器 User-Agent 才能正常访问。",
     "env": {
       "title": "环境变量",
       "description": "管理 openclaw.json 中的环境变量配置（API Key、自定义变量等）",
+      "editorHint": "以 JSON 形式编辑整个 env 节点。支持 env.vars、env.shellEnv 等嵌套对象。",
+      "objectRequired": "OpenClaw 的 env 必须是 JSON 对象。",
+      "invalidJson": "OpenClaw 的 env 必须是合法 JSON。",
+      "empty": "OpenClaw 的 env 不能为空。空对象请使用 {}。",
       "keyPlaceholder": "变量名",
       "valuePlaceholder": "值",
       "add": "添加变量",
@@ -1290,6 +1368,14 @@
       "title": "工具权限",
       "description": "管理 openclaw.json 中的工具权限配置（允许/拒绝列表）",
       "profile": "权限模式",
+      "profileMinimal": "最小权限",
+      "profileCoding": "编码",
+      "profileMessaging": "对话",
+      "profileFull": "完全访问",
+      "profileUnset": "未设置",
+      "unsupportedProfileTitle": "检测到不受支持的工具配置",
+      "unsupportedProfileDescription": "当前 tools.profile 的值“{{value}}”不在 OpenClaw 支持列表内。在你手动选择新值之前，它会被保留。",
+      "unsupportedProfileLabel": "不受支持",
       "profiles": {
         "default": "默认",
         "strict": "严格",
@@ -1322,10 +1408,22 @@
       "timeout": "超时时间（秒）",
       "contextTokens": "上下文 Token 数",
       "maxConcurrent": "最大并发数",
+      "legacyTimeoutTitle": "检测到旧版超时字段",
+      "legacyTimeoutDescription": "当前配置仍在使用 agents.defaults.timeout。保存本页面时会迁移为 timeoutSeconds。",
       "saveSuccess": "Agents 配置已保存",
       "saveFailed": "保存 Agents 配置失败",
       "loadFailed": "读取 Agents 配置失败"
-    }
+    },
+    "health": {
+      "title": "检测到 OpenClaw 配置警告",
+      "invalidToolsProfile": "tools.profile 使用了不受支持的值。OpenClaw 当前只支持 minimal、coding、messaging、full。",
+      "legacyTimeout": "agents.defaults.timeout 已废弃。打开并保存 Agents 面板即可迁移到 timeoutSeconds。",
+      "stringifiedEnvVars": "env.vars 应为对象，但当前值看起来像被字符串化或已损坏。",
+      "stringifiedShellEnv": "env.shellEnv 应为对象，但当前值看起来像被字符串化或已损坏。",
+      "parseFailed": "openclaw.json 不是合法 JSON5。请先修复文件，再通过这里编辑。"
+    },
+    "primaryModel": "默认模型",
+    "fallbackModel": "回退模型"
   },
   "env": {
     "warning": {
@@ -1545,7 +1643,14 @@
       "skillsPath": "Skills 路径",
       "hint": "此操作将添加 Skill 仓库到列表。",
       "hintDetail": "添加后，您可以在 Skills 管理界面中选择安装具体的 Skill。"
-    }
+    },
+    "usageScript": "用量查询",
+    "usageScriptEnabled": "已启用",
+    "usageScriptDisabled": "未启用",
+    "usageApiKey": "用量 API Key",
+    "usageBaseUrl": "用量查询地址",
+    "usageAutoInterval": "自动查询",
+    "usageAutoIntervalValue": "每 {{minutes}} 分钟"
   },
   "iconPicker": {
     "search": "搜索图标",
@@ -1564,7 +1669,8 @@
     "selectIcon": "选择图标",
     "preview": "预览",
     "clickToChange": "点击更换图标",
-    "clickToSelect": "点击选择图标"
+    "clickToSelect": "点击选择图标",
+    "color": "图标颜色"
   },
   "migration": {
     "success": "配置迁移成功",
@@ -1701,7 +1807,12 @@
       "hint": "选择要接管的应用，启用后该应用的请求将通过本地代理转发",
       "enabled": "{{app}} 接管已启用",
       "disabled": "{{app}} 接管已关闭",
-      "failed": "切换接管状态失败"
+      "failed": "切换接管状态失败",
+      "tooltip": {
+        "active": "{{appLabel}} 已接管 - {{address}}:{{port}}\n切换该应用供应商为热切换",
+        "broken": "{{appLabel}} 已接管，但代理服务未运行",
+        "inactive": "接管 {{appLabel}} 的 Live 配置，让该应用请求走本地代理"
+      }
     },
     "failover": {
       "proxyRequired": "需要先启动代理服务才能配置故障转移",
@@ -1751,8 +1862,28 @@
       "successThresholdLabel": "恢复成功阈值",
       "successThresholdExplain": "半开状态下，成功达到此次数时关闭熔断器，供应商恢复可用",
       "errorRateLabel": "错误率阈值",
-      "errorRateExplain": "错误率超过此值时，即使未达到失败阈值也会打开熔断器"
-    }
+      "errorRateExplain": "错误率超过此值时，即使未达到失败阈值也会打开熔断器",
+      "maxRetries": "最大重试次数",
+      "timeoutSettings": "超时配置",
+      "streamingFirstByte": "流式首字节超时",
+      "streamingIdle": "流式静默超时",
+      "nonStreaming": "非流式超时",
+      "maxRetriesHint": "请求失败时的重试次数（0-10）",
+      "streamingFirstByteHint": "等待首个数据块的最大时间，范围 1-120 秒，默认 60 秒",
+      "streamingIdleHint": "数据块之间的最大间隔，范围 60-600 秒，填 0 禁用（防止中途卡住）",
+      "nonStreamingHint": "非流式请求的总超时时间，范围 60-1200 秒，默认 600 秒（10 分钟）"
+    },
+    "logging": {
+      "enabled": "日志记录已启用",
+      "disabled": "日志记录已关闭",
+      "failed": "切换日志状态失败"
+    },
+    "server": {
+      "started": "代理服务已启动 - {{address}}:{{port}}",
+      "startFailed": "启动代理服务失败: {{detail}}"
+    },
+    "stoppedWithRestore": "代理服务已关闭，已恢复所有接管配置",
+    "stopWithRestoreFailed": "停止失败: {{detail}}"
   },
   "streamCheck": {
     "configSaved": "健康检查配置已保存",
@@ -1765,7 +1896,11 @@
     "timeout": "超时时间（秒）",
     "maxRetries": "最大重试次数",
     "degradedThreshold": "降级阈值（毫秒）",
-    "testPrompt": "检查提示词"
+    "testPrompt": "检查提示词",
+    "operational": "{{providerName}} 运行正常 ({{responseTimeMs}}ms)",
+    "degraded": "{{providerName}} 响应较慢 ({{responseTimeMs}}ms)",
+    "failed": "{{providerName}} 检查失败: {{message}}",
+    "error": "{{providerName}} 检查出错: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "代理总开关",
@@ -1786,12 +1921,29 @@
   "circuitBreaker": {
     "failureThreshold": "失败阈值",
     "successThreshold": "成功阈值",
-    "timeoutSeconds": "超时时间",
-    "errorRateThreshold": "错误率阈值",
+    "timeoutSeconds": "超时时间（秒）",
+    "errorRateThreshold": "错误率阈值 (%)",
     "minRequests": "最小请求数",
     "validationFailed": "以下字段超出有效范围: {{fields}}",
     "configSaved": "熔断器配置已保存",
-    "saveFailed": "保存失败"
+    "saveFailed": "保存失败",
+    "loading": "加载中...",
+    "title": "熔断器配置",
+    "description": "调整熔断器参数以控制故障检测和恢复行为",
+    "failureThresholdHint": "连续失败多少次后打开熔断器",
+    "timeoutSecondsHint": "熔断器打开后多久尝试恢复（半开状态）",
+    "successThresholdHint": "半开状态下成功多少次后关闭熔断器",
+    "errorRateThresholdHint": "错误率超过此值时打开熔断器",
+    "minRequestsHint": "计算错误率前的最小请求数",
+    "saveConfig": "保存配置",
+    "instructionsTitle": "配置说明",
+    "instructions": {
+      "failureThreshold": "连续失败达到此次数时，熔断器打开",
+      "timeout": "熔断器打开后，等待此时间后尝试半开",
+      "successThreshold": "半开状态下，成功达到此次数时关闭熔断器",
+      "errorRate": "错误率超过此值时，熔断器打开",
+      "minRequests": "只有请求数达到此值后才计算错误率"
+    }
   },
   "universalProvider": {
     "title": "统一供应商",

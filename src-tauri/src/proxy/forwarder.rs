@@ -6,6 +6,7 @@ use super::{
     body_filter::filter_private_params_with_whitelist,
     error::*,
     failover_switch::FailoverSwitchManager,
+    log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{get_adapter, ProviderAdapter, ProviderType},
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
@@ -701,13 +702,13 @@ impl RequestForwarder {
                                     Some(format!("Provider {} 失败: {}", provider.name, e));
                             }
 
-                            log::warn!(
-                                "[{}] [FWD-001] Provider {} 失败，切换下一个 ({}/{})",
-                                app_type_str,
-                                provider.name,
+                            let (log_code, log_message) = build_retryable_failure_log(
+                                &provider.name,
                                 attempted_providers,
-                                providers.len()
+                                providers.len(),
+                                &e,
                             );
+                            log::warn!("[{app_type_str}] [{log_code}] {log_message}");
 
                             last_error = Some(e);
                             last_provider = Some(provider.clone());
@@ -764,7 +765,11 @@ impl RequestForwarder {
             }
         }
 
-        log::warn!("[{app_type_str}] [FWD-002] 所有 Provider 均失败");
+        if let Some((log_code, log_message)) =
+            build_terminal_failure_log(attempted_providers, providers.len(), last_error.as_ref())
+        {
+            log::warn!("[{app_type_str}] [{log_code}] {log_message}");
+        }
 
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
@@ -815,7 +820,13 @@ impl RequestForwarder {
                     None => (endpoint, None),
                 };
                 if path == "/v1/messages" || path == "/claude/v1/messages" {
-                    // 转换到 chat/completions 时剥离 beta=true（Anthropic 专有参数）
+                    // 转换到 OpenAI 兼容端点时剥离 beta=true（Anthropic 专有参数）
+                    let api_format = super::providers::get_claude_api_format(provider);
+                    let target_path = if api_format == "openai_responses" {
+                        "/v1/responses"
+                    } else {
+                        "/v1/chat/completions"
+                    };
                     let filtered = query.map(|q| {
                         q.split('&')
                             .filter(|p| !p.starts_with("beta="))
@@ -823,8 +834,8 @@ impl RequestForwarder {
                             .join("&")
                     });
                     match filtered.as_deref() {
-                        Some(q) if !q.is_empty() => format!("/v1/chat/completions?{q}"),
-                        _ => "/v1/chat/completions".to_string(),
+                        Some(q) if !q.is_empty() => format!("{target_path}?{q}"),
+                        _ => target_path.to_string(),
                     }
                 } else {
                     endpoint.to_string()
@@ -1015,4 +1026,192 @@ fn is_bedrock_provider(provider: &Provider) -> bool {
         .and_then(|v| v.as_str())
         .map(|v| v == "1")
         .unwrap_or(false)
+}
+
+fn build_retryable_failure_log(
+    provider_name: &str,
+    attempted_providers: usize,
+    total_providers: usize,
+    error: &ProxyError,
+) -> (&'static str, String) {
+    let error_summary = summarize_proxy_error(error);
+
+    if total_providers <= 1 {
+        (
+            log_fwd::SINGLE_PROVIDER_FAILED,
+            format!("Provider {provider_name} 请求失败: {error_summary}"),
+        )
+    } else {
+        (
+            log_fwd::PROVIDER_FAILED_RETRY,
+            format!(
+                "Provider {provider_name} 失败，继续尝试下一个 ({attempted_providers}/{total_providers}): {error_summary}"
+            ),
+        )
+    }
+}
+
+fn build_terminal_failure_log(
+    attempted_providers: usize,
+    total_providers: usize,
+    last_error: Option<&ProxyError>,
+) -> Option<(&'static str, String)> {
+    if total_providers <= 1 {
+        return None;
+    }
+
+    let error_summary = last_error
+        .map(summarize_proxy_error)
+        .unwrap_or_else(|| "未知错误".to_string());
+
+    Some((
+        log_fwd::ALL_PROVIDERS_FAILED,
+        format!(
+            "已尝试 {attempted_providers}/{total_providers} 个 Provider，均失败。最后错误: {error_summary}"
+        ),
+    ))
+}
+
+fn summarize_proxy_error(error: &ProxyError) -> String {
+    match error {
+        ProxyError::UpstreamError { status, body } => {
+            let body_summary = body
+                .as_deref()
+                .map(summarize_upstream_body)
+                .filter(|summary| !summary.is_empty());
+
+            match body_summary {
+                Some(summary) => format!("上游 HTTP {status}: {summary}"),
+                None => format!("上游 HTTP {status}"),
+            }
+        }
+        ProxyError::Timeout(message) => {
+            format!("请求超时: {}", summarize_text_for_log(message, 180))
+        }
+        ProxyError::ForwardFailed(message) => {
+            format!("请求转发失败: {}", summarize_text_for_log(message, 180))
+        }
+        ProxyError::TransformError(message) => {
+            format!("响应转换失败: {}", summarize_text_for_log(message, 180))
+        }
+        ProxyError::ConfigError(message) => {
+            format!("配置错误: {}", summarize_text_for_log(message, 180))
+        }
+        ProxyError::AuthError(message) => {
+            format!("认证失败: {}", summarize_text_for_log(message, 180))
+        }
+        _ => summarize_text_for_log(&error.to_string(), 180),
+    }
+}
+
+fn summarize_upstream_body(body: &str) -> String {
+    if let Ok(json_body) = serde_json::from_str::<Value>(body) {
+        if let Some(message) = extract_json_error_message(&json_body) {
+            return summarize_text_for_log(&message, 180);
+        }
+
+        if let Ok(compact_json) = serde_json::to_string(&json_body) {
+            return summarize_text_for_log(&compact_json, 180);
+        }
+    }
+
+    summarize_text_for_log(body, 180)
+}
+
+fn extract_json_error_message(body: &Value) -> Option<String> {
+    let candidates = [
+        body.pointer("/error/message"),
+        body.pointer("/message"),
+        body.pointer("/detail"),
+        body.pointer("/error"),
+    ];
+
+    candidates
+        .into_iter()
+        .flatten()
+        .find_map(|value| value.as_str().map(ToString::to_string))
+}
+
+fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = normalized.trim();
+
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+
+    let truncated: String = trimmed.chars().take(max_chars).collect();
+    let truncated = truncated.trim_end();
+    format!("{truncated}...")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn single_provider_retryable_log_uses_single_provider_code() {
+        let error = ProxyError::UpstreamError {
+            status: 429,
+            body: Some(r#"{"error":{"message":"rate limit exceeded"}}"#.to_string()),
+        };
+
+        let (code, message) = build_retryable_failure_log("PackyCode-response", 1, 1, &error);
+
+        assert_eq!(code, log_fwd::SINGLE_PROVIDER_FAILED);
+        assert!(message.contains("Provider PackyCode-response 请求失败"));
+        assert!(message.contains("上游 HTTP 429"));
+        assert!(message.contains("rate limit exceeded"));
+        assert!(!message.contains("切换下一个"));
+    }
+
+    #[test]
+    fn multi_provider_retryable_log_keeps_failover_wording() {
+        let error = ProxyError::Timeout("upstream timed out after 30s".to_string());
+
+        let (code, message) = build_retryable_failure_log("primary", 1, 3, &error);
+
+        assert_eq!(code, log_fwd::PROVIDER_FAILED_RETRY);
+        assert!(message.contains("继续尝试下一个 (1/3)"));
+        assert!(message.contains("请求超时"));
+    }
+
+    #[test]
+    fn single_provider_has_no_terminal_all_failed_log() {
+        assert!(build_terminal_failure_log(1, 1, None).is_none());
+    }
+
+    #[test]
+    fn multi_provider_terminal_log_contains_last_error_summary() {
+        let error = ProxyError::ForwardFailed("connection reset by peer".to_string());
+
+        let (code, message) =
+            build_terminal_failure_log(2, 2, Some(&error)).expect("expected terminal log");
+
+        assert_eq!(code, log_fwd::ALL_PROVIDERS_FAILED);
+        assert!(message.contains("已尝试 2/2 个 Provider，均失败"));
+        assert!(message.contains("connection reset by peer"));
+    }
+
+    #[test]
+    fn summarize_upstream_body_prefers_json_message() {
+        let body = json!({
+            "error": {
+                "message": "invalid_request_error: unsupported field"
+            },
+            "request_id": "req_123"
+        });
+
+        let summary = summarize_upstream_body(&body.to_string());
+
+        assert_eq!(summary, "invalid_request_error: unsupported field");
+    }
+
+    #[test]
+    fn summarize_text_for_log_collapses_whitespace_and_truncates() {
+        let summary = summarize_text_for_log("line1\n\n line2   line3", 12);
+
+        assert_eq!(summary, "line1 line2...");
+    }
 }

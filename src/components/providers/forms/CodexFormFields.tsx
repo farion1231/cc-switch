@@ -112,7 +112,7 @@ export function CodexFormFields({
             value={modelName}
             onChange={(e) => onModelNameChange(e.target.value)}
             placeholder={t("codexConfig.modelNamePlaceholder", {
-              defaultValue: "例如: gpt-5-codex",
+              defaultValue: "例如: gpt-5.4",
             })}
             className="w-full px-3 py-2 border border-border-default bg-background text-foreground rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 transition-colors"
           />

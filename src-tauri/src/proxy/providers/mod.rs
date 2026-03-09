@@ -18,7 +18,9 @@ mod codex;
 mod gemini;
 pub mod models;
 pub mod streaming;
+pub mod streaming_responses;
 pub mod transform;
+pub mod transform_responses;
 
 use crate::app_config::AppType;
 use crate::provider::Provider;
@@ -27,7 +29,7 @@ use serde::{Deserialize, Serialize};
 // 公开导出
 pub use adapter::ProviderAdapter;
 pub use auth::{AuthInfo, AuthStrategy};
-pub use claude::ClaudeAdapter;
+pub use claude::{get_claude_api_format, ClaudeAdapter};
 pub use codex::CodexAdapter;
 pub use gemini::GeminiAdapter;
 

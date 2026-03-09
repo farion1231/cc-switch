@@ -38,7 +38,9 @@
     "reset": "リセット",
     "actions": "操作",
     "deleting": "削除中...",
-    "auto": "自動"
+    "auto": "自動",
+    "enabled": "有効",
+    "notSet": "未設定"
   },
   "apiKeyInput": {
     "placeholder": "API Key を入力",
@@ -170,6 +172,7 @@
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
     "openAIChatFormatHint": "このプロバイダーは OpenAI Chat フォーマットを使用しており、プロキシサービスの有効化が必要です",
+    "openAIFormatHint": "このプロバイダーは OpenAI 互換フォーマットを使用しており、プロキシサービスの有効化が必要です",
     "proxyRequiredForSwitch": "このプロバイダーにはプロキシが必要です。先にプロキシを起動してください",
     "openLinkFailed": "リンクを開けませんでした",
     "openclawModelsRegistered": "モデルが /model リストに登録されました",
@@ -188,6 +191,11 @@
       "message": "ローカルプロキシは上級機能です。有効にする前に、その仕組みを理解していることをご確認ください。\n\n適切な設定方法については、関連ドキュメントまたはプロバイダーにご相談ください。",
       "confirm": "理解しました、有効にする"
     },
+    "failover": {
+      "title": "フェイルオーバーの有効化",
+      "message": "フェイルオーバーは上級機能です。有効にする前に、その仕組みを理解していることをご確認ください。\n\nフェイルオーバーキューでプロバイダーの優先順位を先に設定することをお勧めします。",
+      "confirm": "理解しました、有効にする"
+    },
     "usage": {
       "title": "使用量クエリの設定",
       "message": "使用量クエリにはカスタムスクリプトまたは API パラメータが必要です。プロバイダーから必要な情報を取得していることをご確認ください。\n\n設定方法が不明な場合は、プロバイダーのドキュメントを先にご確認ください。",
@@ -197,6 +205,11 @@
       "title": "モデルヘルスチェック",
       "message": "ヘルスチェックは API リクエストを直接送信してプロバイダーの接続性をテストします。以下の場合、チェックが失敗する可能性があります：\n\n• 公式プロバイダー（OAuth ログイン使用、独立した API キーなし）\n• 一部の中継サービス（リクエストが Claude Code CLI からのものか検証）\n• AWS Bedrock（IAM 署名認証を使用）\n\nチェック失敗はプロバイダーが使用不能であることを意味しません。独立したリクエストでの検証ができないことを示すだけです。アプリ内の実際の動作を基準にしてください。",
       "confirm": "理解しました、続行する"
+    },
+    "autoSync": {
+      "title": "自動同期を有効にする",
+      "message": "自動同期を有効にすると、データベースの変更ごとに WebDAV サーバーへ自動アップロードされます。\n\nネットワークトラフィックが大幅に増加する可能性があります。ネットワーク環境と WebDAV サービスが頻繁なデータ転送に対応できることをご確認ください。",
+      "confirm": "理解しました、有効にする"
     }
   },
   "settings": {
@@ -215,6 +228,8 @@
         "description": "プロキシサービスの切り替え、ステータスとポート情報を表示",
         "enableFeature": "メインページにプロキシ切り替えを表示",
         "enableFeatureDescription": "有効にすると、メインページ上部にプロキシとフェイルオーバーの切り替えが表示されます",
+        "enableFailoverToggle": "メインページにフェイルオーバー切り替えを表示",
+        "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
         "running": "実行中",
         "stopped": "停止中"
       },
@@ -397,7 +412,7 @@
       "saveAndTestSuccess": "設定を保存しました。接続正常です",
       "saveAndTestFailed": "設定を保存しましたが、接続テストに失敗しました：{{error}}",
       "noRemoteData": "クラウドに同期データが見つかりません",
-      "incompatibleVersion": "リモートデータのバージョンに互換性がありません（v{{version}}）。現在 v2 をサポートしています",
+      "incompatibleVersion": "リモートデータに互換性がありません（プロトコル v{{protocolVersion}}、データベース {{dbCompatVersion}}）。このクライアントは protocol v2 / db-v6 をサポートしています。",
       "unsaved": "未保存",
       "saved": "保存済み",
       "unsavedChanges": "先に設定を保存してください",
@@ -408,7 +423,10 @@
         "title": "クラウドから復元",
         "deviceName": "アップロード元",
         "createdAt": "アップロード日時",
+        "path": "リモートパス",
+        "dbCompat": "DB 互換レイヤー",
         "artifacts": "内容",
+        "legacyNotice": "旧レイアウトのリモートパスを検出しました。復元後、次回のアップロードは新しい v2/db-v6 パスに書き込まれます。",
         "warning": "ローカルのすべてのデータとスキル設定が上書きされます",
         "confirm": "復元を実行"
       },
@@ -421,7 +439,10 @@
         "existingData": "クラウドの既存データ",
         "deviceName": "アップロード元",
         "createdAt": "アップロード日時",
+        "path": "リモートパス",
+        "dbCompat": "DB 互換レイヤー",
         "warning": "リモートの既存同期データが上書きされます",
+        "legacyNotice": "旧レイアウトのリモートデータを検出しました。今回のアップロードは新しい v2/db-v6 パスに書き込み、旧パスは上書きしません。",
         "confirm": "アップロードを実行"
       }
     },
@@ -568,7 +589,8 @@
       "pricingLoadFailed": "課金設定の読み込みに失敗しました: {{error}}",
       "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
       "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
-    }
+    },
+    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
   },
   "apps": {
     "claude": "Claude",
@@ -604,6 +626,14 @@
     "projectDirCopied": "ディレクトリをコピーしました",
     "copySourcePath": "元ファイルをコピー",
     "sourcePathCopied": "元ファイルをコピーしました",
+    "delete": "セッションを削除",
+    "deleting": "削除中...",
+    "deleteTooltip": "このローカルセッション記録を完全に削除します",
+    "deleteConfirmTitle": "セッションを削除",
+    "deleteConfirmMessage": "ローカルセッション「{{title}}」を完全に削除します\nSession ID: {{sessionId}}\n\nこの操作は元に戻せません。",
+    "deleteConfirmAction": "セッションを削除",
+    "sessionDeleted": "セッションを削除しました",
+    "deleteFailed": "セッションの削除に失敗しました: {{error}}",
     "loadingMessages": "内容を読み込み中...",
     "emptySession": "表示できる内容がありません",
     "clickToCopyPath": "クリックしてパスをコピー",
@@ -614,7 +644,14 @@
     "daysAgo": "{{count}}日前",
     "roleUser": "ユーザー",
     "roleSystem": "システム",
-    "roleTool": "ツール"
+    "roleTool": "ツール",
+    "resume": "セッションを再開",
+    "resumeTooltip": "ターミナルでこのセッションを再開",
+    "noResumeCommand": "このセッションは再開できません",
+    "copyCommand": "コマンドをコピー",
+    "copyMessage": "メッセージをコピー",
+    "messageCopied": "メッセージがコピーされました",
+    "conversationHistory": "会話履歴"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",
@@ -668,7 +705,11 @@
       "aicodemirror": "AICodeMirror は CC Switch の公式パートナーです。このリンクから登録すると20%オフ！",
       "aicoding": "AI Coding は CC Switch ユーザー向けに特別割引を提供しています。初回チャージが 10% オフ！",
       "crazyrouter": "CrazyRouter は CC Switch ユーザー向けに特別ボーナスを提供しています。初回チャージで 30% の追加クレジットがもらえます！",
-      "sssaicode": "SSAI Code は CC Switch ユーザー向けに特別ボーナスを提供しています。チャージごとに $10 の追加クレジットがもらえます！"
+      "sssaicode": "SSAI Code は CC Switch ユーザー向けに特別ボーナスを提供しています。チャージごとに $10 の追加クレジットがもらえます！",
+      "siliconflow": "SiliconFlow は CC Switch の公式パートナーです",
+      "ucloud": "UCloud は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、5元のプラットフォーム体験クレジットがもらえます！",
+      "micu": "Micu は CC Switch の公式パートナーです",
+      "x-code": "XCodeAPI は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、初回注文で 10% の追加クレジットがもらえます（管理者に連絡して受け取り）"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
@@ -701,6 +742,12 @@
     "fullUrlHint": "プロキシはこの URL をそのまま使用",
     "apiFormatAnthropic": "Anthropic Messages（ネイティブ）",
     "apiFormatOpenAIChat": "OpenAI Chat Completions（プロキシが必要）",
+    "apiFormatOpenAIResponses": "OpenAI Responses API（プロキシが必要）",
+    "authField": "認証フィールド",
+    "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（デフォルト）",
+    "authFieldApiKey": "ANTHROPIC_API_KEY",
+    "authFieldHint": "設定に書き込む認証環境変数名を選択",
+    "apiHintResponses": "💡 OpenAI Responses API 互換サービスのエンドポイントを入力してください。末尾にスラッシュを付けないでください",
     "anthropicDefaultHaikuModel": "既定 Haiku モデル",
     "anthropicDefaultSonnetModel": "既定 Sonnet モデル",
     "anthropicDefaultOpusModel": "既定 Opus モデル",
@@ -736,7 +783,8 @@
     "pleaseAddEndpoint": "まずエンドポイントを追加してください",
     "testUnavailable": "速度テストを実行できません",
     "noResult": "結果がありません",
-    "testFailed": "速度テストに失敗しました: {{error}}"
+    "testFailed": "速度テストに失敗しました: {{error}}",
+    "empty": "エンドポイントがありません"
   },
   "providerAdvanced": {
     "testConfig": "モデルテスト設定",
@@ -780,7 +828,9 @@
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
     "extractFailed": "抽出に失敗しました: {{error}}",
     "saveFailed": "保存に失敗しました: {{error}}",
-    "modelNameHint": "使用するモデルを指定します。config.toml に自動更新されます"
+    "modelNameHint": "使用するモデルを指定します。config.toml に自動更新されます",
+    "modelName": "モデル名",
+    "modelNamePlaceholder": "例: gpt-5-codex"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
@@ -925,7 +975,28 @@
     "costBreakdown": "コスト明細",
     "performance": "パフォーマンス",
     "latency": "レイテンシー",
-    "errorMessage": "エラーメッセージ"
+    "errorMessage": "エラーメッセージ",
+    "requests": "リクエスト数",
+    "tokens": "トークン",
+    "avgCost": "平均コスト",
+    "avgLatency": "平均レイテンシ",
+    "successRate": "成功率",
+    "requestId": "リクエスト ID",
+    "never": "なし",
+    "modelId": "モデル ID",
+    "modelIdRequired": "モデル ID は必須です",
+    "inputCostPerMillion": "入力コスト（100万トークンあたり、USD）",
+    "outputCostPerMillion": "出力コスト（100万トークンあたり、USD）",
+    "invalidPrice": "価格は負でない数値である必要があります",
+    "invalidTimeRange": "開始/終了時刻を完全に選択してください",
+    "invalidTimeRangeOrder": "開始時刻は終了時刻より前である必要があります",
+    "timeRangeTooLarge": "時間範囲が大きすぎます。範囲を縮小してください",
+    "addPricing": "価格設定を追加",
+    "editPricing": "価格設定を編集",
+    "pricingAdded": "価格設定が追加されました",
+    "pricingUpdated": "価格設定が更新されました",
+    "cacheReadCostPerMillion": "キャッシュ読み取りコスト（100万トークンあたり、USD）",
+    "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -1245,6 +1316,7 @@
     }
   },
   "openclaw": {
+    "backupCreated": "バックアップを作成しました: {{path}}",
     "providerKey": "プロバイダーキー",
     "providerKeyPlaceholder": "my-provider",
     "providerKeyHint": "設定ファイル内のユニーク識別子。作成後は変更できません。小文字、数字、ハイフンのみ使用可能。",
@@ -1275,9 +1347,15 @@
     "cacheWriteCost": "キャッシュ書込コスト ($/M トークン)",
     "cacheCostHint": "キャッシュコストは Prompt Caching のコスト計算に使用されます。キャッシュを使用しない場合は空欄のままにしてください。",
     "modelsHint": "このプロバイダーがサポートするモデルを設定します。モデル ID は API 呼び出しに、表示名はインターフェースに使用されます。",
+    "userAgent": "User-Agent を送信",
+    "userAgentHint": "一部のプロバイダーはブラウザの User-Agent ヘッダーが必要です。",
     "env": {
       "title": "環境変数",
       "description": "openclaw.json の環境変数設定を管理（APIキー、カスタム変数など）",
+      "editorHint": "env セクション全体を JSON として編集します。env.vars や env.shellEnv などのネストしたオブジェクトにも対応しています。",
+      "objectRequired": "OpenClaw の env は JSON オブジェクトである必要があります。",
+      "invalidJson": "OpenClaw の env は有効な JSON である必要があります。",
+      "empty": "OpenClaw の env は空にできません。空オブジェクトの場合は {} を使用してください。",
       "keyPlaceholder": "変数名",
       "valuePlaceholder": "値",
       "add": "変数を追加",
@@ -1290,6 +1368,14 @@
       "title": "ツール権限",
       "description": "openclaw.json のツール権限設定を管理（許可/拒否リスト）",
       "profile": "権限プロファイル",
+      "profileMinimal": "最小",
+      "profileCoding": "コーディング",
+      "profileMessaging": "メッセージ",
+      "profileFull": "フルアクセス",
+      "profileUnset": "未設定",
+      "unsupportedProfileTitle": "未対応のツールプロファイルを検出しました",
+      "unsupportedProfileDescription": "現在の tools.profile の値 '{{value}}' は OpenClaw の対応リストにありません。新しい値を選択するまでこの値を保持します。",
+      "unsupportedProfileLabel": "未対応",
       "profiles": {
         "default": "デフォルト",
         "strict": "厳格",
@@ -1322,10 +1408,22 @@
       "timeout": "タイムアウト（秒）",
       "contextTokens": "コンテキストトークン数",
       "maxConcurrent": "最大同時実行数",
+      "legacyTimeoutTitle": "旧タイムアウト設定を検出しました",
+      "legacyTimeoutDescription": "この設定ではまだ agents.defaults.timeout を使用しています。ここで保存すると timeoutSeconds に移行されます。",
       "saveSuccess": "Agents 設定を保存しました",
       "saveFailed": "Agents 設定の保存に失敗しました",
       "loadFailed": "Agents 設定の読み込みに失敗しました"
-    }
+    },
+    "health": {
+      "title": "OpenClaw 設定の警告を検出しました",
+      "invalidToolsProfile": "tools.profile に未対応の値が設定されています。OpenClaw が現在サポートしているのは minimal、coding、messaging、full です。",
+      "legacyTimeout": "agents.defaults.timeout は非推奨です。Agents パネルを保存すると timeoutSeconds に移行されます。",
+      "stringifiedEnvVars": "env.vars はオブジェクトである必要がありますが、現在の値は文字列化または破損しているようです。",
+      "stringifiedShellEnv": "env.shellEnv はオブジェクトである必要がありますが、現在の値は文字列化または破損しているようです。",
+      "parseFailed": "openclaw.json を有効な JSON5 として解析できませんでした。ここで編集する前にファイルを修正してください。"
+    },
+    "primaryModel": "プライマリモデル",
+    "fallbackModel": "フォールバックモデル"
   },
   "env": {
     "warning": {
@@ -1545,7 +1643,14 @@
       "skillsPath": "スキルパス",
       "hint": "この操作でスキルリポジトリが一覧に追加されます。",
       "hintDetail": "追加後、スキル管理ページから個別のスキルをインストールできます。"
-    }
+    },
+    "usageScript": "使用量クエリ",
+    "usageScriptEnabled": "有効",
+    "usageScriptDisabled": "無効",
+    "usageApiKey": "使用量 API キー",
+    "usageBaseUrl": "使用量クエリ URL",
+    "usageAutoInterval": "自動クエリ",
+    "usageAutoIntervalValue": "{{minutes}} 分ごと"
   },
   "iconPicker": {
     "search": "アイコンを検索",
@@ -1564,7 +1669,8 @@
     "selectIcon": "アイコンを選択",
     "preview": "プレビュー",
     "clickToChange": "クリックでアイコンを変更",
-    "clickToSelect": "クリックでアイコンを選択"
+    "clickToSelect": "クリックでアイコンを選択",
+    "color": "アイコンカラー"
   },
   "migration": {
     "success": "設定の移行が完了しました",
@@ -1701,7 +1807,12 @@
       "hint": "テイクオーバーするアプリを選択します。有効にすると、そのアプリのリクエストはローカルプロキシ経由で転送されます",
       "enabled": "{{app}} テイクオーバー有効",
       "disabled": "{{app}} テイクオーバー無効",
-      "failed": "テイクオーバーの切り替えに失敗しました"
+      "failed": "テイクオーバーの切り替えに失敗しました",
+      "tooltip": {
+        "active": "{{appLabel}} がインターセプト中 - {{address}}:{{port}}\nホットスイッチングのためプロバイダを切り替え",
+        "broken": "{{appLabel}} がインターセプト中ですが、プロキシサービスが実行されていません",
+        "inactive": "{{appLabel}} のライブ設定をインターセプトしてリクエストをローカルプロキシ経由でルーティング"
+      }
     },
     "failover": {
       "proxyRequired": "フェイルオーバーを設定するには、プロキシサービスを先に起動する必要があります",
@@ -1751,8 +1862,28 @@
       "successThresholdLabel": "回復成功しきい値",
       "successThresholdExplain": "半開状態でこの回数成功するとサーキットブレーカーが閉じ、プロバイダーが再び利用可能になります",
       "errorRateLabel": "エラー率しきい値",
-      "errorRateExplain": "失敗しきい値に達していなくても、エラー率がこの値を超えるとサーキットブレーカーが開きます"
-    }
+      "errorRateExplain": "失敗しきい値に達していなくても、エラー率がこの値を超えるとサーキットブレーカーが開きます",
+      "maxRetries": "最大リトライ回数",
+      "timeoutSettings": "タイムアウト設定",
+      "streamingFirstByte": "ストリーミング最初のバイトタイムアウト",
+      "streamingIdle": "ストリーミングアイドルタイムアウト",
+      "nonStreaming": "非ストリーミングタイムアウト",
+      "maxRetriesHint": "リクエスト失敗時のリトライ回数（0-10）",
+      "streamingFirstByteHint": "最初のデータチャンクを待つ最大時間、範囲 1-120 秒、デフォルト 60 秒",
+      "streamingIdleHint": "データチャンク間の最大間隔、範囲 60-600 秒、0 で無効化（途中停止を防止）",
+      "nonStreamingHint": "非ストリーミングリクエストの合計タイムアウト、範囲 60-1200 秒、デフォルト 600 秒（10 分）"
+    },
+    "logging": {
+      "enabled": "ログ記録が有効になりました",
+      "disabled": "ログ記録が無効になりました",
+      "failed": "ログ状態の切り替えに失敗しました"
+    },
+    "server": {
+      "started": "プロキシサービスが開始されました - {{address}}:{{port}}",
+      "startFailed": "プロキシサービスの開始に失敗しました: {{detail}}"
+    },
+    "stoppedWithRestore": "プロキシサービスが停止し、すべてのテイクオーバー設定が復元されました",
+    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
   },
   "streamCheck": {
     "configSaved": "ヘルスチェック設定を保存しました",
@@ -1765,7 +1896,11 @@
     "timeout": "タイムアウト（秒）",
     "maxRetries": "最大リトライ回数",
     "degradedThreshold": "劣化しきい値（ミリ秒）",
-    "testPrompt": "テストプロンプト"
+    "testPrompt": "テストプロンプト",
+    "operational": "{{providerName}} は正常に動作しています ({{responseTimeMs}}ms)",
+    "degraded": "{{providerName}} の応答が遅いです ({{responseTimeMs}}ms)",
+    "failed": "{{providerName}} のチェックに失敗しました: {{message}}",
+    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "プロキシ有効",
@@ -1784,14 +1919,31 @@
     "nonStreaming": "非ストリーミングタイムアウト"
   },
   "circuitBreaker": {
-    "failureThreshold": "失敗しきい値",
-    "successThreshold": "成功しきい値",
+    "failureThreshold": "失敗閾値",
+    "successThreshold": "成功閾値",
     "timeoutSeconds": "タイムアウト（秒）",
-    "errorRateThreshold": "エラー率しきい値",
+    "errorRateThreshold": "エラー率閾値 (%)",
     "minRequests": "最小リクエスト数",
     "validationFailed": "以下のフィールドが有効範囲外です: {{fields}}",
-    "configSaved": "サーキットブレーカー設定を保存しました",
-    "saveFailed": "保存に失敗しました"
+    "configSaved": "サーキットブレーカー設定が保存されました",
+    "saveFailed": "保存に失敗しました",
+    "loading": "読み込み中...",
+    "title": "サーキットブレーカー設定",
+    "description": "サーキットブレーカーパラメータを調整して、障害検出と復旧動作を制御します",
+    "failureThresholdHint": "連続失敗後にサーキットブレーカーを開く回数",
+    "timeoutSecondsHint": "サーキットブレーカーを開いた後、復旧を試みるまでの時間（半開状態）",
+    "successThresholdHint": "半開状態で成功してサーキットブレーカーを閉じる回数",
+    "errorRateThresholdHint": "エラー率がこの値を超えるとサーキットブレーカーを開く",
+    "minRequestsHint": "エラー率を計算する前の最小リクエスト数",
+    "saveConfig": "設定を保存",
+    "instructionsTitle": "設定説明",
+    "instructions": {
+      "failureThreshold": "連続失敗がこの回数に達するとサーキットブレーカーが開く",
+      "timeout": "サーキットブレーカーを開いた後、この時間待機してから半開を試みる",
+      "successThreshold": "半開状態で成功がこの回数に達するとサーキットブレーカーを閉じる",
+      "errorRate": "エラー率がこの値を超えるとサーキットブレーカーが開く",
+      "minRequests": "リクエスト数がこの値に達した後にのみエラー率が計算される"
+    }
   },
   "universalProvider": {
     "title": "統合プロバイダー",

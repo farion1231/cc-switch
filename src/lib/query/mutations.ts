@@ -1,9 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { providersApi, settingsApi, type AppId } from "@/lib/api";
+import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
+import type { DeleteSessionOptions } from "@/lib/api/sessions";
 import type { SwitchResult } from "@/lib/api/providers";
-import type { Provider, Settings } from "@/types";
+import type { Provider, SessionMeta, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
@@ -65,6 +66,12 @@ export const useAddProviderMutation = (appId: AppId) => {
         });
       }
 
+      if (appId === "openclaw") {
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.health,
+        });
+      }
+
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -106,6 +113,11 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "openclaw") {
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.health,
+        });
+      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -150,6 +162,12 @@ export const useDeleteProviderMutation = (appId: AppId) => {
         });
         await queryClient.invalidateQueries({
           queryKey: ["omo-slim", "provider-count"],
+        });
+      }
+
+      if (appId === "openclaw") {
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.health,
         });
       }
 
@@ -213,6 +231,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.defaultModel,
         });
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.health,
+        });
       }
 
       try {
@@ -242,6 +263,50 @@ export const useSwitchProviderMutation = (appId: AppId) => {
             },
           },
         },
+      );
+    },
+  });
+};
+
+export const useDeleteSessionMutation = () => {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: async (input: DeleteSessionOptions) => {
+      await sessionsApi.delete(input);
+      return input;
+    },
+    onSuccess: async (input) => {
+      queryClient.setQueryData<SessionMeta[]>(["sessions"], (current) =>
+        (current ?? []).filter(
+          (session) =>
+            !(
+              session.providerId === input.providerId &&
+              session.sessionId === input.sessionId &&
+              session.sourcePath === input.sourcePath
+            ),
+        ),
+      );
+      queryClient.removeQueries({
+        queryKey: ["sessionMessages", input.providerId, input.sourcePath],
+      });
+
+      await queryClient.invalidateQueries({ queryKey: ["sessions"] });
+
+      toast.success(
+        t("sessionManager.sessionDeleted", {
+          defaultValue: "会话已删除",
+        }),
+      );
+    },
+    onError: (error: Error) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
+      toast.error(
+        t("sessionManager.deleteFailed", {
+          defaultValue: "删除会话失败: {{error}}",
+          error: detail,
+        }),
       );
     },
   });

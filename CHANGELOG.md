@@ -9,6 +9,127 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.12.0] - 2026-03-09
+
+### Feature Release
+
+This release restores the **Model Health Check (Stream Check)** UI, adds **OpenAI Responses API** format conversion, introduces the **Bedrock Optimizer** for thinking + cache injection, expands provider presets (Ucloud, Micu, X-Code API, Novita, Bailian For Coding), overhauls **OpenClaw config panels** with a JSON5 round-trip write engine, enhances **WebDAV sync** with dual-layer versioning, and delivers a comprehensive **i18n audit** fixing 69 missing keys alongside 20+ bug fixes.
+
+**Stats**: 56 commits | 221 files changed | +20,582 insertions | -8,026 deletions
+
+### Added
+
+#### Stream Check (Model Health Check)
+
+- **Restore Stream Check UI**: Brought back the model health check (Stream Check) panel for testing provider endpoint availability with live streaming validation
+- **First-Run Confirmation**: Added a confirmation dialog on first use of Stream Check to inform users about the feature's purpose and network requests
+- **OpenAI Chat Format Support**: Stream Check now supports `openai_chat` api_format, enabling health checks for providers using OpenAI-compatible endpoints
+
+#### OpenAI Responses API
+
+- **Responses API Format Conversion**: New `api_format = "openai_responses"` option enabling Anthropic Messages ↔ OpenAI Responses API bidirectional conversion for providers that implement the Responses API
+- **Responses API Deduplication**: Deduplicated and improved the Responses API conversion logic, consolidating shared transformation code
+
+#### Bedrock Optimizer
+
+- **Bedrock Request Optimizer**: PRE-SEND optimizer that injects thinking parameters and cache control blocks into AWS Bedrock requests, enabling extended thinking and prompt caching on Bedrock endpoints (#1301)
+
+#### OpenClaw Enhancements
+
+- **JSON5 Round-Trip Write Engine**: Overhauled OpenClaw config panels with a JSON5 round-trip write engine that preserves comments, formatting, and ordering when saving configuration changes
+- **Config Panel Improvements**: Redesigned EnvPanel as a full JSON editor, added `tools.profile` selection to ToolsPanel, introduced OpenClawHealthBanner for config validation warnings, and added legacy timeout migration support in Agents Defaults
+- **Agent Model Dropdown**: Replaced text inputs with dropdown selects for OpenClaw agent model configuration, offering a curated list of available models
+- **User-Agent Toggle**: Added a User-Agent header toggle for OpenClaw, defaulting to off to avoid potential compatibility issues with certain providers
+
+#### Provider Presets
+
+- **Ucloud**: Added Ucloud partner provider preset for Claude, Codex, and OpenClaw with endpointCandidates, unified apiKeyUrl, refreshed model defaults, and OpenClaw `templateValues` / `suggestedDefaults`
+- **Micu**: Added Micu partner provider preset for Claude, Codex, OpenClaw, and OpenCode with OpenClaw `templateValues` / `suggestedDefaults`
+- **X-Code API**: Added X-Code API partner provider preset for Claude, Codex, and OpenCode with endpointCandidates
+- **Novita**: Added Novita provider presets and icon across all supported apps (#1192)
+- **Bailian For Coding**: Added Bailian For Coding preset configuration (#1263)
+- **SiliconFlow Partner Badge**: Added partner badge designation for SiliconFlow provider presets
+- **Model Role Badges**: Added model role badges (e.g., Opus, Sonnet) to provider presets and reordered presets to prioritize Opus models
+
+#### WebDAV Sync
+
+- **Dual-Layer Versioning**: Added protocol v2 + db-v6 dual-layer versioning to WebDAV sync, enabling backward-compatible sync format evolution and automatic migration detection
+- **Auto-Sync Confirmation**: Added a confirmation dialog when toggling WebDAV auto-sync on/off to prevent accidental changes
+
+#### Usage & Data
+
+- **Daily Rollups & Auto-Vacuum**: Added usage daily rollups for aggregated statistics, incremental auto-vacuum for storage management, and sync-aware backup that coordinates with WebDAV sync cycles
+- **UsageFooter Extra Fields**: Added extra field display in UsageFooter component for normal mode, showing additional usage metadata (#1137)
+
+#### Session Management
+
+- **Session Deletion**: Added session deletion with per-provider cleanup and path safety validation, allowing users to remove individual conversation sessions
+
+#### UI & Config
+
+- **Auth Field Selector**: Restored Claude provider auth field selector supporting both AUTH_TOKEN and API_KEY authentication modes
+- **Failover Toggle**: Moved failover toggle to display independently on the main page with a confirmation dialog for enabling/disabling
+- **Common Config Auto-Extract**: Auto-extract Common Config Snippets from live configuration files on first run, seeding initial common config without manual setup
+- **New Provider Page Improvements**: Improved the new provider page with API endpoint and model name fields (#1155)
+
+### Changed
+
+#### Architecture
+
+- **Common Config Runtime Overlay**: Common Config is now applied as a runtime overlay during provider switching instead of being materialized (merged) into each provider's stored config. This preserves the original provider config in the database and applies common settings dynamically at write time
+- **First-Run Auto-Extract**: On first run, Common Config Snippets are automatically extracted from the current live configuration files, eliminating the need for manual initial setup
+
+### Fixed
+
+#### Proxy & Streaming
+
+- **OpenAI Streaming Conversion**: Fixed OpenAI ChatCompletion → Anthropic Messages streaming conversion that could produce malformed events under certain response structures
+- **Codex /responses/compact Route**: Added support for Codex `/responses/compact` route in proxy forwarding (#1194)
+- **Codex Common Config TOML Merge**: Fixed Codex Common Config to use structural TOML merge/subset instead of raw string comparison, correctly handling key ordering and formatting differences
+- **Proxy Forwarder Failure Logs**: Improved proxy forwarder failure logging with more descriptive error messages
+
+#### Provider & Preset
+
+- **X-Code Rename**: Renamed "X-Code" provider to "X-Code API" for consistency with the official branding
+- **SSSAiCode Missing /v1**: Added missing `/v1` path to SSSAiCode default endpoint for Codex and OpenCode
+- **AICoding URL Fix**: Removed `www` prefix from aicoding.sh provider URLs to match the correct domain
+- **New Provider Page Input Handling**: Fixed the new provider page so API endpoint / model fields handle line-break deletion correctly and added the missing `codexConfig.modelNameHint` i18n key for zh/en/ja
+
+#### Platform
+
+- **Cache Hit Token Statistics**: Fixed missing token statistics for cache hits in streaming responses (#1244)
+- **Minimize-to-Tray Auto Exit**: Fixed issue where the application would automatically exit after being minimized to the system tray for a period of time (#1245)
+
+#### i18n & Localization
+
+- **Comprehensive i18n Audit**: Added 69 missing i18n keys and fixed hardcoded Chinese strings across the application, improving localization coverage for all three languages (zh/en/ja)
+- **Model Test Panel i18n**: Corrected i18n key paths for model test panel title and description
+- **JSON5 Slash Escaping**: Normalized JSON5 slash escaping and added i18n support for OpenClaw panel labels
+
+#### UI
+
+- **Skills Count Display**: Fixed skills count not displaying correctly when adding new skills (#1295)
+- **Endpoint Speed Test**: Removed HTTP status code display from endpoint speed test results to reduce visual noise
+- **Outline Button Text Tone**: Aligned outline button text color tone with usage refresh control for visual consistency (#1222)
+
+### Performance
+
+- **OpenClaw Config Write Skip**: Skip backup and atomic write when OpenClaw configuration content is unchanged, avoiding unnecessary I/O operations
+
+### Documentation
+
+- **User Manual i18n**: Restructured user manual for internationalization and added complete EN/JA translations alongside the existing ZH documentation
+- **User Manual OpenClaw**: Added OpenClaw coverage and completed settings documentation for the user manual
+- **UCloud CompShare Sponsor**: Added UCloud CompShare as a sponsor partner
+- **Docs Directory Reorganization**: Reorganized docs directory structure, added user manual links to all three README files, removed cross-language links from user manual sections, and synced README features across EN/ZH/JA
+
+### Maintenance
+
+- **Periodic Maintenance Timer**: Consolidated periodic maintenance timers into a unified scheduler, combining vacuum and rollup operations into a single timer
+- **OpenClaw Save Toast**: Removed backup path display from OpenClaw save toasts for cleaner notification messages
+
+---
+
 ## [3.11.1] - 2026-02-28
 
 ### Hotfix Release

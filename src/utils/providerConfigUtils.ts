@@ -170,7 +170,7 @@ export const hasCommonConfigSnippet = (
 export const getApiKeyFromConfig = (
   jsonString: string,
   appType?: string,
-  apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY",
+  apiKeyField?: string,
 ): string => {
   try {
     const config = JSON.parse(jsonString);
@@ -305,7 +305,7 @@ export const setApiKeyInConfig = (
   options: {
     createIfMissing?: boolean;
     appType?: string;
-    apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
+    apiKeyField?: string;
   } = {},
 ): string => {
   const { createIfMissing = false, appType, apiKeyField } = options;

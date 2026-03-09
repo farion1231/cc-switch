@@ -33,6 +33,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { settingsApi } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { SettingsFormState } from "@/hooks/useSettings";
 import type { RemoteSnapshotInfo, WebDavSyncSettings } from "@/types";
 
 // ─── WebDAV service presets ─────────────────────────────────
@@ -92,6 +94,10 @@ function formatDate(rfc3339: string): string {
   return Number.isNaN(d.getTime()) ? rfc3339 : d.toLocaleString();
 }
 
+function formatDbCompatVersion(version?: number | null): string | null {
+  return typeof version === "number" ? `db-v${version}` : null;
+}
+
 // ─── Types ──────────────────────────────────────────────────
 
 type ActionState =
@@ -106,6 +112,8 @@ type DialogType = "upload" | "download" | null;
 
 interface WebdavSyncSectionProps {
   config?: WebDavSyncSettings;
+  settings?: SettingsFormState;
+  onAutoSave?: (updates: Partial<SettingsFormState>) => Promise<unknown>;
 }
 
 // ─── ActionButton ───────────────────────────────────────────
@@ -147,7 +155,11 @@ function ActionButton({
 
 // ─── Main component ─────────────────────────────────────────
 
-export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
+export function WebdavSyncSection({
+  config,
+  settings,
+  onAutoSave,
+}: WebdavSyncSectionProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [actionState, setActionState] = useState<ActionState>("idle");
@@ -176,6 +188,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
   // Confirmation dialog state
   const [dialogType, setDialogType] = useState<DialogType>(null);
   const [remoteInfo, setRemoteInfo] = useState<RemoteSnapshotInfo | null>(null);
+  const [showAutoSyncConfirm, setShowAutoSyncConfirm] = useState(false);
 
   const closeDialog = useCallback(() => {
     setDialogType(null);
@@ -240,15 +253,34 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
     }
   }, [form.baseUrl, presetId]);
 
-  const handleAutoSyncChange = useCallback((checked: boolean) => {
-    setForm((prev) => ({ ...prev, autoSync: checked }));
+  const handleAutoSyncChange = useCallback(
+    (checked: boolean) => {
+      if (checked && !settings?.autoSyncConfirmed) {
+        setShowAutoSyncConfirm(true);
+        return;
+      }
+      setForm((prev) => ({ ...prev, autoSync: checked }));
+      setDirty(true);
+      setJustSaved(false);
+      if (justSavedTimerRef.current) {
+        clearTimeout(justSavedTimerRef.current);
+        justSavedTimerRef.current = null;
+      }
+    },
+    [settings?.autoSyncConfirmed],
+  );
+
+  const handleAutoSyncConfirm = useCallback(async () => {
+    setShowAutoSyncConfirm(false);
+    await onAutoSave?.({ autoSyncConfirmed: true });
+    setForm((prev) => ({ ...prev, autoSync: true }));
     setDirty(true);
     setJustSaved(false);
     if (justSavedTimerRef.current) {
       clearTimeout(justSavedTimerRef.current);
       justSavedTimerRef.current = null;
     }
-  }, []);
+  }, [onAutoSave]);
 
   const buildSettings = useCallback((): WebDavSyncSettings | null => {
     const baseUrl = form.baseUrl.trim();
@@ -395,7 +427,10 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
       if (!info.compatible) {
         toast.error(
           t("settings.webdavSync.incompatibleVersion", {
-            version: info.version,
+            protocolVersion: info.protocolVersion,
+            dbCompatVersion:
+              formatDbCompatVersion(info.dbCompatVersion) ??
+              t("common.unknown"),
           }),
         );
         return;
@@ -450,6 +485,11 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
   const lastError = config?.status?.lastError?.trim();
   const showAutoSyncError =
     !!lastError && config?.status?.lastErrorSource === "auto";
+  const currentRemotePath = `/${form.remoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${form.profile.trim() || "default"}`;
+  const remoteDbCompatDisplay = formatDbCompatVersion(
+    remoteInfo?.dbCompatVersion,
+  );
+  const remoteIsLegacy = remoteInfo?.layout === "legacy";
 
   // ─── Render ─────────────────────────────────────────────
 
@@ -720,8 +760,7 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
                   {t("settings.webdavSync.confirmUpload.targetPath")}
                   {": "}
                   <code className="ml-1 text-xs bg-muted px-1.5 py-0.5 rounded">
-                    /{form.remoteRoot.trim() || "cc-switch-sync"}/v2/
-                    {form.profile.trim() || "default"}
+                    {currentRemotePath}
                   </code>
                 </p>
                 {remoteInfo && (
@@ -742,12 +781,33 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
                         {t("settings.webdavSync.confirmUpload.createdAt")}
                       </dt>
                       <dd>{formatDate(remoteInfo.createdAt)}</dd>
+                      <dt className="font-medium text-foreground">
+                        {t("settings.webdavSync.confirmUpload.path")}
+                      </dt>
+                      <dd>
+                        <code className="bg-muted px-1.5 py-0.5 rounded">
+                          {remoteInfo.remotePath}
+                        </code>
+                      </dd>
+                      {remoteDbCompatDisplay && (
+                        <>
+                          <dt className="font-medium text-foreground">
+                            {t("settings.webdavSync.confirmUpload.dbCompat")}
+                          </dt>
+                          <dd>{remoteDbCompatDisplay}</dd>
+                        </>
+                      )}
                     </dl>
                   </div>
                 )}
-                {remoteInfo && (
+                {remoteInfo && !remoteIsLegacy && (
                   <p className="text-destructive font-medium">
                     {t("settings.webdavSync.confirmUpload.warning")}
+                  </p>
+                )}
+                {remoteInfo && remoteIsLegacy && (
+                  <p className="font-medium text-amber-600 dark:text-amber-400">
+                    {t("settings.webdavSync.confirmUpload.legacyNotice")}
                   </p>
                 )}
               </div>
@@ -794,10 +854,31 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
                     </dt>
                     <dd>{formatDate(remoteInfo.createdAt)}</dd>
                     <dt className="font-medium text-foreground">
+                      {t("settings.webdavSync.confirmDownload.path")}
+                    </dt>
+                    <dd>
+                      <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                        {remoteInfo.remotePath}
+                      </code>
+                    </dd>
+                    {remoteDbCompatDisplay && (
+                      <>
+                        <dt className="font-medium text-foreground">
+                          {t("settings.webdavSync.confirmDownload.dbCompat")}
+                        </dt>
+                        <dd>{remoteDbCompatDisplay}</dd>
+                      </>
+                    )}
+                    <dt className="font-medium text-foreground">
                       {t("settings.webdavSync.confirmDownload.artifacts")}
                     </dt>
                     <dd>{remoteInfo.artifacts.join(", ")}</dd>
                   </dl>
+                )}
+                {remoteInfo?.layout === "legacy" && (
+                  <p className="font-medium text-amber-600 dark:text-amber-400">
+                    {t("settings.webdavSync.confirmDownload.legacyNotice")}
+                  </p>
                 )}
                 <p className="text-destructive font-medium">
                   {t("settings.webdavSync.confirmDownload.warning")}
@@ -815,6 +896,17 @@ export function WebdavSyncSection({ config }: WebdavSyncSectionProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ─── Auto-sync confirmation dialog ────────────────── */}
+      <ConfirmDialog
+        isOpen={showAutoSyncConfirm}
+        variant="info"
+        title={t("confirm.autoSync.title")}
+        message={t("confirm.autoSync.message")}
+        confirmText={t("confirm.autoSync.confirm")}
+        onConfirm={() => void handleAutoSyncConfirm()}
+        onCancel={() => setShowAutoSyncConfirm(false)}
+      />
     </section>
   );
 }

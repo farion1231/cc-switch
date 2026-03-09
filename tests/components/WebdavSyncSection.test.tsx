@@ -228,6 +228,14 @@ describe("WebdavSyncSection", () => {
     fireEvent.click(
       screen.getByRole("switch", { name: "settings.webdavSync.autoSync" }),
     );
+    fireEvent.click(
+      screen.getByRole("button", { name: "confirm.autoSync.confirm" }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByRole("switch", { name: "settings.webdavSync.autoSync" }),
+      ).toHaveAttribute("aria-checked", "true");
+    });
     fireEvent.click(screen.getByRole("button", { name: "settings.webdavSync.save" }));
 
     await waitFor(() => {

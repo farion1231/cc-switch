@@ -42,6 +42,10 @@ interface OpenClawFormFieldsProps {
   // Models
   models: OpenClawModel[];
   onModelsChange: (models: OpenClawModel[]) => void;
+
+  // User-Agent
+  userAgent: boolean;
+  onUserAgentChange: (checked: boolean) => void;
 }
 
 export function OpenClawFormFields({
@@ -58,6 +62,8 @@ export function OpenClawFormFields({
   onApiChange,
   models,
   onModelsChange,
+  userAgent,
+  onUserAgentChange,
 }: OpenClawFormFieldsProps) {
   const { t } = useTranslation();
   const [expandedModels, setExpandedModels] = useState<Record<number, boolean>>(
@@ -204,6 +210,21 @@ export function OpenClawFormFields({
         isPartner={isPartner}
         partnerPromotionKey={partnerPromotionKey}
       />
+
+      {/* User-Agent */}
+      <div className="flex items-center justify-between">
+        <div className="space-y-0.5">
+          <FormLabel>
+            {t("openclaw.userAgent", { defaultValue: "发送 User-Agent" })}
+          </FormLabel>
+          <p className="text-xs text-muted-foreground">
+            {t("openclaw.userAgentHint", {
+              defaultValue: "部分供应商需要浏览器 User-Agent 才能正常访问。",
+            })}
+          </p>
+        </div>
+        <Switch checked={userAgent} onCheckedChange={onUserAgentChange} />
+      </div>
 
       {/* Models Editor */}
       <div className="space-y-3">

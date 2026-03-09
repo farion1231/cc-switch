@@ -102,7 +102,7 @@ export const settingsApi = {
     return await invoke("import_config_from_file", { filePath });
   },
 
-  // ─── WebDAV v2 sync ───────────────────────────────────────
+  // ─── WebDAV sync ──────────────────────────────────────────
 
   async webdavTestConnection(
     settings: WebDavSyncSettings,

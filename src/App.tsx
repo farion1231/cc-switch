@@ -33,7 +33,7 @@ import {
 } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
-import { openclawKeys } from "@/hooks/useOpenClaw";
+import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
@@ -70,6 +70,7 @@ import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
+import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 
 type View =
   | "providers"
@@ -229,6 +230,16 @@ function App() {
   });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
+  const isOpenClawView =
+    activeApp === "openclaw" &&
+    (currentView === "providers" ||
+      currentView === "workspace" ||
+      currentView === "sessions" ||
+      currentView === "openclawEnv" ||
+      currentView === "openclawTools" ||
+      currentView === "openclawAgents");
+  const { data: openclawHealthWarnings = [] } =
+    useOpenClawHealth(isOpenClawView);
   const hasSkillsSupport = true;
   const hasSessionSupport =
     activeApp === "claude" ||
@@ -543,6 +554,9 @@ function App() {
       } else if (activeApp === "openclaw") {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.liveProviderIds,
+        });
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.health,
         });
       }
       toast.success(
@@ -967,23 +981,17 @@ function App() {
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
             {currentView === "providers" &&
               activeApp !== "opencode" &&
-              activeApp !== "openclaw" &&
-              settingsData?.enableLocalProxy && (
+              activeApp !== "openclaw" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
                 >
-                  <ProxyToggle activeApp={activeApp} />
-                  <div
-                    className={cn(
-                      "transition-all duration-300 ease-in-out overflow-hidden",
-                      isCurrentAppTakeoverActive
-                        ? "opacity-100 max-w-[100px] scale-100"
-                        : "opacity-0 max-w-0 scale-75 pointer-events-none",
-                    )}
-                  >
+                  {settingsData?.enableLocalProxy && (
+                    <ProxyToggle activeApp={activeApp} />
+                  )}
+                  {settingsData?.enableFailoverToggle && (
                     <FailoverToggle activeApp={activeApp} />
-                  </div>
+                  )}
                 </div>
               )}
             <div
@@ -1225,6 +1233,9 @@ function App() {
       </header>
 
       <main className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in">
+        {isOpenClawView && openclawHealthWarnings.length > 0 && (
+          <OpenClawHealthBanner warnings={openclawHealthWarnings} />
+        )}
         {renderContent()}
       </main>
 

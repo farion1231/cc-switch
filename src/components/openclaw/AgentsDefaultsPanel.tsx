@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Save, Plus, Trash2 } from "lucide-react";
+import { Save, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import {
   useOpenClawAgentsDefaults,
@@ -10,6 +10,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Select,
   SelectContent,
@@ -19,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import type { OpenClawAgentsDefaults } from "@/types";
 import { useOpenClawModelOptions } from "./hooks/useOpenClawModelOptions";
+import { getOpenClawTimeoutInputValue } from "./utils";
 
 const UNSET_SENTINEL = "__unset__";
 
@@ -50,9 +52,16 @@ const AgentsDefaultsPanel: React.FC = () => {
 
       // Extract known extra fields
       setWorkspace(String(agentsData.workspace ?? ""));
-      setTimeout_(String(agentsData.timeout ?? ""));
+      setTimeout_(getOpenClawTimeoutInputValue(agentsData));
       setContextTokens(String(agentsData.contextTokens ?? ""));
       setMaxConcurrent(String(agentsData.maxConcurrent ?? ""));
+    } else {
+      setPrimaryModel("");
+      setFallbacks([]);
+      setWorkspace("");
+      setTimeout_("");
+      setContextTokens("");
+      setMaxConcurrent("");
     }
   }, [agentsData]);
 
@@ -146,8 +155,9 @@ const AgentsDefaultsPanel: React.FC = () => {
       };
 
       const timeoutNum = timeout.trim() ? parseNum(timeout) : undefined;
-      if (timeoutNum !== undefined) updated.timeout = timeoutNum;
-      else delete updated.timeout;
+      if (timeoutNum !== undefined) updated.timeoutSeconds = timeoutNum;
+      else delete updated.timeoutSeconds;
+      delete updated.timeout;
 
       const ctxNum = contextTokens.trim() ? parseNum(contextTokens) : undefined;
       if (ctxNum !== undefined) updated.contextTokens = ctxNum;
@@ -180,12 +190,34 @@ const AgentsDefaultsPanel: React.FC = () => {
   }
 
   const noModels = modelOptions.length === 0 && !modelsLoading;
+  const hasLegacyTimeout =
+    agentsData !== undefined &&
+    agentsData !== null &&
+    typeof agentsData.timeout === "number" &&
+    typeof agentsData.timeoutSeconds !== "number";
 
   return (
     <div className="px-6 pt-4 pb-8">
       <p className="text-sm text-muted-foreground mb-6">
         {t("openclaw.agents.description")}
       </p>
+
+      {hasLegacyTimeout && (
+        <Alert className="mb-4 border-amber-500/30 bg-amber-500/5">
+          <TriangleAlert className="h-4 w-4" />
+          <AlertTitle>
+            {t("openclaw.agents.legacyTimeoutTitle", {
+              defaultValue: "Legacy timeout detected",
+            })}
+          </AlertTitle>
+          <AlertDescription>
+            {t("openclaw.agents.legacyTimeoutDescription", {
+              defaultValue:
+                "This config still uses agents.defaults.timeout. Saving here will migrate it to timeoutSeconds.",
+            })}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Model Configuration Card */}
       <div className="rounded-xl border border-border bg-card p-5 mb-4">

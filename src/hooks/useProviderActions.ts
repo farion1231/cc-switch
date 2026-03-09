@@ -80,6 +80,9 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
             const existingCatalog = (await openclawApi.getModelCatalog()) || {};
             const mergedCatalog = { ...existingCatalog, ...modelCatalog };
             await openclawApi.setModelCatalog(mergedCatalog);
+            await queryClient.invalidateQueries({
+              queryKey: openclawKeys.health,
+            });
             modelsRegistered = true;
           }
 
@@ -88,6 +91,9 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
             const existingDefault = await openclawApi.getDefaultModel();
             if (!existingDefault?.primary) {
               await openclawApi.setDefaultModel(model);
+              await queryClient.invalidateQueries({
+                queryKey: openclawKeys.health,
+              });
             }
           }
 
@@ -109,7 +115,7 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         }
       }
     },
-    [addProviderMutation, activeApp, t],
+    [addProviderMutation, activeApp, queryClient, t],
   );
 
   // 更新供应商
@@ -138,7 +144,8 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         activeApp === "claude" &&
         provider.category !== "official" &&
         (provider.meta?.isFullUrl ||
-          provider.meta?.apiFormat === "openai_chat") &&
+          provider.meta?.apiFormat === "openai_chat" ||
+          provider.meta?.apiFormat === "openai_responses") &&
         !isProxyRunning
       ) {
         toast.warning(
@@ -168,13 +175,14 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         if (
           activeApp === "claude" &&
           provider.category !== "official" &&
-          provider.meta?.apiFormat === "openai_chat"
+          (provider.meta?.apiFormat === "openai_chat" ||
+            provider.meta?.apiFormat === "openai_responses")
         ) {
-          // OpenAI Chat 格式供应商：显示代理提示
+          // OpenAI format provider: show proxy hint
           toast.info(
-            t("notifications.openAIChatFormatHint", {
+            t("notifications.openAIFormatHint", {
               defaultValue:
-                "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用",
+                "此供应商使用 OpenAI 兼容格式，需要开启代理服务才能正常使用",
             }),
             {
               duration: 5000,
@@ -273,6 +281,9 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         await openclawApi.setDefaultModel(model);
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.defaultModel,
+        });
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.health,
         });
         toast.success(
           t("notifications.openclawDefaultModelSet", {

@@ -180,9 +180,11 @@ export function ClaudeFormFields({
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.apiEndpointPlaceholder")}
           hint={
-            apiFormat === "openai_chat"
-              ? t("providerForm.apiHintOAI")
-              : t("providerForm.apiHint")
+            apiFormat === "openai_responses"
+              ? t("providerForm.apiHintResponses")
+              : apiFormat === "openai_chat"
+                ? t("providerForm.apiHintOAI")
+                : t("providerForm.apiHint")
           }
           onManageClick={() => onEndpointModalToggle(true)}
           showFullUrlToggle={true}
@@ -228,6 +230,11 @@ export function ClaudeFormFields({
                   defaultValue: "OpenAI Chat Completions (需转换)",
                 })}
               </SelectItem>
+              <SelectItem value="openai_responses">
+                {t("providerForm.apiFormatOpenAIResponses", {
+                  defaultValue: "OpenAI Responses API (需转换)",
+                })}
+              </SelectItem>
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
@@ -254,20 +261,19 @@ export function ClaudeFormFields({
             <SelectContent>
               <SelectItem value="ANTHROPIC_AUTH_TOKEN">
                 {t("providerForm.authFieldAuthToken", {
-                  defaultValue: "Auth Token (默认)",
+                  defaultValue: "ANTHROPIC_AUTH_TOKEN（默认）",
                 })}
               </SelectItem>
               <SelectItem value="ANTHROPIC_API_KEY">
                 {t("providerForm.authFieldApiKey", {
-                  defaultValue: "API Key",
+                  defaultValue: "ANTHROPIC_API_KEY",
                 })}
               </SelectItem>
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
             {t("providerForm.authFieldHint", {
-              defaultValue:
-                "大多数第三方供应商使用 Auth Token；少数供应商需要 API Key",
+              defaultValue: "选择写入配置的认证环境变量名",
             })}
           </p>
         </div>

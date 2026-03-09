@@ -9,6 +9,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, Connection};
 use serde_json::json;
 use std::collections::HashMap;
+use tempfile::NamedTempFile;
 
 const LEGACY_SCHEMA_SQL: &str = r#"
     CREATE TABLE providers (
@@ -631,5 +632,34 @@ fn schema_model_pricing_is_seeded_on_init() {
         gemini_count > 0,
         "应该包含 Gemini 模型定价，实际数量: {}",
         gemini_count
+    );
+}
+
+#[test]
+fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
+    let temp = NamedTempFile::new().expect("create temp db file");
+    let path = temp.path().to_path_buf();
+
+    let conn = Connection::open(&path).expect("open temp db");
+    conn.execute("PRAGMA auto_vacuum = NONE;", [])
+        .expect("set none auto_vacuum");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+
+    assert_eq!(
+        Database::get_auto_vacuum_mode(&conn).expect("auto_vacuum before rebuild"),
+        0,
+        "existing file db should start with NONE auto_vacuum"
+    );
+
+    let rebuilt =
+        Database::ensure_incremental_auto_vacuum_on_conn(&conn).expect("enable incremental mode");
+    assert!(rebuilt, "existing db should require rebuild via VACUUM");
+    drop(conn);
+
+    let reopened = Connection::open(&path).expect("reopen temp db");
+    assert_eq!(
+        Database::get_auto_vacuum_mode(&reopened).expect("auto_vacuum after rebuild"),
+        2,
+        "file db should persist INCREMENTAL auto_vacuum after VACUUM rebuild"
     );
 }

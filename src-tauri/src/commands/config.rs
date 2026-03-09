@@ -28,6 +28,39 @@ fn invalid_json_format_error(error: serde_json::Error) -> String {
     }
 }
 
+fn invalid_toml_format_error(error: toml_edit::TomlError) -> String {
+    let lang = settings::get_settings()
+        .language
+        .unwrap_or_else(|| "zh".to_string());
+
+    match lang.as_str() {
+        "en" => format!("Invalid TOML format: {error}"),
+        "ja" => format!("TOML形式が無効です: {error}"),
+        _ => format!("无效的 TOML 格式: {error}"),
+    }
+}
+
+fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), String> {
+    if snippet.trim().is_empty() {
+        return Ok(());
+    }
+
+    match app_type {
+        "claude" | "gemini" | "omo" | "omo-slim" => {
+            serde_json::from_str::<serde_json::Value>(snippet)
+                .map_err(invalid_json_format_error)?;
+        }
+        "codex" => {
+            snippet
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(invalid_toml_format_error)?;
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_config_status(app: String) -> Result<ConfigStatus, String> {
     match AppType::from_str(&app).map_err(|e| e.to_string())? {
@@ -213,16 +246,12 @@ pub async fn set_common_config_snippet(
     snippet: String,
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<(), String> {
-    if !snippet.trim().is_empty() {
-        match app_type.as_str() {
-            "claude" | "gemini" | "omo" | "omo-slim" => {
-                serde_json::from_str::<serde_json::Value>(&snippet)
-                    .map_err(invalid_json_format_error)?;
-            }
-            "codex" => {}
-            _ => {}
-        }
-    }
+    let old_snippet = state
+        .db
+        .get_config_snippet(&app_type)
+        .map_err(|e| e.to_string())?;
+
+    validate_common_config_snippet(&app_type, &snippet)?;
 
     let value = if snippet.trim().is_empty() {
         None
@@ -230,10 +259,34 @@ pub async fn set_common_config_snippet(
         Some(snippet)
     };
 
+    if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
+        if let Some(legacy_snippet) = old_snippet
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            let app = AppType::from_str(&app_type).map_err(|e| e.to_string())?;
+            crate::services::provider::ProviderService::migrate_legacy_common_config_usage(
+                state.inner(),
+                app,
+                legacy_snippet,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
     state
         .db
         .set_config_snippet(&app_type, value)
         .map_err(|e| e.to_string())?;
+
+    if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
+        let app = AppType::from_str(&app_type).map_err(|e| e.to_string())?;
+        crate::services::provider::ProviderService::sync_current_provider_for_app(
+            state.inner(),
+            app,
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
     if app_type == "omo"
         && state
@@ -262,6 +315,27 @@ pub async fn set_common_config_snippet(
         .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_common_config_snippet;
+
+    #[test]
+    fn validate_common_config_snippet_accepts_comment_only_codex_snippet() {
+        validate_common_config_snippet("codex", "# comment only\n")
+            .expect("comment-only codex snippet should be valid");
+    }
+
+    #[test]
+    fn validate_common_config_snippet_rejects_invalid_codex_snippet() {
+        let err = validate_common_config_snippet("codex", "[broken")
+            .expect_err("invalid codex snippet should be rejected");
+        assert!(
+            err.contains("TOML") || err.contains("toml") || err.contains("格式"),
+            "expected TOML validation error, got {err}"
+        );
+    }
 }
 
 #[tauri::command]
