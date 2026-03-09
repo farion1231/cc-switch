@@ -1,5 +1,44 @@
 # Tauri Command Parity Test Plan
 
+## 当前状态（2026-03-09）
+
+这轮迁移已经完成了主计划里的 `Layer A + Layer B + Layer C`，并用现有前端 integration tests 补上了轻量 `Layer D` 主链 smoke：
+
+- `src-tauri baseline` 已落地并通过
+- `legacy vs core parity` 已落地并通过
+- 前端 `GUI API smoke` 已通过 `tests/api/TauriContracts.test.ts` 和现有 integration tests 补齐
+- `Layer D` 当前由 `tests/integration/App.test.tsx`、`tests/integration/SettingsDialog.test.tsx` 等主链 smoke 覆盖
+
+已完成迁移并具备 baseline/parity 覆盖的域：
+
+- `provider`
+- `mcp`
+- `prompt`
+- `skill`
+- `usage`
+- `proxy + failover`
+- `settings + config + import/export + backup + webdav`
+- `deeplink`
+- `workspace + sessions`
+- `openclaw + omo`
+- `global_proxy`
+- `env`
+- `plugin + stream_check`
+
+当前明确留在壳层、不纳入 `core parity` 主结论的命令仍然是这些：
+
+- 文件/目录选择器：`pick_directory`、`save_file_dialog`、`open_file_dialog`、`open_zip_file_dialog`
+- 打开外部资源：`open_external`、`open_config_folder`、`open_app_config_folder`、`open_workspace_directory`
+- 终端拉起：`launch_session_terminal`、`open_provider_terminal`
+- 窗口/桌面壳层：`restart_app`、`set_window_theme`
+- 启动态只读信息：`get_init_error`、`get_migration_result`、`get_skills_migration_result`
+
+也就是说，后续如果继续推进，重点已经不是“再把业务迁去 core”，而是：
+
+1. 决定哪些壳层命令需要保留
+2. 决定是否要补真实 Tauri runtime / Playwright 级别的桌面 smoke
+3. 在前端页面层继续做更高价值的主流程回归
+
 ## 目标
 
 在把 `src-tauri` 命令层切到 `cc-switch-core` 之前，先建立一套可重复、可比较、可逐域推进的测试框架。

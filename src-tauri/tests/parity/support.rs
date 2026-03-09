@@ -110,6 +110,55 @@ pub fn create_empty_core_state() -> cc_switch_core::AppState {
     create_core_state_with_config(&MultiAppConfig::default())
 }
 
+pub fn test_db_path() -> std::path::PathBuf {
+    ensure_test_home().join(".cc-switch").join("cc-switch.db")
+}
+
+pub fn seed_usage_log(request_id: &str, created_at_secs: i64) {
+    let db_path = test_db_path();
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent).expect("create db dir");
+    }
+
+    let conn = rusqlite::Connection::open(&db_path).expect("open parity db");
+    conn.execute(
+        "INSERT INTO proxy_request_logs (
+            request_id, provider_id, app_type, model, request_model,
+            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+            total_cost_usd, latency_ms, first_token_ms, duration_ms, status_code,
+            error_message, session_id, provider_type, is_streaming, cost_multiplier, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+        rusqlite::params![
+            request_id,
+            "provider-a",
+            "claude",
+            "claude-haiku-4-5-20251001",
+            Option::<String>::None,
+            120_i64,
+            80_i64,
+            10_i64,
+            5_i64,
+            "0.000100",
+            "0.000200",
+            "0.000010",
+            "0.000005",
+            "0.000315",
+            321_i64,
+            Option::<i64>::None,
+            Option::<i64>::None,
+            200_i64,
+            Option::<String>::None,
+            Option::<String>::None,
+            Option::<String>::None,
+            1_i64,
+            "1.0",
+            created_at_secs
+        ],
+    )
+    .expect("insert usage log");
+}
+
 fn convert_provider(provider: Provider) -> cc_switch_core::Provider {
     serde_json::from_value(serde_json::to_value(provider).expect("provider to value"))
         .expect("provider convert")

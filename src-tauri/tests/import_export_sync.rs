@@ -1030,7 +1030,7 @@ fn import_sql_rejects_non_cc_switch_backup() {
 fn import_sql_accepts_cc_switch_exported_backup() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
-    let home = ensure_test_home();
+    let _home = ensure_test_home();
 
     // Create a database with some data and export it.
     let mut config = MultiAppConfig::default();
@@ -1051,7 +1051,13 @@ fn import_sql_accepts_cc_switch_exported_backup() {
     }
 
     let state = create_test_state_with_config(&config).expect("create test state");
-    let export_path = home.join("cc-switch-export.sql");
+    let export_path = std::env::temp_dir().join(format!(
+        "cc-switch-export-{}.sql",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos()
+    ));
     state
         .db
         .export_sql(&export_path)
@@ -1073,4 +1079,5 @@ fn import_sql_accepts_cc_switch_exported_backup() {
         providers.contains_key("test-provider"),
         "imported providers should contain test-provider"
     );
+    let _ = fs::remove_file(export_path);
 }

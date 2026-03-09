@@ -38,6 +38,7 @@ const success = <T>(payload: T) => HttpResponse.json(payload as any);
 export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_migration_result`, () => success(false)),
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
     return success(getProviders(app));
