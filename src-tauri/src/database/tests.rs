@@ -8,7 +8,7 @@ use crate::provider::{Provider, ProviderManager};
 use indexmap::IndexMap;
 use rusqlite::{params, Connection};
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 const LEGACY_SCHEMA_SQL: &str = r#"
     CREATE TABLE providers (
@@ -116,6 +116,36 @@ const V3_8_SCHEMA_V1_SQL: &str = r#"
     CREATE TABLE settings (
         key TEXT PRIMARY KEY,
         value TEXT
+    );
+"#;
+
+// v3（skills 统一管理架构后，v4/v5 前）的最小可迁移结构：
+// - mcp_servers / skills 缺少 enabled_opencode（v3->v4 目标）
+// - proxy_config / proxy_request_logs 缺少 v5 新列（v4->v5 目标）
+const V3_SCHEMA_SQL: &str = r#"
+    CREATE TABLE mcp_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        server_config TEXT NOT NULL,
+        enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+        enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+        enabled_gemini BOOLEAN NOT NULL DEFAULT 0
+    );
+    CREATE TABLE skills (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        directory TEXT NOT NULL,
+        enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+        enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+        enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+        installed_at INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE proxy_config (
+        app_type TEXT PRIMARY KEY
+    );
+    CREATE TABLE proxy_request_logs (
+        request_id TEXT PRIMARY KEY,
+        model TEXT NOT NULL
     );
 "#;
 
@@ -337,6 +367,63 @@ fn schema_migration_v4_adds_pricing_model_columns() {
 }
 
 #[test]
+fn schema_migration_steps_are_contiguous_and_unique() {
+    let steps = Database::migration_step_pairs_for_test();
+    assert!(!steps.is_empty(), "migration step list should not be empty");
+    assert_eq!(
+        steps.first().copied(),
+        Some((0, 1)),
+        "migration steps should start from v0 -> v1"
+    );
+    assert_eq!(
+        steps.last().map(|(_, to)| *to),
+        Some(SCHEMA_VERSION),
+        "migration steps should end at current schema version"
+    );
+
+    let mut seen_from = HashSet::new();
+    for (idx, (from, to)) in steps.iter().copied().enumerate() {
+        assert!(seen_from.insert(from), "duplicate migration from-version: v{from}");
+        assert_eq!(to, from + 1, "migration step should be contiguous: v{from} -> v{to}");
+
+        if idx > 0 {
+            let (_, prev_to) = steps[idx - 1];
+            assert_eq!(
+                prev_to, from,
+                "migration chain should be linked: previous ends at v{prev_to}, current starts at v{from}"
+            );
+        }
+    }
+}
+
+#[test]
+fn schema_migration_from_v3_to_current_schema_v5() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(V3_SCHEMA_SQL).expect("seed v3 schema");
+    Database::set_user_version(&conn, 3).expect("set user_version=3");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("user_version after migration"),
+        SCHEMA_VERSION
+    );
+
+    for (table, column) in [
+        ("mcp_servers", "enabled_opencode"),
+        ("skills", "enabled_opencode"),
+        ("proxy_config", "default_cost_multiplier"),
+        ("proxy_config", "pricing_model_source"),
+        ("proxy_request_logs", "request_model"),
+    ] {
+        assert!(
+            Database::has_column(&conn, table, column).expect("check column"),
+            "{table}.{column} should exist after v3 -> v5 migration"
+        );
+    }
+}
+
+#[test]
 fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
@@ -384,7 +471,7 @@ fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
 }
 
 #[test]
-fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
+fn migration_from_v3_8_schema_v1_to_current_schema_v5() {
     let conn = Connection::open_in_memory().expect("open memory db");
     conn.execute("PRAGMA foreign_keys = ON;", [])
         .expect("enable foreign keys");
@@ -499,6 +586,20 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         .query_row("SELECT COUNT(*) FROM model_pricing", [], |r| r.get(0))
         .expect("count model_pricing rows");
     assert!(pricing_rows > 0, "model_pricing should be seeded");
+
+    // v3 -> v4 / v4 -> v5：关键列应存在
+    for (table, column) in [
+        ("mcp_servers", "enabled_opencode"),
+        ("skills", "enabled_opencode"),
+        ("proxy_config", "default_cost_multiplier"),
+        ("proxy_config", "pricing_model_source"),
+        ("proxy_request_logs", "request_model"),
+    ] {
+        assert!(
+            Database::has_column(&conn, table, column).expect("check column"),
+            "{table}.{column} should exist after v1 -> v5 migration"
+        );
+    }
 }
 
 #[test]
