@@ -19,8 +19,9 @@ use crate::proxy::CircuitBreakerConfig;
 use crate::services::skill::SkillRepo;
 use crate::services::stream_check::{StreamCheckConfig, StreamCheckResult};
 use crate::services::usage::{
-    ModelPricingInfo, PaginatedUsageLogs, ProviderLimitStatus, RequestLog, UsageLogDetail,
-    UsageLogFilters, UsageModelStat, UsageProviderStat, UsageSummary, UsageTrendPoint,
+    DetailedUsageSummary, ModelPricingInfo, PaginatedUsageLogs, ProviderLimitStatus, RequestLog,
+    UsageLogDetail, UsageLogFilters, UsageModelStat, UsageProviderStat, UsageSummary,
+    UsageTrendPoint,
 };
 use crate::settings::AppSettings;
 
@@ -1174,19 +1175,26 @@ impl Database {
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 drop(conn);
                 self.ensure_runtime_proxy_config_rows_initialized()?;
+                let (max_retries, first_byte_timeout, idle_timeout, circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds, circuit_error_rate_threshold, circuit_min_requests) =
+                    match app_type {
+                        "claude" => (6, 90, 180, 8, 3, 90, 0.7, 15),
+                        "codex" => (3, 60, 120, 4, 2, 60, 0.6, 10),
+                        "gemini" => (5, 60, 120, 4, 2, 60, 0.6, 10),
+                        _ => (3, 60, 120, 4, 2, 60, 0.6, 10),
+                    };
                 Ok(AppProxyConfig {
                     app_type: app_type_owned,
                     enabled: false,
                     auto_failover_enabled: false,
-                    max_retries: 3,
-                    streaming_first_byte_timeout: 60,
-                    streaming_idle_timeout: 120,
+                    max_retries,
+                    streaming_first_byte_timeout: first_byte_timeout,
+                    streaming_idle_timeout: idle_timeout,
                     non_streaming_timeout: 600,
-                    circuit_failure_threshold: 4,
-                    circuit_success_threshold: 2,
-                    circuit_timeout_seconds: 60,
-                    circuit_error_rate_threshold: 0.6,
-                    circuit_min_requests: 10,
+                    circuit_failure_threshold,
+                    circuit_success_threshold,
+                    circuit_timeout_seconds,
+                    circuit_error_rate_threshold,
+                    circuit_min_requests,
                 })
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -1814,6 +1822,73 @@ impl Database {
     pub fn get_usage_summary_all(&self, app: &str) -> Result<UsageSummary, AppError> {
         let conn = lock_conn!(self.conn);
         self.query_usage_summary(app, None, None, None, &conn)
+    }
+
+    pub fn get_usage_detailed_summary(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<DetailedUsageSummary, AppError> {
+        let conn = lock_conn!(self.conn);
+        let created_at_expr = normalized_usage_timestamp_sql("created_at");
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(start_date) = start_date {
+            conditions.push(format!("{created_at_expr} >= ?"));
+            params.push(Box::new(start_date));
+        }
+
+        if let Some(end_date) = end_date {
+            conditions.push(format!("{created_at_expr} <= ?"));
+            params.push(Box::new(end_date));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|item| item.as_ref()).collect();
+
+        let sql = format!(
+            "SELECT
+                COUNT(*) as total_requests,
+                COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
+                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
+                COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END), 0) as success_count
+             FROM proxy_request_logs
+             {where_clause}"
+        );
+
+        conn.query_row(&sql, params_refs.as_slice(), |row| {
+            let total_requests = row.get::<_, i64>(0)? as u64;
+            let total_cost = row.get::<_, f64>(1)?;
+            let total_input_tokens = row.get::<_, i64>(2)? as u64;
+            let total_output_tokens = row.get::<_, i64>(3)? as u64;
+            let total_cache_creation_tokens = row.get::<_, i64>(4)? as u64;
+            let total_cache_read_tokens = row.get::<_, i64>(5)? as u64;
+            let success_count = row.get::<_, i64>(6)? as u64;
+            let success_rate = if total_requests > 0 {
+                (success_count as f32 / total_requests as f32) * 100.0
+            } else {
+                0.0
+            };
+
+            Ok(DetailedUsageSummary {
+                total_requests,
+                total_cost: format!("{total_cost:.6}"),
+                total_input_tokens,
+                total_output_tokens,
+                total_cache_creation_tokens,
+                total_cache_read_tokens,
+                success_rate,
+            })
+        })
+        .map_err(|e| AppError::Database(e.to_string()))
     }
 
     pub fn get_provider_usage_summary(

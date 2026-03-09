@@ -157,12 +157,9 @@ pub async fn install_skill_for_app(
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
     let app_type = parse_app_type(&app)?;
-
-    // 先获取技能信息
-    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
-    let skills = service
-        .0
-        .discover_available(repos)
+    let _ = service;
+    let _ = app_state;
+    let skills = skill_bridge::discover_available_skills()
         .await
         .map_err(|e| e.to_string())?;
 
@@ -183,10 +180,7 @@ pub async fn install_skill_for_app(
                 Some("checkRepoUrl"),
             )
         })?;
-
-    service
-        .0
-        .install(&app_state.db, &skill, &app_type)
+    let _installed = skill_bridge::install_skill_unified(skill, app_type)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -207,16 +201,14 @@ pub fn uninstall_skill_for_app(
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
     let _ = parse_app_type(&app)?; // 验证参数
-
-    // 通过 directory 找到对应的 skill id
-    let skills = SkillService::get_all_installed(&app_state.db).map_err(|e| e.to_string())?;
+    let _ = app_state;
+    let skills = skill_bridge::get_installed_skills().map_err(|e| e.to_string())?;
 
     let skill = skills
         .into_iter()
         .find(|s| s.directory.eq_ignore_ascii_case(&directory))
         .ok_or_else(|| format!("未找到已安装的 Skill: {directory}"))?;
-
-    SkillService::uninstall(&app_state.db, &skill.id).map_err(|e| e.to_string())?;
+    skill_bridge::uninstall_skill_unified(&skill.id).map_err(|e| e.to_string())?;
 
     Ok(true)
 }

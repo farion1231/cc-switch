@@ -18,7 +18,7 @@ mod session_manager;
 mod settings;
 pub mod skill;
 mod stream_check;
-mod sync_support;
+pub mod sync_support;
 mod usage;
 mod webdav_sync;
 mod workspace;

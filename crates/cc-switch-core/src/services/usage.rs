@@ -16,6 +16,18 @@ pub struct UsageSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DetailedUsageSummary {
+    pub total_requests: u64,
+    pub total_cost: String,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub success_rate: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RequestLog {
     pub timestamp: String,
     pub model: String,
@@ -132,6 +144,14 @@ pub struct ProviderLimitStatus {
 pub struct UsageService;
 
 impl UsageService {
+    pub fn get_detailed_summary(
+        db: &Database,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<DetailedUsageSummary, AppError> {
+        db.get_usage_detailed_summary(start_date, end_date)
+    }
+
     pub fn get_summary_all(db: &Database, app: &str) -> Result<UsageSummary, AppError> {
         db.get_usage_summary_all(app)
     }

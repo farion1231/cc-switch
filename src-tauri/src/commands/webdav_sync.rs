@@ -3,6 +3,7 @@
 use serde_json::{json, Value};
 use tauri::State;
 
+use crate::bridges::webdav as webdav_bridge;
 use crate::commands::sync_support::{
     attach_warning, post_sync_warning_from_result, run_post_import_sync,
 };
@@ -92,7 +93,7 @@ pub async fn webdav_test_connection(
         settings::get_webdav_sync_settings(),
         preserve_empty,
     );
-    webdav_sync_service::check_connection(&resolved)
+    webdav_bridge::test_connection(resolved)
         .await
         .map_err(|e| e.to_string())?;
     Ok(json!({
@@ -103,10 +104,10 @@ pub async fn webdav_test_connection(
 
 #[tauri::command]
 pub async fn webdav_sync_upload(state: State<'_, AppState>) -> Result<Value, String> {
-    let db = state.db.clone();
+    let _ = state;
     let mut settings = require_enabled_webdav_settings()?;
 
-    let result = run_with_webdav_lock(webdav_sync_service::upload(&db, &mut settings)).await;
+    let result = run_with_webdav_lock(webdav_bridge::upload()).await;
     map_sync_result(result, |error| {
         persist_sync_error(&mut settings, error, "manual")
     })
@@ -114,19 +115,20 @@ pub async fn webdav_sync_upload(state: State<'_, AppState>) -> Result<Value, Str
 
 #[tauri::command]
 pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, String> {
-    let db = state.db.clone();
-    let db_for_sync = db.clone();
+    let _ = state;
     let mut settings = require_enabled_webdav_settings()?;
     let _auto_sync_suppression = crate::services::webdav_auto_sync::AutoSyncSuppressionGuard::new();
 
-    let sync_result = run_with_webdav_lock(webdav_sync_service::download(&db, &mut settings)).await;
+    let sync_result = run_with_webdav_lock(webdav_bridge::download()).await;
     let mut result = map_sync_result(sync_result, |error| {
         persist_sync_error(&mut settings, error, "manual")
     })?;
 
     // Post-download sync is best-effort: snapshot restore has already succeeded.
     let warning = post_sync_warning_from_result(
-        tauri::async_runtime::spawn_blocking(move || run_post_import_sync(db_for_sync))
+        tauri::async_runtime::spawn_blocking(move || {
+            run_post_import_sync(std::sync::Arc::new(crate::database::Database::init()?))
+        })
             .await
             .map_err(|e| e.to_string()),
     );
@@ -155,14 +157,14 @@ pub async fn webdav_sync_save_settings(
 
     sync_settings.normalize();
     sync_settings.validate().map_err(|e| e.to_string())?;
-    settings::set_webdav_sync_settings(Some(sync_settings)).map_err(|e| e.to_string())?;
+    webdav_bridge::save_settings(sync_settings).map_err(|e| e.to_string())?;
     Ok(json!({ "success": true }))
 }
 
 #[tauri::command]
 pub async fn webdav_sync_fetch_remote_info() -> Result<Value, String> {
-    let settings = require_enabled_webdav_settings()?;
-    let info = webdav_sync_service::fetch_remote_info(&settings)
+    let _ = require_enabled_webdav_settings()?;
+    let info = webdav_bridge::fetch_remote_info()
         .await
         .map_err(|e| e.to_string())?;
     Ok(info.unwrap_or(json!({ "empty": true })))

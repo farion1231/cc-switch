@@ -3,6 +3,8 @@
 //! Implements manifest-based synchronization on top of the HTTP transport
 //! primitives in [`super::webdav`]. Artifact set: `db.sql` + `skills.zip`.
 
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::future::Future;

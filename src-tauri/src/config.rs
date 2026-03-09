@@ -298,6 +298,7 @@ pub struct ConfigStatus {
 }
 
 /// 获取 Claude Code 配置状态
+#[allow(dead_code)]
 pub fn get_claude_config_status() -> ConfigStatus {
     let path = get_claude_settings_path();
     ConfigStatus {

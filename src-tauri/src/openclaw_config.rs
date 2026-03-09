@@ -36,6 +36,8 @@
 //! }
 //! ```
 
+#![allow(dead_code)]
+
 use crate::config::write_json_file;
 use crate::error::AppError;
 use crate::settings::get_openclaw_override_dir;

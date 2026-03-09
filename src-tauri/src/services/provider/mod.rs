@@ -21,8 +21,8 @@ use crate::store::AppState;
 
 // Re-export sub-module functions for external access
 pub use live::{
-    import_default_config, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings, sync_current_to_live,
+    import_default_config, import_opencode_providers_from_live, read_live_settings,
+    sync_current_to_live,
 };
 
 // Internal re-exports (pub(crate))
