@@ -17,6 +17,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ApiKeySection } from "./shared";
 import { openclawApiProtocols } from "@/config/openclawProviderPresets";
 import type { ProviderCategory, OpenClawModel } from "@/types";
@@ -95,6 +96,7 @@ export function OpenClawFormFields({
         contextWindow: undefined,
         maxTokens: undefined,
         cost: undefined,
+        input: ["text"],
       },
     ]);
   };
@@ -318,6 +320,62 @@ export function OpenClawFormFields({
                     </Button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="space-y-3 pt-2">
+                    {/* Reasoning, Input Types row */}
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 space-y-1">
+                        <label className="text-xs text-muted-foreground">
+                          {t("openclaw.reasoning", {
+                            defaultValue: "推理模式",
+                          })}
+                        </label>
+                        <div className="flex items-center h-9 gap-2">
+                          <Switch
+                            checked={model.reasoning ?? false}
+                            onCheckedChange={(checked) =>
+                              handleModelChange(index, "reasoning", checked)
+                            }
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            {model.reasoning
+                              ? t("openclaw.reasoningOn", {
+                                  defaultValue: "启用",
+                                })
+                              : t("openclaw.reasoningOff", {
+                                  defaultValue: "关闭",
+                                })}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex-1 space-y-1">
+                        <label className="text-xs text-muted-foreground">
+                          {t("openclaw.inputTypes", {
+                            defaultValue: "输入类型",
+                          })}
+                        </label>
+                        <div className="flex items-center gap-4 h-9">
+                          {(["text", "image"] as const).map((type) => (
+                            <label
+                              key={type}
+                              className="flex items-center gap-1.5 cursor-pointer select-none"
+                            >
+                              <Checkbox
+                                checked={(model.input ?? ["text"]).includes(type)}
+                                onCheckedChange={(checked) => {
+                                  const current = model.input ?? ["text"];
+                                  const next = checked
+                                    ? [...new Set([...current, type])]
+                                    : current.filter((v) => v !== type);
+                                  handleModelChange(index, "input", next);
+                                }}
+                              />
+                              <span className="text-xs">{type}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex-1" />
+                    </div>
+
                     {/* Context Window, Max Tokens and Reasoning row */}
                     <div className="flex items-center gap-2">
                       <div className="flex-1 space-y-1">
@@ -362,30 +420,7 @@ export function OpenClawFormFields({
                           placeholder="32000"
                         />
                       </div>
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
-                          {t("openclaw.reasoning", {
-                            defaultValue: "推理模式",
-                          })}
-                        </label>
-                        <div className="flex items-center h-9 gap-2">
-                          <Switch
-                            checked={model.reasoning ?? false}
-                            onCheckedChange={(checked) =>
-                              handleModelChange(index, "reasoning", checked)
-                            }
-                          />
-                          <span className="text-xs text-muted-foreground">
-                            {model.reasoning
-                              ? t("openclaw.reasoningOn", {
-                                  defaultValue: "启用",
-                                })
-                              : t("openclaw.reasoningOff", {
-                                  defaultValue: "关闭",
-                                })}
-                          </span>
-                        </div>
-                      </div>
+                      <div className="flex-1" />
                     </div>
 
                     {/* Cost row */}
