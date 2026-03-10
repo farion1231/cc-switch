@@ -789,6 +789,12 @@ impl RequestForwarder {
         // 使用适配器提取 base_url
         let base_url = adapter.extract_base_url(provider)?;
 
+        log::info!(
+            "[{}] extracted base_url: {}",
+            adapter.name(),
+            base_url
+        );
+
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
 
@@ -826,20 +832,45 @@ impl RequestForwarder {
             mapped_body
         };
 
-        // 根据转换后的请求体形状决定是否切换到 Responses API
-        // 当请求是 Chat Completions 端点，但 payload 已是 Responses 风格（input 且无 messages）
-        // 则自动路由到 /v1/responses；否则保持原端点。
+        // 根据转换后的请求体形状决定是否切换到 Responses API 或 Chat Completions API
+        // 双向路由逻辑：
+        // 1. Chat Completions → Responses: 当 payload 有 input 但无 messages 时
+        // 2. Responses → Chat Completions: 当 payload 有 messages 但无 input 时
         let routed_endpoint = if effective_endpoint == "/v1/chat/completions"
             && request_body.get("input").is_some()
             && request_body.get("messages").is_none()
         {
             log::info!(
-                "[{}] Routing to /v1/responses (input={:?}, messages={:?})",
+                "[{}] Routing from chat to responses (input={:?}, messages={:?})",
                 adapter.name(),
                 request_body.get("input").is_some(),
                 request_body.get("messages").is_some()
             );
             "/v1/responses"
+        } else if effective_endpoint == "/responses"
+            || effective_endpoint == "/v1/responses"
+            || effective_endpoint == "/v1/v1/responses"
+            || effective_endpoint == "/codex/v1/responses"
+        {
+            // 路由 Responses API 到 Chat Completions
+            if request_body.get("messages").is_some() || request_body.get("input").is_none() {
+                log::info!(
+                    "[{}] Routing from responses to chat (input={:?}, messages={:?})",
+                    adapter.name(),
+                    request_body.get("input").is_some(),
+                    request_body.get("messages").is_some()
+                );
+                "/v1/chat/completions"
+            } else {
+                log::info!(
+                    "[{}] Keeping endpoint {} (input={:?}, messages={:?})",
+                    adapter.name(),
+                    effective_endpoint,
+                    request_body.get("input").is_some(),
+                    request_body.get("messages").is_some()
+                );
+                effective_endpoint
+            }
         } else {
             log::info!(
                 "[{}] Keeping endpoint {} (input={:?}, messages={:?})",
@@ -853,6 +884,14 @@ impl RequestForwarder {
 
         // 使用适配器构建 URL
         let url = adapter.build_url(&base_url, routed_endpoint);
+
+        log::info!(
+            "[{}] Final URL: {} (base: {}, endpoint: {})",
+            adapter.name(),
+            url,
+            base_url,
+            routed_endpoint
+        );
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段

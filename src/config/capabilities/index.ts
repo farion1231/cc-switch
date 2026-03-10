@@ -16,6 +16,7 @@ export const FLOW: Record<string, ProviderEndpoint[]> = {
   gemini: ENDPOINTS.filter((e) => fitsSlot(e, APP_SLOTS.gemini)),
   opencode: ENDPOINTS.filter((e) => fitsSlot(e, APP_SLOTS.opencode)),
   openclaw: ENDPOINTS.filter((e) => fitsSlot(e, APP_SLOTS.openclaw)),
+  iiagent: ENDPOINTS.filter((e) => fitsSlot(e, APP_SLOTS.iiagent)),
 };
 
 export const UNIVERSAL = ENDPOINTS.filter(isUniversal);
@@ -26,5 +27,7 @@ export function flowTo(appId: string): ProviderEndpoint[] {
 
 export function getDefaultApps(endpointId: string): Record<string, boolean> {
   const ep = ENDPOINTS.find((e) => e.id === endpointId);
-  return ep ? deriveApps(ep) : { claude: false, codex: false, gemini: false };
+  return ep
+    ? deriveApps(ep)
+    : { claude: false, codex: false, gemini: false, iiagent: false };
 }

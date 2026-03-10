@@ -16,6 +16,11 @@ use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use reqwest::RequestBuilder;
 
+/// Public helper for handlers/forwarder code that need the resolved Claude API format.
+pub fn get_claude_api_format(provider: &Provider) -> &'static str {
+    ClaudeAdapter::new().get_api_format(provider)
+}
+
 /// Claude 适配器
 pub struct ClaudeAdapter;
 

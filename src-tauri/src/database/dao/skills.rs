@@ -43,6 +43,7 @@ impl Database {
                         codex: row.get(9)?,
                         gemini: row.get(10)?,
                         opencode: row.get(11)?,
+                        iiagent: false,
                     },
                     installed_at: row.get(12)?,
                 })
@@ -83,6 +84,7 @@ impl Database {
                     codex: row.get(9)?,
                     gemini: row.get(10)?,
                     opencode: row.get(11)?,
+                    iiagent: false,
                 },
                 installed_at: row.get(12)?,
             })

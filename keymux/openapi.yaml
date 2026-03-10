@@ -1,0 +1,1039 @@
+openapi: 3.0.3
+info:
+  title: KeyMux Console API
+  description: |
+    Web console for KeyMux - SSH pubkey authenticated key management and provider routing.
+    
+    Features:
+    - Key storage with SSH pubkey locking
+    - Provider mapping and routing
+    - Visual patch cord graphs for model/provider connections
+    - Session management for remote agents
+  version: 0.1.0
+  contact:
+    name: KeyMux
+    url: https://github.com/jnorthrup/literbike
+
+servers:
+  - url: http://localhost:8888/api/v1
+    description: Local development
+
+tags:
+  - name: keys
+    description: API key management
+  - name: providers
+    description: Provider configuration
+  - name: peers
+    description: SSH pubkey peer management
+  - name: sessions
+    description: Active agent sessions
+  - name: graph
+    description: Visual patch cord graph
+  - name: routes
+    description: Routing configuration
+
+paths:
+  /keys:
+    get:
+      tags: [keys]
+      summary: List all stored keys (masked)
+      operationId: listKeys
+      responses:
+        '200':
+          description: List of keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KeyInfo'
+    post:
+      tags: [keys]
+      summary: Add a new API key
+      operationId: addKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddKeyRequest'
+      responses:
+        '201':
+          description: Key added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfo'
+
+  /keys/{provider}/{keyId}:
+    delete:
+      tags: [keys]
+      summary: Remove a key
+      operationId: removeKey
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: keyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Key removed
+        '404':
+          description: Key not found
+
+  /keys/{provider}/test:
+    post:
+      tags: [keys]
+      summary: Test a provider's key
+      operationId: testKey
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Test result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyTestResult'
+
+  /providers:
+    get:
+      tags: [providers]
+      summary: List all configured providers
+      operationId: listProviders
+      responses:
+        '200':
+          description: List of providers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Provider'
+
+  /providers/{provider}:
+    get:
+      tags: [providers]
+      summary: Get provider details
+      operationId: getProvider
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Provider details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Provider'
+    patch:
+      tags: [providers]
+      summary: Update provider settings
+      operationId: updateProvider
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderUpdate'
+      responses:
+        '200':
+          description: Provider updated
+
+  /providers/{provider}/models:
+    get:
+      tags: [providers]
+      summary: List available models for a provider
+      operationId: listProviderModels
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Model'
+
+  /peers:
+    get:
+      tags: [peers]
+      summary: List known SSH pubkey peers
+      operationId: listPeers
+      responses:
+        '200':
+          description: List of peers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  peers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Peer'
+    post:
+      tags: [peers]
+      summary: Add a new peer (SSH pubkey)
+      operationId: addPeer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddPeerRequest'
+      responses:
+        '201':
+          description: Peer added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Peer'
+
+  /peers/{fingerprint}:
+    get:
+      tags: [peers]
+      summary: Get peer details
+      operationId: getPeer
+      parameters:
+        - name: fingerprint
+          in: path
+          required: true
+          schema:
+            type: string
+            description: SSH pubkey fingerprint (SHA256:xxx)
+      responses:
+        '200':
+          description: Peer details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Peer'
+    delete:
+      tags: [peers]
+      summary: Remove a peer
+      operationId: removePeer
+      parameters:
+        - name: fingerprint
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Peer removed
+
+  /peers/{fingerprint}/providers:
+    put:
+      tags: [peers]
+      summary: Update allowed providers for a peer
+      operationId: updatePeerProviders
+      parameters:
+        - name: fingerprint
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                providers:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Providers updated
+
+  /sessions:
+    get:
+      tags: [sessions]
+      summary: List active sessions
+      operationId: listSessions
+      responses:
+        '200':
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Session'
+
+  /sessions/{sessionId}:
+    get:
+      tags: [sessions]
+      summary: Get session details
+      operationId: getSession
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+    delete:
+      tags: [sessions]
+      summary: Terminate a session
+      operationId: terminateSession
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Session terminated
+
+  /sessions/{sessionId}/usage:
+    get:
+      tags: [sessions]
+      summary: Get session usage statistics
+      operationId: getSessionUsage
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Usage statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionUsage'
+
+  /graph:
+    get:
+      tags: [graph]
+      summary: Get the full patch cord graph
+      description: |
+        Returns a graph structure for visual rendering (n8n-style).
+        Nodes represent providers, models, peers, and sessions.
+        Edges represent connections and access permissions.
+      operationId: getGraph
+      responses:
+        '200':
+          description: Patch cord graph
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatchCordGraph'
+
+  /graph/nodes:
+    post:
+      tags: [graph]
+      summary: Create a new node
+      operationId: createNode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNodeRequest'
+      responses:
+        '201':
+          description: Node created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphNode'
+
+  /graph/nodes/{nodeId}:
+    patch:
+      tags: [graph]
+      summary: Update node position/properties
+      operationId: updateNode
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNodeRequest'
+      responses:
+        '200':
+          description: Node updated
+    delete:
+      tags: [graph]
+      summary: Remove a node
+      operationId: deleteNode
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Node removed
+
+  /graph/edges:
+    post:
+      tags: [graph]
+      summary: Create a connection (patch cord)
+      operationId: createEdge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEdgeRequest'
+      responses:
+        '201':
+          description: Edge created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphEdge'
+
+  /graph/edges/{edgeId}:
+    delete:
+      tags: [graph]
+      summary: Remove a connection
+      operationId: deleteEdge
+      parameters:
+        - name: edgeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Edge removed
+
+  /routes:
+    get:
+      tags: [routes]
+      summary: List routing rules
+      operationId: listRoutes
+      responses:
+        '200':
+          description: List of routes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  routes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Route'
+
+  /routes:
+    post:
+      tags: [routes]
+      summary: Create a routing rule
+      operationId: createRoute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRouteRequest'
+      responses:
+        '201':
+          description: Route created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Route'
+
+  /routes/{routeId}:
+    patch:
+      tags: [routes]
+      summary: Update a routing rule
+      operationId: updateRoute
+      parameters:
+        - name: routeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRouteRequest'
+      responses:
+        '200':
+          description: Route updated
+    delete:
+      tags: [routes]
+      summary: Remove a routing rule
+      operationId: deleteRoute
+      parameters:
+        - name: routeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Route removed
+
+  /health:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded]
+                  version:
+                    type: string
+                  uptime_seconds:
+                    type: integer
+                  active_sessions:
+                    type: integer
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Metrics in Prometheus format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  schemas:
+    KeyInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        provider:
+          type: string
+        masked_key:
+          type: string
+          description: First/last 4 chars with *** in between
+        created_at:
+          type: string
+          format: date-time
+        last_used:
+          type: string
+          format: date-time
+        usage_count:
+          type: integer
+        status:
+          type: string
+          enum: [active, expired, invalid, unknown]
+        allowed_pubkeys:
+          type: array
+          items:
+            type: string
+          description: SSH fingerprints that can unlock this key
+
+    AddKeyRequest:
+      type: object
+      required:
+        - provider
+        - key
+      properties:
+        provider:
+          type: string
+          example: openai
+        key:
+          type: string
+          description: The API key
+        allowed_pubkeys:
+          type: array
+          items:
+            type: string
+          description: SSH fingerprints allowed to unlock (empty = all registered peers)
+
+    KeyTestResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        provider:
+          type: string
+        model_available:
+          type: boolean
+        error:
+          type: string
+        latency_ms:
+          type: integer
+
+    Provider:
+      type: object
+      properties:
+        name:
+          type: string
+        display_name:
+          type: string
+        base_url:
+          type: string
+        api_version:
+          type: string
+        key_count:
+          type: integer
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/Model'
+        health:
+          $ref: '#/components/schemas/ProviderHealth'
+        settings:
+          type: object
+          additionalProperties: true
+
+    ProviderHealth:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, down, unknown]
+        last_check:
+          type: string
+          format: date-time
+        latency_ms:
+          type: integer
+        error_rate:
+          type: number
+          format: float
+
+    ProviderUpdate:
+      type: object
+      properties:
+        base_url:
+          type: string
+        api_version:
+          type: string
+        settings:
+          type: object
+          additionalProperties: true
+
+    Model:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+        context_window:
+          type: integer
+        max_output:
+          type: integer
+        input_price:
+          type: number
+          description: Price per 1M tokens
+        output_price:
+          type: number
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [chat, completion, embedding, vision, tools, streaming]
+
+    Peer:
+      type: object
+      properties:
+        fingerprint:
+          type: string
+          description: SSH pubkey fingerprint (SHA256:xxx)
+        comment:
+          type: string
+        providers:
+          type: array
+          items:
+            type: string
+          description: Providers this peer can access
+        added_at:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        active_sessions:
+          type: integer
+        quotas:
+          type: object
+          additionalProperties:
+            type: number
+            description: Quota limit per provider
+
+    AddPeerRequest:
+      type: object
+      required:
+        - fingerprint
+      properties:
+        fingerprint:
+          type: string
+          description: SSH pubkey fingerprint
+        comment:
+          type: string
+        providers:
+          type: array
+          items:
+            type: string
+        quotas:
+          type: object
+          additionalProperties:
+            type: number
+
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        peer_fingerprint:
+          type: string
+        providers:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        last_activity:
+          type: string
+          format: date-time
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        requests_count:
+          type: integer
+        tokens_used:
+          type: integer
+
+    SessionUsage:
+      type: object
+      properties:
+        session_id:
+          type: string
+        requests:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              provider:
+                type: string
+              model:
+                type: string
+              tokens_in:
+                type: integer
+              tokens_out:
+                type: integer
+              latency_ms:
+                type: integer
+              status:
+                type: integer
+        total_tokens:
+          type: object
+          properties:
+            input:
+              type: integer
+            output:
+              type: integer
+        total_cost:
+          type: number
+
+    PatchCordGraph:
+      type: object
+      description: React Flow compatible graph structure
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphEdge'
+        viewport:
+          type: object
+          properties:
+            x:
+              type: number
+            y:
+              type: number
+            zoom:
+              type: number
+
+    GraphNode:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [provider, model, peer, session, route, key]
+        position:
+          type: object
+          properties:
+            x:
+              type: number
+            y:
+              type: number
+        data:
+          type: object
+          additionalProperties: true
+          description: Node-specific data (provider info, peer info, etc.)
+        style:
+          type: object
+          additionalProperties: true
+
+    GraphEdge:
+      type: object
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+          description: Source node ID
+        target:
+          type: string
+          description: Target node ID
+        sourceHandle:
+          type: string
+          description: Output handle on source node
+        targetHandle:
+          type: string
+          description: Input handle on target node
+        type:
+          type: string
+          enum: [default, animated, dotted]
+          default: default
+        label:
+          type: string
+        style:
+          type: object
+          additionalProperties: true
+        data:
+          type: object
+          additionalProperties: true
+          description: Edge metadata (quota, permissions, etc.)
+
+    CreateNodeRequest:
+      type: object
+      required:
+        - type
+        - position
+      properties:
+        type:
+          type: string
+          enum: [provider, model, peer, session, route, key]
+        position:
+          type: object
+          properties:
+            x:
+              type: number
+            y:
+              type: number
+        data:
+          type: object
+          additionalProperties: true
+
+    UpdateNodeRequest:
+      type: object
+      properties:
+        position:
+          type: object
+          properties:
+            x:
+              type: number
+            y:
+              type: number
+        data:
+          type: object
+          additionalProperties: true
+
+    CreateEdgeRequest:
+      type: object
+      required:
+        - source
+        - target
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        sourceHandle:
+          type: string
+        targetHandle:
+          type: string
+        label:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+
+    Route:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        pattern:
+          type: string
+          description: URL pattern to match (e.g., /anthropic/*)
+        target:
+          type: string
+          description: Target provider or URL
+        priority:
+          type: integer
+        enabled:
+          type: boolean
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouteCondition'
+        transforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouteTransform'
+
+    RouteCondition:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [header, model, body, peer]
+        key:
+          type: string
+        value:
+          type: string
+        operator:
+          type: string
+          enum: [equals, contains, matches, in]
+
+    RouteTransform:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [header, body, model_mapping]
+        action:
+          type: string
+          enum: [set, remove, rename]
+        key:
+          type: string
+        value:
+          type: string
+
+    CreateRouteRequest:
+      type: object
+      required:
+        - pattern
+        - target
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        pattern:
+          type: string
+        target:
+          type: string
+        priority:
+          type: integer
+        enabled:
+          type: boolean
+          default: true
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouteCondition'
+        transforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouteTransform'
+
+    UpdateRouteRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        pattern:
+          type: string
+        target:
+          type: string
+        priority:
+          type: integer
+        enabled:
+          type: boolean
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouteCondition'
+        transforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouteTransform'

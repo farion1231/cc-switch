@@ -1,0 +1,12 @@
+/Users/jim/work/cc-switch/keymux/target/debug/deps/writeable-c696250077755279.d: /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/lib.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/cmp.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/impls.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/ops.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/parts_write_adapter.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/testing.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/to_string_or_borrow.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/try_writeable.rs
+
+/Users/jim/work/cc-switch/keymux/target/debug/deps/libwriteable-c696250077755279.rmeta: /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/lib.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/cmp.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/impls.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/ops.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/parts_write_adapter.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/testing.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/to_string_or_borrow.rs /Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/try_writeable.rs
+
+/Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/lib.rs:
+/Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/cmp.rs:
+/Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/impls.rs:
+/Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/ops.rs:
+/Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/parts_write_adapter.rs:
+/Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/testing.rs:
+/Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/to_string_or_borrow.rs:
+/Users/jim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/try_writeable.rs:

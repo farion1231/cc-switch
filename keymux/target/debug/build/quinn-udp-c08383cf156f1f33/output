@@ -1,0 +1,8 @@
+cargo:rustc-check-cfg=cfg(apple)
+cargo:rustc-cfg=apple
+cargo:rustc-check-cfg=cfg(bsd)
+cargo:rustc-check-cfg=cfg(solarish)
+cargo:rustc-check-cfg=cfg(apple_fast)
+cargo:rustc-check-cfg=cfg(apple_slow)
+cargo:rustc-cfg=apple_slow
+cargo:rustc-check-cfg=cfg(wasm_browser)

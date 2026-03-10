@@ -8,6 +8,7 @@
 //! - `claude`: Claude (Anthropic) 适配器
 //! - `codex`: Codex (OpenAI) 适配器
 //! - `gemini`: Gemini (Google) 适配器
+//! - `opencode`: OpenCode (AI SDK) 适配器
 //! - `models`: API 数据模型
 //! - `transform`: 格式转换
 
@@ -16,6 +17,7 @@ mod auth;
 mod claude;
 mod codex;
 mod gemini;
+mod opencode;
 pub mod models;
 pub mod streaming;
 pub mod streaming_responses;
@@ -32,6 +34,7 @@ pub use auth::{AuthInfo, AuthStrategy};
 pub use claude::{get_claude_api_format, ClaudeAdapter};
 pub use codex::CodexAdapter;
 pub use gemini::GeminiAdapter;
+pub use opencode::OpenCodeAdapter;
 
 /// 供应商类型枚举
 ///
@@ -52,6 +55,10 @@ pub enum ProviderType {
     GeminiCli,
     /// OpenRouter（已支持 Claude Code 兼容接口，默认透传；保留旧转换逻辑备用）
     OpenRouter,
+    /// OpenCode (AI SDK format) - standard provider
+    OpenCode,
+    /// OpenCode managed by cc-switch (-cc suffix)
+    OpenCodeCC,
 }
 
 impl ProviderType {
@@ -77,6 +84,7 @@ impl ProviderType {
                 "https://generativelanguage.googleapis.com"
             }
             ProviderType::OpenRouter => "https://openrouter.ai/api",
+            ProviderType::OpenCode | ProviderType::OpenCodeCC => "https://api.openai.com/v1",
         }
     }
 
@@ -135,13 +143,20 @@ impl ProviderType {
                 ProviderType::Gemini
             }
             AppType::OpenCode => {
-                // OpenCode doesn't support proxy, but return a default type for completeness
-                ProviderType::Codex // Fallback to Codex-like type
+                // Use OpenCode adapter to detect provider type
+                let adapter = OpenCodeAdapter::new();
+                
+                // Check if it's a cc-switch managed provider (-cc suffix)
+                if provider.id.ends_with("-cc") {
+                    ProviderType::OpenCodeCC
+                } else if adapter.is_cc_managed(provider) {
+                    ProviderType::OpenCodeCC
+                } else {
+                    ProviderType::OpenCode
+                }
             }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy, but return a default type for completeness
-                ProviderType::Codex // Fallback to Codex-like type
-            }
+            AppType::OpenClaw => ProviderType::Codex,
+            AppType::IIAgent => ProviderType::Codex,
         }
     }
 
@@ -154,6 +169,8 @@ impl ProviderType {
             ProviderType::Gemini => "gemini",
             ProviderType::GeminiCli => "gemini_cli",
             ProviderType::OpenRouter => "openrouter",
+            ProviderType::OpenCode => "opencode",
+            ProviderType::OpenCodeCC => "opencode_cc",
         }
     }
 }
@@ -175,6 +192,8 @@ impl std::str::FromStr for ProviderType {
             "gemini" => Ok(ProviderType::Gemini),
             "gemini_cli" | "gemini-cli" => Ok(ProviderType::GeminiCli),
             "openrouter" => Ok(ProviderType::OpenRouter),
+            "opencode" => Ok(ProviderType::OpenCode),
+            "opencode_cc" | "opencode-cc" => Ok(ProviderType::OpenCodeCC),
             _ => Err(format!("Invalid provider type: {s}")),
         }
     }
@@ -186,14 +205,9 @@ pub fn get_adapter(app_type: &AppType) -> Box<dyn ProviderAdapter> {
         AppType::Claude => Box::new(ClaudeAdapter::new()),
         AppType::Codex => Box::new(CodexAdapter::new()),
         AppType::Gemini => Box::new(GeminiAdapter::new()),
-        AppType::OpenCode => {
-            // OpenCode doesn't support proxy, fallback to Codex adapter
-            Box::new(CodexAdapter::new())
-        }
-        AppType::OpenClaw => {
-            // OpenClaw doesn't support proxy, fallback to Codex adapter
-            Box::new(CodexAdapter::new())
-        }
+        AppType::OpenCode => Box::new(OpenCodeAdapter::new()),
+        AppType::OpenClaw => Box::new(CodexAdapter::new()),
+        AppType::IIAgent => Box::new(CodexAdapter::new()),
     }
 }
 
@@ -206,6 +220,7 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
         }
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
+        ProviderType::OpenCode | ProviderType::OpenCodeCC => Box::new(OpenCodeAdapter::new()),
     }
 }
 

@@ -49,6 +49,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
+import { MuxerPanel } from "@/components/MuxerPanel";
 import { ProxyToggle } from "@/components/proxy/ProxyToggle";
 import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import UsageScriptModal from "@/components/UsageScriptModal";
@@ -85,7 +86,8 @@ type View =
   | "workspace"
   | "openclawEnv"
   | "openclawTools"
-  | "openclawAgents";
+  | "openclawAgents"
+  | "muxer";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -104,6 +106,7 @@ const VALID_APPS: AppId[] = [
   "gemini",
   "opencode",
   "openclaw",
+  "iiagent",
 ];
 
 const getInitialApp = (): AppId => {
@@ -159,6 +162,7 @@ function App() {
     gemini: true,
     opencode: true,
     openclaw: true,
+    iiagent: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -167,6 +171,7 @@ function App() {
     if (visibleApps.gemini) return "gemini";
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
+    if (visibleApps.iiagent) return "iiagent";
     return "claude"; // fallback
   };
 
@@ -707,6 +712,8 @@ function App() {
               appId={activeApp}
             />
           );
+        case "muxer":
+          return <MuxerPanel />;
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -987,10 +994,19 @@ function App() {
                   style={{ WebkitAppRegion: "no-drag" } as any}
                 >
                   {settingsData?.enableLocalProxy && (
-                    <ProxyToggle activeApp={activeApp} />
-                  )}
-                  {settingsData?.enableFailoverToggle && (
-                    <FailoverToggle activeApp={activeApp} />
+                    <>
+                      <ProxyToggle activeApp={activeApp} />
+                      <div
+                        className={cn(
+                          "transition-all duration-300 ease-in-out overflow-hidden",
+                          isCurrentAppTakeoverActive
+                            ? "opacity-100 max-w-[100px] scale-100"
+                            : "opacity-0 max-w-0 scale-75 pointer-events-none",
+                        )}
+                      >
+                        <FailoverToggle activeApp={activeApp} />
+                      </div>
+                    </>
                   )}
                 </div>
               )}

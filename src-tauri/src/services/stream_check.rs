@@ -242,11 +242,17 @@ impl StreamCheckService {
                 ));
             }
             AppType::OpenClaw => {
-                // OpenClaw doesn't support stream check yet
                 return Err(AppError::localized(
                     "openclaw_no_stream_check",
                     "OpenClaw 暂不支持健康检查",
                     "OpenClaw does not support health check yet",
+                ));
+            }
+            AppType::IIAgent => {
+                return Err(AppError::localized(
+                    "iiagent_no_stream_check",
+                    "IIAgent 暂不支持健康检查",
+                    "IIAgent does not support health check yet",
                 ));
             }
         };
@@ -615,9 +621,10 @@ impl StreamCheckService {
                 Self::extract_opencode_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }
             AppType::OpenClaw => {
-                // OpenClaw uses models array in settings_config
-                // Try to extract first model from the models array
                 Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
+            }
+            AppType::IIAgent => {
+                "gpt-4o".to_string()
             }
         }
     }

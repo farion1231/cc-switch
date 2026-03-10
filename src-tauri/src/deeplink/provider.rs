@@ -147,6 +147,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Gemini => build_gemini_settings(request),
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_openclaw_settings(request),
+        AppType::IIAgent => build_iiagent_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -419,6 +420,26 @@ fn build_openclaw_settings(request: &DeepLinkImportRequest) -> serde_json::Value
     }
 
     json!(config)
+}
+
+fn build_iiagent_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut settings_config = serde_json::Map::new();
+
+    if !endpoint.is_empty() {
+        settings_config.insert("base_url".to_string(), json!(endpoint));
+    }
+
+    if let Some(api_key) = &request.api_key {
+        settings_config.insert("api_key".to_string(), json!(api_key));
+    }
+
+    if let Some(model) = &request.model {
+        settings_config.insert("model".to_string(), json!(model));
+    }
+
+    json!({ "settings_config": settings_config })
 }
 
 // =============================================================================

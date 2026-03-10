@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/Users/jim/work/cc-switch/keymux/target/debug/build/mime_guess-249f60c0d95fd5eb/out/mime_types_generated.rs

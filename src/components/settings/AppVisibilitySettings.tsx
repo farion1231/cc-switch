@@ -35,6 +35,7 @@ export function AppVisibilitySettings({
     gemini: true,
     opencode: true,
     openclaw: true,
+    iiagent: true,
   };
 
   // Count how many apps are currently visible

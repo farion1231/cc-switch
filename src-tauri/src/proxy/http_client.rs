@@ -242,14 +242,15 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
         log::debug!("[GlobalProxy] Proxy configured: {}", mask_url(url));
     } else {
         // 未设置全局代理时，让 reqwest 自动检测系统代理（环境变量）
-        // 若系统代理指向本机，禁用系统代理避免自环
-        if system_proxy_points_to_loopback() {
+        // 仅当系统代理指向 CC-Switch 自己的端口时才禁用，避免自环
+        // 用户的其他系统代理（如 v2ray/Clash）会被保留用于上游请求
+        if points_to_cc_switch_proxy_from_env() {
             builder = builder.no_proxy();
             log::warn!(
-                "[GlobalProxy] System proxy points to localhost, bypassing to avoid recursion"
+                "[GlobalProxy] System proxy points to CC-Switch's own port, bypassing to avoid recursion"
             );
         } else {
-            log::debug!("[GlobalProxy] Following system proxy (no explicit proxy configured)");
+            log::info!("[GlobalProxy] Following system proxy for upstream requests (no explicit proxy configured)");
         }
     }
 
@@ -259,6 +260,14 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
 }
 
 fn system_proxy_points_to_loopback() -> bool {
+    // Only bypass if system proxy points to CC-Switch's own proxy port
+    // This allows users to use external proxies (v2ray, Clash, etc.) for upstream requests
+    // while avoiding recursion when the system proxy points to CC-Switch itself
+    points_to_cc_switch_proxy_from_env()
+}
+
+// New helper function - check if any proxy env var points to CC-Switch's own port
+fn points_to_cc_switch_proxy_from_env() -> bool {
     const KEYS: [&str; 6] = [
         "HTTP_PROXY",
         "http_proxy",
@@ -272,7 +281,28 @@ fn system_proxy_points_to_loopback() -> bool {
         .filter_map(|key| env::var(key).ok())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .any(|value| proxy_points_to_loopback(&value))
+        .any(|value| points_to_cc_switch_proxy(&value))
+}
+
+// Check if a proxy URL points to CC-Switch's own proxy port
+fn points_to_cc_switch_proxy(value: &str) -> bool {
+    fn is_cc_switch_proxy_port(port: Option<u16>) -> bool {
+        let cc_switch_port = get_proxy_port();
+        port == Some(cc_switch_port)
+    }
+
+    if let Ok(parsed) = url::Url::parse(value) {
+        if let Some(host) = parsed.host_str() {
+            // Only return true if BOTH:
+            // 1. Host is loopback (localhost, 127.0.0.1, ::1)
+            // 2. Port matches CC-Switch proxy port
+            let is_loopback = host.eq_ignore_ascii_case("localhost")
+                || host.parse::<IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false);
+            
+            return is_loopback && is_cc_switch_proxy_port(parsed.port());
+        }
+    }
+    false
 }
 
 fn proxy_points_to_loopback(value: &str) -> bool {

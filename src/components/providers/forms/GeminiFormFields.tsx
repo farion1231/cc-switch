@@ -1,10 +1,8 @@
 import { useTranslation } from "react-i18next";
-import { FormLabel } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
 import { Info } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField } from "./shared";
-import type { ProviderCategory } from "@/types";
+import { ApiKeySection, EndpointField, RemoteModelSelector } from "./shared";
+import type { ProviderCategory, ProviderProxyConfig } from "@/types";
 
 interface EndpointCandidate {
   url: string;
@@ -39,6 +37,9 @@ interface GeminiFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+
+  // Provider-level proxy config for model enumeration
+  proxyConfig?: ProviderProxyConfig;
 }
 
 export function GeminiFormFields({
@@ -63,6 +64,7 @@ export function GeminiFormFields({
   model,
   onModelChange,
   speedTestEndpoints,
+  proxyConfig,
 }: GeminiFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -123,17 +125,17 @@ export function GeminiFormFields({
 
       {/* Model 输入框 */}
       {shouldShowModelField && (
-        <div>
-          <FormLabel htmlFor="gemini-model">
-            {t("provider.form.gemini.model", { defaultValue: "模型" })}
-          </FormLabel>
-          <Input
-            id="gemini-model"
-            value={model}
-            onChange={(e) => onModelChange(e.target.value)}
-            placeholder="gemini-3-pro-preview"
-          />
-        </div>
+        <RemoteModelSelector
+          id="gemini-model"
+          label={t("provider.form.gemini.model", { defaultValue: "模型" })}
+          value={model}
+          onChange={onModelChange}
+          baseUrl={baseUrl}
+          apiKey={apiKey}
+          apiFormat="openai_chat"
+          proxyConfig={proxyConfig}
+          placeholder="gemini-3-pro-preview"
+        />
       )}
 
       {/* 端点测速弹窗 */}

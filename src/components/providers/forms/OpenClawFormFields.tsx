@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -17,10 +17,14 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import { ApiKeySection, RemoteModelSelector } from "./shared";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ApiKeySection } from "./shared";
 import { openclawApiProtocols } from "@/config/openclawProviderPresets";
-import type { ProviderCategory, OpenClawModel } from "@/types";
+import type {
+  ProviderCategory,
+  OpenClawModel,
+  ProviderProxyConfig,
+} from "@/types";
 
 interface OpenClawFormFieldsProps {
   // Base URL
@@ -45,8 +49,10 @@ interface OpenClawFormFieldsProps {
   onModelsChange: (models: OpenClawModel[]) => void;
 
   // User-Agent
-  userAgent: boolean;
-  onUserAgentChange: (checked: boolean) => void;
+  userAgent?: boolean;
+  onUserAgentChange?: (checked: boolean) => void;
+  // Provider-level proxy config for model enumeration
+  proxyConfig?: ProviderProxyConfig;
 }
 
 export function OpenClawFormFields({
@@ -63,10 +69,16 @@ export function OpenClawFormFields({
   onApiChange,
   models,
   onModelsChange,
-  userAgent,
-  onUserAgentChange,
+  userAgent = false,
+  onUserAgentChange = () => {},
+  proxyConfig,
 }: OpenClawFormFieldsProps) {
   const { t } = useTranslation();
+
+  const apiFormat = useMemo(
+    () => (api === "anthropic" ? "anthropic" : "openai_chat"),
+    [api],
+  );
   const [expandedModels, setExpandedModels] = useState<Record<number, boolean>>(
     {},
   );
@@ -280,17 +292,19 @@ export function OpenClawFormFields({
                 {/* Model ID and Name row */}
                 <div className="flex items-center gap-2">
                   <div className="flex-1 space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {t("openclaw.modelId", { defaultValue: "模型 ID" })}
-                    </label>
-                    <Input
+                    <RemoteModelSelector
+                      id={`openclaw-model-id-${index}`}
+                      label={t("openclaw.modelId", { defaultValue: "模型 ID" })}
                       value={model.id}
-                      onChange={(e) =>
-                        handleModelChange(index, "id", e.target.value)
-                      }
+                      onChange={(val) => handleModelChange(index, "id", val)}
+                      baseUrl={baseUrl}
+                      apiKey={apiKey}
+                      apiFormat={apiFormat}
+                      proxyConfig={proxyConfig}
                       placeholder={t("openclaw.modelIdPlaceholder", {
                         defaultValue: "claude-3-sonnet",
                       })}
+                      className="flex-1 space-y-1"
                     />
                   </div>
                   <div className="flex-1 space-y-1">
@@ -444,6 +458,7 @@ export function OpenClawFormFields({
                           placeholder="32000"
                         />
                       </div>
+                      <div className="flex-1" />
                       <div className="flex-1" />
                     </div>
 

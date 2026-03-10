@@ -17,6 +17,7 @@ import type {
   OpenCodeModel,
   OpenCodeProviderConfig,
   OpenClawModel,
+  IIAgentModelInfo,
 } from "@/types";
 import {
   providerPresets,
@@ -40,6 +41,11 @@ import {
   type OpenClawProviderPreset,
   type OpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
+import {
+  iiAgentPresets,
+  type IIAgentProviderPreset,
+} from "@/config/iiAgentProviderPresets";
+import { IIAgentFormFields } from "./IIAgentFormFields";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
@@ -58,11 +64,8 @@ import { ClaudeFormFields } from "./ClaudeFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { OmoFormFields } from "./OmoFormFields";
-import { type OmoGlobalConfigFieldsRef } from "./OmoGlobalConfigFields";
-import { OmoCommonConfigEditor } from "./OmoCommonConfigEditor";
 import * as configApi from "@/lib/api/config";
-import type { OmoGlobalConfig } from "@/types/omo";
-import { mergeOmoConfigPreview, parseOmoOtherFieldsObject } from "@/types/omo";
+import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
   ProviderAdvancedConfig,
   type PricingModelSourceOption,
@@ -83,7 +86,6 @@ import {
   useGeminiCommonConfig,
 } from "./hooks";
 import { useProvidersQuery } from "@/lib/query/queries";
-import { useOmoGlobalConfig } from "@/lib/query/omo";
 
 const CLAUDE_DEFAULT_CONFIG = JSON.stringify({ env: {} }, null, 2);
 const CODEX_DEFAULT_CONFIG = JSON.stringify({ auth: {}, config: "" }, null, 2);
@@ -180,6 +182,18 @@ function toOpencodeExtraOptions(
   return extra;
 }
 
+const IIAGENT_DEFAULT_MODELS: Record<string, IIAgentModelInfo> = {};
+
+const IIAGENT_DEFAULT_CONFIG = JSON.stringify(
+  {
+    baseUrl: "",
+    apiKey: "",
+    models: IIAGENT_DEFAULT_MODELS,
+  },
+  null,
+  2,
+);
+
 const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
   {
     baseUrl: "",
@@ -198,7 +212,8 @@ type PresetEntry = {
   | CodexProviderPreset
   | GeminiProviderPreset
   | OpenCodeProviderPreset
-  | OpenClawProviderPreset;
+  | OpenClawProviderPreset
+  | IIAgentProviderPreset;
 };
 
 interface ProviderFormProps {
@@ -247,15 +262,6 @@ function buildOmoProfilePreview(
   }
   return profileOnly;
 }
-
-const EMPTY_OMO_GLOBAL_CONFIG: OmoGlobalConfig = {
-  id: "global",
-  disabledAgents: [],
-  disabledMcps: [],
-  disabledHooks: [],
-  disabledSkills: [],
-  updatedAt: "",
-};
 
 export function ProviderForm({
   appId,
@@ -322,7 +328,6 @@ export function ProviderForm({
     initialCategory: initialData?.category,
   });
   const isOmoCategory = appId === "opencode" && category === "omo";
-  const { data: queriedOmoGlobalConfig } = useOmoGlobalConfig(isOmoCategory);
 
   useEffect(() => {
     setSelectedPresetId(initialData ? null : "custom");
@@ -360,7 +365,9 @@ export function ProviderForm({
               ? OPENCODE_DEFAULT_CONFIG
               : appId === "openclaw"
                 ? OPENCLAW_DEFAULT_CONFIG
-                : CLAUDE_DEFAULT_CONFIG,
+                : appId === "iiagent"
+                  ? IIAGENT_DEFAULT_CONFIG
+                  : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -492,6 +499,11 @@ export function ProviderForm({
         id: `openclaw-${index}`,
         preset,
       }));
+    } else if (appId === "iiagent") {
+      return iiAgentPresets.map<PresetEntry>((preset, index) => ({
+        id: `iiagent-${index}`,
+        preset,
+      }));
     }
     return providerPresets.map<PresetEntry>((preset, index) => ({
       id: `claude-${index}`,
@@ -507,7 +519,7 @@ export function ProviderForm({
     validateTemplateValues,
   } = useTemplateValues({
     selectedPresetId: appId === "claude" ? selectedPresetId : null,
-    presetEntries: appId === "claude" ? presetEntries : [],
+    presetEntries: appId === "claude" ? (presetEntries as any[]) : [],
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: (config) => form.setValue("settingsConfig", config),
   });
@@ -953,40 +965,18 @@ export function ProviderForm({
     return otherFields ? JSON.stringify(otherFields, null, 2) : "";
   });
 
-  const [omoGlobalState, setOmoGlobalState] = useState<OmoGlobalConfig | null>(
-    null,
-  );
-
-  const [isOmoConfigModalOpen, setIsOmoConfigModalOpen] = useState(false);
   const [useOmoCommonConfig, setUseOmoCommonConfig] = useState(() => {
     const raw = initialOmoSettings?.useCommonConfig;
     return typeof raw === "boolean" ? raw : true;
   });
-  const [isOmoSaving, setIsOmoSaving] = useState(false);
-  const omoGlobalConfigRef = useRef<OmoGlobalConfigFieldsRef>(null);
-  const [omoFieldsKey, setOmoFieldsKey] = useState(0);
-  const effectiveOmoGlobalConfig =
-    omoGlobalState ?? queriedOmoGlobalConfig ?? EMPTY_OMO_GLOBAL_CONFIG;
 
   const mergedOmoJsonPreview = useMemo(() => {
-    if (useOmoCommonConfig) {
-      const merged = mergeOmoConfigPreview(
-        effectiveOmoGlobalConfig,
-        omoAgents,
-        omoCategories,
-        omoOtherFieldsStr,
-      );
-      return JSON.stringify(merged, null, 2);
-    } else {
-      return JSON.stringify(
-        buildOmoProfilePreview(omoAgents, omoCategories, omoOtherFieldsStr),
-        null,
-        2,
-      );
-    }
+    return JSON.stringify(
+      buildOmoProfilePreview(omoAgents, omoCategories, omoOtherFieldsStr),
+      null,
+      2,
+    );
   }, [
-    useOmoCommonConfig,
-    effectiveOmoGlobalConfig,
     omoAgents,
     omoCategories,
     omoOtherFieldsStr,
@@ -1012,28 +1002,6 @@ export function ProviderForm({
       active = false;
     };
   }, [appId, category, isEditMode]);
-
-  const handleOmoGlobalConfigSave = useCallback(async () => {
-    if (!omoGlobalConfigRef.current) return;
-    setIsOmoSaving(true);
-    try {
-      const config = omoGlobalConfigRef.current.buildCurrentConfigStrict();
-      await configApi.setCommonConfigSnippet("omo", JSON.stringify(config));
-      setIsOmoConfigModalOpen(false);
-      toast.success(
-        t("omo.globalConfigSaved", { defaultValue: "Global config saved" }),
-      );
-    } catch (err) {
-      toast.error(String(err));
-    } finally {
-      setIsOmoSaving(false);
-    }
-  }, [t]);
-
-  const handleOmoEditClick = useCallback(() => {
-    setOmoFieldsKey((k) => k + 1);
-    setIsOmoConfigModalOpen(true);
-  }, []);
 
   const resetOmoDraftState = useCallback((useCommonConfig = true) => {
     setOmoAgents({});
@@ -1160,6 +1128,88 @@ export function ProviderForm({
       } catch {
         // ignore
       }
+    },
+    [form],
+  );
+
+  // IIAgent 配置状态
+  const [iiagentBaseUrl, setIiagentBaseUrl] = useState<string>(() => {
+    if (appId !== "iiagent") return "";
+    try {
+      const config = JSON.parse(
+        initialData?.settingsConfig
+          ? JSON.stringify(initialData.settingsConfig)
+          : IIAGENT_DEFAULT_CONFIG,
+      );
+      return config.baseUrl || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const [iiagentApiKey, setIiagentApiKey] = useState<string>(() => {
+    if (appId !== "iiagent") return "";
+    try {
+      const config = JSON.parse(
+        initialData?.settingsConfig
+          ? JSON.stringify(initialData.settingsConfig)
+          : IIAGENT_DEFAULT_CONFIG,
+      );
+      return config.apiKey || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const [iiagentModels, setIiagentModels] = useState<Record<string, IIAgentModelInfo>>(() => {
+    if (appId !== "iiagent") return IIAGENT_DEFAULT_MODELS;
+    try {
+      const configJson = form.getValues("settingsConfig") || IIAGENT_DEFAULT_CONFIG;
+      const config = JSON.parse(configJson);
+      return config.models || IIAGENT_DEFAULT_MODELS;
+    } catch {
+      return IIAGENT_DEFAULT_MODELS;
+    }
+  });
+
+  const handleIiagentBaseUrlChange = useCallback(
+    (baseUrl: string) => {
+      setIiagentBaseUrl(baseUrl);
+      try {
+        const config = JSON.parse(
+          form.getValues("settingsConfig") || IIAGENT_DEFAULT_CONFIG,
+        );
+        config.baseUrl = baseUrl.trim().replace(/\/+$/, "");
+        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+      } catch { }
+    },
+    [form],
+  );
+
+  const handleIiagentApiKeyChange = useCallback(
+    (apiKey: string) => {
+      setIiagentApiKey(apiKey);
+      try {
+        const config = JSON.parse(
+          form.getValues("settingsConfig") || IIAGENT_DEFAULT_CONFIG,
+        );
+        config.apiKey = apiKey;
+        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+      } catch { }
+    },
+    [form],
+  );
+
+  const handleIiagentModelsChange = useCallback(
+    (models: Record<string, IIAgentModelInfo>) => {
+      setIiagentModels(models);
+      try {
+        const config = JSON.parse(
+          form.getValues("settingsConfig") || IIAGENT_DEFAULT_CONFIG,
+        );
+        config.models = models;
+        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+      } catch { }
     },
     [form],
   );
@@ -1310,6 +1360,24 @@ export function ProviderForm({
 
     // 非官方供应商必填校验：端点和 API Key
     if (category !== "official") {
+      if (appId === "iiagent") {
+        return (
+          <IIAgentFormFields
+            apiKey={iiagentApiKey}
+            onApiKeyChange={handleIiagentApiKeyChange}
+            category={category}
+            shouldShowApiKeyLink={true}
+            websiteUrl={form.getValues("websiteUrl") || ""}
+            isPartner={activePreset?.isPartner}
+            partnerPromotionKey={activePreset?.partnerPromotionKey}
+            baseUrl={iiagentBaseUrl}
+            onBaseUrlChange={handleIiagentBaseUrlChange}
+            models={iiagentModels}
+            onModelsChange={handleIiagentModelsChange}
+          />
+        );
+      }
+
       if (appId === "claude") {
         if (!baseUrl.trim()) {
           toast.error(
@@ -1532,7 +1600,7 @@ export function ProviderForm({
   };
 
   const groupedPresets = useMemo(() => {
-    return presetEntries.reduce<Record<string, PresetEntry[]>>((acc, entry) => {
+    return (presetEntries as any[]).reduce<Record<string, PresetEntry[]>>((acc, entry) => {
       const category = entry.preset.category ?? "others";
       if (!acc[category]) {
         acc[category] = [];
@@ -1559,7 +1627,7 @@ export function ProviderForm({
     appId: "claude",
     category,
     selectedPresetId,
-    presetEntries,
+    presetEntries: presetEntries as any[],
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
@@ -1572,7 +1640,7 @@ export function ProviderForm({
     appId: "codex",
     category,
     selectedPresetId,
-    presetEntries,
+    presetEntries: presetEntries as any[],
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
@@ -1585,7 +1653,7 @@ export function ProviderForm({
     appId: "gemini",
     category,
     selectedPresetId,
-    presetEntries,
+    presetEntries: presetEntries as any[],
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
@@ -1598,7 +1666,7 @@ export function ProviderForm({
     appId: "opencode",
     category,
     selectedPresetId,
-    presetEntries,
+    presetEntries: presetEntries as any[],
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
@@ -1612,7 +1680,7 @@ export function ProviderForm({
     appId: "openclaw",
     category,
     selectedPresetId,
-    presetEntries,
+    presetEntries: presetEntries as any[],
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
@@ -1620,7 +1688,7 @@ export function ProviderForm({
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
     selectedPresetId,
-    presetEntries,
+    presetEntries: presetEntries as any[],
     baseUrl,
     codexBaseUrl,
     initialData,
@@ -1662,8 +1730,36 @@ export function ProviderForm({
     }
 
 
-    const entry = presetEntries.find((item) => item.id === value);
+    const entry = (presetEntries as any[]).find((item) => item.id === value);
     if (!entry) {
+      return;
+    }
+
+    if (appId === "iiagent") {
+      const p = entry.preset as IIAgentProviderPreset;
+      form.setValue("name", p.name);
+      form.setValue("websiteUrl", p.websiteUrl);
+      form.setValue("icon", p.icon);
+      form.setValue("iconColor", p.iconColor);
+
+      // Update iiagent specific state
+      setIiagentBaseUrl(p.transport.baseUrl);
+      setIiagentApiKey("");
+      setIiagentModels(IIAGENT_DEFAULT_MODELS);
+
+      const config = {
+        baseUrl: p.transport.baseUrl,
+        apiKey: "",
+        models: IIAGENT_DEFAULT_MODELS,
+      };
+      form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+
+      setActivePreset({
+        id: value,
+        category: p.category,
+        isPartner: p.isPartner,
+        partnerPromotionKey: p.partnerPromotionKey,
+      });
       return;
     }
 
@@ -1820,7 +1916,7 @@ export function ProviderForm({
         {!initialData && (
           <ProviderPresetSelector
             selectedPresetId={selectedPresetId}
-            groupedPresets={groupedPresets}
+            groupedPresets={groupedPresets as any}
             categoryKeys={categoryKeys}
             presetCategoryLabels={presetCategoryLabels}
             onPresetChange={handlePresetChange}
@@ -1953,6 +2049,24 @@ export function ProviderForm({
           </div>
         )}
 
+        {/* IIAgent 专属字段 */}
+        {appId === "iiagent" && (
+          <IIAgentFormFields
+            apiKey={iiagentApiKey}
+            onApiKeyChange={handleIiagentApiKeyChange}
+            category={category}
+            shouldShowApiKeyLink={true}
+            websiteUrl={form.getValues("websiteUrl") || ""}
+            isPartner={activePreset?.isPartner}
+            partnerPromotionKey={activePreset?.partnerPromotionKey}
+            baseUrl={iiagentBaseUrl}
+            onBaseUrlChange={handleIiagentBaseUrlChange}
+            models={iiagentModels}
+            onModelsChange={handleIiagentModelsChange}
+            proxyConfig={proxyConfig}
+          />
+        )}
+
         {/* Claude 专属字段 */}
         {appId === "claude" && (
           <ClaudeFormFields
@@ -2020,6 +2134,7 @@ export function ProviderForm({
             modelName={codexModelName}
             onModelNameChange={handleCodexModelNameChange}
             speedTestEndpoints={speedTestEndpoints}
+            proxyConfig={proxyConfig}
           />
         )}
 
@@ -2049,6 +2164,7 @@ export function ProviderForm({
             model={geminiModel}
             onModelChange={handleGeminiModelChange}
             speedTestEndpoints={speedTestEndpoints}
+            proxyConfig={proxyConfig}
           />
         )}
 
@@ -2070,6 +2186,7 @@ export function ProviderForm({
             extraOptions={opencodeExtraOptions}
             onExtraOptionsChange={handleOpencodeExtraOptionsChange}
             isNewApi={opencodeIsNewApi}
+            proxyConfig={proxyConfig}
           />
         )}
 
@@ -2103,6 +2220,7 @@ export function ProviderForm({
             onApiChange={handleOpenclawApiChange}
             models={openclawModels}
             onModelsChange={handleOpenclawModelsChange}
+            proxyConfig={proxyConfig}
           />
         )}
 
@@ -2148,19 +2266,16 @@ export function ProviderForm({
             {settingsConfigErrorField}
           </>
         ) : appId === "opencode" && category === "omo" ? (
-          <OmoCommonConfigEditor
-            previewValue={mergedOmoJsonPreview}
-            useCommonConfig={useOmoCommonConfig}
-            onCommonConfigToggle={setUseOmoCommonConfig}
-            isModalOpen={isOmoConfigModalOpen}
-            onEditClick={handleOmoEditClick}
-            onModalClose={() => setIsOmoConfigModalOpen(false)}
-            onSave={handleOmoGlobalConfigSave}
-            isSaving={isOmoSaving}
-            onGlobalConfigStateChange={setOmoGlobalState}
-            globalConfigRef={omoGlobalConfigRef}
-            fieldsKey={omoFieldsKey}
-          />
+          <div className="space-y-2">
+            <Label>{t("provider.configJson")}</Label>
+            <JsonEditor
+              value={mergedOmoJsonPreview}
+              onChange={() => {}}
+              rows={14}
+              showValidation={false}
+              language="json"
+            />
+          </div>
         ) : appId === "opencode" && category !== "omo" ? (
           <>
             <div className="space-y-2">

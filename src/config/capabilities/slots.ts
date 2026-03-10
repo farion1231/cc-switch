@@ -37,6 +37,9 @@ export const APP_SLOTS: Record<string, Slot> = {
   gemini: { acceptsFormats: new Set(["google"]) },
   opencode: { acceptsFormats: new Set(["anthropic", "openai_chat", "google"]) },
   openclaw: { acceptsFormats: new Set(["anthropic", "openai_chat"]) },
+  iiagent: {
+    acceptsFormats: new Set(["anthropic", "openai_chat", "openai_responses"]),
+  },
 };
 
 export function fitsSlot(endpoint: ProviderEndpoint, slot: Slot): boolean {
@@ -53,12 +56,13 @@ export function deriveApps(
     claude: fitsSlot(endpoint, APP_SLOTS.claude),
     codex: fitsSlot(endpoint, APP_SLOTS.codex),
     gemini: fitsSlot(endpoint, APP_SLOTS.gemini),
+    iiagent: fitsSlot(endpoint, APP_SLOTS.iiagent),
   };
 }
 
 export function isUniversal(endpoint: ProviderEndpoint): boolean {
   const apps = deriveApps(endpoint);
-  return apps.claude && apps.codex && apps.gemini;
+  return apps.claude && apps.codex && apps.gemini && apps.iiagent;
 }
 
 export function flowToSlot(

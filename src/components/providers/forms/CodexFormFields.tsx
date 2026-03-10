@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField } from "./shared";
-import type { ProviderCategory } from "@/types";
+import { ApiKeySection, EndpointField, RemoteModelSelector } from "./shared";
+import type { ProviderCategory, ProviderProxyConfig } from "@/types";
 
 interface EndpointCandidate {
   url: string;
@@ -35,6 +35,9 @@ interface CodexFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+
+  // Provider-level proxy config for model enumeration
+  proxyConfig?: ProviderProxyConfig;
 }
 
 export function CodexFormFields({
@@ -58,6 +61,7 @@ export function CodexFormFields({
   modelName = "",
   onModelNameChange,
   speedTestEndpoints,
+  proxyConfig,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -99,33 +103,22 @@ export function CodexFormFields({
 
       {/* Codex Model Name 输入框 */}
       {shouldShowModelField && onModelNameChange && (
-        <div className="space-y-2">
-          <label
-            htmlFor="codexModelName"
-            className="block text-sm font-medium text-foreground"
-          >
-            {t("codexConfig.modelName", { defaultValue: "模型名称" })}
-          </label>
-          <input
-            id="codexModelName"
-            type="text"
-            value={modelName}
-            onChange={(e) => onModelNameChange(e.target.value)}
-            placeholder={t("codexConfig.modelNamePlaceholder", {
-              defaultValue: "例如: gpt-5.4",
-            })}
-            className="w-full px-3 py-2 border border-border-default bg-background text-foreground rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 transition-colors"
-          />
-          <p className="text-xs text-muted-foreground">
-            {modelName.trim()
-              ? t("codexConfig.modelNameHint", {
-                  defaultValue: "指定使用的模型，将自动更新到 config.toml 中",
-                })
-              : t("providerForm.modelHint", {
-                  defaultValue: "💡 留空将使用供应商的默认模型",
-                })}
-          </p>
-        </div>
+        <RemoteModelSelector
+          id="codexModelName"
+          label={t("codexConfig.modelName", { defaultValue: "模型名称" })}
+          value={modelName}
+          onChange={onModelNameChange}
+          baseUrl={codexBaseUrl}
+          apiKey={codexApiKey}
+          apiFormat="openai_chat"
+          proxyConfig={proxyConfig}
+          placeholder={t("codexConfig.modelNamePlaceholder", {
+            defaultValue: "例如: gpt-5-codex",
+          })}
+          hint={t("codexConfig.modelNameHint", {
+            defaultValue: "指定使用的模型，将自动更新到 config.toml 中",
+          })}
+        />
       )}
 
       {/* 端点测速弹窗 - Codex */}

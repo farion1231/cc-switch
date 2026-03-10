@@ -34,7 +34,8 @@ pub(crate) use live::{
 
 // Internal re-exports
 use live::{
-    remove_openclaw_provider_from_live, remove_opencode_provider_from_live, write_gemini_live,
+    remove_iiagent_provider_from_live, remove_openclaw_provider_from_live,
+    remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -404,7 +405,8 @@ impl ProviderService {
             match app_type {
                 AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                 AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
-                _ => {} // Should not reach here
+                AppType::IIAgent => remove_iiagent_provider_from_live(id)?,
+                _ => {}
             }
             return Ok(());
         }
@@ -763,6 +765,7 @@ impl ProviderService {
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
+            AppType::IIAgent => Self::extract_iiagent_common_config(&provider.settings_config),
         }
     }
 
@@ -777,6 +780,7 @@ impl ProviderService {
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
+            AppType::IIAgent => Self::extract_iiagent_common_config(settings_config),
         }
     }
 
@@ -944,6 +948,23 @@ impl ProviderService {
             obj.remove("apiKey");
             obj.remove("baseUrl");
             // Keep api and models as they might be common
+        }
+
+        if config.is_null() || (config.is_object() && config.as_object().unwrap().is_empty()) {
+            return Ok("{}".to_string());
+        }
+
+        serde_json::to_string_pretty(&config)
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+    }
+
+    /// Extract common config for IIAgent (JSON format)
+    fn extract_iiagent_common_config(settings: &Value) -> Result<String, AppError> {
+        let mut config = settings.clone();
+
+        if let Some(obj) = config.as_object_mut() {
+            obj.remove("api_key");
+            obj.remove("base_url");
         }
 
         if config.is_null() || (config.is_object() && config.as_object().unwrap().is_empty()) {
@@ -1132,13 +1153,20 @@ impl ProviderService {
                 }
             }
             AppType::OpenClaw => {
-                // OpenClaw uses config structure: { baseUrl, apiKey, api, models }
-                // Basic validation - must be an object
                 if !provider.settings_config.is_object() {
                     return Err(AppError::localized(
                         "provider.openclaw.settings.not_object",
                         "OpenClaw 配置必须是 JSON 对象",
                         "OpenClaw configuration must be a JSON object",
+                    ));
+                }
+            }
+            AppType::IIAgent => {
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.iiagent.settings.not_object",
+                        "IIAgent 配置必须是 JSON 对象",
+                        "IIAgent configuration must be a JSON object",
                     ));
                 }
             }
@@ -1331,6 +1359,29 @@ impl ProviderService {
                 let base_url = provider
                     .settings_config
                     .get("baseUrl")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::IIAgent => {
+                let api_key = provider
+                    .settings_config
+                    .get("api_key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.iiagent.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = provider
+                    .settings_config
+                    .get("base_url")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

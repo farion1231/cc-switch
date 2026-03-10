@@ -1,0 +1,1 @@
+([(HeaderName, HeaderValue); 1], Sse<impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>>>)

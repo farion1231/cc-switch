@@ -1,0 +1,13 @@
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-changed=configure.rs
+cargo:rustc-check-cfg=cfg(assert_no_panic)
+cargo:rustc-check-cfg=cfg(intrinsics_enabled)
+cargo:rustc-check-cfg=cfg(arch_enabled)
+cargo:rustc-cfg=arch_enabled
+cargo:rustc-check-cfg=cfg(optimizations_enabled)
+cargo:rustc-check-cfg=cfg(x86_no_sse)
+cargo:rustc-env=CFG_CARGO_FEATURES=["arch", "default"]
+cargo:rustc-env=CFG_OPT_LEVEL=0
+cargo:rustc-env=CFG_TARGET_FEATURES=["aes", "crc", "dit", "dotprod", "dpb", "dpb2", "fcma", "fhm", "flagm", "fp16", "frintts", "jsconv", "lor", "lse", "neon", "paca", "pacg", "pan", "pmuv3", "ras", "rcpc", "rcpc2", "rdm", "sb", "sha2", "sha3", "ssbs", "vh"]
+cargo:rustc-check-cfg=cfg(f16_enabled)
+cargo:rustc-check-cfg=cfg(f128_enabled)

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { providersApi } from "@/lib/api/providers";
@@ -13,44 +13,47 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Trash2, ChevronRight, Download, Loader2 } from "lucide-react";
-import { ApiKeySection } from "./shared";
+import { ApiKeySection, RemoteModelSelector } from "./shared";
 import { opencodeNpmPackages } from "@/config/opencodeProviderPresets";
 import { cn } from "@/lib/utils";
-import type { ProviderCategory, OpenCodeModel } from "@/types";
+import type {
+  ProviderCategory,
+  OpenCodeModel,
+  ProviderProxyConfig,
+} from "@/types";
 
 /**
- * Model ID input with local state to prevent focus loss.
- * The key prop issue: when Model ID changes, React sees it as a new element
- * and unmounts/remounts the input, losing focus. Using local state + onBlur
- * keeps the key stable during editing.
+ * Model ID input with local state and remote picker.
  */
 function ModelIdInput({
   modelId,
   onChange,
+  baseUrl,
+  apiKey,
+  apiFormat,
+  proxyConfig,
   placeholder,
 }: {
   modelId: string;
   onChange: (newId: string) => void;
+  baseUrl: string;
+  apiKey: string;
+  apiFormat: "anthropic" | "openai_chat";
+  proxyConfig?: ProviderProxyConfig;
   placeholder?: string;
 }) {
-  const [localValue, setLocalValue] = useState(modelId);
-
-  // Sync when external modelId changes (e.g., undo operation)
-  useEffect(() => {
-    setLocalValue(modelId);
-  }, [modelId]);
-
   return (
-    <Input
-      value={localValue}
-      onChange={(e) => setLocalValue(e.target.value)}
-      onBlur={() => {
-        if (localValue !== modelId && localValue.trim()) {
-          onChange(localValue);
-        }
-      }}
+    <RemoteModelSelector
+      id={`model-id-${modelId}`}
+      label=""
+      value={modelId}
+      onChange={onChange}
+      baseUrl={baseUrl}
+      apiKey={apiKey}
+      apiFormat={apiFormat}
+      proxyConfig={proxyConfig}
       placeholder={placeholder}
-      className="flex-1"
+      className="flex-1 space-y-0"
     />
   );
 }
@@ -158,6 +161,9 @@ interface OpenCodeFormFieldsProps {
 
   // NewAPI
   isNewApi: boolean;
+
+  // Provider-level proxy config for model enumeration
+  proxyConfig?: ProviderProxyConfig;
 }
 
 export function OpenCodeFormFields({
@@ -177,6 +183,7 @@ export function OpenCodeFormFields({
   extraOptions,
   onExtraOptionsChange,
   isNewApi,
+  proxyConfig,
 }: OpenCodeFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -404,6 +411,12 @@ export function OpenCodeFormFields({
     });
   };
 
+  // Determine API format based on selected NPM package for individual model pickers
+  const apiFormat = useMemo(
+    () => (npm === "@ai-sdk/anthropic" ? "anthropic" : "openai_chat"),
+    [npm],
+  );
+
   return (
     <>
       {/* NPM Package Selector */}
@@ -620,6 +633,10 @@ export function OpenCodeFormFields({
                   <ModelIdInput
                     modelId={key}
                     onChange={(newId) => handleModelIdChange(key, newId)}
+                    baseUrl={baseUrl}
+                    apiKey={apiKey}
+                    apiFormat={apiFormat}
+                    proxyConfig={proxyConfig}
                     placeholder={t("opencode.modelId", {
                       defaultValue: "Model ID",
                     })}

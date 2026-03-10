@@ -1,0 +1,123 @@
+cargo:rustc-check-cfg=cfg(osslconf, values("OPENSSL_NO_OCB", "OPENSSL_NO_SM4", "OPENSSL_NO_SEED", "OPENSSL_NO_CHACHA", "OPENSSL_NO_CAST", "OPENSSL_NO_IDEA", "OPENSSL_NO_CAMELLIA", "OPENSSL_NO_RC4", "OPENSSL_NO_BF", "OPENSSL_NO_PSK", "OPENSSL_NO_DEPRECATED_3_0", "OPENSSL_NO_SCRYPT", "OPENSSL_NO_SM3", "OPENSSL_NO_RMD160", "OPENSSL_NO_EC2M", "OPENSSL_NO_OCSP", "OPENSSL_NO_CMS", "OPENSSL_NO_COMP", "OPENSSL_NO_SOCK", "OPENSSL_NO_STDIO", "OPENSSL_NO_EC", "OPENSSL_NO_SSL3_METHOD", "OPENSSL_NO_KRB5", "OPENSSL_NO_TLSEXT", "OPENSSL_NO_SRP", "OPENSSL_NO_SRTP", "OPENSSL_NO_RFC3779", "OPENSSL_NO_SHA", "OPENSSL_NO_NEXTPROTONEG", "OPENSSL_NO_ENGINE", "OPENSSL_NO_BUF_FREELISTS", "OPENSSL_NO_RC2"))
+cargo:rustc-check-cfg=cfg(openssl)
+cargo:rustc-check-cfg=cfg(libressl)
+cargo:rustc-check-cfg=cfg(boringssl)
+cargo:rustc-check-cfg=cfg(awslc)
+cargo:rustc-check-cfg=cfg(libressl250)
+cargo:rustc-check-cfg=cfg(libressl251)
+cargo:rustc-check-cfg=cfg(libressl252)
+cargo:rustc-check-cfg=cfg(libressl261)
+cargo:rustc-check-cfg=cfg(libressl270)
+cargo:rustc-check-cfg=cfg(libressl271)
+cargo:rustc-check-cfg=cfg(libressl273)
+cargo:rustc-check-cfg=cfg(libressl280)
+cargo:rustc-check-cfg=cfg(libressl281)
+cargo:rustc-check-cfg=cfg(libressl291)
+cargo:rustc-check-cfg=cfg(libressl310)
+cargo:rustc-check-cfg=cfg(libressl321)
+cargo:rustc-check-cfg=cfg(libressl332)
+cargo:rustc-check-cfg=cfg(libressl340)
+cargo:rustc-check-cfg=cfg(libressl350)
+cargo:rustc-check-cfg=cfg(libressl360)
+cargo:rustc-check-cfg=cfg(libressl361)
+cargo:rustc-check-cfg=cfg(libressl370)
+cargo:rustc-check-cfg=cfg(libressl380)
+cargo:rustc-check-cfg=cfg(libressl381)
+cargo:rustc-check-cfg=cfg(libressl382)
+cargo:rustc-check-cfg=cfg(libressl390)
+cargo:rustc-check-cfg=cfg(libressl400)
+cargo:rustc-check-cfg=cfg(libressl410)
+cargo:rustc-check-cfg=cfg(libressl420)
+cargo:rustc-check-cfg=cfg(ossl101)
+cargo:rustc-check-cfg=cfg(ossl102)
+cargo:rustc-check-cfg=cfg(ossl102f)
+cargo:rustc-check-cfg=cfg(ossl102h)
+cargo:rustc-check-cfg=cfg(ossl110)
+cargo:rustc-check-cfg=cfg(ossl110f)
+cargo:rustc-check-cfg=cfg(ossl110g)
+cargo:rustc-check-cfg=cfg(ossl110h)
+cargo:rustc-check-cfg=cfg(ossl111)
+cargo:rustc-check-cfg=cfg(ossl111b)
+cargo:rustc-check-cfg=cfg(ossl111c)
+cargo:rustc-check-cfg=cfg(ossl111d)
+cargo:rustc-check-cfg=cfg(ossl300)
+cargo:rustc-check-cfg=cfg(ossl310)
+cargo:rustc-check-cfg=cfg(ossl320)
+cargo:rustc-check-cfg=cfg(ossl330)
+cargo:rustc-check-cfg=cfg(ossl340)
+cargo:rerun-if-env-changed=AARCH64_APPLE_DARWIN_OPENSSL_LIB_DIR
+AARCH64_APPLE_DARWIN_OPENSSL_LIB_DIR unset
+cargo:rerun-if-env-changed=OPENSSL_LIB_DIR
+OPENSSL_LIB_DIR unset
+cargo:rerun-if-env-changed=AARCH64_APPLE_DARWIN_OPENSSL_INCLUDE_DIR
+AARCH64_APPLE_DARWIN_OPENSSL_INCLUDE_DIR unset
+cargo:rerun-if-env-changed=OPENSSL_INCLUDE_DIR
+OPENSSL_INCLUDE_DIR unset
+cargo:rerun-if-env-changed=AARCH64_APPLE_DARWIN_OPENSSL_DIR
+AARCH64_APPLE_DARWIN_OPENSSL_DIR unset
+cargo:rerun-if-env-changed=OPENSSL_DIR
+OPENSSL_DIR unset
+cargo:rerun-if-changed=/opt/homebrew/opt/openssl@3/include/openssl
+cargo:rustc-link-search=native=/opt/homebrew/opt/openssl@3/lib
+cargo:include=/opt/homebrew/opt/openssl@3/include
+cargo:rerun-if-changed=build/expando.c
+OPT_LEVEL = Some(0)
+OUT_DIR = Some(/Users/jim/work/cc-switch/keymux/target/debug/build/openssl-sys-ecea413e0dfd5c6f/out)
+TARGET = Some(aarch64-apple-darwin)
+CARGO_ENCODED_RUSTFLAGS = Some()
+HOST = Some(aarch64-apple-darwin)
+cargo:rerun-if-env-changed=CC_aarch64-apple-darwin
+CC_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=CC_aarch64_apple_darwin
+CC_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=HOST_CC
+HOST_CC = None
+cargo:rerun-if-env-changed=CC
+CC = None
+cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+RUSTC_WRAPPER = None
+cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+CRATE_CC_NO_DEFAULTS = None
+DEBUG = Some(true)
+cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET
+MACOSX_DEPLOYMENT_TARGET = None
+cargo:rerun-if-env-changed=CFLAGS
+CFLAGS = None
+cargo:rerun-if-env-changed=HOST_CFLAGS
+HOST_CFLAGS = None
+cargo:rerun-if-env-changed=CFLAGS_aarch64_apple_darwin
+CFLAGS_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=CFLAGS_aarch64-apple-darwin
+CFLAGS_aarch64-apple-darwin = None
+version: 3_6_1
+cargo:rustc-cfg=osslconf="OPENSSL_NO_SSL3_METHOD"
+cargo:conf=OPENSSL_NO_SSL3_METHOD
+cargo:rustc-cfg=openssl
+cargo:rustc-cfg=ossl101
+cargo:rustc-cfg=ossl102
+cargo:rustc-cfg=ossl102f
+cargo:rustc-cfg=ossl102h
+cargo:rustc-cfg=ossl110
+cargo:rustc-cfg=ossl110f
+cargo:rustc-cfg=ossl110g
+cargo:rustc-cfg=ossl110h
+cargo:rustc-cfg=ossl111
+cargo:rustc-cfg=ossl111b
+cargo:rustc-cfg=ossl111c
+cargo:rustc-cfg=ossl111d
+cargo:rustc-cfg=ossl300
+cargo:rustc-cfg=ossl320
+cargo:rustc-cfg=ossl330
+cargo:rustc-cfg=ossl340
+cargo:rustc-cfg=ossl350
+cargo:version_number=30600010
+cargo:rerun-if-env-changed=AARCH64_APPLE_DARWIN_OPENSSL_LIBS
+AARCH64_APPLE_DARWIN_OPENSSL_LIBS unset
+cargo:rerun-if-env-changed=OPENSSL_LIBS
+OPENSSL_LIBS unset
+cargo:rerun-if-env-changed=AARCH64_APPLE_DARWIN_OPENSSL_STATIC
+AARCH64_APPLE_DARWIN_OPENSSL_STATIC unset
+cargo:rerun-if-env-changed=OPENSSL_STATIC
+OPENSSL_STATIC unset
+cargo:rustc-link-lib=dylib=ssl
+cargo:rustc-link-lib=dylib=crypto

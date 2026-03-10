@@ -750,5 +750,45 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
 }
 
 // ============================================================================
+// OpenCode Model Picker Commands
+// ============================================================================
+
+/// Get OpenCode provider with model picker array
+#[tauri::command]
+pub fn get_opencode_provider_with_models(
+    id: String,
+) -> Result<Option<crate::opencode_config::OpenCodeProviderWithModels>, String> {
+    crate::opencode_config::get_provider_with_models(&id)
+        .map_err(|e| e.to_string())
+}
+
+/// Get all OpenCode providers with their model arrays
+#[tauri::command]
+pub fn get_all_opencode_providers_with_models(
+) -> Result<Vec<crate::opencode_config::OpenCodeProviderWithModels>, String> {
+    crate::opencode_config::get_all_providers_with_models()
+        .map_err(|e| e.to_string())
+}
+
+/// Get predefined model picker for a provider
+#[tauri::command]
+pub fn get_opencode_model_picker(
+    provider_id: String,
+) -> Result<Option<crate::opencode_config::OpenCodeModelPicker>, String> {
+    Ok(crate::opencode_config::get_model_picker(&provider_id))
+}
+
+/// Set provider models array in opencode config
+#[tauri::command]
+pub fn set_opencode_provider_models(
+    id: String,
+    models: Vec<crate::opencode_config::OpenCodeModelInfo>,
+) -> Result<bool, String> {
+    crate::opencode_config::set_provider_models(&id, models)
+        .map(|_| true)
+        .map_err(|e| e.to_string())
+}
+
+// ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================

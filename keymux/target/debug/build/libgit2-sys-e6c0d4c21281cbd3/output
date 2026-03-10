@@ -1,0 +1,372 @@
+cargo:rerun-if-env-changed=LIBGIT2_NO_VENDOR
+cargo:rerun-if-env-changed=LIBGIT2_NO_PKG_CONFIG
+cargo:rerun-if-env-changed=PKG_CONFIG_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG
+cargo:rerun-if-env-changed=PKG_CONFIG
+cargo:rerun-if-env-changed=LIBGIT2_STATIC
+cargo:rerun-if-env-changed=LIBGIT2_DYNAMIC
+cargo:rerun-if-env-changed=PKG_CONFIG_ALL_STATIC
+cargo:rerun-if-env-changed=PKG_CONFIG_ALL_DYNAMIC
+cargo:rerun-if-env-changed=PKG_CONFIG_PATH_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_PATH_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG_PATH
+cargo:rerun-if-env-changed=PKG_CONFIG_PATH
+cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG_LIBDIR
+cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR
+cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR_aarch64-apple-darwin
+cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR_aarch64_apple_darwin
+cargo:rerun-if-env-changed=HOST_PKG_CONFIG_SYSROOT_DIR
+cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR
+cargo:warning=failed to probe system libgit2: 
+pkg-config exited with status code 1
+> PKG_CONFIG_ALLOW_SYSTEM_LIBS=1 PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1 pkg-config --libs --cflags libgit2 'libgit2 >= 1.7.2' 'libgit2 < 1.8.0'
+
+The system library `libgit2` required by crate `libgit2-sys` was not found.
+The file `libgit2.pc` needs to be installed and the PKG_CONFIG_PATH environment variable must contain its parent directory.
+The PKG_CONFIG_PATH environment variable is not set.
+
+HINT: if you have installed the library, try setting PKG_CONFIG_PATH to the directory containing `libgit2.pc`.
+
+cargo:rustc-cfg=libgit2_vendored
+libgit2/include/git2.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2.h
+libgit2/include/git2/signature.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/signature.h
+libgit2/include/git2/oid.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/oid.h
+libgit2/include/git2/index.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/index.h
+libgit2/include/git2/email.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/email.h
+libgit2/include/git2/ignore.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/ignore.h
+libgit2/include/git2/attr.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/attr.h
+libgit2/include/git2/blame.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/blame.h
+libgit2/include/git2/oidarray.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/oidarray.h
+libgit2/include/git2/pack.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/pack.h
+libgit2/include/git2/revert.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/revert.h
+libgit2/include/git2/version.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/version.h
+libgit2/include/git2/odb.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/odb.h
+libgit2/include/git2/status.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/status.h
+libgit2/include/git2/net.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/net.h
+libgit2/include/git2/tag.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/tag.h
+libgit2/include/git2/annotated_commit.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/annotated_commit.h
+libgit2/include/git2/config.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/config.h
+libgit2/include/git2/branch.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/branch.h
+libgit2/include/git2/types.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/types.h
+libgit2/include/git2/repository.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/repository.h
+libgit2/include/git2/clone.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/clone.h
+libgit2/include/git2/global.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/global.h
+libgit2/include/git2/blob.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/blob.h
+libgit2/include/git2/cherrypick.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/cherrypick.h
+libgit2/include/git2/mailmap.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/mailmap.h
+libgit2/include/git2/submodule.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/submodule.h
+libgit2/include/git2/errors.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/errors.h
+libgit2/include/git2/message.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/message.h
+libgit2/include/git2/merge.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/merge.h
+libgit2/include/git2/pathspec.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/pathspec.h
+libgit2/include/git2/tree.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/tree.h
+libgit2/include/git2/odb_backend.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/odb_backend.h
+libgit2/include/git2/graph.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/graph.h
+libgit2/include/git2/describe.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/describe.h
+libgit2/include/git2/rebase.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/rebase.h
+libgit2/include/git2/worktree.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/worktree.h
+libgit2/include/git2/stash.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/stash.h
+libgit2/include/git2/remote.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/remote.h
+libgit2/include/git2/strarray.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/strarray.h
+libgit2/include/git2/reflog.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/reflog.h
+libgit2/include/git2/cred_helpers.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/cred_helpers.h
+libgit2/include/git2/buffer.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/buffer.h
+libgit2/include/git2/diff.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/diff.h
+libgit2/include/git2/sys/index.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/index.h
+libgit2/include/git2/sys/email.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/email.h
+libgit2/include/git2/sys/config.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/config.h
+libgit2/include/git2/sys/path.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/path.h
+libgit2/include/git2/sys/repository.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/repository.h
+libgit2/include/git2/sys/openssl.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/openssl.h
+libgit2/include/git2/sys/midx.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/midx.h
+libgit2/include/git2/sys/cred.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/cred.h
+libgit2/include/git2/sys/merge.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/merge.h
+libgit2/include/git2/sys/stream.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/stream.h
+libgit2/include/git2/sys/odb_backend.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/odb_backend.h
+libgit2/include/git2/sys/remote.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/remote.h
+libgit2/include/git2/sys/reflog.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/reflog.h
+libgit2/include/git2/sys/diff.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/diff.h
+libgit2/include/git2/sys/commit_graph.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/commit_graph.h
+libgit2/include/git2/sys/transport.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/transport.h
+libgit2/include/git2/sys/hashsig.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/hashsig.h
+libgit2/include/git2/sys/credential.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/credential.h
+libgit2/include/git2/sys/refs.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/refs.h
+libgit2/include/git2/sys/filter.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/filter.h
+libgit2/include/git2/sys/alloc.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/alloc.h
+libgit2/include/git2/sys/mempack.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/mempack.h
+libgit2/include/git2/sys/commit.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/commit.h
+libgit2/include/git2/sys/refdb_backend.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/sys/refdb_backend.h
+libgit2/include/git2/trace.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/trace.h
+libgit2/include/git2/common.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/common.h
+libgit2/include/git2/proxy.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/proxy.h
+libgit2/include/git2/indexer.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/indexer.h
+libgit2/include/git2/refspec.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/refspec.h
+libgit2/include/git2/notes.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/notes.h
+libgit2/include/git2/cert.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/cert.h
+libgit2/include/git2/deprecated.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/deprecated.h
+libgit2/include/git2/transport.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/transport.h
+libgit2/include/git2/revwalk.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/revwalk.h
+libgit2/include/git2/patch.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/patch.h
+libgit2/include/git2/object.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/object.h
+libgit2/include/git2/checkout.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/checkout.h
+libgit2/include/git2/apply.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/apply.h
+libgit2/include/git2/revparse.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/revparse.h
+libgit2/include/git2/credential_helpers.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/credential_helpers.h
+libgit2/include/git2/credential.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/credential.h
+libgit2/include/git2/refs.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/refs.h
+libgit2/include/git2/reset.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/reset.h
+libgit2/include/git2/filter.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/filter.h
+libgit2/include/git2/transaction.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/transaction.h
+libgit2/include/git2/experimental.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/experimental.h
+libgit2/include/git2/stdint.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/stdint.h
+libgit2/include/git2/commit.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/commit.h
+libgit2/include/git2/refdb.h => /Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/include/git2/refdb.h
+OPT_LEVEL = Some(0)
+TARGET = Some(aarch64-apple-darwin)
+CARGO_ENCODED_RUSTFLAGS = Some()
+HOST = Some(aarch64-apple-darwin)
+cargo:rerun-if-env-changed=CC_aarch64-apple-darwin
+CC_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=CC_aarch64_apple_darwin
+CC_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=HOST_CC
+HOST_CC = None
+cargo:rerun-if-env-changed=CC
+CC = None
+cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+RUSTC_WRAPPER = None
+cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+CRATE_CC_NO_DEFAULTS = None
+DEBUG = Some(true)
+cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET
+MACOSX_DEPLOYMENT_TARGET = None
+cargo:rerun-if-env-changed=CFLAGS
+CFLAGS = None
+cargo:rerun-if-env-changed=HOST_CFLAGS
+HOST_CFLAGS = None
+cargo:rerun-if-env-changed=CFLAGS_aarch64_apple_darwin
+CFLAGS_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=CFLAGS_aarch64-apple-darwin
+CFLAGS_aarch64-apple-darwin = None
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+cargo:rerun-if-env-changed=AR_aarch64-apple-darwin
+AR_aarch64-apple-darwin = None
+cargo:rerun-if-env-changed=AR_aarch64_apple_darwin
+AR_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=HOST_AR
+HOST_AR = None
+cargo:rerun-if-env-changed=AR
+AR = None
+cargo:rerun-if-env-changed=ARFLAGS
+ARFLAGS = None
+cargo:rerun-if-env-changed=HOST_ARFLAGS
+HOST_ARFLAGS = None
+cargo:rerun-if-env-changed=ARFLAGS_aarch64_apple_darwin
+ARFLAGS_aarch64_apple_darwin = None
+cargo:rerun-if-env-changed=ARFLAGS_aarch64-apple-darwin
+ARFLAGS_aarch64-apple-darwin = None
+cargo:rustc-link-lib=static=git2
+cargo:rustc-link-search=native=/Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out/build
+cargo:root=/Users/jim/work/cc-switch/keymux/target/debug/build/libgit2-sys-e6c0d4c21281cbd3/out
+cargo:rustc-link-lib=iconv
+cargo:rustc-link-lib=framework=Security
+cargo:rustc-link-lib=framework=CoreFoundation
+cargo:rerun-if-changed=libgit2/include
+cargo:rerun-if-changed=libgit2/src
+cargo:rerun-if-changed=libgit2/deps

@@ -1,0 +1,4 @@
+src/smoke.c:4:10: warning: cast to smaller integer type 'int' from 'uLong (*)(uLong, const Bytef *, uInt)' (aka 'unsigned long (*)(unsigned long, const unsigned char *, unsigned int)') [-Wpointer-to-int-cast]
+    4 |   return (int) adler32;
+      |          ^~~~~~~~~~~~~
+1 warning generated.

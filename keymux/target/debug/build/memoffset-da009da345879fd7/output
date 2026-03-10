@@ -1,0 +1,7 @@
+cargo:rustc-cfg=tuple_ty
+cargo:rustc-cfg=allow_clippy
+cargo:rustc-cfg=maybe_uninit
+cargo:rustc-cfg=doctests
+cargo:rustc-cfg=raw_ref_macros
+cargo:rustc-cfg=stable_const
+cargo:rustc-cfg=stable_offset_of

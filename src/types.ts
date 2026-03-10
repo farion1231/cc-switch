@@ -155,6 +155,8 @@ export interface ProviderMeta {
   promptCacheKey?: string;
   // OpenCode: 是否为 NewAPI 兼容供应商（支持 /v1/models 获取模型列表）
   isNewApi?: boolean;
+  // IIAgent: API 格式
+  api_format?: "anthropic" | "openai_chat";
 }
 
 // Skill 同步方式
@@ -176,6 +178,7 @@ export interface VisibleApps {
   gemini: boolean;
   opencode: boolean;
   openclaw: boolean;
+  iiagent: boolean;
 }
 
 // WebDAV 同步状态
@@ -263,6 +266,8 @@ export interface Settings {
   opencodeConfigDir?: string;
   // 覆盖 OpenClaw 配置目录（可选）
   openclawConfigDir?: string;
+  // 覆盖 IIAgent 配置目录（可选）
+  iiagentConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -271,6 +276,8 @@ export interface Settings {
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
+  // 当前 IIAgent 供应商 ID（优先于数据库 is_current）
+  currentProviderIIAgent?: string;
 
   // ===== Skill 同步设置 =====
   // Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
@@ -334,6 +341,7 @@ export interface McpApps {
   gemini: boolean;
   opencode: boolean;
   openclaw: boolean;
+  iiagent: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -377,6 +385,7 @@ export interface UniversalProviderApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  iiagent: boolean;
 }
 
 // Claude 模型配置
@@ -398,11 +407,33 @@ export interface GeminiModelConfig {
   model?: string;
 }
 
+// IIAgent 模型信息
+export interface IIAgentModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+  description: string;
+  context_window: number;
+  max_output_tokens: number;
+  input_cost_per_token?: number;
+  output_cost_per_token?: number;
+  capabilities?: string[];
+  recommended_for?: string[];
+  options?: Record<string, any>; // Model-specific options (e.g., provider routing)
+}
+
+// IIAgent 模型配置
+export interface IIAgentModelConfig {
+  model?: string;
+  models?: IIAgentModelInfo[] | Record<string, IIAgentModelInfo>;
+}
+
 // 各应用的模型配置
 export interface UniversalProviderModels {
   claude?: ClaudeModelConfig;
   codex?: CodexModelConfig;
   gemini?: GeminiModelConfig;
+  iiagent?: IIAgentModelConfig;
 }
 
 // 统一供应商（跨应用共享配置）
@@ -523,6 +554,7 @@ export interface OpenClawProviderConfig {
   baseUrl?: string; // API 端点
   apiKey?: string; // API 密钥
   api?: string; // API 协议类型（如 "openai-completions"、"anthropic"）
+  authHeader?: boolean; // 是否发送认证请求头
   models?: OpenClawModel[]; // 可用模型列表
   headers?: Record<string, string>; // 自定义请求头（如 User-Agent）
 }

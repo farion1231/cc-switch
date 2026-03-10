@@ -184,6 +184,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  iiagent: {
+    name: "iiagent",
+    displayName: "IIAgent",
+    category: "ai-provider",
+    keywords: ["ii-agent", "intelligent-internet", "agent"],
+    defaultColor: "#6366F1",
+  },
   kimi: {
     name: "kimi",
     displayName: "Kimi",

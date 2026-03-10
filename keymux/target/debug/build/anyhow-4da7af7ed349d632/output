@@ -1,0 +1,7 @@
+cargo:rerun-if-changed=src/nightly.rs
+cargo:rerun-if-env-changed=RUSTC_BOOTSTRAP
+cargo:rustc-check-cfg=cfg(anyhow_build_probe)
+cargo:rustc-check-cfg=cfg(anyhow_nightly_testing)
+cargo:rustc-check-cfg=cfg(anyhow_no_clippy_format_args)
+cargo:rustc-check-cfg=cfg(anyhow_no_core_error)
+cargo:rustc-check-cfg=cfg(error_generic_member_access)

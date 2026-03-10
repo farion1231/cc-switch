@@ -1,0 +1,21 @@
+###########################################################################
+# libssh2 installation details
+#
+# Copyright (C) The libssh2 project and its contributors.
+# SPDX-License-Identifier: BSD-3-Clause
+###########################################################################
+
+prefix=/Users/jim/work/cc-switch/keymux/target/debug/build/libssh2-sys-bd7b94dc21423167/out
+exec_prefix=
+libdir=/Users/jim/work/cc-switch/keymux/target/debug/build/libssh2-sys-bd7b94dc21423167/out/lib
+includedir=/Users/jim/work/cc-switch/keymux/target/debug/build/libssh2-sys-bd7b94dc21423167/out/include
+
+Name: libssh2
+URL: https://libssh2.org/
+Description: Library for SSH-based communication
+Version: @LIBSSH2_VERSION@
+Requires: @LIBSSH2_PC_REQUIRES@
+Requires.private: @LIBSSH2_PC_REQUIRES_PRIVATE@
+Libs: -L${libdir} -lssh2 @LIBSSH2_PC_LIBS@
+Libs.private: @LIBSSH2_PC_LIBS_PRIVATE@
+Cflags: -I${includedir}

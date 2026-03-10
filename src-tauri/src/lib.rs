@@ -11,6 +11,7 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+mod iiagent_config;
 mod init_status;
 mod mcp;
 mod openclaw_config;
@@ -741,6 +742,11 @@ pub fn run() {
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
+            // 初始化 ModelMux key vault (共享 SQLite 配置)
+            // if let Err(e) = crate::commands::muxer::init_key_vault(&app) {
+            //     log::warn!("ModelMux key vault 初始化失败：{}", e);
+            // }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -1055,6 +1061,21 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            // ModelMux commands (temporarily disabled)
+            // commands::muxer_add_key,
+            // commands::muxer_remove_key,
+            // commands::muxer_list_keys,
+            // commands::muxer_list_providers,
+            // commands::muxer_get_quota,
+            // commands::muxer_start,
+            // commands::muxer_stop,
+            // commands::muxer_status,
+            // commands::muxer_get_litbike_metrics,
+            // OpenCode model picker support
+            commands::get_opencode_provider_with_models,
+            commands::get_all_opencode_providers_with_models,
+            commands::get_opencode_model_picker,
+            commands::set_opencode_provider_models,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,

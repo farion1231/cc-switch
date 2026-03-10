@@ -8,6 +8,7 @@ mod global_proxy;
 mod import_export;
 mod mcp;
 mod misc;
+// mod muxer; // Temporarily disabled due to compilation issues
 mod omo;
 mod openclaw;
 mod plugin;
@@ -32,6 +33,7 @@ pub use global_proxy::*;
 pub use import_export::*;
 pub use mcp::*;
 pub use misc::*;
+// pub use muxer::*;
 pub use omo::*;
 pub use openclaw::*;
 pub use plugin::*;

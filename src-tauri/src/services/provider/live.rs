@@ -332,7 +332,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw => false,
+        AppType::OpenCode | AppType::OpenClaw | AppType::IIAgent => false,
     }
 }
 
@@ -402,7 +402,7 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw => Ok(settings.clone()),
+        AppType::OpenCode | AppType::OpenClaw | AppType::IIAgent => Ok(settings.clone()),
     }
 }
 
@@ -457,7 +457,7 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw => Ok(settings.clone()),
+        AppType::OpenCode | AppType::OpenClaw | AppType::IIAgent => Ok(settings.clone()),
     }
 }
 
@@ -766,6 +766,39 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 }
             }
         }
+        AppType::IIAgent => {
+            use crate::iiagent_config;
+
+            let config_result = serde_json::from_value::<
+                crate::iiagent_config::IIAgentProviderConfig,
+            >(provider.settings_config.clone());
+
+            match config_result {
+                Ok(config) => {
+                    iiagent_config::set_typed_provider(&provider.id, &config)?;
+                    log::info!("IIAgent provider '{}' written to live config", provider.id);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to parse IIAgent provider config for '{}': {}",
+                        provider.id,
+                        e
+                    );
+                    if provider.settings_config.get("baseUrl").is_some()
+                        || provider.settings_config.get("api_key").is_some()
+                    {
+                        iiagent_config::set_provider(
+                            &provider.id,
+                            provider.settings_config.clone(),
+                        )?;
+                        log::info!(
+                            "IIAgent provider '{}' written as raw JSON to live config",
+                            provider.id
+                        );
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -954,6 +987,12 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_openclaw_config()?;
             Ok(config)
         }
+        AppType::IIAgent => {
+            use crate::iiagent_config;
+
+            let config = iiagent_config::read_iiagent_config()?;
+            Ok(config)
+        }
     }
 }
 
@@ -1036,7 +1075,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             })
         }
         // OpenCode and OpenClaw use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::IIAgent => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1288,7 +1327,6 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
 pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::openclaw_config;
 
-    // Check if OpenClaw config directory exists
     if !openclaw_config::get_openclaw_dir().exists() {
         log::debug!("OpenClaw config directory doesn't exist, skipping removal of '{provider_id}'");
         return Ok(());
@@ -1296,6 +1334,24 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 
     openclaw_config::remove_provider(provider_id)?;
     log::info!("OpenClaw provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Remove IIAgent provider from live configuration
+///
+/// This removes a specific provider from ~/.ii-agent/providers/providers.json
+/// without affecting other providers in the file.
+pub fn remove_iiagent_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    use crate::iiagent_config;
+
+    if !iiagent_config::get_iiagent_dir().exists() {
+        log::debug!("IIAgent config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    iiagent_config::remove_provider(provider_id)?;
+    log::info!("IIAgent provider '{provider_id}' removed from live config");
 
     Ok(())
 }

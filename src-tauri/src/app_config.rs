@@ -15,6 +15,8 @@ pub struct McpApps {
     pub gemini: bool,
     #[serde(default)]
     pub opencode: bool,
+    #[serde(default)]
+    pub iiagent: bool,
 }
 
 impl McpApps {
@@ -26,6 +28,7 @@ impl McpApps {
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
+            AppType::IIAgent => self.iiagent,
         }
     }
 
@@ -37,6 +40,7 @@ impl McpApps {
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
+            AppType::IIAgent => self.iiagent = enabled,
         }
     }
 
@@ -55,12 +59,15 @@ impl McpApps {
         if self.opencode {
             apps.push(AppType::OpenCode);
         }
+        if self.iiagent {
+            apps.push(AppType::IIAgent);
+        }
         apps
     }
 
     /// 检查是否所有应用都未启用
     pub fn is_empty(&self) -> bool {
-        !self.claude && !self.codex && !self.gemini && !self.opencode
+        !self.claude && !self.codex && !self.gemini && !self.opencode && !self.iiagent
     }
 }
 
@@ -75,6 +82,8 @@ pub struct SkillApps {
     pub gemini: bool,
     #[serde(default)]
     pub opencode: bool,
+    #[serde(default)]
+    pub iiagent: bool,
 }
 
 impl SkillApps {
@@ -86,6 +95,7 @@ impl SkillApps {
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
+            AppType::IIAgent => self.iiagent,
         }
     }
 
@@ -97,6 +107,7 @@ impl SkillApps {
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
+            AppType::IIAgent => self.iiagent = enabled,
         }
     }
 
@@ -115,12 +126,15 @@ impl SkillApps {
         if self.opencode {
             apps.push(AppType::OpenCode);
         }
+        if self.iiagent {
+            apps.push(AppType::IIAgent);
+        }
         apps
     }
 
     /// 检查是否所有应用都未启用
     pub fn is_empty(&self) -> bool {
-        !self.claude && !self.codex && !self.gemini && !self.opencode
+        !self.claude && !self.codex && !self.gemini && !self.opencode && !self.iiagent
     }
 
     /// 仅启用指定应用（其他应用设为禁用）
@@ -245,6 +259,9 @@ pub struct McpRoot {
     /// OpenClaw MCP 配置（v4.1.0+，实际使用 openclaw.json）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub openclaw: McpConfig,
+    /// IIAgent MCP 配置（v4.2.0+）
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub iiagent: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -258,6 +275,7 @@ impl Default for McpRoot {
             gemini: McpConfig::default(),
             opencode: McpConfig::default(),
             openclaw: McpConfig::default(),
+            iiagent: McpConfig::default(),
         }
     }
 }
@@ -282,6 +300,8 @@ pub struct PromptRoot {
     pub opencode: PromptConfig,
     #[serde(default)]
     pub openclaw: PromptConfig,
+    #[serde(default)]
+    pub iiagent: PromptConfig,
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
@@ -298,6 +318,7 @@ pub enum AppType {
     Gemini,
     OpenCode,
     OpenClaw,
+    IIAgent,
 }
 
 impl AppType {
@@ -308,6 +329,7 @@ impl AppType {
             AppType::Gemini => "gemini",
             AppType::OpenCode => "opencode",
             AppType::OpenClaw => "openclaw",
+            AppType::IIAgent => "iiagent",
         }
     }
 
@@ -316,7 +338,10 @@ impl AppType {
     /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)
     /// - Additive mode (true): All providers are written to live config (OpenCode, OpenClaw)
     pub fn is_additive_mode(&self) -> bool {
-        matches!(self, AppType::OpenCode | AppType::OpenClaw)
+        matches!(
+            self,
+            AppType::OpenCode | AppType::OpenClaw | AppType::IIAgent
+        )
     }
 
     /// Return an iterator over all app types
@@ -327,6 +352,7 @@ impl AppType {
             AppType::Gemini,
             AppType::OpenCode,
             AppType::OpenClaw,
+            AppType::IIAgent,
         ]
         .into_iter()
     }
@@ -343,10 +369,11 @@ impl FromStr for AppType {
             "gemini" => Ok(AppType::Gemini),
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
+            "iiagent" => Ok(AppType::IIAgent),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode, openclaw。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode, openclaw."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode, openclaw, iiagent。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode, openclaw, iiagent."),
             )),
         }
     }
@@ -369,6 +396,9 @@ pub struct CommonConfigSnippets {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openclaw: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iiagent: Option<String>,
 }
 
 impl CommonConfigSnippets {
@@ -380,6 +410,7 @@ impl CommonConfigSnippets {
             AppType::Gemini => self.gemini.as_ref(),
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
+            AppType::IIAgent => self.iiagent.as_ref(),
         }
     }
 
@@ -391,6 +422,7 @@ impl CommonConfigSnippets {
             AppType::Gemini => self.gemini = snippet,
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
+            AppType::IIAgent => self.iiagent = snippet,
         }
     }
 }
@@ -592,6 +624,7 @@ impl MultiAppConfig {
             AppType::Gemini => &self.mcp.gemini,
             AppType::OpenCode => &self.mcp.opencode,
             AppType::OpenClaw => &self.mcp.openclaw,
+            AppType::IIAgent => &self.mcp.iiagent,
         }
     }
 
@@ -603,6 +636,7 @@ impl MultiAppConfig {
             AppType::Gemini => &mut self.mcp.gemini,
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::OpenClaw => &mut self.mcp.openclaw,
+            AppType::IIAgent => &mut self.mcp.iiagent,
         }
     }
 
@@ -723,6 +757,7 @@ impl MultiAppConfig {
             AppType::Gemini => &mut config.prompts.gemini.prompts,
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
+            AppType::IIAgent => &mut config.prompts.iiagent.prompts,
         };
 
         prompts.insert(id, prompt);
@@ -762,7 +797,8 @@ impl MultiAppConfig {
                 AppType::Codex => &self.mcp.codex.servers,
                 AppType::Gemini => &self.mcp.gemini.servers,
                 AppType::OpenCode => &self.mcp.opencode.servers,
-                AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
+                AppType::OpenClaw => continue,
+                AppType::IIAgent => continue,
             };
 
             for (id, entry) in old_servers {

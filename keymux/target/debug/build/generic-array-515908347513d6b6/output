@@ -1,0 +1,1 @@
+cargo:rustc-cfg=relaxed_coherence

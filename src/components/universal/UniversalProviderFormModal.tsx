@@ -50,6 +50,7 @@ export function UniversalProviderFormModal({
   const [claudeEnabled, setClaudeEnabled] = useState(true);
   const [codexEnabled, setCodexEnabled] = useState(true);
   const [geminiEnabled, setGeminiEnabled] = useState(true);
+  const [iiagentEnabled, setIiagentEnabled] = useState(true);
 
   // 模型配置
   const [models, setModels] = useState<UniversalProviderModels>({});
@@ -71,6 +72,7 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(editingProvider.apps.claude);
       setCodexEnabled(editingProvider.apps.codex);
       setGeminiEnabled(editingProvider.apps.gemini);
+      setIiagentEnabled(editingProvider.apps.iiagent || false);
       setModels(editingProvider.models || {});
 
       // 尝试匹配预设
@@ -90,6 +92,7 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
+      setIiagentEnabled(defaultPreset.defaultApps.iiagent || false);
       setModels(JSON.parse(JSON.stringify(defaultPreset.defaultModels)));
     }
   }, [editingProvider, initialPreset, isOpen]);
@@ -103,6 +106,7 @@ export function UniversalProviderFormModal({
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
+        setIiagentEnabled(preset.defaultApps.iiagent || false);
         setModels(JSON.parse(JSON.stringify(preset.defaultModels)));
       }
     },
@@ -181,6 +185,15 @@ requires_openai_auth = true`;
       },
     };
   }, [geminiEnabled, baseUrl, apiKey, models.gemini]);
+  // 计算 IIAgent 配置 JSON 预览
+  const iiagentConfigJson = useMemo(() => {
+    if (!iiagentEnabled) return null;
+    return {
+      baseUrl: baseUrl,
+      apiKey: apiKey,
+      models: models.iiagent?.models || [],
+    };
+  }, [iiagentEnabled, baseUrl, apiKey, models.iiagent]);
 
   // 提交表单
   const handleSubmit = useCallback(() => {
@@ -190,26 +203,27 @@ requires_openai_auth = true`;
 
     const provider: UniversalProvider = editingProvider
       ? {
-          ...editingProvider,
-          name: name.trim(),
-          baseUrl: baseUrl.trim(),
-          apiKey: apiKey.trim(),
-          websiteUrl: websiteUrl.trim() || undefined,
-          notes: notes.trim() || undefined,
-          apps: {
-            claude: claudeEnabled,
-            codex: codexEnabled,
-            gemini: geminiEnabled,
-          },
-          models,
-        }
+        ...editingProvider,
+        name: name.trim(),
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey.trim(),
+        websiteUrl: websiteUrl.trim() || undefined,
+        notes: notes.trim() || undefined,
+        apps: {
+          claude: claudeEnabled,
+          codex: codexEnabled,
+          gemini: geminiEnabled,
+          iiagent: iiagentEnabled,
+        },
+        models,
+      }
       : createUniversalProviderFromPreset(
-          selectedPreset || universalProviderPresets[0],
-          crypto.randomUUID(),
-          baseUrl.trim(),
-          apiKey.trim(),
-          name.trim(),
-        );
+        selectedPreset || universalProviderPresets[0],
+        crypto.randomUUID(),
+        baseUrl.trim(),
+        apiKey.trim(),
+        name.trim(),
+      );
 
     // 如果是新建，更新应用启用状态和模型
     if (!editingProvider) {
@@ -217,6 +231,7 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        iiagent: iiagentEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -235,6 +250,7 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    iiagentEnabled,
     models,
     selectedPreset,
     onSave,
@@ -249,26 +265,27 @@ requires_openai_auth = true`;
 
     const provider: UniversalProvider = editingProvider
       ? {
-          ...editingProvider,
-          name: name.trim(),
-          baseUrl: baseUrl.trim(),
-          apiKey: apiKey.trim(),
-          websiteUrl: websiteUrl.trim() || undefined,
-          notes: notes.trim() || undefined,
-          apps: {
-            claude: claudeEnabled,
-            codex: codexEnabled,
-            gemini: geminiEnabled,
-          },
-          models,
-        }
+        ...editingProvider,
+        name: name.trim(),
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey.trim(),
+        websiteUrl: websiteUrl.trim() || undefined,
+        notes: notes.trim() || undefined,
+        apps: {
+          claude: claudeEnabled,
+          codex: codexEnabled,
+          gemini: geminiEnabled,
+          iiagent: iiagentEnabled,
+        },
+        models,
+      }
       : createUniversalProviderFromPreset(
-          selectedPreset || universalProviderPresets[0],
-          crypto.randomUUID(),
-          baseUrl.trim(),
-          apiKey.trim(),
-          name.trim(),
-        );
+        selectedPreset || universalProviderPresets[0],
+        crypto.randomUUID(),
+        baseUrl.trim(),
+        apiKey.trim(),
+        name.trim(),
+      );
 
     // 如果是新建，更新应用启用状态和模型
     if (!editingProvider) {
@@ -276,6 +293,7 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        iiagent: iiagentEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -293,6 +311,7 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    iiagentEnabled,
     models,
     selectedPreset,
   ]);
@@ -366,11 +385,10 @@ requires_openai_auth = true`;
                   key={preset.providerType}
                   type="button"
                   onClick={() => handlePresetSelect(preset)}
-                  className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                    selectedPreset?.providerType === preset.providerType
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-accent text-muted-foreground hover:bg-accent/80"
-                  }`}
+                  className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${selectedPreset?.providerType === preset.providerType
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-accent text-muted-foreground hover:bg-accent/80"
+                    }`}
                 >
                   <ProviderIcon
                     icon={preset.icon}
@@ -511,6 +529,16 @@ requires_openai_auth = true`;
                 onCheckedChange={setGeminiEnabled}
               />
             </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="iiagent" name="IIAgent" size={20} />
+                <span className="font-medium">II-Agent (Proxy)</span>
+              </div>
+              <Switch
+                checked={iiagentEnabled}
+                onCheckedChange={setIiagentEnabled}
+              />
+            </div>
           </div>
         </div>
 
@@ -632,7 +660,7 @@ requires_openai_auth = true`;
         </div>
 
         {/* 配置 JSON 预览 */}
-        {isEditMode && (claudeEnabled || codexEnabled || geminiEnabled) && (
+        {isEditMode && (claudeEnabled || codexEnabled || geminiEnabled || iiagentEnabled) && (
           <div className="space-y-4">
             <Label>
               {t("universalProvider.configJsonPreview", {
@@ -655,7 +683,7 @@ requires_openai_auth = true`;
                 </div>
                 <JsonEditor
                   value={JSON.stringify(claudeConfigJson, null, 2)}
-                  onChange={() => {}}
+                  onChange={() => { }}
                   height={180}
                 />
               </div>
@@ -670,7 +698,7 @@ requires_openai_auth = true`;
                 </div>
                 <JsonEditor
                   value={JSON.stringify(codexConfigJson, null, 2)}
-                  onChange={() => {}}
+                  onChange={() => { }}
                   height={280}
                 />
               </div>
@@ -685,34 +713,49 @@ requires_openai_auth = true`;
                 </div>
                 <JsonEditor
                   value={JSON.stringify(geminiConfigJson, null, 2)}
-                  onChange={() => {}}
+                  height={140}
+                  onChange={() => { }}
+                />
+              </div>
+            )}
+
+            {/* IIAgent JSON */}
+            {iiagentConfigJson && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <ProviderIcon icon="iiagent" name="IIAgent" size={16} />
+                  II-Agent
+                </div>
+                <JsonEditor
+                  value={JSON.stringify(iiagentConfigJson, null, 2)}
+                  onChange={() => { }}
                   height={140}
                 />
               </div>
             )}
           </div>
         )}
-      </div>
 
-      {/* 保存并同步确认弹窗 */}
-      <ConfirmDialog
-        isOpen={syncConfirmOpen}
-        title={t("universalProvider.syncConfirmTitle", {
-          defaultValue: "同步统一供应商",
-        })}
-        message={t("universalProvider.syncConfirmDescription", {
-          defaultValue: `同步 "${name}" 将会覆盖 Claude、Codex 和 Gemini 中关联的供应商配置。确定要继续吗？`,
-          name: name,
-        })}
-        confirmText={t("universalProvider.saveAndSync", {
-          defaultValue: "保存并同步",
-        })}
-        onConfirm={confirmSaveAndSync}
-        onCancel={() => {
-          setSyncConfirmOpen(false);
-          setPendingProvider(null);
-        }}
-      />
+        {/* 保存并同步确认弹窗 */}
+        <ConfirmDialog
+          isOpen={syncConfirmOpen}
+          title={t("universalProvider.syncConfirmTitle", {
+            defaultValue: "同步统一供应商",
+          })}
+          message={t("universalProvider.syncConfirmDescription", {
+            defaultValue: `同步 "${name}" 将会覆盖 Claude、Codex、Gemini 和 II-Agent 中关联的供应商配置。确定要继续吗？`,
+            name: name,
+          })}
+          confirmText={t("universalProvider.saveAndSync", {
+            defaultValue: "保存并同步",
+          })}
+          onConfirm={confirmSaveAndSync}
+          onCancel={() => {
+            setSyncConfirmOpen(false);
+            setPendingProvider(null);
+          }}
+        />
+      </div>
     </FullScreenPanel>
   );
 }

@@ -1,0 +1,2 @@
+cargo:rerun-if-env-changed=ICU4X_DATA_DIR
+cargo:rustc-check-cfg=cfg(icu4c_enable_renaming)

@@ -1,0 +1,7 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/jim/work/cc-switch/modelmux/target/debug/build/aws-lc-sys-403116c21bddc69b/out/memcmp_invalid_stripped_check'
+relocations:
+  - { offset: 0x26, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x1000004B0, symSize: 0x78 }
+  - { offset: 0x51, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x1000004B0, symSize: 0x78 }
+...

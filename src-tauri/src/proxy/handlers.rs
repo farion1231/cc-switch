@@ -416,6 +416,15 @@ pub async fn handle_responses(
     process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
 }
 
+/// Temporary compatibility alias for routes still pointing at the compact Responses handler.
+pub async fn handle_responses_compact(
+    state: State<ProxyState>,
+    headers: axum::http::HeaderMap,
+    body: Json<Value>,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_responses(state, headers, body).await
+}
+
 // ============================================================================
 // Gemini API 处理器
 // ============================================================================

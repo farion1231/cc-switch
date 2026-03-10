@@ -44,7 +44,7 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
   {
     name: "NewAPI",
     providerType: "newapi",
-    defaultApps: { claude: true, codex: true, gemini: true },
+    defaultApps: { claude: true, codex: true, gemini: true, iiagent: true },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     websiteUrl: "https://www.newapi.ai",
     icon: "newapi",
@@ -56,7 +56,7 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
   {
     name: "自定义网关",
     providerType: "custom_gateway",
-    defaultApps: { claude: true, codex: true, gemini: true },
+    defaultApps: { claude: true, codex: true, gemini: true, iiagent: true },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     icon: "openai",
     iconColor: "#6366F1",
@@ -102,6 +102,7 @@ export function createUniversalProviderFromEndpoint(
     claude: derived.claude,
     codex: derived.codex,
     gemini: derived.gemini,
+    iiagent: derived.iiagent,
   };
   return {
     id: endpoint.id,

@@ -596,7 +596,8 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "iiagent": "IIAgent"
   },
   "sessionManager": {
     "title": "セッション管理",

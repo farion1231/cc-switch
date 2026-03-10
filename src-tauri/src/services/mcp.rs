@@ -124,9 +124,10 @@ impl McpService {
                 )?;
             }
             AppType::OpenClaw => {
-                // OpenClaw MCP support is still in development (Issue #4834)
-                // Skip for now
                 log::debug!("OpenClaw MCP support is still in development, skipping sync");
+            }
+            AppType::IIAgent => {
+                log::debug!("IIAgent MCP support is still in development, skipping sync");
             }
         }
         Ok(())
@@ -138,7 +139,6 @@ impl McpService {
         id: &str,
         server: &McpServer,
     ) -> Result<(), AppError> {
-        // 从所有曾启用的应用中移除
         for app in server.apps.enabled_apps() {
             Self::remove_server_from_app(state, id, &app)?;
         }
@@ -154,8 +154,10 @@ impl McpService {
                 mcp::remove_server_from_opencode(id)?;
             }
             AppType::OpenClaw => {
-                // OpenClaw MCP support is still in development
                 log::debug!("OpenClaw MCP support is still in development, skipping remove");
+            }
+            AppType::IIAgent => {
+                log::debug!("IIAgent MCP support is still in development, skipping remove");
             }
         }
         Ok(())
