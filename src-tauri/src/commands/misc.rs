@@ -162,10 +162,7 @@ pub async fn get_tool_versions(
     let mut results = Vec::new();
 
     for tool in requested {
-        results.push(
-            get_single_tool_version_impl(tool, wsl_shell_by_tool.as_ref())
-                .await,
-        );
+        results.push(get_single_tool_version_impl(tool, wsl_shell_by_tool.as_ref()).await);
     }
 
     Ok(results)
