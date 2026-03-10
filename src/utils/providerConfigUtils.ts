@@ -414,6 +414,167 @@ export const hasTomlCommonConfigSnippet = (
 
 // ========== Codex base_url utils ==========
 
+const extractCodexModelProviderKey = (tomlText: string): string | undefined => {
+  const m = tomlText.match(/^model_provider\s*=\s*(['"])([^'"]+)\1/m);
+  return m && m[2] ? m[2] : undefined;
+};
+
+const isTomlTableHeaderLine = (line: string): boolean => {
+  const trimmed = line.trim();
+  return trimmed.startsWith("[") && trimmed.endsWith("]");
+};
+
+const findTomlSectionRange = (
+  lines: string[],
+  matchHeader: (trimmedHeaderLine: string) => boolean,
+): { headerIndex: number; start: number; end: number } | undefined => {
+  const headerIndex = lines.findIndex((line) => matchHeader(line.trim()));
+  if (headerIndex === -1) return undefined;
+
+  const start = headerIndex + 1;
+  let end = lines.length;
+  for (let i = start; i < lines.length; i += 1) {
+    if (isTomlTableHeaderLine(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+
+  return { headerIndex, start, end };
+};
+
+const matchModelProvidersHeader = (
+  trimmedHeaderLine: string,
+  providerKey: string,
+): boolean => {
+  return (
+    trimmedHeaderLine === `[model_providers.${providerKey}]` ||
+    trimmedHeaderLine === `[model_providers."${providerKey}"]` ||
+    trimmedHeaderLine === `[model_providers.'${providerKey}']`
+  );
+};
+
+const matchAnyModelProvidersHeader = (
+  trimmedHeaderLine: string,
+): { providerKey: string } | undefined => {
+  const m = trimmedHeaderLine.match(
+    /^\[model_providers\.(?:"([^"]+)"|'([^']+)'|([^\]]+))\]$/,
+  );
+  const providerKey = m?.[1] ?? m?.[2] ?? m?.[3];
+  return providerKey ? { providerKey } : undefined;
+};
+
+const extractBaseUrlValueFromLine = (line: string): string | undefined => {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) return undefined;
+  const m = trimmed.match(/^base_url\s*=\s*(['"])([^'"]+)\1/);
+  return m && m[2] ? m[2] : undefined;
+};
+
+const upsertBaseUrlInSection = (
+  lines: string[],
+  range: { start: number; end: number },
+  newValueLine: string,
+): string[] => {
+  const next = [...lines];
+
+  for (let i = range.start; i < range.end; i += 1) {
+    const trimmed = next[i].trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (/^base_url\s*=/.test(trimmed)) {
+      const indent = next[i].match(/^(\s*)/)?.[1] ?? "";
+      next[i] = `${indent}${newValueLine}`;
+      return next;
+    }
+  }
+
+  // Insert after leading comments/blank lines in this section
+  let insertAt = range.start;
+  while (insertAt < range.end) {
+    const trimmed = next[insertAt].trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      insertAt += 1;
+      continue;
+    }
+    break;
+  }
+
+  const indent =
+    insertAt < range.end ? next[insertAt].match(/^(\s*)/)?.[1] ?? "" : "";
+  next.splice(insertAt, 0, `${indent}${newValueLine}`);
+  return next;
+};
+
+const removeBaseUrlFromSection = (
+  lines: string[],
+  range: { start: number; end: number },
+): string[] => {
+  const next: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (i >= range.start && i < range.end) {
+      const trimmed = lines[i].trim();
+      if (!trimmed || trimmed.startsWith("#")) {
+        next.push(lines[i]);
+        continue;
+      }
+      if (/^base_url\s*=/.test(trimmed)) {
+        continue;
+      }
+    }
+    next.push(lines[i]);
+  }
+  return next;
+};
+
+const upsertTopLevelBaseUrl = (
+  lines: string[],
+  newValueLine: string,
+): string[] => {
+  const next = [...lines];
+  const firstHeaderIndex = next.findIndex(isTomlTableHeaderLine);
+  const rootEnd = firstHeaderIndex === -1 ? next.length : firstHeaderIndex;
+
+  for (let i = 0; i < rootEnd; i += 1) {
+    const trimmed = next[i].trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (/^base_url\s*=/.test(trimmed)) {
+      const indent = next[i].match(/^(\s*)/)?.[1] ?? "";
+      next[i] = `${indent}${newValueLine}`;
+      return next;
+    }
+  }
+
+  // Insert after model_provider if present; otherwise insert at top of root.
+  const modelProviderIndex = next.findIndex((line) =>
+    /^\s*model_provider\s*=/.test(line),
+  );
+  const insertAt =
+    modelProviderIndex !== -1 && modelProviderIndex + 1 <= rootEnd
+      ? modelProviderIndex + 1
+      : 0;
+  next.splice(insertAt, 0, newValueLine);
+  return next;
+};
+
+const removeTopLevelBaseUrl = (lines: string[]): string[] => {
+  const next = [...lines];
+  const firstHeaderIndex = next.findIndex(isTomlTableHeaderLine);
+  const rootEnd = firstHeaderIndex === -1 ? next.length : firstHeaderIndex;
+
+  return next.filter((line, index) => {
+    if (index >= rootEnd) return true;
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return true;
+    return !/^base_url\s*=/.test(trimmed);
+  });
+};
+
+const removeAgentsRootBaseUrl = (lines: string[]): string[] => {
+  const range = findTomlSectionRange(lines, (trimmed) => trimmed === "[agents]");
+  if (!range) return lines;
+  return removeBaseUrlFromSection(lines, { start: range.start, end: range.end });
+};
+
 // 从 Codex 的 TOML 配置文本中提取 base_url（支持单/双引号）
 export const extractCodexBaseUrl = (
   configText: string | undefined | null,
@@ -423,7 +584,41 @@ export const extractCodexBaseUrl = (
     // 归一化中文/全角引号，避免正则提取失败
     const text = normalizeQuotes(raw);
     if (!text) return undefined;
-    const m = text.match(/base_url\s*=\s*(['"])([^'\"]+)\1/);
+
+    const lines = text.split(/\r?\n/);
+    const modelProviderKey =
+      extractCodexModelProviderKey(text) ??
+      (() => {
+        const firstHeader = lines
+          .map((line) => line.trim())
+          .find((trimmed) => matchAnyModelProvidersHeader(trimmed));
+        return firstHeader
+          ? matchAnyModelProvidersHeader(firstHeader)?.providerKey
+          : undefined;
+      })();
+
+    if (modelProviderKey) {
+      const providerSection = findTomlSectionRange(lines, (trimmed) =>
+        matchModelProvidersHeader(trimmed, modelProviderKey),
+      );
+      if (providerSection) {
+        for (let i = providerSection.start; i < providerSection.end; i += 1) {
+          const value = extractBaseUrlValueFromLine(lines[i]);
+          if (value) return value;
+        }
+      }
+    }
+
+    // Fallback to top-level base_url (legacy)
+    const firstHeaderIndex = lines.findIndex(isTomlTableHeaderLine);
+    const rootEnd = firstHeaderIndex === -1 ? lines.length : firstHeaderIndex;
+    for (let i = 0; i < rootEnd; i += 1) {
+      const value = extractBaseUrlValueFromLine(lines[i]);
+      if (value) return value;
+    }
+
+    // Final fallback: first base_url anywhere (keeps compatibility with unknown layouts)
+    const m = text.match(/base_url\s*=\s*(['"])([^'"]+)\1/);
     return m && m[2] ? m[2] : undefined;
   } catch {
     return undefined;
@@ -454,33 +649,74 @@ export const setCodexBaseUrl = (
   // 归一化原文本中的引号（既能匹配，也能输出稳定格式）
   const normalizedText = normalizeQuotes(configText);
 
-  // 允许清空：当 baseUrl 为空时，移除 base_url 行
-  if (!trimmed) {
-    if (!normalizedText) return normalizedText;
-    const next = normalizedText
-      .split("\n")
-      .filter((line) => !/^\s*base_url\s*=/.test(line))
-      .join("\n")
-      // 避免移除后留下过多空行
-      .replace(/\n{3,}/g, "\n\n")
-      // 避免开头出现空行
-      .replace(/^\n+/, "");
-    return next;
-  }
+  if (!normalizedText) return normalizedText;
 
   const normalizedUrl = trimmed.replace(/\s+/g, "");
   const replacementLine = `base_url = "${normalizedUrl}"`;
-  const pattern = /base_url\s*=\s*(["'])([^"']+)\1/;
 
-  if (pattern.test(normalizedText)) {
-    return normalizedText.replace(pattern, replacementLine);
+  let lines = normalizedText.split(/\r?\n/);
+
+  // Migration: Codex v26+ does not accept `[agents].base_url` (expects agent role tables).
+  // Always strip it to avoid breaking Codex config parsing.
+  lines = removeAgentsRootBaseUrl(lines);
+
+  const modelProviderKey =
+    extractCodexModelProviderKey(normalizedText) ??
+    (() => {
+      const firstHeader = lines
+        .map((line) => line.trim())
+        .find((trimmed) => matchAnyModelProvidersHeader(trimmed));
+      return firstHeader
+        ? matchAnyModelProvidersHeader(firstHeader)?.providerKey
+        : undefined;
+    })();
+
+  if (modelProviderKey) {
+    const usesModelProvidersTables = lines.some((line) =>
+      matchAnyModelProvidersHeader(line.trim()),
+    );
+    const providerSection = findTomlSectionRange(lines, (trimmed) =>
+      matchModelProvidersHeader(trimmed, modelProviderKey),
+    );
+
+    if (providerSection) {
+      if (!trimmed) {
+        lines = removeBaseUrlFromSection(lines, {
+          start: providerSection.start,
+          end: providerSection.end,
+        });
+      } else {
+        lines = upsertBaseUrlInSection(
+          lines,
+          { start: providerSection.start, end: providerSection.end },
+          replacementLine,
+        );
+      }
+      return lines.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "");
+    }
+
+    // If the provider section is missing, create it (avoids appending base_url into an unrelated table).
+    if (trimmed && usesModelProvidersTables) {
+      const suffix =
+        lines.length && lines[lines.length - 1]?.trim() ? [""] : [];
+      return [
+        ...lines,
+        ...suffix,
+        `[model_providers.${modelProviderKey}]`,
+        replacementLine,
+      ]
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .replace(/^\n+/, "");
+    }
   }
 
-  const prefix =
-    normalizedText && !normalizedText.endsWith("\n")
-      ? `${normalizedText}\n`
-      : normalizedText;
-  return `${prefix}${replacementLine}\n`;
+  // Fallback to top-level base_url (legacy layouts)
+  lines = trimmed
+    ? upsertTopLevelBaseUrl(lines, replacementLine)
+    : removeTopLevelBaseUrl(lines);
+
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "");
 };
 
 // ========== Codex model name utils ==========
