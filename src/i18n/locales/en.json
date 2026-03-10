@@ -1372,12 +1372,6 @@
       "unsupportedProfileTitle": "Unsupported tools profile detected",
       "unsupportedProfileDescription": "The current tools.profile value '{{value}}' is not in the supported OpenClaw list. It will be preserved until you choose a new value.",
       "unsupportedProfileLabel": "unsupported",
-      "profiles": {
-        "minimal": "Minimal",
-        "coding": "Coding",
-        "messaging": "Messaging",
-        "full": "Full"
-      },
       "allowList": "Allow List",
       "denyList": "Deny List",
       "patternPlaceholder": "Tool name or pattern",
@@ -1385,8 +1379,7 @@
       "addDeny": "Add Deny",
       "saveSuccess": "Tool permissions saved",
       "saveFailed": "Failed to save tool permissions",
-      "loadFailed": "Failed to load tool permissions",
-      "invalidProfile": "Invalid permission profile"
+      "loadFailed": "Failed to load tool permissions"
     },
     "agents": {
       "title": "Agents Config",

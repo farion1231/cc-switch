@@ -1372,12 +1372,6 @@
       "unsupportedProfileTitle": "未対応のツールプロファイルを検出しました",
       "unsupportedProfileDescription": "現在の tools.profile の値 '{{value}}' は OpenClaw の対応リストにありません。新しい値を選択するまでこの値を保持します。",
       "unsupportedProfileLabel": "未対応",
-      "profiles": {
-        "minimal": "最小",
-        "coding": "コーディング",
-        "messaging": "メッセージング",
-        "full": "フル"
-      },
       "allowList": "許可リスト",
       "denyList": "拒否リスト",
       "patternPlaceholder": "ツール名またはパターン",
@@ -1385,8 +1379,7 @@
       "addDeny": "拒否を追加",
       "saveSuccess": "ツール権限を保存しました",
       "saveFailed": "ツール権限の保存に失敗しました",
-      "loadFailed": "ツール権限の読み込みに失敗しました",
-      "invalidProfile": "無効な権限プロファイルです"
+      "loadFailed": "ツール権限の読み込みに失敗しました"
     },
     "agents": {
       "title": "Agents 設定",

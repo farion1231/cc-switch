@@ -19,7 +19,6 @@ import type { OpenClawToolsConfig, OpenClawToolsProfile } from "@/types";
 import {
   getOpenClawToolsProfileSelectValue,
   getOpenClawUnsupportedProfile,
-  isOpenClawToolsProfile,
   OPENCLAW_TOOL_PROFILES,
   OPENCLAW_UNSET_PROFILE,
   OPENCLAW_UNSUPPORTED_PROFILE,
@@ -78,13 +77,6 @@ const ToolsPanel: React.FC = () => {
 
   const handleSave = async () => {
     try {
-      if (config.profile && !isOpenClawToolsProfile(config.profile)) {
-        toast.error(t("openclaw.tools.saveFailed"), {
-          description: t("openclaw.tools.invalidProfile"),
-        });
-        return;
-      }
-
       const { profile, allow, deny, ...other } = config;
       const newConfig: OpenClawToolsConfig = {
         ...other,

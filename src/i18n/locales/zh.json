@@ -1372,12 +1372,6 @@
       "unsupportedProfileTitle": "检测到不受支持的工具配置",
       "unsupportedProfileDescription": "当前 tools.profile 的值“{{value}}”不在 OpenClaw 支持列表内。在你手动选择新值之前，它会被保留。",
       "unsupportedProfileLabel": "不受支持",
-      "profiles": {
-        "minimal": "最小",
-        "coding": "编码",
-        "messaging": "消息",
-        "full": "完整"
-      },
       "allowList": "允许列表",
       "denyList": "拒绝列表",
       "patternPlaceholder": "工具名称或模式",
@@ -1385,8 +1379,7 @@
       "addDeny": "添加拒绝",
       "saveSuccess": "工具权限已保存",
       "saveFailed": "保存工具权限失败",
-      "loadFailed": "读取工具权限失败",
-      "invalidProfile": "无效的权限模式"
+      "loadFailed": "读取工具权限失败"
     },
     "agents": {
       "title": "Agents 配置",
