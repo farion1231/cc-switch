@@ -1241,6 +1241,15 @@ impl Database {
                 "0.03",
                 "0",
             ),
+            // StepFun 系列
+            (
+                "step-3.5-flash",
+                "Step 3.5 Flash",
+                "0.10",
+                "0.30",
+                "0.02",
+                "0",
+            ),
             // ====== 国产模型 (CNY/1M tokens) ======
             // Doubao (字节跳动)
             (

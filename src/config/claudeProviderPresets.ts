@@ -179,6 +179,26 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#6366F1",
   },
   {
+    name: "StepFun",
+    websiteUrl: "https://platform.stepfun.ai",
+    apiKeyUrl: "https://platform.stepfun.ai/interface-key",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.stepfun.ai/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "step-3.5-flash",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "step-3.5-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "step-3.5-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "step-3.5-flash",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: ["https://api.stepfun.ai/v1"],
+    apiFormat: "openai_chat",
+    icon: "stepfun",
+    iconColor: "#005AFF",
+  },
+  {
     name: "ModelScope",
     websiteUrl: "https://modelscope.cn",
     settingsConfig: {

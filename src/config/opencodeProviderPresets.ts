@@ -61,6 +61,11 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       outputLimit: 262144,
       modalities: { input: ["text", "image", "video"], output: ["text"] },
     },
+    {
+      id: "step-3.5-flash",
+      name: "Step 3.5 Flash",
+      contextLimit: 262144,
+    },
   ],
   "@ai-sdk/google": [
     {
@@ -465,6 +470,38 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "StepFun",
+    websiteUrl: "https://platform.stepfun.ai",
+    apiKeyUrl: "https://platform.stepfun.ai/interface-key",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "StepFun",
+      options: {
+        baseURL: "https://api.stepfun.ai/v1",
+        apiKey: "",
+      },
+      models: {
+        "step-3.5-flash": { name: "Step 3.5 Flash" },
+      },
+    },
+    category: "cn_official",
+    icon: "stepfun",
+    iconColor: "#005AFF",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.stepfun.ai/v1",
+        defaultValue: "https://api.stepfun.ai/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "step-...",
         editorValue: "",
       },
     },
