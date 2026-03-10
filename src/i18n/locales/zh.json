@@ -1264,6 +1264,7 @@
     "reasoning": "推理模式",
     "reasoningOn": "启用",
     "reasoningOff": "关闭",
+    "inputTypes": "输入类型",
     "inputCost": "输入价格 ($/M tokens)",
     "outputCost": "输出价格 ($/M tokens)",
     "advancedOptions": "高级选项",

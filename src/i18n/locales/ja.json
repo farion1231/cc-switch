@@ -1264,6 +1264,7 @@
     "reasoning": "推論モード",
     "reasoningOn": "有効",
     "reasoningOff": "無効",
+    "inputTypes": "入力タイプ",
     "inputCost": "入力コスト ($/M トークン)",
     "outputCost": "出力コスト ($/M トークン)",
     "advancedOptions": "詳細オプション",
