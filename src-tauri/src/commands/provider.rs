@@ -189,12 +189,7 @@ pub async fn queryProviderUsage(
                 unit: Some(COPILOT_UNIT_PREMIUM.to_string()),
                 is_valid: Some(true),
                 invalid_message: None,
-                extra: Some(
-                    serde_json::json!({
-                        "reset_date": usage.quota_reset_date
-                    })
-                    .to_string(),
-                ),
+                extra: Some(format!("Reset: {}", usage.quota_reset_date)),
             }]),
             error: None,
         });
