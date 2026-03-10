@@ -102,7 +102,7 @@ export const settingsApi = {
     return await invoke("import_config_from_file", { filePath });
   },
 
-  // ─── WebDAV v2 sync ───────────────────────────────────────
+  // ─── WebDAV sync ──────────────────────────────────────────
 
   async webdavTestConnection(
     settings: WebDavSyncSettings,
@@ -169,15 +169,23 @@ export const settingsApi = {
     return await invoke("get_auto_launch_status");
   },
 
-  async getToolVersions(): Promise<
+  async getToolVersions(
+    tools?: string[],
+    wslShellByTool?: Record<
+      string,
+      { wslShell?: string | null; wslShellFlag?: string | null }
+    >,
+  ): Promise<
     Array<{
       name: string;
       version: string | null;
       latest_version: string | null;
       error: string | null;
+      env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
+      wsl_distro: string | null;
     }>
   > {
-    return await invoke("get_tool_versions");
+    return await invoke("get_tool_versions", { tools, wslShellByTool });
   },
 
   async getRectifierConfig(): Promise<RectifierConfig> {
@@ -186,6 +194,14 @@ export const settingsApi = {
 
   async setRectifierConfig(config: RectifierConfig): Promise<boolean> {
     return await invoke("set_rectifier_config", { config });
+  },
+
+  async getOptimizerConfig(): Promise<OptimizerConfig> {
+    return await invoke("get_optimizer_config");
+  },
+
+  async setOptimizerConfig(config: OptimizerConfig): Promise<boolean> {
+    return await invoke("set_optimizer_config", { config });
   },
 
   async getLogConfig(): Promise<LogConfig> {
@@ -203,7 +219,42 @@ export interface RectifierConfig {
   requestThinkingBudget: boolean;
 }
 
+export interface OptimizerConfig {
+  enabled: boolean;
+  thinkingOptimizer: boolean;
+  cacheInjection: boolean;
+  cacheTtl: string;
+}
+
 export interface LogConfig {
   enabled: boolean;
   level: "error" | "warn" | "info" | "debug" | "trace";
 }
+
+export interface BackupEntry {
+  filename: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export const backupsApi = {
+  async createDbBackup(): Promise<string> {
+    return await invoke("create_db_backup");
+  },
+
+  async listDbBackups(): Promise<BackupEntry[]> {
+    return await invoke("list_db_backups");
+  },
+
+  async restoreDbBackup(filename: string): Promise<string> {
+    return await invoke("restore_db_backup", { filename });
+  },
+
+  async renameDbBackup(oldFilename: string, newName: string): Promise<string> {
+    return await invoke("rename_db_backup", { oldFilename, newName });
+  },
+
+  async deleteDbBackup(filename: string): Promise<void> {
+    await invoke("delete_db_backup", { filename });
+  },
+};

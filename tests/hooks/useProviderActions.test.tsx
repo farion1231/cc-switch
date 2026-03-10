@@ -53,6 +53,9 @@ const providersApiUpdateMock = vi.fn();
 const providersApiUpdateTrayMenuMock = vi.fn();
 const settingsApiGetMock = vi.fn();
 const settingsApiApplyMock = vi.fn();
+const openclawApiGetModelCatalogMock = vi.fn();
+const openclawApiGetDefaultModelMock = vi.fn();
+const openclawApiSetDefaultModelMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   providersApi: {
@@ -64,6 +67,14 @@ vi.mock("@/lib/api", () => ({
     get: (...args: unknown[]) => settingsApiGetMock(...args),
     applyClaudePluginConfig: (...args: unknown[]) =>
       settingsApiApplyMock(...args),
+  },
+  openclawApi: {
+    getModelCatalog: (...args: unknown[]) =>
+      openclawApiGetModelCatalogMock(...args),
+    getDefaultModel: (...args: unknown[]) =>
+      openclawApiGetDefaultModelMock(...args),
+    setDefaultModel: (...args: unknown[]) =>
+      openclawApiSetDefaultModelMock(...args),
   },
 }));
 
@@ -100,6 +111,9 @@ beforeEach(() => {
   providersApiUpdateTrayMenuMock.mockReset();
   settingsApiGetMock.mockReset();
   settingsApiApplyMock.mockReset();
+  openclawApiGetModelCatalogMock.mockReset();
+  openclawApiGetDefaultModelMock.mockReset();
+  openclawApiSetDefaultModelMock.mockReset();
   toastSuccessMock.mockReset();
   toastErrorMock.mockReset();
 
@@ -449,6 +463,35 @@ describe("useProviderActions", () => {
     });
 
     expect(result.current.isLoading).toBe(true);
+  });
+
+  it("does not show backup details when setting OpenClaw default model", async () => {
+    openclawApiSetDefaultModelMock.mockResolvedValueOnce({
+      backupPath: "/tmp/openclaw-backup.json5",
+      warnings: [],
+    });
+
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      settingsConfig: {
+        models: [{ id: "gpt-4.1" }, { id: "gpt-4.1-mini" }],
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("openclaw"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.setAsDefaultModel(provider);
+    });
+
+    expect(openclawApiSetDefaultModelMock).toHaveBeenCalledWith({
+      primary: "provider-1/gpt-4.1",
+      fallbacks: ["provider-1/gpt-4.1-mini"],
+    });
+    expect(toastSuccessMock).toHaveBeenCalledTimes(1);
+    expect(toastSuccessMock.mock.calls[0]?.[1]).toEqual({ closeButton: true });
   });
 });
 it("clears loading flag when all mutations idle", () => {

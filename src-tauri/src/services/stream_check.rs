@@ -207,6 +207,7 @@ impl StreamCheckService {
                     &model_to_test,
                     test_prompt,
                     request_timeout,
+                    provider,
                 )
                 .await
             }
@@ -283,7 +284,9 @@ impl StreamCheckService {
 
     /// Claude 流式检查
     ///
-    /// 严格按照 Claude CLI 真实请求格式构建请求
+    /// 根据供应商的 api_format 选择请求格式：
+    /// - "anthropic" (默认): Anthropic Messages API (/v1/messages)
+    /// - "openai_chat": OpenAI Chat Completions API (/v1/chat/completions)
     async fn check_claude_stream(
         client: &Client,
         base_url: &str,
@@ -291,15 +294,42 @@ impl StreamCheckService {
         model: &str,
         test_prompt: &str,
         timeout: std::time::Duration,
+        provider: &Provider,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
-        // URL 必须包含 ?beta=true 参数（某些中转服务依赖此参数验证请求来源）
-        let url = if base.ends_with("/v1") {
-            format!("{base}/messages?beta=true")
+
+        // Detect api_format: meta.api_format > settings_config.api_format > default "anthropic"
+        let api_format = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.api_format.as_deref())
+            .or_else(|| {
+                provider
+                    .settings_config
+                    .get("api_format")
+                    .and_then(|v| v.as_str())
+            })
+            .unwrap_or("anthropic");
+
+        let is_openai_chat = api_format == "openai_chat";
+
+        // URL: /v1/chat/completions for openai_chat, /v1/messages?beta=true for anthropic
+        let url = if is_openai_chat {
+            if base.ends_with("/v1") {
+                format!("{base}/chat/completions")
+            } else {
+                format!("{base}/v1/chat/completions")
+            }
         } else {
-            format!("{base}/v1/messages?beta=true")
+            // ?beta=true is required by some relay services to verify request origin
+            if base.ends_with("/v1") {
+                format!("{base}/messages?beta=true")
+            } else {
+                format!("{base}/v1/messages?beta=true")
+            }
         };
 
+        // Body: identical structure for minimal test (both APIs accept messages array)
         let body = json!({
             "model": model,
             "max_tokens": 1,
@@ -307,49 +337,58 @@ impl StreamCheckService {
             "stream": true
         });
 
-        // 获取本地系统信息
-        let os_name = Self::get_os_name();
-        let arch_name = Self::get_arch_name();
+        let mut request_builder = client.post(&url);
 
-        // 根据 auth.strategy 构建认证 headers
-        let mut request_builder = client
-            .post(&url)
-            .header("authorization", format!("Bearer {}", auth.api_key));
+        if is_openai_chat {
+            // OpenAI-compatible: Bearer auth + standard headers only
+            request_builder = request_builder
+                .header("authorization", format!("Bearer {}", auth.api_key))
+                .header("content-type", "application/json")
+                .header("accept", "application/json");
+        } else {
+            // Anthropic native: full Claude CLI headers
+            let os_name = Self::get_os_name();
+            let arch_name = Self::get_arch_name();
 
-        // 只有 Anthropic 官方策略才添加 x-api-key
-        if auth.strategy == AuthStrategy::Anthropic {
-            request_builder = request_builder.header("x-api-key", &auth.api_key);
+            request_builder =
+                request_builder.header("authorization", format!("Bearer {}", auth.api_key));
+
+            // Only Anthropic official strategy adds x-api-key
+            if auth.strategy == AuthStrategy::Anthropic {
+                request_builder = request_builder.header("x-api-key", &auth.api_key);
+            }
+
+            request_builder = request_builder
+                // Anthropic required headers
+                .header("anthropic-version", "2023-06-01")
+                .header(
+                    "anthropic-beta",
+                    "claude-code-20250219,interleaved-thinking-2025-05-14",
+                )
+                .header("anthropic-dangerous-direct-browser-access", "true")
+                // Content type headers
+                .header("content-type", "application/json")
+                .header("accept", "application/json")
+                .header("accept-encoding", "identity")
+                .header("accept-language", "*")
+                // Client identification headers
+                .header("user-agent", "claude-cli/2.1.2 (external, cli)")
+                .header("x-app", "cli")
+                // x-stainless SDK headers (dynamic local system info)
+                .header("x-stainless-lang", "js")
+                .header("x-stainless-package-version", "0.70.0")
+                .header("x-stainless-os", os_name)
+                .header("x-stainless-arch", arch_name)
+                .header("x-stainless-runtime", "node")
+                .header("x-stainless-runtime-version", "v22.20.0")
+                .header("x-stainless-retry-count", "0")
+                .header("x-stainless-timeout", "600")
+                // Other headers
+                .header("sec-fetch-mode", "cors")
+                .header("connection", "keep-alive");
         }
 
-        // 严格按照 Claude CLI 请求格式设置其他 headers
         let response = request_builder
-            // Anthropic 必需 headers
-            .header("anthropic-version", "2023-06-01")
-            .header(
-                "anthropic-beta",
-                "claude-code-20250219,interleaved-thinking-2025-05-14",
-            )
-            .header("anthropic-dangerous-direct-browser-access", "true")
-            // 内容类型 headers
-            .header("content-type", "application/json")
-            .header("accept", "application/json")
-            .header("accept-encoding", "identity")
-            .header("accept-language", "*")
-            // 客户端标识 headers
-            .header("user-agent", "claude-cli/2.1.2 (external, cli)")
-            .header("x-app", "cli")
-            // x-stainless SDK headers（动态获取本地系统信息）
-            .header("x-stainless-lang", "js")
-            .header("x-stainless-package-version", "0.70.0")
-            .header("x-stainless-os", os_name)
-            .header("x-stainless-arch", arch_name)
-            .header("x-stainless-runtime", "node")
-            .header("x-stainless-runtime-version", "v22.20.0")
-            .header("x-stainless-retry-count", "0")
-            .header("x-stainless-timeout", "600")
-            // 其他 headers
-            .header("sec-fetch-mode", "cors")
-            .header("connection", "keep-alive")
             .timeout(timeout)
             .json(&body)
             .send()

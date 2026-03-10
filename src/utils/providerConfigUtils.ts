@@ -1,7 +1,8 @@
 // 供应商配置处理工具函数
 
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
-import { normalizeQuotes } from "@/utils/textNormalization";
+import { normalizeQuotes, normalizeTomlText } from "@/utils/textNormalization";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
 const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
@@ -172,6 +173,16 @@ export const getApiKeyFromConfig = (
 ): string => {
   try {
     const config = JSON.parse(jsonString);
+
+    // 优先检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    if (
+      typeof config?.apiKey === "string" &&
+      config.apiKey &&
+      !config.apiKey.includes("${")
+    ) {
+      return config.apiKey;
+    }
+
     const env = config?.env;
 
     if (!env) return "";
@@ -255,6 +266,12 @@ export const hasApiKeyField = (
 ): boolean => {
   try {
     const config = JSON.parse(jsonString);
+
+    // 检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    if (Object.prototype.hasOwnProperty.call(config, "apiKey")) {
+      return true;
+    }
+
     const env = config?.env ?? {};
 
     if (appType === "gemini") {
@@ -278,11 +295,22 @@ export const hasApiKeyField = (
 export const setApiKeyInConfig = (
   jsonString: string,
   apiKey: string,
-  options: { createIfMissing?: boolean; appType?: string } = {},
+  options: {
+    createIfMissing?: boolean;
+    appType?: string;
+    apiKeyField?: string;
+  } = {},
 ): string => {
-  const { createIfMissing = false, appType } = options;
+  const { createIfMissing = false, appType, apiKeyField } = options;
   try {
     const config = JSON.parse(jsonString);
+
+    // 优先检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    if (Object.prototype.hasOwnProperty.call(config, "apiKey")) {
+      config.apiKey = apiKey;
+      return JSON.stringify(config, null, 2);
+    }
+
     if (!config.env) {
       if (!createIfMissing) return jsonString;
       config.env = {};
@@ -313,13 +341,13 @@ export const setApiKeyInConfig = (
       return JSON.stringify(config, null, 2);
     }
 
-    // Claude API Key (优先写入已存在的字段；若两者均不存在且允许创建，则默认创建 AUTH_TOKEN 字段)
+    // Claude API Key (优先写入已存在的字段；若两者均不存在且允许创建，则使用 apiKeyField 或默认 AUTH_TOKEN 字段)
     if ("ANTHROPIC_AUTH_TOKEN" in env) {
       env.ANTHROPIC_AUTH_TOKEN = apiKey;
     } else if ("ANTHROPIC_API_KEY" in env) {
       env.ANTHROPIC_API_KEY = apiKey;
     } else if (createIfMissing) {
-      env.ANTHROPIC_AUTH_TOKEN = apiKey;
+      env[apiKeyField ?? "ANTHROPIC_AUTH_TOKEN"] = apiKey;
     } else {
       return jsonString;
     }
@@ -336,76 +364,52 @@ export interface UpdateTomlCommonConfigResult {
   error?: string;
 }
 
-// 保存之前的通用配置片段，用于替换操作
-let previousCommonSnippet = "";
-
-// 将通用配置片段写入/移除 TOML 配置
+// Write/remove common config snippet to/from TOML config (structural merge)
 export const updateTomlCommonConfigSnippet = (
   tomlString: string,
   snippetString: string,
   enabled: boolean,
 ): UpdateTomlCommonConfigResult => {
   if (!snippetString.trim()) {
-    // 如果片段为空，直接返回原始配置
-    return {
-      updatedConfig: tomlString,
-    };
+    return { updatedConfig: tomlString };
   }
 
-  if (enabled) {
-    // 添加通用配置
-    // 先移除旧的通用配置（如果有）
-    let updatedConfig = tomlString;
-    if (previousCommonSnippet && tomlString.includes(previousCommonSnippet)) {
-      updatedConfig = tomlString.replace(previousCommonSnippet, "");
+  try {
+    const config = parseToml(normalizeTomlText(tomlString || ""));
+    const snippet = parseToml(normalizeTomlText(snippetString));
+
+    if (enabled) {
+      const merged = deepMerge(
+        deepClone(config) as Record<string, any>,
+        deepClone(snippet) as Record<string, any>,
+      );
+      return { updatedConfig: stringifyToml(merged) };
+    } else {
+      const result = deepClone(config) as Record<string, any>;
+      deepRemove(result, snippet as Record<string, any>);
+      return { updatedConfig: stringifyToml(result) };
     }
-
-    // 在文件末尾添加新的通用配置
-    // 确保有适当的换行
-    const needsNewline = updatedConfig && !updatedConfig.endsWith("\n");
-    updatedConfig =
-      updatedConfig + (needsNewline ? "\n\n" : "\n") + snippetString;
-
-    // 保存当前通用配置片段
-    previousCommonSnippet = snippetString;
-
-    return {
-      updatedConfig: updatedConfig.trim() + "\n",
-    };
-  } else {
-    // 移除通用配置
-    if (tomlString.includes(snippetString)) {
-      const updatedConfig = tomlString.replace(snippetString, "");
-      // 清理多余的空行
-      const cleaned = updatedConfig.replace(/\n{3,}/g, "\n\n").trim();
-
-      // 清空保存的状态
-      previousCommonSnippet = "";
-
-      return {
-        updatedConfig: cleaned ? cleaned + "\n" : "",
-      };
-    }
-    return {
-      updatedConfig: tomlString,
-    };
+  } catch (e) {
+    return { updatedConfig: tomlString, error: String(e) };
   }
 };
 
-// 检查 TOML 配置是否已包含通用配置片段
+// Check if TOML config already contains the common config snippet (structural subset check)
 export const hasTomlCommonConfigSnippet = (
   tomlString: string,
   snippetString: string,
 ): boolean => {
   if (!snippetString.trim()) return false;
 
-  // 简单检查配置是否包含片段内容
-  // 去除空白字符后比较，避免格式差异影响
-  const normalizeWhitespace = (str: string) => str.replace(/\s+/g, " ").trim();
-
-  return normalizeWhitespace(tomlString).includes(
-    normalizeWhitespace(snippetString),
-  );
+  try {
+    const config = parseToml(normalizeTomlText(tomlString || ""));
+    const snippet = parseToml(normalizeTomlText(snippetString));
+    return isSubset(config, snippet);
+  } catch {
+    // Fallback to text-based matching if TOML parsing fails
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+    return norm(tomlString).includes(norm(snippetString));
+  }
 };
 
 // ========== Codex base_url utils ==========
@@ -447,11 +451,22 @@ export const setCodexBaseUrl = (
   baseUrl: string,
 ): string => {
   const trimmed = baseUrl.trim();
-  if (!trimmed) {
-    return configText;
-  }
   // 归一化原文本中的引号（既能匹配，也能输出稳定格式）
   const normalizedText = normalizeQuotes(configText);
+
+  // 允许清空：当 baseUrl 为空时，移除 base_url 行
+  if (!trimmed) {
+    if (!normalizedText) return normalizedText;
+    const next = normalizedText
+      .split("\n")
+      .filter((line) => !/^\s*base_url\s*=/.test(line))
+      .join("\n")
+      // 避免移除后留下过多空行
+      .replace(/\n{3,}/g, "\n\n")
+      // 避免开头出现空行
+      .replace(/^\n+/, "");
+    return next;
+  }
 
   const normalizedUrl = trimmed.replace(/\s+/g, "");
   const replacementLine = `base_url = "${normalizedUrl}"`;
@@ -494,12 +509,20 @@ export const setCodexModelName = (
   modelName: string,
 ): string => {
   const trimmed = modelName.trim();
-  if (!trimmed) {
-    return configText;
-  }
-
   // 归一化原文本中的引号（既能匹配，也能输出稳定格式）
   const normalizedText = normalizeQuotes(configText);
+
+  // 允许清空：当 modelName 为空时，移除 model 行
+  if (!trimmed) {
+    if (!normalizedText) return normalizedText;
+    const next = normalizedText
+      .split("\n")
+      .filter((line) => !/^\s*model\s*=/.test(line))
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/^\n+/, "");
+    return next;
+  }
 
   const replacementLine = `model = "${trimmed}"`;
   const pattern = /^model\s*=\s*["']([^"']+)["']/m;

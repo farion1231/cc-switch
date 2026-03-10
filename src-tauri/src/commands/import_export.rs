@@ -8,6 +8,8 @@ use tauri_plugin_dialog::DialogExt;
 use crate::commands::sync_support::{
     post_sync_warning_from_result, run_post_import_sync, success_payload_with_warning,
 };
+use crate::database::backup::BackupEntry;
+use crate::database::Database;
 use crate::error::AppError;
 use crate::services::provider::ProviderService;
 use crate::store::AppState;
@@ -117,4 +119,58 @@ pub async fn open_zip_file_dialog<R: tauri::Runtime>(
         .blocking_pick_file();
 
     Ok(result.map(|p| p.to_string()))
+}
+
+// ─── Database backup management ─────────────────────────────
+
+/// Manually create a database backup
+#[tauri::command]
+pub async fn create_db_backup(state: State<'_, AppState>) -> Result<String, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || match db.backup_database_file()? {
+        Some(path) => Ok(path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default()),
+        None => Err(AppError::Config(
+            "Database file not found, backup skipped".to_string(),
+        )),
+    })
+    .await
+    .map_err(|e| format!("Backup failed: {e}"))?
+    .map_err(|e: AppError| e.to_string())
+}
+
+/// List all database backup files
+#[tauri::command]
+pub fn list_db_backups() -> Result<Vec<BackupEntry>, String> {
+    Database::list_backups().map_err(|e| e.to_string())
+}
+
+/// Restore database from a backup file
+#[tauri::command]
+pub async fn restore_db_backup(
+    state: State<'_, AppState>,
+    filename: String,
+) -> Result<String, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.restore_from_backup(&filename))
+        .await
+        .map_err(|e| format!("Restore failed: {e}"))?
+        .map_err(|e: AppError| e.to_string())
+}
+
+/// Rename a database backup file
+#[tauri::command]
+pub fn rename_db_backup(
+    #[allow(non_snake_case)] oldFilename: String,
+    #[allow(non_snake_case)] newName: String,
+) -> Result<String, String> {
+    Database::rename_backup(&oldFilename, &newName).map_err(|e| e.to_string())
+}
+
+/// Delete a database backup file
+#[tauri::command]
+pub fn delete_db_backup(filename: String) -> Result<(), String> {
+    Database::delete_backup(&filename).map_err(|e| e.to_string())
 }

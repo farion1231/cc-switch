@@ -24,6 +24,10 @@ export interface RemoteModelInfo {
   displayName?: string | null;
 }
 
+export interface SwitchResult {
+  warnings: string[];
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -53,7 +57,7 @@ export const providersApi = {
     return await invoke("remove_provider_from_live_config", { id, app: appId });
   },
 
-  async switch(id: string, appId: AppId): Promise<boolean> {
+  async switch(id: string, appId: AppId): Promise<SwitchResult> {
     return await invoke("switch_provider", { id, app: appId });
   },
 
@@ -115,13 +119,21 @@ export const providersApi = {
   },
 
   /**
+   * 从 OpenClaw live 配置导入供应商到数据库
+   * OpenClaw 特有功能：由于累加模式，用户可能已在 openclaw.json 中配置供应商
+   */
+  async importOpenClawFromLive(): Promise<number> {
+    return await invoke("import_openclaw_providers_from_live");
+  },
+
+  /**
    * Enumerate available remote models for a provider endpoint.
    * Uses Rust backend to avoid browser CORS restrictions.
    */
   async enumerateModels(params: {
     baseUrl: string;
     apiKey: string;
-    apiFormat?: "anthropic" | "openai_chat";
+    apiFormat?: "anthropic" | "openai_chat" | "openai_responses";
     proxyConfig?: ProviderProxyConfig;
     forceRefresh?: boolean;
   }): Promise<RemoteModelInfo[]> {
@@ -132,8 +144,6 @@ export const providersApi = {
     }
     return await invoke("enumerate_provider_models", params);
   },
-
-
 };
 
 // ============================================================================

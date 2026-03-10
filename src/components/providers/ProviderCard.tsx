@@ -28,12 +28,13 @@ interface ProviderCardProps {
   appId: AppId;
   isInConfig?: boolean; // OpenCode: 是否已添加到 opencode.json
   isOmo?: boolean;
-  isLastOmo?: boolean;
+  isOmoSlim?: boolean;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
+  onDisableOmoSlim?: () => void;
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
@@ -91,12 +92,13 @@ export function ProviderCard({
   appId,
   isInConfig = true,
   isOmo = false,
-  isLastOmo = false,
+  isOmoSlim = false,
   onSwitch,
   onEdit,
   onDelete,
   onRemoveFromConfig,
   onDisableOmo,
+  onDisableOmoSlim,
   onConfigureUsage,
   onOpenWebsite,
   onDuplicate,
@@ -116,6 +118,10 @@ export function ProviderCard({
   onSetAsDefault,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+
+  // OMO and OMO Slim share the same card behavior
+  const isAnyOmo = isOmo || isOmoSlim;
+  const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
 
   const { data: health } = useProviderHealth(provider.id, appId);
 
@@ -186,11 +192,11 @@ export function ProviderCard({
   };
 
   // 判断是否是"当前使用中"的供应商
-  // - OMO 供应商：使用 isCurrent
+  // - OMO/OMO Slim 供应商：使用 isCurrent
   // - 累加模式应用（OpenCode 非 OMO / OpenClaw）：不存在"当前"概念，始终返回 false
   // - 故障转移模式：代理实际使用的供应商（activeProviderId）
   // - 普通模式：isCurrent
-  const isActiveProvider = isOmo
+  const isActiveProvider = isAnyOmo
     ? isCurrent
     : appId === "opencode" || appId === "openclaw"
       ? false
@@ -198,10 +204,10 @@ export function ProviderCard({
         ? activeProviderId === provider.id
         : isCurrent;
 
-  const shouldUseGreen = !isOmo && isProxyTakeover && isActiveProvider;
+  const shouldUseGreen = !isAnyOmo && isProxyTakeover && isActiveProvider;
   const shouldUseBlue =
-    (isOmo && isActiveProvider) ||
-    (!isOmo && !isProxyTakeover && isActiveProvider);
+    (isAnyOmo && isActiveProvider) ||
+    (!isAnyOmo && !isProxyTakeover && isActiveProvider);
 
   return (
     <div
@@ -262,6 +268,12 @@ export function ProviderCard({
               {isOmo && (
                 <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
                   OMO
+                </span>
+              )}
+
+              {isOmoSlim && (
+                <span className="inline-flex items-center rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                  Slim
                 </span>
               )}
 
@@ -372,8 +384,7 @@ export function ProviderCard({
               isInConfig={isInConfig}
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
-              isOmo={isOmo}
-              isLastOmo={isLastOmo}
+              isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
@@ -385,7 +396,7 @@ export function ProviderCard({
                   ? () => onRemoveFromConfig(provider)
                   : undefined
               }
-              onDisableOmo={onDisableOmo}
+              onDisableOmo={handleDisableAnyOmo}
               onOpenTerminal={
                 onOpenTerminal ? () => onOpenTerminal(provider) : undefined
               }

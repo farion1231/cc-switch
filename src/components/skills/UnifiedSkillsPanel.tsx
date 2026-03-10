@@ -16,7 +16,7 @@ import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { APP_IDS } from "@/config/appConfig";
+import { MCP_SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -56,7 +56,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     const counts = { claude: 0, codex: 0, gemini: 0, opencode: 0, openclaw: 0 };
     if (!skills) return counts;
     skills.forEach((skill) => {
-      for (const app of APP_IDS) {
+      for (const app of MCP_SKILLS_APP_IDS) {
         if (skill.apps[app]) counts[app]++;
       }
     });
@@ -159,6 +159,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       <AppCountBar
         totalLabel={t("skills.installed", { count: skills?.length || 0 })}
         counts={enabledCounts}
+        appIds={MCP_SKILLS_APP_IDS}
       />
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
@@ -282,6 +283,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
       <AppToggleGroup
         apps={skill.apps}
         onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
+        appIds={MCP_SKILLS_APP_IDS}
       />
 
       <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">

@@ -57,3 +57,20 @@ pub async fn launch_session_terminal(
 
     Ok(true)
 }
+
+#[tauri::command]
+pub async fn delete_session(
+    providerId: String,
+    sessionId: String,
+    sourcePath: String,
+) -> Result<bool, String> {
+    let provider_id = providerId.clone();
+    let session_id = sessionId.clone();
+    let source_path = sourcePath.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::delete_session(&provider_id, &session_id, &source_path)
+    })
+    .await
+    .map_err(|e| format!("Failed to delete session: {e}"))?
+}

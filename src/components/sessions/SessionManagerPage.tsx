@@ -7,13 +7,19 @@ import {
   RefreshCw,
   Search,
   Play,
+  Trash2,
   MessageSquare,
   Clock,
   FolderOpen,
   X,
 } from "lucide-react";
-import { useSessionMessagesQuery, useSessionsQuery } from "@/lib/query";
+import {
+  useDeleteSessionMutation,
+  useSessionMessagesQuery,
+  useSessionsQuery,
+} from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
+import type { SessionMeta } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   Tooltip,
   TooltipContent,
@@ -46,9 +53,15 @@ import {
   getSessionKey,
 } from "./utils";
 
-type ProviderFilter = "all" | "codex" | "claude";
+type ProviderFilter =
+  | "all"
+  | "codex"
+  | "claude"
+  | "opencode"
+  | "openclaw"
+  | "gemini";
 
-export function SessionManagerPage() {
+export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
   const { data, isLoading, refetch } = useSessionsQuery();
   const sessions = data ?? [];
@@ -60,10 +73,13 @@ export function SessionManagerPage() {
   );
   const [tocDialogOpen, setTocDialogOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = useState("");
-  const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>(
+    appId as ProviderFilter,
+  );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   // 使用 FlexSearch 全文搜索
@@ -105,6 +121,7 @@ export function SessionManagerPage() {
       selectedSession?.providerId,
       selectedSession?.sourcePath,
     );
+  const deleteSessionMutation = useDeleteSessionMutation();
 
   // 提取用户消息用于目录
   const userMessagesToc = useMemo(() => {
@@ -174,6 +191,19 @@ export function SessionManagerPage() {
       await handleCopy(fallback, t("sessionManager.resumeFallbackCopied"));
       toast.error(extractErrorMessage(error) || t("sessionManager.openFailed"));
     }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget?.sourcePath || deleteSessionMutation.isPending) {
+      return;
+    }
+
+    setDeleteTarget(null);
+    await deleteSessionMutation.mutateAsync({
+      providerId: deleteTarget.providerId,
+      sessionId: deleteTarget.sessionId,
+      sourcePath: deleteTarget.sourcePath,
+    });
   };
 
   return (
@@ -265,9 +295,7 @@ export function SessionManagerPage() {
                                 icon={
                                   providerFilter === "all"
                                     ? "apps"
-                                    : providerFilter === "codex"
-                                      ? "openai"
-                                      : "claude"
+                                    : getProviderIconName(providerFilter)
                                 }
                                 name={providerFilter}
                                 size={14}
@@ -307,6 +335,36 @@ export function SessionManagerPage() {
                                 size={14}
                               />
                               <span>Claude Code</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="opencode">
+                            <div className="flex items-center gap-2">
+                              <ProviderIcon
+                                icon="opencode"
+                                name="opencode"
+                                size={14}
+                              />
+                              <span>OpenCode</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="openclaw">
+                            <div className="flex items-center gap-2">
+                              <ProviderIcon
+                                icon="openclaw"
+                                name="openclaw"
+                                size={14}
+                              />
+                              <span>OpenClaw</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="gemini">
+                            <div className="flex items-center gap-2">
+                              <ProviderIcon
+                                icon="gemini"
+                                name="gemini"
+                                size={14}
+                              />
+                              <span>Gemini CLI</span>
                             </div>
                           </SelectItem>
                         </SelectContent>
@@ -481,6 +539,36 @@ export function SessionManagerPage() {
                             </TooltipContent>
                           </Tooltip>
                         )}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              className="gap-1.5"
+                              onClick={() => setDeleteTarget(selectedSession)}
+                              disabled={
+                                !selectedSession.sourcePath ||
+                                deleteSessionMutation.isPending
+                              }
+                            >
+                              <Trash2 className="size-3.5" />
+                              <span className="hidden sm:inline">
+                                {deleteSessionMutation.isPending
+                                  ? t("sessionManager.deleting", {
+                                      defaultValue: "删除中...",
+                                    })
+                                  : t("sessionManager.delete", {
+                                      defaultValue: "删除会话",
+                                    })}
+                              </span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t("sessionManager.deleteTooltip", {
+                              defaultValue: "永久删除此本地会话记录",
+                            })}
+                          </TooltipContent>
+                        </Tooltip>
                       </div>
                     </div>
 
@@ -593,6 +681,33 @@ export function SessionManagerPage() {
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        isOpen={Boolean(deleteTarget)}
+        title={t("sessionManager.deleteConfirmTitle", {
+          defaultValue: "删除会话",
+        })}
+        message={
+          deleteTarget
+            ? t("sessionManager.deleteConfirmMessage", {
+                defaultValue:
+                  "将永久删除本地会话“{{title}}”\nSession ID: {{sessionId}}\n\n此操作不可恢复。",
+                title: formatSessionTitle(deleteTarget),
+                sessionId: deleteTarget.sessionId,
+              })
+            : ""
+        }
+        confirmText={t("sessionManager.deleteConfirmAction", {
+          defaultValue: "删除会话",
+        })}
+        cancelText={t("common.cancel", { defaultValue: "取消" })}
+        variant="destructive"
+        onConfirm={() => void handleDeleteConfirm()}
+        onCancel={() => {
+          if (!deleteSessionMutation.isPending) {
+            setDeleteTarget(null);
+          }
+        }}
+      />
     </TooltipProvider>
   );
 }

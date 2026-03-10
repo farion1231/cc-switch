@@ -7,7 +7,9 @@ use serde_json::Value;
 use crate::config::get_claude_config_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{extract_text, parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::utils::{
+    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
+};
 
 const PROVIDER_ID: &str = "claude";
 
@@ -68,65 +70,101 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(messages)
 }
 
+pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    let meta = parse_session(path).ok_or_else(|| {
+        format!(
+            "Failed to parse Claude session metadata: {}",
+            path.display()
+        )
+    })?;
+
+    if meta.session_id != session_id {
+        return Err(format!(
+            "Claude session ID mismatch: expected {session_id}, found {}",
+            meta.session_id
+        ));
+    }
+
+    if let Some(stem) = path.file_stem() {
+        let sibling = path.parent().unwrap_or_else(|| Path::new("")).join(stem);
+        remove_path_if_exists(&sibling).map_err(|e| {
+            format!(
+                "Failed to delete Claude session sidecar {}: {e}",
+                sibling.display()
+            )
+        })?;
+    }
+
+    std::fs::remove_file(path).map_err(|e| {
+        format!(
+            "Failed to delete Claude session file {}: {e}",
+            path.display()
+        )
+    })?;
+
+    Ok(true)
+}
+
 fn parse_session(path: &Path) -> Option<SessionMeta> {
     if is_agent_session(path) {
         return None;
     }
 
-    let file = File::open(path).ok()?;
-    let reader = BufReader::new(file);
+    let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
 
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
-    let mut last_active_at: Option<i64> = None;
-    let mut summary: Option<String> = None;
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let value: Value = match serde_json::from_str(&line) {
+    // Extract metadata from head lines
+    for line in &head {
+        let value: Value = match serde_json::from_str(line) {
             Ok(parsed) => parsed,
             Err(_) => continue,
         };
-
         if session_id.is_none() {
             session_id = value
                 .get("sessionId")
                 .and_then(Value::as_str)
                 .map(|s| s.to_string());
         }
-
         if project_dir.is_none() {
             project_dir = value
                 .get("cwd")
                 .and_then(Value::as_str)
                 .map(|s| s.to_string());
         }
-
-        if let Some(ts) = value.get("timestamp").and_then(parse_timestamp_to_ms) {
-            if created_at.is_none() {
-                created_at = Some(ts);
-            }
-            last_active_at = Some(ts);
+        if created_at.is_none() {
+            created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
+    }
 
-        if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
-            continue;
-        }
+    // Extract last_active_at and summary from tail lines (reverse order)
+    let mut last_active_at: Option<i64> = None;
+    let mut summary: Option<String> = None;
 
-        let message = match value.get("message") {
-            Some(message) => message,
-            None => continue,
+    for line in tail.iter().rev() {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
         };
-
-        let text = message.get("content").map(extract_text).unwrap_or_default();
-        if text.trim().is_empty() {
-            continue;
+        if last_active_at.is_none() {
+            last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
-        summary = Some(text);
+        if summary.is_none() {
+            if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
+            if let Some(message) = value.get("message") {
+                let text = message.get("content").map(extract_text).unwrap_or_default();
+                if !text.trim().is_empty() {
+                    summary = Some(text);
+                }
+            }
+        }
+        if last_active_at.is_some() && summary.is_some() {
+            break;
+        }
     }
 
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
@@ -182,5 +220,52 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
             files.push(path);
         }
+    }
+}
+
+fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
+    match std::fs::metadata(path) {
+        Ok(meta) => {
+            if meta.is_dir() {
+                std::fs::remove_dir_all(path)
+            } else {
+                std::fs::remove_file(path)
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn delete_session_removes_main_file_and_sidecar_directory() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("abc123-session.jsonl");
+        let sidecar = temp.path().join("abc123-session");
+        let subagents = sidecar.join("subagents");
+        let tool_results = sidecar.join("tool-results");
+
+        std::fs::create_dir_all(&subagents).expect("create subagents");
+        std::fs::create_dir_all(&tool_results).expect("create tool-results");
+        std::fs::write(subagents.join("agent-1.jsonl"), "{}").expect("write subagent");
+        std::fs::write(tool_results.join("tool-1.txt"), "result").expect("write tool result");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-123\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"timestamp\":\"2026-03-06T10:01:00Z\"}\n"
+            ),
+        )
+        .expect("write session");
+
+        delete_session(temp.path(), &path, "session-123").expect("delete session");
+
+        assert!(!path.exists());
+        assert!(!sidecar.exists());
     }
 }

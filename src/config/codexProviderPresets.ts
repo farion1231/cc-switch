@@ -40,7 +40,7 @@ export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
 export function generateThirdPartyConfig(
   providerName: string,
   baseUrl: string,
-  modelName = "gpt-5.1-codex",
+  modelName = "gpt-5.4",
 ): string {
   // 清理供应商名称，确保符合TOML键名规范
   const cleanProviderName =
@@ -85,7 +85,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     isOfficial: true,
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "azure"
-model = "gpt-5.2"
+model = "gpt-5.4"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
@@ -128,7 +128,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "aihubmix",
       "https://aihubmix.com/v1",
-      "gpt-5.2",
+      "gpt-5.4",
     ),
     endpointCandidates: [
       "https://aihubmix.com/v1",
@@ -143,7 +143,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "dmxapi",
       "https://www.dmxapi.cn/v1",
-      "gpt-5.2",
+      "gpt-5.4",
     ),
     endpointCandidates: ["https://www.dmxapi.cn/v1"],
     isPartner: true, // 合作伙伴
@@ -158,7 +158,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "packycode",
       "https://www.packyapi.com/v1",
-      "gpt-5.2",
+      "gpt-5.4",
     ),
     endpointCandidates: [
       "https://www.packyapi.com/v1",
@@ -176,7 +176,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "cubence",
       "https://api.cubence.com/v1",
-      "gpt-5.2",
+      "gpt-5.4",
     ),
     endpointCandidates: [
       "https://api.cubence.com/v1",
@@ -199,7 +199,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "aigocode",
       "https://api.aigocode.com",
-      "gpt-5.2",
+      "gpt-5.4",
     ),
     endpointCandidates: ["https://api.aigocode.com"],
     isPartner: true, // 合作伙伴
@@ -215,7 +215,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "rightcode",
       "https://right.codes/codex/v1",
-      "gpt-5.2",
+      "gpt-5.4",
     ),
     category: "third_party",
     isPartner: true,
@@ -231,7 +231,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "aicodemirror",
       "https://api.aicodemirror.com/api/codex/backend-api/codex",
-      "gpt-5.2",
+      "gpt-5.4",
     ),
     endpointCandidates: [
       "https://api.aicodemirror.com/api/codex/backend-api/codex",
@@ -243,6 +243,111 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
+    name: "AICoding",
+    websiteUrl: "https://aicoding.sh",
+    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "aicoding",
+      "https://api.aicoding.sh",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://api.aicoding.sh"],
+    isPartner: true,
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
+  },
+  {
+    name: "CrazyRouter",
+    websiteUrl: "https://www.crazyrouter.com",
+    apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "crazyrouter",
+      "https://crazyrouter.com/v1",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://crazyrouter.com/v1"],
+    isPartner: true,
+    partnerPromotionKey: "crazyrouter",
+    icon: "crazyrouter",
+    iconColor: "#000000",
+  },
+  {
+    name: "SSSAiCode",
+    websiteUrl: "https://www.sssaicode.com",
+    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "sssaicode",
+      "https://node-hk.sssaicode.com/api/v1",
+      "gpt-5.4",
+    ),
+    endpointCandidates: [
+      "https://node-hk.sssaicode.com/api/v1",
+      "https://claude2.sssaicode.com/api/v1",
+      "https://anti.sssaicode.com/api/v1",
+    ],
+    category: "third_party",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "sssaicode", // 促销信息 i18n key
+    icon: "sssaicode",
+    iconColor: "#000000",
+  },
+  {
+    name: "Ucloud",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl:
+      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "ucloud",
+      "https://api.modelverse.cn/v1",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://api.modelverse.cn/v1"],
+    category: "aggregator",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "ucloud", // 促销信息 i18n key
+    icon: "ucloud",
+    iconColor: "#000000",
+  },
+  {
+    name: "Micu",
+    websiteUrl: "https://www.openclaudecode.cn",
+    apiKeyUrl: "https://www.openclaudecode.cn/v1",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "micu",
+      "https://www.openclaudecode.cn/v1",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://www.openclaudecode.cn/v1"],
+    category: "third_party",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "micu", // 促销信息 i18n key
+    icon: "micu",
+    iconColor: "#000000",
+  },
+  {
+    name: "X-Code API",
+    websiteUrl: "https://www.x-code.cn",
+    apiKeyUrl: "https://www.x-code.cn",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "x-code",
+      "https://www.x-code.cn/v1",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://www.x-code.cn/v1"],
+    category: "third_party",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "x-code", // 促销信息 i18n key
+    icon: "x-code",
+    iconColor: "#000000",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
@@ -250,7 +355,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "openrouter",
       "https://openrouter.ai/api/v1",
-      "gpt-5.2",
+      "gpt-5.4",
     ),
     category: "aggregator",
     icon: "openrouter",

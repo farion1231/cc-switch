@@ -43,6 +43,8 @@ export function useProxyStatus() {
     onSuccess: (info) => {
       toast.success(
         t("proxy.server.started", {
+          address: info.address,
+          port: info.port,
           defaultValue: `代理服务已启动 - ${info.address}:${info.port}`,
         }),
         { closeButton: true },
@@ -108,9 +110,11 @@ export function useProxyStatus() {
       toast.success(
         variables.enabled
           ? t("proxy.takeover.enabled", {
+              app: appLabel,
               defaultValue: `已接管 ${appLabel} 配置（请求将走本地代理）`,
             })
           : t("proxy.takeover.disabled", {
+              app: appLabel,
               defaultValue: `已恢复 ${appLabel} 配置`,
             }),
         { closeButton: true },

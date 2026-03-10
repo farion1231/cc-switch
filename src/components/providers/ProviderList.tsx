@@ -15,7 +15,8 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
@@ -24,7 +25,7 @@ import {
   useOpenClawLiveProviderIds,
   useOpenClawDefaultModel,
 } from "@/hooks/useOpenClaw";
-// import { useStreamCheck } from "@/hooks/useStreamCheck"; // 测试功能已隐藏
+import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 import {
@@ -33,10 +34,15 @@ import {
   useAddToFailoverQueue,
   useRemoveFromFailoverQueue,
 } from "@/lib/query/failover";
-import { useCurrentOmoProviderId, useOmoProviderCount } from "@/lib/query/omo";
+import {
+  useCurrentOmoProviderId,
+  useCurrentOmoSlimProviderId,
+} from "@/lib/query/omo";
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { settingsApi } from "@/lib/api/settings";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -47,6 +53,7 @@ interface ProviderListProps {
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
+  onDisableOmoSlim?: () => void;
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
@@ -68,6 +75,7 @@ export function ProviderList({
   onDelete,
   onRemoveFromConfig,
   onDisableOmo,
+  onDisableOmoSlim,
   onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
@@ -80,6 +88,7 @@ export function ProviderList({
   onSetAsDefault,
 }: ProviderListProps) {
   const { t } = useTranslation();
+  const { checkProvider, isChecking } = useStreamCheck(appId);
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
     appId,
@@ -134,7 +143,7 @@ export function ProviderList({
 
   const isOpenCode = appId === "opencode";
   const { data: currentOmoId } = useCurrentOmoProviderId(isOpenCode);
-  const { data: omoProviderCount } = useOmoProviderCount(isOpenCode);
+  const { data: currentOmoSlimId } = useCurrentOmoSlimProviderId(isOpenCode);
 
   const getFailoverPriority = useCallback(
     (providerId: string): number | undefined => {
@@ -169,6 +178,70 @@ export function ProviderList({
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [showStreamCheckConfirm, setShowStreamCheckConfirm] = useState(false);
+  const [pendingTestProvider, setPendingTestProvider] =
+    useState<Provider | null>(null);
+
+  // Query settings for streamCheckConfirmed flag
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => settingsApi.get(),
+  });
+
+  const handleTest = useCallback(
+    (provider: Provider) => {
+      if (!settings?.streamCheckConfirmed) {
+        setPendingTestProvider(provider);
+        setShowStreamCheckConfirm(true);
+      } else {
+        checkProvider(provider.id, provider.name);
+      }
+    },
+    [checkProvider, settings?.streamCheckConfirmed],
+  );
+
+  const handleStreamCheckConfirm = async () => {
+    setShowStreamCheckConfirm(false);
+    try {
+      if (settings) {
+        await settingsApi.save({ ...settings, streamCheckConfirmed: true });
+        await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      }
+    } catch (error) {
+      console.error("Failed to save stream check confirmed:", error);
+    }
+    if (pendingTestProvider) {
+      checkProvider(pendingTestProvider.id, pendingTestProvider.name);
+      setPendingTestProvider(null);
+    }
+  };
+
+  // Import current live config as default provider
+  const queryClient = useQueryClient();
+  const importMutation = useMutation({
+    mutationFn: async (): Promise<boolean> => {
+      if (appId === "opencode") {
+        const count = await providersApi.importOpenCodeFromLive();
+        return count > 0;
+      }
+      if (appId === "openclaw") {
+        const count = await providersApi.importOpenClawFromLive();
+        return count > 0;
+      }
+      return providersApi.importDefault(appId);
+    },
+    onSuccess: (imported) => {
+      if (imported) {
+        queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+        toast.success(t("provider.importCurrentDescription"));
+      } else {
+        toast.info(t("provider.noProviders"));
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -223,7 +296,12 @@ export function ProviderList({
   }
 
   if (sortedProviders.length === 0) {
-    return <ProviderEmptyState onCreate={onCreate} />;
+    return (
+      <ProviderEmptyState
+        onCreate={onCreate}
+        onImport={() => importMutation.mutate()}
+      />
+    );
   }
 
   const renderProviderList = () => (
@@ -239,30 +317,41 @@ export function ProviderList({
         <div className="space-y-3">
           {filteredProviders.map((provider) => {
             const isOmo = provider.category === "omo";
+            const isOmoSlim = provider.category === "omo-slim";
             const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
+            const isOmoSlimCurrent =
+              isOmoSlim && provider.id === (currentOmoSlimId || "");
             return (
               <SortableProviderCard
                 key={provider.id}
                 provider={provider}
                 isCurrent={
-                  isOmo ? isOmoCurrent : provider.id === currentProviderId
+                  isOmo
+                    ? isOmoCurrent
+                    : isOmoSlim
+                      ? isOmoSlimCurrent
+                      : provider.id === currentProviderId
                 }
                 appId={appId}
                 isInConfig={isProviderInConfig(provider.id)}
                 isOmo={isOmo}
-                isLastOmo={
-                  isOmo && (omoProviderCount ?? 0) <= 1 && isOmoCurrent
-                }
+                isOmoSlim={isOmoSlim}
                 onSwitch={onSwitch}
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onRemoveFromConfig={onRemoveFromConfig}
                 onDisableOmo={onDisableOmo}
+                onDisableOmoSlim={onDisableOmoSlim}
                 onDuplicate={onDuplicate}
                 onConfigureUsage={onConfigureUsage}
                 onOpenWebsite={onOpenWebsite}
                 onOpenTerminal={onOpenTerminal}
-                isTesting={false} // isChecking(provider.id) - 测试功能已隐藏
+                onTest={
+                  appId !== "opencode" && appId !== "openclaw"
+                    ? handleTest
+                    : undefined
+                }
+                isTesting={isChecking(provider.id)}
                 isProxyRunning={isProxyRunning}
                 isProxyTakeover={isProxyTakeover}
                 isAutoFailoverEnabled={isFailoverModeActive}
@@ -360,6 +449,19 @@ export function ProviderList({
       ) : (
         renderProviderList()
       )}
+
+      <ConfirmDialog
+        isOpen={showStreamCheckConfirm}
+        variant="info"
+        title={t("confirm.streamCheck.title")}
+        message={t("confirm.streamCheck.message")}
+        confirmText={t("confirm.streamCheck.confirm")}
+        onConfirm={() => void handleStreamCheckConfirm()}
+        onCancel={() => {
+          setShowStreamCheckConfirm(false);
+          setPendingTestProvider(null);
+        }}
+      />
     </div>
   );
 }
@@ -370,12 +472,13 @@ interface SortableProviderCardProps {
   appId: AppId;
   isInConfig: boolean;
   isOmo: boolean;
-  isLastOmo: boolean;
+  isOmoSlim: boolean;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
+  onDisableOmoSlim?: () => void;
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
@@ -400,12 +503,13 @@ function SortableProviderCard({
   appId,
   isInConfig,
   isOmo,
-  isLastOmo,
+  isOmoSlim,
   onSwitch,
   onEdit,
   onDelete,
   onRemoveFromConfig,
   onDisableOmo,
+  onDisableOmoSlim,
   onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
@@ -444,12 +548,13 @@ function SortableProviderCard({
         appId={appId}
         isInConfig={isInConfig}
         isOmo={isOmo}
-        isLastOmo={isLastOmo}
+        isOmoSlim={isOmoSlim}
         onSwitch={onSwitch}
         onEdit={onEdit}
         onDelete={onDelete}
         onRemoveFromConfig={onRemoveFromConfig}
         onDisableOmo={onDisableOmo}
+        onDisableOmoSlim={onDisableOmoSlim}
         onDuplicate={onDuplicate}
         onConfigureUsage={
           onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
