@@ -52,11 +52,24 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             None => continue,
         };
 
-        let role = message
+        let mut role = message
             .get("role")
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string();
+
+        // Claude wraps tool_result inside user messages; reclassify as "tool" role
+        if role == "user" {
+            if let Some(Value::Array(items)) = message.get("content") {
+                if items
+                    .iter()
+                    .any(|item| item.get("type").and_then(Value::as_str) == Some("tool_result"))
+                {
+                    role = "tool".to_string();
+                }
+            }
+        }
+
         let content = message.get("content").map(extract_text).unwrap_or_default();
         if content.trim().is_empty() {
             continue;
@@ -267,5 +280,43 @@ mod tests {
 
         assert!(!path.exists());
         assert!(!sidecar.exists());
+    }
+
+    #[test]
+    fn load_messages_tool_use_shows_as_assistant() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"Write\",\"input\":{\"file_path\":\"a.txt\"}}]},\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_1\",\"content\":\"File written\"}]},\"timestamp\":\"2026-03-06T10:00:01Z\"}\n",
+            ),
+        )
+        .expect("write");
+
+        let msgs = load_messages(&path).expect("load");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, "assistant");
+        assert!(msgs[0].content.contains("[Tool: Write]"));
+        assert_eq!(msgs[1].role, "tool");
+        assert_eq!(msgs[1].content, "File written");
+    }
+
+    #[test]
+    fn load_messages_mixed_text_and_tool_use() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            "{\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Let me help.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"Read\",\"input\":{}}]},\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+        )
+        .expect("write");
+
+        let msgs = load_messages(&path).expect("load");
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "assistant");
+        assert!(msgs[0].content.contains("Let me help."));
+        assert!(msgs[0].content.contains("[Tool: Read]"));
     }
 }
