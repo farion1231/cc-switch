@@ -127,15 +127,17 @@ fn append_provider_section<'a>(
     sorted_providers.sort_by(|(_, a), (_, b)| {
         match (a.sort_index, b.sort_index) {
             (Some(idx_a), Some(idx_b)) => return idx_a.cmp(&idx_b),
-            (Some(_), None) => return std::cmp::Ordering::Less,
-            (None, Some(_)) => return std::cmp::Ordering::Greater,
+            // Providers without sort_index (newly added) appear first
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
             _ => {}
         }
 
+        // Neither has sort_index: newest first
         match (a.created_at, b.created_at) {
-            (Some(time_a), Some(time_b)) => return time_a.cmp(&time_b),
-            (Some(_), None) => return std::cmp::Ordering::Greater,
-            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(time_a), Some(time_b)) => return time_b.cmp(&time_a),
+            (Some(_), None) => return std::cmp::Ordering::Less,
+            (None, Some(_)) => return std::cmp::Ordering::Greater,
             _ => {}
         }
 
