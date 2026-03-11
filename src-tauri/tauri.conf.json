@@ -5,7 +5,7 @@
   "identifier": "com.ccswitch.desktop",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://127.0.0.1:14211",
     "beforeDevCommand": "pnpm run dev:renderer",
     "beforeBuildCommand": "pnpm run build:renderer"
   },
@@ -19,7 +19,7 @@
         "height": 650,
         "minWidth": 900,
         "minHeight": 600,
-        "visible": false,
+        "visible": true,
         "resizable": true,
         "fullscreen": false,
         "center": true

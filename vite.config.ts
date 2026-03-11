@@ -18,7 +18,8 @@ export default defineConfig(({ command }) => ({
     emptyOutDir: true,
   },
   server: {
-    port: 3000,
+    host: "0.0.0.0",
+    port: 14211,
     strictPort: true,
   },
   resolve: {
