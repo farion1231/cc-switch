@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
@@ -71,6 +72,7 @@ import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
+import { TerminalLaunchDialog } from "@/components/providers/TerminalLaunchDialog";
 
 type View =
   | "providers"
@@ -192,6 +194,8 @@ function App() {
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
+  const [terminalLaunchProvider, setTerminalLaunchProvider] =
+    useState<Provider | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
     provider: Provider;
     action: "remove" | "delete";
@@ -647,8 +651,31 @@ function App() {
   };
 
   const handleOpenTerminal = async (provider: Provider) => {
+    if (activeApp === "claude") {
+      setTerminalLaunchProvider(provider);
+    } else {
+      // 其他应用直接启动
+      performOpenTerminal(provider, false);
+    }
+  };
+
+  const performOpenTerminal = async (
+    provider: Provider,
+    dangerouslySkipPermissions: boolean,
+  ) => {
     try {
-      await providersApi.openTerminal(provider.id, activeApp);
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "选择终端启动目录 (取消则默认在家目录启动)",
+      });
+
+      const cwd = typeof selected === "string" ? selected : undefined;
+      const args = dangerouslySkipPermissions
+        ? ["--dangerously-skip-permissions"]
+        : [];
+
+      await providersApi.openTerminal(provider.id, activeApp, cwd, args);
       toast.success(
         t("provider.terminalOpened", {
           defaultValue: "终端已打开",
@@ -1294,6 +1321,18 @@ function App() {
         }
         onConfirm={() => void handleConfirmAction()}
         onCancel={() => setConfirmAction(null)}
+      />
+
+      <TerminalLaunchDialog
+        isOpen={Boolean(terminalLaunchProvider)}
+        provider={terminalLaunchProvider}
+        onConfirm={(bypass) => {
+          if (terminalLaunchProvider) {
+            void performOpenTerminal(terminalLaunchProvider, bypass);
+          }
+          setTerminalLaunchProvider(null);
+        }}
+        onCancel={() => setTerminalLaunchProvider(null)}
       />
 
       <DeepLinkImportDialog />
