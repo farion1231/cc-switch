@@ -718,6 +718,7 @@ pub async fn open_provider_terminal(
     state: State<'_, crate::store::AppState>,
     app: String,
     #[allow(non_snake_case)] providerId: String,
+    cwd: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
 
@@ -734,7 +735,7 @@ pub async fn open_provider_terminal(
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId).map_err(|e| format!("启动终端失败: {e}"))?;
+    launch_terminal_with_env(env_vars, &providerId, cwd.as_deref()).map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
 }
@@ -794,6 +795,7 @@ fn extract_env_vars_from_config(
 fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
+    cwd: Option<&str>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let config_file = temp_dir.join(format!(
@@ -807,19 +809,19 @@ fn launch_terminal_with_env(
 
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file)?;
+        launch_macos_terminal(&config_file, cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file)?;
+        launch_linux_terminal(&config_file, cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file)?;
+        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
         return Ok(());
     }
 
@@ -849,7 +851,7 @@ fn write_claude_config(
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path) -> Result<(), String> {
+fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&str>) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -859,17 +861,25 @@ fn launch_macos_terminal(config_file: &std::path::Path) -> Result<(), String> {
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
 
+    let cd_command = if let Some(dir) = cwd {
+        format!("cd \"{}\"", dir)
+    } else {
+        "cd \"$HOME\"".to_string()
+    };
+
     // Write the shell script to a temp file
     let script_content = format!(
         r#"#!/bin/bash
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
+{cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
-        script_file = script_file.display()
+        script_file = script_file.display(),
+        cd_command = cd_command
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -1005,7 +1015,7 @@ fn launch_macos_open_app(
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path) -> Result<(), String> {
+fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&str>) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -1028,16 +1038,24 @@ fn launch_linux_terminal(config_file: &std::path::Path) -> Result<(), String> {
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
 
+    let cd_command = if let Some(dir) = cwd {
+        format!("cd \"{}\"", dir)
+    } else {
+        "cd \"$HOME\"".to_string()
+    };
+
     let script_content = format!(
         r#"#!/bin/bash
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
+{cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
-        script_file = script_file.display()
+        script_file = script_file.display(),
+        cd_command = cd_command
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -1116,6 +1134,7 @@ fn which_command(cmd: &str) -> bool {
 fn launch_windows_terminal(
     temp_dir: &std::path::Path,
     config_file: &std::path::Path,
+    cwd: Option<&str>,
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
@@ -1123,15 +1142,22 @@ fn launch_windows_terminal(
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
     let config_path_for_batch = config_file.to_string_lossy().replace('&', "^&");
 
+    let cd_command = if let Some(dir) = cwd {
+        format!("cd /d \"{}\"", dir)
+    } else {
+        "cd /d \"%USERPROFILE%\"".to_string()
+    };
+
     let content = format!(
         "@echo off
+{cd_command}
 echo Using provider-specific claude config:
 echo {}
 claude --settings \"{}\"
 del \"{}\" >nul 2>&1
 del \"%~f0\" >nul 2>&1
 ",
-        config_path_for_batch, config_path_for_batch, config_path_for_batch
+        config_path_for_batch, config_path_for_batch, config_path_for_batch, cd_command = cd_command
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
