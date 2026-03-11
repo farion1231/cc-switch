@@ -96,7 +96,11 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            zip_url TEXT,
+            website_url TEXT,
+            repo_source TEXT NOT NULL DEFAULT 'Github',
+            PRIMARY KEY (owner, name)
         )",
             [],
         )
@@ -385,6 +389,11 @@ impl Database {
                         log::info!("迁移数据库从 v5 到 v6（使用量聚合表）");
                         Self::migrate_v5_to_v6(conn)?;
                         Self::set_user_version(conn, 6)?;
+                    }
+                    6 => {
+                        log::info!("迁移数据库从 v6 到 v7（技能源支持自定义 ZIP URL 和 repo_source 字段）");
+                        Self::migrate_v6_to_v7(conn)?;
+                        Self::set_user_version(conn, 7)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -963,6 +972,33 @@ impl Database {
         .map_err(|e| AppError::Database(format!("创建 usage_daily_rollups 表失败: {e}")))?;
 
         log::info!("v5 -> v6 迁移完成：已添加使用量日聚合表");
+        Ok(())
+    }
+
+    /// v6 -> v7 迁移：技能源支持自定义 ZIP URL 和 repo_source 字段
+    /// 为 skill_repos 表添加 zip_url、website_url 和 repo_source 字段
+    fn migrate_v6_to_v7(conn: &Connection) -> Result<(), AppError> {
+        // 添加 zip_url 字段
+        Self::add_column_if_missing(conn, "skill_repos", "zip_url", "TEXT")?;
+
+        // 添加 website_url 字段
+        Self::add_column_if_missing(conn, "skill_repos", "website_url", "TEXT")?;
+
+        // 添加 repo_source 字段，默认值为 'github'
+        Self::add_column_if_missing(conn, "skill_repos", "repo_source", "TEXT NOT NULL DEFAULT 'github'")?;
+
+        // 为现有数据生成 zip_url 和 website_url（按 GitHub 格式），并设置 repo_source
+        conn.execute(
+            "UPDATE skill_repos SET
+                zip_url = 'https://github.com/' || owner || '/' || name || '/archive/refs/heads/' || branch || '.zip',
+                website_url = 'https://github.com/' || owner || '/' || name,
+                repo_source = 'github'
+             WHERE zip_url IS NULL",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("迁移 skill_repos 数据失败：{e}")))?;
+
+        log::info!("v6 -> v7 迁移完成：已添加 zip_url、website_url 和 repo_source 字段");
         Ok(())
     }
 
