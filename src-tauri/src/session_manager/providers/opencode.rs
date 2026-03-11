@@ -292,22 +292,8 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                match part_value.get("type").and_then(Value::as_str) {
-                    Some("text") => {
-                        if let Some(text) = part_value.get("text").and_then(Value::as_str) {
-                            if !text.trim().is_empty() {
-                                texts.push(text.to_string());
-                            }
-                        }
-                    }
-                    Some("tool") => {
-                        let tool = part_value
-                            .get("tool")
-                            .and_then(Value::as_str)
-                            .unwrap_or("unknown");
-                        texts.push(format!("[Tool: {tool}]"));
-                    }
-                    _ => {}
+                if let Some(text) = extract_part_text(&part_value) {
+                    texts.push(text);
                 }
             }
         }
@@ -393,26 +379,43 @@ pub fn delete_session(storage: &Path, path: &Path, session_id: &str) -> Result<b
 }
 
 /// Delete a session from the OpenCode SQLite database.
-/// Relies on `PRAGMA foreign_keys = ON` for cascading deletion of messages and parts.
 pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, String> {
     let (db_path, ref_session_id) = parse_sqlite_source(source)
         .ok_or_else(|| format!("Invalid SQLite source reference: {source}"))?;
+    let db_path = db_path
+        .canonicalize()
+        .map_err(|e| format!("Failed to canonicalize SQLite database path: {e}"))?;
+    let expected_db_path = get_opencode_db_path()
+        .canonicalize()
+        .map_err(|e| format!("Failed to canonicalize expected OpenCode database path: {e}"))?;
 
     if ref_session_id != session_id {
         return Err(format!(
             "OpenCode SQLite session ID mismatch: expected {session_id}, found {ref_session_id}"
         ));
     }
+    if db_path != expected_db_path {
+        return Err("SQLite path does not match expected OpenCode database".to_string());
+    }
 
     let conn =
         Connection::open(&db_path).map_err(|e| format!("Failed to open OpenCode database: {e}"))?;
 
-    conn.execute_batch("PRAGMA foreign_keys = ON;")
-        .map_err(|e| format!("Failed to enable foreign keys: {e}"))?;
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Failed to begin transaction: {e}"))?;
 
-    let deleted = conn
+    tx.execute("DELETE FROM part WHERE session_id = ?1", [session_id])
+        .map_err(|e| format!("Failed to delete OpenCode parts: {e}"))?;
+    tx.execute("DELETE FROM message WHERE session_id = ?1", [session_id])
+        .map_err(|e| format!("Failed to delete OpenCode messages: {e}"))?;
+
+    let deleted = tx
         .execute("DELETE FROM session WHERE id = ?1", [session_id])
         .map_err(|e| format!("Failed to delete OpenCode session: {e}"))?;
+
+    tx.commit()
+        .map_err(|e| format!("Failed to commit session deletion: {e}"))?;
 
     Ok(deleted > 0)
 }
@@ -527,6 +530,24 @@ fn get_first_user_summary(storage: &Path, session_id: &str) -> Option<String> {
 }
 
 /// Collect text content from all parts in a part directory.
+fn extract_part_text(part_value: &Value) -> Option<String> {
+    match part_value.get("type").and_then(Value::as_str) {
+        Some("text") => part_value
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|t| !t.trim().is_empty())
+            .map(|t| t.to_string()),
+        Some("tool") => {
+            let tool = part_value
+                .get("tool")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            Some(format!("[Tool: {tool}]"))
+        }
+        _ => None,
+    }
+}
+
 fn collect_parts_text(part_dir: &Path) -> String {
     if !part_dir.is_dir() {
         return String::new();
@@ -546,22 +567,8 @@ fn collect_parts_text(part_dir: &Path) -> String {
             Err(_) => continue,
         };
 
-        match value.get("type").and_then(Value::as_str) {
-            Some("text") => {
-                if let Some(text) = value.get("text").and_then(Value::as_str) {
-                    if !text.trim().is_empty() {
-                        texts.push(text.to_string());
-                    }
-                }
-            }
-            Some("tool") => {
-                let tool = value
-                    .get("tool")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                texts.push(format!("[Tool: {tool}]"));
-            }
-            _ => {}
+        if let Some(text) = extract_part_text(&value) {
+            texts.push(text);
         }
     }
 
@@ -885,8 +892,15 @@ mod tests {
 
     #[test]
     fn delete_session_sqlite_removes_session() {
+        let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
-        let db_path = temp.path().join("opencode.db");
+        let original_xdg = std::env::var_os("XDG_DATA_HOME");
+        #[allow(deprecated)]
+        std::env::set_var("XDG_DATA_HOME", temp.path());
+
+        let base_dir = temp.path().join("opencode");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        let db_path = base_dir.join("opencode.db");
         let conn = Connection::open(&db_path).expect("open sqlite db");
         create_sqlite_schema(&conn);
 
@@ -937,5 +951,47 @@ mod tests {
         assert_eq!(remaining_sessions, 0);
         assert_eq!(remaining_messages, 0);
         assert_eq!(remaining_parts, 0);
+
+        #[allow(deprecated)]
+        if let Some(value) = original_xdg {
+            std::env::set_var("XDG_DATA_HOME", value);
+        } else {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
+    }
+
+    #[test]
+    fn delete_session_sqlite_rejects_foreign_db_path() {
+        let _guard = opencode_env_lock().lock().expect("lock");
+        let temp = tempdir().expect("tempdir");
+        let original_xdg = std::env::var_os("XDG_DATA_HOME");
+        #[allow(deprecated)]
+        std::env::set_var("XDG_DATA_HOME", temp.path());
+
+        let expected_base_dir = temp.path().join("opencode");
+        std::fs::create_dir_all(&expected_base_dir).expect("create expected base dir");
+        let expected_db_path = expected_base_dir.join("opencode.db");
+        Connection::open(&expected_db_path).expect("create expected sqlite db");
+
+        let db_path = temp.path().join("foreign.db");
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        create_sqlite_schema(&conn);
+        conn.execute(
+            "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_1", "Session", "/tmp/project", 1000_i64, 3000_i64),
+        )
+        .expect("insert session");
+        drop(conn);
+
+        let source = format!("sqlite:{}:ses_1", db_path.display());
+        let err = delete_session_sqlite("ses_1", &source).expect_err("should reject foreign db");
+        assert!(err.contains("expected OpenCode database"));
+
+        #[allow(deprecated)]
+        if let Some(value) = original_xdg {
+            std::env::set_var("XDG_DATA_HOME", value);
+        } else {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
     }
 }
