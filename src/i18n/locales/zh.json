@@ -710,6 +710,9 @@
       "micu": "Micu 是 CC Switch 的官方合作伙伴",
       "x-code": "XCodeAPI 为CC Switch 的用户提供特别福利，使用此链接注册后首单加赠10%的额度(联系站长领取)"
     },
+    "presets": {
+      "ucloud": "优云智算"
+    },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
     "mainModelPlaceholder": "例如: GLM-4.6",

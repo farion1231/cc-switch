@@ -3,6 +3,7 @@ import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 
 export interface OpenCodeProviderPreset {
   name: string;
+  nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
   apiKeyUrl?: string;
   settingsConfig: OpenCodeProviderConfig;
@@ -1119,7 +1120,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Micu",
     websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/v1",
+    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "Micu",
@@ -1147,13 +1148,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "X-Code API",
-    websiteUrl: "https://www.x-code.cn",
-    apiKeyUrl: "https://www.x-code.cn",
+    websiteUrl: "https://x-code.cc",
+    apiKeyUrl: "https://x-code.cc",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "X-Code API",
       options: {
-        baseURL: "https://www.x-code.cn/v1",
+        baseURL: "https://x-code.cc/v1",
         apiKey: "",
       },
       models: {

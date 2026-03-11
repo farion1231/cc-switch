@@ -69,6 +69,18 @@ const renderPage = () => {
   );
 };
 
+const openSearch = () => {
+  const searchButton = Array.from(screen.getAllByRole("button")).find((button) =>
+    button.querySelector(".lucide-search"),
+  );
+
+  if (!searchButton) {
+    throw new Error("Search button not found");
+  }
+
+  fireEvent.click(searchButton);
+};
+
 describe("SessionManagerPage", () => {
   beforeEach(() => {
     toastSuccessMock.mockReset();
@@ -134,6 +146,42 @@ describe("SessionManagerPage", () => {
     );
 
     expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).toHaveBeenCalled();
+  });
+
+  it("removes a deleted session from filtered search results", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    openSearch();
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "Alpha" },
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByText("Alpha Session")).toHaveLength(2),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /删除会话/i }));
+
+    const dialog = screen.getByTestId("confirm-dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /删除会话/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument(),
+    );
+
+    expect(screen.getByText("sessionManager.selectSession")).toBeInTheDocument();
+    expect(
+      screen.queryByText("sessionManager.emptySession"),
+    ).not.toBeInTheDocument();
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
   });

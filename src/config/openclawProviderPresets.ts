@@ -19,6 +19,7 @@ export interface OpenClawSuggestedDefaults {
 
 export interface OpenClawProviderPreset {
   name: string;
+  nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
   apiKeyUrl?: string;
   /** OpenClaw settings_config structure */
@@ -1264,7 +1265,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "Ucloud",
+    name: "Compshare",
+    nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:
       "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
@@ -1295,17 +1297,17 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "ucloud/claude-opus-4-6",
+        primary: "compshare/claude-opus-4-6",
       },
       modelCatalog: {
-        "ucloud/claude-opus-4-6": { alias: "Opus" },
+        "compshare/claude-opus-4-6": { alias: "Opus" },
       },
     },
   },
   {
     name: "Micu",
     websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn",
+    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
     settingsConfig: {
       baseUrl: "https://www.openclaudecode.cn",
       apiKey: "",

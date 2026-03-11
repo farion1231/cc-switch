@@ -6,6 +6,7 @@ import type { PresetTheme } from "./claudeProviderPresets";
 
 export interface CodexProviderPreset {
   name: string;
+  nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
   // 第三方供应商可提供单独的获取 API Key 链接
   apiKeyUrl?: string;
@@ -281,13 +282,14 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
-    name: "Ucloud",
+    name: "Compshare",
+    nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:
       "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
-      "ucloud",
+      "compshare",
       "https://api.modelverse.cn/v1",
       "gpt-5.4",
     ),
@@ -301,7 +303,7 @@ requires_openai_auth = true`,
   {
     name: "Micu",
     websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/v1",
+    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "micu",
@@ -317,15 +319,15 @@ requires_openai_auth = true`,
   },
   {
     name: "X-Code API",
-    websiteUrl: "https://www.x-code.cn",
-    apiKeyUrl: "https://www.x-code.cn",
+    websiteUrl: "https://x-code.cc",
+    apiKeyUrl: "https://x-code.cc",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "x-code",
-      "https://www.x-code.cn/v1",
+      "https://x-code.cc/v1",
       "gpt-5.4",
     ),
-    endpointCandidates: ["https://www.x-code.cn/v1"],
+    endpointCandidates: ["https://x-code.cc/v1"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "x-code", // 促销信息 i18n key

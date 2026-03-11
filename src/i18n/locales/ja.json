@@ -706,9 +706,12 @@
       "crazyrouter": "CrazyRouter は CC Switch ユーザー向けに特別ボーナスを提供しています。初回チャージで 30% の追加クレジットがもらえます！",
       "sssaicode": "SSAI Code は CC Switch ユーザー向けに特別ボーナスを提供しています。チャージごとに $10 の追加クレジットがもらえます！",
       "siliconflow": "SiliconFlow は CC Switch の公式パートナーです",
-      "ucloud": "UCloud は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、5元のプラットフォーム体験クレジットがもらえます！",
+      "ucloud": "Compshare は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、5元のプラットフォーム体験クレジットがもらえます！",
       "micu": "Micu は CC Switch の公式パートナーです",
       "x-code": "XCodeAPI は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、初回注文で 10% の追加クレジットがもらえます（管理者に連絡して受け取り）"
+    },
+    "presets": {
+      "ucloud": "Compshare"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",

@@ -159,7 +159,9 @@ export function ProviderPresetSelector({
                 }
               >
                 {renderPresetIcon(entry.preset)}
-                {entry.preset.name}
+                {entry.preset.nameKey
+                  ? t(entry.preset.nameKey)
+                  : entry.preset.name}
                 {isPartner && (
                   <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
                     <Star className="h-2.5 w-2.5 fill-current" />

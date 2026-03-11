@@ -9,7 +9,7 @@ interface GeminiCommonConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
   value: string;
-  onChange: (value: string) => void;
+  onSave: (value: string) => boolean;
   error?: string;
   onExtract?: () => void;
   isExtracting?: boolean;
@@ -21,9 +21,10 @@ interface GeminiCommonConfigModalProps {
  */
 export const GeminiCommonConfigModal: React.FC<
   GeminiCommonConfigModalProps
-> = ({ isOpen, onClose, value, onChange, error, onExtract, isExtracting }) => {
+> = ({ isOpen, onClose, value, onSave, error, onExtract, isExtracting }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [draftValue, setDraftValue] = useState(value);
 
   useEffect(() => {
     setIsDarkMode(document.documentElement.classList.contains("dark"));
@@ -40,13 +41,30 @@ export const GeminiCommonConfigModal: React.FC<
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (isOpen) {
+      setDraftValue(value);
+    }
+  }, [isOpen, value]);
+
+  const handleClose = () => {
+    setDraftValue(value);
+    onClose();
+  };
+
+  const handleSave = () => {
+    if (onSave(draftValue)) {
+      onClose();
+    }
+  };
+
   return (
     <FullScreenPanel
       isOpen={isOpen}
       title={t("geminiConfig.editCommonConfigTitle", {
         defaultValue: "编辑 Gemini 通用配置片段",
       })}
-      onClose={onClose}
+      onClose={handleClose}
       footer={
         <>
           {onExtract && (
@@ -67,10 +85,10 @@ export const GeminiCommonConfigModal: React.FC<
               })}
             </Button>
           )}
-          <Button type="button" variant="outline" onClick={onClose}>
+          <Button type="button" variant="outline" onClick={handleClose}>
             {t("common.cancel")}
           </Button>
-          <Button type="button" onClick={onClose} className="gap-2">
+          <Button type="button" onClick={handleSave} className="gap-2">
             <Save className="w-4 h-4" />
             {t("common.save")}
           </Button>
@@ -86,8 +104,8 @@ export const GeminiCommonConfigModal: React.FC<
         </p>
 
         <JsonEditor
-          value={value}
-          onChange={onChange}
+          value={draftValue}
+          onChange={setDraftValue}
           placeholder={`{
   "GEMINI_MODEL": "gemini-3-pro-preview"
 }`}

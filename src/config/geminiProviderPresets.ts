@@ -14,6 +14,7 @@ export interface GeminiPresetTheme {
 
 export interface GeminiProviderPreset {
   name: string;
+  nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
   apiKeyUrl?: string;
   settingsConfig: object;

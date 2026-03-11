@@ -15,12 +15,20 @@ use tempfile::NamedTempFile;
 
 const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
 
-/// Tables that are local-only (not synced via WebDAV snapshots).
-/// Schema is still exported, but data rows are skipped.
-const LOCAL_ONLY_TABLES: &[&str] = &[
+/// Tables whose data rows are skipped when exporting for WebDAV sync.
+const SYNC_SKIP_TABLES: &[&str] = &[
     "proxy_request_logs",
     "stream_check_logs",
     "provider_health",
+    "proxy_live_backup",
+    "usage_daily_rollups",
+];
+
+/// Tables whose local data is preserved (restored from local snapshot) during WebDAV import.
+/// Excludes ephemeral tables like provider_health that can safely rebuild at runtime.
+const SYNC_PRESERVE_TABLES: &[&str] = &[
+    "proxy_request_logs",
+    "stream_check_logs",
     "proxy_live_backup",
     "usage_daily_rollups",
 ];
@@ -44,7 +52,7 @@ impl Database {
     /// Export SQL for sync (WebDAV), skipping local-only tables' data
     pub fn export_sql_string_for_sync(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
-        Self::dump_sql(&snapshot, LOCAL_ONLY_TABLES)
+        Self::dump_sql(&snapshot, SYNC_SKIP_TABLES)
     }
 
     /// 导出为 SQLite 兼容的 SQL 文本
@@ -80,7 +88,7 @@ impl Database {
     /// Import SQL generated for sync, then restore local-only tables from the
     /// current device snapshot before replacing the main database.
     pub(crate) fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
-        self.import_sql_string_inner(sql_raw, LOCAL_ONLY_TABLES)
+        self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)
     }
 
     fn import_sql_string_inner(

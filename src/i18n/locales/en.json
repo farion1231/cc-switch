@@ -706,9 +706,12 @@
       "crazyrouter": "CrazyRouter offers an exclusive bonus for CC Switch users — 30% extra credit on your first top-up!",
       "sssaicode": "SSAI Code offers an exclusive bonus for CC Switch users — $10 extra credit on every top-up!",
       "siliconflow": "SiliconFlow is an official partner of CC Switch",
-      "ucloud": "UCloud offers an exclusive bonus for CC Switch users — register via this link to get ¥5 platform trial credit!",
+      "ucloud": "Compshare offers an exclusive bonus for CC Switch users — register via this link to get ¥5 platform trial credit!",
       "micu": "Micu is an official partner of CC Switch",
       "x-code": "XCodeAPI offers a special bonus for CC Switch users — register via this link and get 10% extra credit on your first order (contact admin to claim)"
+    },
+    "presets": {
+      "ucloud": "Compshare"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
