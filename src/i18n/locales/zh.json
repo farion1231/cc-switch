@@ -1340,6 +1340,7 @@
     "reasoning": "推理模式",
     "reasoningOn": "启用",
     "reasoningOff": "关闭",
+    "inputTypes": "输入类型",
     "inputCost": "输入价格 ($/M tokens)",
     "outputCost": "输出价格 ($/M tokens)",
     "advancedOptions": "高级选项",
@@ -1376,12 +1377,6 @@
       "unsupportedProfileTitle": "检测到不受支持的工具配置",
       "unsupportedProfileDescription": "当前 tools.profile 的值“{{value}}”不在 OpenClaw 支持列表内。在你手动选择新值之前，它会被保留。",
       "unsupportedProfileLabel": "不受支持",
-      "profiles": {
-        "default": "默认",
-        "strict": "严格",
-        "permissive": "宽松",
-        "custom": "自定义"
-      },
       "allowList": "允许列表",
       "denyList": "拒绝列表",
       "patternPlaceholder": "工具名称或模式",

@@ -1340,6 +1340,7 @@
     "reasoning": "推論モード",
     "reasoningOn": "有効",
     "reasoningOff": "無効",
+    "inputTypes": "入力タイプ",
     "inputCost": "入力コスト ($/M トークン)",
     "outputCost": "出力コスト ($/M トークン)",
     "advancedOptions": "詳細オプション",
@@ -1376,12 +1377,6 @@
       "unsupportedProfileTitle": "未対応のツールプロファイルを検出しました",
       "unsupportedProfileDescription": "現在の tools.profile の値 '{{value}}' は OpenClaw の対応リストにありません。新しい値を選択するまでこの値を保持します。",
       "unsupportedProfileLabel": "未対応",
-      "profiles": {
-        "default": "デフォルト",
-        "strict": "厳格",
-        "permissive": "寛容",
-        "custom": "カスタム"
-      },
       "allowList": "許可リスト",
       "denyList": "拒否リスト",
       "patternPlaceholder": "ツール名またはパターン",
