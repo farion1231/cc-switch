@@ -61,6 +61,15 @@ export function RepoManager({
         skill.repoOwner === repo.owner && skill.repoName === repo.name,
     ).length;
 
+  // 根据 source 生成仓库官网链接
+  const getRepoWebsiteUrl = (source: string | undefined, owner: string, name: string): string => {
+    if (source === "gitee") {
+      return `https://gitee.com/${owner}/${name}`;
+    }
+    // 默认 GitHub
+    return `https://github.com/${owner}/${name}`;
+  };
+
   // 解析 GitHub/Gitee URL，提取 owner/name
   const parseRepoUrl = (url: string): { owner: string; name: string } | null => {
     let cleaned = url.trim();
@@ -313,7 +322,7 @@ export function RepoManager({
                           {repo.owner}/{repo.name}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground truncate max-w-[400px]">
-                          {repo.zipUrl || `https://github.com/${repo.owner}/${repo.name}`}
+                          {repo.zipUrl || getRepoWebsiteUrl(repo.source, repo.owner, repo.name)}
                         </div>
                       </div>
                       <div className="flex gap-2 flex-shrink-0 ml-2">
@@ -330,7 +339,7 @@ export function RepoManager({
                             onClick={() =>
                               handleOpenWebsite(
                                 repo.websiteUrl ||
-                                  `https://github.com/${repo.owner}/${repo.name}`,
+                                  getRepoWebsiteUrl(repo.source, repo.owner, repo.name),
                               )
                             }
                             title={t("common.view", { defaultValue: "查看" })}
