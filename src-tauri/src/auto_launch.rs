@@ -21,7 +21,7 @@ fn get_auto_launch() -> Result<AutoLaunch, AppError> {
     let exe_path =
         std::env::current_exe().map_err(|e| AppError::Message(format!("无法获取应用路径: {e}")))?;
 
-    // macOS 需要使用 .app bundle 路径，否则 AppleScript login item 会打开终端
+    // macOS 需要使用 .app bundle 路径，确保以完整应用形式启动
     #[cfg(target_os = "macos")]
     let app_path = get_macos_app_bundle_path(&exe_path).unwrap_or(exe_path);
 
@@ -29,11 +29,12 @@ fn get_auto_launch() -> Result<AutoLaunch, AppError> {
     let app_path = exe_path;
 
     // 使用 AutoLaunchBuilder 消除平台差异
-    // macOS: 使用 AppleScript 方式（默认），需要 .app bundle 路径
+    // macOS: 使用 LaunchAgent plist 方式（兼容 macOS 13+）
     // Windows/Linux: 使用注册表/XDG autostart
     let auto_launch = AutoLaunchBuilder::new()
         .set_app_name(app_name)
         .set_app_path(&app_path.to_string_lossy())
+        .set_use_launch_agent(true)
         .build()
         .map_err(|e| AppError::Message(format!("创建 AutoLaunch 失败: {e}")))?;
 
