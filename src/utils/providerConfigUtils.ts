@@ -414,17 +414,176 @@ export const hasTomlCommonConfigSnippet = (
 
 // ========== Codex base_url utils ==========
 
+const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
+const TOML_BASE_URL_PATTERN =
+  /^\s*base_url\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+const TOML_MODEL_PROVIDER_PATTERN =
+  /^\s*model_provider\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/m;
+
+interface TomlSectionRange {
+  bodyEndIndex: number;
+  bodyStartIndex: number;
+}
+
+interface TomlAssignmentMatch {
+  index: number;
+  sectionName?: string;
+  value: string;
+}
+
+const finalizeTomlText = (lines: string[]): string =>
+  lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\n+/, "");
+
+const getTomlSectionRange = (
+  lines: string[],
+  sectionName: string,
+): TomlSectionRange | undefined => {
+  let headerLineIndex = -1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(TOML_SECTION_HEADER_PATTERN);
+    if (!match) {
+      continue;
+    }
+
+    if (headerLineIndex === -1) {
+      if (match[1] === sectionName) {
+        headerLineIndex = index;
+      }
+      continue;
+    }
+
+    return {
+      bodyStartIndex: headerLineIndex + 1,
+      bodyEndIndex: index,
+    };
+  }
+
+  if (headerLineIndex === -1) {
+    return undefined;
+  }
+
+  return {
+    bodyStartIndex: headerLineIndex + 1,
+    bodyEndIndex: lines.length,
+  };
+};
+
+const getCodexModelProviderName = (configText: string): string | undefined => {
+  const match = configText.match(TOML_MODEL_PROVIDER_PATTERN);
+  const providerName = match?.[2]?.trim();
+  return providerName || undefined;
+};
+
+const findTomlAssignmentInRange = (
+  lines: string[],
+  pattern: RegExp,
+  startIndex: number,
+  endIndex: number,
+  sectionName?: string,
+): TomlAssignmentMatch | undefined => {
+  for (let index = startIndex; index < endIndex; index += 1) {
+    const match = lines[index].match(pattern);
+    if (match?.[2]) {
+      return {
+        index,
+        sectionName,
+        value: match[2],
+      };
+    }
+  }
+
+  return undefined;
+};
+
+const findTomlAssignments = (
+  lines: string[],
+  pattern: RegExp,
+): TomlAssignmentMatch[] => {
+  const assignments: TomlAssignmentMatch[] = [];
+  let currentSectionName: string | undefined;
+
+  lines.forEach((line, index) => {
+    const sectionMatch = line.match(TOML_SECTION_HEADER_PATTERN);
+    if (sectionMatch) {
+      currentSectionName = sectionMatch[1];
+      return;
+    }
+
+    const match = line.match(pattern);
+    if (!match?.[2]) {
+      return;
+    }
+
+    assignments.push({
+      index,
+      sectionName: currentSectionName,
+      value: match[2],
+    });
+  });
+
+  return assignments;
+};
+
+const getCodexProviderSectionName = (
+  configText: string,
+): string | undefined => {
+  const providerName = getCodexModelProviderName(configText);
+  return providerName ? `model_providers.${providerName}` : undefined;
+};
+
+const getTomlSectionInsertIndex = (
+  lines: string[],
+  sectionRange: TomlSectionRange,
+): number => {
+  let insertIndex = sectionRange.bodyEndIndex;
+  while (
+    insertIndex > sectionRange.bodyStartIndex &&
+    lines[insertIndex - 1].trim() === ""
+  ) {
+    insertIndex -= 1;
+  }
+  return insertIndex;
+};
+
 // 从 Codex 的 TOML 配置文本中提取 base_url（支持单/双引号）
 export const extractCodexBaseUrl = (
   configText: string | undefined | null,
 ): string | undefined => {
   try {
     const raw = typeof configText === "string" ? configText : "";
-    // 归一化中文/全角引号，避免正则提取失败
-    const text = normalizeQuotes(raw);
+    const text = normalizeTomlText(raw);
     if (!text) return undefined;
-    const m = text.match(/base_url\s*=\s*(['"])([^'\"]+)\1/);
-    return m && m[2] ? m[2] : undefined;
+
+    const lines = text.split("\n");
+    const targetSectionName = getCodexProviderSectionName(text);
+
+    if (targetSectionName) {
+      const sectionRange = getTomlSectionRange(lines, targetSectionName);
+      if (sectionRange) {
+        const match = findTomlAssignmentInRange(
+          lines,
+          TOML_BASE_URL_PATTERN,
+          sectionRange.bodyStartIndex,
+          sectionRange.bodyEndIndex,
+          targetSectionName,
+        );
+        if (match?.value) {
+          return match.value;
+        }
+      }
+    }
+
+    const fallbackMatch = findTomlAssignmentInRange(
+      lines,
+      TOML_BASE_URL_PATTERN,
+      0,
+      lines.length,
+    );
+    return fallbackMatch?.value;
   } catch {
     return undefined;
   }
@@ -451,36 +610,98 @@ export const setCodexBaseUrl = (
   baseUrl: string,
 ): string => {
   const trimmed = baseUrl.trim();
-  // 归一化原文本中的引号（既能匹配，也能输出稳定格式）
-  const normalizedText = normalizeQuotes(configText);
+  const normalizedText = normalizeTomlText(configText);
+  const lines = normalizedText ? normalizedText.split("\n") : [];
+  const targetSectionName = getCodexProviderSectionName(normalizedText);
+  const allAssignments = findTomlAssignments(lines, TOML_BASE_URL_PATTERN);
 
   // 允许清空：当 baseUrl 为空时，移除 base_url 行
   if (!trimmed) {
     if (!normalizedText) return normalizedText;
-    const next = normalizedText
-      .split("\n")
-      .filter((line) => !/^\s*base_url\s*=/.test(line))
-      .join("\n")
-      // 避免移除后留下过多空行
-      .replace(/\n{3,}/g, "\n\n")
-      // 避免开头出现空行
-      .replace(/^\n+/, "");
-    return next;
+
+    if (targetSectionName) {
+      const sectionRange = getTomlSectionRange(lines, targetSectionName);
+      const targetMatch = sectionRange
+        ? findTomlAssignmentInRange(
+            lines,
+            TOML_BASE_URL_PATTERN,
+            sectionRange.bodyStartIndex,
+            sectionRange.bodyEndIndex,
+            targetSectionName,
+          )
+        : undefined;
+
+      if (targetMatch) {
+        lines.splice(targetMatch.index, 1);
+        return finalizeTomlText(lines);
+      }
+    }
+
+    if (allAssignments.length === 1) {
+      lines.splice(allAssignments[0].index, 1);
+      return finalizeTomlText(lines);
+    }
+
+    return finalizeTomlText(lines);
   }
 
   const normalizedUrl = trimmed.replace(/\s+/g, "");
   const replacementLine = `base_url = "${normalizedUrl}"`;
-  const pattern = /base_url\s*=\s*(["'])([^"']+)\1/;
 
-  if (pattern.test(normalizedText)) {
-    return normalizedText.replace(pattern, replacementLine);
+  if (targetSectionName) {
+    let targetSectionRange = getTomlSectionRange(lines, targetSectionName);
+    const targetMatch = targetSectionRange
+      ? findTomlAssignmentInRange(
+          lines,
+          TOML_BASE_URL_PATTERN,
+          targetSectionRange.bodyStartIndex,
+          targetSectionRange.bodyEndIndex,
+          targetSectionName,
+        )
+      : undefined;
+
+    if (targetMatch) {
+      lines[targetMatch.index] = replacementLine;
+      return finalizeTomlText(lines);
+    }
+
+    if (
+      allAssignments.length === 1 &&
+      allAssignments[0].sectionName !== targetSectionName
+    ) {
+      lines.splice(allAssignments[0].index, 1);
+      targetSectionRange = getTomlSectionRange(lines, targetSectionName);
+    }
+
+    if (targetSectionRange) {
+      const insertIndex = getTomlSectionInsertIndex(lines, targetSectionRange);
+      lines.splice(insertIndex, 0, replacementLine);
+      return finalizeTomlText(lines);
+    }
+
+    if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
+      lines.push("");
+    }
+    lines.push(`[${targetSectionName}]`, replacementLine);
+    return finalizeTomlText(lines);
   }
 
-  const prefix =
-    normalizedText && !normalizedText.endsWith("\n")
-      ? `${normalizedText}\n`
-      : normalizedText;
-  return `${prefix}${replacementLine}\n`;
+  const firstAssignment = allAssignments[0];
+  if (firstAssignment) {
+    lines[firstAssignment.index] = replacementLine;
+    return finalizeTomlText(lines);
+  }
+
+  if (lines.length === 0) {
+    return `${replacementLine}\n`;
+  }
+
+  if (lines[lines.length - 1].trim() !== "") {
+    lines.push(replacementLine);
+  } else {
+    lines.splice(lines.length - 1, 0, replacementLine);
+  }
+  return finalizeTomlText(lines);
 };
 
 // ========== Codex model name utils ==========

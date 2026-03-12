@@ -17,6 +17,7 @@ import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
+import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 
@@ -179,11 +180,9 @@ export function AddProviderDialog({
         } else if (appId === "codex") {
           const config = parsedConfig.config as string | undefined;
           if (config) {
-            const baseUrlMatch = config.match(
-              /base_url\s*=\s*["']([^"']+)["']/,
-            );
-            if (baseUrlMatch?.[1]) {
-              addUrl(baseUrlMatch[1]);
+            const extractedBaseUrl = extractCodexBaseUrl(config);
+            if (extractedBaseUrl) {
+              addUrl(extractedBaseUrl);
             }
           }
         } else if (appId === "gemini") {
