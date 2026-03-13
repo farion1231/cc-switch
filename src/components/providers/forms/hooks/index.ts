@@ -11,6 +11,7 @@ export { useCodexCommonConfig } from "./useCodexCommonConfig";
 export { useSpeedTestEndpoints } from "./useSpeedTestEndpoints";
 export { useCodexTomlValidation } from "./useCodexTomlValidation";
 export { useGeminiConfigState } from "./useGeminiConfigState";
+export { useManagedAuth } from "./useManagedAuth";
 export { useGeminiCommonConfig } from "./useGeminiCommonConfig";
 export { useOmoModelSource } from "./useOmoModelSource";
 export { useOpencodeFormState } from "./useOpencodeFormState";

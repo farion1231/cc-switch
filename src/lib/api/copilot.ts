@@ -38,6 +38,8 @@ export interface GitHubAccount {
 export interface CopilotAuthStatus {
   /** 是否已认证（有任意账号）- 向后兼容 */
   authenticated: boolean;
+  /** 默认账号 ID */
+  default_account_id: string | null;
   /** 第一个账号的用户名 - 向后兼容 */
   username: string | null;
   /** Copilot Token 过期时间 - 向后兼容 */
@@ -182,7 +184,7 @@ export async function copilotListAccounts(): Promise<GitHubAccount[]> {
  * @returns 新添加的账号信息，如果仍在等待则返回 null
  */
 export async function copilotPollForAccount(
-  deviceCode: string
+  deviceCode: string,
 ): Promise<GitHubAccount | null> {
   return invoke<GitHubAccount | null>("copilot_poll_for_account", {
     deviceCode,
@@ -199,6 +201,17 @@ export async function copilotRemoveAccount(accountId: string): Promise<void> {
 }
 
 /**
+ * 设置默认 GitHub 账号
+ *
+ * @param accountId - GitHub 用户 ID
+ */
+export async function copilotSetDefaultAccount(
+  accountId: string,
+): Promise<void> {
+  return invoke("copilot_set_default_account", { accountId });
+}
+
+/**
  * 获取指定账号的有效 Copilot Token
  *
  * 内部使用，用于代理请求。
@@ -207,7 +220,7 @@ export async function copilotRemoveAccount(accountId: string): Promise<void> {
  * @returns Copilot Token
  */
 export async function copilotGetTokenForAccount(
-  accountId: string
+  accountId: string,
 ): Promise<string> {
   return invoke<string>("copilot_get_token_for_account", { accountId });
 }
@@ -219,9 +232,11 @@ export async function copilotGetTokenForAccount(
  * @returns 可用模型列表
  */
 export async function copilotGetModelsForAccount(
-  accountId: string
+  accountId: string,
 ): Promise<CopilotModel[]> {
-  return invoke<CopilotModel[]>("copilot_get_models_for_account", { accountId });
+  return invoke<CopilotModel[]>("copilot_get_models_for_account", {
+    accountId,
+  });
 }
 
 /**
@@ -231,7 +246,7 @@ export async function copilotGetModelsForAccount(
  * @returns 使用量信息
  */
 export async function copilotGetUsageForAccount(
-  accountId: string
+  accountId: string,
 ): Promise<CopilotUsageResponse> {
   return invoke<CopilotUsageResponse>("copilot_get_usage_for_account", {
     accountId,

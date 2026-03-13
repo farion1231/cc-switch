@@ -252,6 +252,8 @@ impl From<&GitHubAccountData> for GitHubAccount {
 pub struct CopilotAuthStatus {
     /// 所有已认证的账号
     pub accounts: Vec<GitHubAccount>,
+    /// 默认账号 ID（显式状态，避免依赖 HashMap 顺序）
+    pub default_account_id: Option<String>,
     /// 是否已认证（向后兼容：有任意账号即为 true）
     pub authenticated: bool,
     /// GitHub 用户名（向后兼容：第一个账号的用户名）
@@ -271,15 +273,18 @@ struct GitHubAccountData {
     pub authenticated_at: i64,
 }
 
-/// 持久化存储结构（v2 多账号格式）
+/// 持久化存储结构（v3 多账号 + 默认账号格式）
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct CopilotAuthStore {
-    /// 存储格式版本（2 = 多账号格式）
+    /// 存储格式版本（3 = 多账号 + 默认账号格式）
     #[serde(default)]
     version: u32,
     /// 多账号数据（key = GitHub user ID）
     #[serde(default)]
     accounts: HashMap<String, GitHubAccountData>,
+    /// 默认账号 ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_account_id: Option<String>,
     /// 兼容 v1 单账号格式的字段
     #[serde(skip_serializing_if = "Option::is_none")]
     github_token: Option<String>,
@@ -291,6 +296,8 @@ struct CopilotAuthStore {
 pub struct CopilotAuthManager {
     /// 所有 GitHub 账号（key = GitHub user ID）
     accounts: Arc<RwLock<HashMap<String, GitHubAccountData>>>,
+    /// 默认账号 ID
+    default_account_id: Arc<RwLock<Option<String>>>,
     /// Copilot Token 缓存（key = GitHub user ID，内存缓存，自动刷新）
     copilot_tokens: Arc<RwLock<HashMap<String, CopilotToken>>>,
     /// HTTP 客户端
@@ -308,6 +315,7 @@ impl CopilotAuthManager {
 
         let manager = Self {
             accounts: Arc::new(RwLock::new(HashMap::new())),
+            default_account_id: Arc::new(RwLock::new(None)),
             copilot_tokens: Arc::new(RwLock::new(HashMap::new())),
             http_client: Client::new(),
             storage_path,
@@ -326,8 +334,9 @@ impl CopilotAuthManager {
 
     /// 列出所有已认证的账号
     pub async fn list_accounts(&self) -> Vec<GitHubAccount> {
-        let accounts = self.accounts.read().await;
-        accounts.values().map(GitHubAccount::from).collect()
+        let accounts = self.accounts.read().await.clone();
+        let default_account_id = self.resolve_default_account_id().await;
+        Self::sorted_accounts(&accounts, default_account_id.as_deref())
     }
 
     /// 获取指定账号信息
@@ -351,6 +360,14 @@ impl CopilotAuthManager {
         {
             let mut tokens = self.copilot_tokens.write().await;
             tokens.remove(account_id);
+        }
+
+        {
+            let accounts = self.accounts.read().await;
+            let mut default_account_id = self.default_account_id.write().await;
+            if default_account_id.as_deref() == Some(account_id) {
+                *default_account_id = Self::fallback_default_account_id(&accounts);
+            }
         }
 
         // 持久化
@@ -386,12 +403,37 @@ impl CopilotAuthManager {
             accounts.insert(account_id, account_data);
         }
 
+        {
+            let mut default_account_id = self.default_account_id.write().await;
+            if default_account_id.is_none() {
+                *default_account_id = Some(account.id.clone());
+            }
+        }
+
         // 持久化
         self.save_to_disk().await?;
 
         log::info!("[CopilotAuth] 添加账号成功: {}", user.login);
 
         Ok(account)
+    }
+
+    /// 设置默认账号
+    pub async fn set_default_account(&self, account_id: &str) -> Result<(), CopilotAuthError> {
+        {
+            let accounts = self.accounts.read().await;
+            if !accounts.contains_key(account_id) {
+                return Err(CopilotAuthError::AccountNotFound(account_id.to_string()));
+            }
+        }
+
+        {
+            let mut default_account_id = self.default_account_id.write().await;
+            *default_account_id = Some(account_id.to_string());
+        }
+
+        self.save_to_disk().await?;
+        Ok(())
     }
 
     // ==================== 设备码流程 ====================
@@ -530,12 +572,9 @@ impl CopilotAuthManager {
 
         // 返回新 token
         let tokens = self.copilot_tokens.read().await;
-        tokens
-            .get(account_id)
-            .map(|t| t.token.clone())
-            .ok_or(CopilotAuthError::CopilotTokenFetchFailed(
-                "刷新后仍无令牌".to_string(),
-            ))
+        tokens.get(account_id).map(|t| t.token.clone()).ok_or(
+            CopilotAuthError::CopilotTokenFetchFailed("刷新后仍无令牌".to_string()),
+        )
     }
 
     /// 获取有效的 Copilot Token（向后兼容：使用第一个账号）
@@ -543,12 +582,7 @@ impl CopilotAuthManager {
         // 确保迁移完成
         self.ensure_migration_complete().await?;
 
-        let first_account_id = {
-            let accounts = self.accounts.read().await;
-            accounts.keys().next().cloned()
-        };
-
-        match first_account_id {
+        match self.resolve_default_account_id().await {
             Some(id) => self.get_valid_token_for_account(&id).await,
             None => Err(CopilotAuthError::GitHubTokenInvalid),
         }
@@ -611,12 +645,7 @@ impl CopilotAuthManager {
 
     /// 获取 Copilot 可用模型列表（向后兼容：使用第一个账号）
     pub async fn fetch_models(&self) -> Result<Vec<CopilotModel>, CopilotAuthError> {
-        let first_account_id = {
-            let accounts = self.accounts.read().await;
-            accounts.keys().next().cloned()
-        };
-
-        match first_account_id {
+        match self.resolve_default_account_id().await {
             Some(id) => self.fetch_models_for_account(&id).await,
             None => Err(CopilotAuthError::GitHubTokenInvalid),
         }
@@ -678,12 +707,7 @@ impl CopilotAuthManager {
 
     /// 获取 Copilot 使用量信息（向后兼容：使用第一个账号）
     pub async fn fetch_usage(&self) -> Result<CopilotUsageResponse, CopilotAuthError> {
-        let first_account_id = {
-            let accounts = self.accounts.read().await;
-            accounts.keys().next().cloned()
-        };
-
-        match first_account_id {
+        match self.resolve_default_account_id().await {
             Some(id) => self.fetch_usage_for_account(&id).await,
             None => Err(CopilotAuthError::GitHubTokenInvalid),
         }
@@ -696,22 +720,27 @@ impl CopilotAuthManager {
         // 确保迁移完成
         let _ = self.ensure_migration_complete().await;
 
-        let accounts = self.accounts.read().await;
-        let copilot_tokens = self.copilot_tokens.read().await;
+        let accounts = self.accounts.read().await.clone();
+        let default_account_id = self.resolve_default_account_id().await;
+        let copilot_tokens = self.copilot_tokens.read().await.clone();
 
-        let account_list: Vec<GitHubAccount> = accounts.values().map(GitHubAccount::from).collect();
+        let account_list = Self::sorted_accounts(&accounts, default_account_id.as_deref());
         let authenticated = !account_list.is_empty();
-        let username = account_list.first().map(|a| a.login.clone());
+        let username = default_account_id
+            .as_ref()
+            .and_then(|id| accounts.get(id))
+            .map(|a| a.user.login.clone())
+            .or_else(|| account_list.first().map(|a| a.login.clone()));
 
-        // 获取第一个账号的过期时间
-        let expires_at = accounts
-            .keys()
-            .next()
+        // 获取默认账号的过期时间
+        let expires_at = default_account_id
+            .as_ref()
             .and_then(|id| copilot_tokens.get(id))
             .map(|t| t.expires_at);
 
         CopilotAuthStatus {
             accounts: account_list,
+            default_account_id,
             authenticated,
             username,
             expires_at,
@@ -733,6 +762,10 @@ impl CopilotAuthManager {
             accounts.clear();
         }
         {
+            let mut default_account_id = self.default_account_id.write().await;
+            default_account_id.take();
+        }
+        {
             let mut tokens = self.copilot_tokens.write().await;
             tokens.clear();
         }
@@ -746,6 +779,50 @@ impl CopilotAuthManager {
     }
 
     // ==================== 内部方法 ====================
+
+    fn fallback_default_account_id(
+        accounts: &HashMap<String, GitHubAccountData>,
+    ) -> Option<String> {
+        accounts
+            .iter()
+            .max_by(|(id_a, a), (id_b, b)| {
+                a.authenticated_at
+                    .cmp(&b.authenticated_at)
+                    .then_with(|| id_b.cmp(id_a))
+            })
+            .map(|(id, _)| id.clone())
+    }
+
+    fn sorted_accounts(
+        accounts: &HashMap<String, GitHubAccountData>,
+        default_account_id: Option<&str>,
+    ) -> Vec<GitHubAccount> {
+        let mut account_list: Vec<GitHubAccount> =
+            accounts.values().map(GitHubAccount::from).collect();
+        account_list.sort_by(|a, b| {
+            let a_default = default_account_id == Some(a.id.as_str());
+            let b_default = default_account_id == Some(b.id.as_str());
+
+            b_default
+                .cmp(&a_default)
+                .then_with(|| b.authenticated_at.cmp(&a.authenticated_at))
+                .then_with(|| a.login.cmp(&b.login))
+        });
+        account_list
+    }
+
+    async fn resolve_default_account_id(&self) -> Option<String> {
+        let stored_default = self.default_account_id.read().await.clone();
+        let accounts = self.accounts.read().await;
+
+        if let Some(default_id) = stored_default {
+            if accounts.contains_key(&default_id) {
+                return Some(default_id);
+            }
+        }
+
+        Self::fallback_default_account_id(&accounts)
+    }
 
     /// 使用指定 token 获取 GitHub 用户信息
     async fn fetch_user_info_with_token(
@@ -840,17 +917,22 @@ impl CopilotAuthManager {
         }
 
         let content = std::fs::read_to_string(&self.storage_path)?;
-        let store: CopilotAuthStore =
-            serde_json::from_str(&content).map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
+        let store: CopilotAuthStore = serde_json::from_str(&content)
+            .map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
 
         if store.version >= 2 {
             // v2 多账号格式
             if let Ok(mut accounts) = self.accounts.try_write() {
                 *accounts = store.accounts;
-                log::info!(
-                    "[CopilotAuth] 从磁盘加载 {} 个账号",
-                    accounts.len()
-                );
+                log::info!("[CopilotAuth] 从磁盘加载 {} 个账号", accounts.len());
+            }
+            if let Ok(mut default_account_id) = self.default_account_id.try_write() {
+                *default_account_id = store.default_account_id;
+                if default_account_id.is_none() {
+                    if let Ok(accounts) = self.accounts.try_read() {
+                        *default_account_id = Self::fallback_default_account_id(&accounts);
+                    }
+                }
             }
         } else if store.github_token.is_some() {
             // v1 单账号格式，标记待迁移
@@ -908,11 +990,13 @@ impl CopilotAuthManager {
 
     /// 保存到磁盘
     async fn save_to_disk(&self) -> Result<(), CopilotAuthError> {
-        let accounts = self.accounts.read().await;
+        let accounts = self.accounts.read().await.clone();
+        let default_account_id = self.resolve_default_account_id().await;
 
         let store = CopilotAuthStore {
-            version: 2,
-            accounts: accounts.clone(),
+            version: 3,
+            accounts,
+            default_account_id,
             github_token: None,
             authenticated_at: None,
         };
@@ -927,7 +1011,10 @@ impl CopilotAuthManager {
 
         std::fs::write(&self.storage_path, content)?;
 
-        log::info!("[CopilotAuth] 保存到磁盘成功（{} 个账号）", accounts.len());
+        log::info!(
+            "[CopilotAuth] 保存到磁盘成功（{} 个账号）",
+            store.accounts.len()
+        );
 
         Ok(())
     }
@@ -972,6 +1059,7 @@ mod tests {
                 avatar_url: Some("https://example.com/avatar.png".to_string()),
                 authenticated_at: 1234567890,
             }],
+            default_account_id: Some("12345".to_string()),
             authenticated: true,
             username: Some("testuser".to_string()),
             expires_at: Some(1234567890),
@@ -981,6 +1069,7 @@ mod tests {
         let parsed: CopilotAuthStatus = serde_json::from_str(&json).unwrap();
 
         assert!(parsed.authenticated);
+        assert_eq!(parsed.default_account_id, Some("12345".to_string()));
         assert_eq!(parsed.username, Some("testuser".to_string()));
         assert_eq!(parsed.expires_at, Some(1234567890));
         assert_eq!(parsed.accounts.len(), 1);
@@ -1017,8 +1106,9 @@ mod tests {
         );
 
         let store = CopilotAuthStore {
-            version: 2,
+            version: 3,
             accounts,
+            default_account_id: Some("67890".to_string()),
             github_token: None,
             authenticated_at: None,
         };
@@ -1026,7 +1116,8 @@ mod tests {
         let json = serde_json::to_string_pretty(&store).unwrap();
         let parsed: CopilotAuthStore = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(parsed.version, 2);
+        assert_eq!(parsed.version, 3);
+        assert_eq!(parsed.default_account_id, Some("67890".to_string()));
         assert_eq!(parsed.accounts.len(), 2);
         assert!(parsed.accounts.contains_key("12345"));
         assert!(parsed.accounts.contains_key("67890"));
@@ -1068,5 +1159,39 @@ mod tests {
             Some("https://example.com/avatar.png".to_string())
         );
         assert_eq!(account.authenticated_at, 1700000000);
+    }
+
+    #[test]
+    fn test_fallback_default_account_prefers_latest_authenticated() {
+        let mut accounts = HashMap::new();
+        accounts.insert(
+            "12345".to_string(),
+            GitHubAccountData {
+                github_token: "gho_test_token".to_string(),
+                user: GitHubUser {
+                    login: "alice".to_string(),
+                    id: 12345,
+                    avatar_url: None,
+                },
+                authenticated_at: 1700000000,
+            },
+        );
+        accounts.insert(
+            "67890".to_string(),
+            GitHubAccountData {
+                github_token: "gho_test_token_2".to_string(),
+                user: GitHubUser {
+                    login: "bob".to_string(),
+                    id: 67890,
+                    avatar_url: None,
+                },
+                authenticated_at: 1700000001,
+            },
+        );
+
+        assert_eq!(
+            CopilotAuthManager::fallback_default_account_id(&accounts),
+            Some("67890".to_string())
+        );
     }
 }

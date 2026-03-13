@@ -3,8 +3,8 @@
 //! 提供 Copilot OAuth 认证相关的 Tauri 命令，支持多账号管理。
 
 use crate::proxy::providers::copilot_auth::{
-    CopilotAuthManager, CopilotAuthStatus, CopilotModel, CopilotUsageResponse,
-    GitHubAccount, GitHubDeviceCodeResponse,
+    CopilotAuthManager, CopilotAuthStatus, CopilotModel, CopilotUsageResponse, GitHubAccount,
+    GitHubDeviceCodeResponse,
 };
 use std::sync::Arc;
 use tauri::State;
@@ -38,7 +38,7 @@ pub async fn copilot_poll_for_auth(
     device_code: String,
     state: State<'_, CopilotAuthState>,
 ) -> Result<bool, String> {
-    let auth_manager = state.0.read().await;
+    let auth_manager = state.0.write().await;
     match auth_manager.poll_for_token(&device_code).await {
         Ok(Some(_account)) => {
             log::info!("[CopilotAuth] 用户已授权");
@@ -63,7 +63,7 @@ pub async fn copilot_poll_for_account(
     device_code: String,
     state: State<'_, CopilotAuthState>,
 ) -> Result<Option<GitHubAccount>, String> {
-    let auth_manager = state.0.read().await;
+    let auth_manager = state.0.write().await;
     match auth_manager.poll_for_token(&device_code).await {
         Ok(account) => Ok(account),
         Err(crate::proxy::providers::copilot_auth::CopilotAuthError::AuthorizationPending) => {
@@ -93,9 +93,22 @@ pub async fn copilot_remove_account(
     account_id: String,
     state: State<'_, CopilotAuthState>,
 ) -> Result<(), String> {
-    let auth_manager = state.0.read().await;
+    let auth_manager = state.0.write().await;
     auth_manager
         .remove_account(&account_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 设置默认账号
+#[tauri::command(rename_all = "camelCase")]
+pub async fn copilot_set_default_account(
+    account_id: String,
+    state: State<'_, CopilotAuthState>,
+) -> Result<(), String> {
+    let auth_manager = state.0.write().await;
+    auth_manager
+        .set_default_account(&account_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -121,7 +134,7 @@ pub async fn copilot_is_authenticated(state: State<'_, CopilotAuthState>) -> Res
 /// 注销所有 Copilot 认证
 #[tauri::command]
 pub async fn copilot_logout(state: State<'_, CopilotAuthState>) -> Result<(), String> {
-    let auth_manager = state.0.read().await;
+    let auth_manager = state.0.write().await;
     auth_manager.clear_auth().await.map_err(|e| e.to_string())
 }
 

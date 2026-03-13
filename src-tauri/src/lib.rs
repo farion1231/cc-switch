@@ -1044,12 +1044,21 @@ pub fn run() {
             commands::scan_local_proxies,
             // Window theme control
             commands::set_window_theme,
+            // Generic managed auth commands
+            commands::auth_start_login,
+            commands::auth_poll_for_account,
+            commands::auth_list_accounts,
+            commands::auth_get_status,
+            commands::auth_remove_account,
+            commands::auth_set_default_account,
+            commands::auth_logout,
             // Copilot OAuth commands (multi-account support)
             commands::copilot_start_device_flow,
             commands::copilot_poll_for_auth,
             commands::copilot_poll_for_account,
             commands::copilot_list_accounts,
             commands::copilot_remove_account,
+            commands::copilot_set_default_account,
             commands::copilot_get_auth_status,
             commands::copilot_logout,
             commands::copilot_is_authenticated,
