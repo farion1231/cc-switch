@@ -154,28 +154,40 @@ pub async fn queryProviderUsage(
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
 
-    // 检查是否为 GitHub Copilot 模板类型
-    let is_copilot_template = {
+    // 检查是否为 GitHub Copilot 模板类型，并解析绑定账号
+    let (is_copilot_template, copilot_account_id) = {
         let providers = state
             .db
             .get_all_providers(app_type.as_str())
             .map_err(|e| format!("Failed to get providers: {}", e))?;
-        providers
-            .get(&providerId)
+
+        let provider = providers.get(&providerId);
+        let is_copilot = provider
             .and_then(|p| p.meta.as_ref())
             .and_then(|m| m.usage_script.as_ref())
             .and_then(|s| s.template_type.as_ref())
             .map(|t| t == TEMPLATE_TYPE_GITHUB_COPILOT)
-            .unwrap_or(false)
+            .unwrap_or(false);
+        let account_id = provider
+            .and_then(|p| p.meta.as_ref())
+            .and_then(|m| m.managed_account_id_for(TEMPLATE_TYPE_GITHUB_COPILOT));
+
+        (is_copilot, account_id)
     };
 
     if is_copilot_template {
         // 使用 Copilot 专用 API
         let auth_manager = copilot_state.0.read().await;
-        let usage = auth_manager
-            .fetch_usage()
-            .await
-            .map_err(|e| format!("Failed to fetch Copilot usage: {}", e))?;
+        let usage = match copilot_account_id.as_deref() {
+            Some(account_id) => auth_manager
+                .fetch_usage_for_account(account_id)
+                .await
+                .map_err(|e| format!("Failed to fetch Copilot usage: {}", e))?,
+            None => auth_manager
+                .fetch_usage()
+                .await
+                .map_err(|e| format!("Failed to fetch Copilot usage: {}", e))?,
+        };
         let premium = &usage.quota_snapshots.premium_interactions;
         let used = premium.entitlement - premium.remaining;
 

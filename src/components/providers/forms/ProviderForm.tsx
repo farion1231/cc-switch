@@ -90,6 +90,7 @@ import {
   OPENCLAW_DEFAULT_CONFIG,
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 
 type PresetEntry = {
   id: string;
@@ -338,7 +339,7 @@ export function ProviderForm({
   // 选中的 GitHub 账号 ID（多账号支持）
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
-  >(() => initialData?.meta?.githubAccountId ?? null);
+  >(() => resolveManagedAccountId(initialData?.meta, "github_copilot"));
 
   const {
     codexAuth,
@@ -909,6 +910,13 @@ export function ProviderForm({
       endpointAutoSelect,
       // 保存 providerType（用于识别 Copilot 等特殊供应商）
       providerType,
+      authBinding: isCopilotProvider
+        ? {
+            source: "managed_account",
+            authProvider: "github_copilot",
+            accountId: selectedGitHubAccountId ?? undefined,
+          }
+        : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
         isCopilotProvider && selectedGitHubAccountId

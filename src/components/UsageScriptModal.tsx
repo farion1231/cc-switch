@@ -5,8 +5,9 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
+import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
-import { copilotGetUsage } from "@/lib/api/copilot";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
@@ -306,7 +307,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     try {
       // Copilot 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT) {
-        const usage = await copilotGetUsage();
+        const accountId = resolveManagedAccountId(
+          provider.meta,
+          PROVIDER_TYPES.GITHUB_COPILOT,
+        );
+        const usage = accountId
+          ? await copilotGetUsageForAccount(accountId)
+          : await copilotGetUsage();
         const premium = usage.quota_snapshots.premium_interactions;
         const used = premium.entitlement - premium.remaining;
         const summary = `[${usage.copilot_plan}] ${t("usage.remaining")} ${premium.remaining}/${premium.entitlement} (${t("usageScript.resetDate")}: ${usage.quota_reset_date})`;

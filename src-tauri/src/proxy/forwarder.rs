@@ -915,7 +915,7 @@ impl RequestForwarder {
                     let account_id = provider
                         .meta
                         .as_ref()
-                        .and_then(|m| m.github_account_id.clone());
+                        .and_then(|m| m.managed_account_id_for("github_copilot"));
 
                     // 根据账号 ID 获取对应 token（向后兼容：无账号 ID 时使用第一个账号）
                     let token_result = match &account_id {

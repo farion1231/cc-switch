@@ -124,6 +124,14 @@ export interface ProviderProxyConfig {
   proxyPassword?: string;
 }
 
+export type AuthBindingSource = "provider_config" | "managed_account";
+
+export interface AuthBinding {
+  source: AuthBindingSource;
+  authProvider?: string;
+  accountId?: string;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -151,14 +159,15 @@ export interface ProviderMeta {
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
   apiFormat?: "anthropic" | "openai_chat" | "openai_responses";
+  // 通用认证绑定
+  authBinding?: AuthBinding;
   // Claude 认证字段名
   apiKeyField?: ClaudeApiKeyField;
   // Prompt cache key for OpenAI-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
-  // GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
-  // 用于多账号支持，关联到特定的 GitHub 账号
+  // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
 }
 

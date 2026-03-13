@@ -27,7 +27,10 @@ import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
-import { copilotGetModels } from "@/lib/api/copilot";
+import {
+  copilotGetModels,
+  copilotGetModelsForAccount,
+} from "@/lib/api/copilot";
 import type { CopilotModel } from "@/lib/api/copilot";
 import type {
   ProviderCategory,
@@ -181,15 +184,12 @@ export function ClaudeFormFields({
 
     let cancelled = false;
     setModelsLoading(true);
-    console.log(
-      "[Copilot] Fetching models, isCopilotPreset:",
-      isCopilotPreset,
-      "isCopilotAuthenticated:",
-      isCopilotAuthenticated,
-    );
-    copilotGetModels()
+    const fetchModels = selectedGitHubAccountId
+      ? copilotGetModelsForAccount(selectedGitHubAccountId)
+      : copilotGetModels();
+
+    fetchModels
       .then((models) => {
-        console.log("[Copilot] Fetched models:", models.length, models);
         if (!cancelled) setCopilotModels(models);
       })
       .catch((err) => {
@@ -201,7 +201,7 @@ export function ClaudeFormFields({
     return () => {
       cancelled = true;
     };
-  }, [isCopilotPreset, isCopilotAuthenticated]);
+  }, [isCopilotPreset, isCopilotAuthenticated, selectedGitHubAccountId]);
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
