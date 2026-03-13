@@ -797,7 +797,12 @@ impl RequestForwarder {
 
         // 确定有效端点
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
-        let is_copilot = base_url.contains("githubcopilot.com");
+        let is_copilot = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.as_deref())
+            == Some("github_copilot")
+            || base_url.contains("githubcopilot.com");
         let effective_endpoint =
             if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
                 if is_copilot {
