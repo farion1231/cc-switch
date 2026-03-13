@@ -294,16 +294,34 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     onClose();
   };
 
+  const getResolvedTestCredentials = (): {
+    apiKey: string | undefined;
+    baseUrl: string | undefined;
+  } => {
+    if (selectedTemplate === TEMPLATE_KEYS.CUSTOM) {
+      return {
+        apiKey: providerCredentials.apiKey,
+        baseUrl: providerCredentials.baseUrl,
+      };
+    }
+
+    return {
+      apiKey: script.apiKey?.trim() || undefined,
+      baseUrl: script.baseUrl?.trim() || undefined,
+    };
+  };
+
   const handleTest = async () => {
     setTesting(true);
     try {
+      const resolvedCredentials = getResolvedTestCredentials();
       const result = await usageApi.testScript(
         provider.id,
         appId,
         script.code,
         script.timeout,
-        script.apiKey,
-        script.baseUrl,
+        resolvedCredentials.apiKey,
+        resolvedCredentials.baseUrl,
         script.accessToken,
         script.userId,
         selectedTemplate as "custom" | "general" | "newapi" | undefined,
@@ -371,13 +389,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     const preset = PRESET_TEMPLATES[presetName];
     if (preset) {
       if (presetName === TEMPLATE_KEYS.CUSTOM) {
-        // 🔧 自定义模式：用户应该在脚本中直接写完整 URL 和凭证，而不是依赖变量替换
-        // 这样可以避免同源检查导致的问题
-        // 如果用户想使用变量，需要手动在配置中设置 baseUrl/apiKey
+        // 自定义模板仍支持 {{apiKey}} / {{baseUrl}} 变量。
+        // 测试时仅使用 provider 配置解析结果，与当前 UI 行为保持一致。
         setScript({
           ...script,
           code: preset,
-          // 清除凭证，用户可选择手动输入或保持空
+          // 清除无效的手填凭证字段，custom 模板不提供单独输入入口
           apiKey: undefined,
           baseUrl: undefined,
           accessToken: undefined,
