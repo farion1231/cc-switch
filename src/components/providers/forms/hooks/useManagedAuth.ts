@@ -69,6 +69,8 @@ export function useManagedAuth(authProvider: ManagedAuthProvider) {
         console.debug("[ManagedAuth] Failed to open browser:", e);
       }
 
+      // Add a small buffer on top of GitHub's suggested interval to avoid
+      // hitting slow_down responses too aggressively during device polling.
       const interval = Math.max((response.interval || 5) + 3, 8) * 1000;
       const expiresAt = Date.now() + response.expires_in * 1000;
 
@@ -133,6 +135,11 @@ export function useManagedAuth(authProvider: ManagedAuthProvider) {
         accounts: [],
       });
       await queryClient.invalidateQueries({ queryKey });
+    },
+    onError: async (e) => {
+      console.error("[ManagedAuth] Failed to logout:", e);
+      setError(e instanceof Error ? e.message : String(e));
+      await refetchStatus();
     },
   });
 
@@ -207,6 +214,7 @@ export function useManagedAuth(authProvider: ManagedAuthProvider) {
     hasAnyAccount: accounts.length > 0,
     isAuthenticated: authStatus?.authenticated ?? false,
     defaultAccountId: authStatus?.default_account_id ?? null,
+    migrationError: authStatus?.migration_error ?? null,
     pollingState,
     deviceCode,
     error,

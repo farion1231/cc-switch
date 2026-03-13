@@ -785,12 +785,16 @@
     "selectAccountPlaceholder": "选择一个 GitHub 账号",
     "useDefaultAccount": "使用默认账号",
     "loggedInAccounts": "已登录账号",
+    "defaultAccount": "默认",
     "selected": "已选中",
     "removeAccount": "移除账号",
+    "setAsDefault": "设为默认",
     "addAnotherAccount": "添加其他账号",
     "logoutAll": "注销所有账号",
     "retry": "重试",
-    "copyCode": "复制代码"
+    "copyCode": "复制代码",
+    "migrationFailed": "旧认证数据迁移失败：{{error}}",
+    "loadModelsFailed": "加载 Copilot 模型列表失败"
   },
   "endpointTest": {
     "title": "请求地址管理",

@@ -15,6 +15,7 @@ export interface ManagedAuthStatus {
   provider: ManagedAuthProvider;
   authenticated: boolean;
   default_account_id: string | null;
+  migration_error?: string | null;
   accounts: ManagedAuthAccount[];
 }
 

@@ -10,17 +10,19 @@
 //! 4. 使用 GitHub token 获取 Copilot token
 //! 5. 自动刷新 Copilot token（到期前 60 秒）
 //!
-//! ## 多账号支持 (v2)
+//! ## 多账号支持 (v3)
 //! - 每个 GitHub 账号独立存储 token
-//! - Provider 通过 meta.github_account_id 关联账号
-//! - 自动迁移 v1 单账号格式到 v2 多账号格式
+//! - Provider 通过 meta.authBinding 关联账号
+//! - 自动迁移 v1 单账号格式到 v3 多账号 + 默认账号格式
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 /// GitHub OAuth 客户端 ID（VS Code 使用的 ID）
 const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
@@ -254,6 +256,8 @@ pub struct CopilotAuthStatus {
     pub accounts: Vec<GitHubAccount>,
     /// 默认账号 ID（显式状态，避免依赖 HashMap 顺序）
     pub default_account_id: Option<String>,
+    /// 旧认证数据迁移失败时的状态消息（用于前端提示）
+    pub migration_error: Option<String>,
     /// 是否已认证（向后兼容：有任意账号即为 true）
     pub authenticated: bool,
     /// GitHub 用户名（向后兼容：第一个账号的用户名）
@@ -266,6 +270,9 @@ pub struct CopilotAuthStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GitHubAccountData {
     /// GitHub OAuth Token
+    ///
+    /// 安全说明：为了复用登录状态，本地会持久化该令牌。
+    /// 当前实现未接入系统钥匙串，依赖私有文件权限（Unix 下 0600）保护。
     pub github_token: String,
     /// 用户信息
     pub user: GitHubUser,
@@ -298,6 +305,8 @@ pub struct CopilotAuthManager {
     accounts: Arc<RwLock<HashMap<String, GitHubAccountData>>>,
     /// 默认账号 ID
     default_account_id: Arc<RwLock<Option<String>>>,
+    /// 每个账号的刷新锁，避免并发刷新重复打 GitHub API
+    refresh_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
     /// Copilot Token 缓存（key = GitHub user ID，内存缓存，自动刷新）
     copilot_tokens: Arc<RwLock<HashMap<String, CopilotToken>>>,
     /// HTTP 客户端
@@ -306,6 +315,8 @@ pub struct CopilotAuthManager {
     storage_path: PathBuf,
     /// 待迁移的旧格式 token
     pending_migration: Arc<RwLock<Option<String>>>,
+    /// 旧认证数据迁移失败时的状态消息
+    migration_error: Arc<RwLock<Option<String>>>,
 }
 
 impl CopilotAuthManager {
@@ -316,10 +327,12 @@ impl CopilotAuthManager {
         let manager = Self {
             accounts: Arc::new(RwLock::new(HashMap::new())),
             default_account_id: Arc::new(RwLock::new(None)),
+            refresh_locks: Arc::new(RwLock::new(HashMap::new())),
             copilot_tokens: Arc::new(RwLock::new(HashMap::new())),
             http_client: Client::new(),
             storage_path,
             pending_migration: Arc::new(RwLock::new(None)),
+            migration_error: Arc::new(RwLock::new(None)),
         };
 
         // 尝试从磁盘加载（同步，不发起网络请求）
@@ -360,6 +373,10 @@ impl CopilotAuthManager {
         {
             let mut tokens = self.copilot_tokens.write().await;
             tokens.remove(account_id);
+        }
+        {
+            let mut refresh_locks = self.refresh_locks.write().await;
+            refresh_locks.remove(account_id);
         }
 
         {
@@ -409,6 +426,8 @@ impl CopilotAuthManager {
                 *default_account_id = Some(account.id.clone());
             }
         }
+
+        self.set_migration_error(None).await;
 
         // 持久化
         self.save_to_disk().await?;
@@ -556,6 +575,19 @@ impl CopilotAuthManager {
             "[CopilotAuth] 账号 {} 的 Copilot Token 需要刷新",
             account_id
         );
+
+        let refresh_lock = self.get_refresh_lock(account_id).await;
+        let _refresh_guard = refresh_lock.lock().await;
+
+        // double-check：等待锁期间可能已由其他请求刷新完成
+        {
+            let tokens = self.copilot_tokens.read().await;
+            if let Some(copilot_token) = tokens.get(account_id) {
+                if !copilot_token.is_expiring_soon() {
+                    return Ok(copilot_token.token.clone());
+                }
+            }
+        }
 
         // 获取账号的 GitHub token
         let github_token = {
@@ -723,6 +755,7 @@ impl CopilotAuthManager {
         let accounts = self.accounts.read().await.clone();
         let default_account_id = self.resolve_default_account_id().await;
         let copilot_tokens = self.copilot_tokens.read().await.clone();
+        let migration_error = self.migration_error.read().await.clone();
 
         let account_list = Self::sorted_accounts(&accounts, default_account_id.as_deref());
         let authenticated = !account_list.is_empty();
@@ -741,6 +774,7 @@ impl CopilotAuthManager {
         CopilotAuthStatus {
             accounts: account_list,
             default_account_id,
+            migration_error,
             authenticated,
             username,
             expires_at,
@@ -765,9 +799,14 @@ impl CopilotAuthManager {
             let mut default_account_id = self.default_account_id.write().await;
             default_account_id.take();
         }
+        self.set_migration_error(None).await;
         {
             let mut tokens = self.copilot_tokens.write().await;
             tokens.clear();
+        }
+        {
+            let mut refresh_locks = self.refresh_locks.write().await;
+            refresh_locks.clear();
         }
 
         // 删除存储文件
@@ -822,6 +861,82 @@ impl CopilotAuthManager {
         }
 
         Self::fallback_default_account_id(&accounts)
+    }
+
+    async fn get_refresh_lock(&self, account_id: &str) -> Arc<Mutex<()>> {
+        {
+            let refresh_locks = self.refresh_locks.read().await;
+            if let Some(lock) = refresh_locks.get(account_id) {
+                return Arc::clone(lock);
+            }
+        }
+
+        let mut refresh_locks = self.refresh_locks.write().await;
+        Arc::clone(
+            refresh_locks
+                .entry(account_id.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(()))),
+        )
+    }
+
+    async fn set_migration_error(&self, message: Option<String>) {
+        let mut migration_error = self.migration_error.write().await;
+        *migration_error = message;
+    }
+
+    fn write_store_atomic(&self, content: &str) -> Result<(), CopilotAuthError> {
+        if let Some(parent) = self.storage_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let parent = self
+            .storage_path
+            .parent()
+            .ok_or_else(|| CopilotAuthError::IoError("无效的存储路径".to_string()))?;
+        let file_name = self
+            .storage_path
+            .file_name()
+            .ok_or_else(|| CopilotAuthError::IoError("无效的存储文件名".to_string()))?
+            .to_string_lossy()
+            .to_string();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let tmp_path = parent.join(format!("{file_name}.tmp.{ts}"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+            let mut file = fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o600)
+                .open(&tmp_path)?;
+            file.write_all(content.as_bytes())?;
+            file.flush()?;
+
+            fs::rename(&tmp_path, &self.storage_path)?;
+            fs::set_permissions(&self.storage_path, fs::Permissions::from_mode(0o600))?;
+        }
+
+        #[cfg(windows)]
+        {
+            let mut file = fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&tmp_path)?;
+            file.write_all(content.as_bytes())?;
+            file.flush()?;
+
+            if self.storage_path.exists() {
+                let _ = fs::remove_file(&self.storage_path);
+            }
+            fs::rename(&tmp_path, &self.storage_path)?;
+        }
+
+        Ok(())
     }
 
     /// 使用指定 token 获取 GitHub 用户信息
@@ -970,10 +1085,15 @@ impl CopilotAuthManager {
 
                     // 添加账号
                     self.add_account_internal(legacy_token, user).await?;
+                    self.set_migration_error(None).await;
 
                     log::info!("[CopilotAuth] 旧格式迁移完成");
                 }
                 Err(e) => {
+                    self.set_migration_error(Some(format!(
+                        "Legacy Copilot auth migration failed: {e}"
+                    )))
+                    .await;
                     log::warn!("[CopilotAuth] 迁移失败，旧 token 可能已失效: {}", e);
                 }
             }
@@ -1001,15 +1121,10 @@ impl CopilotAuthManager {
             authenticated_at: None,
         };
 
-        // 确保目录存在
-        if let Some(parent) = self.storage_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
         let content = serde_json::to_string_pretty(&store)
             .map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
 
-        std::fs::write(&self.storage_path, content)?;
+        self.write_store_atomic(&content)?;
 
         log::info!(
             "[CopilotAuth] 保存到磁盘成功（{} 个账号）",
@@ -1060,6 +1175,7 @@ mod tests {
                 authenticated_at: 1234567890,
             }],
             default_account_id: Some("12345".to_string()),
+            migration_error: None,
             authenticated: true,
             username: Some("testuser".to_string()),
             expires_at: Some(1234567890),

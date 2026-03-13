@@ -109,7 +109,7 @@ impl ClaudeAdapter {
             }
         }
 
-        // 方式2: 检查 base_url
+        // 方式2: 检查 base_url（兼容旧数据的 fallback，后续应优先依赖 providerType）
         if let Ok(base_url) = self.extract_base_url(provider) {
             if base_url.contains("githubcopilot.com") {
                 return true;

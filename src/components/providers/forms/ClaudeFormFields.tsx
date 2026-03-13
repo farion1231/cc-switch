@@ -6,6 +6,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { toast } from "sonner";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
@@ -194,6 +195,13 @@ export function ClaudeFormFields({
       })
       .catch((err) => {
         console.warn("[Copilot] Failed to fetch models:", err);
+        if (!cancelled) {
+          toast.error(
+            t("copilot.loadModelsFailed", {
+              defaultValue: "加载 Copilot 模型列表失败",
+            }),
+          );
+        }
       })
       .finally(() => {
         if (!cancelled) setModelsLoading(false);

@@ -48,6 +48,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
   const {
     accounts,
     defaultAccountId,
+    migrationError,
     hasAnyAccount,
     pollingState,
     deviceCode,
@@ -119,6 +120,15 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
             : t("copilot.notAuthenticated", "未认证")}
         </Badge>
       </div>
+
+      {migrationError && (
+        <p className="text-sm text-amber-600 dark:text-amber-400">
+          {t("copilot.migrationFailed", {
+            error: migrationError,
+            defaultValue: `旧认证数据迁移失败：${migrationError}`,
+          })}
+        </p>
+      )}
 
       {/* 账号选择器（有账号时显示） */}
       {hasAnyAccount && onAccountSelect && (

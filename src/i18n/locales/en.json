@@ -785,12 +785,16 @@
     "selectAccountPlaceholder": "Select a GitHub account",
     "useDefaultAccount": "Use default account",
     "loggedInAccounts": "Logged in accounts",
+    "defaultAccount": "Default",
     "selected": "Selected",
     "removeAccount": "Remove account",
+    "setAsDefault": "Set as default",
     "addAnotherAccount": "Add another account",
     "logoutAll": "Logout all accounts",
     "retry": "Retry",
-    "copyCode": "Copy code"
+    "copyCode": "Copy code",
+    "migrationFailed": "Legacy auth migration failed: {{error}}",
+    "loadModelsFailed": "Failed to load Copilot models"
   },
   "endpointTest": {
     "title": "API Endpoint Management",

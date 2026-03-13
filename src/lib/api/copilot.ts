@@ -40,6 +40,8 @@ export interface CopilotAuthStatus {
   authenticated: boolean;
   /** 默认账号 ID */
   default_account_id: string | null;
+  /** 旧认证数据迁移失败时的状态消息 */
+  migration_error?: string | null;
   /** 第一个账号的用户名 - 向后兼容 */
   username: string | null;
   /** Copilot Token 过期时间 - 向后兼容 */
