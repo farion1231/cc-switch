@@ -298,6 +298,7 @@ export function ProviderList({
   if (sortedProviders.length === 0) {
     return (
       <ProviderEmptyState
+        appId={appId}
         onCreate={onCreate}
         onImport={() => importMutation.mutate()}
       />

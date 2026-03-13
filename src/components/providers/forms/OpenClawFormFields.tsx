@@ -383,7 +383,9 @@ export function OpenClawFormFields({
                               className="flex items-center gap-1.5 cursor-pointer select-none"
                             >
                               <Checkbox
-                                checked={(model.input ?? ["text"]).includes(type)}
+                                checked={(model.input ?? ["text"]).includes(
+                                  type,
+                                )}
                                 onCheckedChange={(checked) => {
                                   const current = model.input ?? ["text"];
                                   const next = checked

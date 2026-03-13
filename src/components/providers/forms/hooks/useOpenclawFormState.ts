@@ -171,18 +171,15 @@ export function useOpenclawFormState({
     [updateOpenclawConfig],
   );
 
-  const resetOpenclawState = useCallback(
-    (config?: OpenClawProviderConfig) => {
-      setOpenclawProviderKey("");
-      setOpenclawBaseUrl(config?.baseUrl || "");
-      setOpenclawApiKey(config?.apiKey || "");
-      setOpenclawApi(config?.api || "openai-completions");
-      setOpenclawModels(config?.models || []);
-      const ua = config?.headers ? "User-Agent" in config.headers : false;
-      setOpenclawUserAgent(ua);
-    },
-    [],
-  );
+  const resetOpenclawState = useCallback((config?: OpenClawProviderConfig) => {
+    setOpenclawProviderKey("");
+    setOpenclawBaseUrl(config?.baseUrl || "");
+    setOpenclawApiKey(config?.apiKey || "");
+    setOpenclawApi(config?.api || "openai-completions");
+    setOpenclawModels(config?.models || []);
+    const ua = config?.headers ? "User-Agent" in config.headers : false;
+    setOpenclawUserAgent(ua);
+  }, []);
 
   return {
     openclawProviderKey,

@@ -22,6 +22,80 @@ fn sanitize_provider_name(name: &str) -> String {
 }
 
 #[test]
+fn migrate_legacy_common_config_usage_marks_historical_provider_enabled() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "legacy-provider".to_string();
+        manager.providers.insert(
+            "legacy-provider".to_string(),
+            Provider::with_id(
+                "legacy-provider".to_string(),
+                "Legacy".to_string(),
+                json!({
+                    "includeCoAuthoredBy": false,
+                    "env": {
+                        "ANTHROPIC_API_KEY": "legacy-key"
+                    }
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(r#"{ "includeCoAuthoredBy": false }"#.to_string()),
+        )
+        .expect("set common config snippet");
+
+    ProviderService::migrate_legacy_common_config_usage_if_needed(&state, AppType::Claude)
+        .expect("migrate legacy common config");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
+        .expect("get providers after migration");
+    let provider = providers
+        .get("legacy-provider")
+        .expect("legacy provider exists");
+
+    assert_eq!(
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.common_config_enabled),
+        Some(true),
+        "historical provider should be explicitly marked as using common config"
+    );
+    assert!(
+        provider
+            .settings_config
+            .get("includeCoAuthoredBy")
+            .is_none(),
+        "common config fields should be stripped from provider storage after migration"
+    );
+    assert_eq!(
+        provider
+            .settings_config
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_API_KEY"))
+            .and_then(|v| v.as_str()),
+        Some("legacy-key"),
+        "provider-specific auth should remain untouched"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_updates_live_and_config() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -161,6 +235,184 @@ command = "say"
     assert_eq!(
         legacy_auth_value, "legacy-key",
         "previous provider should be backfilled with live auth"
+    );
+}
+
+#[test]
+fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "current-provider".to_string();
+
+        let mut provider = Provider::with_id(
+            "current-provider".to_string(),
+            "Current".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "real-token",
+                    "ANTHROPIC_BASE_URL": "https://claude.example"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        manager
+            .providers
+            .insert("current-provider".to_string(), provider);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(r#"{ "includeCoAuthoredBy": false }"#.to_string()),
+        )
+        .expect("set common config snippet");
+
+    let taken_over_live = json!({
+        "env": {
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:5000",
+            "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"
+        }
+    });
+    let settings_path = get_claude_settings_path();
+    std::fs::create_dir_all(settings_path.parent().expect("settings dir")).expect("create dir");
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&taken_over_live).expect("serialize taken over live"),
+    )
+    .expect("write taken over live");
+
+    futures::executor::block_on(state.db.save_live_backup("claude", "{\"env\":{}}"))
+        .expect("seed live backup");
+
+    let mut proxy_config = futures::executor::block_on(state.db.get_proxy_config_for_app("claude"))
+        .expect("get proxy config");
+    proxy_config.enabled = true;
+    futures::executor::block_on(state.db.update_proxy_config_for_app(proxy_config))
+        .expect("enable takeover");
+
+    ProviderService::sync_current_provider_for_app(&state, AppType::Claude)
+        .expect("sync current provider should succeed");
+
+    let live_after: serde_json::Value =
+        read_json_file(&settings_path).expect("read live settings after sync");
+    assert_eq!(
+        live_after, taken_over_live,
+        "sync should not overwrite live config while takeover is active"
+    );
+
+    let backup = futures::executor::block_on(state.db.get_live_backup("claude"))
+        .expect("get live backup")
+        .expect("backup exists");
+    let backup_value: serde_json::Value =
+        serde_json::from_str(&backup.original_config).expect("parse backup value");
+
+    assert_eq!(
+        backup_value
+            .get("includeCoAuthoredBy")
+            .and_then(|v| v.as_bool()),
+        Some(false),
+        "restore backup should receive the updated effective config"
+    );
+    assert_eq!(
+        backup_value
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_AUTH_TOKEN"))
+            .and_then(|v| v.as_str()),
+        Some("real-token"),
+        "restore backup should preserve the provider token rather than proxy placeholder"
+    );
+}
+
+#[test]
+fn explicitly_cleared_common_snippet_is_not_auto_extracted() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .set_config_snippet_cleared(AppType::Claude.as_str(), true)
+        .expect("mark snippet explicitly cleared");
+
+    assert!(
+        !state
+            .db
+            .should_auto_extract_config_snippet(AppType::Claude.as_str())
+            .expect("check auto-extract eligibility"),
+        "explicitly cleared snippets should block auto-extraction"
+    );
+
+    state
+        .db
+        .set_config_snippet(AppType::Claude.as_str(), Some("{}".to_string()))
+        .expect("set snippet");
+    state
+        .db
+        .set_config_snippet_cleared(AppType::Claude.as_str(), false)
+        .expect("clear explicit-empty marker");
+
+    assert!(
+        !state
+            .db
+            .should_auto_extract_config_snippet(AppType::Claude.as_str())
+            .expect("check auto-extract after snippet saved"),
+        "existing snippets should also block auto-extraction"
+    );
+}
+
+#[test]
+fn legacy_common_config_migration_flag_roundtrip() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+
+    assert!(
+        !state
+            .db
+            .is_legacy_common_config_migrated()
+            .expect("initial migration flag"),
+        "migration flag should default to false"
+    );
+
+    state
+        .db
+        .set_legacy_common_config_migrated(true)
+        .expect("set migration flag");
+    assert!(
+        state
+            .db
+            .is_legacy_common_config_migrated()
+            .expect("read migration flag"),
+        "migration flag should persist once set"
+    );
+
+    state
+        .db
+        .set_legacy_common_config_migrated(false)
+        .expect("clear migration flag");
+    assert!(
+        !state
+            .db
+            .is_legacy_common_config_migrated()
+            .expect("read migration flag after clear"),
+        "migration flag should be removable for tests/debugging"
     );
 }
 
