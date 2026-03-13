@@ -28,8 +28,9 @@ pub use live::{
 // Internal re-exports (pub(crate))
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
-    normalize_provider_common_config_for_storage, strip_common_config_from_live_settings,
-    sync_current_provider_for_app_to_live, write_live_with_common_config,
+    build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
+    strip_common_config_from_live_settings, sync_current_provider_for_app_to_live,
+    write_live_with_common_config,
 };
 
 // Internal re-exports
@@ -613,6 +614,46 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<(), AppError> {
+        if app_type.is_additive_mode() {
+            return sync_current_provider_for_app_to_live(state, &app_type);
+        }
+
+        let current_id =
+            match crate::settings::get_effective_current_provider(&state.db, &app_type)? {
+                Some(id) => id,
+                None => return Ok(()),
+            };
+
+        let providers = state.db.get_all_providers(app_type.as_str())?;
+        let Some(provider) = providers.get(&current_id) else {
+            return Ok(());
+        };
+
+        let takeover_enabled =
+            futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str()))
+                .map(|config| config.enabled)
+                .unwrap_or(false);
+
+        let has_live_backup =
+            futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+                .ok()
+                .flatten()
+                .is_some();
+
+        let live_taken_over = state
+            .proxy_service
+            .detect_takeover_in_live_config_for_app(&app_type);
+
+        if takeover_enabled && (has_live_backup || live_taken_over) {
+            futures::executor::block_on(
+                state
+                    .proxy_service
+                    .update_live_backup_from_provider(app_type.as_str(), provider),
+            )
+            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+            return Ok(());
+        }
+
         sync_current_provider_for_app_to_live(state, &app_type)
     }
 
@@ -668,6 +709,25 @@ impl ProviderService {
         }
 
         Ok(())
+    }
+
+    pub fn migrate_legacy_common_config_usage_if_needed(
+        state: &AppState,
+        app_type: AppType,
+    ) -> Result<(), AppError> {
+        if app_type.is_additive_mode() {
+            return Ok(());
+        }
+
+        let Some(snippet) = state.db.get_config_snippet(app_type.as_str())? else {
+            return Ok(());
+        };
+
+        if snippet.trim().is_empty() {
+            return Ok(());
+        }
+
+        Self::migrate_legacy_common_config_usage(state, app_type, &snippet)
     }
 
     /// Extract common config snippet from current provider

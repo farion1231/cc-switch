@@ -13,6 +13,7 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
+import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 
@@ -76,9 +77,9 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
     const baseUrl = (config as Record<string, any>)?.config;
 
     if (typeof baseUrl === "string" && baseUrl.includes("base_url")) {
-      const match = baseUrl.match(/base_url\s*=\s*['"]([^'"]+)['"]/);
-      if (match?.[1]) {
-        return match[1];
+      const extractedBaseUrl = extractCodexBaseUrl(baseUrl);
+      if (extractedBaseUrl) {
+        return extractedBaseUrl;
       }
     }
   }

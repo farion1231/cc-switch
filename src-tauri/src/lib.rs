@@ -560,59 +560,6 @@ pub fn run() {
                 }
             }
 
-            // 5. Auto-extract common config snippets from live files (when snippet is missing)
-            for app_type in crate::app_config::AppType::all() {
-                // Skip if snippet already exists
-                if app_state
-                    .db
-                    .get_config_snippet(app_type.as_str())
-                    .ok()
-                    .flatten()
-                    .is_some()
-                {
-                    continue;
-                }
-
-                // Try to read the live config file for this app type
-                let settings =
-                    match crate::services::provider::ProviderService::read_live_settings(
-                        app_type.clone(),
-                    ) {
-                        Ok(s) => s,
-                        Err(_) => continue, // No live config file, skip silently
-                    };
-
-                // Extract common config (strip provider-specific fields)
-                match crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
-                    app_type.clone(),
-                    &settings,
-                ) {
-                    Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
-                        match app_state
-                            .db
-                            .set_config_snippet(app_type.as_str(), Some(snippet))
-                        {
-                            Ok(()) => log::info!(
-                                "✓ Auto-extracted common config snippet for {}",
-                                app_type.as_str()
-                            ),
-                            Err(e) => log::warn!(
-                                "✗ Failed to save config snippet for {}: {e}",
-                                app_type.as_str()
-                            ),
-                        }
-                    }
-                    Ok(_) => log::debug!(
-                        "○ Live config for {} has no extractable common fields",
-                        app_type.as_str()
-                    ),
-                    Err(e) => log::warn!(
-                        "✗ Failed to extract config snippet for {}: {e}",
-                        app_type.as_str()
-                    ),
-                }
-            }
-
             // 迁移旧的 app_config_dir 配置到 Store
             if let Err(e) = app_store::migrate_app_config_dir_from_settings(app.handle()) {
                 log::warn!("迁移 app_config_dir 失败: {e}");
@@ -796,6 +743,8 @@ pub fn run() {
                         log::info!("Live 配置已恢复");
                     }
                 }
+
+                initialize_common_config_snippets(&state);
 
                 // 检查 settings 表中的代理状态，自动恢复代理服务
                 restore_proxy_state_on_startup(&state).await;
@@ -1301,6 +1250,85 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
                     log::error!("清除 {app_type} 代理状态失败: {clear_err}");
                 }
             }
+        }
+    }
+}
+
+fn initialize_common_config_snippets(state: &store::AppState) {
+    // Auto-extract common config snippets from clean live files when snippet is missing.
+    // This must run before proxy takeover is restored on startup, otherwise we'd read
+    // proxy-placeholder configs instead of the user's actual live settings.
+    for app_type in crate::app_config::AppType::all() {
+        if !state
+            .db
+            .should_auto_extract_config_snippet(app_type.as_str())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let settings = match crate::services::provider::ProviderService::read_live_settings(
+            app_type.clone(),
+        ) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        match crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
+            app_type.clone(),
+            &settings,
+        ) {
+            Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
+                match state.db.set_config_snippet(app_type.as_str(), Some(snippet)) {
+                    Ok(()) => {
+                        let _ = state.db.set_config_snippet_cleared(app_type.as_str(), false);
+                        log::info!(
+                            "✓ Auto-extracted common config snippet for {}",
+                            app_type.as_str()
+                        );
+                    }
+                    Err(e) => log::warn!(
+                        "✗ Failed to save config snippet for {}: {e}",
+                        app_type.as_str()
+                    ),
+                }
+            }
+            Ok(_) => log::debug!(
+                "○ Live config for {} has no extractable common fields",
+                app_type.as_str()
+            ),
+            Err(e) => log::warn!(
+                "✗ Failed to extract config snippet for {}: {e}",
+                app_type.as_str()
+            ),
+        }
+    }
+
+    let should_run_legacy_migration = state
+        .db
+        .is_legacy_common_config_migrated()
+        .map(|done| !done)
+        .unwrap_or(true);
+
+    if should_run_legacy_migration {
+        for app_type in [
+            crate::app_config::AppType::Claude,
+            crate::app_config::AppType::Codex,
+            crate::app_config::AppType::Gemini,
+        ] {
+            if let Err(e) = crate::services::provider::ProviderService::migrate_legacy_common_config_usage_if_needed(
+                state,
+                app_type.clone(),
+            ) {
+                log::warn!(
+                    "✗ Failed to migrate legacy common-config usage for {}: {e}",
+                    app_type.as_str()
+                );
+            }
+        }
+
+        if let Err(e) = state.db.set_legacy_common_config_migrated(true) {
+            log::warn!("✗ Failed to persist legacy common-config migration flag: {e}");
         }
     }
 }
