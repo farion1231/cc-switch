@@ -117,6 +117,7 @@ interface ProviderFormProps {
     meta?: ProviderMeta;
     icon?: string;
     iconColor?: string;
+    tags?: string[];
   };
   showButtons?: boolean;
 }
@@ -228,6 +229,9 @@ export function ProviderForm({
                 : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
+      tags: typeof initialData?.tags === "string"
+        ? initialData.tags
+        : initialData?.tags?.join(", ") ?? "",
     }),
     [initialData, appId],
   );
@@ -778,11 +782,20 @@ export function ProviderForm({
       settingsConfig = values.settingsConfig.trim();
     }
 
+    // 将标签字符串转换为数组
+    const tagsArray = values.tags
+      ? values.tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0)
+      : undefined;
+
     const payload: ProviderFormValues = {
       ...values,
       name: values.name.trim(),
       websiteUrl: values.websiteUrl?.trim() ?? "",
       settingsConfig,
+      tags: tagsArray,
     };
 
     if (appId === "opencode") {
@@ -1040,6 +1053,7 @@ export function ProviderForm({
         settingsConfig: JSON.stringify({ auth, config }, null, 2),
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
+        tags: [],
       });
       return;
     }

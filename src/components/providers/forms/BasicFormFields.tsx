@@ -171,6 +171,31 @@ export function BasicFormFields({
           </FormItem>
         )}
       />
+
+      {/* 标签输入 - 用于 X-CC-SELECT 请求头过滤 */}
+      <FormField
+        control={form.control}
+        name="tags"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>{t("provider.tags")}</FormLabel>
+            <FormControl>
+              <Input
+                {...field}
+                value={field.value as string || ""}
+                onKeyDown={(e) => {
+                  // 阻止回车提交表单
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                  }
+                }}
+                placeholder={t("provider.tagsPlaceholder")}
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
     </>
   );
 }

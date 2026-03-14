@@ -32,6 +32,7 @@ impl Database {
                 meta TEXT NOT NULL DEFAULT '{}',
                 is_current BOOLEAN NOT NULL DEFAULT 0,
                 in_failover_queue BOOLEAN NOT NULL DEFAULT 0,
+                tags TEXT NOT NULL DEFAULT '[]',
                 PRIMARY KEY (id, app_type)
             )",
             [],
@@ -385,6 +386,11 @@ impl Database {
                         log::info!("迁移数据库从 v5 到 v6（使用量聚合表）");
                         Self::migrate_v5_to_v6(conn)?;
                         Self::set_user_version(conn, 6)?;
+                    }
+                    6 => {
+                        log::info!("迁移数据库从 v6 到 v7（供应商标签支持）");
+                        Self::migrate_v6_to_v7(conn)?;
+                        Self::set_user_version(conn, 7)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -963,6 +969,13 @@ impl Database {
         .map_err(|e| AppError::Database(format!("创建 usage_daily_rollups 表失败: {e}")))?;
 
         log::info!("v5 -> v6 迁移完成：已添加使用量日聚合表");
+        Ok(())
+    }
+
+    /// v6 -> v7 迁移：供应商标签支持
+    fn migrate_v6_to_v7(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(conn, "providers", "tags", "TEXT NOT NULL DEFAULT '[]'")?;
+        log::info!("v6 -> v7 迁移完成：已添加 providers.tags 列");
         Ok(())
     }
 

@@ -40,6 +40,9 @@ pub struct Provider {
     #[serde(default)]
     #[serde(rename = "inFailoverQueue")]
     pub in_failover_queue: bool,
+    /// 标签列表（用于 X-CC-SELECT 请求头过滤）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 impl Provider {
@@ -63,6 +66,7 @@ impl Provider {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+            tags: None,
         }
     }
 }
@@ -444,6 +448,7 @@ impl UniversalProvider {
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
+            tags: None,
         })
     }
 
@@ -509,6 +514,7 @@ requires_openai_auth = true"#
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
+            tags: None,
         })
     }
 
@@ -544,6 +550,7 @@ requires_openai_auth = true"#
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
+            tags: None,
         })
     }
 }

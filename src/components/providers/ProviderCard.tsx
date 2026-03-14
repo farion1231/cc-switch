@@ -278,6 +278,21 @@ export function ProviderCard({
                 </span>
               )}
 
+              {/* 标签展示 */}
+              {provider.tags && provider.tags.length > 0 && (
+                <div className="flex items-center gap-1">
+                  {provider.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                      title={t("provider.tagHint")}
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
                   consecutiveFailures={health.consecutive_failures}

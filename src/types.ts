@@ -28,6 +28,8 @@ export interface Provider {
   iconColor?: string; // 图标颜色（Hex 格式，如 "#00A67E"）
   // 是否加入故障转移队列
   inFailoverQueue?: boolean;
+  // 标签列表（用于 X-CC-SELECT 请求头过滤）
+  tags?: string[];
 }
 
 export interface AppConfig {
