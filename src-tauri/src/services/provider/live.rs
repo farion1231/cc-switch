@@ -461,19 +461,18 @@ fn apply_common_config_to_settings(
     }
 }
 
-pub(crate) fn write_live_with_common_config(
+pub(crate) fn build_effective_settings_with_common_config(
     db: &Database,
     app_type: &AppType,
     provider: &Provider,
-) -> Result<(), AppError> {
+) -> Result<Value, AppError> {
     let snippet = db.get_config_snippet(app_type.as_str())?;
-    let mut effective_provider = provider.clone();
+    let mut effective_settings = provider.settings_config.clone();
 
     if provider_uses_common_config(app_type, provider, snippet.as_deref()) {
         if let Some(snippet_text) = snippet.as_deref() {
-            match apply_common_config_to_settings(app_type, &provider.settings_config, snippet_text)
-            {
-                Ok(settings) => effective_provider.settings_config = settings,
+            match apply_common_config_to_settings(app_type, &effective_settings, snippet_text) {
+                Ok(settings) => effective_settings = settings,
                 Err(err) => {
                     log::warn!(
                         "Failed to apply common config for {} provider '{}': {err}",
@@ -484,6 +483,18 @@ pub(crate) fn write_live_with_common_config(
             }
         }
     }
+
+    Ok(effective_settings)
+}
+
+pub(crate) fn write_live_with_common_config(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    let mut effective_provider = provider.clone();
+    effective_provider.settings_config =
+        build_effective_settings_with_common_config(db, app_type, provider)?;
 
     write_live_snapshot(app_type, &effective_provider)
 }

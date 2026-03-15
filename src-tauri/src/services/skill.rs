@@ -159,6 +159,21 @@ pub struct SkillMetadata {
     pub description: Option<String>,
 }
 
+/// 导入已有 Skill 时，前端显式提交的启用应用选择
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSkillSelection {
+    pub directory: String,
+    #[serde(default)]
+    pub apps: SkillApps,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LegacySkillMigrationRow {
+    directory: String,
+    app_type: String,
+}
+
 // ========== ~/.agents/ lock 文件解析 ==========
 
 /// `~/.agents/.skill-lock.json` 文件结构
@@ -717,6 +732,9 @@ impl SkillService {
                 }
 
                 let skill_md = path.join("SKILL.md");
+                if !skill_md.exists() {
+                    continue;
+                }
                 let (name, description) = Self::read_skill_name_desc(&skill_md, &dir_name);
 
                 unmanaged
@@ -740,14 +758,18 @@ impl SkillService {
     /// 将未管理的 Skills 导入到 CC Switch 统一管理
     pub fn import_from_apps(
         db: &Arc<Database>,
-        directories: Vec<String>,
+        imports: Vec<ImportSkillSelection>,
     ) -> Result<Vec<InstalledSkill>> {
         let ssot_dir = Self::get_ssot_dir()?;
         let agents_lock = parse_agents_lock();
         let mut imported = Vec::new();
 
         // 将 lock 文件中发现的仓库保存到 skill_repos
-        save_repos_from_lock(db, &agents_lock, directories.iter().map(|s| s.as_str()));
+        save_repos_from_lock(
+            db,
+            &agents_lock,
+            imports.iter().map(|selection| selection.directory.as_str()),
+        );
 
         // 收集所有候选搜索目录
         let mut search_sources: Vec<(PathBuf, String)> = Vec::new();
@@ -761,10 +783,10 @@ impl SkillService {
         }
         search_sources.push((ssot_dir.clone(), "cc-switch".to_string()));
 
-        for dir_name in directories {
+        for selection in imports {
+            let dir_name = selection.directory;
             // 在所有候选目录中查找
             let mut source_path: Option<PathBuf> = None;
-            let mut found_in: Vec<String> = Vec::new();
 
             for (base, label) in &search_sources {
                 let skill_path = base.join(&dir_name);
@@ -772,7 +794,7 @@ impl SkillService {
                     if source_path.is_none() {
                         source_path = Some(skill_path);
                     }
-                    found_in.push(label.clone());
+                    log::debug!("Skill '{}' found in source '{}'", dir_name, label);
                 }
             }
 
@@ -780,6 +802,14 @@ impl SkillService {
                 Some(p) => p,
                 None => continue,
             };
+            if !source.join("SKILL.md").exists() {
+                log::warn!(
+                    "Skip importing '{}' because source '{}' has no SKILL.md",
+                    dir_name,
+                    source.display()
+                );
+                continue;
+            }
 
             // 复制到 SSOT
             let dest = ssot_dir.join(&dir_name);
@@ -791,8 +821,8 @@ impl SkillService {
             let skill_md = dest.join("SKILL.md");
             let (name, description) = Self::read_skill_name_desc(&skill_md, &dir_name);
 
-            // 构建启用状态
-            let apps = SkillApps::from_labels(&found_in);
+            // 启用状态仅信任用户本次显式选择，不再根据“在哪些位置找到”自动推断。
+            let apps = selection.apps;
 
             // 从 lock 文件提取仓库信息
             let (id, repo_owner, repo_name, repo_branch, readme_url) =
@@ -935,6 +965,33 @@ impl SkillService {
         Ok(())
     }
 
+    /// 判断路径是否为指向 SSOT 目录内的符号链接。
+    fn is_symlink_to_ssot(path: &Path, ssot_dir: &Path) -> bool {
+        if !Self::is_symlink(path) {
+            return false;
+        }
+
+        let Ok(target) = fs::read_link(path) else {
+            return false;
+        };
+
+        if target.is_absolute() && target.starts_with(ssot_dir) {
+            return true;
+        }
+
+        let resolved = path
+            .parent()
+            .map(|parent| parent.join(&target))
+            .unwrap_or(target.clone());
+
+        let canonical_ssot = ssot_dir
+            .canonicalize()
+            .unwrap_or_else(|_| ssot_dir.to_path_buf());
+        let canonical_target = resolved.canonicalize().unwrap_or(resolved);
+
+        canonical_target.starts_with(&canonical_ssot)
+    }
+
     /// 从应用目录删除 Skill（支持 symlink 和真实目录）
     pub fn remove_from_app(directory: &str, app: &AppType) -> Result<()> {
         let app_dir = Self::get_app_skills_dir(app)?;
@@ -951,6 +1008,36 @@ impl SkillService {
     /// 同步所有已启用的 Skills 到指定应用
     pub fn sync_to_app(db: &Arc<Database>, app: &AppType) -> Result<()> {
         let skills = db.get_all_installed_skills()?;
+        let ssot_dir = Self::get_ssot_dir()?;
+        let app_dir = Self::get_app_skills_dir(app)?;
+
+        let indexed_skills: HashMap<String, &InstalledSkill> = skills
+            .values()
+            .map(|skill| (skill.directory.to_lowercase(), skill))
+            .collect();
+
+        if app_dir.exists() {
+            for entry in fs::read_dir(&app_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+
+                if let Some(skill) = indexed_skills.get(&dir_name.to_lowercase()) {
+                    if !skill.apps.is_enabled_for(app) {
+                        Self::remove_path(&path)?;
+                    }
+                    continue;
+                }
+
+                if Self::is_symlink_to_ssot(&path, &ssot_dir) {
+                    Self::remove_path(&path)?;
+                }
+            }
+        }
 
         for skill in skills.values() {
             if skill.apps.is_enabled_for(app) {
@@ -1814,7 +1901,31 @@ fn save_repos_from_lock(
 pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
     let ssot_dir = SkillService::get_ssot_dir()?;
     let agents_lock = parse_agents_lock();
+    let snapshot: Vec<LegacySkillMigrationRow> =
+        match db.get_setting("skills_ssot_migration_snapshot")? {
+            Some(value) if !value.trim().is_empty() => match serde_json::from_str(&value) {
+                Ok(rows) => rows,
+                Err(err) => {
+                    log::warn!("解析 skills 迁移快照失败，将回退到文件系统扫描: {err}");
+                    Vec::new()
+                }
+            },
+            _ => Vec::new(),
+        };
+
+    let has_snapshot = !snapshot.is_empty();
     let mut discovered: HashMap<String, SkillApps> = HashMap::new();
+
+    if has_snapshot {
+        for row in &snapshot {
+            if let Ok(app) = row.app_type.parse::<AppType>() {
+                discovered
+                    .entry(row.directory.clone())
+                    .or_default()
+                    .set_enabled_for(&app, true);
+            }
+        }
+    }
 
     // 扫描各应用目录
     for app in AppType::all() {
@@ -1838,6 +1949,12 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             if dir_name.starts_with('.') {
                 continue;
             }
+            if !path.join("SKILL.md").exists() {
+                continue;
+            }
+            if has_snapshot && !discovered.contains_key(&dir_name) {
+                continue;
+            }
 
             // 复制到 SSOT（如果不存在）
             let ssot_path = ssot_dir.join(&dir_name);
@@ -1845,10 +1962,12 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
                 SkillService::copy_dir_recursive(&path, &ssot_path)?;
             }
 
-            discovered
-                .entry(dir_name)
-                .or_default()
-                .set_enabled_for(&app, true);
+            if !has_snapshot {
+                discovered
+                    .entry(dir_name)
+                    .or_default()
+                    .set_enabled_for(&app, true);
+            }
         }
     }
 
@@ -1884,6 +2003,8 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
         db.save_skill(&skill)?;
         count += 1;
     }
+
+    let _ = db.set_setting("skills_ssot_migration_snapshot", "");
 
     log::info!("Skills 迁移完成，共 {count} 个");
 

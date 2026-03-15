@@ -6,7 +6,9 @@
 
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
-use crate::services::skill::{DiscoverableSkill, Skill, SkillRepo, SkillService};
+use crate::services::skill::{
+    DiscoverableSkill, ImportSkillSelection, Skill, SkillRepo, SkillService,
+};
 use crate::store::AppState;
 use std::sync::Arc;
 use tauri::State;
@@ -85,10 +87,10 @@ pub fn scan_unmanaged_skills(
 /// 从应用目录导入 Skills
 #[tauri::command]
 pub fn import_skills_from_apps(
-    directories: Vec<String>,
+    imports: Vec<ImportSkillSelection>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<InstalledSkill>, String> {
-    SkillService::import_from_apps(&app_state.db, directories).map_err(|e| e.to_string())
+    SkillService::import_from_apps(&app_state.db, imports).map_err(|e| e.to_string())
 }
 
 // ========== 发现功能命令 ==========

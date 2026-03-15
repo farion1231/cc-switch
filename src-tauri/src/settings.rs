@@ -181,6 +181,9 @@ pub struct AppSettings {
     /// 是否跳过 Claude Code 初次安装确认
     #[serde(default)]
     pub skip_claude_onboarding: bool,
+    /// 是否解除 Tool Search 域名限制
+    #[serde(default)]
+    pub tool_search_bypass: bool,
     /// 是否开机自启
     #[serde(default)]
     pub launch_on_startup: bool,
@@ -286,6 +289,7 @@ impl Default for AppSettings {
             minimize_to_tray_on_close: true,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
+            tool_search_bypass: false,
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,

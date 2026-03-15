@@ -4,6 +4,7 @@ import { Sparkles, Trash2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
+  type ImportSkillSelection,
   useInstalledSkills,
   useToggleSkillApp,
   useUninstallSkill,
@@ -23,6 +24,7 @@ import { ListItemRow } from "@/components/common/ListItemRow";
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
+  currentApp: AppId;
 }
 
 export interface UnifiedSkillsPanelHandle {
@@ -34,7 +36,7 @@ export interface UnifiedSkillsPanelHandle {
 const UnifiedSkillsPanel = React.forwardRef<
   UnifiedSkillsPanelHandle,
   UnifiedSkillsPanelProps
->(({ onOpenDiscovery }, ref) => {
+>(({ onOpenDiscovery, currentApp }, ref) => {
   const { t } = useTranslation();
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -103,9 +105,9 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
-  const handleImport = async (directories: string[]) => {
+  const handleImport = async (imports: ImportSkillSelection[]) => {
     try {
-      const imported = await importMutation.mutateAsync(directories);
+      const imported = await importMutation.mutateAsync(imports);
       setImportDialogOpen(false);
       toast.success(t("skills.importSuccess", { count: imported.length }), {
         closeButton: true,
@@ -120,7 +122,6 @@ const UnifiedSkillsPanel = React.forwardRef<
       const filePath = await skillsApi.openZipFileDialog();
       if (!filePath) return;
 
-      const currentApp: AppId = "claude";
       const installed = await installFromZipMutation.mutateAsync({
         filePath,
         currentApp,
@@ -310,7 +311,7 @@ interface ImportSkillsDialogProps {
     foundIn: string[];
     path: string;
   }>;
-  onImport: (directories: string[]) => void;
+  onImport: (imports: ImportSkillSelection[]) => void;
   onClose: () => void;
 }
 
@@ -322,6 +323,22 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Set<string>>(
     new Set(skills.map((s) => s.directory)),
+  );
+  const [selectedApps, setSelectedApps] = useState<
+    Record<string, ImportSkillSelection["apps"]>
+  >(() =>
+    Object.fromEntries(
+      skills.map((skill) => [
+        skill.directory,
+        {
+          claude: skill.foundIn.includes("claude"),
+          codex: skill.foundIn.includes("codex"),
+          gemini: skill.foundIn.includes("gemini"),
+          opencode: skill.foundIn.includes("opencode"),
+          openclaw: false,
+        },
+      ]),
+    ),
   );
 
   const toggleSelect = (directory: string) => {
@@ -335,7 +352,18 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   };
 
   const handleImport = () => {
-    onImport(Array.from(selected));
+    onImport(
+      Array.from(selected).map((directory) => ({
+        directory,
+        apps: selectedApps[directory] ?? {
+          claude: false,
+          codex: false,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+        },
+      })),
+    );
   };
 
   return (
@@ -348,9 +376,9 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
 
         <div className="flex-1 overflow-y-auto space-y-2 mb-4">
           {skills.map((skill) => (
-            <label
+            <div
               key={skill.directory}
-              className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted cursor-pointer"
+              className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted"
             >
               <input
                 type="checkbox"
@@ -365,6 +393,35 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                     {skill.description}
                   </div>
                 )}
+                <div className="mt-2">
+                  <AppToggleGroup
+                    apps={
+                      selectedApps[skill.directory] ?? {
+                        claude: false,
+                        codex: false,
+                        gemini: false,
+                        opencode: false,
+                        openclaw: false,
+                      }
+                    }
+                    onToggle={(app, enabled) => {
+                      setSelectedApps((prev) => ({
+                        ...prev,
+                        [skill.directory]: {
+                          ...(prev[skill.directory] ?? {
+                            claude: false,
+                            codex: false,
+                            gemini: false,
+                            opencode: false,
+                            openclaw: false,
+                          }),
+                          [app]: enabled,
+                        },
+                      }));
+                    }}
+                    appIds={MCP_SKILLS_APP_IDS}
+                  />
+                </div>
                 <div
                   className="text-xs text-muted-foreground/50 mt-1 truncate"
                   title={skill.path}
@@ -372,7 +429,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                   {skill.path}
                 </div>
               </div>
-            </label>
+            </div>
           ))}
         </div>
 

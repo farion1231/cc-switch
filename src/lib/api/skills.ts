@@ -48,6 +48,12 @@ export interface UnmanagedSkill {
   path: string;
 }
 
+/** 导入已有 Skill 时提交的应用启用状态 */
+export interface ImportSkillSelection {
+  directory: string;
+  apps: SkillApps;
+}
+
 /** 技能对象（兼容旧 API） */
 export interface Skill {
   key: string;
@@ -103,8 +109,10 @@ export const skillsApi = {
   },
 
   /** 从应用目录导入 Skills */
-  async importFromApps(directories: string[]): Promise<InstalledSkill[]> {
-    return await invoke("import_skills_from_apps", { directories });
+  async importFromApps(
+    imports: ImportSkillSelection[],
+  ): Promise<InstalledSkill[]> {
+    return await invoke("import_skills_from_apps", { imports });
   },
 
   /** 发现可安装的 Skills（从仓库获取） */

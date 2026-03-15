@@ -104,10 +104,11 @@ interface ProviderFormProps {
   appId: AppId;
   providerId?: string;
   submitLabel: string;
-  onSubmit: (values: ProviderFormValues) => void;
+  onSubmit: (values: ProviderFormValues) => Promise<void> | void;
   onCancel: () => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
+  onSubmittingChange?: (isSubmitting: boolean) => void;
   initialData?: {
     name?: string;
     websiteUrl?: string;
@@ -129,6 +130,7 @@ export function ProviderForm({
   onCancel,
   onUniversalPresetSelect,
   onManageUniversalProviders,
+  onSubmittingChange,
   initialData,
   showButtons = true,
 }: ProviderFormProps) {
@@ -237,6 +239,7 @@ export function ProviderForm({
     defaultValues,
     mode: "onSubmit",
   });
+  const { isSubmitting } = form.formState;
 
   const handleSettingsConfigChange = useCallback(
     (config: string) => {
@@ -256,6 +259,10 @@ export function ProviderForm({
       return "ANTHROPIC_AUTH_TOKEN";
     },
   );
+
+  useEffect(() => {
+    onSubmittingChange?.(isSubmitting);
+  }, [isSubmitting, onSubmittingChange]);
 
   const {
     apiKey,
@@ -583,7 +590,7 @@ export function ProviderForm({
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
-  const handleSubmit = (values: ProviderFormData) => {
+  const handleSubmit = async (values: ProviderFormData) => {
     if (appId === "claude" && templateValueEntries.length > 0) {
       const validation = validateTemplateValues();
       if (!validation.isValid && validation.missingField) {
@@ -892,7 +899,7 @@ export function ProviderForm({
           : undefined,
     };
 
-    onSubmit(payload);
+    await onSubmit(payload);
   };
 
   const groupedPresets = useMemo(() => {
@@ -1600,7 +1607,7 @@ export function ProviderForm({
             <Button variant="outline" type="button" onClick={onCancel}>
               {t("common.cancel")}
             </Button>
-            <Button type="submit">{submitLabel}</Button>
+            <Button type="submit" disabled={isSubmitting}>{submitLabel}</Button>
           </div>
         )}
       </form>

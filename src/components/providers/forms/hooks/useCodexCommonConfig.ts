@@ -285,7 +285,13 @@ export function useCodexCommonConfig({
         isUpdatingFromCommonConfig.current = false;
       }, 0);
     },
-    [codexConfig, commonConfigSnippet, onConfigChange, parseCommonConfigSnippet, t],
+    [
+      codexConfig,
+      commonConfigSnippet,
+      onConfigChange,
+      parseCommonConfigSnippet,
+      t,
+    ],
   );
 
   // 处理通用配置片段变化

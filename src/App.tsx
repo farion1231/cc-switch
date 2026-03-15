@@ -712,17 +712,14 @@ function App() {
             <UnifiedSkillsPanel
               ref={unifiedSkillsPanelRef}
               onOpenDiscovery={() => setCurrentView("skillsDiscovery")}
+              currentApp={activeApp === "openclaw" ? "claude" : activeApp}
             />
           );
         case "skillsDiscovery":
           return (
             <SkillsPage
               ref={skillsPageRef}
-              initialApp={
-                activeApp === "opencode" || activeApp === "openclaw"
-                  ? "claude"
-                  : activeApp
-              }
+              initialApp={activeApp === "openclaw" ? "claude" : activeApp}
             />
           );
         case "mcp":

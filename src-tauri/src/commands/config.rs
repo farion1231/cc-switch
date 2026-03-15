@@ -212,19 +212,21 @@ pub async fn set_claude_common_config_snippet(
     snippet: String,
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<(), String> {
+    let is_cleared = snippet.trim().is_empty();
+
     if !snippet.trim().is_empty() {
         serde_json::from_str::<serde_json::Value>(&snippet).map_err(invalid_json_format_error)?;
     }
 
-    let value = if snippet.trim().is_empty() {
-        None
-    } else {
-        Some(snippet)
-    };
+    let value = if is_cleared { None } else { Some(snippet) };
 
     state
         .db
         .set_config_snippet("claude", value)
+        .map_err(|e| e.to_string())?;
+    state
+        .db
+        .set_config_snippet_cleared("claude", is_cleared)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -246,6 +248,7 @@ pub async fn set_common_config_snippet(
     snippet: String,
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<(), String> {
+    let is_cleared = snippet.trim().is_empty();
     let old_snippet = state
         .db
         .get_config_snippet(&app_type)
@@ -253,11 +256,7 @@ pub async fn set_common_config_snippet(
 
     validate_common_config_snippet(&app_type, &snippet)?;
 
-    let value = if snippet.trim().is_empty() {
-        None
-    } else {
-        Some(snippet)
-    };
+    let value = if is_cleared { None } else { Some(snippet) };
 
     if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
         if let Some(legacy_snippet) = old_snippet
@@ -277,6 +276,10 @@ pub async fn set_common_config_snippet(
     state
         .db
         .set_config_snippet(&app_type, value)
+        .map_err(|e| e.to_string())?;
+    state
+        .db
+        .set_config_snippet_cleared(&app_type, is_cleared)
         .map_err(|e| e.to_string())?;
 
     if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {

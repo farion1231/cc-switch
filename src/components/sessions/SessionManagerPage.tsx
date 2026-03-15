@@ -606,10 +606,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
                   {/* 消息列表区域 */}
                   <CardContent className="flex-1 overflow-hidden p-0">
-                    <div className="flex h-full">
+                    <div className="flex h-full min-w-0">
                       {/* 消息列表 */}
-                      <ScrollArea className="flex-1">
-                        <div className="p-4">
+                      <ScrollArea className="flex-1 min-w-0">
+                        <div className="p-4 min-w-0">
                           <div className="flex items-center gap-2 mb-3">
                             <MessageSquare className="size-4 text-muted-foreground" />
                             <span className="text-sm font-medium">

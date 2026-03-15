@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   skillsApi,
   type DiscoverableSkill,
+  type ImportSkillSelection,
   type InstalledSkill,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
@@ -99,8 +100,8 @@ export function useScanUnmanagedSkills() {
 export function useImportSkillsFromApps() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (directories: string[]) =>
-      skillsApi.importFromApps(directories),
+    mutationFn: (imports: ImportSkillSelection[]) =>
+      skillsApi.importFromApps(imports),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
       queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] });
@@ -169,4 +170,4 @@ export function useInstallSkillsFromZip() {
 
 // ========== 辅助类型 ==========
 
-export type { InstalledSkill, DiscoverableSkill, AppId };
+export type { InstalledSkill, DiscoverableSkill, ImportSkillSelection, AppId };
