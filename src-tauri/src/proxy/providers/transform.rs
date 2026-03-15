@@ -6,6 +6,14 @@
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
+/// Detect OpenAI o-series reasoning models (o1, o3, o4-mini, etc.)
+/// These models require `max_completion_tokens` instead of `max_tokens`.
+pub fn is_openai_o_series(model: &str) -> bool {
+    model.len() > 1
+        && model.starts_with('o')
+        && model.as_bytes().get(1).is_some_and(|b| b.is_ascii_digit())
+}
+
 /// Anthropic 请求 → OpenAI 请求
 ///
 /// `cache_key`: optional prompt_cache_key to inject for improved cache routing
@@ -50,13 +58,10 @@ pub fn anthropic_to_openai(body: Value, cache_key: Option<&str>) -> Result<Value
 
     result["messages"] = json!(messages);
 
-    // 转换参数
-    // 检测模型类型：o1/o3 系列模型需要使用 max_completion_tokens 而不是 max_tokens
+    // 转换参数 — o-series 模型需要 max_completion_tokens
     let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
-    let is_o_series = model.starts_with("o1") || model.starts_with("o3");
-
     if let Some(v) = body.get("max_tokens") {
-        if is_o_series {
+        if is_openai_o_series(model) {
             result["max_completion_tokens"] = v.clone();
         } else {
             result["max_tokens"] = v.clone();
@@ -782,43 +787,42 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_o_series_max_completion_tokens() {
-        // o1/o3 系列模型应该使用 max_completion_tokens 而不是 max_tokens
-        let input_o1 = json!({
-            "model": "o1-mini",
-            "max_tokens": 1024,
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-
-        let result = anthropic_to_openai(input_o1, None).unwrap();
-        assert!(
-            result.get("max_completion_tokens").is_some(),
-            "o1 模型应该使用 max_completion_tokens"
-        );
-        assert!(
-            result.get("max_tokens").is_none(),
-            "o1 模型不应该使用 max_tokens"
-        );
-        assert_eq!(result["max_completion_tokens"], 1024);
-
-        // 测试 o3 系列
-        let input_o3 = json!({
-            "model": "o3-mini",
-            "max_tokens": 2048,
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-
-        let result_o3 = anthropic_to_openai(input_o3, None).unwrap();
-        assert!(
-            result_o3.get("max_completion_tokens").is_some(),
-            "o3 模型应该使用 max_completion_tokens"
-        );
-        assert_eq!(result_o3["max_completion_tokens"], 2048);
+    fn test_is_openai_o_series() {
+        assert!(is_openai_o_series("o1"));
+        assert!(is_openai_o_series("o1-preview"));
+        assert!(is_openai_o_series("o1-mini"));
+        assert!(is_openai_o_series("o3"));
+        assert!(is_openai_o_series("o3-mini"));
+        assert!(is_openai_o_series("o4-mini"));
+        assert!(!is_openai_o_series("gpt-4o"));
+        assert!(!is_openai_o_series("openai-gpt"));
+        assert!(!is_openai_o_series("o"));
+        assert!(!is_openai_o_series(""));
     }
 
     #[test]
-    fn test_anthropic_to_openai_non_o_series_max_tokens() {
-        // 非 o 系列模型应该继续使用 max_tokens
+    fn test_anthropic_to_openai_o_series_max_completion_tokens() {
+        for model in &["o1", "o3-mini", "o4-mini"] {
+            let input = json!({
+                "model": model,
+                "max_tokens": 4096,
+                "messages": [{"role": "user", "content": "Hello"}]
+            });
+
+            let result = anthropic_to_openai(input, None).unwrap();
+            assert!(
+                result.get("max_tokens").is_none(),
+                "{model} should not have max_tokens"
+            );
+            assert_eq!(
+                result["max_completion_tokens"], 4096,
+                "{model} should use max_completion_tokens"
+            );
+        }
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_non_o_series_keeps_max_tokens() {
         let input = json!({
             "model": "gpt-4o",
             "max_tokens": 1024,
@@ -826,14 +830,7 @@ mod tests {
         });
 
         let result = anthropic_to_openai(input, None).unwrap();
-        assert!(
-            result.get("max_tokens").is_some(),
-            "gpt-4o 应该使用 max_tokens"
-        );
-        assert!(
-            result.get("max_completion_tokens").is_none(),
-            "gpt-4o 不应该使用 max_completion_tokens"
-        );
         assert_eq!(result["max_tokens"], 1024);
+        assert!(result.get("max_completion_tokens").is_none());
     }
 }

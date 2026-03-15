@@ -45,7 +45,7 @@ pub fn anthropic_to_responses(body: Value, cache_key: Option<&str>) -> Result<Va
         result["input"] = json!(input);
     }
 
-    // max_tokens → max_output_tokens
+    // max_tokens → max_output_tokens (Responses API uses max_output_tokens for all models)
     if let Some(v) = body.get("max_tokens") {
         result["max_output_tokens"] = v.clone();
     }
@@ -896,5 +896,18 @@ mod tests {
         let result = responses_to_anthropic(input).unwrap();
         assert_eq!(result["usage"]["cache_read_input_tokens"], 60);
         assert_eq!(result["usage"]["cache_creation_input_tokens"], 20);
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_o_series_uses_max_output_tokens() {
+        // Responses API always uses max_output_tokens, even for o-series models
+        let input = json!({
+            "model": "o3-mini",
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let result = anthropic_to_responses(input, None).unwrap();
+        assert_eq!(result["max_output_tokens"], 4096);
+        assert!(result.get("max_completion_tokens").is_none());
     }
 }
