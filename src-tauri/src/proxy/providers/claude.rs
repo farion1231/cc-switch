@@ -261,6 +261,8 @@ impl ProviderAdapter for ClaudeAdapter {
         //
         // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
         // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
+        //
+        // `?beta=true` 由客户端请求决定，代理不再硬编码追加。
 
         let mut base = format!(
             "{}/{}",
@@ -273,19 +275,7 @@ impl ProviderAdapter for ClaudeAdapter {
             base = base.replace("/v1/v1", "/v1");
         }
 
-        // 为 Claude 原生 /v1/messages 端点添加 ?beta=true 参数
-        // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
-        // 注意：不要为 OpenAI Chat Completions (/v1/chat/completions) 添加此参数
-        //       当 apiFormat="openai_chat" 时，请求会转发到 /v1/chat/completions，
-        //       但该端点是 OpenAI 标准，不支持 ?beta=true 参数
-        if endpoint.contains("/v1/messages")
-            && !endpoint.contains("/v1/chat/completions")
-            && !endpoint.contains('?')
-        {
-            format!("{base}?beta=true")
-        } else {
-            base
-        }
+        base
     }
 
     fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
@@ -522,23 +512,20 @@ mod tests {
     #[test]
     fn test_build_url_anthropic() {
         let adapter = ClaudeAdapter::new();
-        // /v1/messages 端点会自动添加 ?beta=true 参数
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages");
-        assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages");
     }
 
     #[test]
     fn test_build_url_openrouter() {
         let adapter = ClaudeAdapter::new();
-        // /v1/messages 端点会自动添加 ?beta=true 参数
         let url = adapter.build_url("https://openrouter.ai/api", "/v1/messages");
-        assert_eq!(url, "https://openrouter.ai/api/v1/messages?beta=true");
+        assert_eq!(url, "https://openrouter.ai/api/v1/messages");
     }
 
     #[test]
     fn test_build_url_no_beta_for_other_endpoints() {
         let adapter = ClaudeAdapter::new();
-        // 非 /v1/messages 端点不添加 ?beta=true
         let url = adapter.build_url("https://api.anthropic.com", "/v1/complete");
         assert_eq!(url, "https://api.anthropic.com/v1/complete");
     }
@@ -546,9 +533,8 @@ mod tests {
     #[test]
     fn test_build_url_preserve_existing_query() {
         let adapter = ClaudeAdapter::new();
-        // 已有查询参数时不重复添加
-        let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar");
-        assert_eq!(url, "https://api.anthropic.com/v1/messages?foo=bar");
+        let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?beta=true");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
     }
 
     #[test]

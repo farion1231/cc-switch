@@ -151,6 +151,8 @@ export interface ProviderMeta {
   apiFormat?: "anthropic" | "openai_chat" | "openai_responses";
   // Claude 认证字段名
   apiKeyField?: ClaudeApiKeyField;
+  // 是否将 base_url 视为完整 API 端点（代理直接使用此 URL，不拼接路径）
+  isFullUrl?: boolean;
   // Prompt cache key for OpenAI-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
 }

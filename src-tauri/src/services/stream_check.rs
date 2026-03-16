@@ -312,22 +312,12 @@ impl StreamCheckService {
             .unwrap_or("anthropic");
 
         let is_openai_chat = api_format == "openai_chat";
-
-        // URL: /v1/chat/completions for openai_chat, /v1/messages?beta=true for anthropic
-        let url = if is_openai_chat {
-            if base.ends_with("/v1") {
-                format!("{base}/chat/completions")
-            } else {
-                format!("{base}/v1/chat/completions")
-            }
-        } else {
-            // ?beta=true is required by some relay services to verify request origin
-            if base.ends_with("/v1") {
-                format!("{base}/messages?beta=true")
-            } else {
-                format!("{base}/v1/messages?beta=true")
-            }
-        };
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
+        let url = Self::build_claude_stream_check_url(base, is_openai_chat, is_full_url);
 
         // Body: identical structure for minimal test (both APIs accept messages array)
         let body = json!({
@@ -692,6 +682,28 @@ impl StreamCheckService {
             other => other,
         }
     }
+
+    fn build_claude_stream_check_url(
+        base_url: &str,
+        is_openai_chat: bool,
+        is_full_url: bool,
+    ) -> String {
+        if is_full_url {
+            return base_url.to_string();
+        }
+
+        if is_openai_chat {
+            if base_url.ends_with("/v1") {
+                format!("{base_url}/chat/completions")
+            } else {
+                format!("{base_url}/v1/chat/completions")
+            }
+        } else if base_url.ends_with("/v1") {
+            format!("{base_url}/messages?beta=true")
+        } else {
+            format!("{base_url}/v1/messages?beta=true")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -793,5 +805,38 @@ mod tests {
         assert_eq!(anthropic, AuthStrategy::Anthropic);
         assert_eq!(claude_auth, AuthStrategy::ClaudeAuth);
         assert_eq!(bearer, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_build_claude_stream_check_url_for_full_url_mode() {
+        let url = StreamCheckService::build_claude_stream_check_url(
+            "https://relay.example/v1/chat/completions",
+            true,
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_build_claude_stream_check_url_for_openai_chat() {
+        let url = StreamCheckService::build_claude_stream_check_url(
+            "https://relay.example/v1",
+            true,
+            false,
+        );
+
+        assert_eq!(url, "https://relay.example/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_build_claude_stream_check_url_for_anthropic() {
+        let url = StreamCheckService::build_claude_stream_check_url(
+            "https://relay.example",
+            false,
+            false,
+        );
+
+        assert_eq!(url, "https://relay.example/v1/messages?beta=true");
     }
 }

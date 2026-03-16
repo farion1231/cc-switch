@@ -160,6 +160,10 @@ export function ProviderForm({
   const [endpointAutoSelect, setEndpointAutoSelect] = useState<boolean>(
     () => initialData?.meta?.endpointAutoSelect ?? true,
   );
+  const [localIsFullUrl, setLocalIsFullUrl] = useState<boolean>(() => {
+    if (appId !== "claude") return false;
+    return initialData?.meta?.isFullUrl ?? false;
+  });
 
   const [testConfig, setTestConfig] = useState<ProviderTestConfig>(
     () => initialData?.meta?.testConfig ?? { enabled: false },
@@ -199,6 +203,9 @@ export function ProviderForm({
       setDraftCustomEndpoints([]);
     }
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
+    setLocalIsFullUrl(
+      appId === "claude" ? (initialData?.meta?.isFullUrl ?? false) : false,
+    );
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
     setProxyConfig(initialData?.meta?.proxyConfig ?? { enabled: false });
     setPricingConfig({
@@ -897,6 +904,10 @@ export function ProviderForm({
         localApiKeyField !== "ANTHROPIC_AUTH_TOKEN"
           ? localApiKeyField
           : undefined,
+      isFullUrl:
+        appId === "claude" && category !== "official" && localIsFullUrl
+          ? true
+          : undefined,
     };
 
     await onSubmit(payload);
@@ -1136,6 +1147,7 @@ export function ProviderForm({
     }
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
+    setLocalIsFullUrl(false);
 
     form.reset({
       name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -1344,6 +1356,8 @@ export function ProviderForm({
             onApiFormatChange={handleApiFormatChange}
             apiKeyField={localApiKeyField}
             onApiKeyFieldChange={handleApiKeyFieldChange}
+            isFullUrl={localIsFullUrl}
+            onFullUrlChange={setLocalIsFullUrl}
           />
         )}
 
@@ -1607,7 +1621,9 @@ export function ProviderForm({
             <Button variant="outline" type="button" onClick={onCancel}>
               {t("common.cancel")}
             </Button>
-            <Button type="submit" disabled={isSubmitting}>{submitLabel}</Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {submitLabel}
+            </Button>
           </div>
         )}
       </form>
