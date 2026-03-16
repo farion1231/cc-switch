@@ -18,6 +18,7 @@ interface UseCommonConfigSnippetProps {
   initialData?: {
     settingsConfig?: Record<string, unknown>;
   };
+  initialEnabled?: boolean;
   selectedPresetId?: string;
   /** When false, the hook skips all logic and returns disabled state. Default: true */
   enabled?: boolean;
@@ -31,6 +32,7 @@ export function useCommonConfigSnippet({
   settingsConfig,
   onConfigChange,
   initialData,
+  initialEnabled,
   selectedPresetId,
   enabled = true,
 }: UseCommonConfigSnippetProps) {
@@ -47,12 +49,15 @@ export function useCommonConfigSnippet({
   const isUpdatingFromCommonConfig = useRef(false);
   // 用于跟踪新建模式是否已初始化默认勾选
   const hasInitializedNewMode = useRef(false);
+  // 用于跟踪编辑模式是否已初始化显式开关/预览
+  const hasInitializedEditMode = useRef(false);
 
   // 当预设变化时，重置初始化标记，使新预设能够重新触发初始化逻辑
   useEffect(() => {
     if (!enabled) return;
     hasInitializedNewMode.current = false;
-  }, [selectedPresetId, enabled]);
+    hasInitializedEditMode.current = false;
+  }, [selectedPresetId, enabled, initialEnabled]);
 
   // 初始化：从 config.json 加载，支持从 localStorage 迁移
   useEffect(() => {
@@ -115,13 +120,40 @@ export function useCommonConfigSnippet({
     if (!enabled) return;
     if (initialData && !isLoading) {
       const configString = JSON.stringify(initialData.settingsConfig, null, 2);
-      const hasCommon = hasCommonConfigSnippet(
+      const inferredHasCommon = hasCommonConfigSnippet(
         configString,
         commonConfigSnippet,
       );
+      const hasCommon = initialEnabled ?? inferredHasCommon;
       setUseCommonConfig(hasCommon);
+
+      if (hasCommon && !inferredHasCommon && !hasInitializedEditMode.current) {
+        hasInitializedEditMode.current = true;
+        const { updatedConfig, error } = updateCommonConfigSnippet(
+          settingsConfig,
+          commonConfigSnippet,
+          true,
+        );
+        if (!error) {
+          isUpdatingFromCommonConfig.current = true;
+          onConfigChange(updatedConfig);
+          setTimeout(() => {
+            isUpdatingFromCommonConfig.current = false;
+          }, 0);
+        }
+      } else {
+        hasInitializedEditMode.current = true;
+      }
     }
-  }, [enabled, initialData, commonConfigSnippet, isLoading]);
+  }, [
+    enabled,
+    initialData,
+    initialEnabled,
+    commonConfigSnippet,
+    isLoading,
+    onConfigChange,
+    settingsConfig,
+  ]);
 
   // 新建模式：如果通用配置片段存在且有效，默认启用
   useEffect(() => {

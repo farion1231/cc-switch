@@ -103,20 +103,22 @@ fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result
         // Extract common config snippet (mirrors old startup logic in lib.rs)
         if state
             .db
-            .get_config_snippet(app_type.as_str())
-            .ok()
-            .flatten()
-            .is_none()
+            .should_auto_extract_config_snippet(app_type.as_str())?
         {
             match ProviderService::extract_common_config_snippet(state, app_type.clone()) {
                 Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
                     let _ = state
                         .db
                         .set_config_snippet(app_type.as_str(), Some(snippet));
+                    let _ = state
+                        .db
+                        .set_config_snippet_cleared(app_type.as_str(), false);
                 }
                 _ => {}
             }
         }
+
+        ProviderService::migrate_legacy_common_config_usage_if_needed(state, app_type.clone())?;
     }
 
     Ok(imported)

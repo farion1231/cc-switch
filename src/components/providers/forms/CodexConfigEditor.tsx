@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { CodexAuthSection, CodexConfigSection } from "./CodexConfigSections";
 import { CodexCommonConfigModal } from "./CodexCommonConfigModal";
 
@@ -19,7 +19,9 @@ interface CodexConfigEditorProps {
 
   commonConfigSnippet: string;
 
-  onCommonConfigSnippetChange: (value: string) => void;
+  onCommonConfigSnippetChange: (value: string) => boolean;
+
+  onCommonConfigErrorClear: () => void;
 
   commonConfigError: string;
 
@@ -42,6 +44,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
   onCommonConfigToggle,
   commonConfigSnippet,
   onCommonConfigSnippetChange,
+  onCommonConfigErrorClear,
   commonConfigError,
   authError,
   configError,
@@ -50,12 +53,10 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
 }) => {
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
-  // Auto-open common config modal if there's an error
-  useEffect(() => {
-    if (commonConfigError && !isCommonConfigModalOpen) {
-      setIsCommonConfigModalOpen(true);
-    }
-  }, [commonConfigError, isCommonConfigModalOpen]);
+  const handleCloseCommonConfigModal = () => {
+    onCommonConfigErrorClear();
+    setIsCommonConfigModalOpen(false);
+  };
 
   return (
     <div className="space-y-6">
@@ -81,9 +82,9 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
       {/* Common Config Modal */}
       <CodexCommonConfigModal
         isOpen={isCommonConfigModalOpen}
-        onClose={() => setIsCommonConfigModalOpen(false)}
+        onClose={handleCloseCommonConfigModal}
         value={commonConfigSnippet}
-        onChange={onCommonConfigSnippetChange}
+        onSave={onCommonConfigSnippetChange}
         error={commonConfigError}
         onExtract={onExtract}
         isExtracting={isExtracting}

@@ -1,5 +1,11 @@
 import type { AppId } from "@/lib/api/types";
-import type { McpServer, Provider, Settings } from "@/types";
+import type {
+  McpServer,
+  Provider,
+  SessionMessage,
+  SessionMeta,
+  Settings,
+} from "@/types";
 
 type ProvidersByApp = Record<AppId, Record<string, Provider>>;
 type CurrentProviderState = Record<AppId, string>;
@@ -80,13 +86,69 @@ let settingsState: Settings = {
   language: "zh",
 };
 let appConfigDirOverride: string | null = null;
+const sessionMessageKey = (providerId: string, sourcePath: string) =>
+  `${providerId}:${sourcePath}`;
+
+const createDefaultSessions = (): SessionMeta[] => {
+  const now = Date.now();
+  return [
+    {
+      providerId: "codex",
+      sessionId: "codex-session-1",
+      title: "Codex Session One",
+      summary: "Codex summary",
+      projectDir: "/mock/codex",
+      createdAt: now - 2000,
+      lastActiveAt: now - 1000,
+      sourcePath: "/mock/codex/session-1.jsonl",
+      resumeCommand: "codex resume codex-session-1",
+    },
+    {
+      providerId: "claude",
+      sessionId: "claude-session-1",
+      title: "Claude Session One",
+      summary: "Claude summary",
+      projectDir: "/mock/claude",
+      createdAt: now - 4000,
+      lastActiveAt: now - 3000,
+      sourcePath: "/mock/claude/session-1.jsonl",
+      resumeCommand: "claude --resume claude-session-1",
+    },
+  ];
+};
+
+const createDefaultSessionMessages = (): Record<string, SessionMessage[]> => ({
+  [sessionMessageKey("codex", "/mock/codex/session-1.jsonl")]: [
+    {
+      role: "user",
+      content: "First codex message",
+      ts: Date.now() - 1000,
+    },
+  ],
+  [sessionMessageKey("claude", "/mock/claude/session-1.jsonl")]: [
+    {
+      role: "user",
+      content: "First claude message",
+      ts: Date.now() - 3000,
+    },
+  ],
+});
+
+let sessionsState = createDefaultSessions();
+let sessionMessagesState = createDefaultSessionMessages();
 let mcpConfigs: McpConfigState = {
   claude: {
     sample: {
       id: "sample",
       name: "Sample Claude Server",
       enabled: true,
-      apps: { claude: true, codex: false, gemini: false, opencode: false, openclaw: false },
+      apps: {
+        claude: true,
+        codex: false,
+        gemini: false,
+        opencode: false,
+        openclaw: false,
+      },
       server: {
         type: "stdio",
         command: "claude-server",
@@ -98,7 +160,13 @@ let mcpConfigs: McpConfigState = {
       id: "httpServer",
       name: "HTTP Codex Server",
       enabled: false,
-      apps: { claude: false, codex: true, gemini: false, opencode: false, openclaw: false },
+      apps: {
+        claude: false,
+        codex: true,
+        gemini: false,
+        opencode: false,
+        openclaw: false,
+      },
       server: {
         type: "http",
         url: "http://localhost:3000",
@@ -116,6 +184,8 @@ const cloneProviders = (value: ProvidersByApp) =>
 export const resetProviderState = () => {
   providers = createDefaultProviders();
   current = createDefaultCurrent();
+  sessionsState = createDefaultSessions();
+  sessionMessagesState = createDefaultSessionMessages();
   settingsState = {
     showInTray: true,
     minimizeToTrayOnClose: true,
@@ -131,7 +201,13 @@ export const resetProviderState = () => {
         id: "sample",
         name: "Sample Claude Server",
         enabled: true,
-        apps: { claude: true, codex: false, gemini: false, opencode: false, openclaw: false },
+        apps: {
+          claude: true,
+          codex: false,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+        },
         server: {
           type: "stdio",
           command: "claude-server",
@@ -143,7 +219,13 @@ export const resetProviderState = () => {
         id: "httpServer",
         name: "HTTP Codex Server",
         enabled: false,
-        apps: { claude: false, codex: true, gemini: false, opencode: false, openclaw: false },
+        apps: {
+          claude: false,
+          codex: true,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+        },
         server: {
           type: "http",
           url: "http://localhost:3000",
@@ -284,4 +366,42 @@ export const upsertMcpServer = (
 export const deleteMcpServer = (appType: AppId, id: string) => {
   if (!mcpConfigs[appType]) return;
   delete mcpConfigs[appType][id];
+};
+
+export const listSessions = () =>
+  JSON.parse(JSON.stringify(sessionsState)) as SessionMeta[];
+
+export const getSessionMessages = (providerId: string, sourcePath: string) =>
+  JSON.parse(
+    JSON.stringify(
+      sessionMessagesState[sessionMessageKey(providerId, sourcePath)] ?? [],
+    ),
+  ) as SessionMessage[];
+
+export const deleteSession = (
+  providerId: string,
+  sessionId: string,
+  sourcePath: string,
+) => {
+  sessionsState = sessionsState.filter(
+    (session) =>
+      !(
+        session.providerId === providerId &&
+        session.sessionId === sessionId &&
+        session.sourcePath === sourcePath
+      ),
+  );
+  delete sessionMessagesState[sessionMessageKey(providerId, sourcePath)];
+  return true;
+};
+
+export const setSessionFixtures = (
+  sessions: SessionMeta[],
+  messages: Record<string, SessionMessage[]>,
+) => {
+  sessionsState = JSON.parse(JSON.stringify(sessions)) as SessionMeta[];
+  sessionMessagesState = JSON.parse(JSON.stringify(messages)) as Record<
+    string,
+    SessionMessage[]
+  >;
 };

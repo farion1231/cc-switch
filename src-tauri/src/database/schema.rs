@@ -5,6 +5,13 @@
 use super::{lock_conn, Database, SCHEMA_VERSION};
 use crate::error::AppError;
 use rusqlite::Connection;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct LegacySkillMigrationRow {
+    directory: String,
+    app_type: String,
+}
 
 impl Database {
     /// 创建所有数据库表
@@ -241,6 +248,27 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 17. Usage Daily Rollups 表 (日聚合统计)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (date, app_type, provider_id, model)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 尝试添加 live_takeover_active 列到 proxy_config 表
         let _ = conn.execute(
             "ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0",
@@ -359,6 +387,11 @@ impl Database {
                         log::info!("迁移数据库从 v4 到 v5（计费模式支持）");
                         Self::migrate_v4_to_v5(conn)?;
                         Self::set_user_version(conn, 5)?;
+                    }
+                    5 => {
+                        log::info!("迁移数据库从 v5 到 v6（使用量聚合表）");
+                        Self::migrate_v5_to_v6(conn)?;
+                        Self::set_user_version(conn, 6)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -820,11 +853,30 @@ impl Database {
 
         log::info!("开始迁移 skills 表到 v3 结构（统一管理架构）...");
 
-        // 1. 备份旧数据（用于日志）
+        // 1. 备份旧数据（用于日志和后续启动迁移）
         let old_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM skills", [], |row| row.get(0))
             .unwrap_or(0);
         log::info!("旧 skills 表有 {old_count} 条记录");
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT directory, app_type FROM skills
+                 WHERE installed = 1",
+            )
+            .map_err(|e| AppError::Database(format!("查询旧 skills 快照失败: {e}")))?;
+        let snapshot_rows: Vec<LegacySkillMigrationRow> = stmt
+            .query_map([], |row| {
+                Ok(LegacySkillMigrationRow {
+                    directory: row.get(0)?,
+                    app_type: row.get(1)?,
+                })
+            })
+            .map_err(|e| AppError::Database(format!("读取旧 skills 快照失败: {e}")))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(format!("解析旧 skills 快照失败: {e}")))?;
+        let snapshot_json = serde_json::to_string(&snapshot_rows)
+            .map_err(|e| AppError::Database(format!("序列化旧 skills 快照失败: {e}")))?;
 
         // 标记：需要在启动后从文件系统扫描并重建 Skills 数据
         // 说明：v3 结构将 Skills 的 SSOT 迁移到 ~/.cc-switch/skills/，
@@ -832,6 +884,10 @@ impl Database {
         let _ = conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES ('skills_ssot_migration_pending', 'true')",
             [],
+        );
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('skills_ssot_migration_snapshot', ?1)",
+            [snapshot_json],
         );
 
         // 2. 删除旧表
@@ -911,6 +967,32 @@ impl Database {
         }
 
         log::info!("v4 -> v5 迁移完成：已添加计费模式与请求模型字段");
+        Ok(())
+    }
+
+    /// v5 -> v6 迁移：添加使用量日聚合表
+    fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (date, app_type, provider_id, model)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 usage_daily_rollups 表失败: {e}")))?;
+
+        log::info!("v5 -> v6 迁移完成：已添加使用量日聚合表");
         Ok(())
     }
 
@@ -1187,6 +1269,15 @@ impl Database {
                 "0.3",
                 "2.5",
                 "0.03",
+                "0",
+            ),
+            // StepFun 系列
+            (
+                "step-3.5-flash",
+                "Step 3.5 Flash",
+                "0.10",
+                "0.30",
+                "0.02",
                 "0",
             ),
             // ====== 国产模型 (CNY/1M tokens) ======

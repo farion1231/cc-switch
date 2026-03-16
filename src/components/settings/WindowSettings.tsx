@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
-import { AppWindow, MonitorUp, Power, EyeOff } from "lucide-react";
+import { AppWindow, MonitorUp, Power, EyeOff, Search } from "lucide-react";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -64,6 +64,14 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
           description={t("settings.skipClaudeOnboardingDescription")}
           checked={!!settings.skipClaudeOnboarding}
           onCheckedChange={(value) => onChange({ skipClaudeOnboarding: value })}
+        />
+
+        <ToggleRow
+          icon={<Search className="h-4 w-4 text-amber-500" />}
+          title={t("settings.toolSearchBypass")}
+          description={t("settings.toolSearchBypassDescription")}
+          checked={!!settings.toolSearchBypass}
+          onCheckedChange={(value) => onChange({ toolSearchBypass: value })}
         />
 
         <ToggleRow

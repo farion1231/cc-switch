@@ -25,10 +25,11 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod toolsearch_patch;
 mod tray;
 mod usage_script;
 
-pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
+pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
 pub use commands::open_provider_terminal;
 pub use commands::*;
@@ -44,6 +45,7 @@ pub use mcp::{
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
+    skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
 };
@@ -560,59 +562,6 @@ pub fn run() {
                 }
             }
 
-            // 5. Auto-extract common config snippets from live files (when snippet is missing)
-            for app_type in crate::app_config::AppType::all() {
-                // Skip if snippet already exists
-                if app_state
-                    .db
-                    .get_config_snippet(app_type.as_str())
-                    .ok()
-                    .flatten()
-                    .is_some()
-                {
-                    continue;
-                }
-
-                // Try to read the live config file for this app type
-                let settings =
-                    match crate::services::provider::ProviderService::read_live_settings(
-                        app_type.clone(),
-                    ) {
-                        Ok(s) => s,
-                        Err(_) => continue, // No live config file, skip silently
-                    };
-
-                // Extract common config (strip provider-specific fields)
-                match crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
-                    app_type.clone(),
-                    &settings,
-                ) {
-                    Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
-                        match app_state
-                            .db
-                            .set_config_snippet(app_type.as_str(), Some(snippet))
-                        {
-                            Ok(()) => log::info!(
-                                "✓ Auto-extracted common config snippet for {}",
-                                app_type.as_str()
-                            ),
-                            Err(e) => log::warn!(
-                                "✗ Failed to save config snippet for {}: {e}",
-                                app_type.as_str()
-                            ),
-                        }
-                    }
-                    Ok(_) => log::debug!(
-                        "○ Live config for {} has no extractable common fields",
-                        app_type.as_str()
-                    ),
-                    Err(e) => log::warn!(
-                        "✗ Failed to extract config snippet for {}: {e}",
-                        app_type.as_str()
-                    ),
-                }
-            }
-
             // 迁移旧的 app_config_dir 配置到 Store
             if let Err(e) = app_store::migrate_app_config_dir_from_settings(app.handle()) {
                 log::warn!("迁移 app_config_dir 失败: {e}");
@@ -797,6 +746,8 @@ pub fn run() {
                     }
                 }
 
+                initialize_common_config_snippets(&state);
+
                 // 检查 settings 表中的代理状态，自动恢复代理服务
                 restore_proxy_state_on_startup(&state).await;
 
@@ -805,16 +756,18 @@ pub fn run() {
                     log::warn!("Periodic backup failed on startup: {e}");
                 }
 
-                // Periodic backup timer: check every hour while the app is running
+                // Periodic maintenance timer: run once per day while the app is running
                 let db_for_timer = state.db.clone();
                 tauri::async_runtime::spawn(async move {
-                    let mut interval =
-                        tokio::time::interval(std::time::Duration::from_secs(3600));
+                    const PERIODIC_MAINTENANCE_INTERVAL_SECS: u64 = 24 * 60 * 60;
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                        PERIODIC_MAINTENANCE_INTERVAL_SECS,
+                    ));
                     interval.tick().await; // skip immediate first tick (already checked above)
                     loop {
                         interval.tick().await;
                         if let Err(e) = db_for_timer.periodic_backup_if_needed() {
-                            log::warn!("Periodic backup timer failed: {e}");
+                            log::warn!("Periodic maintenance timer failed: {e}");
                         }
                     }
                 });
@@ -853,6 +806,27 @@ pub fn run() {
                 }
             }
 
+            // Tool Search bypass: auto-apply patch on startup if enabled
+            if settings.tool_search_bypass {
+                match crate::toolsearch_patch::apply_toolsearch_patch() {
+                    Ok(results) => {
+                        let success = results.iter().filter(|r| r.success).count();
+                        let total = results.len();
+                        if success > 0 {
+                            log::info!("✓ Tool Search patch auto-applied ({success}/{total})");
+                        }
+                        for r in results.iter().filter(|r| !r.success) {
+                            if let Some(err) = &r.error {
+                                log::warn!("✗ Tool Search patch failed for {}: {err}", r.path);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("✗ Tool Search auto-patch skipped: {e}");
+                    }
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -886,6 +860,8 @@ pub fn run() {
             commands::save_settings,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
+            commands::get_optimizer_config,
+            commands::set_optimizer_config,
             commands::get_log_config,
             commands::set_log_config,
             commands::restart_app,
@@ -897,6 +873,10 @@ pub fn run() {
             commands::is_claude_plugin_applied,
             commands::apply_claude_onboarding_skip,
             commands::clear_claude_onboarding_skip,
+            // Tool Search patch
+            commands::check_toolsearch_status,
+            commands::apply_toolsearch_patch,
+            commands::restore_toolsearch_patch,
             // Claude MCP management
             commands::get_claude_mcp_status,
             commands::read_claude_mcp_config,
@@ -964,8 +944,11 @@ pub fn run() {
             commands::restore_env_backup,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
+            commands::get_skill_backups,
+            commands::delete_skill_backup,
             commands::install_skill_unified,
             commands::uninstall_skill_unified,
+            commands::restore_skill_backup,
             commands::toggle_skill_app,
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
@@ -1036,6 +1019,7 @@ pub fn run() {
             // Session manager
             commands::list_sessions,
             commands::get_session_messages,
+            commands::delete_session,
             commands::launch_session_terminal,
             commands::get_tool_versions,
             // Provider terminal
@@ -1052,6 +1036,8 @@ pub fn run() {
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,
+            commands::get_openclaw_live_provider,
+            commands::scan_openclaw_config_health,
             commands::get_openclaw_default_model,
             commands::set_openclaw_default_model,
             commands::get_openclaw_model_catalog,
@@ -1296,6 +1282,85 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
                     log::error!("清除 {app_type} 代理状态失败: {clear_err}");
                 }
             }
+        }
+    }
+}
+
+fn initialize_common_config_snippets(state: &store::AppState) {
+    // Auto-extract common config snippets from clean live files when snippet is missing.
+    // This must run before proxy takeover is restored on startup, otherwise we'd read
+    // proxy-placeholder configs instead of the user's actual live settings.
+    for app_type in crate::app_config::AppType::all() {
+        if !state
+            .db
+            .should_auto_extract_config_snippet(app_type.as_str())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let settings = match crate::services::provider::ProviderService::read_live_settings(
+            app_type.clone(),
+        ) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        match crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
+            app_type.clone(),
+            &settings,
+        ) {
+            Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
+                match state.db.set_config_snippet(app_type.as_str(), Some(snippet)) {
+                    Ok(()) => {
+                        let _ = state.db.set_config_snippet_cleared(app_type.as_str(), false);
+                        log::info!(
+                            "✓ Auto-extracted common config snippet for {}",
+                            app_type.as_str()
+                        );
+                    }
+                    Err(e) => log::warn!(
+                        "✗ Failed to save config snippet for {}: {e}",
+                        app_type.as_str()
+                    ),
+                }
+            }
+            Ok(_) => log::debug!(
+                "○ Live config for {} has no extractable common fields",
+                app_type.as_str()
+            ),
+            Err(e) => log::warn!(
+                "✗ Failed to extract config snippet for {}: {e}",
+                app_type.as_str()
+            ),
+        }
+    }
+
+    let should_run_legacy_migration = state
+        .db
+        .is_legacy_common_config_migrated()
+        .map(|done| !done)
+        .unwrap_or(true);
+
+    if should_run_legacy_migration {
+        for app_type in [
+            crate::app_config::AppType::Claude,
+            crate::app_config::AppType::Codex,
+            crate::app_config::AppType::Gemini,
+        ] {
+            if let Err(e) = crate::services::provider::ProviderService::migrate_legacy_common_config_usage_if_needed(
+                state,
+                app_type.clone(),
+            ) {
+                log::warn!(
+                    "✗ Failed to migrate legacy common-config usage for {}: {e}",
+                    app_type.as_str()
+                );
+            }
+        }
+
+        if let Err(e) = state.db.set_legacy_common_config_migrated(true) {
+            log::warn!("✗ Failed to persist legacy common-config migration flag: {e}");
         }
     }
 }

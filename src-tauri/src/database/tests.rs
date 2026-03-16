@@ -9,6 +9,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, Connection};
 use serde_json::json;
 use std::collections::HashMap;
+use tempfile::NamedTempFile;
 
 const LEGACY_SCHEMA_SQL: &str = r#"
     CREATE TABLE providers (
@@ -487,6 +488,25 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         matches!(pending.as_deref(), Some("true") | Some("1")),
         "skills_ssot_migration_pending should be set after v2->v3 migration"
     );
+    let snapshot: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'skills_ssot_migration_snapshot'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    let snapshot = snapshot.expect("skills migration snapshot should be recorded");
+    let snapshot_rows: serde_json::Value =
+        serde_json::from_str(&snapshot).expect("parse skills migration snapshot");
+    assert!(
+        snapshot_rows
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| {
+                row.get("directory").and_then(|v| v.as_str()) == Some("demo-skill")
+                    && row.get("app_type").and_then(|v| v.as_str()) == Some("claude")
+            })),
+        "skills migration snapshot should preserve legacy app mapping"
+    );
 
     // v3.9+ 新增：proxy_config 三行 seed 必须存在（否则 UI 会查不到默认值）
     let proxy_rows: i64 = conn
@@ -631,5 +651,34 @@ fn schema_model_pricing_is_seeded_on_init() {
         gemini_count > 0,
         "应该包含 Gemini 模型定价，实际数量: {}",
         gemini_count
+    );
+}
+
+#[test]
+fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
+    let temp = NamedTempFile::new().expect("create temp db file");
+    let path = temp.path().to_path_buf();
+
+    let conn = Connection::open(&path).expect("open temp db");
+    conn.execute("PRAGMA auto_vacuum = NONE;", [])
+        .expect("set none auto_vacuum");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+
+    assert_eq!(
+        Database::get_auto_vacuum_mode(&conn).expect("auto_vacuum before rebuild"),
+        0,
+        "existing file db should start with NONE auto_vacuum"
+    );
+
+    let rebuilt =
+        Database::ensure_incremental_auto_vacuum_on_conn(&conn).expect("enable incremental mode");
+    assert!(rebuilt, "existing db should require rebuild via VACUUM");
+    drop(conn);
+
+    let reopened = Connection::open(&path).expect("reopen temp db");
+    assert_eq!(
+        Database::get_auto_vacuum_mode(&reopened).expect("auto_vacuum after rebuild"),
+        2,
+        "file db should persist INCREMENTAL auto_vacuum after VACUUM rebuild"
     );
 }

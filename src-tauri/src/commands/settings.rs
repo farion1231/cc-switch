@@ -145,6 +145,36 @@ pub async fn set_rectifier_config(
     Ok(true)
 }
 
+/// 获取优化器配置
+#[tauri::command]
+pub async fn get_optimizer_config(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<crate::proxy::types::OptimizerConfig, String> {
+    state.db.get_optimizer_config().map_err(|e| e.to_string())
+}
+
+/// 设置优化器配置
+#[tauri::command]
+pub async fn set_optimizer_config(
+    state: tauri::State<'_, crate::AppState>,
+    config: crate::proxy::types::OptimizerConfig,
+) -> Result<bool, String> {
+    // Validate cache_ttl: only allow known values
+    match config.cache_ttl.as_str() {
+        "5m" | "1h" => {}
+        other => {
+            return Err(format!(
+                "Invalid cache_ttl value: '{other}'. Allowed values: '5m', '1h'"
+            ))
+        }
+    }
+    state
+        .db
+        .set_optimizer_config(&config)
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// 获取日志配置
 #[tauri::command]
 pub async fn get_log_config(

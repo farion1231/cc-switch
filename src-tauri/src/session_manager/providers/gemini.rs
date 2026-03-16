@@ -80,6 +80,31 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(result)
 }
 
+pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    let meta = parse_session(path).ok_or_else(|| {
+        format!(
+            "Failed to parse Gemini session metadata: {}",
+            path.display()
+        )
+    })?;
+
+    if meta.session_id != session_id {
+        return Err(format!(
+            "Gemini session ID mismatch: expected {session_id}, found {}",
+            meta.session_id
+        ));
+    }
+
+    std::fs::remove_file(path).map_err(|e| {
+        format!(
+            "Failed to delete Gemini session file {}: {e}",
+            path.display()
+        )
+    })?;
+
+    Ok(true)
+}
+
 fn parse_session(path: &Path) -> Option<SessionMeta> {
     let data = std::fs::read_to_string(path).ok()?;
     let value: Value = serde_json::from_str(&data).ok()?;
@@ -114,4 +139,37 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         source_path: Some(source_path),
         resume_command: Some(format!("gemini --resume {session_id}")),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn delete_session_removes_json_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-2026-03-06T10-17-test.json");
+        std::fs::write(
+            &path,
+            r#"{
+              "sessionId": "gemini-session-123",
+              "startTime": "2026-03-06T10:17:58.000Z",
+              "lastUpdated": "2026-03-06T10:20:00.000Z",
+              "messages": [
+                {
+                  "id": "msg-1",
+                  "timestamp": "2026-03-06T10:17:58.000Z",
+                  "type": "user",
+                  "content": "hello"
+                }
+              ]
+            }"#,
+        )
+        .expect("write session");
+
+        delete_session(temp.path(), &path, "gemini-session-123").expect("delete session");
+
+        assert!(!path.exists());
+    }
 }

@@ -6,13 +6,14 @@ use super::{
     body_filter::filter_private_params_with_whitelist,
     error::*,
     failover_switch::FailoverSwitchManager,
+    log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{get_adapter, ProviderAdapter, ProviderType},
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{ProxyStatus, RectifierConfig},
+    types::{OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
 use crate::{app_config::AppType, provider::Provider};
@@ -97,6 +98,8 @@ pub struct RequestForwarder {
     current_provider_id_at_start: String,
     /// 整流器配置
     rectifier_config: RectifierConfig,
+    /// 优化器配置
+    optimizer_config: OptimizerConfig,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
 }
@@ -114,6 +117,7 @@ impl RequestForwarder {
         _streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
+        optimizer_config: OptimizerConfig,
     ) -> Self {
         Self {
             router,
@@ -123,6 +127,7 @@ impl RequestForwarder {
             app_handle,
             current_provider_id_at_start,
             rectifier_config,
+            optimizer_config,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
         }
     }
@@ -139,7 +144,7 @@ impl RequestForwarder {
         &self,
         app_type: &AppType,
         endpoint: &str,
-        mut body: Value,
+        body: Value,
         headers: axum::http::HeaderMap,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
@@ -183,6 +188,22 @@ impl RequestForwarder {
                 continue;
             }
 
+            // PRE-SEND 优化器：每个 provider 独立决定是否优化
+            // clone body 以避免 Bedrock 优化字段泄漏到非 Bedrock provider（failover 场景）
+            let mut provider_body =
+                if self.optimizer_config.enabled && is_bedrock_provider(provider) {
+                    let mut b = body.clone();
+                    if self.optimizer_config.thinking_optimizer {
+                        super::thinking_optimizer::optimize(&mut b, &self.optimizer_config);
+                    }
+                    if self.optimizer_config.cache_injection {
+                        super::cache_injector::inject(&mut b, &self.optimizer_config);
+                    }
+                    b
+                } else {
+                    body.clone()
+                };
+
             attempted_providers += 1;
 
             // 更新状态中的当前Provider信息
@@ -196,7 +217,13 @@ impl RequestForwarder {
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self
-                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                .forward(
+                    provider,
+                    endpoint,
+                    &provider_body,
+                    &headers,
+                    adapter.as_ref(),
+                )
                 .await
             {
                 Ok(response) => {
@@ -296,7 +323,7 @@ impl RequestForwarder {
                             }
 
                             // 首次触发：整流请求体
-                            let rectified = rectify_anthropic_request(&mut body);
+                            let rectified = rectify_anthropic_request(&mut provider_body);
 
                             // 整流未生效：继续尝试 budget 整流路径，避免误判后短路
                             if !rectified.applied {
@@ -318,7 +345,13 @@ impl RequestForwarder {
 
                                 // 使用同一供应商重试（不计入熔断器）
                                 match self
-                                    .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                                    .forward(
+                                        provider,
+                                        endpoint,
+                                        &provider_body,
+                                        &headers,
+                                        adapter.as_ref(),
+                                    )
                                     .await
                                 {
                                     Ok(response) => {
@@ -472,7 +505,7 @@ impl RequestForwarder {
                                 });
                             }
 
-                            let budget_rectified = rectify_thinking_budget(&mut body);
+                            let budget_rectified = rectify_thinking_budget(&mut provider_body);
                             if !budget_rectified.applied {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-014] budget 整流器触发但无可整流内容，不做无意义重试"
@@ -509,7 +542,13 @@ impl RequestForwarder {
 
                             // 使用同一供应商重试（不计入熔断器）
                             match self
-                                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                                .forward(
+                                    provider,
+                                    endpoint,
+                                    &provider_body,
+                                    &headers,
+                                    adapter.as_ref(),
+                                )
                                 .await
                             {
                                 Ok(response) => {
@@ -663,13 +702,13 @@ impl RequestForwarder {
                                     Some(format!("Provider {} 失败: {}", provider.name, e));
                             }
 
-                            log::warn!(
-                                "[{}] [FWD-001] Provider {} 失败，切换下一个 ({}/{})",
-                                app_type_str,
-                                provider.name,
+                            let (log_code, log_message) = build_retryable_failure_log(
+                                &provider.name,
                                 attempted_providers,
-                                providers.len()
+                                providers.len(),
+                                &e,
                             );
+                            log::warn!("[{app_type_str}] [{log_code}] {log_message}");
 
                             last_error = Some(e);
                             last_provider = Some(provider.clone());
@@ -726,7 +765,11 @@ impl RequestForwarder {
             }
         }
 
-        log::warn!("[{app_type_str}] [FWD-002] 所有 Provider 均失败");
+        if let Some((log_code, log_message)) =
+            build_terminal_failure_log(attempted_providers, providers.len(), last_error.as_ref())
+        {
+            log::warn!("[{app_type_str}] [{log_code}] {log_message}");
+        }
 
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
@@ -751,7 +794,13 @@ impl RequestForwarder {
 
         let effective_endpoint =
             if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
-                "/v1/chat/completions"
+                // 根据 api_format 选择目标端点
+                let api_format = super::providers::get_claude_api_format(provider);
+                if api_format == "openai_responses" {
+                    "/v1/responses"
+                } else {
+                    "/v1/chat/completions"
+                }
             } else {
                 endpoint
             };
@@ -836,9 +885,11 @@ impl RequestForwarder {
             }
         }
 
-        // 禁用压缩，避免 gzip 流式响应解析错误
-        // 参考 CCH: undici 在连接提前关闭时会对不完整的 gzip 流抛出错误
-        request = request.header("accept-encoding", "identity");
+        // 流式请求保守禁用压缩，避免上游压缩 SSE 在连接中断时触发解压错误。
+        // 非流式请求不显式设置 Accept-Encoding，让 reqwest 自动协商压缩并透明解压。
+        if should_force_identity_encoding(effective_endpoint, &filtered_body, headers) {
+            request = request.header("accept-encoding", "identity");
+        }
 
         // 使用适配器添加认证头
         if let Some(auth) = adapter.extract_auth(provider) {
@@ -925,5 +976,274 @@ fn extract_error_message(error: &ProxyError) -> Option<String> {
     match error {
         ProxyError::UpstreamError { body, .. } => body.clone(),
         _ => Some(error.to_string()),
+    }
+}
+
+/// 检测 Provider 是否为 Bedrock（通过 CLAUDE_CODE_USE_BEDROCK 环境变量判断）
+fn is_bedrock_provider(provider: &Provider) -> bool {
+    provider
+        .settings_config
+        .get("env")
+        .and_then(|e| e.get("CLAUDE_CODE_USE_BEDROCK"))
+        .and_then(|v| v.as_str())
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+fn build_retryable_failure_log(
+    provider_name: &str,
+    attempted_providers: usize,
+    total_providers: usize,
+    error: &ProxyError,
+) -> (&'static str, String) {
+    let error_summary = summarize_proxy_error(error);
+
+    if total_providers <= 1 {
+        (
+            log_fwd::SINGLE_PROVIDER_FAILED,
+            format!("Provider {provider_name} 请求失败: {error_summary}"),
+        )
+    } else {
+        (
+            log_fwd::PROVIDER_FAILED_RETRY,
+            format!(
+                "Provider {provider_name} 失败，继续尝试下一个 ({attempted_providers}/{total_providers}): {error_summary}"
+            ),
+        )
+    }
+}
+
+fn build_terminal_failure_log(
+    attempted_providers: usize,
+    total_providers: usize,
+    last_error: Option<&ProxyError>,
+) -> Option<(&'static str, String)> {
+    if total_providers <= 1 {
+        return None;
+    }
+
+    let error_summary = last_error
+        .map(summarize_proxy_error)
+        .unwrap_or_else(|| "未知错误".to_string());
+
+    Some((
+        log_fwd::ALL_PROVIDERS_FAILED,
+        format!(
+            "已尝试 {attempted_providers}/{total_providers} 个 Provider，均失败。最后错误: {error_summary}"
+        ),
+    ))
+}
+
+fn summarize_proxy_error(error: &ProxyError) -> String {
+    match error {
+        ProxyError::UpstreamError { status, body } => {
+            let body_summary = body
+                .as_deref()
+                .map(summarize_upstream_body)
+                .filter(|summary| !summary.is_empty());
+
+            match body_summary {
+                Some(summary) => format!("上游 HTTP {status}: {summary}"),
+                None => format!("上游 HTTP {status}"),
+            }
+        }
+        ProxyError::Timeout(message) => {
+            format!("请求超时: {}", summarize_text_for_log(message, 180))
+        }
+        ProxyError::ForwardFailed(message) => {
+            format!("请求转发失败: {}", summarize_text_for_log(message, 180))
+        }
+        ProxyError::TransformError(message) => {
+            format!("响应转换失败: {}", summarize_text_for_log(message, 180))
+        }
+        ProxyError::ConfigError(message) => {
+            format!("配置错误: {}", summarize_text_for_log(message, 180))
+        }
+        ProxyError::AuthError(message) => {
+            format!("认证失败: {}", summarize_text_for_log(message, 180))
+        }
+        _ => summarize_text_for_log(&error.to_string(), 180),
+    }
+}
+
+fn summarize_upstream_body(body: &str) -> String {
+    if let Ok(json_body) = serde_json::from_str::<Value>(body) {
+        if let Some(message) = extract_json_error_message(&json_body) {
+            return summarize_text_for_log(&message, 180);
+        }
+
+        if let Ok(compact_json) = serde_json::to_string(&json_body) {
+            return summarize_text_for_log(&compact_json, 180);
+        }
+    }
+
+    summarize_text_for_log(body, 180)
+}
+
+fn extract_json_error_message(body: &Value) -> Option<String> {
+    let candidates = [
+        body.pointer("/error/message"),
+        body.pointer("/message"),
+        body.pointer("/detail"),
+        body.pointer("/error"),
+    ];
+
+    candidates
+        .into_iter()
+        .flatten()
+        .find_map(|value| value.as_str().map(ToString::to_string))
+}
+
+fn should_force_identity_encoding(
+    endpoint: &str,
+    body: &Value,
+    headers: &axum::http::HeaderMap,
+) -> bool {
+    if body
+        .get("stream")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    if endpoint.contains("streamGenerateContent") || endpoint.contains("alt=sse") {
+        return true;
+    }
+
+    headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .map(|accept| accept.contains("text/event-stream"))
+        .unwrap_or(false)
+}
+
+fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = normalized.trim();
+
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+
+    let truncated: String = trimmed.chars().take(max_chars).collect();
+    let truncated = truncated.trim_end();
+    format!("{truncated}...")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{header::ACCEPT, HeaderMap, HeaderValue};
+    use serde_json::json;
+
+    #[test]
+    fn single_provider_retryable_log_uses_single_provider_code() {
+        let error = ProxyError::UpstreamError {
+            status: 429,
+            body: Some(r#"{"error":{"message":"rate limit exceeded"}}"#.to_string()),
+        };
+
+        let (code, message) = build_retryable_failure_log("PackyCode-response", 1, 1, &error);
+
+        assert_eq!(code, log_fwd::SINGLE_PROVIDER_FAILED);
+        assert!(message.contains("Provider PackyCode-response 请求失败"));
+        assert!(message.contains("上游 HTTP 429"));
+        assert!(message.contains("rate limit exceeded"));
+        assert!(!message.contains("切换下一个"));
+    }
+
+    #[test]
+    fn multi_provider_retryable_log_keeps_failover_wording() {
+        let error = ProxyError::Timeout("upstream timed out after 30s".to_string());
+
+        let (code, message) = build_retryable_failure_log("primary", 1, 3, &error);
+
+        assert_eq!(code, log_fwd::PROVIDER_FAILED_RETRY);
+        assert!(message.contains("继续尝试下一个 (1/3)"));
+        assert!(message.contains("请求超时"));
+    }
+
+    #[test]
+    fn single_provider_has_no_terminal_all_failed_log() {
+        assert!(build_terminal_failure_log(1, 1, None).is_none());
+    }
+
+    #[test]
+    fn multi_provider_terminal_log_contains_last_error_summary() {
+        let error = ProxyError::ForwardFailed("connection reset by peer".to_string());
+
+        let (code, message) =
+            build_terminal_failure_log(2, 2, Some(&error)).expect("expected terminal log");
+
+        assert_eq!(code, log_fwd::ALL_PROVIDERS_FAILED);
+        assert!(message.contains("已尝试 2/2 个 Provider，均失败"));
+        assert!(message.contains("connection reset by peer"));
+    }
+
+    #[test]
+    fn summarize_upstream_body_prefers_json_message() {
+        let body = json!({
+            "error": {
+                "message": "invalid_request_error: unsupported field"
+            },
+            "request_id": "req_123"
+        });
+
+        let summary = summarize_upstream_body(&body.to_string());
+
+        assert_eq!(summary, "invalid_request_error: unsupported field");
+    }
+
+    #[test]
+    fn summarize_text_for_log_collapses_whitespace_and_truncates() {
+        let summary = summarize_text_for_log("line1\n\n line2   line3", 12);
+
+        assert_eq!(summary, "line1 line2...");
+    }
+
+    #[test]
+    fn force_identity_for_stream_flag_requests() {
+        let headers = HeaderMap::new();
+
+        assert!(should_force_identity_encoding(
+            "/v1/responses",
+            &json!({ "stream": true }),
+            &headers
+        ));
+    }
+
+    #[test]
+    fn force_identity_for_gemini_stream_endpoints() {
+        let headers = HeaderMap::new();
+
+        assert!(should_force_identity_encoding(
+            "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+            &json!({ "model": "gemini-2.5-pro" }),
+            &headers
+        ));
+    }
+
+    #[test]
+    fn force_identity_for_sse_accept_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+
+        assert!(should_force_identity_encoding(
+            "/v1/responses",
+            &json!({ "model": "gpt-5" }),
+            &headers
+        ));
+    }
+
+    #[test]
+    fn non_streaming_requests_allow_automatic_compression() {
+        let headers = HeaderMap::new();
+
+        assert!(!should_force_identity_encoding(
+            "/v1/responses",
+            &json!({ "model": "gpt-5" }),
+            &headers
+        ));
     }
 }

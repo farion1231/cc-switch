@@ -88,7 +88,7 @@ fn default_profile() -> String {
     "default".to_string()
 }
 
-/// WebDAV v2 同步设置
+/// WebDAV 同步设置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebDavSyncSettings {
@@ -181,6 +181,9 @@ pub struct AppSettings {
     /// 是否跳过 Claude Code 初次安装确认
     #[serde(default)]
     pub skip_claude_onboarding: bool,
+    /// 是否解除 Tool Search 域名限制
+    #[serde(default)]
+    pub tool_search_bypass: bool,
     /// 是否开机自启
     #[serde(default)]
     pub launch_on_startup: bool,
@@ -199,6 +202,12 @@ pub struct AppSettings {
     /// User has confirmed the stream check first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_check_confirmed: Option<bool>,
+    /// Whether to show the failover toggle independently on the main page
+    #[serde(default)]
+    pub enable_failover_toggle: bool,
+    /// User has confirmed the failover toggle first-run notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failover_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
@@ -280,12 +289,15 @@ impl Default for AppSettings {
             minimize_to_tray_on_close: true,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
+            tool_search_bypass: false,
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,
             proxy_confirmed: None,
             usage_confirmed: None,
             stream_check_confirmed: None,
+            enable_failover_toggle: false,
+            failover_confirmed: None,
             language: None,
             visible_apps: None,
             claude_config_dir: None,

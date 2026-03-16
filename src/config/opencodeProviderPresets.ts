@@ -3,6 +3,7 @@ import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 
 export interface OpenCodeProviderPreset {
   name: string;
+  nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
   apiKeyUrl?: string;
   settingsConfig: OpenCodeProviderConfig;
@@ -18,7 +19,7 @@ export interface OpenCodeProviderPreset {
 }
 
 export const opencodeNpmPackages = [
-  { value: "@ai-sdk/openai", label: "OpenAI" },
+  { value: "@ai-sdk/openai", label: "OpenAI Responses" },
   { value: "@ai-sdk/openai-compatible", label: "OpenAI Compatible" },
   { value: "@ai-sdk/anthropic", label: "Anthropic" },
   { value: "@ai-sdk/amazon-bedrock", label: "Amazon Bedrock" },
@@ -60,6 +61,11 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       contextLimit: 262144,
       outputLimit: 262144,
       modalities: { input: ["text", "image", "video"], output: ["text"] },
+    },
+    {
+      id: "step-3.5-flash",
+      name: "Step 3.5 Flash",
+      contextLimit: 262144,
     },
   ],
   "@ai-sdk/google": [
@@ -124,174 +130,11 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
   ],
   "@ai-sdk/openai": [
     {
-      id: "gpt-5",
-      name: "GPT-5",
+      id: "gpt-5.4",
+      name: "GPT-5.4",
       contextLimit: 400000,
       outputLimit: 128000,
       modalities: { input: ["text", "image"], output: ["text"] },
-      variants: {
-        low: {
-          reasoningEffort: "low",
-          reasoningSummary: "auto",
-          textVerbosity: "low",
-        },
-        medium: {
-          reasoningEffort: "medium",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        high: {
-          reasoningEffort: "high",
-          reasoningSummary: "auto",
-          textVerbosity: "high",
-        },
-      },
-    },
-    {
-      id: "gpt-5.1",
-      name: "GPT-5.1",
-      contextLimit: 400000,
-      outputLimit: 272000,
-      modalities: { input: ["text", "image"], output: ["text"] },
-      variants: {
-        low: {
-          reasoningEffort: "low",
-          reasoningSummary: "auto",
-          textVerbosity: "low",
-        },
-        medium: {
-          reasoningEffort: "medium",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        high: {
-          reasoningEffort: "high",
-          reasoningSummary: "auto",
-          textVerbosity: "high",
-        },
-      },
-    },
-    {
-      id: "gpt-5.1-codex",
-      name: "GPT-5.1 Codex",
-      contextLimit: 400000,
-      outputLimit: 128000,
-      modalities: { input: ["text", "image"], output: ["text"] },
-      options: { include: ["reasoning.encrypted_content"], store: false },
-      variants: {
-        low: {
-          reasoningEffort: "low",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        medium: {
-          reasoningEffort: "medium",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        high: {
-          reasoningEffort: "high",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-      },
-    },
-    {
-      id: "gpt-5.1-codex-max",
-      name: "GPT-5.1 Codex Max",
-      contextLimit: 400000,
-      outputLimit: 128000,
-      modalities: { input: ["text", "image"], output: ["text"] },
-      options: { include: ["reasoning.encrypted_content"], store: false },
-      variants: {
-        low: {
-          reasoningEffort: "low",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        medium: {
-          reasoningEffort: "medium",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        high: {
-          reasoningEffort: "high",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        xhigh: {
-          reasoningEffort: "xhigh",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-      },
-    },
-    {
-      id: "gpt-5.2",
-      name: "GPT-5.2",
-      contextLimit: 400000,
-      outputLimit: 128000,
-      modalities: { input: ["text", "image"], output: ["text"] },
-      variants: {
-        low: {
-          reasoningEffort: "low",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        medium: {
-          reasoningEffort: "medium",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        high: {
-          reasoningEffort: "high",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        xhigh: {
-          reasoningEffort: "xhigh",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-      },
-    },
-    {
-      id: "gpt-5.2-codex",
-      name: "GPT-5.2 Codex",
-      contextLimit: 400000,
-      outputLimit: 128000,
-      modalities: { input: ["text", "image"], output: ["text"] },
-      options: { include: ["reasoning.encrypted_content"], store: false },
-      variants: {
-        low: {
-          reasoningEffort: "low",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        medium: {
-          reasoningEffort: "medium",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        high: {
-          reasoningEffort: "high",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-        xhigh: {
-          reasoningEffort: "xhigh",
-          reasoningSummary: "auto",
-          textVerbosity: "medium",
-        },
-      },
-    },
-    {
-      id: "gpt-5.3-codex",
-      name: "GPT-5.3 Codex",
-      contextLimit: 400000,
-      outputLimit: 128000,
-      modalities: { input: ["text", "image"], output: ["text"] },
-      options: { include: ["reasoning.encrypted_content"], store: false },
       variants: {
         low: {
           reasoningEffort: "low",
@@ -628,6 +471,38 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "StepFun",
+    websiteUrl: "https://platform.stepfun.ai",
+    apiKeyUrl: "https://platform.stepfun.ai/interface-key",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "StepFun",
+      options: {
+        baseURL: "https://api.stepfun.ai/v1",
+        apiKey: "",
+      },
+      models: {
+        "step-3.5-flash": { name: "Step 3.5 Flash" },
+      },
+    },
+    category: "cn_official",
+    icon: "stepfun",
+    iconColor: "#005AFF",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.stepfun.ai/v1",
+        defaultValue: "https://api.stepfun.ai/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "step-...",
         editorValue: "",
       },
     },
@@ -1110,11 +985,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "gpt-5.2": { name: "GPT-5.2" },
-        "gpt-5.2-codex": {
-          name: "GPT-5.2 Codex",
-          options: { include: ["reasoning.encrypted_content"], store: false },
-        },
+        "gpt-5.4": { name: "GPT-5.4" },
       },
     },
     category: "third_party",
@@ -1161,8 +1032,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "AICoding",
-    websiteUrl: "https://www.aicoding.sh",
-    apiKeyUrl: "https://www.aicoding.sh/i/CCSWITCH",
+    websiteUrl: "https://aicoding.sh",
+    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "AICoding",
@@ -1225,7 +1096,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/anthropic",
       name: "SSSAiCode",
       options: {
-        baseURL: "https://node-hk.sssaicode.com/api",
+        baseURL: "https://node-hk.sssaicode.com/api/v1",
         apiKey: "",
       },
       models: {
@@ -1237,6 +1108,93 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "sssaicode",
     icon: "sssaicode",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Micu",
+    websiteUrl: "https://www.openclaudecode.cn",
+    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Micu",
+      options: {
+        baseURL: "https://www.openclaudecode.cn/v1",
+        apiKey: "",
+      },
+      models: {
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "micu",
+    icon: "micu",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "X-Code API",
+    websiteUrl: "https://x-code.cc",
+    apiKeyUrl: "https://x-code.cc",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "X-Code API",
+      options: {
+        baseURL: "https://x-code.cc/v1",
+        apiKey: "",
+      },
+      models: {
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "x-code",
+    icon: "x-code",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "CTok.ai",
+    websiteUrl: "https://ctok.ai",
+    apiKeyUrl: "https://ctok.ai",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "CTok",
+      options: {
+        baseURL: "https://api.ctok.ai/v1",
+        apiKey: "",
+      },
+      models: {
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "ctok",
+    icon: "ctok",
     iconColor: "#000000",
     templateValues: {
       apiKey: {

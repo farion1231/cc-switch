@@ -109,6 +109,25 @@ impl TokenUsage {
                                     usage.input_tokens = input as u32;
                                 }
                             }
+                            // 从 message_delta 中处理缓存命中(cache_read_input_tokens)
+                            if usage.cache_read_tokens == 0 {
+                                if let Some(cache_read) = delta_usage
+                                    .get("cache_read_input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                {
+                                    usage.cache_read_tokens = cache_read as u32;
+                                }
+                            }
+                            // 从 message_delta 中处理缓存创建(cache_creation_input_tokens)
+                            // 注: 现在 zhipu 没有返回 cache_creation_input_tokens 字段
+                            if usage.cache_creation_tokens == 0 {
+                                if let Some(cache_creation) = delta_usage
+                                    .get("cache_creation_input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                {
+                                    usage.cache_creation_tokens = cache_creation as u32;
+                                }
+                            }
                         }
                     }
                     _ => {}

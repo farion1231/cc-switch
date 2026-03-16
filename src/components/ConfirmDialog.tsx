@@ -17,6 +17,7 @@ interface ConfirmDialogProps {
   confirmText?: string;
   cancelText?: string;
   variant?: "destructive" | "info";
+  zIndex?: "base" | "nested" | "alert" | "top";
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -28,6 +29,7 @@ export function ConfirmDialog({
   confirmText,
   cancelText,
   variant = "destructive",
+  zIndex = "alert",
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -46,7 +48,7 @@ export function ConfirmDialog({
         }
       }}
     >
-      <DialogContent className="max-w-sm" zIndex="alert">
+      <DialogContent className="max-w-sm" zIndex={zIndex}>
         <DialogHeader className="space-y-3 border-b-0 bg-transparent pb-0">
           <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
             <IconComponent className={iconClass} />

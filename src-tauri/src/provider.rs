@@ -197,6 +197,12 @@ pub struct ProviderMeta {
     /// 自定义端点列表（按 URL 去重存储）
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub custom_endpoints: HashMap<String, crate::settings::CustomEndpoint>,
+    /// 是否在写入 live 时应用通用配置片段
+    #[serde(
+        rename = "commonConfigEnabled",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub common_config_enabled: Option<bool>,
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,
@@ -233,8 +239,17 @@ pub struct ProviderMeta {
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
+    /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// Claude 认证字段名（"ANTHROPIC_AUTH_TOKEN" 或 "ANTHROPIC_API_KEY"）
+    #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
+    pub api_key_field: Option<String>,
+    /// Prompt cache key for OpenAI-compatible endpoints.
+    /// When set, injected into converted requests to improve cache hit rate.
+    /// If not set, provider ID is used automatically during format conversion.
+    #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
 }
 
 impl ProviderManager {

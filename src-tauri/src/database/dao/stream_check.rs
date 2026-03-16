@@ -48,6 +48,23 @@ impl Database {
         }
     }
 
+    /// Delete stream check logs older than `retain_days` days.
+    /// Returns the number of deleted rows.
+    pub fn cleanup_old_stream_check_logs(&self, retain_days: i64) -> Result<u64, AppError> {
+        let cutoff = chrono::Utc::now().timestamp() - retain_days * 86400;
+        let conn = lock_conn!(self.conn);
+        let deleted = conn
+            .execute(
+                "DELETE FROM stream_check_logs WHERE tested_at < ?1",
+                [cutoff],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if deleted > 0 {
+            log::info!("Cleaned up {deleted} stream_check_logs older than {retain_days} days");
+        }
+        Ok(deleted as u64)
+    }
+
     /// 保存流式检查配置
     pub fn save_stream_check_config(&self, config: &StreamCheckConfig) -> Result<(), AppError> {
         let json = serde_json::to_string(config)
