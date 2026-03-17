@@ -30,8 +30,8 @@ pub use live::{
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
-    strip_common_config_from_live_settings, sync_current_provider_for_app_to_live,
-    write_live_with_common_config,
+    strip_common_config_from_live_settings, sync_all_claude_instance_dirs,
+    sync_current_provider_for_app_to_live, write_live_with_common_config,
 };
 
 // Internal re-exports
@@ -177,17 +177,10 @@ impl ProviderService {
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
-        // Create/update instance directory for multi-instance support (Claude only)
+        // Sync all Claude instance directories (create missing ones with symlinks too)
         if matches!(app_type, AppType::Claude) {
-            let effective = build_effective_settings_with_common_config(
-                state.db.as_ref(),
-                &app_type,
-                &provider,
-            )
-            .unwrap_or_else(|_| provider.settings_config.clone());
-            let settings = instance::sanitize_for_instance(&effective);
-            if let Err(e) = instance::ensure_instance_dir(&provider.id, &settings) {
-                log::warn!("Failed to create instance dir for '{}': {e}", provider.id);
+            if let Err(e) = sync_all_claude_instance_dirs(state) {
+                log::warn!("Failed to sync Claude instance dirs after add: {e}");
             }
         }
 
@@ -233,17 +226,10 @@ impl ProviderService {
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
-        // Sync instance directory settings for multi-instance support (Claude only)
+        // Sync all Claude instance directories (create missing ones with symlinks too)
         if matches!(app_type, AppType::Claude) {
-            let effective = build_effective_settings_with_common_config(
-                state.db.as_ref(),
-                &app_type,
-                &provider,
-            )
-            .unwrap_or_else(|_| provider.settings_config.clone());
-            let settings = instance::sanitize_for_instance(&effective);
-            if let Err(e) = instance::sync_instance_settings(&provider.id, &settings) {
-                log::warn!("Failed to sync instance dir for '{}': {e}", provider.id);
+            if let Err(e) = sync_all_claude_instance_dirs(state) {
+                log::warn!("Failed to sync Claude instance dirs after update: {e}");
             }
         }
 
