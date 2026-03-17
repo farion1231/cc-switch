@@ -814,19 +814,20 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     if app_type.is_additive_mode() {
         sync_all_providers_to_live(state, app_type)?;
     } else {
-        let current_id = match crate::settings::get_effective_current_provider(&state.db, app_type)?
-        {
-            Some(id) => id,
-            None => return Ok(()),
-        };
+        let current_id =
+            crate::settings::get_effective_current_provider(&state.db, app_type)?;
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
-        if let Some(provider) = providers.get(&current_id) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+
+        if let Some(current_id) = current_id {
+            if let Some(provider) = providers.get(&current_id) {
+                write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            }
         }
 
-        // For Claude, also refresh all instance directories with the updated common config.
-        // Use ensure_instance_dir so missing directories (and their symlinks) are created too.
+        // For Claude, refresh all instance directories regardless of whether a
+        // current provider is set. Use ensure_instance_dir so missing directories
+        // (and their symlinks) are created too.
         if matches!(app_type, AppType::Claude) {
             for (id, p) in &providers {
                 let effective = build_effective_settings_with_common_config(
