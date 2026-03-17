@@ -122,22 +122,24 @@ export function ClaudeFormFields({
   onApiKeyFieldChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
-  const hasAnyModelValue = !!(
+  const hasAnyAdvancedValue = !!(
     claudeModel ||
     reasoningModel ||
     defaultHaikuModel ||
     defaultSonnetModel ||
-    defaultOpusModel
+    defaultOpusModel ||
+    apiFormat !== "anthropic" ||
+    apiKeyField !== "ANTHROPIC_AUTH_TOKEN"
   );
-  const [modelSectionExpanded, setModelSectionExpanded] =
-    useState(hasAnyModelValue);
+  const [advancedExpanded, setAdvancedExpanded] =
+    useState(hasAnyAdvancedValue);
 
-  // 预设填充模型值后自动展开（仅从折叠→展开，不会自动折叠）
+  // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
-    if (hasAnyModelValue) {
-      setModelSectionExpanded(true);
+    if (hasAnyAdvancedValue) {
+      setAdvancedExpanded(true);
     }
-  }, [hasAnyModelValue]);
+  }, [hasAnyAdvancedValue]);
 
   return (
     <>
@@ -224,81 +226,11 @@ export function ClaudeFormFields({
         />
       )}
 
-      {/* API 格式选择（仅非官方、非云服务商显示） */}
-      {shouldShowModelSelector && category !== "cloud_provider" && (
-        <div className="space-y-2">
-          <FormLabel htmlFor="apiFormat">
-            {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
-          </FormLabel>
-          <Select value={apiFormat} onValueChange={onApiFormatChange}>
-            <SelectTrigger id="apiFormat" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="anthropic">
-                {t("providerForm.apiFormatAnthropic", {
-                  defaultValue: "Anthropic Messages (原生)",
-                })}
-              </SelectItem>
-              <SelectItem value="openai_chat">
-                {t("providerForm.apiFormatOpenAIChat", {
-                  defaultValue: "OpenAI Chat Completions (需转换)",
-                })}
-              </SelectItem>
-              <SelectItem value="openai_responses">
-                {t("providerForm.apiFormatOpenAIResponses", {
-                  defaultValue: "OpenAI Responses API (需转换)",
-                })}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            {t("providerForm.apiFormatHint", {
-              defaultValue: "选择供应商 API 的输入格式",
-            })}
-          </p>
-        </div>
-      )}
-
-      {/* 认证字段选择器 */}
-      {shouldShowModelSelector && (
-        <div className="space-y-2">
-          <FormLabel>
-            {t("providerForm.authField", { defaultValue: "认证字段" })}
-          </FormLabel>
-          <Select
-            value={apiKeyField}
-            onValueChange={(v) => onApiKeyFieldChange(v as ClaudeApiKeyField)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ANTHROPIC_AUTH_TOKEN">
-                {t("providerForm.authFieldAuthToken", {
-                  defaultValue: "ANTHROPIC_AUTH_TOKEN（默认）",
-                })}
-              </SelectItem>
-              <SelectItem value="ANTHROPIC_API_KEY">
-                {t("providerForm.authFieldApiKey", {
-                  defaultValue: "ANTHROPIC_API_KEY",
-                })}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            {t("providerForm.authFieldHint", {
-              defaultValue: "选择写入配置的认证环境变量名",
-            })}
-          </p>
-        </div>
-      )}
-
-      {/* 模型选择器（折叠） */}
+      {/* 高级选项（API 格式 + 认证字段 + 模型映射） */}
       {shouldShowModelSelector && (
         <Collapsible
-          open={modelSectionExpanded}
-          onOpenChange={setModelSectionExpanded}
+          open={advancedExpanded}
+          onOpenChange={setAdvancedExpanded}
         >
           <CollapsibleTrigger asChild>
             <Button
@@ -307,20 +239,97 @@ export function ClaudeFormFields({
               size="sm"
               className="h-8 gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
             >
-              {modelSectionExpanded ? (
+              {advancedExpanded ? (
                 <ChevronDown className="h-4 w-4" />
               ) : (
                 <ChevronRight className="h-4 w-4" />
               )}
-              {t("providerForm.modelMappingToggle")}
+              {t("providerForm.advancedOptionsToggle")}
             </Button>
           </CollapsibleTrigger>
-          {!modelSectionExpanded && (
+          {!advancedExpanded && (
             <p className="text-xs text-muted-foreground mt-1 ml-1">
-              {t("providerForm.modelMappingCollapsedHint")}
+              {t("providerForm.advancedOptionsHint")}
             </p>
           )}
-          <CollapsibleContent className="space-y-3 pt-2">
+          <CollapsibleContent className="space-y-4 pt-2">
+            {/* API 格式选择（仅非云服务商显示） */}
+            {category !== "cloud_provider" && (
+              <div className="space-y-2">
+                <FormLabel htmlFor="apiFormat">
+                  {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+                </FormLabel>
+                <Select value={apiFormat} onValueChange={onApiFormatChange}>
+                  <SelectTrigger id="apiFormat" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="anthropic">
+                      {t("providerForm.apiFormatAnthropic", {
+                        defaultValue: "Anthropic Messages (原生)",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="openai_chat">
+                      {t("providerForm.apiFormatOpenAIChat", {
+                        defaultValue: "OpenAI Chat Completions (需转换)",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="openai_responses">
+                      {t("providerForm.apiFormatOpenAIResponses", {
+                        defaultValue: "OpenAI Responses API (需转换)",
+                      })}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {t("providerForm.apiFormatHint", {
+                    defaultValue: "选择供应商 API 的输入格式",
+                  })}
+                </p>
+              </div>
+            )}
+
+            {/* 认证字段选择器 */}
+            <div className="space-y-2">
+              <FormLabel>
+                {t("providerForm.authField", { defaultValue: "认证字段" })}
+              </FormLabel>
+              <Select
+                value={apiKeyField}
+                onValueChange={(v) =>
+                  onApiKeyFieldChange(v as ClaudeApiKeyField)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ANTHROPIC_AUTH_TOKEN">
+                    {t("providerForm.authFieldAuthToken", {
+                      defaultValue: "ANTHROPIC_AUTH_TOKEN（默认）",
+                    })}
+                  </SelectItem>
+                  <SelectItem value="ANTHROPIC_API_KEY">
+                    {t("providerForm.authFieldApiKey", {
+                      defaultValue: "ANTHROPIC_API_KEY",
+                    })}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.authFieldHint", {
+                  defaultValue: "选择写入配置的认证环境变量名",
+                })}
+              </p>
+            </div>
+
+            {/* 模型映射 */}
+            <div className="space-y-1 pt-2 border-t">
+              <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.modelMappingHint")}
+              </p>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* 主模型 */}
               <div className="space-y-2">
@@ -431,12 +440,6 @@ export function ClaudeFormFields({
                 />
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {t("providerForm.modelHelper", {
-                defaultValue:
-                  "可选：指定默认使用的 Claude 模型，留空则使用系统默认。",
-              })}
-            </p>
           </CollapsibleContent>
         </Collapsible>
       )}
