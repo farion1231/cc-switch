@@ -832,7 +832,10 @@
     "saveFailed": "保存に失敗しました: {{error}}",
     "modelNameHint": "使用するモデルを指定します。config.toml に自動更新されます",
     "modelName": "モデル名",
-    "modelNamePlaceholder": "例: gpt-5-codex"
+    "modelNamePlaceholder": "例: gpt-5-codex",
+    "contextWindow1M": "1M コンテキストウィンドウ",
+    "autoCompactLimit": "自動圧縮しきい値",
+    "autoCompactLimitHint": "コンテキストトークン数がこのしきい値に達すると履歴を自動圧縮"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
