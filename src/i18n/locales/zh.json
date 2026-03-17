@@ -757,6 +757,8 @@
     "smallModelPlaceholder": "",
     "haikuModelPlaceholder": "",
     "modelHelper": "可选：指定默认使用的 Claude 模型，留空则使用系统默认。",
+    "modelMappingToggle": "模型映射（高级）",
+    "modelMappingCollapsedHint": "如果供应商原生提供 Claude 系列模型，通常无需配置。仅在需要将请求映射到不同模型名称时展开填写。",
     "categoryOfficial": "官方",
     "categoryCnOfficial": "开源官方",
     "categoryAggregation": "聚合服务",

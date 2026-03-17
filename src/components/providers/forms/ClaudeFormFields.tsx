@@ -1,4 +1,11 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
@@ -8,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField } from "./shared";
 import type {
@@ -114,6 +122,22 @@ export function ClaudeFormFields({
   onApiKeyFieldChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
+  const hasAnyModelValue = !!(
+    claudeModel ||
+    reasoningModel ||
+    defaultHaikuModel ||
+    defaultSonnetModel ||
+    defaultOpusModel
+  );
+  const [modelSectionExpanded, setModelSectionExpanded] =
+    useState(hasAnyModelValue);
+
+  // 预设填充模型值后自动展开（仅从折叠→展开，不会自动折叠）
+  useEffect(() => {
+    if (hasAnyModelValue) {
+      setModelSectionExpanded(true);
+    }
+  }, [hasAnyModelValue]);
 
   return (
     <>
@@ -270,118 +294,151 @@ export function ClaudeFormFields({
         </div>
       )}
 
-      {/* 模型选择器 */}
+      {/* 模型选择器（折叠） */}
       {shouldShowModelSelector && (
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* 主模型 */}
-            <div className="space-y-2">
-              <FormLabel htmlFor="claudeModel">
-                {t("providerForm.anthropicModel", { defaultValue: "主模型" })}
-              </FormLabel>
-              <Input
-                id="claudeModel"
-                type="text"
-                value={claudeModel}
-                onChange={(e) =>
-                  onModelChange("ANTHROPIC_MODEL", e.target.value)
-                }
-                placeholder={t("providerForm.modelPlaceholder", {
-                  defaultValue: "",
-                })}
-                autoComplete="off"
-              />
-            </div>
+        <Collapsible
+          open={modelSectionExpanded}
+          onOpenChange={setModelSectionExpanded}
+        >
+          <CollapsibleTrigger asChild>
+            <Button
+              type="button"
+              variant={null}
+              size="sm"
+              className="h-8 gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
+            >
+              {modelSectionExpanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+              {t("providerForm.modelMappingToggle")}
+            </Button>
+          </CollapsibleTrigger>
+          {!modelSectionExpanded && (
+            <p className="text-xs text-muted-foreground mt-1 ml-1">
+              {t("providerForm.modelMappingCollapsedHint")}
+            </p>
+          )}
+          <CollapsibleContent className="space-y-3 pt-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* 主模型 */}
+              <div className="space-y-2">
+                <FormLabel htmlFor="claudeModel">
+                  {t("providerForm.anthropicModel", {
+                    defaultValue: "主模型",
+                  })}
+                </FormLabel>
+                <Input
+                  id="claudeModel"
+                  type="text"
+                  value={claudeModel}
+                  onChange={(e) =>
+                    onModelChange("ANTHROPIC_MODEL", e.target.value)
+                  }
+                  placeholder={t("providerForm.modelPlaceholder", {
+                    defaultValue: "",
+                  })}
+                  autoComplete="off"
+                />
+              </div>
 
-            {/* 推理模型 */}
-            <div className="space-y-2">
-              <FormLabel htmlFor="reasoningModel">
-                {t("providerForm.anthropicReasoningModel")}
-              </FormLabel>
-              <Input
-                id="reasoningModel"
-                type="text"
-                value={reasoningModel}
-                onChange={(e) =>
-                  onModelChange("ANTHROPIC_REASONING_MODEL", e.target.value)
-                }
-                autoComplete="off"
-              />
-            </div>
+              {/* 推理模型 */}
+              <div className="space-y-2">
+                <FormLabel htmlFor="reasoningModel">
+                  {t("providerForm.anthropicReasoningModel")}
+                </FormLabel>
+                <Input
+                  id="reasoningModel"
+                  type="text"
+                  value={reasoningModel}
+                  onChange={(e) =>
+                    onModelChange("ANTHROPIC_REASONING_MODEL", e.target.value)
+                  }
+                  autoComplete="off"
+                />
+              </div>
 
-            {/* 默认 Haiku */}
-            <div className="space-y-2">
-              <FormLabel htmlFor="claudeDefaultHaikuModel">
-                {t("providerForm.anthropicDefaultHaikuModel", {
-                  defaultValue: "Haiku 默认模型",
-                })}
-              </FormLabel>
-              <Input
-                id="claudeDefaultHaikuModel"
-                type="text"
-                value={defaultHaikuModel}
-                onChange={(e) =>
-                  onModelChange("ANTHROPIC_DEFAULT_HAIKU_MODEL", e.target.value)
-                }
-                placeholder={t("providerForm.haikuModelPlaceholder", {
-                  defaultValue: "",
-                })}
-                autoComplete="off"
-              />
-            </div>
+              {/* 默认 Haiku */}
+              <div className="space-y-2">
+                <FormLabel htmlFor="claudeDefaultHaikuModel">
+                  {t("providerForm.anthropicDefaultHaikuModel", {
+                    defaultValue: "Haiku 默认模型",
+                  })}
+                </FormLabel>
+                <Input
+                  id="claudeDefaultHaikuModel"
+                  type="text"
+                  value={defaultHaikuModel}
+                  onChange={(e) =>
+                    onModelChange(
+                      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                      e.target.value,
+                    )
+                  }
+                  placeholder={t("providerForm.haikuModelPlaceholder", {
+                    defaultValue: "",
+                  })}
+                  autoComplete="off"
+                />
+              </div>
 
-            {/* 默认 Sonnet */}
-            <div className="space-y-2">
-              <FormLabel htmlFor="claudeDefaultSonnetModel">
-                {t("providerForm.anthropicDefaultSonnetModel", {
-                  defaultValue: "Sonnet 默认模型",
-                })}
-              </FormLabel>
-              <Input
-                id="claudeDefaultSonnetModel"
-                type="text"
-                value={defaultSonnetModel}
-                onChange={(e) =>
-                  onModelChange(
-                    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                    e.target.value,
-                  )
-                }
-                placeholder={t("providerForm.modelPlaceholder", {
-                  defaultValue: "",
-                })}
-                autoComplete="off"
-              />
-            </div>
+              {/* 默认 Sonnet */}
+              <div className="space-y-2">
+                <FormLabel htmlFor="claudeDefaultSonnetModel">
+                  {t("providerForm.anthropicDefaultSonnetModel", {
+                    defaultValue: "Sonnet 默认模型",
+                  })}
+                </FormLabel>
+                <Input
+                  id="claudeDefaultSonnetModel"
+                  type="text"
+                  value={defaultSonnetModel}
+                  onChange={(e) =>
+                    onModelChange(
+                      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                      e.target.value,
+                    )
+                  }
+                  placeholder={t("providerForm.modelPlaceholder", {
+                    defaultValue: "",
+                  })}
+                  autoComplete="off"
+                />
+              </div>
 
-            {/* 默认 Opus */}
-            <div className="space-y-2">
-              <FormLabel htmlFor="claudeDefaultOpusModel">
-                {t("providerForm.anthropicDefaultOpusModel", {
-                  defaultValue: "Opus 默认模型",
-                })}
-              </FormLabel>
-              <Input
-                id="claudeDefaultOpusModel"
-                type="text"
-                value={defaultOpusModel}
-                onChange={(e) =>
-                  onModelChange("ANTHROPIC_DEFAULT_OPUS_MODEL", e.target.value)
-                }
-                placeholder={t("providerForm.modelPlaceholder", {
-                  defaultValue: "",
-                })}
-                autoComplete="off"
-              />
+              {/* 默认 Opus */}
+              <div className="space-y-2">
+                <FormLabel htmlFor="claudeDefaultOpusModel">
+                  {t("providerForm.anthropicDefaultOpusModel", {
+                    defaultValue: "Opus 默认模型",
+                  })}
+                </FormLabel>
+                <Input
+                  id="claudeDefaultOpusModel"
+                  type="text"
+                  value={defaultOpusModel}
+                  onChange={(e) =>
+                    onModelChange(
+                      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                      e.target.value,
+                    )
+                  }
+                  placeholder={t("providerForm.modelPlaceholder", {
+                    defaultValue: "",
+                  })}
+                  autoComplete="off"
+                />
+              </div>
             </div>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {t("providerForm.modelHelper", {
-              defaultValue:
-                "可选：指定默认使用的 Claude 模型，留空则使用系统默认。",
-            })}
-          </p>
-        </div>
+            <p className="text-xs text-muted-foreground">
+              {t("providerForm.modelHelper", {
+                defaultValue:
+                  "可选：指定默认使用的 Claude 模型，留空则使用系统默认。",
+              })}
+            </p>
+          </CollapsibleContent>
+        </Collapsible>
       )}
     </>
   );

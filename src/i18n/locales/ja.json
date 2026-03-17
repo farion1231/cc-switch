@@ -757,6 +757,8 @@
     "smallModelPlaceholder": "",
     "haikuModelPlaceholder": "",
     "modelHelper": "任意: 既定で使いたい Claude モデルを指定。空欄ならシステム既定を使用します。",
+    "modelMappingToggle": "モデルマッピング（上級）",
+    "modelMappingCollapsedHint": "プロバイダーが Claude モデルをネイティブ提供している場合、通常は設定不要です。リクエストを別のモデル名にマッピングする場合のみ展開してください。",
     "categoryOfficial": "公式",
     "categoryCnOfficial": "オープンソース公式",
     "categoryAggregation": "アグリゲーター",
