@@ -64,7 +64,8 @@
     "saveFailed": "保存に失敗しました: {{error}}",
     "hideAttribution": "AI署名を非表示",
     "alwaysThinking": "拡張思考",
-    "enableTeammates": "Teammates モード"
+    "enableTeammates": "Teammates モード",
+    "enableToolSearch": "Tool Search を有効化"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",
@@ -166,8 +167,6 @@
     "syncClaudePluginFailed": "Claude プラグインとの同期に失敗しました",
     "skipClaudeOnboardingFailed": "Claude Code の初回確認スキップに失敗しました",
     "clearClaudeOnboardingSkipFailed": "Claude Code の初回確認の復元に失敗しました",
-    "toolSearchPatchFailed": "Tool Search パッチの適用に失敗しました",
-    "toolSearchRestoreFailed": "Tool Search パッチの復元に失敗しました",
     "updateSuccess": "プロバイダーを更新しました",
     "updateFailed": "プロバイダーの更新に失敗しました: {{error}}",
     "deleteSuccess": "プロバイダーを削除しました",
@@ -465,8 +464,6 @@
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "オンにすると Claude Code の初回インストール確認をスキップします",
-    "toolSearchBypass": "Tool Search ドメイン制限を解除",
-    "toolSearchBypassDescription": "現在アクティブな Claude Code インストールの Tool Search ドメインホワイトリスト制限を解除します。そのインストールの更新後は自動で再適用されます",
     "appVisibility": {
       "title": "ホームページ表示",
       "description": "ホームページに表示するアプリを選択",

@@ -25,7 +25,7 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
-mod toolsearch_patch;
+
 mod tray;
 mod usage_script;
 
@@ -806,26 +806,6 @@ pub fn run() {
                 }
             }
 
-            // Tool Search bypass: auto-apply patch on startup if enabled
-            if settings.tool_search_bypass {
-                match crate::toolsearch_patch::apply_toolsearch_patch() {
-                    Ok(results) => {
-                        let success = results.iter().filter(|r| r.success).count();
-                        let total = results.len();
-                        if success > 0 {
-                            log::info!("✓ Tool Search patch auto-applied ({success}/{total})");
-                        }
-                        for r in results.iter().filter(|r| !r.success) {
-                            if let Some(err) = &r.error {
-                                log::warn!("✗ Tool Search patch failed for {}: {err}", r.path);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("✗ Tool Search auto-patch skipped: {e}");
-                    }
-                }
-            }
 
             Ok(())
         })
@@ -873,10 +853,6 @@ pub fn run() {
             commands::is_claude_plugin_applied,
             commands::apply_claude_onboarding_skip,
             commands::clear_claude_onboarding_skip,
-            // Tool Search patch
-            commands::check_toolsearch_status,
-            commands::apply_toolsearch_patch,
-            commands::restore_toolsearch_patch,
             // Claude MCP management
             commands::get_claude_mcp_status,
             commands::read_claude_mcp_config,

@@ -1607,7 +1607,9 @@ export function ProviderForm({
             <Button variant="outline" type="button" onClick={onCancel}>
               {t("common.cancel")}
             </Button>
-            <Button type="submit" disabled={isSubmitting}>{submitLabel}</Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {submitLabel}
+            </Button>
           </div>
         )}
       </form>

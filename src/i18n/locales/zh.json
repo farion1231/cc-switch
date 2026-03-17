@@ -64,7 +64,8 @@
     "saveFailed": "保存失败: {{error}}",
     "hideAttribution": "隐藏 AI 署名",
     "alwaysThinking": "扩展思考",
-    "enableTeammates": "Teammates 模式"
+    "enableTeammates": "Teammates 模式",
+    "enableToolSearch": "启用 Tool Search"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
@@ -166,8 +167,6 @@
     "syncClaudePluginFailed": "同步 Claude 插件失败",
     "skipClaudeOnboardingFailed": "跳过 Claude Code 初次安装确认失败",
     "clearClaudeOnboardingSkipFailed": "恢复 Claude Code 初次安装确认失败",
-    "toolSearchPatchFailed": "Tool Search 补丁操作失败",
-    "toolSearchRestoreFailed": "Tool Search 恢复操作失败",
     "updateSuccess": "供应商更新成功",
     "updateFailed": "更新供应商失败：{{error}}",
     "deleteSuccess": "供应商已删除",
@@ -465,8 +464,6 @@
     "enableClaudePluginIntegrationDescription": "开启后 Vscode Claude Code 插件的供应商将随本软件切换",
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
     "skipClaudeOnboardingDescription": "开启后跳过 Claude Code 初次安装确认",
-    "toolSearchBypass": "解除 Tool Search 域名限制",
-    "toolSearchBypassDescription": "解除当前活跃 Claude Code 安装的 Tool Search 域名白名单限制。该安装更新后会自动重新应用",
     "appVisibility": {
       "title": "主页面显示",
       "description": "选择在主页面显示的应用",

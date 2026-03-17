@@ -86,18 +86,6 @@ export const settingsApi = {
     return await invoke("clear_claude_onboarding_skip");
   },
 
-  async applyToolSearchPatch(): Promise<
-    Array<{ path: string; success: boolean; error?: string }>
-  > {
-    return await invoke("apply_toolsearch_patch");
-  },
-
-  async restoreToolSearchPatch(): Promise<
-    Array<{ path: string; success: boolean; error?: string }>
-  > {
-    return await invoke("restore_toolsearch_patch");
-  },
-
   async saveFileDialog(defaultName: string): Promise<string | null> {
     return await invoke("save_file_dialog", { defaultName });
   },
