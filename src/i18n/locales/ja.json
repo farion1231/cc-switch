@@ -65,7 +65,8 @@
     "hideAttribution": "AI署名を非表示",
     "alwaysThinking": "拡張思考",
     "enableTeammates": "Teammates モード",
-    "enableToolSearch": "Tool Search を有効化"
+    "enableToolSearch": "Tool Search を有効化",
+    "effortHigh": "高強度思考"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",

@@ -65,7 +65,8 @@
     "hideAttribution": "Hide AI Attribution",
     "alwaysThinking": "Extended Thinking",
     "enableTeammates": "Teammates Mode",
-    "enableToolSearch": "Enable Tool Search"
+    "enableToolSearch": "Enable Tool Search",
+    "effortHigh": "High Effort Thinking"
   },
   "header": {
     "viewOnGithub": "View on GitHub",

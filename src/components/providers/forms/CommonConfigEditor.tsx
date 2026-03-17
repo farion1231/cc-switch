@@ -82,6 +82,7 @@ export function CommonConfigEditor({
         enableToolSearch:
           config?.env?.ENABLE_TOOL_SEARCH === "true" ||
           config?.env?.ENABLE_TOOL_SEARCH === "1",
+        effortHigh: config?.effortLevel === "high",
       };
     } catch {
       return {
@@ -89,6 +90,7 @@ export function CommonConfigEditor({
         alwaysThinking: false,
         teammates: false,
         enableToolSearch: false,
+        effortHigh: false,
       };
     }
   }, [localValue]);
@@ -129,6 +131,13 @@ export function CommonConfigEditor({
             } else {
               delete config.env.ENABLE_TOOL_SEARCH;
               if (Object.keys(config.env).length === 0) delete config.env;
+            }
+            break;
+          case "effortHigh":
+            if (checked) {
+              config.effortLevel = "high";
+            } else {
+              delete config.effortLevel;
             }
             break;
         }
@@ -219,6 +228,15 @@ export function CommonConfigEditor({
               className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
             />
             <span>{t("claudeConfig.enableToolSearch")}</span>
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={toggleStates.effortHigh}
+              onChange={(e) => handleToggle("effortHigh", e.target.checked)}
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            <span>{t("claudeConfig.effortHigh")}</span>
           </label>
         </div>
         <JsonEditor
