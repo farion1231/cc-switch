@@ -91,16 +91,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
 
   // 渲染账号头像
   const renderAvatar = (account: GitHubAccount) => {
-    if (account.avatar_url) {
-      return (
-        <img
-          src={account.avatar_url}
-          alt={account.login}
-          className="h-5 w-5 rounded-full"
-        />
-      );
-    }
-    return <User className="h-5 w-5 text-muted-foreground" />;
+    return <CopilotAccountAvatar account={account} />;
   };
 
   return (
@@ -349,6 +340,27 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
         </Button>
       )}
     </div>
+  );
+};
+
+const CopilotAccountAvatar: React.FC<{ account: GitHubAccount }> = ({
+  account,
+}) => {
+  const [failed, setFailed] = React.useState(false);
+
+  if (!account.avatar_url || failed) {
+    return <User className="h-5 w-5 text-muted-foreground" />;
+  }
+
+  return (
+    <img
+      src={account.avatar_url}
+      alt={account.login}
+      className="h-5 w-5 rounded-full"
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+    />
   );
 };
 
