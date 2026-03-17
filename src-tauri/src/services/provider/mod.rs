@@ -179,7 +179,13 @@ impl ProviderService {
 
         // Create/update instance directory for multi-instance support (Claude only)
         if matches!(app_type, AppType::Claude) {
-            let settings = instance::sanitize_for_instance(&provider.settings_config);
+            let effective = build_effective_settings_with_common_config(
+                state.db.as_ref(),
+                &app_type,
+                &provider,
+            )
+            .unwrap_or_else(|_| provider.settings_config.clone());
+            let settings = instance::sanitize_for_instance(&effective);
             if let Err(e) = instance::ensure_instance_dir(&provider.id, &settings) {
                 log::warn!("Failed to create instance dir for '{}': {e}", provider.id);
             }
@@ -229,7 +235,13 @@ impl ProviderService {
 
         // Sync instance directory settings for multi-instance support (Claude only)
         if matches!(app_type, AppType::Claude) {
-            let settings = instance::sanitize_for_instance(&provider.settings_config);
+            let effective = build_effective_settings_with_common_config(
+                state.db.as_ref(),
+                &app_type,
+                &provider,
+            )
+            .unwrap_or_else(|_| provider.settings_config.clone());
+            let settings = instance::sanitize_for_instance(&effective);
             if let Err(e) = instance::sync_instance_settings(&provider.id, &settings) {
                 log::warn!("Failed to sync instance dir for '{}': {e}", provider.id);
             }

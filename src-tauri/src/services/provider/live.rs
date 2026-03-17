@@ -824,6 +824,23 @@ pub(crate) fn sync_current_provider_for_app_to_live(
         if let Some(provider) = providers.get(&current_id) {
             write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
         }
+
+        // For Claude, also refresh all instance directories with the updated common config.
+        // Use ensure_instance_dir so missing directories (and their symlinks) are created too.
+        if matches!(app_type, AppType::Claude) {
+            for (id, p) in &providers {
+                let effective = build_effective_settings_with_common_config(
+                    state.db.as_ref(),
+                    app_type,
+                    p,
+                )
+                .unwrap_or_else(|_| p.settings_config.clone());
+                let settings = super::instance::sanitize_for_instance(&effective);
+                if let Err(e) = super::instance::ensure_instance_dir(id, &settings) {
+                    log::warn!("Failed to refresh instance dir for '{id}' after common config update: {e}");
+                }
+            }
+        }
     }
 
     McpService::sync_all_enabled(state)?;
@@ -864,15 +881,21 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     // MCP sync
     McpService::sync_all_enabled(state)?;
 
-    // Sync all Claude instance directories (for multi-instance support)
+    // Sync all Claude instance directories (for multi-instance support).
+    // Use ensure_instance_dir so missing directories (and their symlinks) are created too.
     match state.db.get_all_providers(AppType::Claude.as_str()) {
         Ok(providers) => {
-            let pairs: Vec<(&str, serde_json::Value)> = providers
-                .iter()
-                .map(|(id, p)| (id.as_str(), super::instance::sanitize_for_instance(&p.settings_config)))
-                .collect();
-            if let Err(e) = super::instance::sync_all_instances(&pairs) {
-                log::warn!("Failed to sync instance directories: {e}");
+            for (id, p) in &providers {
+                let effective = build_effective_settings_with_common_config(
+                    state.db.as_ref(),
+                    &AppType::Claude,
+                    p,
+                )
+                .unwrap_or_else(|_| p.settings_config.clone());
+                let settings = super::instance::sanitize_for_instance(&effective);
+                if let Err(e) = super::instance::ensure_instance_dir(id, &settings) {
+                    log::warn!("Failed to sync instance dir for '{id}': {e}");
+                }
             }
         }
         Err(e) => log::warn!("Failed to fetch Claude providers for instance sync: {e}"),
