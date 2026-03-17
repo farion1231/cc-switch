@@ -63,7 +63,6 @@
     "extractFailed": "提取失败: {{error}}",
     "saveFailed": "保存失败: {{error}}",
     "hideAttribution": "隐藏 AI 署名",
-    "alwaysThinking": "扩展思考",
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "启用 Tool Search",
     "effortHigh": "高强度思考"

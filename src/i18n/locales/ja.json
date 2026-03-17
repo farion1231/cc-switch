@@ -63,7 +63,6 @@
     "extractFailed": "抽出に失敗しました: {{error}}",
     "saveFailed": "保存に失敗しました: {{error}}",
     "hideAttribution": "AI署名を非表示",
-    "alwaysThinking": "拡張思考",
     "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
     "effortHigh": "高強度思考"

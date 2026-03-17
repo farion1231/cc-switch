@@ -75,7 +75,6 @@ export function CommonConfigEditor({
       return {
         hideAttribution:
           config?.attribution?.commit === "" && config?.attribution?.pr === "",
-        alwaysThinking: config?.alwaysThinkingEnabled === true,
         teammates:
           config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === "1" ||
           config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === 1,
@@ -87,7 +86,6 @@ export function CommonConfigEditor({
     } catch {
       return {
         hideAttribution: false,
-        alwaysThinking: false,
         teammates: false,
         enableToolSearch: false,
         effortHigh: false,
@@ -106,13 +104,6 @@ export function CommonConfigEditor({
               config.attribution = { commit: "", pr: "" };
             } else {
               delete config.attribution;
-            }
-            break;
-          case "alwaysThinking":
-            if (checked) {
-              config.alwaysThinkingEnabled = true;
-            } else {
-              delete config.alwaysThinkingEnabled;
             }
             break;
           case "teammates":
@@ -199,15 +190,6 @@ export function CommonConfigEditor({
               className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
             />
             <span>{t("claudeConfig.hideAttribution")}</span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <input
-              type="checkbox"
-              checked={toggleStates.alwaysThinking}
-              onChange={(e) => handleToggle("alwaysThinking", e.target.checked)}
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            <span>{t("claudeConfig.alwaysThinking")}</span>
           </label>
           <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <input
