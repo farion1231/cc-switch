@@ -42,16 +42,6 @@ pub fn ensure_instance_dir(provider_id: &str, settings: &Value) -> Result<(), Ap
     )
 }
 
-/// Update `settings.json` inside an existing instance directory.
-pub fn sync_instance_settings(provider_id: &str, settings: &Value) -> Result<(), AppError> {
-    sync_instance_settings_with_paths(
-        provider_id,
-        settings,
-        &get_claude_config_dir(),
-        &get_instances_root(),
-    )
-}
-
 /// Delete the instance directory for `provider_id`.
 pub fn remove_instance_dir(provider_id: &str) -> Result<(), AppError> {
     remove_instance_dir_with_paths(provider_id, &get_instances_root())
@@ -139,30 +129,6 @@ pub(crate) fn ensure_instance_dir_with_paths(
         }
     }
 
-    Ok(())
-}
-
-/// Update `settings.json` inside `<instance_root>/<provider_id>`.
-///
-/// Falls back to a full `ensure_instance_dir_with_paths` if the directory
-/// does not yet exist. `claude_dir` is used only in that fallback case.
-pub(crate) fn sync_instance_settings_with_paths(
-    provider_id: &str,
-    settings: &Value,
-    claude_dir: &Path,
-    instance_root: &Path,
-) -> Result<(), AppError> {
-    let instance_dir = instance_root.join(provider_id);
-    if !instance_dir.exists() {
-        return ensure_instance_dir_with_paths(provider_id, settings, claude_dir, instance_root);
-    }
-
-    // Sanitize before writing (same as ensure_instance_dir_with_paths)
-    let sanitized = super::live::sanitize_claude_settings_for_live(settings);
-    let settings_path = instance_dir.join("settings.json");
-    let json = serde_json::to_string_pretty(&sanitized)
-        .map_err(|e| AppError::JsonSerialize { source: e })?;
-    fs::write(&settings_path, json).map_err(|e| AppError::io(&settings_path, e))?;
     Ok(())
 }
 
@@ -400,34 +366,6 @@ mod tests {
 
         let instance_dir = instance_root.join("provider-abc");
         assert!(instance_dir.exists());
-    }
-
-    #[test]
-    fn test_sync_instance_settings_updates_settings_json() {
-        let (claude_dir, cc_switch_dir) = setup_dirs();
-        let instance_root = cc_switch_dir.path().join("instances");
-
-        ensure_instance_dir_with_paths(
-            "provider-abc",
-            &serde_json::json!({"apiKey": "old"}),
-            claude_dir.path(),
-            &instance_root,
-        )
-        .unwrap();
-
-        sync_instance_settings_with_paths(
-            "provider-abc",
-            &serde_json::json!({"apiKey": "new"}),
-            claude_dir.path(),
-            &instance_root,
-        )
-        .unwrap();
-
-        let content: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(instance_root.join("provider-abc").join("settings.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(content["apiKey"], "new");
     }
 
     #[test]
