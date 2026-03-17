@@ -315,14 +315,24 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       {pollingState === "error" && error && (
         <div className="space-y-2">
           <p className="text-sm text-red-500">{error}</p>
-          <Button
-            type="button"
-            onClick={addAccount}
-            variant="outline"
-            size="sm"
-          >
-            {t("copilot.retry", "重试")}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              onClick={addAccount}
+              variant="outline"
+              size="sm"
+            >
+              {t("copilot.retry", "重试")}
+            </Button>
+            <Button
+              type="button"
+              onClick={cancelAuth}
+              variant="ghost"
+              size="sm"
+            >
+              {t("common.cancel", "取消")}
+            </Button>
+          </div>
         </div>
       )}
 
