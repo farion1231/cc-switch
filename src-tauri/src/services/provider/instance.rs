@@ -57,28 +57,6 @@ pub fn remove_instance_dir(provider_id: &str) -> Result<(), AppError> {
     remove_instance_dir_with_paths(provider_id, &get_instances_root())
 }
 
-/// Batch-sync settings for providers that already have an instance directory.
-///
-/// Providers without an existing directory are silently skipped.
-pub fn sync_all_instances(provider_settings: &[(&str, Value)]) -> Result<(), AppError> {
-    let instances_root = get_instances_root();
-    if !instances_root.exists() {
-        return Ok(());
-    }
-    let claude_dir = get_claude_config_dir();
-    for (provider_id, settings) in provider_settings {
-        let instance_dir = instances_root.join(provider_id);
-        if instance_dir.exists() {
-            sync_instance_settings_with_paths(
-                provider_id,
-                settings,
-                &claude_dir,
-                &instances_root,
-            )?;
-        }
-    }
-    Ok(())
-}
 
 /// Generate a shell aliases script for the given providers.
 pub fn export_aliases(providers: &[(String, String)]) -> String {
