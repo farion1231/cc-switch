@@ -50,6 +50,13 @@ export interface ProviderPreset {
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
   apiFormat?: "anthropic" | "openai_chat" | "openai_responses";
+
+  // 供应商类型标识（用于特殊供应商检测）
+  // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
+  providerType?: "github_copilot";
+
+  // 是否需要 OAuth 认证（而非 API Key）
+  requiresOAuth?: boolean;
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -677,6 +684,25 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     endpointCandidates: ["https://api.novita.ai/anthropic"],
     icon: "novita",
+    iconColor: "#000000",
+  },
+  {
+    name: "GitHub Copilot",
+    websiteUrl: "https://github.com/features/copilot",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.githubcopilot.com",
+        ANTHROPIC_MODEL: "claude-opus-4.6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4.6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4.6",
+      },
+    },
+    category: "third_party",
+    apiFormat: "openai_chat",
+    providerType: "github_copilot",
+    requiresOAuth: true,
+    icon: "github",
     iconColor: "#000000",
   },
   {

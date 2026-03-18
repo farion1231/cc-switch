@@ -25,7 +25,7 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
-mod toolsearch_patch;
+
 mod tray;
 mod usage_script;
 
@@ -690,6 +690,18 @@ pub fn run() {
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
+            // 初始化 CopilotAuthManager
+            {
+                use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+                use commands::CopilotAuthState;
+                use tokio::sync::RwLock;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                let copilot_auth_manager = CopilotAuthManager::new(app_config_dir);
+                app.manage(CopilotAuthState(Arc::new(RwLock::new(copilot_auth_manager))));
+                log::info!("✓ CopilotAuthManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -806,26 +818,6 @@ pub fn run() {
                 }
             }
 
-            // Tool Search bypass: auto-apply patch on startup if enabled
-            if settings.tool_search_bypass {
-                match crate::toolsearch_patch::apply_toolsearch_patch() {
-                    Ok(results) => {
-                        let success = results.iter().filter(|r| r.success).count();
-                        let total = results.len();
-                        if success > 0 {
-                            log::info!("✓ Tool Search patch auto-applied ({success}/{total})");
-                        }
-                        for r in results.iter().filter(|r| !r.success) {
-                            if let Some(err) = &r.error {
-                                log::warn!("✗ Tool Search patch failed for {}: {err}", r.path);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("✗ Tool Search auto-patch skipped: {e}");
-                    }
-                }
-            }
 
             Ok(())
         })
@@ -873,10 +865,6 @@ pub fn run() {
             commands::is_claude_plugin_applied,
             commands::apply_claude_onboarding_skip,
             commands::clear_claude_onboarding_skip,
-            // Tool Search patch
-            commands::check_toolsearch_status,
-            commands::apply_toolsearch_patch,
-            commands::restore_toolsearch_patch,
             // Claude MCP management
             commands::get_claude_mcp_status,
             commands::read_claude_mcp_config,
@@ -1056,6 +1044,31 @@ pub fn run() {
             commands::scan_local_proxies,
             // Window theme control
             commands::set_window_theme,
+            // Generic managed auth commands
+            commands::auth_start_login,
+            commands::auth_poll_for_account,
+            commands::auth_list_accounts,
+            commands::auth_get_status,
+            commands::auth_remove_account,
+            commands::auth_set_default_account,
+            commands::auth_logout,
+            // Copilot OAuth commands (multi-account support)
+            commands::copilot_start_device_flow,
+            commands::copilot_poll_for_auth,
+            commands::copilot_poll_for_account,
+            commands::copilot_list_accounts,
+            commands::copilot_remove_account,
+            commands::copilot_set_default_account,
+            commands::copilot_get_auth_status,
+            commands::copilot_logout,
+            commands::copilot_is_authenticated,
+            commands::copilot_get_token,
+            commands::copilot_get_token_for_account,
+            commands::copilot_get_models,
+            commands::copilot_get_models_for_account,
+            commands::copilot_get_usage,
+            commands::copilot_get_usage_for_account,
+            // OMO commands
             commands::read_omo_local_file,
             commands::get_current_omo_provider_id,
             commands::disable_current_omo,

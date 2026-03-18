@@ -12,6 +12,8 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::proxy::providers::transform::anthropic_to_openai;
+use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
 /// 健康状态枚举
@@ -84,13 +86,16 @@ impl StreamCheckService {
         app_type: &AppType,
         provider: &Provider,
         config: &StreamCheckConfig,
+        auth_override: Option<AuthInfo>,
     ) -> Result<StreamCheckResult, AppError> {
         // 合并供应商单独配置和全局配置
         let effective_config = Self::merge_provider_config(provider, config);
         let mut last_result = None;
 
         for attempt in 0..=effective_config.max_retries {
-            let result = Self::check_once(app_type, provider, &effective_config).await;
+            let result =
+                Self::check_once(app_type, provider, &effective_config, auth_override.clone())
+                    .await;
 
             match &result {
                 Ok(r) if r.success => {
@@ -178,6 +183,7 @@ impl StreamCheckService {
         app_type: &AppType,
         provider: &Provider,
         config: &StreamCheckConfig,
+        auth_override: Option<AuthInfo>,
     ) -> Result<StreamCheckResult, AppError> {
         let start = Instant::now();
         let adapter = get_adapter(app_type);
@@ -186,8 +192,8 @@ impl StreamCheckService {
             .extract_base_url(provider)
             .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}")))?;
 
-        let auth = adapter
-            .extract_auth(provider)
+        let auth = auth_override
+            .or_else(|| adapter.extract_auth(provider))
             .ok_or_else(|| AppError::Message("API Key not found".to_string()))?;
 
         // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
@@ -297,6 +303,7 @@ impl StreamCheckService {
         provider: &Provider,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
+        let is_github_copilot = auth.strategy == AuthStrategy::GitHubCopilot;
 
         // Detect api_format: meta.api_format > settings_config.api_format > default "anthropic"
         let api_format = provider
@@ -311,30 +318,50 @@ impl StreamCheckService {
             })
             .unwrap_or("anthropic");
 
-        let is_openai_chat = api_format == "openai_chat";
         let is_full_url = provider
             .meta
             .as_ref()
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
-        let url = Self::build_claude_stream_check_url(base, is_openai_chat, is_full_url);
+        let is_openai_chat = is_github_copilot || api_format == "openai_chat";
+        let is_openai_responses = !is_github_copilot && api_format == "openai_responses";
+        let url = Self::resolve_claude_stream_url(base, auth.strategy, api_format, is_full_url);
 
-        // Body: identical structure for minimal test (both APIs accept messages array)
-        let body = json!({
+        // Build from Anthropic-native shape first, then convert for configured targets.
+        let anthropic_body = json!({
             "model": model,
             "max_tokens": 1,
             "messages": [{ "role": "user", "content": test_prompt }],
             "stream": true
         });
+        let body = if is_openai_responses {
+            anthropic_to_responses(anthropic_body, Some(&provider.id))
+                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+        } else if is_openai_chat {
+            anthropic_to_openai(anthropic_body, Some(&provider.id))
+                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+        } else {
+            anthropic_body
+        };
 
         let mut request_builder = client.post(&url);
 
-        if is_openai_chat {
-            // OpenAI-compatible: Bearer auth + standard headers only
+        if is_github_copilot {
             request_builder = request_builder
                 .header("authorization", format!("Bearer {}", auth.api_key))
                 .header("content-type", "application/json")
-                .header("accept", "application/json");
+                .header("accept", "text/event-stream")
+                .header("accept-encoding", "identity")
+                .header("editor-version", "vscode/1.85.0")
+                .header("editor-plugin-version", "copilot/1.150.0")
+                .header("copilot-integration-id", "vscode-chat");
+        } else if is_openai_chat || is_openai_responses {
+            // OpenAI-compatible targets: Bearer auth + SSE headers only
+            request_builder = request_builder
+                .header("authorization", format!("Bearer {}", auth.api_key))
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .header("accept-encoding", "identity");
         } else {
             // Anthropic native: full Claude CLI headers
             let os_name = Self::get_os_name();
@@ -683,25 +710,37 @@ impl StreamCheckService {
         }
     }
 
-    fn build_claude_stream_check_url(
+    fn resolve_claude_stream_url(
         base_url: &str,
-        is_openai_chat: bool,
+        auth_strategy: AuthStrategy,
+        api_format: &str,
         is_full_url: bool,
     ) -> String {
         if is_full_url {
             return base_url.to_string();
         }
 
-        if is_openai_chat {
-            if base_url.ends_with("/v1") {
-                format!("{base_url}/chat/completions")
+        let base = base_url.trim_end_matches('/');
+        let is_github_copilot = auth_strategy == AuthStrategy::GitHubCopilot;
+
+        if is_github_copilot {
+            format!("{base}/chat/completions")
+        } else if api_format == "openai_responses" {
+            if base.ends_with("/v1") {
+                format!("{base}/responses")
             } else {
-                format!("{base_url}/v1/chat/completions")
+                format!("{base}/v1/responses")
             }
-        } else if base_url.ends_with("/v1") {
-            format!("{base_url}/messages?beta=true")
+        } else if api_format == "openai_chat" {
+            if base.ends_with("/v1") {
+                format!("{base}/chat/completions")
+            } else {
+                format!("{base}/v1/chat/completions")
+            }
+        } else if base.ends_with("/v1") {
+            format!("{base}/messages?beta=true")
         } else {
-            format!("{base_url}/v1/messages?beta=true")
+            format!("{base}/v1/messages?beta=true")
         }
     }
 }
@@ -808,10 +847,11 @@ mod tests {
     }
 
     #[test]
-    fn test_build_claude_stream_check_url_for_full_url_mode() {
-        let url = StreamCheckService::build_claude_stream_check_url(
+    fn test_resolve_claude_stream_url_for_full_url_mode() {
+        let url = StreamCheckService::resolve_claude_stream_url(
             "https://relay.example/v1/chat/completions",
-            true,
+            AuthStrategy::Bearer,
+            "openai_chat",
             true,
         );
 
@@ -819,24 +859,50 @@ mod tests {
     }
 
     #[test]
-    fn test_build_claude_stream_check_url_for_openai_chat() {
-        let url = StreamCheckService::build_claude_stream_check_url(
-            "https://relay.example/v1",
-            true,
+    fn test_resolve_claude_stream_url_for_github_copilot() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://api.githubcopilot.com",
+            AuthStrategy::GitHubCopilot,
+            "anthropic",
             false,
         );
 
-        assert_eq!(url, "https://relay.example/v1/chat/completions");
+        assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
     }
 
     #[test]
-    fn test_build_claude_stream_check_url_for_anthropic() {
-        let url = StreamCheckService::build_claude_stream_check_url(
-            "https://relay.example",
-            false,
+    fn test_resolve_claude_stream_url_for_openai_chat() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://example.com/v1",
+            AuthStrategy::Bearer,
+            "openai_chat",
             false,
         );
 
-        assert_eq!(url, "https://relay.example/v1/messages?beta=true");
+        assert_eq!(url, "https://example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_openai_responses() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://example.com/v1",
+            AuthStrategy::Bearer,
+            "openai_responses",
+            false,
+        );
+
+        assert_eq!(url, "https://example.com/v1/responses");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_anthropic() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://api.anthropic.com",
+            AuthStrategy::Anthropic,
+            "anthropic",
+            false,
+        );
+
+        assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
     }
 }
