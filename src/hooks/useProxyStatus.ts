@@ -43,6 +43,8 @@ export function useProxyStatus() {
     onSuccess: (info) => {
       toast.success(
         t("proxy.server.started", {
+          address: info.address,
+          port: info.port,
           defaultValue: `代理服务已启动 - ${info.address}:${info.port}`,
         }),
         { closeButton: true },

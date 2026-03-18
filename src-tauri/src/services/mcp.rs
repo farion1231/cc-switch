@@ -165,8 +165,18 @@ impl McpService {
     pub fn sync_all_enabled(state: &AppState) -> Result<(), AppError> {
         let servers = Self::get_all_servers(state)?;
 
-        for server in servers.values() {
-            Self::sync_server_to_apps(state, server)?;
+        for app in AppType::all() {
+            if matches!(app, AppType::OpenClaw) {
+                continue;
+            }
+
+            for server in servers.values() {
+                if server.apps.is_enabled_for(&app) {
+                    Self::sync_server_to_app(state, server, &app)?;
+                } else {
+                    Self::remove_server_from_app(state, &server.id, &app)?;
+                }
+            }
         }
 
         Ok(())

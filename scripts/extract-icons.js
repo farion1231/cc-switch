@@ -6,7 +6,7 @@ const ICONS_TO_EXTRACT = {
   // AI 服务商（必需）
   aiProviders: [
     'openai', 'anthropic', 'claude', 'google', 'gemini',
-    'deepseek', 'kimi', 'moonshot', 'zhipu', 'minimax',
+    'deepseek', 'kimi', 'moonshot', 'stepfun', 'zhipu', 'minimax',
     'baidu', 'alibaba', 'tencent', 'meta', 'microsoft',
     'cohere', 'perplexity', 'mistral', 'huggingface'
   ],
@@ -60,6 +60,9 @@ ALL_ICONS.forEach(iconName => {
     fs.copyFileSync(sourceFile, targetFile);
     console.log(`  ✓ ${iconName}.svg`);
     extracted++;
+  } else if (fs.existsSync(targetFile)) {
+    console.log(`  ✓ ${iconName}.svg (kept local custom icon)`);
+    extracted++;
   } else {
     console.log(`  ✗ ${iconName}.svg (not found)`);
     notFound.push(iconName);
@@ -110,6 +113,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
   deepseek: { name: 'deepseek', displayName: 'DeepSeek', category: 'ai-provider', keywords: ['deep', 'seek'], defaultColor: '#1E88E5' },
   moonshot: { name: 'moonshot', displayName: 'Moonshot', category: 'ai-provider', keywords: ['kimi', 'moonshot'], defaultColor: '#6366F1' },
   kimi: { name: 'kimi', displayName: 'Kimi', category: 'ai-provider', keywords: ['moonshot'], defaultColor: '#6366F1' },
+  stepfun: { name: 'stepfun', displayName: 'StepFun', category: 'ai-provider', keywords: ['stepfun', 'step', 'jieyue', '阶跃星辰'], defaultColor: '#005AFF' },
   zhipu: { name: 'zhipu', displayName: 'Zhipu AI', category: 'ai-provider', keywords: ['chatglm', 'glm'], defaultColor: '#0F62FE' },
   minimax: { name: 'minimax', displayName: 'MiniMax', category: 'ai-provider', keywords: ['minimax'], defaultColor: '#FF6B6B' },
   baidu: { name: 'baidu', displayName: 'Baidu', category: 'ai-provider', keywords: ['ernie', 'wenxin'], defaultColor: '#2932E1' },

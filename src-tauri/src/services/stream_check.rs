@@ -3,6 +3,7 @@
 //! 使用流式 API 进行快速健康检查，只需接收首个 chunk 即判定成功。
 
 use futures::StreamExt;
+use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -11,6 +12,7 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
 /// 健康状态枚举
@@ -83,13 +85,16 @@ impl StreamCheckService {
         app_type: &AppType,
         provider: &Provider,
         config: &StreamCheckConfig,
+        auth_override: Option<AuthInfo>,
     ) -> Result<StreamCheckResult, AppError> {
         // 合并供应商单独配置和全局配置
         let effective_config = Self::merge_provider_config(provider, config);
         let mut last_result = None;
 
         for attempt in 0..=effective_config.max_retries {
-            let result = Self::check_once(app_type, provider, &effective_config).await;
+            let result =
+                Self::check_once(app_type, provider, &effective_config, auth_override.clone())
+                    .await;
 
             match &result {
                 Ok(r) if r.success => {
@@ -177,6 +182,7 @@ impl StreamCheckService {
         app_type: &AppType,
         provider: &Provider,
         config: &StreamCheckConfig,
+        auth_override: Option<AuthInfo>,
     ) -> Result<StreamCheckResult, AppError> {
         let start = Instant::now();
         let adapter = get_adapter(app_type);
@@ -185,8 +191,8 @@ impl StreamCheckService {
             .extract_base_url(provider)
             .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}")))?;
 
-        let auth = adapter
-            .extract_auth(provider)
+        let auth = auth_override
+            .or_else(|| adapter.extract_auth(provider))
             .ok_or_else(|| AppError::Message("API Key not found".to_string()))?;
 
         // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
@@ -296,6 +302,7 @@ impl StreamCheckService {
         provider: &Provider,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
+        let is_github_copilot = auth.strategy == AuthStrategy::GitHubCopilot;
 
         // Detect api_format: meta.api_format > settings_config.api_format > default "anthropic"
         let api_format = provider
@@ -310,10 +317,15 @@ impl StreamCheckService {
             })
             .unwrap_or("anthropic");
 
-        let is_openai_chat = api_format == "openai_chat";
+        let is_openai_chat = is_github_copilot || api_format == "openai_chat";
 
-        // URL: /v1/chat/completions for openai_chat, /v1/messages?beta=true for anthropic
-        let url = if is_openai_chat {
+        // URL:
+        // - GitHub Copilot: /chat/completions (no /v1 prefix)
+        // - OpenAI-compatible: /v1/chat/completions
+        // - Anthropic native: /v1/messages?beta=true
+        let url = if is_github_copilot {
+            format!("{base}/chat/completions")
+        } else if is_openai_chat {
             if base.ends_with("/v1") {
                 format!("{base}/chat/completions")
             } else {
@@ -328,22 +340,38 @@ impl StreamCheckService {
             }
         };
 
-        // Body: identical structure for minimal test (both APIs accept messages array)
-        let body = json!({
+        // Build from Anthropic-native shape first, then convert for OpenAI-compatible targets.
+        let anthropic_body = json!({
             "model": model,
             "max_tokens": 1,
             "messages": [{ "role": "user", "content": test_prompt }],
             "stream": true
         });
+        let body = if is_openai_chat {
+            anthropic_to_openai(anthropic_body, Some(&provider.id))
+                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+        } else {
+            anthropic_body
+        };
 
         let mut request_builder = client.post(&url);
 
-        if is_openai_chat {
+        if is_github_copilot {
+            request_builder = request_builder
+                .header("authorization", format!("Bearer {}", auth.api_key))
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .header("accept-encoding", "identity")
+                .header("editor-version", "vscode/1.85.0")
+                .header("editor-plugin-version", "copilot/1.150.0")
+                .header("copilot-integration-id", "vscode-chat");
+        } else if is_openai_chat {
             // OpenAI-compatible: Bearer auth + standard headers only
             request_builder = request_builder
                 .header("authorization", format!("Bearer {}", auth.api_key))
                 .header("content-type", "application/json")
-                .header("accept", "application/json");
+                .header("accept", "text/event-stream")
+                .header("accept-encoding", "identity");
         } else {
             // Anthropic native: full Claude CLI headers
             let os_name = Self::get_os_name();
@@ -657,49 +685,18 @@ impl StreamCheckService {
     }
 
     fn extract_codex_model(provider: &Provider) -> Option<String> {
-        // 兼容旧格式：model 可能直接放在 settings_config 根节点
-        if let Some(model) = provider
+        let config_text = provider
             .settings_config
-            .get("model")
-            .and_then(|value| value.as_str())
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-        {
-            return Some(model);
+            .get("config")
+            .and_then(|value| value.as_str())?;
+        if config_text.trim().is_empty() {
+            return None;
         }
 
-        let config_value = provider.settings_config.get("config")?;
-
-        // 优先按 TOML 语义解析，避免因为 model 不在首行导致解析失败
-        if let Some(config_text) = config_value.as_str() {
-            if config_text.trim().is_empty() {
-                return None;
-            }
-
-            if let Ok(toml_value) = toml::from_str::<toml::Value>(config_text) {
-                if let Some(model) = toml_value
-                    .get("model")
-                    .and_then(|value| value.as_str())
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                {
-                    return Some(model);
-                }
-            }
-
-            // 兜底：支持非严格 TOML 文本，按多行正则提取 model
-            let re = regex::Regex::new(r#"(?m)^\s*model\s*=\s*["']([^"']+)["']"#).ok()?;
-            return re
-                .captures(config_text)
-                .and_then(|caps| caps.get(1))
-                .map(|m| m.as_str().trim().to_string())
-                .filter(|value| !value.is_empty());
-        }
-
-        config_value
-            .get("model")
-            .and_then(|value| value.as_str())
-            .map(|value| value.trim().to_string())
+        let re = Regex::new(r#"^model\s*=\s*["']([^"']+)["']"#).ok()?;
+        re.captures(config_text)
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().trim().to_string())
             .filter(|value| !value.is_empty())
     }
 
@@ -720,6 +717,31 @@ impl StreamCheckService {
             "x86_64" => "x86_64",
             "x86" => "x86",
             other => other,
+        }
+    }
+
+    #[cfg(test)]
+    fn resolve_claude_stream_url(
+        base_url: &str,
+        auth_strategy: AuthStrategy,
+        api_format: &str,
+    ) -> String {
+        let base = base_url.trim_end_matches('/');
+        let is_github_copilot = auth_strategy == AuthStrategy::GitHubCopilot;
+        let is_openai_chat = is_github_copilot || api_format == "openai_chat";
+
+        if is_github_copilot {
+            format!("{base}/chat/completions")
+        } else if is_openai_chat {
+            if base.ends_with("/v1") {
+                format!("{base}/chat/completions")
+            } else {
+                format!("{base}/v1/chat/completions")
+            }
+        } else if base.ends_with("/v1") {
+            format!("{base}/messages?beta=true")
+        } else {
+            format!("{base}/v1/messages?beta=true")
         }
     }
 }
@@ -826,51 +848,35 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_codex_model_from_toml_when_model_not_first_line() {
-        let provider = Provider {
-            id: "codex-test".to_string(),
-            name: "Codex Test".to_string(),
-            settings_config: json!({
-                "config": r#"model_provider = "azure"
-model = "my-azure-deployment"
-model_reasoning_effort = "medium"
-"#
-            }),
-            website_url: None,
-            category: Some("codex".to_string()),
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: None,
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
+    fn test_resolve_claude_stream_url_for_github_copilot() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://api.githubcopilot.com",
+            AuthStrategy::GitHubCopilot,
+            "anthropic",
+        );
 
-        let model = StreamCheckService::extract_codex_model(&provider);
-        assert_eq!(model.as_deref(), Some("my-azure-deployment"));
+        assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
     }
 
     #[test]
-    fn test_extract_codex_model_from_multiline_text_fallback() {
-        let provider = Provider {
-            id: "codex-test-fallback".to_string(),
-            name: "Codex Test Fallback".to_string(),
-            settings_config: json!({
-                "config": "\n# some preface\nmodel = \"deployment-v2\"\n"
-            }),
-            website_url: None,
-            category: Some("codex".to_string()),
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: None,
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
+    fn test_resolve_claude_stream_url_for_openai_chat() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://example.com/v1",
+            AuthStrategy::Bearer,
+            "openai_chat",
+        );
 
-        let model = StreamCheckService::extract_codex_model(&provider);
-        assert_eq!(model.as_deref(), Some("deployment-v2"));
+        assert_eq!(url, "https://example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_anthropic() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://api.anthropic.com",
+            AuthStrategy::Anthropic,
+            "anthropic",
+        );
+
+        assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
     }
 }

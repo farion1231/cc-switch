@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 use tauri::State;
 
 use crate::app_config::AppType;
+use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::{
@@ -10,6 +11,11 @@ use crate::services::{
 use crate::store::AppState;
 use std::str::FromStr;
 
+// 常量定义
+const TEMPLATE_TYPE_GITHUB_COPILOT: &str = "github_copilot";
+const COPILOT_UNIT_PREMIUM: &str = "requests";
+
+/// 获取所有供应商
 #[tauri::command]
 pub fn get_providers(
     state: State<'_, AppState>,
@@ -103,20 +109,22 @@ fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result
         // Extract common config snippet (mirrors old startup logic in lib.rs)
         if state
             .db
-            .get_config_snippet(app_type.as_str())
-            .ok()
-            .flatten()
-            .is_none()
+            .should_auto_extract_config_snippet(app_type.as_str())?
         {
             match ProviderService::extract_common_config_snippet(state, app_type.clone()) {
                 Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
                     let _ = state
                         .db
                         .set_config_snippet(app_type.as_str(), Some(snippet));
+                    let _ = state
+                        .db
+                        .set_config_snippet_cleared(app_type.as_str(), false);
                 }
                 _ => {}
             }
         }
+
+        ProviderService::migrate_legacy_common_config_usage_if_needed(state, app_type.clone())?;
     }
 
     Ok(imported)
@@ -140,10 +148,65 @@ pub fn import_default_config(state: State<'_, AppState>, app: String) -> Result<
 #[tauri::command]
 pub async fn queryProviderUsage(
     state: State<'_, AppState>,
+    copilot_state: State<'_, CopilotAuthState>,
     #[allow(non_snake_case)] providerId: String, // 使用 camelCase 匹配前端
     app: String,
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+
+    // 检查是否为 GitHub Copilot 模板类型，并解析绑定账号
+    let (is_copilot_template, copilot_account_id) = {
+        let providers = state
+            .db
+            .get_all_providers(app_type.as_str())
+            .map_err(|e| format!("Failed to get providers: {}", e))?;
+
+        let provider = providers.get(&providerId);
+        let is_copilot = provider
+            .and_then(|p| p.meta.as_ref())
+            .and_then(|m| m.usage_script.as_ref())
+            .and_then(|s| s.template_type.as_ref())
+            .map(|t| t == TEMPLATE_TYPE_GITHUB_COPILOT)
+            .unwrap_or(false);
+        let account_id = provider
+            .and_then(|p| p.meta.as_ref())
+            .and_then(|m| m.managed_account_id_for(TEMPLATE_TYPE_GITHUB_COPILOT));
+
+        (is_copilot, account_id)
+    };
+
+    if is_copilot_template {
+        // 使用 Copilot 专用 API
+        let auth_manager = copilot_state.0.read().await;
+        let usage = match copilot_account_id.as_deref() {
+            Some(account_id) => auth_manager
+                .fetch_usage_for_account(account_id)
+                .await
+                .map_err(|e| format!("Failed to fetch Copilot usage: {}", e))?,
+            None => auth_manager
+                .fetch_usage()
+                .await
+                .map_err(|e| format!("Failed to fetch Copilot usage: {}", e))?,
+        };
+        let premium = &usage.quota_snapshots.premium_interactions;
+        let used = premium.entitlement - premium.remaining;
+
+        return Ok(crate::provider::UsageResult {
+            success: true,
+            data: Some(vec![crate::provider::UsageData {
+                plan_name: Some(usage.copilot_plan),
+                remaining: Some(premium.remaining as f64),
+                total: Some(premium.entitlement as f64),
+                used: Some(used as f64),
+                unit: Some(COPILOT_UNIT_PREMIUM.to_string()),
+                is_valid: Some(true),
+                invalid_message: None,
+                extra: Some(format!("Reset: {}", usage.quota_reset_date)),
+            }]),
+            error: None,
+        });
+    }
+
     ProviderService::query_usage(state.inner(), app_type, &providerId)
         .await
         .map_err(|e| e.to_string())

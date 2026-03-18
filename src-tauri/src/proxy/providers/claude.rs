@@ -1,20 +1,70 @@
 //! Claude (Anthropic) Provider Adapter
 //!
-//! 支持透传模式和 OpenAI Chat Completions 格式转换模式
+//! 支持透传模式和 OpenAI 格式转换模式
 //!
 //! ## API 格式
 //! - **anthropic** (默认): Anthropic Messages API 格式，直接透传
 //! - **openai_chat**: OpenAI Chat Completions 格式，需要 Anthropic ↔ OpenAI 转换
+//! - **openai_responses**: OpenAI Responses API 格式，需要 Anthropic ↔ Responses 转换
 //!
 //! ## 认证模式
 //! - **Claude**: Anthropic 官方 API (x-api-key + anthropic-version)
 //! - **ClaudeAuth**: 中转服务 (仅 Bearer 认证，无 x-api-key)
 //! - **OpenRouter**: 已支持 Claude Code 兼容接口，默认透传
+//! - **GitHubCopilot**: GitHub Copilot (OAuth + Copilot Token)
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use reqwest::RequestBuilder;
+
+/// 获取 Claude 供应商的 API 格式
+///
+/// 供 handler/forwarder 外部使用的公开函数。
+/// 优先级：meta.apiFormat > settings_config.api_format > openrouter_compat_mode > 默认 "anthropic"
+pub fn get_claude_api_format(provider: &Provider) -> &'static str {
+    // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
+    if let Some(meta) = provider.meta.as_ref() {
+        if let Some(api_format) = meta.api_format.as_deref() {
+            return match api_format {
+                "openai_chat" => "openai_chat",
+                "openai_responses" => "openai_responses",
+                _ => "anthropic",
+            };
+        }
+    }
+
+    // 2) Backward compatibility: legacy settings_config.api_format
+    if let Some(api_format) = provider
+        .settings_config
+        .get("api_format")
+        .and_then(|v| v.as_str())
+    {
+        return match api_format {
+            "openai_chat" => "openai_chat",
+            "openai_responses" => "openai_responses",
+            _ => "anthropic",
+        };
+    }
+
+    // 3) Backward compatibility: legacy openrouter_compat_mode (bool/number/string)
+    let raw = provider.settings_config.get("openrouter_compat_mode");
+    let enabled = match raw {
+        Some(serde_json::Value::Bool(v)) => *v,
+        Some(serde_json::Value::Number(num)) => num.as_i64().unwrap_or(0) != 0,
+        Some(serde_json::Value::String(value)) => {
+            let normalized = value.trim().to_lowercase();
+            normalized == "true" || normalized == "1"
+        }
+        _ => false,
+    };
+
+    if enabled {
+        "openai_chat"
+    } else {
+        "anthropic"
+    }
+}
 
 /// Claude 适配器
 pub struct ClaudeAdapter;
@@ -27,10 +77,16 @@ impl ClaudeAdapter {
     /// 获取供应商类型
     ///
     /// 根据 base_url 和 auth_mode 检测具体的供应商类型：
+    /// - GitHubCopilot: meta.provider_type 为 github_copilot 或 base_url 包含 githubcopilot.com
     /// - OpenRouter: base_url 包含 openrouter.ai
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
+        // 检测 GitHub Copilot
+        if self.is_github_copilot(provider) {
+            return ProviderType::GitHubCopilot;
+        }
+
         // 检测 OpenRouter
         if self.is_openrouter(provider) {
             return ProviderType::OpenRouter;
@@ -42,6 +98,25 @@ impl ClaudeAdapter {
         }
 
         ProviderType::Claude
+    }
+
+    /// 检测是否为 GitHub Copilot 供应商
+    fn is_github_copilot(&self, provider: &Provider) -> bool {
+        // 方式1: 检查 meta.provider_type
+        if let Some(meta) = provider.meta.as_ref() {
+            if meta.provider_type.as_deref() == Some("github_copilot") {
+                return true;
+            }
+        }
+
+        // 方式2: 检查 base_url（兼容旧数据的 fallback，后续应优先依赖 providerType）
+        if let Ok(base_url) = self.extract_base_url(provider) {
+            if base_url.contains("githubcopilot.com") {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// 检测是否使用 OpenRouter
@@ -57,48 +132,9 @@ impl ClaudeAdapter {
     /// 从 provider.meta.api_format 读取格式设置：
     /// - "anthropic" (默认): Anthropic Messages API 格式，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
+    /// - "openai_responses": OpenAI Responses API 格式，需要格式转换
     fn get_api_format(&self, provider: &Provider) -> &'static str {
-        // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
-        if let Some(meta) = provider.meta.as_ref() {
-            if let Some(api_format) = meta.api_format.as_deref() {
-                return if api_format == "openai_chat" {
-                    "openai_chat"
-                } else {
-                    "anthropic"
-                };
-            }
-        }
-
-        // 2) Backward compatibility: legacy settings_config.api_format
-        if let Some(api_format) = provider
-            .settings_config
-            .get("api_format")
-            .and_then(|v| v.as_str())
-        {
-            return if api_format == "openai_chat" {
-                "openai_chat"
-            } else {
-                "anthropic"
-            };
-        }
-
-        // 3) Backward compatibility: legacy openrouter_compat_mode (bool/number/string)
-        let raw = provider.settings_config.get("openrouter_compat_mode");
-        let enabled = match raw {
-            Some(serde_json::Value::Bool(v)) => *v,
-            Some(serde_json::Value::Number(num)) => num.as_i64().unwrap_or(0) != 0,
-            Some(serde_json::Value::String(value)) => {
-                let normalized = value.trim().to_lowercase();
-                normalized == "true" || normalized == "1"
-            }
-            _ => false,
-        };
-
-        if enabled {
-            "openai_chat"
-        } else {
-            "anthropic"
-        }
+        get_claude_api_format(provider)
     }
 
     /// 检测是否为仅 Bearer 认证模式
@@ -234,6 +270,17 @@ impl ProviderAdapter for ClaudeAdapter {
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
         let provider_type = self.provider_type(provider);
+
+        // GitHub Copilot 使用特殊的认证策略
+        // 实际的 token 会在代理请求时动态获取
+        if provider_type == ProviderType::GitHubCopilot {
+            // 返回一个占位符，实际 token 由 CopilotAuthManager 动态提供
+            return Some(AuthInfo::new(
+                "copilot_placeholder".to_string(),
+                AuthStrategy::GitHubCopilot,
+            ));
+        }
+
         let strategy = match provider_type {
             ProviderType::OpenRouter => AuthStrategy::Bearer,
             ProviderType::ClaudeAuth => AuthStrategy::ClaudeAuth,
@@ -261,6 +308,11 @@ impl ProviderAdapter for ClaudeAdapter {
         // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
         while base.contains("/v1/v1") {
             base = base.replace("/v1/v1", "/v1");
+        }
+
+        // GitHub Copilot 不需要 ?beta=true 参数
+        if base_url.contains("githubcopilot.com") {
+            return base;
         }
 
         // 为 Claude 原生 /v1/messages 端点添加 ?beta=true 参数
@@ -294,27 +346,63 @@ impl ProviderAdapter for ClaudeAdapter {
             AuthStrategy::Bearer => {
                 request.header("Authorization", format!("Bearer {}", auth.api_key))
             }
+            // GitHub Copilot: Bearer + 特定的 Editor headers
+            AuthStrategy::GitHubCopilot => request
+                .header("Authorization", format!("Bearer {}", auth.api_key))
+                .header("Editor-Version", "vscode/1.85.0")
+                .header("Editor-Plugin-Version", "copilot/1.150.0")
+                .header("Copilot-Integration-Id", "vscode-chat"),
             _ => request,
         }
     }
 
     fn needs_transform(&self, provider: &Provider) -> bool {
+        // GitHub Copilot 总是需要格式转换 (Anthropic → OpenAI)
+        if self.is_github_copilot(provider) {
+            return true;
+        }
+
         // 根据 api_format 配置决定是否需要格式转换
         // - "anthropic" (默认): 直接透传，无需转换
-        // - "openai_chat": 需要 Anthropic ↔ OpenAI 格式转换
-        self.get_api_format(provider) == "openai_chat"
+        // - "openai_chat": 需要 Anthropic ↔ OpenAI Chat Completions 格式转换
+        // - "openai_responses": 需要 Anthropic ↔ OpenAI Responses API 格式转换
+        matches!(
+            self.get_api_format(provider),
+            "openai_chat" | "openai_responses"
+        )
     }
 
     fn transform_request(
         &self,
         body: serde_json::Value,
-        _provider: &Provider,
+        provider: &Provider,
     ) -> Result<serde_json::Value, ProxyError> {
-        super::transform::anthropic_to_openai(body)
+        // Use meta.prompt_cache_key if set by user, otherwise fall back to provider.id
+        let cache_key = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.prompt_cache_key.as_deref())
+            .unwrap_or(&provider.id);
+
+        match self.get_api_format(provider) {
+            "openai_responses" => {
+                super::transform_responses::anthropic_to_responses(body, Some(cache_key))
+            }
+            _ => super::transform::anthropic_to_openai(body, Some(cache_key)),
+        }
     }
 
     fn transform_response(&self, body: serde_json::Value) -> Result<serde_json::Value, ProxyError> {
-        super::transform::openai_to_anthropic(body)
+        // Heuristic: detect response format by presence of top-level fields.
+        // The ProviderAdapter trait's transform_response doesn't receive the Provider
+        // config, so we can't check api_format here. Instead we rely on the fact that
+        // Responses API always returns "output" while Chat Completions returns "choices".
+        // This is safe because the two formats are structurally disjoint.
+        if body.get("output").is_some() {
+            super::transform_responses::responses_to_anthropic(body)
+        } else {
+            super::transform::openai_to_anthropic(body)
+        }
     }
 }
 
@@ -599,6 +687,20 @@ mod tests {
         );
         assert!(adapter.needs_transform(&openai_chat_provider));
 
+        // OpenAI Responses format in meta: needs transform
+        let openai_responses_provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(adapter.needs_transform(&openai_responses_provider));
+
         // meta takes precedence over legacy settings_config fields
         let meta_precedence_over_settings = create_provider_with_meta(
             json!({
@@ -628,5 +730,68 @@ mod tests {
             },
         );
         assert!(!adapter.needs_transform(&unknown_format));
+    }
+
+    #[test]
+    fn test_github_copilot_detection_by_url() {
+        let adapter = ClaudeAdapter::new();
+
+        // GitHub Copilot by base_url
+        let copilot = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+            }
+        }));
+        assert_eq!(adapter.provider_type(&copilot), ProviderType::GitHubCopilot);
+    }
+
+    #[test]
+    fn test_github_copilot_detection_by_meta() {
+        let adapter = ClaudeAdapter::new();
+
+        // GitHub Copilot by meta.provider_type
+        let copilot_meta = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            adapter.provider_type(&copilot_meta),
+            ProviderType::GitHubCopilot
+        );
+    }
+
+    #[test]
+    fn test_github_copilot_auth() {
+        let adapter = ClaudeAdapter::new();
+
+        let copilot = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&copilot).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::GitHubCopilot);
+    }
+
+    #[test]
+    fn test_github_copilot_needs_transform() {
+        let adapter = ClaudeAdapter::new();
+
+        let copilot = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+            }
+        }));
+
+        // GitHub Copilot always needs transform
+        assert!(adapter.needs_transform(&copilot));
     }
 }

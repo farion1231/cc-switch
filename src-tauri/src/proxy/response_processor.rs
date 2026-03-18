@@ -283,6 +283,11 @@ fn create_usage_collector(
     status_code: u16,
     parser_config: &UsageParserConfig,
 ) -> SseUsageCollector {
+    let logging_enabled = state
+        .config
+        .try_read()
+        .map(|c| c.enable_logging)
+        .unwrap_or(true);
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
     let request_model = ctx.request_model.clone();
@@ -294,6 +299,9 @@ fn create_usage_collector(
     let session_id = ctx.session_id.clone();
 
     SseUsageCollector::new(start_time, move |events, first_token_ms| {
+        if !logging_enabled {
+            return;
+        }
         if let Some(usage) = stream_parser(&events) {
             let model = model_extractor(&events, &request_model);
             let latency_ms = start_time.elapsed().as_millis() as u64;
@@ -358,6 +366,13 @@ fn spawn_log_usage(
     status_code: u16,
     is_streaming: bool,
 ) {
+    // Check enable_logging before spawning the log task
+    if let Ok(config) = state.config.try_read() {
+        if !config.enable_logging {
+            return;
+        }
+    }
+
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
     let app_type_str = ctx.app_type_str.to_string();

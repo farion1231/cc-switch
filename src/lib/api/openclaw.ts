@@ -5,6 +5,8 @@ import type {
   OpenClawAgentsDefaults,
   OpenClawEnvConfig,
   OpenClawToolsConfig,
+  OpenClawHealthWarning,
+  OpenClawWriteOutcome,
 } from "@/types";
 
 /**
@@ -30,7 +32,9 @@ export const openclawApi = {
   /**
    * Set default model configuration (agents.defaults.model)
    */
-  async setDefaultModel(model: OpenClawDefaultModel): Promise<void> {
+  async setDefaultModel(
+    model: OpenClawDefaultModel,
+  ): Promise<OpenClawWriteOutcome> {
     return await invoke("set_openclaw_default_model", { model });
   },
 
@@ -49,7 +53,7 @@ export const openclawApi = {
    */
   async setModelCatalog(
     catalog: Record<string, OpenClawModelCatalogEntry>,
-  ): Promise<void> {
+  ): Promise<OpenClawWriteOutcome> {
     return await invoke("set_openclaw_model_catalog", { catalog });
   },
 
@@ -63,7 +67,9 @@ export const openclawApi = {
   /**
    * Set full agents.defaults config (all fields)
    */
-  async setAgentsDefaults(defaults: OpenClawAgentsDefaults): Promise<void> {
+  async setAgentsDefaults(
+    defaults: OpenClawAgentsDefaults,
+  ): Promise<OpenClawWriteOutcome> {
     return await invoke("set_openclaw_agents_defaults", { defaults });
   },
 
@@ -81,7 +87,7 @@ export const openclawApi = {
   /**
    * Set env config (env section of openclaw.json)
    */
-  async setEnv(env: OpenClawEnvConfig): Promise<void> {
+  async setEnv(env: OpenClawEnvConfig): Promise<OpenClawWriteOutcome> {
     return await invoke("set_openclaw_env", { env });
   },
 
@@ -99,7 +105,17 @@ export const openclawApi = {
   /**
    * Set tools config (tools section of openclaw.json)
    */
-  async setTools(tools: OpenClawToolsConfig): Promise<void> {
+  async setTools(tools: OpenClawToolsConfig): Promise<OpenClawWriteOutcome> {
     return await invoke("set_openclaw_tools", { tools });
+  },
+
+  async scanHealth(): Promise<OpenClawHealthWarning[]> {
+    return await invoke("scan_openclaw_config_health");
+  },
+
+  async getLiveProvider(
+    providerId: string,
+  ): Promise<Record<string, unknown> | null> {
+    return await invoke("get_openclaw_live_provider", { providerId });
   },
 };

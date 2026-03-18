@@ -70,6 +70,41 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(messages)
 }
 
+pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    let meta = parse_session(path).ok_or_else(|| {
+        format!(
+            "Failed to parse Claude session metadata: {}",
+            path.display()
+        )
+    })?;
+
+    if meta.session_id != session_id {
+        return Err(format!(
+            "Claude session ID mismatch: expected {session_id}, found {}",
+            meta.session_id
+        ));
+    }
+
+    if let Some(stem) = path.file_stem() {
+        let sibling = path.parent().unwrap_or_else(|| Path::new("")).join(stem);
+        remove_path_if_exists(&sibling).map_err(|e| {
+            format!(
+                "Failed to delete Claude session sidecar {}: {e}",
+                sibling.display()
+            )
+        })?;
+    }
+
+    std::fs::remove_file(path).map_err(|e| {
+        format!(
+            "Failed to delete Claude session file {}: {e}",
+            path.display()
+        )
+    })?;
+
+    Ok(true)
+}
+
 fn parse_session(path: &Path) -> Option<SessionMeta> {
     if is_agent_session(path) {
         return None;
@@ -185,5 +220,52 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
             files.push(path);
         }
+    }
+}
+
+fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
+    match std::fs::metadata(path) {
+        Ok(meta) => {
+            if meta.is_dir() {
+                std::fs::remove_dir_all(path)
+            } else {
+                std::fs::remove_file(path)
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn delete_session_removes_main_file_and_sidecar_directory() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("abc123-session.jsonl");
+        let sidecar = temp.path().join("abc123-session");
+        let subagents = sidecar.join("subagents");
+        let tool_results = sidecar.join("tool-results");
+
+        std::fs::create_dir_all(&subagents).expect("create subagents");
+        std::fs::create_dir_all(&tool_results).expect("create tool-results");
+        std::fs::write(subagents.join("agent-1.jsonl"), "{}").expect("write subagent");
+        std::fs::write(tool_results.join("tool-1.txt"), "result").expect("write tool result");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-123\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"timestamp\":\"2026-03-06T10:01:00Z\"}\n"
+            ),
+        )
+        .expect("write session");
+
+        delete_session(temp.path(), &path, "session-123").expect("delete session");
+
+        assert!(!path.exists());
+        assert!(!sidecar.exists());
     }
 }

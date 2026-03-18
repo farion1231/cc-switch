@@ -233,6 +233,42 @@ impl Default for RectifierConfig {
     }
 }
 
+/// 请求优化器配置
+///
+/// 存储在 settings 表中，key = "optimizer_config"
+/// 仅对 Bedrock provider 生效（CLAUDE_CODE_USE_BEDROCK = "1"）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OptimizerConfig {
+    /// 总开关（默认关闭，用户需手动启用）
+    #[serde(default)]
+    pub enabled: bool,
+    /// Thinking 优化子开关（总开关开启后默认生效）
+    #[serde(default = "default_true")]
+    pub thinking_optimizer: bool,
+    /// Cache 注入子开关（总开关开启后默认生效）
+    #[serde(default = "default_true")]
+    pub cache_injection: bool,
+    /// Cache TTL: "5m" | "1h"（默认 "1h"）
+    #[serde(default = "default_cache_ttl")]
+    pub cache_ttl: String,
+}
+
+fn default_cache_ttl() -> String {
+    "1h".to_string()
+}
+
+impl Default for OptimizerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            thinking_optimizer: true,
+            cache_injection: true,
+            cache_ttl: "1h".to_string(),
+        }
+    }
+}
+
 /// 日志配置
 ///
 /// 存储在 settings 表的 log_config 字段中（JSON 格式）

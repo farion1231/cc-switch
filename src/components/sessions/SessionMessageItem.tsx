@@ -31,7 +31,7 @@ export function SessionMessageItem({
     <div
       ref={setRef}
       className={cn(
-        "rounded-lg border px-3 py-2.5 relative group transition-all",
+        "rounded-lg border px-3 py-2.5 relative group transition-all min-w-0",
         message.role.toLowerCase() === "user"
           ? "bg-primary/5 border-primary/20 ml-8"
           : message.role.toLowerCase() === "assistant"
@@ -67,7 +67,7 @@ export function SessionMessageItem({
           </span>
         )}
       </div>
-      <div className="whitespace-pre-wrap text-sm leading-relaxed">
+      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed min-w-0">
         {message.content}
       </div>
     </div>

@@ -2,7 +2,7 @@ pub mod providers;
 pub mod terminal;
 
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use providers::{claude, codex, gemini, openclaw, opencode};
 
@@ -77,5 +77,92 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "openclaw" => openclaw::load_messages(path),
         "gemini" => gemini::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
+    }
+}
+
+pub fn delete_session(
+    provider_id: &str,
+    session_id: &str,
+    source_path: &str,
+) -> Result<bool, String> {
+    let root = provider_root(provider_id)?;
+    delete_session_with_root(provider_id, session_id, Path::new(source_path), &root)
+}
+
+fn delete_session_with_root(
+    provider_id: &str,
+    session_id: &str,
+    source_path: &Path,
+    root: &Path,
+) -> Result<bool, String> {
+    let validated_root = canonicalize_existing_path(root, "session root")?;
+    let validated_source = canonicalize_existing_path(source_path, "session source")?;
+
+    if !validated_source.starts_with(&validated_root) {
+        return Err(format!(
+            "Session source path is outside provider root: {}",
+            source_path.display()
+        ));
+    }
+
+    match provider_id {
+        "codex" => codex::delete_session(&validated_root, &validated_source, session_id),
+        "claude" => claude::delete_session(&validated_root, &validated_source, session_id),
+        "opencode" => opencode::delete_session(&validated_root, &validated_source, session_id),
+        "openclaw" => openclaw::delete_session(&validated_root, &validated_source, session_id),
+        "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
+        _ => Err(format!("Unsupported provider: {provider_id}")),
+    }
+}
+
+fn provider_root(provider_id: &str) -> Result<PathBuf, String> {
+    let root = match provider_id {
+        "codex" => crate::codex_config::get_codex_config_dir().join("sessions"),
+        "claude" => crate::config::get_claude_config_dir().join("projects"),
+        "opencode" => opencode::get_opencode_data_dir(),
+        "openclaw" => crate::openclaw_config::get_openclaw_dir().join("agents"),
+        "gemini" => crate::gemini_config::get_gemini_dir().join("tmp"),
+        _ => return Err(format!("Unsupported provider: {provider_id}")),
+    };
+
+    Ok(root)
+}
+
+fn canonicalize_existing_path(path: &Path, label: &str) -> Result<PathBuf, String> {
+    if !path.exists() {
+        return Err(format!("{label} not found: {}", path.display()));
+    }
+
+    path.canonicalize()
+        .map_err(|e| format!("Failed to resolve {label} {}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn rejects_source_path_outside_provider_root() {
+        let root = tempdir().expect("tempdir");
+        let outside = tempdir().expect("tempdir");
+        let source = outside.path().join("session.jsonl");
+        std::fs::write(&source, "{}").expect("write source");
+
+        let err = delete_session_with_root("codex", "session-1", &source, root.path())
+            .expect_err("expected outside-root path to be rejected");
+
+        assert!(err.contains("outside provider root"));
+    }
+
+    #[test]
+    fn rejects_missing_source_path() {
+        let root = tempdir().expect("tempdir");
+        let missing = root.path().join("missing.jsonl");
+
+        let err = delete_session_with_root("codex", "session-1", &missing, root.path())
+            .expect_err("expected missing source path to fail");
+
+        assert!(err.contains("session source not found"));
     }
 }
