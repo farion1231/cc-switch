@@ -1170,6 +1170,21 @@ fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
         .map_or((endpoint, None), |(path, query)| (path, Some(query)))
 }
 
+fn strip_beta_query(query: Option<&str>) -> Option<String> {
+    let filtered = query.map(|query| {
+        query
+            .split('&')
+            .filter(|pair| !pair.is_empty() && !pair.starts_with("beta="))
+            .collect::<Vec<_>>()
+            .join("&")
+    });
+
+    match filtered.as_deref() {
+        Some("") | None => None,
+        Some(_) => filtered,
+    }
+}
+
 fn is_claude_messages_path(path: &str) -> bool {
     matches!(path, "/v1/messages" | "/claude/v1/messages")
 }
@@ -1180,7 +1195,11 @@ fn rewrite_claude_transform_endpoint(
     is_copilot: bool,
 ) -> (String, Option<String>) {
     let (path, query) = split_endpoint_and_query(endpoint);
-    let passthrough_query = query.map(ToString::to_string);
+    let passthrough_query = if is_claude_messages_path(path) {
+        strip_beta_query(query)
+    } else {
+        query.map(ToString::to_string)
+    };
 
     if !is_claude_messages_path(path) {
         return (endpoint.to_string(), passthrough_query);
@@ -1324,9 +1343,9 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_claude_transform_endpoint_preserves_query_for_chat_completions() {
+    fn rewrite_claude_transform_endpoint_strips_beta_for_chat_completions() {
         let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
-            "/v1/messages?foo=bar",
+            "/v1/messages?beta=true&foo=bar",
             "openai_chat",
             false,
         );
@@ -1336,9 +1355,9 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_claude_transform_endpoint_preserves_query_for_responses() {
+    fn rewrite_claude_transform_endpoint_strips_beta_for_responses() {
         let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
-            "/claude/v1/messages?x-id=1",
+            "/claude/v1/messages?beta=true&x-id=1",
             "openai_responses",
             false,
         );
@@ -1350,7 +1369,7 @@ mod tests {
     #[test]
     fn rewrite_claude_transform_endpoint_uses_copilot_path() {
         let (endpoint, passthrough_query) =
-            rewrite_claude_transform_endpoint("/v1/messages?x-id=1", "anthropic", true);
+            rewrite_claude_transform_endpoint("/v1/messages?beta=true&x-id=1", "anthropic", true);
 
         assert_eq!(endpoint, "/chat/completions?x-id=1");
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
