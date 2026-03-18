@@ -738,9 +738,9 @@ impl StreamCheckService {
                 format!("{base}/v1/chat/completions")
             }
         } else if base.ends_with("/v1") {
-            format!("{base}/messages?beta=true")
+            format!("{base}/messages")
         } else {
-            format!("{base}/v1/messages?beta=true")
+            format!("{base}/v1/messages")
         }
     }
 }
@@ -903,6 +903,6 @@ mod tests {
             false,
         );
 
-        assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages");
     }
 }

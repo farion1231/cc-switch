@@ -1170,21 +1170,6 @@ fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
         .map_or((endpoint, None), |(path, query)| (path, Some(query)))
 }
 
-fn filter_beta_query(query: Option<&str>) -> Option<String> {
-    let filtered = query.map(|query| {
-        query
-            .split('&')
-            .filter(|pair| !pair.is_empty() && !pair.starts_with("beta="))
-            .collect::<Vec<_>>()
-            .join("&")
-    });
-
-    match filtered.as_deref() {
-        Some("") | None => None,
-        Some(_) => filtered,
-    }
-}
-
 fn is_claude_messages_path(path: &str) -> bool {
     matches!(path, "/v1/messages" | "/claude/v1/messages")
 }
@@ -1195,14 +1180,10 @@ fn rewrite_claude_transform_endpoint(
     is_copilot: bool,
 ) -> (String, Option<String>) {
     let (path, query) = split_endpoint_and_query(endpoint);
-    let filtered_query = if is_claude_messages_path(path) {
-        filter_beta_query(query)
-    } else {
-        query.map(ToString::to_string)
-    };
+    let passthrough_query = query.map(ToString::to_string);
 
     if !is_claude_messages_path(path) {
-        return (endpoint.to_string(), filtered_query);
+        return (endpoint.to_string(), passthrough_query);
     }
 
     let target_path = if is_copilot {
@@ -1213,12 +1194,12 @@ fn rewrite_claude_transform_endpoint(
         "/v1/chat/completions"
     };
 
-    let rewritten = match filtered_query.as_deref() {
+    let rewritten = match passthrough_query.as_deref() {
         Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
         _ => target_path.to_string(),
     };
 
-    (rewritten, filtered_query)
+    (rewritten, passthrough_query)
 }
 
 fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
@@ -1343,9 +1324,9 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_claude_transform_endpoint_strips_beta_for_chat_completions() {
+    fn rewrite_claude_transform_endpoint_preserves_query_for_chat_completions() {
         let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
-            "/v1/messages?beta=true&foo=bar",
+            "/v1/messages?foo=bar",
             "openai_chat",
             false,
         );
@@ -1355,9 +1336,9 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_claude_transform_endpoint_strips_only_beta_for_responses() {
+    fn rewrite_claude_transform_endpoint_preserves_query_for_responses() {
         let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
-            "/claude/v1/messages?beta=true&x-id=1",
+            "/claude/v1/messages?x-id=1",
             "openai_responses",
             false,
         );
@@ -1369,7 +1350,7 @@ mod tests {
     #[test]
     fn rewrite_claude_transform_endpoint_uses_copilot_path() {
         let (endpoint, passthrough_query) =
-            rewrite_claude_transform_endpoint("/v1/messages?beta=true&x-id=1", "anthropic", true);
+            rewrite_claude_transform_endpoint("/v1/messages?x-id=1", "anthropic", true);
 
         assert_eq!(endpoint, "/chat/completions?x-id=1");
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
