@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   skillsApi,
   type SkillBackupEntry,
@@ -10,11 +10,15 @@ import type { AppId } from "@/lib/api/types";
 
 /**
  * 查询所有已安装的 Skills
+ * 使用 staleTime: Infinity 和 placeholderData: keepPreviousData
+ * 实现首次进入使用缓存，只有刷新时才重新获取
  */
 export function useInstalledSkills() {
   return useQuery({
     queryKey: ["skills", "installed"],
     queryFn: () => skillsApi.getInstalled(),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -38,17 +42,21 @@ export function useDeleteSkillBackup() {
 
 /**
  * 发现可安装的 Skills（从仓库获取）
+ * 使用 staleTime: Infinity 和 placeholderData: keepPreviousData
+ * 实现首次进入使用缓存，只有刷新时才重新获取
  */
 export function useDiscoverableSkills() {
   return useQuery({
     queryKey: ["skills", "discoverable"],
     queryFn: () => skillsApi.discoverAvailable(),
-    staleTime: Infinity, // 无限缓存，直到仓库变化时 invalidate
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
   });
 }
 
 /**
  * 安装 Skill
+ * 成功后直接更新缓存，不触发重新加载/刷新
  */
 export function useInstallSkill() {
   const queryClient = useQueryClient();
@@ -60,23 +68,76 @@ export function useInstallSkill() {
       skill: DiscoverableSkill;
       currentApp: AppId;
     }) => skillsApi.installUnified(skill, currentApp),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
-      queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
+    onSuccess: (installedSkill, _vars, _ctx) => {
+      const { skill } = _vars;
+      // 直接更新 installed 缓存
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        (oldData) => {
+          if (!oldData) return [installedSkill];
+          return [...oldData, installedSkill];
+        },
+      );
+
+      // 更新 discoverable 缓存中对应技能的 installed 状态
+      const installName =
+        skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
+        skill.directory.toLowerCase();
+      const skillKey = `${installName}:${skill.repoOwner.toLowerCase()}:${skill.repoName.toLowerCase()}`;
+
+      queryClient.setQueryData<DiscoverableSkill[]>(
+        ["skills", "discoverable"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.map((s) => {
+            if (s.key === skillKey) {
+              return { ...s, installed: true };
+            }
+            return s;
+          });
+        },
+      );
     },
   });
 }
 
 /**
  * 卸载 Skill
+ * 成功后直接更新缓存，不触发重新加载/刷新
  */
 export function useUninstallSkill() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => skillsApi.uninstallUnified(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
-      queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
+    mutationFn: ({
+      id,
+      skillKey,
+    }: {
+      id: string;
+      skillKey: string;
+    }) => skillsApi.uninstallUnified(id).then((result) => ({ ...result, skillKey })),
+    onSuccess: ({ skillKey }, _vars) => {
+      // 直接更新 installed 缓存，移除该 skill
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.filter((s) => s.id !== _vars.id);
+        },
+      );
+
+      // 更新 discoverable 缓存中对应技能的 installed 状态
+      queryClient.setQueryData<DiscoverableSkill[]>(
+        ["skills", "discoverable"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.map((s) => {
+            if (s.key === skillKey) {
+              return { ...s, installed: false };
+            }
+            return s;
+          });
+        },
+      );
     },
   });
 }
@@ -132,14 +193,23 @@ export function useScanUnmanagedSkills() {
 
 /**
  * 从应用目录导入 Skills
+ * 成功后直接更新缓存，不触发重新加载/刷新
  */
 export function useImportSkillsFromApps() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (imports: ImportSkillSelection[]) =>
       skillsApi.importFromApps(imports),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    onSuccess: (importedSkills) => {
+      // 直接更新 installed 缓存
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        (oldData) => {
+          if (!oldData) return importedSkills;
+          return [...oldData, ...importedSkills];
+        },
+      );
+      // 刷新 unmanaged 列表（已被导入的应该移除）
       queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] });
     },
   });
@@ -186,6 +256,7 @@ export function useRemoveSkillRepo() {
 
 /**
  * 从 ZIP 文件安装 Skills
+ * 成功后直接更新缓存，不触发重新加载/刷新
  */
 export function useInstallSkillsFromZip() {
   const queryClient = useQueryClient();
@@ -197,9 +268,15 @@ export function useInstallSkillsFromZip() {
       filePath: string;
       currentApp: AppId;
     }) => skillsApi.installFromZip(filePath, currentApp),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
-      queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] });
+    onSuccess: (installedSkills) => {
+      // 直接更新 installed 缓存
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        (oldData) => {
+          if (!oldData) return installedSkills;
+          return [...oldData, ...installedSkills];
+        },
+      );
     },
   });
 }
