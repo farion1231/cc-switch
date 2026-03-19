@@ -652,7 +652,20 @@
     "copyCommand": "复制命令",
     "copyMessage": "复制消息",
     "messageCopied": "已复制消息内容",
-    "conversationHistory": "对话记录"
+    "conversationHistory": "对话记录",
+    "searchMessages": "搜索消息",
+    "filterByRole": "按角色筛选",
+    "showAll": "显示全部",
+    "collapseAll": "全部折叠",
+    "expandAll": "全部展开",
+    "showMore": "展开更多",
+    "noMatchingMessages": "没有匹配的消息",
+    "clearFilters": "清除筛选",
+    "exportConversation": "导出",
+    "copyAllMessages": "复制所有消息",
+    "exportAsMarkdown": "导出为 Markdown",
+    "conversationExported": "对话已导出到剪贴板",
+    "allMessagesCopied": "已复制所有消息"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",

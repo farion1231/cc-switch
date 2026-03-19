@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -12,6 +12,9 @@ import {
   Clock,
   FolderOpen,
   X,
+  Download,
+  Filter,
+  ChevronsUpDown,
 } from "lucide-react";
 import {
   useDeleteSessionMutation,
@@ -38,6 +41,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -51,6 +63,7 @@ import {
   getProviderIconName,
   getProviderLabel,
   getSessionKey,
+  getRoleLabel,
 } from "./utils";
 
 type ProviderFilter =
@@ -60,6 +73,10 @@ type ProviderFilter =
   | "opencode"
   | "openclaw"
   | "gemini";
+
+type RoleFilter = "user" | "assistant" | "tool" | "system";
+
+const ALL_ROLES: RoleFilter[] = ["user", "assistant", "tool", "system"];
 
 export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
@@ -82,7 +99,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
-  // 使用 FlexSearch 全文搜索
+  // Message-level filters
+  const [messageSearch, setMessageSearch] = useState("");
+  const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
+  const messageSearchRef = useRef<HTMLInputElement | null>(null);
+  const [activeRoleFilters, setActiveRoleFilters] =
+    useState<RoleFilter[]>(ALL_ROLES);
+  const [allCollapsed, setAllCollapsed] = useState(false);
+
+  // FlexSearch full-text search
   const { search: searchSessions } = useSessionSearch({
     sessions,
     providerFilter,
@@ -123,7 +148,29 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     );
   const deleteSessionMutation = useDeleteSessionMutation();
 
-  // 提取用户消息用于目录
+  // Filter messages by role and search
+  const filteredMessages = useMemo(() => {
+    let result = messages;
+
+    // Role filter
+    if (activeRoleFilters.length < ALL_ROLES.length) {
+      result = result.filter((msg) =>
+        activeRoleFilters.includes(msg.role.toLowerCase() as RoleFilter),
+      );
+    }
+
+    // Text search within messages
+    if (messageSearch.trim()) {
+      const query = messageSearch.toLowerCase();
+      result = result.filter((msg) =>
+        msg.content.toLowerCase().includes(query),
+      );
+    }
+
+    return result;
+  }, [messages, activeRoleFilters, messageSearch]);
+
+  // TOC from user messages
   const userMessagesToc = useMemo(() => {
     return messages
       .map((msg, index) => ({ msg, index }))
@@ -141,21 +188,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       setActiveMessageIndex(index);
-      setTocDialogOpen(false); // 关闭弹窗
-      // 清除高亮状态
+      setTocDialogOpen(false);
       setTimeout(() => setActiveMessageIndex(null), 2000);
     }
   };
-
-  // 清理定时器
-  useEffect(() => {
-    return () => {
-      // 这里的 setTimeout 其实无法直接清理，因为它在函数闭包里。
-      // 如果要严格清理，需要用 useRef 存 timer id。
-      // 但对于 2秒的高亮清除，通常不清理也没大问题。
-      // 为了代码规范，我们在组件卸载时将 activeMessageIndex 重置 (虽然 React 会处理)
-    };
-  }, []);
 
   const handleCopy = async (text: string, successMessage: string) => {
     try {
@@ -206,13 +242,85 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     });
   };
 
+  const handleExportConversation = useCallback(async () => {
+    if (!selectedSession || messages.length === 0) return;
+    const title = formatSessionTitle(selectedSession);
+    const lines = [
+      `# ${title}`,
+      `> Session ID: ${selectedSession.sessionId}`,
+      `> Provider: ${selectedSession.providerId}`,
+      selectedSession.projectDir
+        ? `> Project: ${selectedSession.projectDir}`
+        : "",
+      `> Exported: ${new Date().toLocaleString()}`,
+      "",
+      "---",
+      "",
+    ];
+
+    for (const msg of messages) {
+      const roleLabel = getRoleLabel(msg.role, t);
+      const ts = msg.ts ? ` (${formatTimestamp(msg.ts)})` : "";
+      lines.push(`## ${roleLabel}${ts}`);
+      lines.push("");
+      lines.push(msg.content);
+      lines.push("");
+      lines.push("---");
+      lines.push("");
+    }
+
+    const text = lines.filter((l) => l !== undefined).join("\n");
+    await handleCopy(
+      text,
+      t("sessionManager.conversationExported", {
+        defaultValue: "Conversation exported to clipboard",
+      }),
+    );
+  }, [selectedSession, messages, t, handleCopy]);
+
+  const handleCopyAll = useCallback(async () => {
+    if (!selectedSession || messages.length === 0) return;
+    const text = messages
+      .map((msg) => {
+        const roleLabel = getRoleLabel(msg.role, t);
+        return `[${roleLabel}]\n${msg.content}`;
+      })
+      .join("\n\n---\n\n");
+    await handleCopy(
+      text,
+      t("sessionManager.allMessagesCopied", {
+        defaultValue: "All messages copied",
+      }),
+    );
+  }, [selectedSession, messages, t, handleCopy]);
+
+  const toggleRoleFilter = (role: RoleFilter) => {
+    setActiveRoleFilters((prev) => {
+      if (prev.includes(role)) {
+        const next = prev.filter((r) => r !== role);
+        return next.length === 0 ? ALL_ROLES : next;
+      }
+      return [...prev, role];
+    });
+  };
+
+  // Role counts for filter badges
+  const roleCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const msg of messages) {
+      const role = msg.role.toLowerCase();
+      counts[role] = (counts[role] || 0) + 1;
+    }
+    return counts;
+  }, [messages]);
+
   return (
     <TooltipProvider>
       <div className="mx-auto px-4 sm:px-6 flex flex-col flex-1 min-h-0">
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
-          {/* 主内容区域 - 左右分栏 */}
+          {/* Main content - left/right split */}
           <div className="flex-1 overflow-hidden grid gap-4 md:grid-cols-[320px_1fr]">
-            {/* 左侧会话列表 */}
+            {/* Left: Session list */}
             <Card className="flex flex-col overflow-hidden">
               <CardHeader className="py-2 px-3 border-b">
                 {isSearchOpen ? (
@@ -424,7 +532,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
               </CardContent>
             </Card>
 
-            {/* 右侧会话详情 */}
+            {/* Right: Session detail */}
             <Card
               className="flex flex-col overflow-hidden min-h-0"
               ref={detailRef}
@@ -436,10 +544,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                 </div>
               ) : (
                 <>
-                  {/* 详情头部 */}
+                  {/* Detail header */}
                   <CardHeader className="py-3 px-4 border-b shrink-0">
                     <div className="flex items-start justify-between gap-4">
-                      {/* 左侧：会话信息 */}
+                      {/* Left: session info */}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <Tooltip>
@@ -463,7 +571,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           </h2>
                         </div>
 
-                        {/* 元信息 */}
+                        {/* Metadata */}
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                           <div className="flex items-center gap-1">
                             <Clock className="size-3" />
@@ -509,7 +617,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         </div>
                       </div>
 
-                      {/* 右侧：操作按钮组 */}
+                      {/* Right: action buttons */}
                       <div className="flex items-center gap-2 shrink-0">
                         {isMac() && (
                           <Tooltip>
@@ -523,7 +631,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 <Play className="size-3.5" />
                                 <span className="hidden sm:inline">
                                   {t("sessionManager.resume", {
-                                    defaultValue: "恢复会话",
+                                    defaultValue: "Resume Session",
                                   })}
                                 </span>
                               </Button>
@@ -531,10 +639,12 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             <TooltipContent>
                               {selectedSession.resumeCommand
                                 ? t("sessionManager.resumeTooltip", {
-                                    defaultValue: "在终端中恢复此会话",
+                                    defaultValue:
+                                      "Resume this session in terminal",
                                   })
                                 : t("sessionManager.noResumeCommand", {
-                                    defaultValue: "此会话无法恢复",
+                                    defaultValue:
+                                      "This session cannot be resumed",
                                   })}
                             </TooltipContent>
                           </Tooltip>
@@ -555,24 +665,25 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               <span className="hidden sm:inline">
                                 {deleteSessionMutation.isPending
                                   ? t("sessionManager.deleting", {
-                                      defaultValue: "删除中...",
+                                      defaultValue: "Deleting...",
                                     })
                                   : t("sessionManager.delete", {
-                                      defaultValue: "删除会话",
+                                      defaultValue: "Delete session",
                                     })}
                               </span>
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>
                             {t("sessionManager.deleteTooltip", {
-                              defaultValue: "永久删除此本地会话记录",
+                              defaultValue:
+                                "Permanently delete this local session record",
                             })}
                           </TooltipContent>
                         </Tooltip>
                       </div>
                     </div>
 
-                    {/* 恢复命令预览 */}
+                    {/* Resume command preview */}
                     {selectedSession.resumeCommand && (
                       <div className="mt-3 flex items-center gap-2">
                         <div className="flex-1 rounded-md bg-muted/60 px-3 py-1.5 font-mono text-xs text-muted-foreground truncate">
@@ -596,7 +707,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           </TooltipTrigger>
                           <TooltipContent>
                             {t("sessionManager.copyCommand", {
-                              defaultValue: "复制命令",
+                              defaultValue: "Copy Command",
                             })}
                           </TooltipContent>
                         </Tooltip>
@@ -604,24 +715,210 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     )}
                   </CardHeader>
 
-                  {/* 消息列表区域 */}
-                  <CardContent className="flex-1 overflow-hidden p-0">
-                    <div className="flex h-full min-w-0">
-                      {/* 消息列表 */}
-                      <ScrollArea className="flex-1 min-w-0">
-                        <div className="p-4 min-w-0">
-                          <div className="flex items-center gap-2 mb-3">
-                            <MessageSquare className="size-4 text-muted-foreground" />
-                            <span className="text-sm font-medium">
-                              {t("sessionManager.conversationHistory", {
-                                defaultValue: "对话记录",
-                              })}
-                            </span>
-                            <Badge variant="secondary" className="text-xs">
-                              {messages.length}
-                            </Badge>
-                          </div>
+                  {/* Message toolbar */}
+                  <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/20 shrink-0">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <MessageSquare className="size-3.5 text-muted-foreground shrink-0" />
+                      <span className="text-xs font-medium text-muted-foreground shrink-0">
+                        {t("sessionManager.conversationHistory", {
+                          defaultValue: "Conversation",
+                        })}
+                      </span>
+                      <Badge
+                        variant="secondary"
+                        className="text-[10px] px-1.5 py-0"
+                      >
+                        {filteredMessages.length}
+                        {filteredMessages.length !== messages.length &&
+                          `/${messages.length}`}
+                      </Badge>
 
+                      {/* Message search */}
+                      {isMessageSearchOpen ? (
+                        <div className="relative flex-1 max-w-[240px]">
+                          <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground" />
+                          <Input
+                            ref={messageSearchRef}
+                            value={messageSearch}
+                            onChange={(e) => setMessageSearch(e.target.value)}
+                            placeholder={t("sessionManager.searchMessages", {
+                              defaultValue: "Search messages...",
+                            })}
+                            className="h-6 pl-7 pr-6 text-xs"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") {
+                                setIsMessageSearchOpen(false);
+                                setMessageSearch("");
+                              }
+                            }}
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-0 top-1/2 -translate-y-1/2 size-5"
+                            onClick={() => {
+                              setIsMessageSearchOpen(false);
+                              setMessageSearch("");
+                            }}
+                          >
+                            <X className="size-2.5" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-6"
+                              onClick={() => {
+                                setIsMessageSearchOpen(true);
+                                setTimeout(
+                                  () => messageSearchRef.current?.focus(),
+                                  0,
+                                );
+                              }}
+                            >
+                              <Search className="size-3" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t("sessionManager.searchMessages", {
+                              defaultValue: "Search messages",
+                            })}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+
+                    {/* Right side toolbar */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {/* Role filter dropdown */}
+                      <DropdownMenu>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={cn(
+                                  "size-6",
+                                  activeRoleFilters.length < ALL_ROLES.length &&
+                                    "text-primary",
+                                )}
+                              >
+                                <Filter className="size-3" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t("sessionManager.filterByRole", {
+                              defaultValue: "Filter by role",
+                            })}
+                          </TooltipContent>
+                        </Tooltip>
+                        <DropdownMenuContent align="end" className="w-44">
+                          {ALL_ROLES.map((role) => (
+                            <DropdownMenuCheckboxItem
+                              key={role}
+                              checked={activeRoleFilters.includes(role)}
+                              onCheckedChange={() => toggleRoleFilter(role)}
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <span className="capitalize">
+                                  {getRoleLabel(role, t)}
+                                </span>
+                                {roleCounts[role] && (
+                                  <span className="text-[10px] text-muted-foreground ml-2">
+                                    {roleCounts[role]}
+                                  </span>
+                                )}
+                              </div>
+                            </DropdownMenuCheckboxItem>
+                          ))}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => setActiveRoleFilters(ALL_ROLES)}
+                          >
+                            {t("sessionManager.showAll", {
+                              defaultValue: "Show all",
+                            })}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+
+                      {/* Collapse/expand all */}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-6"
+                            onClick={() => setAllCollapsed(!allCollapsed)}
+                          >
+                            <ChevronsUpDown className="size-3" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {allCollapsed
+                            ? t("sessionManager.expandAll", {
+                                defaultValue: "Expand all",
+                              })
+                            : t("sessionManager.collapseAll", {
+                                defaultValue: "Collapse all",
+                              })}
+                        </TooltipContent>
+                      </Tooltip>
+
+                      {/* Export / copy all dropdown */}
+                      <DropdownMenu>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-6"
+                              >
+                                <Download className="size-3" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t("sessionManager.exportConversation", {
+                              defaultValue: "Export",
+                            })}
+                          </TooltipContent>
+                        </Tooltip>
+                        <DropdownMenuContent align="end" className="w-52">
+                          <DropdownMenuItem
+                            onClick={() => void handleCopyAll()}
+                          >
+                            <Copy className="size-3.5 mr-2" />
+                            {t("sessionManager.copyAllMessages", {
+                              defaultValue: "Copy all messages",
+                            })}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => void handleExportConversation()}
+                          >
+                            <Download className="size-3.5 mr-2" />
+                            {t("sessionManager.exportAsMarkdown", {
+                              defaultValue: "Export as Markdown",
+                            })}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+
+                  {/* Messages area */}
+                  <CardContent className="flex-1 overflow-hidden p-0">
+                    <div className="flex h-full min-w-0 overflow-hidden">
+                      {/* Message list */}
+                      <ScrollArea className="flex-1 min-w-0 overflow-hidden">
+                        <div className="p-4 min-w-0 overflow-hidden">
                           {isLoadingMessages ? (
                             <div className="flex items-center justify-center py-12">
                               <RefreshCw className="size-5 animate-spin text-muted-foreground" />
@@ -633,41 +930,76 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 {t("sessionManager.emptySession")}
                               </p>
                             </div>
+                          ) : filteredMessages.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-12 text-center">
+                              <Search className="size-8 text-muted-foreground/50 mb-2" />
+                              <p className="text-sm text-muted-foreground">
+                                {t("sessionManager.noMatchingMessages", {
+                                  defaultValue: "No matching messages",
+                                })}
+                              </p>
+                              <Button
+                                variant="link"
+                                size="sm"
+                                className="mt-1 text-xs"
+                                onClick={() => {
+                                  setMessageSearch("");
+                                  setActiveRoleFilters(ALL_ROLES);
+                                }}
+                              >
+                                {t("sessionManager.clearFilters", {
+                                  defaultValue: "Clear filters",
+                                })}
+                              </Button>
+                            </div>
                           ) : (
                             <div className="space-y-3">
-                              {messages.map((message, index) => (
-                                <SessionMessageItem
-                                  key={`${message.role}-${index}`}
-                                  message={message}
-                                  index={index}
-                                  isActive={activeMessageIndex === index}
-                                  setRef={(el) => {
-                                    if (el) messageRefs.current.set(index, el);
-                                  }}
-                                  onCopy={(content) =>
-                                    handleCopy(
-                                      content,
-                                      t("sessionManager.messageCopied", {
-                                        defaultValue: "已复制消息内容",
-                                      }),
-                                    )
-                                  }
-                                />
-                              ))}
+                              {filteredMessages.map((message) => {
+                                // Find original index for ref mapping
+                                const originalIndex = messages.indexOf(message);
+                                return (
+                                  <SessionMessageItem
+                                    key={`${message.role}-${originalIndex}`}
+                                    message={message}
+                                    index={originalIndex}
+                                    isActive={
+                                      activeMessageIndex === originalIndex
+                                    }
+                                    defaultCollapsed={
+                                      allCollapsed ? true : undefined
+                                    }
+                                    setRef={(el) => {
+                                      if (el)
+                                        messageRefs.current.set(
+                                          originalIndex,
+                                          el,
+                                        );
+                                    }}
+                                    onCopy={(content) =>
+                                      handleCopy(
+                                        content,
+                                        t("sessionManager.messageCopied", {
+                                          defaultValue: "Message copied",
+                                        }),
+                                      )
+                                    }
+                                  />
+                                );
+                              })}
                               <div ref={messagesEndRef} />
                             </div>
                           )}
                         </div>
                       </ScrollArea>
 
-                      {/* 右侧目录 - 类似少数派 (大屏幕) */}
+                      {/* TOC sidebar (large screens) */}
                       <SessionTocSidebar
                         items={userMessagesToc}
                         onItemClick={scrollToMessage}
                       />
                     </div>
 
-                    {/* 浮动目录按钮 (小屏幕) */}
+                    {/* Floating TOC button (small screens) */}
                     <SessionTocDialog
                       items={userMessagesToc}
                       onItemClick={scrollToMessage}
@@ -684,22 +1016,22 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       <ConfirmDialog
         isOpen={Boolean(deleteTarget)}
         title={t("sessionManager.deleteConfirmTitle", {
-          defaultValue: "删除会话",
+          defaultValue: "Delete session",
         })}
         message={
           deleteTarget
             ? t("sessionManager.deleteConfirmMessage", {
                 defaultValue:
-                  "将永久删除本地会话“{{title}}”\nSession ID: {{sessionId}}\n\n此操作不可恢复。",
+                  'This will permanently delete the local session "{{title}}"\nSession ID: {{sessionId}}\n\nThis action cannot be undone.',
                 title: formatSessionTitle(deleteTarget),
                 sessionId: deleteTarget.sessionId,
               })
             : ""
         }
         confirmText={t("sessionManager.deleteConfirmAction", {
-          defaultValue: "删除会话",
+          defaultValue: "Delete session",
         })}
-        cancelText={t("common.cancel", { defaultValue: "取消" })}
+        cancelText={t("common.cancel", { defaultValue: "Cancel" })}
         variant="destructive"
         onConfirm={() => void handleDeleteConfirm()}
         onCancel={() => {
