@@ -119,6 +119,11 @@ pub enum AuthStrategy {
     ///
     /// 使用动态获取的 Copilot Token（通过 GitHub OAuth 设备码流程获取）
     GitHubCopilot,
+
+    /// Azure OpenAI API Key 认证方式
+    ///
+    /// - Header: `api-key: <api_key>`
+    AzureApiKey,
 }
 
 #[cfg(test)]
@@ -234,6 +239,7 @@ mod tests {
             AuthStrategy::Google,
             AuthStrategy::GoogleOAuth,
             AuthStrategy::GitHubCopilot,
+            AuthStrategy::AzureApiKey,
         ];
 
         for (i, s1) in strategies.iter().enumerate() {

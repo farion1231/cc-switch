@@ -35,7 +35,12 @@ const HEADER_BLACKLIST: &[&str] = &[
     // 认证类（会被覆盖）
     "authorization",
     "x-api-key",
+    "api-key",
     "x-goog-api-key",
+    // Codex 客户端内部 headers（不应透传到上游）
+    "x-codex-turn-metadata",
+    "session_id",
+    "originator",
     // 连接类（由 HTTP 客户端管理）
     "host",
     "content-length",
@@ -1006,6 +1011,19 @@ impl RequestForwarder {
         } else {
             let status_code = status.as_u16();
             let body_text = response.text().await.ok();
+
+            // 上游返回错误时，记录响应状态和请求体便于调试
+            log::warn!(
+                "[{tag}] <<< 上游错误 {status_code} (url={url}, model={request_model}), 响应体: {}",
+                body_text.as_deref().unwrap_or("<empty>")
+            );
+            if let Ok(req_body_str) = serde_json::to_string(&filtered_body) {
+                log::debug!(
+                    "[{tag}] >>> 导致错误的请求体 ({}字节): {}",
+                    req_body_str.len(),
+                    req_body_str
+                );
+            }
 
             Err(ProxyError::UpstreamError {
                 status: status_code,

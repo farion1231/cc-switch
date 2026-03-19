@@ -29,6 +29,7 @@ import {
 import type { ProxyStatus } from "@/types/proxy";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
+import { extractErrorMessage } from "@/utils/errorUtils";
 
 interface ProxyPanelProps {
   enableLocalProxy: boolean;
@@ -73,24 +74,35 @@ export function ProxyPanel({
   const { data: geminiQueue = [] } = useFailoverQueue("gemini");
 
   const handleTakeoverChange = async (appType: string, enabled: boolean) => {
+    const appLabel =
+      appType === "claude"
+        ? "Claude"
+        : appType === "codex"
+          ? "Codex"
+          : appType === "gemini"
+            ? "Gemini"
+            : appType;
     try {
       await setTakeoverForApp.mutateAsync({ appType, enabled });
       toast.success(
         enabled
           ? t("proxy.takeover.enabled", {
-              app: appType,
-              defaultValue: `${appType} 接管已启用`,
+              app: appLabel,
+              defaultValue: `${appLabel} 接管已启用`,
             })
           : t("proxy.takeover.disabled", {
-              app: appType,
-              defaultValue: `${appType} 接管已关闭`,
+              app: appLabel,
+              defaultValue: `${appLabel} 接管已关闭`,
             }),
         { closeButton: true },
       );
     } catch (error) {
+      const detail = extractErrorMessage(error);
       toast.error(
         t("proxy.takeover.failed", {
-          defaultValue: "切换接管状态失败",
+          defaultValue: detail
+            ? `切换 ${appLabel} 接管状态失败: ${detail}`
+            : "切换接管状态失败",
         }),
       );
     }
