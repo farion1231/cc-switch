@@ -162,8 +162,9 @@ export function ProviderForm({
   const [endpointAutoSelect, setEndpointAutoSelect] = useState<boolean>(
     () => initialData?.meta?.endpointAutoSelect ?? true,
   );
+  const supportsFullUrl = appId === "claude" || appId === "codex";
   const [localIsFullUrl, setLocalIsFullUrl] = useState<boolean>(() => {
-    if (appId !== "claude") return false;
+    if (!supportsFullUrl) return false;
     return initialData?.meta?.isFullUrl ?? false;
   });
 
@@ -206,7 +207,7 @@ export function ProviderForm({
     }
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
     setLocalIsFullUrl(
-      appId === "claude" ? (initialData?.meta?.isFullUrl ?? false) : false,
+      supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
     );
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
     setProxyConfig(initialData?.meta?.proxyConfig ?? { enabled: false });
@@ -219,7 +220,7 @@ export function ProviderForm({
         initialData?.meta?.pricingModelSource,
       ),
     });
-  }, [appId, initialData]);
+  }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
     () => ({
@@ -949,7 +950,7 @@ export function ProviderForm({
           ? localApiKeyField
           : undefined,
       isFullUrl:
-        appId === "claude" && category !== "official" && localIsFullUrl
+        supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
     };
@@ -1432,6 +1433,8 @@ export function ProviderForm({
             shouldShowSpeedTest={shouldShowSpeedTest}
             codexBaseUrl={codexBaseUrl}
             onBaseUrlChange={handleCodexBaseUrlChange}
+            isFullUrl={localIsFullUrl}
+            onFullUrlChange={setLocalIsFullUrl}
             isEndpointModalOpen={isCodexEndpointModalOpen}
             onEndpointModalToggle={setIsCodexEndpointModalOpen}
             onCustomEndpointsChange={

@@ -225,6 +225,7 @@ impl StreamCheckService {
                     &model_to_test,
                     test_prompt,
                     request_timeout,
+                    provider,
                 )
                 .await
             }
@@ -441,18 +442,14 @@ impl StreamCheckService {
         model: &str,
         test_prompt: &str,
         timeout: std::time::Duration,
+        provider: &Provider,
     ) -> Result<(u16, String), AppError> {
-        let base = base_url.trim_end_matches('/');
-        // Codex CLI 的 base_url 语义：base_url 是 API base（可能已包含 /v1 或其他自定义前缀），
-        // Responses 端点为 `/responses`。
-        //
-        // 兼容：如果 base_url 配成纯 origin（如 https://api.openai.com），则需要补 `/v1`。
-        // 优先尝试 `{base}/responses`，若 404 再回退 `{base}/v1/responses`。
-        let urls = if base.ends_with("/v1") {
-            vec![format!("{base}/responses")]
-        } else {
-            vec![format!("{base}/responses"), format!("{base}/v1/responses")]
-        };
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
+        let urls = Self::resolve_codex_stream_urls(base_url, is_full_url);
 
         // 解析模型名和推理等级 (支持 model@level 或 model#level 格式)
         let (actual_model, reasoning_effort) = Self::parse_model_with_effort(model);
@@ -743,6 +740,20 @@ impl StreamCheckService {
             format!("{base}/v1/messages")
         }
     }
+
+    fn resolve_codex_stream_urls(base_url: &str, is_full_url: bool) -> Vec<String> {
+        if is_full_url {
+            return vec![base_url.to_string()];
+        }
+
+        let base = base_url.trim_end_matches('/');
+
+        if base.ends_with("/v1") {
+            vec![format!("{base}/responses")]
+        } else {
+            vec![format!("{base}/responses"), format!("{base}/v1/responses")]
+        }
+    }
 }
 
 #[cfg(test)]
@@ -904,5 +915,36 @@ mod tests {
         );
 
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
+    }
+
+    #[test]
+    fn test_resolve_codex_stream_urls_for_full_url_mode() {
+        let urls = StreamCheckService::resolve_codex_stream_urls(
+            "https://relay.example/custom/responses",
+            true,
+        );
+
+        assert_eq!(urls, vec!["https://relay.example/custom/responses"]);
+    }
+
+    #[test]
+    fn test_resolve_codex_stream_urls_for_v1_base() {
+        let urls =
+            StreamCheckService::resolve_codex_stream_urls("https://api.openai.com/v1", false);
+
+        assert_eq!(urls, vec!["https://api.openai.com/v1/responses"]);
+    }
+
+    #[test]
+    fn test_resolve_codex_stream_urls_for_origin_base() {
+        let urls = StreamCheckService::resolve_codex_stream_urls("https://api.openai.com", false);
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://api.openai.com/responses",
+                "https://api.openai.com/v1/responses",
+            ]
+        );
     }
 }

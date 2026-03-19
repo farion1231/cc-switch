@@ -139,13 +139,17 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
-      if (
-        activeApp === "claude" &&
+      const requiresProxyForSwitch =
+        !isProxyRunning &&
         provider.category !== "official" &&
-        (provider.meta?.isFullUrl ||
-          provider.meta?.apiFormat === "openai_chat" ||
-          provider.meta?.apiFormat === "openai_responses") &&
-        !isProxyRunning
+        ((activeApp === "claude" &&
+          (provider.meta?.isFullUrl ||
+            provider.meta?.apiFormat === "openai_chat" ||
+            provider.meta?.apiFormat === "openai_responses")) ||
+          (activeApp === "codex" && provider.meta?.isFullUrl));
+
+      if (
+        requiresProxyForSwitch
       ) {
         toast.warning(
           t("notifications.proxyRequiredForSwitch", {

@@ -213,6 +213,28 @@ describe("useProviderActions", () => {
     expect(settingsApiGetMock).not.toHaveBeenCalled();
   });
 
+  it("blocks switching Codex full URL providers when proxy is not running", async () => {
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        isFullUrl: true,
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("codex", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
+    expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(settingsApiGetMock).not.toHaveBeenCalled();
+  });
+
   it("should sync plugin config when switching Claude provider with integration enabled", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     settingsApiGetMock.mockResolvedValueOnce({
