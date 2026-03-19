@@ -304,6 +304,22 @@ html.dark {
   margin-bottom: 0;
 }
 
+.session-markdown pre {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.session-markdown a {
+  word-break: break-all;
+}
+
+.session-markdown p,
+.session-markdown li,
+.session-markdown blockquote {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear {
   display: none;

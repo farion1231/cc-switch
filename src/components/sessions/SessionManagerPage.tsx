@@ -915,10 +915,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
                   {/* Messages area */}
                   <CardContent className="flex-1 overflow-hidden p-0">
-                    <div className="flex h-full min-w-0 overflow-hidden">
+                    <div className="flex h-full w-full overflow-hidden">
                       {/* Message list */}
-                      <ScrollArea className="flex-1 min-w-0 overflow-hidden">
-                        <div className="p-4 min-w-0 overflow-hidden">
+                      <ScrollArea className="flex-1 w-0">
+                        <div className="p-4">
                           {isLoadingMessages ? (
                             <div className="flex items-center justify-center py-12">
                               <RefreshCw className="size-5 animate-spin text-muted-foreground" />

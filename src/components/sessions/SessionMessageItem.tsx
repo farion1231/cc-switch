@@ -211,14 +211,14 @@ export function SessionMessageItem({
       {/* Content */}
       <div
         className={cn(
-          "px-3 text-sm leading-relaxed min-w-0 overflow-hidden",
+          "px-3 text-sm leading-relaxed overflow-hidden",
           collapsed ? "max-h-[120px] relative" : "pb-3",
         )}
       >
         {collapsed && (
           <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-[hsl(var(--card))] to-transparent z-10 pointer-events-none" />
         )}
-        <div className="session-markdown prose prose-sm dark:prose-invert max-w-none break-words [overflow-wrap:anywhere]">
+        <div className="session-markdown prose prose-sm dark:prose-invert max-w-none break-words overflow-hidden [word-break:break-word]">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
@@ -253,7 +253,7 @@ export function SessionMessageItem({
                     href={href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-primary hover:underline"
+                    className="text-primary hover:underline break-all"
                   >
                     {children}
                   </a>
