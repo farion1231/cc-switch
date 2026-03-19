@@ -320,6 +320,11 @@ html.dark {
   word-break: break-word;
 }
 
+/* Override Radix ScrollArea's internal display:table div that prevents text wrapping */
+.session-messages-scroll [data-radix-scroll-area-viewport] > div {
+  display: block !important;
+}
+
 input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear {
   display: none;

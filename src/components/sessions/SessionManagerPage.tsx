@@ -917,7 +917,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                   <CardContent className="flex-1 overflow-hidden p-0">
                     <div className="flex h-full w-full overflow-hidden">
                       {/* Message list */}
-                      <ScrollArea className="flex-1 w-0">
+                      <ScrollArea className="flex-1 w-0 session-messages-scroll">
                         <div className="p-4">
                           {isLoadingMessages ? (
                             <div className="flex items-center justify-center py-12">
