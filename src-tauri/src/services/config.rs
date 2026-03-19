@@ -1,4 +1,4 @@
-use super::provider::{sanitize_claude_settings_for_live, ProviderService};
+use super::provider::ProviderService;
 use crate::app_config::{AppType, MultiAppConfig};
 use crate::error::AppError;
 use crate::provider::Provider;
@@ -185,8 +185,9 @@ impl ConfigService {
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
 
-        let settings = sanitize_claude_settings_for_live(&provider.settings_config);
-        write_json_file(&settings_path, &settings)?;
+        // Use merge instead of overwrite to preserve user-defined fields (#1198).
+        let merged = crate::services::provider::merge_claude_settings(&provider.settings_config)?;
+        write_json_file(&settings_path, &merged)?;
 
         let live_after = read_json_file::<serde_json::Value>(&settings_path)?;
         if let Some(manager) = config.get_manager_mut(&AppType::Claude) {

@@ -1692,8 +1692,10 @@ impl ProxyService {
 
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {
         let path = get_claude_settings_path();
-        let settings = crate::services::provider::sanitize_claude_settings_for_live(config);
-        write_json_file(&path, &settings).map_err(|e| format!("写入 Claude 配置失败: {e}"))
+        // Use merge instead of overwrite to preserve user-defined fields (#1198).
+        let merged = crate::services::provider::merge_claude_settings(config)
+            .map_err(|e| format!("合并 Claude 配置失败: {e}"))?;
+        write_json_file(&path, &merged).map_err(|e| format!("写入 Claude 配置失败: {e}"))
     }
 
     fn read_codex_live(&self) -> Result<Value, String> {
