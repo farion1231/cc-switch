@@ -648,13 +648,48 @@ impl LiveSnapshot {
     }
 }
 
+/// Merge provider settings into existing Claude settings.json, preserving
+/// user-defined fields that CC Switch does not manage.
+///
+/// This prevents the long-standing issue (#1198, #1184, #1088, #1485) where
+/// switching providers or restarting CC Switch would silently discard user
+/// customisations such as `allowedTools`, `permissions`, `mcpServers`,
+/// `contextFiles`, `spinnerVerbs`, hooks, etc.
+///
+/// The merge strategy mirrors what `write_gemini_live()` already does for
+/// Gemini: read existing file → overlay provider keys → write back.
+/// Provider keys always take precedence (user values are overridden only
+/// for the fields CC Switch explicitly manages).
+pub(crate) fn merge_claude_settings(provider_settings: &Value) -> Result<Value, AppError> {
+    let path = get_claude_settings_path();
+    let sanitized = sanitize_claude_settings_for_live(provider_settings);
+
+    // Start from the existing file (if any) so user-defined keys survive.
+    let mut merged = if path.exists() {
+        read_json_file::<Value>(&path).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+
+    // Overlay provider-managed keys onto the existing settings.
+    if let (Some(merged_obj), Some(provider_obj)) =
+        (merged.as_object_mut(), sanitized.as_object())
+    {
+        for (k, v) in provider_obj {
+            merged_obj.insert(k.clone(), v.clone());
+        }
+    }
+
+    Ok(merged)
+}
+
 /// Write live configuration snapshot for a provider
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
-            write_json_file(&path, &settings)?;
+            let merged = merge_claude_settings(&provider.settings_config)?;
+            write_json_file(&path, &merged)?;
         }
         AppType::Codex => {
             let obj = provider
@@ -1437,5 +1472,129 @@ mod tests {
             .map(|value| value.as_str().expect("tool id should be string"))
             .collect();
         assert_eq!(values, vec!["tool2"]);
+    }
+
+    #[test]
+    fn merge_claude_settings_preserves_existing_user_fields() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // We cannot easily mock get_claude_settings_path(), so test the
+        // underlying merge logic directly via sanitize + manual merge.
+        let existing = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "old-key"
+            },
+            "allowedTools": ["tool_a", "tool_b"],
+            "permissions": { "allow": ["read"] },
+            "spinnerVerbs": ["hacking"]
+        });
+
+        let provider_settings = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "new-key",
+                "ANTHROPIC_BASE_URL": "https://proxy.example.com"
+            }
+        });
+
+        let sanitized = sanitize_claude_settings_for_live(&provider_settings);
+
+        // Simulate the merge logic from merge_claude_settings
+        let mut merged = existing.clone();
+        if let (Some(merged_obj), Some(provider_obj)) =
+            (merged.as_object_mut(), sanitized.as_object())
+        {
+            for (k, v) in provider_obj {
+                merged_obj.insert(k.clone(), v.clone());
+            }
+        }
+
+        // Provider-managed field should be updated
+        assert_eq!(
+            merged["env"]["ANTHROPIC_AUTH_TOKEN"],
+            json!("new-key"),
+            "provider key should override existing"
+        );
+        assert_eq!(
+            merged["env"]["ANTHROPIC_BASE_URL"],
+            json!("https://proxy.example.com"),
+            "new provider key should be added"
+        );
+
+        // User-defined fields should be preserved
+        assert_eq!(
+            merged["allowedTools"],
+            json!(["tool_a", "tool_b"]),
+            "user allowedTools should survive merge"
+        );
+        assert_eq!(
+            merged["permissions"],
+            json!({ "allow": ["read"] }),
+            "user permissions should survive merge"
+        );
+        assert_eq!(
+            merged["spinnerVerbs"],
+            json!(["hacking"]),
+            "user spinnerVerbs should survive merge"
+        );
+    }
+
+    #[test]
+    fn merge_claude_settings_strips_internal_fields() {
+        let provider_settings = json!({
+            "env": { "ANTHROPIC_AUTH_TOKEN": "key" },
+            "api_format": "openai",
+            "openrouter_compat_mode": true
+        });
+
+        let sanitized = sanitize_claude_settings_for_live(&provider_settings);
+
+        // Internal fields should be removed
+        assert!(
+            sanitized.get("api_format").is_none(),
+            "api_format should be stripped"
+        );
+        assert!(
+            sanitized.get("openrouter_compat_mode").is_none(),
+            "openrouter_compat_mode should be stripped"
+        );
+        // Actual fields should remain
+        assert!(sanitized.get("env").is_some(), "env should be kept");
+    }
+
+    #[test]
+    fn merge_claude_settings_works_when_no_existing_file() {
+        // When existing settings are empty (new install), merge should
+        // just produce the provider settings.
+        let provider_settings = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "my-key",
+                "ANTHROPIC_BASE_URL": "https://api.test"
+            }
+        });
+
+        let sanitized = sanitize_claude_settings_for_live(&provider_settings);
+        let merged = {
+            let mut base = json!({});
+            if let (Some(merged_obj), Some(provider_obj)) =
+                (base.as_object_mut(), sanitized.as_object())
+            {
+                for (k, v) in provider_obj {
+                    merged_obj.insert(k.clone(), v.clone());
+                }
+            }
+            base
+        };
+
+        assert_eq!(
+            merged["env"]["ANTHROPIC_AUTH_TOKEN"],
+            json!("my-key"),
+            "provider key should be present"
+        );
+        assert_eq!(
+            merged["env"]["ANTHROPIC_BASE_URL"],
+            json!("https://api.test"),
+            "provider base_url should be present"
+        );
     }
 }

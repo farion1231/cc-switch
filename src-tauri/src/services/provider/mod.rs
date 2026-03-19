@@ -26,6 +26,7 @@ pub use live::{
 };
 
 // Internal re-exports (pub(crate))
+pub(crate) use live::merge_claude_settings;
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
