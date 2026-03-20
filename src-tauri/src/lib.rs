@@ -1012,6 +1012,8 @@ pub fn run() {
             commands::get_tool_versions,
             // Provider terminal
             commands::open_provider_terminal,
+            // Windows Terminal profiles
+            commands::get_windows_terminal_profiles,
             // Universal Provider management
             commands::get_universal_providers,
             commands::get_universal_provider,

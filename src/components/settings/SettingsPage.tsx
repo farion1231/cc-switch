@@ -240,6 +240,10 @@ export function SettingsPage({
                       onChange={(terminal) =>
                         handleAutoSave({ preferredTerminal: terminal })
                       }
+                      profileValue={settings.preferredTerminalProfile}
+                      onProfileChange={(profile) =>
+                        handleAutoSave({ preferredTerminalProfile: profile })
+                      }
                     />
                   </motion.div>
                 ) : null}
