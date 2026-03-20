@@ -3,6 +3,7 @@
 //! 统一处理流式和非流式 API 响应
 
 use super::{
+    handler_config::{StreamModelExtractor, StreamUsageParser},
     handler_config::UsageParserConfig,
     handler_context::{RequestContext, StreamingTimeoutConfig},
     io_logging,
@@ -81,8 +82,13 @@ pub async fn handle_streaming(
     let logged_stream = create_logged_passthrough_stream(
         stream,
         ctx.tag,
+        ctx.session_id.clone(),
         ctx.trace_id.clone(),
+        ctx.request_model.clone(),
         ctx.request_messages.clone(),
+        Some(parser_config.stream_parser),
+        Some(parser_config.model_extractor),
+        Some(ctx.start_time),
         Some(usage_collector),
         timeout_config,
     );
@@ -137,9 +143,14 @@ pub async fn handle_non_streaming(
     if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
         io_logging::log_training_sample_with_response(
             ctx.tag,
+            &ctx.session_id,
             &ctx.trace_id,
+            "main_response",
+            Some(&ctx.request_model),
             &ctx.request_messages,
             &json_value,
+            Some(ctx.latency_ms()),
+            "success",
         );
         // 解析使用量
         if let Some(usage) = (parser_config.response_parser)(&json_value) {
@@ -486,14 +497,20 @@ async fn log_usage_internal(
 pub fn create_logged_passthrough_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
+    session_id: String,
     trace_id: String,
+    request_model: String,
     request_messages: Vec<Value>,
+    stream_usage_parser: Option<StreamUsageParser>,
+    stream_model_extractor: Option<StreamModelExtractor>,
+    start_time: Option<std::time::Instant>,
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
         let mut response_text = String::new();
+        let mut stream_events = Vec::new();
         let mut collector = usage_collector;
         let mut is_first_chunk = true;
 
@@ -562,6 +579,7 @@ pub fn create_logged_passthrough_stream(
                                     if data.trim() != "[DONE]" {
                                         if let Ok(json_value) = serde_json::from_str::<Value>(data) {
                                             io_logging::collect_stream_response_text(&json_value, &mut response_text);
+                                            stream_events.push(json_value.clone());
                                             if let Some(c) = &collector {
                                                 c.push(json_value.clone()).await;
                                             }
@@ -594,11 +612,30 @@ pub fn create_logged_passthrough_stream(
         if let Some(c) = collector.take() {
             c.finish().await;
         }
+        let usage = stream_usage_parser.and_then(|parser| parser(&stream_events));
+        let model = stream_model_extractor
+            .map(|extractor| extractor(&stream_events, &request_model))
+            .or_else(|| usage.as_ref().and_then(|item| item.model.clone()))
+            .or_else(|| {
+                if request_model.trim().is_empty() || request_model == "unknown" {
+                    None
+                } else {
+                    Some(request_model.clone())
+                }
+            });
+        let latency_ms = start_time.map(|start| start.elapsed().as_millis() as u64);
         io_logging::log_training_sample_with_text(
             tag,
+            &session_id,
             &trace_id,
+            "main_response",
+            model.as_deref(),
             &request_messages,
             &response_text,
+            latency_ms,
+            usage.as_ref(),
+            "success",
+            None,
         );
     }
 }

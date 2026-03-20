@@ -178,8 +178,13 @@ async fn handle_claude_transform(
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
             "Claude/OpenRouter",
+            ctx.session_id.clone(),
             ctx.trace_id.clone(),
+            ctx.request_model.clone(),
             ctx.request_messages.clone(),
+            Some(TokenUsage::from_claude_stream_events),
+            Some(CLAUDE_PARSER_CONFIG.model_extractor),
+            Some(ctx.start_time),
             Some(usage_collector),
             timeout_config,
         );
@@ -298,9 +303,14 @@ async fn handle_claude_transform(
     );
     io_logging::log_training_sample_with_response(
         ctx.tag,
+        &ctx.session_id,
         &ctx.trace_id,
+        "main_response",
+        Some(&ctx.request_model),
         &ctx.request_messages,
         &anthropic_response,
+        Some(ctx.latency_ms()),
+        "success",
     );
 
     let body = axum::body::Body::from(response_body);
