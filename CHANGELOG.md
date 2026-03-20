@@ -5,6 +5,20 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Proxy Data Session Logging**: Added session-based `data` logging under `~/.cc-switch/logs/cc-switch-data/<session_id>.json` with `session / turns / internal_requests` structure for future routing and dataset analysis
+- **Internal Request Metadata**: `internal_requests` now preserve `trace_id`, `kind`, `status`, and optional `model / latency_ms / usage / error` fields when available
+- **Proxy Data Logging Doc**: Added documentation for the new session log schema and collection behavior in `docs/proxy-data-logging-zh.md`
+
+### Changed
+
+- **Visible Turn Extraction**: `turns` now represent only user-visible conversation rounds instead of flattening each backend request into its own turn
+- **Session Aggregation Rules**: Internal requests that happen before a visible reply are buffered and attached to the correct subsequent turn instead of being incorrectly merged into the previous one
+- **Visible User Text Cleanup**: User-visible turn text now strips injected `<system-reminder>` blocks before being written to session logs
+
 ## [3.12.3] - 2026-03-15
 
 Post-v3.12.2 work adds a Tool Search domain restriction bypass, skill backup/restore lifecycle, proxy compatibility for OpenAI o-series models and gzip compression, and robustness fixes for Skills import, provider forms, and terminal session restore.
