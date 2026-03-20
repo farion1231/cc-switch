@@ -884,7 +884,7 @@ exec bash --norc --noprofile
         "iterm2" => launch_macos_iterm2(&script_file),
         "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
-        "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
+        "ghostty" => launch_macos_ghostty(&script_file),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
         _ => launch_macos_terminal_app(&script_file), // "terminal" or default
     };
@@ -1001,6 +1001,84 @@ fn launch_macos_open_app(
     }
 
     Ok(())
+}
+
+/// macOS: Ghostty 使用 AppleScript 显式新建窗口并执行脚本
+#[cfg(target_os = "macos")]
+fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+
+    let applescript = build_ghostty_launcher_osascript(script_file);
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(&applescript)
+        .output()
+        .map_err(|e| format!("执行 Ghostty AppleScript 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Ghostty 执行失败 (exit code: {:?}): {}",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn build_ghostty_launcher_osascript(script_file: &std::path::Path) -> String {
+    let command = format!(
+        "bash {}",
+        shell_escape(script_file.to_string_lossy().as_ref())
+    );
+
+    format!(
+        r#"tell application "Ghostty"
+    activate
+    set cfg to new surface configuration
+    set win to new window with configuration cfg
+    set term to focused terminal of selected tab of win
+    input text {} to term
+    send key "enter" to term
+    focus term
+end tell"#,
+        applescript_string_expr(&command)
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn applescript_string_expr(value: &str) -> String {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+
+    for ch in value.chars() {
+        match ch {
+            '\\' => current.push_str("\\\\"),
+            '"' => current.push_str("\\\""),
+            '\n' => {
+                parts.push(format!("\"{current}\""));
+                current.clear();
+                parts.push("linefeed".to_string());
+            }
+            '\r' => {
+                parts.push(format!("\"{current}\""));
+                current.clear();
+                parts.push("return".to_string());
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    parts.push(format!("\"{current}\""));
+    parts.join(" & ")
+}
+
+#[cfg(target_os = "macos")]
+fn shell_escape(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
 
 /// Linux: 根据用户首选终端启动
