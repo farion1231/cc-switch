@@ -5,6 +5,7 @@
 use super::{
     handler_config::UsageParserConfig,
     handler_context::{RequestContext, StreamingTimeoutConfig},
+    io_logging,
     server::ProxyState,
     usage::parser::TokenUsage,
     ProxyError,
@@ -46,6 +47,12 @@ pub async fn handle_streaming(
     parser_config: &UsageParserConfig,
 ) -> Response {
     let status = response.status();
+    io_logging::log_stream_response_start(
+        ctx.tag,
+        &ctx.trace_id,
+        status.as_u16(),
+        response.headers(),
+    );
     log::debug!(
         "[{}] 已接收上游流式响应: status={}, headers={}",
         ctx.tag,
@@ -71,8 +78,14 @@ pub async fn handle_streaming(
     let timeout_config = ctx.streaming_timeout_config();
 
     // 创建带日志和超时的透传流
-    let logged_stream =
-        create_logged_passthrough_stream(stream, ctx.tag, Some(usage_collector), timeout_config);
+    let logged_stream = create_logged_passthrough_stream(
+        stream,
+        ctx.tag,
+        ctx.trace_id.clone(),
+        ctx.request_messages.clone(),
+        Some(usage_collector),
+        timeout_config,
+    );
 
     let body = axum::body::Body::from_stream(logged_stream);
     match builder.body(body) {
@@ -99,6 +112,13 @@ pub async fn handle_non_streaming(
         log::error!("[{}] 读取响应失败: {e}", ctx.tag);
         ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
     })?;
+    io_logging::log_passthrough_response_bytes(
+        ctx.tag,
+        &ctx.trace_id,
+        status.as_u16(),
+        &response_headers,
+        &body_bytes,
+    );
     log::debug!(
         "[{}] 已接收上游响应体: status={}, bytes={}, headers={}",
         ctx.tag,
@@ -115,6 +135,12 @@ pub async fn handle_non_streaming(
 
     // 解析并记录使用量
     if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
+        io_logging::log_training_sample_with_response(
+            ctx.tag,
+            &ctx.trace_id,
+            &ctx.request_messages,
+            &json_value,
+        );
         // 解析使用量
         if let Some(usage) = (parser_config.response_parser)(&json_value) {
             // 优先使用 usage 中解析出的模型名称，其次使用响应中的 model 字段，最后回退到请求模型
@@ -460,11 +486,14 @@ async fn log_usage_internal(
 pub fn create_logged_passthrough_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
+    trace_id: String,
+    request_messages: Vec<Value>,
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
+        let mut response_text = String::new();
         let mut collector = usage_collector;
         let mut is_first_chunk = true;
 
@@ -528,8 +557,11 @@ pub fn create_logged_passthrough_stream(
                             // 提取 data 部分并尝试解析为 JSON
                             for line in event_text.lines() {
                                 if let Some(data) = line.strip_prefix("data: ") {
+                                    let payload_for_log = if data.trim() == "[DONE]" { "[DONE]" } else { data };
+                                    io_logging::log_stream_payload(tag, &trace_id, payload_for_log);
                                     if data.trim() != "[DONE]" {
                                         if let Ok(json_value) = serde_json::from_str::<Value>(data) {
+                                            io_logging::collect_stream_response_text(&json_value, &mut response_text);
                                             if let Some(c) = &collector {
                                                 c.push(json_value.clone()).await;
                                             }
@@ -562,6 +594,12 @@ pub fn create_logged_passthrough_stream(
         if let Some(c) = collector.take() {
             c.finish().await;
         }
+        io_logging::log_training_sample_with_text(
+            tag,
+            &trace_id,
+            &request_messages,
+            &response_text,
+        );
     }
 }
 

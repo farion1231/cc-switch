@@ -304,8 +304,13 @@ impl LogConfig {
             "info" => log::LevelFilter::Info,
             "debug" => log::LevelFilter::Debug,
             "trace" => log::LevelFilter::Trace,
+            "data" => log::LevelFilter::Off,
             _ => log::LevelFilter::Info,
         }
+    }
+
+    pub fn is_data_mode(&self) -> bool {
+        self.enabled && self.level.eq_ignore_ascii_case("data")
     }
 }
 

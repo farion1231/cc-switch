@@ -678,6 +678,7 @@ pub fn run() {
                 let db = &app.state::<AppState>().db;
                 if let Ok(log_config) = db.get_log_config() {
                     log::set_max_level(log_config.to_level_filter());
+                    crate::proxy::io_logging::set_data_logging_enabled(log_config.is_data_mode());
                     log::info!(
                         "已加载日志配置: enabled={}, level={}",
                         log_config.enabled,

@@ -194,6 +194,7 @@ pub async fn set_log_config(
         .set_log_config(&config)
         .map_err(|e| e.to_string())?;
     log::set_max_level(config.to_level_filter());
+    crate::proxy::io_logging::set_data_logging_enabled(config.is_data_mode());
     log::info!(
         "日志配置已更新: enabled={}, level={}",
         config.enabled,

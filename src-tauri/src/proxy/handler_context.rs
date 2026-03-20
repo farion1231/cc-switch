@@ -7,11 +7,13 @@ use crate::provider::Provider;
 use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
+    io_logging,
     server::ProxyState,
     types::{AppProxyConfig, OptimizerConfig, RectifierConfig},
     ProxyError,
 };
 use axum::http::HeaderMap;
+use serde_json::Value;
 use std::time::Instant;
 
 /// 流式超时配置
@@ -35,6 +37,7 @@ pub struct StreamingTimeoutConfig {
 pub struct RequestContext {
     /// 请求开始时间
     pub start_time: Instant,
+    pub trace_id: String,
     /// 应用级代理配置（per-app，包含重试次数和超时配置）
     pub app_config: AppProxyConfig,
     /// 选中的 Provider（故障转移链的第一个）
@@ -57,6 +60,7 @@ pub struct RequestContext {
     pub app_type: AppType,
     /// Session ID（从客户端请求提取或新生成）
     pub session_id: String,
+    pub request_messages: Vec<Value>,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -85,6 +89,7 @@ impl RequestContext {
         app_type_str: &'static str,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
+        let trace_id = uuid::Uuid::new_v4().to_string();
 
         // 从数据库读取应用级代理配置（per-app）
         let app_config = state
@@ -110,10 +115,12 @@ impl RequestContext {
         // 提取 Session ID
         let session_result = extract_session_id(headers, body, app_type_str);
         let session_id = session_result.session_id.clone();
+        let request_messages = io_logging::extract_request_messages(body);
 
         log::debug!(
-            "[{}] Session ID: {} (from {:?}, client_provided: {})",
+            "[{}] Trace ID: {}, Session ID: {} (from {:?}, client_provided: {})",
             tag,
+            trace_id,
             session_id,
             session_result.source,
             session_result.client_provided
@@ -139,8 +146,9 @@ impl RequestContext {
             .ok_or(ProxyError::NoAvailableProvider)?;
 
         log::debug!(
-            "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
+            "[{}] [trace={}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
             tag,
+            trace_id,
             provider.name,
             request_model,
             providers.len(),
@@ -149,6 +157,7 @@ impl RequestContext {
 
         Ok(Self {
             start_time,
+            trace_id,
             app_config,
             provider,
             providers,
@@ -158,6 +167,7 @@ impl RequestContext {
             app_type_str,
             app_type,
             session_id,
+            request_messages,
             rectifier_config,
             optimizer_config,
         })
@@ -216,6 +226,7 @@ impl RequestContext {
             state.current_providers.clone(),
             state.failover_manager.clone(),
             state.app_handle.clone(),
+            self.trace_id.clone(),
             self.current_provider_id.clone(),
             first_byte_timeout,
             idle_timeout,

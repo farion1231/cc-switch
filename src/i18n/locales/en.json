@@ -298,7 +298,8 @@
           "warn": "Warning",
           "info": "Info",
           "debug": "Debug",
-          "trace": "Trace"
+          "trace": "Trace",
+          "data": "Data"
         },
         "levelHint": "Log level descriptions:",
         "levelDesc": {
@@ -306,7 +307,8 @@
           "warn": "Errors + warnings",
           "info": "General operation info (default)",
           "debug": "Detailed info including SSE stream and request/response",
-          "trace": "All logs, most verbose"
+          "trace": "All logs, most verbose",
+          "data": "Only write training-style JSON records to the data log file"
         }
       }
     },

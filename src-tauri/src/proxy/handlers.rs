@@ -13,6 +13,7 @@ use super::{
         CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
     },
     handler_context::RequestContext,
+    io_logging,
     providers::{
         get_adapter, get_claude_api_format, streaming::create_anthropic_sse_stream,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
@@ -71,6 +72,7 @@ pub async fn handle_messages(
         .get("stream")
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
+    io_logging::log_client_request(ctx.tag, &ctx.trace_id, "/v1/messages", &headers, &body);
 
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
@@ -176,6 +178,8 @@ async fn handle_claude_transform(
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
             "Claude/OpenRouter",
+            ctx.trace_id.clone(),
+            ctx.request_messages.clone(),
             Some(usage_collector),
             timeout_config,
         );
@@ -192,6 +196,12 @@ async fn handle_claude_transform(
         headers.insert(
             "Connection",
             axum::http::HeaderValue::from_static("keep-alive"),
+        );
+        io_logging::log_stream_response_start(
+            ctx.tag,
+            &ctx.trace_id,
+            status.as_u16(),
+            &headers,
         );
 
         let body = axum::body::Body::from_stream(logged_stream);
@@ -272,6 +282,26 @@ async fn handle_claude_transform(
         log::error!("[Claude] 序列化响应失败: {e}");
         ProxyError::TransformError(format!("Failed to serialize response: {e}"))
     })?;
+    let mut client_headers = response_headers.clone();
+    client_headers.remove(axum::http::header::CONTENT_LENGTH);
+    client_headers.remove(axum::http::header::TRANSFER_ENCODING);
+    client_headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    io_logging::log_client_response_bytes(
+        ctx.tag,
+        &ctx.trace_id,
+        status.as_u16(),
+        &client_headers,
+        &response_body,
+    );
+    io_logging::log_training_sample_with_response(
+        ctx.tag,
+        &ctx.trace_id,
+        &ctx.request_messages,
+        &anthropic_response,
+    );
 
     let body = axum::body::Body::from(response_body);
     builder.body(body).map_err(|e| {
@@ -297,6 +327,13 @@ pub async fn handle_chat_completions(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    io_logging::log_client_request(
+        ctx.tag,
+        &ctx.trace_id,
+        "/v1/chat/completions",
+        &headers,
+        &body,
+    );
 
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
@@ -338,6 +375,7 @@ pub async fn handle_responses(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    io_logging::log_client_request(ctx.tag, &ctx.trace_id, "/v1/responses", &headers, &body);
 
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
@@ -379,6 +417,13 @@ pub async fn handle_responses_compact(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    io_logging::log_client_request(
+        ctx.tag,
+        &ctx.trace_id,
+        "/v1/responses/compact",
+        &headers,
+        &body,
+    );
 
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
@@ -433,6 +478,7 @@ pub async fn handle_gemini(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    io_logging::log_client_request(ctx.tag, &ctx.trace_id, endpoint, &headers, &body);
 
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
@@ -472,6 +518,8 @@ fn log_forward_error(
     error: &ProxyError,
 ) {
     use super::usage::logger::UsageLogger;
+
+    io_logging::log_proxy_error_response(ctx.tag, &ctx.trace_id, error);
 
     let logger = UsageLogger::new(&state.db);
     let status_code = map_proxy_error_to_status(error);

@@ -228,7 +228,7 @@ export interface OptimizerConfig {
 
 export interface LogConfig {
   enabled: boolean;
-  level: "error" | "warn" | "info" | "debug" | "trace";
+  level: "error" | "warn" | "info" | "debug" | "trace" | "data";
 }
 
 export interface BackupEntry {

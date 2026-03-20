@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/select";
 import { settingsApi, type LogConfig } from "@/lib/api/settings";
 
-const LOG_LEVELS = ["error", "warn", "info", "debug", "trace"] as const;
+const LOG_LEVELS = ["error", "warn", "info", "debug", "trace", "data"] as const;
 
 export function LogConfigPanel() {
   const { t } = useTranslation();
@@ -111,6 +111,10 @@ export function LogConfigPanel() {
           <p>
             <span className="font-mono text-gray-500">trace</span> -{" "}
             {t("settings.advanced.logConfig.levelDesc.trace")}
+          </p>
+          <p>
+            <span className="font-mono text-cyan-600">data</span> -{" "}
+            {t("settings.advanced.logConfig.levelDesc.data")}
           </p>
         </div>
       </div>

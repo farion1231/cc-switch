@@ -6,6 +6,7 @@ use super::{
     body_filter::filter_private_params_with_whitelist,
     error::*,
     failover_switch::FailoverSwitchManager,
+    io_logging,
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{get_adapter, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType},
@@ -97,6 +98,7 @@ pub struct RequestForwarder {
     failover_manager: Arc<FailoverSwitchManager>,
     /// AppHandle，用于发射事件和更新托盘
     app_handle: Option<tauri::AppHandle>,
+    trace_id: String,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
     /// 整流器配置
@@ -116,6 +118,7 @@ impl RequestForwarder {
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<tauri::AppHandle>,
+        trace_id: String,
         current_provider_id_at_start: String,
         _streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
@@ -128,6 +131,7 @@ impl RequestForwarder {
             current_providers,
             failover_manager,
             app_handle,
+            trace_id,
             current_provider_id_at_start,
             rectifier_config,
             optimizer_config,
@@ -978,6 +982,13 @@ impl RequestForwarder {
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
+        io_logging::log_upstream_request(
+            tag,
+            &self.trace_id,
+            &url,
+            request_model,
+            &filtered_body,
+        );
         log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
         if let Ok(body_str) = serde_json::to_string(&filtered_body) {
             log::debug!(
