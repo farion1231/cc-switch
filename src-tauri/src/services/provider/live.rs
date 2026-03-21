@@ -33,6 +33,25 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     v
 }
 
+/// Strip user-global fields from a Claude snapshot before saving to the database.
+///
+/// These fields are written by Claude Code itself (e.g. plugin install, hooks config)
+/// and are shared across all providers. Storing them in per-provider snapshots causes
+/// stale values to overwrite the live file when switching providers.
+pub(crate) fn strip_global_fields_for_backfill(app_type: &AppType, settings: Value) -> Value {
+    if !matches!(app_type, AppType::Claude) {
+        return settings;
+    }
+    let mut v = settings;
+    if let Some(obj) = v.as_object_mut() {
+        obj.remove("enabledPlugins");
+        obj.remove("hooks");
+        obj.remove("spinnerVerbs");
+        obj.remove("permissions");
+    }
+    v
+}
+
 fn json_is_subset(target: &Value, source: &Value) -> bool {
     match source {
         Value::Object(source_map) => {
@@ -653,8 +672,30 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
-            write_json_file(&path, &settings)?;
+            let provider_settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            // Strip user-global fields from the snapshot before merge.
+            // This is a defensive guard against stale snapshots that were saved before
+            // strip_global_fields_for_backfill was introduced (pre-fix historical data).
+            let provider_settings =
+                strip_global_fields_for_backfill(app_type, provider_settings);
+            // Merge provider settings into the existing live file instead of full overwrite.
+            // This preserves user-managed fields (enabledPlugins, hooks, spinnerVerbs, etc.)
+            // that Claude Code writes directly and are not tracked per-provider.
+            let merged = if path.exists() {
+                match read_json_file(&path) {
+                    Ok(mut live) => {
+                        json_deep_merge(&mut live, &provider_settings);
+                        live
+                    }
+                    Err(err) => {
+                        log::warn!("Failed to read live Claude settings for merge, falling back to full write: {err}");
+                        provider_settings
+                    }
+                }
+            } else {
+                provider_settings
+            };
+            write_json_file(&path, &merged)?;
         }
         AppType::Codex => {
             let obj = provider
@@ -1437,5 +1478,83 @@ mod tests {
             .map(|value| value.as_str().expect("tool id should be string"))
             .collect();
         assert_eq!(values, vec!["tool2"]);
+    }
+
+    #[test]
+    fn strip_global_fields_removes_user_managed_fields_for_claude() {
+        let settings = json!({
+            "env": { "ANTHROPIC_AUTH_TOKEN": "sk-test" },
+            "enabledPlugins": ["plugin-a", "plugin-b"],
+            "hooks": { "PreToolUse": [] },
+            "spinnerVerbs": ["思考", "分析"],
+            "permissions": { "allow": [], "deny": [] }
+        });
+
+        let result = strip_global_fields_for_backfill(&AppType::Claude, settings);
+
+        assert!(result.get("enabledPlugins").is_none(), "enabledPlugins should be stripped");
+        assert!(result.get("hooks").is_none(), "hooks should be stripped");
+        assert!(result.get("spinnerVerbs").is_none(), "spinnerVerbs should be stripped");
+        assert!(result.get("permissions").is_none(), "permissions should be stripped");
+        assert_eq!(result["env"]["ANTHROPIC_AUTH_TOKEN"], json!("sk-test"), "provider fields should be preserved");
+    }
+
+    #[test]
+    fn strip_global_fields_is_noop_for_non_claude_app_types() {
+        let settings = json!({
+            "enabledPlugins": ["plugin-a"],
+            "hooks": { "PreToolUse": [] }
+        });
+
+        for app_type in [AppType::Codex, AppType::Gemini] {
+            let result = strip_global_fields_for_backfill(&app_type, settings.clone());
+            assert_eq!(result, settings, "non-Claude app types should not be modified");
+        }
+    }
+
+    #[test]
+    fn write_live_snapshot_merges_global_fields_from_existing_file() {
+        // Simulate the merge logic: live has enabledPlugins, provider snapshot does not.
+        // After merge, enabledPlugins should be preserved.
+        let mut live = json!({
+            "env": { "ANTHROPIC_AUTH_TOKEN": "old-token" },
+            "enabledPlugins": ["my-plugin"],
+            "spinnerVerbs": ["思考"]
+        });
+        let provider_snapshot = json!({
+            "env": { "ANTHROPIC_AUTH_TOKEN": "new-token" }
+        });
+
+        json_deep_merge(&mut live, &provider_snapshot);
+
+        assert_eq!(live["env"]["ANTHROPIC_AUTH_TOKEN"], json!("new-token"), "provider field should be updated");
+        assert_eq!(live["enabledPlugins"], json!(["my-plugin"]), "enabledPlugins should survive merge");
+        assert_eq!(live["spinnerVerbs"], json!(["思考"]), "spinnerVerbs should survive merge");
+    }
+
+    #[test]
+    fn provider_snapshot_with_stale_plugins_does_not_overwrite_live() {
+        // Simulate: provider snapshot has stale enabledPlugins (from before strip_global_fields fix).
+        // After strip_global_fields_for_backfill, snapshot no longer has enabledPlugins,
+        // so merge preserves the live value.
+        let stale_snapshot = json!({
+            "env": { "ANTHROPIC_AUTH_TOKEN": "token" },
+            "enabledPlugins": ["stale-plugin"]
+        });
+        let cleaned_snapshot =
+            strip_global_fields_for_backfill(&AppType::Claude, stale_snapshot);
+        assert!(cleaned_snapshot.get("enabledPlugins").is_none());
+
+        let mut live = json!({
+            "env": { "ANTHROPIC_AUTH_TOKEN": "token" },
+            "enabledPlugins": ["current-plugin"]
+        });
+        json_deep_merge(&mut live, &cleaned_snapshot);
+
+        assert_eq!(
+            live["enabledPlugins"],
+            json!(["current-plugin"]),
+            "live enabledPlugins should not be overwritten by stale snapshot"
+        );
     }
 }

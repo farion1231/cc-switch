@@ -1103,8 +1103,14 @@ impl ProxyService {
         match app_type {
             AppType::Claude => {
                 if let Ok(Some(backup)) = self.db.get_live_backup("claude").await {
-                    let config: Value = serde_json::from_str(&backup.original_config)
+                    let mut config: Value = serde_json::from_str(&backup.original_config)
                         .map_err(|e| format!("解析 Claude 备份失败: {e}"))?;
+                    // Preserve current live's user-global fields if the backup doesn't have them.
+                    // Mirrors restore_live_config_for_app_with_fallback to close the same
+                    // historical-backup gap on rollback and manual disable paths.
+                    if let Ok(current_live) = self.read_claude_live() {
+                        Self::preserve_claude_global_fields_in_backup(&mut config, &current_live);
+                    }
                     self.write_claude_live(&config)?;
                     log::info!("Claude Live 配置已恢复");
                 }
@@ -1169,8 +1175,16 @@ impl ProxyService {
             .await
             .map_err(|e| format!("获取 {app_type_str} Live 备份失败: {e}"))?;
         if let Some(backup) = backup {
-            let config: Value = serde_json::from_str(&backup.original_config)
+            let mut config: Value = serde_json::from_str(&backup.original_config)
                 .map_err(|e| format!("解析 {app_type_str} 备份失败: {e}"))?;
+            // For Claude: preserve current live's user-global fields if the backup doesn't have them.
+            // The backup may have been saved before global fields were tracked (pre-fix historical data),
+            // or after a previous switch had already stripped them.
+            if matches!(app_type, AppType::Claude) {
+                if let Ok(current_live) = self.read_claude_live() {
+                    Self::preserve_claude_global_fields_in_backup(&mut config, &current_live);
+                }
+            }
             self.write_live_config_for_app(app_type, &config)?;
             log::info!("{app_type_str} Live 配置已从备份恢复");
             return Ok(());
@@ -1494,7 +1508,7 @@ impl ProxyService {
             build_effective_settings_with_common_config(self.db.as_ref(), &app_type_enum, provider)
                 .map_err(|e| format!("构建 {app_type} 有效配置失败: {e}"))?;
 
-        if matches!(app_type_enum, AppType::Codex) {
+        if matches!(app_type_enum, AppType::Claude | AppType::Codex) {
             let existing_backup = self
                 .db
                 .get_live_backup(app_type)
@@ -1504,10 +1518,21 @@ impl ProxyService {
             if let Some(existing_backup) = existing_backup {
                 let existing_value: Value = serde_json::from_str(&existing_backup.original_config)
                     .map_err(|e| format!("解析 {app_type} 现有备份失败: {e}"))?;
-                Self::preserve_codex_mcp_servers_in_backup(
-                    &mut effective_settings,
-                    &existing_value,
-                )?;
+                match app_type_enum {
+                    AppType::Claude => {
+                        Self::preserve_claude_global_fields_in_backup(
+                            &mut effective_settings,
+                            &existing_value,
+                        );
+                    }
+                    AppType::Codex => {
+                        Self::preserve_codex_mcp_servers_in_backup(
+                            &mut effective_settings,
+                            &existing_value,
+                        )?;
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -1538,6 +1563,38 @@ impl ProxyService {
 
         log::info!("已更新 {app_type} Live 备份（热切换）");
         Ok(())
+    }
+
+    /// Preserve user-global fields (enabledPlugins, hooks, etc.) from the existing Claude live
+    /// backup into the new provider-based backup.
+    ///
+    /// In proxy takeover mode the live file is replaced with proxy placeholders, so we store
+    /// the "original live" in live_backup. When the user hot-switches providers we rebuild the
+    /// backup from the new provider's settings_config — but that snapshot won't contain the
+    /// user-global fields that Claude Code manages itself. This function copies those fields
+    /// from the previous backup so they survive the hot-switch.
+    fn preserve_claude_global_fields_in_backup(
+        target_settings: &mut Value,
+        existing_backup: &Value,
+    ) {
+        const GLOBAL_FIELDS: &[&str] =
+            &["enabledPlugins", "hooks", "spinnerVerbs", "permissions"];
+        let Some(target_obj) = target_settings.as_object_mut() else {
+            return;
+        };
+        let Some(backup_obj) = existing_backup.as_object() else {
+            return;
+        };
+        for field in GLOBAL_FIELDS {
+            if let Some(backup_value) = backup_obj.get(*field) {
+                // Only copy fields that the provider snapshot doesn't explicitly set.
+                // This mirrors the write_live_snapshot merge semantic: provider wins on
+                // provider-specific keys, backup (i.e. the original live) wins on global keys.
+                target_obj
+                    .entry(field.to_string())
+                    .or_insert_with(|| backup_value.clone());
+            }
+        }
     }
 
     fn preserve_codex_mcp_servers_in_backup(

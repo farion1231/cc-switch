@@ -29,8 +29,8 @@ pub use live::{
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
-    strip_common_config_from_live_settings, sync_current_provider_for_app_to_live,
-    write_live_with_common_config,
+    strip_common_config_from_live_settings, strip_global_fields_for_backfill,
+    sync_current_provider_for_app_to_live, write_live_with_common_config,
 };
 
 // Internal re-exports
@@ -567,11 +567,14 @@ impl ProviderService {
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
                             current_provider.settings_config =
-                                strip_common_config_from_live_settings(
-                                    state.db.as_ref(),
+                                strip_global_fields_for_backfill(
                                     &app_type,
-                                    &current_provider,
-                                    live_config,
+                                    strip_common_config_from_live_settings(
+                                        state.db.as_ref(),
+                                        &app_type,
+                                        &current_provider,
+                                        live_config,
+                                    ),
                                 );
                             if let Err(e) =
                                 state.db.save_provider(app_type.as_str(), &current_provider)
