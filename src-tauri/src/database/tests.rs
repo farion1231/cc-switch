@@ -488,6 +488,25 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         matches!(pending.as_deref(), Some("true") | Some("1")),
         "skills_ssot_migration_pending should be set after v2->v3 migration"
     );
+    let snapshot: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'skills_ssot_migration_snapshot'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    let snapshot = snapshot.expect("skills migration snapshot should be recorded");
+    let snapshot_rows: serde_json::Value =
+        serde_json::from_str(&snapshot).expect("parse skills migration snapshot");
+    assert!(
+        snapshot_rows
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| {
+                row.get("directory").and_then(|v| v.as_str()) == Some("demo-skill")
+                    && row.get("app_type").and_then(|v| v.as_str()) == Some("claude")
+            })),
+        "skills migration snapshot should preserve legacy app mapping"
+    );
 
     // v3.9+ 新增：proxy_config 三行 seed 必须存在（否则 UI 会查不到默认值）
     let proxy_rows: i64 = conn

@@ -712,17 +712,14 @@ function App() {
             <UnifiedSkillsPanel
               ref={unifiedSkillsPanelRef}
               onOpenDiscovery={() => setCurrentView("skillsDiscovery")}
+              currentApp={activeApp === "openclaw" ? "claude" : activeApp}
             />
           );
         case "skillsDiscovery":
           return (
             <SkillsPage
               ref={skillsPageRef}
-              initialApp={
-                activeApp === "opencode" || activeApp === "openclaw"
-                  ? "claude"
-                  : activeApp
-              }
+              initialApp={activeApp === "openclaw" ? "claude" : activeApp}
             />
           );
         case "mcp":
@@ -755,7 +752,7 @@ function App() {
           return <AgentsDefaultsPanel />;
         default:
           return (
-            <div className="px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
+            <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
                 <AnimatePresence mode="wait">
                   <motion.div
@@ -1037,6 +1034,17 @@ function App() {
                 )}
                 {currentView === "skills" && (
                   <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        unifiedSkillsPanelRef.current?.openRestoreFromBackup()
+                      }
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <History className="w-4 h-4 mr-2" />
+                      {t("skills.restoreFromBackup.button")}
+                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"

@@ -208,7 +208,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
   return (
     <TooltipProvider>
-      <div className="mx-auto px-4 sm:px-6 flex flex-col h-[calc(100vh-8rem)]">
+      <div className="mx-auto px-4 sm:px-6 flex flex-col flex-1 min-h-0">
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
           {/* 主内容区域 - 左右分栏 */}
           <div className="flex-1 overflow-hidden grid gap-4 md:grid-cols-[320px_1fr]">
@@ -606,10 +606,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
                   {/* 消息列表区域 */}
                   <CardContent className="flex-1 overflow-hidden p-0">
-                    <div className="flex h-full">
+                    <div className="flex h-full min-w-0">
                       {/* 消息列表 */}
-                      <ScrollArea className="flex-1">
-                        <div className="p-4">
+                      <ScrollArea className="flex-1 min-w-0">
+                        <div className="p-4 min-w-0">
                           <div className="flex items-center gap-2 mb-3">
                             <MessageSquare className="size-4 text-muted-foreground" />
                             <span className="text-sm font-medium">

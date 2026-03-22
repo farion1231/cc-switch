@@ -194,16 +194,19 @@ export function ProviderCard({
 
   // 判断是否是"当前使用中"的供应商
   // - OMO/OMO Slim 供应商：使用 isCurrent
-  // - 累加模式应用（OpenCode 非 OMO / OpenClaw）：不存在"当前"概念，始终返回 false
+  // - OpenClaw：使用默认模型归属的 provider 作为当前项（蓝色边框）
+  // - OpenCode（非 OMO）：不存在"当前"概念，返回 false
   // - 故障转移模式：代理实际使用的供应商（activeProviderId）
   // - 普通模式：isCurrent
   const isActiveProvider = isAnyOmo
     ? isCurrent
-    : appId === "opencode" || appId === "openclaw"
-      ? false
-      : isAutoFailoverEnabled
-        ? activeProviderId === provider.id
-        : isCurrent;
+    : appId === "openclaw"
+      ? Boolean(isDefaultModel)
+      : appId === "opencode"
+        ? false
+        : isAutoFailoverEnabled
+          ? activeProviderId === provider.id
+          : isCurrent;
 
   const shouldUseGreen = !isAnyOmo && isProxyTakeover && isActiveProvider;
   const shouldUseBlue =

@@ -4,7 +4,14 @@
 
 use super::{lock_conn, Database, SCHEMA_VERSION};
 use crate::error::AppError;
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct LegacySkillMigrationRow {
+    directory: String,
+    app_type: String,
+}
 
 impl Database {
     /// 创建所有数据库表
@@ -382,7 +389,7 @@ impl Database {
                         Self::set_user_version(conn, 5)?;
                     }
                     5 => {
-                        log::info!("迁移数据库从 v5 到 v6（使用量聚合表）");
+                        log::info!("迁移数据库从 v5 到 v6（使用量聚合表 + Copilot 模板类型统一）");
                         Self::migrate_v5_to_v6(conn)?;
                         Self::set_user_version(conn, 6)?;
                     }
@@ -846,11 +853,30 @@ impl Database {
 
         log::info!("开始迁移 skills 表到 v3 结构（统一管理架构）...");
 
-        // 1. 备份旧数据（用于日志）
+        // 1. 备份旧数据（用于日志和后续启动迁移）
         let old_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM skills", [], |row| row.get(0))
             .unwrap_or(0);
         log::info!("旧 skills 表有 {old_count} 条记录");
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT directory, app_type FROM skills
+                 WHERE installed = 1",
+            )
+            .map_err(|e| AppError::Database(format!("查询旧 skills 快照失败: {e}")))?;
+        let snapshot_rows: Vec<LegacySkillMigrationRow> = stmt
+            .query_map([], |row| {
+                Ok(LegacySkillMigrationRow {
+                    directory: row.get(0)?,
+                    app_type: row.get(1)?,
+                })
+            })
+            .map_err(|e| AppError::Database(format!("读取旧 skills 快照失败: {e}")))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(format!("解析旧 skills 快照失败: {e}")))?;
+        let snapshot_json = serde_json::to_string(&snapshot_rows)
+            .map_err(|e| AppError::Database(format!("序列化旧 skills 快照失败: {e}")))?;
 
         // 标记：需要在启动后从文件系统扫描并重建 Skills 数据
         // 说明：v3 结构将 Skills 的 SSOT 迁移到 ~/.cc-switch/skills/，
@@ -858,6 +884,10 @@ impl Database {
         let _ = conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES ('skills_ssot_migration_pending', 'true')",
             [],
+        );
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('skills_ssot_migration_snapshot', ?1)",
+            [snapshot_json],
         );
 
         // 2. 删除旧表
@@ -940,8 +970,9 @@ impl Database {
         Ok(())
     }
 
-    /// v5 -> v6 迁移：添加使用量日聚合表
+    /// v5 -> v6 迁移：添加使用量日聚合表 + 统一 Copilot 模板类型
     fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
+        // 1. 添加使用量日聚合表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS usage_daily_rollups (
                 date TEXT NOT NULL,
@@ -962,7 +993,55 @@ impl Database {
         )
         .map_err(|e| AppError::Database(format!("创建 usage_daily_rollups 表失败: {e}")))?;
 
-        log::info!("v5 -> v6 迁移完成：已添加使用量日聚合表");
+        // 2. 统一 Copilot 模板类型为 github_copilot
+        let mut stmt = conn
+            .prepare("SELECT id, app_type, meta FROM providers")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut updates = Vec::new();
+        for row in rows {
+            let (id, app_type, meta_str) = row.map_err(|e| AppError::Database(e.to_string()))?;
+
+            if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                let mut updated = false;
+
+                if let Some(usage_script) = meta.get_mut("usage_script") {
+                    if let Some(template_type) = usage_script.get_mut("template_type") {
+                        if template_type == "copilot" {
+                            *template_type =
+                                serde_json::Value::String("github_copilot".to_string());
+                            updated = true;
+                        }
+                    }
+                }
+
+                if updated {
+                    let new_meta_str = serde_json::to_string(&meta)
+                        .map_err(|e| AppError::Database(e.to_string()))?;
+                    updates.push((id, app_type, new_meta_str));
+                }
+            }
+        }
+
+        for (id, app_type, new_meta) in updates {
+            conn.execute(
+                "UPDATE providers SET meta = ?1 WHERE id = ?2 AND app_type = ?3",
+                params![new_meta, id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        log::info!("v5 -> v6 迁移完成：已添加使用量日聚合表，统一 copilot 模板类型");
         Ok(())
     }
 
@@ -979,6 +1058,14 @@ impl Database {
                 "25",
                 "0.50",
                 "6.25",
+            ),
+            (
+                "claude-sonnet-4-6-20260217",
+                "Claude Sonnet 4.6",
+                "3",
+                "15",
+                "0.30",
+                "3.75",
             ),
             // Claude 4.5 系列
             (

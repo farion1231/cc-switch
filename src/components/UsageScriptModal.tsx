@@ -5,7 +5,9 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
+import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
@@ -18,6 +20,7 @@ import { Switch } from "@/components/ui/switch";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
+import { TEMPLATE_TYPES, PROVIDER_TYPES } from "@/config/constants";
 
 interface UsageScriptModalProps {
   provider: Provider;
@@ -27,18 +30,11 @@ interface UsageScriptModalProps {
   onSave: (script: UsageScript) => void;
 }
 
-// 预设模板键名（用于国际化）
-const TEMPLATE_KEYS = {
-  CUSTOM: "custom",
-  GENERAL: "general",
-  NEW_API: "newapi",
-} as const;
-
 // 生成预设模板的函数（支持国际化）
 const generatePresetTemplates = (
   t: (key: string) => string,
 ): Record<string, string> => ({
-  [TEMPLATE_KEYS.CUSTOM]: `({
+  [TEMPLATE_TYPES.CUSTOM]: `({
   request: {
     url: "",
     method: "GET",
@@ -52,7 +48,7 @@ const generatePresetTemplates = (
   }
 })`,
 
-  [TEMPLATE_KEYS.GENERAL]: `({
+  [TEMPLATE_TYPES.GENERAL]: `({
   request: {
     url: "{{baseUrl}}/user/balance",
     method: "GET",
@@ -70,7 +66,7 @@ const generatePresetTemplates = (
   }
 })`,
 
-  [TEMPLATE_KEYS.NEW_API]: `({
+  [TEMPLATE_TYPES.NEW_API]: `({
   request: {
     url: "{{baseUrl}}/api/user/self",
     method: "GET",
@@ -96,13 +92,17 @@ const generatePresetTemplates = (
     };
   },
 })`,
+
+  // GitHub Copilot 模板不需要脚本，使用专用 API
+  [TEMPLATE_TYPES.GITHUB_COPILOT]: "",
 });
 
 // 模板名称国际化键映射
 const TEMPLATE_NAME_KEYS: Record<string, string> = {
-  [TEMPLATE_KEYS.CUSTOM]: "usageScript.templateCustom",
-  [TEMPLATE_KEYS.GENERAL]: "usageScript.templateGeneral",
-  [TEMPLATE_KEYS.NEW_API]: "usageScript.templateNewAPI",
+  [TEMPLATE_TYPES.CUSTOM]: "usageScript.templateCustom",
+  [TEMPLATE_TYPES.GENERAL]: "usageScript.templateGeneral",
+  [TEMPLATE_TYPES.NEW_API]: "usageScript.templateNewAPI",
+  [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
 };
 
 const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
@@ -167,7 +167,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     const defaultScript = {
       enabled: false,
       language: "javascript" as const,
-      code: PRESET_TEMPLATES[TEMPLATE_KEYS.GENERAL],
+      code: PRESET_TEMPLATES[TEMPLATE_TYPES.GENERAL],
       timeout: 10,
     };
 
@@ -230,6 +230,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(
     () => {
       const existingScript = provider.meta?.usage_script;
+      // Copilot 供应商默认使用 Copilot 模板
+      if (provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT) {
+        return TEMPLATE_TYPES.GITHUB_COPILOT;
+      }
       // 优先使用保存的 templateType
       if (existingScript?.templateType) {
         return existingScript.templateType;
@@ -237,14 +241,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       // 向后兼容：根据字段推断模板类型
       // 检测 NEW_API 模板（有 accessToken 或 userId）
       if (existingScript?.accessToken || existingScript?.userId) {
-        return TEMPLATE_KEYS.NEW_API;
+        return TEMPLATE_TYPES.NEW_API;
       }
       // 检测 GENERAL 模板（有 apiKey 或 baseUrl）
       if (existingScript?.apiKey || existingScript?.baseUrl) {
-        return TEMPLATE_KEYS.GENERAL;
+        return TEMPLATE_TYPES.GENERAL;
       }
       // 新配置或无凭证：默认使用 GENERAL（与默认代码模板一致）
-      return TEMPLATE_KEYS.GENERAL;
+      return TEMPLATE_TYPES.GENERAL;
     },
   );
 
@@ -273,13 +277,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const handleSave = () => {
-    if (script.enabled && !script.code.trim()) {
-      toast.error(t("usageScript.scriptEmpty"));
-      return;
-    }
-    if (script.enabled && !script.code.includes("return")) {
-      toast.error(t("usageScript.mustHaveReturn"), { duration: 5000 });
-      return;
+    // Copilot 模板不需要脚本验证
+    if (selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT) {
+      if (script.enabled && !script.code.trim()) {
+        toast.error(t("usageScript.scriptEmpty"));
+        return;
+      }
+      if (script.enabled && !script.code.includes("return")) {
+        toast.error(t("usageScript.mustHaveReturn"), { duration: 5000 });
+        return;
+      }
     }
     // 保存时记录当前选择的模板类型
     const scriptWithTemplate = {
@@ -288,6 +295,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "custom"
         | "general"
         | "newapi"
+        | "github_copilot"
         | undefined,
     };
     onSave(scriptWithTemplate);
@@ -297,24 +305,46 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const getResolvedTestCredentials = (): {
     apiKey: string | undefined;
     baseUrl: string | undefined;
-  } => {
-    if (selectedTemplate === TEMPLATE_KEYS.CUSTOM) {
-      return {
-        apiKey: providerCredentials.apiKey,
-        baseUrl: providerCredentials.baseUrl,
-      };
-    }
-
-    return {
-      apiKey: script.apiKey?.trim() || undefined,
-      baseUrl: script.baseUrl?.trim() || undefined,
-    };
-  };
+  } => ({
+    apiKey: script.apiKey?.trim() || providerCredentials.apiKey,
+    baseUrl: script.baseUrl?.trim() || providerCredentials.baseUrl,
+  });
 
   const handleTest = async () => {
     setTesting(true);
     try {
       const resolvedCredentials = getResolvedTestCredentials();
+      // Copilot 模板使用专用 API
+      if (selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT) {
+        const accountId = resolveManagedAccountId(
+          provider.meta,
+          PROVIDER_TYPES.GITHUB_COPILOT,
+        );
+        const usage = accountId
+          ? await copilotGetUsageForAccount(accountId)
+          : await copilotGetUsage();
+        const premium = usage.quota_snapshots.premium_interactions;
+        const used = premium.entitlement - premium.remaining;
+        const summary = `[${usage.copilot_plan}] ${t("usage.remaining")} ${premium.remaining}/${premium.entitlement} (${t("usageScript.resetDate")}: ${usage.quota_reset_date})`;
+        toast.success(`${t("usageScript.testSuccess")}${summary}`, {
+          duration: 3000,
+          closeButton: true,
+        });
+        // 更新缓存
+        queryClient.setQueryData(["usage", provider.id, appId], {
+          success: true,
+          data: [
+            {
+              planName: usage.copilot_plan,
+              remaining: premium.remaining,
+              total: premium.entitlement,
+              used: used,
+              unit: t("usageScript.premiumRequests"),
+            },
+          ],
+        });
+        return;
+      }
       const result = await usageApi.testScript(
         provider.id,
         appId,
@@ -388,30 +418,40 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const handleUsePreset = (presetName: string) => {
     const preset = PRESET_TEMPLATES[presetName];
     if (preset) {
-      if (presetName === TEMPLATE_KEYS.CUSTOM) {
-        // 自定义模板仍支持 {{apiKey}} / {{baseUrl}} 变量。
-        // 测试时仅使用 provider 配置解析结果，与当前 UI 行为保持一致。
+      if (presetName === TEMPLATE_TYPES.CUSTOM) {
+        // 自定义模板不显示单独凭证输入，但测试与真实查询都保持
+        // “脚本值优先，空值回退 provider” 的解析顺序。
         setScript({
           ...script,
           code: preset,
-          // 清除无效的手填凭证字段，custom 模板不提供单独输入入口
+          // 清除显式覆盖值，回到 provider 回退路径。
           apiKey: undefined,
           baseUrl: undefined,
           accessToken: undefined,
           userId: undefined,
         });
-      } else if (presetName === TEMPLATE_KEYS.GENERAL) {
+      } else if (presetName === TEMPLATE_TYPES.GENERAL) {
         setScript({
           ...script,
           code: preset,
           accessToken: undefined,
           userId: undefined,
         });
-      } else if (presetName === TEMPLATE_KEYS.NEW_API) {
+      } else if (presetName === TEMPLATE_TYPES.NEW_API) {
         setScript({
           ...script,
           code: preset,
           apiKey: undefined,
+        });
+      } else if (presetName === TEMPLATE_TYPES.GITHUB_COPILOT) {
+        // Copilot 模板不需要脚本和凭证，使用专用 API
+        setScript({
+          ...script,
+          code: "",
+          apiKey: undefined,
+          baseUrl: undefined,
+          accessToken: undefined,
+          userId: undefined,
         });
       }
       setSelectedTemplate(presetName);
@@ -419,8 +459,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const shouldShowCredentialsConfig =
-    selectedTemplate === TEMPLATE_KEYS.GENERAL ||
-    selectedTemplate === TEMPLATE_KEYS.NEW_API;
+    selectedTemplate === TEMPLATE_TYPES.GENERAL ||
+    selectedTemplate === TEMPLATE_TYPES.NEW_API;
 
   const footer = (
     <>
@@ -491,30 +531,40 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               {t("usageScript.presetTemplate")}
             </Label>
             <div className="flex gap-2 flex-wrap">
-              {Object.keys(PRESET_TEMPLATES).map((name) => {
-                const isSelected = selectedTemplate === name;
-                return (
-                  <Button
-                    key={name}
-                    type="button"
-                    variant={isSelected ? "default" : "outline"}
-                    size="sm"
-                    className={cn(
-                      "rounded-lg border",
-                      isSelected
-                        ? "shadow-sm"
-                        : "bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                    )}
-                    onClick={() => handleUsePreset(name)}
-                  >
-                    {t(TEMPLATE_NAME_KEYS[name])}
-                  </Button>
-                );
-              })}
+              {Object.keys(PRESET_TEMPLATES)
+                .filter((name) => {
+                  const isCopilotProvider =
+                    provider.meta?.providerType === "github_copilot";
+                  // Copilot 供应商只显示 copilot 模板，其他供应商不显示 copilot 模板
+                  if (isCopilotProvider) {
+                    return name === TEMPLATE_TYPES.GITHUB_COPILOT;
+                  }
+                  return name !== TEMPLATE_TYPES.GITHUB_COPILOT;
+                })
+                .map((name) => {
+                  const isSelected = selectedTemplate === name;
+                  return (
+                    <Button
+                      key={name}
+                      type="button"
+                      variant={isSelected ? "default" : "outline"}
+                      size="sm"
+                      className={cn(
+                        "rounded-lg border",
+                        isSelected
+                          ? "shadow-sm"
+                          : "bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                      )}
+                      onClick={() => handleUsePreset(name)}
+                    >
+                      {t(TEMPLATE_NAME_KEYS[name])}
+                    </Button>
+                  );
+                })}
             </div>
 
             {/* 自定义模式：变量提示和具体值 */}
-            {selectedTemplate === TEMPLATE_KEYS.CUSTOM && (
+            {selectedTemplate === TEMPLATE_TYPES.CUSTOM && (
               <div className="space-y-2 border-t border-white/10 pt-3">
                 <h4 className="text-sm font-medium text-foreground">
                   {t("usageScript.supportedVariables")}
@@ -581,6 +631,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               </div>
             )}
 
+            {/* Copilot 模式：自动认证提示 */}
+            {selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT && (
+              <div className="space-y-2 border-t border-white/10 pt-3">
+                <p className="text-sm text-muted-foreground">
+                  {t("usageScript.copilotAutoAuth")}
+                </p>
+              </div>
+            )}
+
             {/* 凭证配置 */}
             {shouldShowCredentialsConfig && (
               <div className="space-y-4">
@@ -594,7 +653,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
-                  {selectedTemplate === TEMPLATE_KEYS.GENERAL && (
+                  {selectedTemplate === TEMPLATE_TYPES.GENERAL && (
                     <>
                       <div className="space-y-2">
                         <Label htmlFor="usage-api-key">
@@ -658,7 +717,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                     </>
                   )}
 
-                  {selectedTemplate === TEMPLATE_KEYS.NEW_API && (
+                  {selectedTemplate === TEMPLATE_TYPES.NEW_API && (
                     <>
                       <div className="space-y-2">
                         <Label htmlFor="usage-newapi-base-url">
@@ -806,34 +865,39 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             </div>
           </div>
 
-          {/* 提取器代码 */}
-          <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
-            <div className="flex items-center justify-between">
-              <Label className="text-base font-medium">
-                {t("usageScript.extractorCode")}
-              </Label>
-              <div className="text-xs text-muted-foreground">
-                {t("usageScript.extractorHint")}
+          {/* 提取器代码 - Copilot 模板不需要 */}
+          {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT && (
+            <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
+              <div className="flex items-center justify-between">
+                <Label className="text-base font-medium">
+                  {t("usageScript.extractorCode")}
+                </Label>
+                <div className="text-xs text-muted-foreground">
+                  {t("usageScript.extractorHint")}
+                </div>
               </div>
+              <JsonEditor
+                id="usage-code"
+                value={script.code || ""}
+                onChange={(value) => setScript({ ...script, code: value })}
+                height={480}
+                language="javascript"
+                showMinimap={false}
+              />
             </div>
-            <JsonEditor
-              id="usage-code"
-              value={script.code || ""}
-              onChange={(value) => setScript({ ...script, code: value })}
-              height={480}
-              language="javascript"
-              showMinimap={false}
-            />
-          </div>
+          )}
 
-          {/* 帮助信息 */}
-          <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
-            <h4 className="font-medium mb-2">{t("usageScript.scriptHelp")}</h4>
-            <div className="space-y-3 text-xs">
-              <div>
-                <strong>{t("usageScript.configFormat")}</strong>
-                <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
-                  {`({
+          {/* 帮助信息 - Copilot 模板不需要 */}
+          {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT && (
+            <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
+              <h4 className="font-medium mb-2">
+                {t("usageScript.scriptHelp")}
+              </h4>
+              <div className="space-y-3 text-xs">
+                <div>
+                  <strong>{t("usageScript.configFormat")}</strong>
+                  <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
+                    {`({
   request: {
     url: "{{baseUrl}}/api/usage",
     method: "POST",
@@ -850,38 +914,39 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     };
   }
 })`}
-                </pre>
-              </div>
+                  </pre>
+                </div>
 
-              <div>
-                <strong>{t("usageScript.extractorFormat")}</strong>
-                <ul className="mt-1 space-y-0.5 ml-2">
-                  <li>{t("usageScript.fieldIsValid")}</li>
-                  <li>{t("usageScript.fieldInvalidMessage")}</li>
-                  <li>{t("usageScript.fieldRemaining")}</li>
-                  <li>{t("usageScript.fieldUnit")}</li>
-                  <li>{t("usageScript.fieldPlanName")}</li>
-                  <li>{t("usageScript.fieldTotal")}</li>
-                  <li>{t("usageScript.fieldUsed")}</li>
-                  <li>{t("usageScript.fieldExtra")}</li>
-                </ul>
-              </div>
+                <div>
+                  <strong>{t("usageScript.extractorFormat")}</strong>
+                  <ul className="mt-1 space-y-0.5 ml-2">
+                    <li>{t("usageScript.fieldIsValid")}</li>
+                    <li>{t("usageScript.fieldInvalidMessage")}</li>
+                    <li>{t("usageScript.fieldRemaining")}</li>
+                    <li>{t("usageScript.fieldUnit")}</li>
+                    <li>{t("usageScript.fieldPlanName")}</li>
+                    <li>{t("usageScript.fieldTotal")}</li>
+                    <li>{t("usageScript.fieldUsed")}</li>
+                    <li>{t("usageScript.fieldExtra")}</li>
+                  </ul>
+                </div>
 
-              <div className="text-muted-foreground">
-                <strong>{t("usageScript.tips")}</strong>
-                <ul className="mt-1 space-y-0.5 ml-2">
-                  <li>
-                    {t("usageScript.tip1", {
-                      apiKey: "{{apiKey}}",
-                      baseUrl: "{{baseUrl}}",
-                    })}
-                  </li>
-                  <li>{t("usageScript.tip2")}</li>
-                  <li>{t("usageScript.tip3")}</li>
-                </ul>
+                <div className="text-muted-foreground">
+                  <strong>{t("usageScript.tips")}</strong>
+                  <ul className="mt-1 space-y-0.5 ml-2">
+                    <li>
+                      {t("usageScript.tip1", {
+                        apiKey: "{{apiKey}}",
+                        baseUrl: "{{baseUrl}}",
+                      })}
+                    </li>
+                    <li>{t("usageScript.tip2")}</li>
+                    <li>{t("usageScript.tip3")}</li>
+                  </ul>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 

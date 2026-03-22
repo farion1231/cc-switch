@@ -80,6 +80,7 @@ import {
   useOpencodeFormState,
   useOmoDraftState,
   useOpenclawFormState,
+  useCopilotAuth,
 } from "./hooks";
 import {
   CLAUDE_DEFAULT_CONFIG,
@@ -89,6 +90,7 @@ import {
   OPENCLAW_DEFAULT_CONFIG,
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 
 type PresetEntry = {
   id: string;
@@ -104,10 +106,11 @@ interface ProviderFormProps {
   appId: AppId;
   providerId?: string;
   submitLabel: string;
-  onSubmit: (values: ProviderFormValues) => void;
+  onSubmit: (values: ProviderFormValues) => Promise<void> | void;
   onCancel: () => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
+  onSubmittingChange?: (isSubmitting: boolean) => void;
   initialData?: {
     name?: string;
     websiteUrl?: string;
@@ -129,6 +132,7 @@ export function ProviderForm({
   onCancel,
   onUniversalPresetSelect,
   onManageUniversalProviders,
+  onSubmittingChange,
   initialData,
   showButtons = true,
 }: ProviderFormProps) {
@@ -237,6 +241,7 @@ export function ProviderForm({
     defaultValues,
     mode: "onSubmit",
   });
+  const { isSubmitting } = form.formState;
 
   const handleSettingsConfigChange = useCallback(
     (config: string) => {
@@ -256,6 +261,10 @@ export function ProviderForm({
       return "ANTHROPIC_AUTH_TOKEN";
     },
   );
+
+  useEffect(() => {
+    onSubmittingChange?.(isSubmitting);
+  }, [isSubmitting, onSubmittingChange]);
 
   const {
     apiKey,
@@ -323,6 +332,14 @@ export function ProviderForm({
     },
     [localApiKeyField, form, handleSettingsConfigChange],
   );
+
+  // Copilot OAuth 认证状态（仅 Claude 应用需要）
+  const { isAuthenticated: isCopilotAuthenticated } = useCopilotAuth();
+
+  // 选中的 GitHub 账号 ID（多账号支持）
+  const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "github_copilot"));
 
   const {
     codexAuth,
@@ -583,7 +600,7 @@ export function ProviderForm({
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
-  const handleSubmit = (values: ProviderFormData) => {
+  const handleSubmit = async (values: ProviderFormData) => {
     if (appId === "claude" && templateValueEntries.length > 0) {
       const validation = validateTemplateValues();
       if (!validation.isValid && validation.missingField) {
@@ -653,6 +670,21 @@ export function ProviderForm({
 
     // 非官方供应商必填校验：端点和 API Key
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
+    // GitHub Copilot 使用 OAuth 认证，不需要 API Key
+    const isCopilotProvider =
+      templatePreset?.providerType === "github_copilot" ||
+      initialData?.meta?.providerType === "github_copilot" ||
+      baseUrl.includes("githubcopilot.com");
+    // GitHub Copilot 必须先登录才能添加
+    if (isCopilotProvider && !isCopilotAuthenticated) {
+      toast.error(
+        t("copilot.loginRequired", {
+          defaultValue: "请先登录 GitHub Copilot",
+        }),
+      );
+      return;
+    }
+
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
         if (!baseUrl.trim()) {
@@ -663,7 +695,7 @@ export function ProviderForm({
           );
           return;
         }
-        if (!apiKey.trim()) {
+        if (!isCopilotProvider && !apiKey.trim()) {
           toast.error(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -860,6 +892,11 @@ export function ProviderForm({
 
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+
+    // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
+    const providerType =
+      templatePreset?.providerType || initialData?.meta?.providerType;
+
     payload.meta = {
       ...(baseMeta ?? {}),
       commonConfigEnabled:
@@ -871,6 +908,20 @@ export function ProviderForm({
               ? useGeminiCommonConfigFlag
               : undefined,
       endpointAutoSelect,
+      // 保存 providerType（用于识别 Copilot 等特殊供应商）
+      providerType,
+      authBinding: isCopilotProvider
+        ? {
+            source: "managed_account",
+            authProvider: "github_copilot",
+            accountId: selectedGitHubAccountId ?? undefined,
+          }
+        : undefined,
+      // GitHub Copilot 多账号：保存关联的账号 ID
+      githubAccountId:
+        isCopilotProvider && selectedGitHubAccountId
+          ? selectedGitHubAccountId
+          : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
       proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
       costMultiplier: pricingConfig.enabled
@@ -892,7 +943,7 @@ export function ProviderForm({
           : undefined,
     };
 
-    onSubmit(payload);
+    await onSubmit(payload);
   };
 
   const groupedPresets = useMemo(() => {
@@ -1311,6 +1362,20 @@ export function ProviderForm({
             websiteUrl={claudeWebsiteUrl}
             isPartner={isClaudePartner}
             partnerPromotionKey={claudePartnerPromotionKey}
+            isCopilotPreset={
+              templatePreset?.providerType === "github_copilot" ||
+              initialData?.meta?.providerType === "github_copilot" ||
+              baseUrl.includes("githubcopilot.com")
+            }
+            usesOAuth={
+              templatePreset?.requiresOAuth === true ||
+              templatePreset?.providerType === "github_copilot" ||
+              initialData?.meta?.providerType === "github_copilot" ||
+              baseUrl.includes("githubcopilot.com")
+            }
+            isCopilotAuthenticated={isCopilotAuthenticated}
+            selectedGitHubAccountId={selectedGitHubAccountId}
+            onGitHubAccountSelect={setSelectedGitHubAccountId}
             templateValueEntries={templateValueEntries}
             templateValues={templateValues}
             templatePresetName={templatePreset?.name || ""}
@@ -1600,7 +1665,9 @@ export function ProviderForm({
             <Button variant="outline" type="button" onClick={onCancel}>
               {t("common.cancel")}
             </Button>
-            <Button type="submit">{submitLabel}</Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {submitLabel}
+            </Button>
           </div>
         )}
       </form>

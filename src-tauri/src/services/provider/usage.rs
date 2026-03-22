@@ -186,6 +186,29 @@ fn extract_codex_base_url_from_toml(config_toml: &str) -> Option<String> {
     }
 }
 
+fn resolve_usage_credentials(
+    app_type: &AppType,
+    provider: &crate::provider::Provider,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+) -> (String, String) {
+    let api_key = api_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| extract_api_key_from_provider(app_type, provider))
+        .unwrap_or_default();
+
+    let base_url = base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| extract_base_url_from_provider(app_type, provider))
+        .unwrap_or_default();
+
+    (api_key, base_url)
+}
+
 /// Query provider usage (using saved script configuration)
 pub async fn query_usage(
     state: &AppState,
@@ -222,19 +245,12 @@ pub async fn query_usage(
         }
 
         // Get credentials: prioritize UsageScript values, fallback to provider config
-        let api_key = usage_script
-            .api_key
-            .clone()
-            .filter(|k| !k.is_empty())
-            .or_else(|| extract_api_key_from_provider(&app_type, provider))
-            .unwrap_or_default();
-
-        let base_url = usage_script
-            .base_url
-            .clone()
-            .filter(|u| !u.is_empty())
-            .or_else(|| extract_base_url_from_provider(&app_type, provider))
-            .unwrap_or_default();
+        let (api_key, base_url) = resolve_usage_credentials(
+            &app_type,
+            provider,
+            usage_script.api_key.as_deref(),
+            usage_script.base_url.as_deref(),
+        );
 
         (
             usage_script.code.clone(),
@@ -262,9 +278,9 @@ pub async fn query_usage(
 /// Test usage script (using temporary script content, not saved)
 #[allow(clippy::too_many_arguments)]
 pub async fn test_usage_script(
-    _state: &AppState,
-    _app_type: AppType,
-    _provider_id: &str,
+    state: &AppState,
+    app_type: AppType,
+    provider_id: &str,
     script_code: &str,
     timeout: u64,
     api_key: Option<&str>,
@@ -273,11 +289,21 @@ pub async fn test_usage_script(
     user_id: Option<&str>,
     template_type: Option<&str>,
 ) -> Result<UsageResult, AppError> {
-    // Use provided credential parameters directly for testing
+    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let provider = providers.get(provider_id).ok_or_else(|| {
+        AppError::localized(
+            "provider.not_found",
+            format!("供应商不存在: {provider_id}"),
+            format!("Provider not found: {provider_id}"),
+        )
+    })?;
+
+    let (api_key, base_url) = resolve_usage_credentials(&app_type, provider, api_key, base_url);
+
     execute_and_format_usage_result(
         script_code,
-        api_key.unwrap_or(""),
-        base_url.unwrap_or(""),
+        &api_key,
+        &base_url,
         timeout,
         access_token,
         user_id,
@@ -308,7 +334,7 @@ pub(crate) fn validate_usage_script(script: &UsageScript) -> Result<(), AppError
 mod tests {
     use super::{
         extract_api_key_from_provider, extract_base_url_from_provider,
-        extract_codex_base_url_from_toml,
+        extract_codex_base_url_from_toml, resolve_usage_credentials,
     };
     use crate::app_config::AppType;
     use crate::provider::Provider;
@@ -403,5 +429,29 @@ base_url = "https://single.example.com/v1"
             extract_base_url_from_provider(&AppType::Gemini, &provider).as_deref(),
             Some("https://gemini.example.com")
         );
+    }
+
+    #[test]
+    fn resolves_usage_credentials_with_script_override_then_provider_fallback() {
+        let provider = provider_with_settings(json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "provider-key",
+                "ANTHROPIC_BASE_URL": "https://provider.example.com/"
+            }
+        }));
+
+        let (api_key, base_url) = resolve_usage_credentials(
+            &AppType::Claude,
+            &provider,
+            Some(" script-key "),
+            Some(" https://script.example.com "),
+        );
+        assert_eq!(api_key, "script-key");
+        assert_eq!(base_url, "https://script.example.com");
+
+        let (api_key, base_url) =
+            resolve_usage_credentials(&AppType::Claude, &provider, Some(""), None);
+        assert_eq!(api_key, "provider-key");
+        assert_eq!(base_url, "https://provider.example.com");
     }
 }

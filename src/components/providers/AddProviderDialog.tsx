@@ -42,12 +42,13 @@ export function AddProviderDialog({
   const { t } = useTranslation();
   // OpenCode and OpenClaw don't support universal providers
   const showUniversalTab = appId !== "opencode" && appId !== "openclaw";
-  const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
-    "app-specific",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "app-specific" | "universal"
+  >("app-specific");
   const [universalFormOpen, setUniversalFormOpen] = useState(false);
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
+  const [isFormSubmitting, setIsFormSubmitting] = useState(false);
 
   const handleUniversalProviderSave = useCallback(
     async (provider: UniversalProvider) => {
@@ -247,6 +248,7 @@ export function AddProviderDialog({
         <Button
           type="submit"
           form="provider-form"
+          disabled={isFormSubmitting}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Plus className="h-4 w-4 mr-2" />
@@ -282,7 +284,9 @@ export function AddProviderDialog({
       {showUniversalTab ? (
         <Tabs
           value={activeTab}
-          onValueChange={(v) => setActiveTab(v as "app-specific" | "universal")}
+          onValueChange={(v) =>
+            setActiveTab(v as "app-specific" | "universal")
+          }
         >
           <TabsList className="grid w-full grid-cols-2 mb-6">
             <TabsTrigger value="app-specific">
@@ -299,6 +303,7 @@ export function AddProviderDialog({
               submitLabel={t("common.add")}
               onSubmit={handleSubmit}
               onCancel={() => onOpenChange(false)}
+              onSubmittingChange={setIsFormSubmitting}
               showButtons={false}
             />
           </TabsContent>
@@ -314,6 +319,7 @@ export function AddProviderDialog({
           submitLabel={t("common.add")}
           onSubmit={handleSubmit}
           onCancel={() => onOpenChange(false)}
+          onSubmittingChange={setIsFormSubmitting}
           showButtons={false}
         />
       )}

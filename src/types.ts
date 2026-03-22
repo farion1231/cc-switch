@@ -49,13 +49,15 @@ export interface EndpointCandidate {
   isCustom?: boolean;
 }
 
+import type { TemplateType } from "./config/constants";
+
 // 用量查询脚本配置
 export interface UsageScript {
   enabled: boolean; // 是否启用用量查询
   language: "javascript"; // 脚本语言
   code: string; // 脚本代码（JSON 格式配置）
   timeout?: number; // 超时时间（秒，默认 10）
-  templateType?: "custom" | "general" | "newapi"; // 模板类型（用于后端判断验证规则）
+  templateType?: TemplateType; // 模板类型（用于后端判断验证规则）
   apiKey?: string; // 用量查询专用的 API Key（通用模板使用）
   baseUrl?: string; // 用量查询专用的 Base URL（通用和 NewAPI 模板使用）
   accessToken?: string; // 访问令牌（NewAPI 模板使用）
@@ -122,6 +124,14 @@ export interface ProviderProxyConfig {
   proxyPassword?: string;
 }
 
+export type AuthBindingSource = "provider_config" | "managed_account";
+
+export interface AuthBinding {
+  source: AuthBindingSource;
+  authProvider?: string;
+  accountId?: string;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -149,10 +159,16 @@ export interface ProviderMeta {
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
   apiFormat?: "anthropic" | "openai_chat" | "openai_responses";
+  // 通用认证绑定
+  authBinding?: AuthBinding;
   // Claude 认证字段名
   apiKeyField?: ClaudeApiKeyField;
   // Prompt cache key for OpenAI-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
+  // 供应商类型（用于识别 Copilot 等特殊供应商）
+  providerType?: string;
+  // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
+  githubAccountId?: string;
 }
 
 // Skill 同步方式
