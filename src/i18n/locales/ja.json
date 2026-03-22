@@ -183,6 +183,7 @@
     "syncClaudePluginFailed": "Claude プラグインとの同期に失敗しました",
     "skipClaudeOnboardingFailed": "Claude Code の初回確認スキップに失敗しました",
     "clearClaudeOnboardingSkipFailed": "Claude Code の初回確認の復元に失敗しました",
+    "keepConversationHistoryFailed": "会話履歴保護の更新に失敗しました",
     "updateSuccess": "プロバイダーを更新しました",
     "updateFailed": "プロバイダーの更新に失敗しました: {{error}}",
     "deleteSuccess": "プロバイダーを削除しました",
@@ -498,6 +499,8 @@
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "オンにすると Claude Code の初回インストール確認をスキップします",
+    "keepConversationHistory": "会話履歴を保持",
+    "keepConversationHistoryDescription": "Claude Codeが会話記録を自動削除するのを防ぎます（デフォルト：30日でクリーンアップ）",
     "appVisibility": {
       "title": "ホームページ表示",
       "description": "ホームページに表示するアプリを選択",

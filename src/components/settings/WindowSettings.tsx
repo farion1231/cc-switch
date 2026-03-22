@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
-import { AppWindow, MonitorUp, Power, EyeOff } from "lucide-react";
+import { AppWindow, MonitorUp, Power, EyeOff, History } from "lucide-react";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -64,6 +64,16 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
           description={t("settings.skipClaudeOnboardingDescription")}
           checked={!!settings.skipClaudeOnboarding}
           onCheckedChange={(value) => onChange({ skipClaudeOnboarding: value })}
+        />
+
+        <ToggleRow
+          icon={<History className="h-4 w-4 text-amber-500" />}
+          title={t("settings.keepConversationHistory")}
+          description={t("settings.keepConversationHistoryDescription")}
+          checked={!!settings.keepConversationHistory}
+          onCheckedChange={(value) =>
+            onChange({ keepConversationHistory: value })
+          }
         />
 
         <ToggleRow
