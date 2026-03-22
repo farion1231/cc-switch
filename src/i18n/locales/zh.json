@@ -244,6 +244,7 @@
     "syncClaudePluginFailed": "同步 Claude 插件失败",
     "skipClaudeOnboardingFailed": "跳过 Claude Code 初次安装确认失败",
     "clearClaudeOnboardingSkipFailed": "恢复 Claude Code 初次安装确认失败",
+    "keepConversationHistoryFailed": "更新对话历史保护失败",
     "updateSuccess": "供应商更新成功",
     "updateFailed": "更新供应商失败：{{error}}",
     "deleteSuccess": "供应商已删除",
@@ -691,6 +692,8 @@
     "unifyCodexHistoryRestoreFailed": "还原官方会话历史失败，请重试",
     "unifyCodexHistoryRestoreNothing": "当前 Codex 目录没有可恢复的迁移备份",
     "unifyCodexHistoryRestoreSkippedToggleOn": "统一会话历史开关已重新开启，已跳过还原",
+    "keepConversationHistory": "保留对话历史",
+    "keepConversationHistoryDescription": "防止 Claude Code 自动删除对话记录（默认 30 天清理）",
     "appVisibility": {
       "title": "主页面显示",
       "description": "选择在主页面显示的应用",

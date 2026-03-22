@@ -46,3 +46,23 @@ pub async fn apply_claude_onboarding_skip() -> Result<bool, String> {
 pub async fn clear_claude_onboarding_skip() -> Result<bool, String> {
     crate::claude_mcp::clear_has_completed_onboarding().map_err(|e| e.to_string())
 }
+
+/// Claude Code：启用对话记录保护（写入 ~/.claude/settings.json 的 cleanupPeriodDays=99999）
+#[tauri::command]
+pub async fn apply_transcript_protection() -> Result<bool, String> {
+    crate::claude_mcp::set_cleanup_period_days().map_err(|e| e.to_string())
+}
+
+/// Claude Code：关闭对话记录保护（删除 ~/.claude/settings.json 的 cleanupPeriodDays 字段）
+#[tauri::command]
+pub async fn clear_transcript_protection() -> Result<bool, String> {
+    crate::claude_mcp::clear_cleanup_period_days().map_err(|e| e.to_string())
+}
+
+/// Claude Code：获取对话记录保护状态（cleanupPeriodDays > 365 视为已启用）
+#[tauri::command]
+pub async fn get_transcript_protection() -> Result<bool, String> {
+    crate::claude_mcp::get_cleanup_period_days()
+        .map(|v| v.map_or(false, |days| days > 365))
+        .map_err(|e| e.to_string())
+}

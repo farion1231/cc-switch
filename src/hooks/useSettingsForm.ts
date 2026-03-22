@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
+import { settingsApi } from "@/lib/api/settings";
 import type { Settings } from "@/types";
 
 type Language = "zh" | "zh-TW" | "en" | "ja";
@@ -119,6 +120,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       preserveCodexOfficialAuthOnSwitch:
         data.preserveCodexOfficialAuthOnSwitch ?? false,
       unifyCodexSessionHistory: data.unifyCodexSessionHistory ?? false,
+      keepConversationHistory: data.keepConversationHistory ?? false,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
@@ -130,6 +132,16 @@ export function useSettingsForm(): UseSettingsFormResult {
     setSettingsState(normalized);
     initialLanguageRef.current = normalizedLanguage;
     syncLanguage(normalizedLanguage);
+
+    // 从 ~/.claude/settings.json 读取实际的 transcript protection 状态并同步到表单
+    settingsApi.getTranscriptProtection().then((isProtected) => {
+      setSettingsState((prev) => {
+        if (!prev || prev.keepConversationHistory === isProtected) return prev;
+        return { ...prev, keepConversationHistory: isProtected };
+      });
+    }).catch((err) => {
+      console.warn("[useSettingsForm] Failed to read transcript protection state", err);
+    });
   }, [data, readPersistedLanguage, syncLanguage]);
 
   const updateSettings = useCallback(
@@ -145,6 +157,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             skipClaudeOnboarding: false,
             preserveCodexOfficialAuthOnSwitch: false,
             unifyCodexSessionHistory: false,
+            keepConversationHistory: false,
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -185,6 +198,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         preserveCodexOfficialAuthOnSwitch:
           serverData.preserveCodexOfficialAuthOnSwitch ?? false,
         unifyCodexSessionHistory: serverData.unifyCodexSessionHistory ?? false,
+        keepConversationHistory: serverData.keepConversationHistory ?? false,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),
