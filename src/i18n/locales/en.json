@@ -1143,6 +1143,12 @@
       "enabledApps": "Enabled Apps",
       "noImportFound": "No MCP servers to import found. All servers are already managed by CC Switch.",
       "importSuccess": "Successfully imported {{count}} MCP servers",
+      "importSummary": "Import complete: added {{added}}, refreshed {{refreshed}}, enabled existing {{enabledOnly}}.",
+      "importWarningTitle": "Some MCP entries were skipped",
+      "importConflictItem": "{{id}} (from {{sourceApp}}) conflicts with existing apps: {{existingApps}}",
+      "importInvalidItem": "{{id}} (from {{sourceApp}}) is invalid and was skipped",
+      "importWarningMore": "And {{count}} more item(s).",
+      "importWarningHint": "One ID represents one unified MCP server. If definitions differ, reconcile them in CC-Switch or rename them in the external app.",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -1239,6 +1245,7 @@
       "jsonInvalid": "Invalid JSON format",
       "tomlInvalid": "Invalid TOML format",
       "commandRequired": "Please enter command",
+      "typeRequiredForUrl": "Servers with a url must explicitly set type to http or sse",
       "singleServerObjectRequired": "Please paste a single MCP server object (do not include top-level mcpServers)",
       "saveFailed": "Save failed",
       "deleteFailed": "Delete failed"

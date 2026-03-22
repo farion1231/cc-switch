@@ -1143,6 +1143,12 @@
       "enabledApps": "启用的应用",
       "noImportFound": "未发现需要导入的 MCP 服务器。所有服务器已在 CC Switch 统一管理中。",
       "importSuccess": "成功导入 {{count}} 个 MCP 服务器",
+      "importSummary": "导入完成：新增 {{added}} 个，刷新 {{refreshed}} 个，仅启用来源应用 {{enabledOnly}} 个。",
+      "importWarningTitle": "部分 MCP 条目已跳过",
+      "importConflictItem": "{{id}}（来自 {{sourceApp}}）与现有应用定义冲突：{{existingApps}}",
+      "importInvalidItem": "{{id}}（来自 {{sourceApp}}）配置无效，已跳过",
+      "importWarningMore": "另有 {{count}} 个条目未在此显示。",
+      "importWarningHint": "统一 MCP 中同一 ID 代表同一个服务器。如定义不同，请在 CC-Switch 中统一，或在外部应用中改名。",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -1239,6 +1245,7 @@
       "jsonInvalid": "JSON 格式错误，请检查",
       "tomlInvalid": "TOML 格式错误，请检查",
       "commandRequired": "请填写命令",
+      "typeRequiredForUrl": "包含 url 的服务器必须显式指定 type 为 http 或 sse",
       "singleServerObjectRequired": "此处只需单个服务器对象，请不要粘贴包含 mcpServers 的整份配置",
       "saveFailed": "保存失败",
       "deleteFailed": "删除失败"

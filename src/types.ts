@@ -366,6 +366,32 @@ export interface McpServer {
   [key: string]: any;
 }
 
+export type McpImportSourceApp =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "opencode"
+  | "openclaw";
+
+export type McpImportIssueKind = "conflict" | "invalid";
+
+export interface McpImportIssue {
+  id: string;
+  sourceApp: McpImportSourceApp;
+  kind: McpImportIssueKind;
+  message: string;
+  existingApps: McpImportSourceApp[];
+}
+
+export interface McpImportResult {
+  added: number;
+  refreshed: number;
+  enabledOnly: number;
+  conflicts: number;
+  invalid: number;
+  issues: McpImportIssue[];
+}
+
 // MCP 服务器映射（id -> McpServer）
 export type McpServersMap = Record<string, McpServer>;
 

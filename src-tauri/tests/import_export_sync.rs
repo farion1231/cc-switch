@@ -577,12 +577,53 @@ command = "echo"
     // 验证 Codex 应用已启用
     assert!(entry.apps.codex, "Codex app should be enabled after import");
 
-    // 验证现有配置被保留（server 不应被覆盖）
+    // 新策略：仅属于 Codex / 未被其他应用使用时，应刷新 server 配置
     let spec = entry.server.as_object().expect("server spec");
     assert_eq!(
         spec.get("command").and_then(|v| v.as_str()),
-        Some("prev"),
-        "existing server config should be preserved, not overwritten by import"
+        Some("echo"),
+        "Codex-owned entry should be refreshed from imported config"
+    );
+}
+
+#[test]
+fn import_from_codex_normalizes_http_headers_to_headers() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+    fs::write(
+        &path,
+        r#"[mcp_servers.remote]
+type = "http"
+url = "https://example.com/mcp"
+
+[mcp_servers.remote.http_headers]
+Authorization = "Bearer token"
+"#,
+    )
+    .expect("write codex config");
+
+    let mut config = MultiAppConfig::default();
+    let changed = cc_switch_lib::import_from_codex(&mut config).expect("import codex");
+    assert!(changed >= 1, "should import remote server");
+
+    let entry = config
+        .mcp
+        .servers
+        .as_ref()
+        .unwrap()
+        .get("remote")
+        .expect("remote server");
+    assert!(
+        entry.server.get("http_headers").is_none(),
+        "canonical unified spec should not keep http_headers"
+    );
+    assert_eq!(
+        entry.server.pointer("/headers/Authorization").and_then(|v| v.as_str()),
+        Some("Bearer token")
     );
 }
 
@@ -708,13 +749,75 @@ fn import_from_claude_merges_into_config() {
         "Claude app should be enabled after import"
     );
 
-    // 验证现有配置被保留（server 不应被覆盖）
+    // 新策略：仅属于 Claude / 未被其他应用使用时，应刷新 server 配置
     let server = entry.server.as_object().expect("server obj");
     assert_eq!(
         server.get("command").and_then(|v| v.as_str()).unwrap_or(""),
-        "prev",
-        "existing server config should be preserved"
+        "echo",
+        "Claude-owned entry should be refreshed from imported config"
     );
+}
+
+#[test]
+fn sync_single_server_to_codex_normalizes_headers_to_http_headers() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+
+    cc_switch_lib::sync_single_server_to_codex(
+        &MultiAppConfig::default(),
+        "remote",
+        &json!({
+            "type": "http",
+            "url": "https://example.com/mcp",
+            "headers": {
+                "Authorization": "Bearer token"
+            }
+        }),
+    )
+    .expect("sync codex remote server");
+
+    let text = fs::read_to_string(&path).expect("read codex config");
+    assert!(
+        text.contains("http_headers"),
+        "Codex export should use http_headers for remote servers"
+    );
+    assert!(
+        text.contains("Authorization"),
+        "headers should be serialized into codex config"
+    );
+}
+
+#[test]
+fn sync_single_server_to_codex_rejects_url_without_type() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+
+    let err = cc_switch_lib::sync_single_server_to_codex(
+        &MultiAppConfig::default(),
+        "broken",
+        &json!({
+            "url": "https://example.com/mcp"
+        }),
+    )
+    .expect_err("url-only spec without type should be rejected");
+
+    match err {
+        AppError::McpValidation(msg) => {
+            assert!(
+                msg.contains("显式指定 type") || msg.contains("type"),
+                "unexpected error message: {msg}"
+            );
+        }
+        other => panic!("unexpected error variant: {other:?}"),
+    }
 }
 
 #[test]

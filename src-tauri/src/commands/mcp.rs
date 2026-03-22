@@ -196,11 +196,8 @@ pub async fn toggle_mcp_app(
 
 /// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）
 #[tauri::command]
-pub async fn import_mcp_from_apps(state: State<'_, AppState>) -> Result<usize, String> {
-    let mut total = 0;
-    total += McpService::import_from_claude(&state).unwrap_or(0);
-    total += McpService::import_from_codex(&state).unwrap_or(0);
-    total += McpService::import_from_gemini(&state).unwrap_or(0);
-    total += McpService::import_from_opencode(&state).unwrap_or(0);
-    Ok(total)
+pub async fn import_mcp_from_apps(
+    state: State<'_, AppState>,
+) -> Result<crate::mcp::McpImportResult, String> {
+    McpService::import_from_apps_detailed(&state).map_err(|e| e.to_string())
 }

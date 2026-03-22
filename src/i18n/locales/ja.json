@@ -1143,6 +1143,12 @@
       "enabledApps": "有効なアプリ",
       "noImportFound": "インポートする MCP サーバーが見つかりませんでした。すべてのサーバーは CC Switch で管理されています。",
       "importSuccess": "{{count}} 個の MCP サーバーをインポートしました",
+      "importSummary": "インポート完了: 追加 {{added}} 件、更新 {{refreshed}} 件、既存有効化 {{enabledOnly}} 件。",
+      "importWarningTitle": "一部の MCP 項目をスキップしました",
+      "importConflictItem": "{{id}}（{{sourceApp}} から） は既存アプリ {{existingApps}} と競合しています",
+      "importInvalidItem": "{{id}}（{{sourceApp}} から） は不正なためスキップしました",
+      "importWarningMore": "ほか {{count}} 件あります。",
+      "importWarningHint": "1 つの ID は 1 つの統一 MCP サーバーを表します。定義が異なる場合は CC-Switch で統一するか、外部アプリ側で名前を変更してください。",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -1239,6 +1245,7 @@
       "jsonInvalid": "JSON 形式が無効です",
       "tomlInvalid": "TOML 形式が無効です",
       "commandRequired": "コマンドを入力してください",
+      "typeRequiredForUrl": "url を持つサーバーは type を http または sse に明示してください",
       "singleServerObjectRequired": "単一の MCP サーバーオブジェクトを貼り付けてください（トップレベルの mcpServers は不要）",
       "saveFailed": "保存に失敗しました",
       "deleteFailed": "削除に失敗しました"

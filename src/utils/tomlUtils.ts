@@ -103,7 +103,19 @@ function normalizeServerConfig(config: any): McpServerSpec {
     throw new Error("服务器配置必须是对象");
   }
 
-  const type = (config.type as string) || "stdio";
+  let type = typeof config.type === "string" ? config.type : undefined;
+  const hasCommand = Object.prototype.hasOwnProperty.call(config, "command");
+  const hasUrl = Object.prototype.hasOwnProperty.call(config, "url");
+
+  if (!type) {
+    if (hasCommand) {
+      type = "stdio";
+    } else if (hasUrl) {
+      throw new Error("包含 url 字段时必须显式指定 type 为 http 或 sse");
+    } else {
+      type = "stdio";
+    }
+  }
 
   // 已知字段列表（用于后续排除）
   const knownFields = new Set<string>();
@@ -157,15 +169,17 @@ function normalizeServerConfig(config: any): McpServerSpec {
     };
     knownFields.add("type");
     knownFields.add("url");
+    knownFields.add("headers");
+    knownFields.add("http_headers");
 
     // 可选字段
-    if (config.headers && typeof config.headers === "object") {
+    const rawHeaders = config.headers ?? config.http_headers;
+    if (rawHeaders && typeof rawHeaders === "object") {
       const headers: Record<string, string> = {};
-      for (const [k, v] of Object.entries(config.headers)) {
+      for (const [k, v] of Object.entries(rawHeaders)) {
         headers[k] = String(v);
       }
       server.headers = headers;
-      knownFields.add("headers");
     }
 
     // 保留所有未知字段

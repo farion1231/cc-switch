@@ -13,13 +13,13 @@
 //! | `url`                | `url`               |
 
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpServer, MultiAppConfig};
+use crate::app_config::{AppType, MultiAppConfig};
 use crate::error::AppError;
 use crate::opencode_config;
 
-use super::validation::validate_server_spec;
+use super::validation::normalize_server_spec;
+use super::{apply_parsed_import, build_imported_server, invalid_issue, ParsedImport};
 
 // ============================================================================
 // Helper Functions
@@ -210,16 +210,17 @@ pub fn remove_server_from_opencode(id: &str) -> Result<(), AppError> {
 ///
 /// Existing servers will have OpenCode app enabled without overwriting other fields.
 pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppError> {
+    let parsed = parse_import_from_opencode()?;
+    apply_parsed_import(config, parsed, AppType::OpenCode)
+}
+
+pub(crate) fn parse_import_from_opencode() -> Result<ParsedImport, AppError> {
     let mcp_map = opencode_config::get_mcp_servers()?;
     if mcp_map.is_empty() {
-        return Ok(0);
+        return Ok(ParsedImport::default());
     }
 
-    // Ensure servers map exists
-    let servers = config.mcp.servers.get_or_insert_with(HashMap::new);
-
-    let mut changed = 0;
-    let mut errors = Vec::new();
+    let mut parsed = ParsedImport::default();
 
     for (id, spec) in mcp_map {
         // Convert from OpenCode format to unified format
@@ -227,59 +228,27 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
             Ok(s) => s,
             Err(e) => {
                 log::warn!("Skip invalid OpenCode MCP server '{id}': {e}");
-                errors.push(format!("{id}: {e}"));
+                parsed
+                    .issues
+                    .push(invalid_issue(id, AppType::OpenCode, e.to_string()));
                 continue;
             }
         };
 
-        // Validate the converted spec
-        if let Err(e) = validate_server_spec(&unified_spec) {
-            log::warn!("Skip invalid MCP server '{id}' after conversion: {e}");
-            errors.push(format!("{id}: {e}"));
-            continue;
-        }
-
-        if let Some(existing) = servers.get_mut(&id) {
-            // Existing server: just enable OpenCode app
-            if !existing.apps.opencode {
-                existing.apps.opencode = true;
-                changed += 1;
-                log::info!("MCP server '{id}' enabled for OpenCode");
+        match normalize_server_spec(&unified_spec) {
+            Ok(spec) => parsed
+                .servers
+                .push(build_imported_server(id.clone(), AppType::OpenCode, spec)),
+            Err(e) => {
+                log::warn!("Skip invalid MCP server '{id}' after conversion: {e}");
+                parsed
+                    .issues
+                    .push(invalid_issue(id, AppType::OpenCode, e.to_string()));
             }
-        } else {
-            // New server: default to only OpenCode enabled
-            servers.insert(
-                id.clone(),
-                McpServer {
-                    id: id.clone(),
-                    name: id.clone(),
-                    server: unified_spec,
-                    apps: McpApps {
-                        claude: false,
-                        codex: false,
-                        gemini: false,
-                        opencode: true,
-                    },
-                    description: None,
-                    homepage: None,
-                    docs: None,
-                    tags: Vec::new(),
-                },
-            );
-            changed += 1;
-            log::info!("Imported new MCP server '{id}' from OpenCode");
         }
     }
 
-    if !errors.is_empty() {
-        log::warn!(
-            "Import completed with {} failures: {:?}",
-            errors.len(),
-            errors
-        );
-    }
-
-    Ok(changed)
+    Ok(parsed)
 }
 
 #[cfg(test)]

@@ -153,6 +153,20 @@ describe("useMcpValidation", () => {
       );
     });
 
+    it("requires explicit type when url exists without type", () => {
+      const { validateJsonConfig } = getHookResult();
+      expect(validateJsonConfig('{"url":"https://example.com/mcp"}')).toBe(
+        "mcp.error.typeRequiredForUrl",
+      );
+    });
+
+    it("allows stdio command without explicit type", () => {
+      const { validateJsonConfig } = getHookResult();
+      expect(
+        validateJsonConfig('{"command":"node","args":["server.js"]}'),
+      ).toBe("");
+    });
+
     it("returns empty string when json config valid", () => {
       const { validateJsonConfig } = getHookResult();
       expect(
