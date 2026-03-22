@@ -13,6 +13,7 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::providers::transform::anthropic_to_openai;
+use crate::proxy::providers::copilot_auth;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
@@ -353,9 +354,12 @@ impl StreamCheckService {
                 .header("content-type", "application/json")
                 .header("accept", "text/event-stream")
                 .header("accept-encoding", "identity")
-                .header("editor-version", "vscode/1.85.0")
-                .header("editor-plugin-version", "copilot/1.150.0")
-                .header("copilot-integration-id", "vscode-chat");
+                .header("user-agent", copilot_auth::COPILOT_USER_AGENT)
+                .header("editor-version", copilot_auth::COPILOT_EDITOR_VERSION)
+                .header("editor-plugin-version", copilot_auth::COPILOT_PLUGIN_VERSION)
+                .header("copilot-integration-id", copilot_auth::COPILOT_INTEGRATION_ID)
+                .header("x-github-api-version", copilot_auth::COPILOT_API_VERSION)
+                .header("openai-intent", "conversation-panel");
         } else if is_openai_chat || is_openai_responses {
             // OpenAI-compatible targets: Bearer auth + SSE headers only
             request_builder = request_builder

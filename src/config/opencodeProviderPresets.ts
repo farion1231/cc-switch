@@ -42,8 +42,8 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
 > = {
   "@ai-sdk/openai-compatible": [
     {
-      id: "MiniMax-M2.5",
-      name: "MiniMax M2.5",
+      id: "MiniMax-M2.7",
+      name: "MiniMax M2.7",
       contextLimit: 204800,
       outputLimit: 131072,
       modalities: { input: ["text"], output: ["text"] },
@@ -170,7 +170,7 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
     {
       id: "global.anthropic.claude-sonnet-4-6",
       name: "Claude Sonnet 4.6",
-      contextLimit: 200000,
+      contextLimit: 1000000,
       outputLimit: 64000,
       modalities: { input: ["text", "image", "pdf"], output: ["text"] },
     },
@@ -634,7 +634,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "MiniMax-M2.5": { name: "MiniMax M2.5" },
+        "MiniMax-M2.7": { name: "MiniMax M2.7" },
       },
     },
     category: "cn_official",
@@ -667,7 +667,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "MiniMax-M2.5": { name: "MiniMax M2.5" },
+        "MiniMax-M2.7": { name: "MiniMax M2.7" },
       },
     },
     category: "cn_official",
@@ -753,7 +753,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "mimo-v2-flash": { name: "MiMo V2 Flash" },
+        "mimo-v2-pro": { name: "MiMo V2 Pro" },
       },
     },
     category: "cn_official",

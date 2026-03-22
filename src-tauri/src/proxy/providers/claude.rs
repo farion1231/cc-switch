@@ -329,12 +329,15 @@ impl ProviderAdapter for ClaudeAdapter {
             AuthStrategy::Bearer => {
                 request.header("Authorization", format!("Bearer {}", auth.api_key))
             }
-            // GitHub Copilot: Bearer + 特定的 Editor headers
+            // GitHub Copilot: Bearer + 统一指纹头
             AuthStrategy::GitHubCopilot => request
                 .header("Authorization", format!("Bearer {}", auth.api_key))
-                .header("Editor-Version", "vscode/1.85.0")
-                .header("Editor-Plugin-Version", "copilot/1.150.0")
-                .header("Copilot-Integration-Id", "vscode-chat"),
+                .header("editor-version", super::copilot_auth::COPILOT_EDITOR_VERSION)
+                .header("editor-plugin-version", super::copilot_auth::COPILOT_PLUGIN_VERSION)
+                .header("copilot-integration-id", super::copilot_auth::COPILOT_INTEGRATION_ID)
+                .header("user-agent", super::copilot_auth::COPILOT_USER_AGENT)
+                .header("x-github-api-version", super::copilot_auth::COPILOT_API_VERSION)
+                .header("openai-intent", "conversation-panel"),
             _ => request,
         }
     }

@@ -860,9 +860,22 @@ impl RequestForwarder {
 
         // 过滤黑名单 Headers，保护隐私并避免冲突
         for (key, value) in headers {
+            let key_str = key.as_str();
             if HEADER_BLACKLIST
                 .iter()
-                .any(|h| key.as_str().eq_ignore_ascii_case(h))
+                .any(|h| key_str.eq_ignore_ascii_case(h))
+            {
+                continue;
+            }
+            // Copilot 请求：过滤会由 add_auth_headers 注入的固定指纹头，
+            // 防止客户端原始头与注入头重复（reqwest header() 是追加语义）
+            if is_copilot
+                && (key_str.eq_ignore_ascii_case("user-agent")
+                    || key_str.eq_ignore_ascii_case("editor-version")
+                    || key_str.eq_ignore_ascii_case("editor-plugin-version")
+                    || key_str.eq_ignore_ascii_case("copilot-integration-id")
+                    || key_str.eq_ignore_ascii_case("x-github-api-version")
+                    || key_str.eq_ignore_ascii_case("openai-intent"))
             {
                 continue;
             }

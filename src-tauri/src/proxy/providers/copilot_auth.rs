@@ -46,10 +46,11 @@ const TOKEN_REFRESH_BUFFER_SECONDS: i64 = 60;
 const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
 
 /// Copilot API Header 常量
-const COPILOT_EDITOR_VERSION: &str = "vscode/1.96.0";
-const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.26.7";
-const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
-const COPILOT_API_VERSION: &str = "2025-04-01";
+pub const COPILOT_EDITOR_VERSION: &str = "vscode/1.96.0";
+pub const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.26.7";
+pub const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
+pub const COPILOT_API_VERSION: &str = "2025-04-01";
+pub const COPILOT_INTEGRATION_ID: &str = "vscode-chat";
 
 /// Copilot 使用量 API URL
 const COPILOT_USAGE_URL: &str = "https://api.github.com/copilot_internal/user";
@@ -465,6 +466,7 @@ impl CopilotAuthManager {
             .http_client
             .post(GITHUB_DEVICE_CODE_URL)
             .header("Accept", "application/json")
+            .header("User-Agent", COPILOT_USER_AGENT)
             .form(&[("client_id", GITHUB_CLIENT_ID), ("scope", "read:user")])
             .send()
             .await?;
@@ -502,6 +504,7 @@ impl CopilotAuthManager {
             .http_client
             .post(GITHUB_OAUTH_TOKEN_URL)
             .header("Accept", "application/json")
+            .header("User-Agent", COPILOT_USER_AGENT)
             .form(&[
                 ("client_id", GITHUB_CLIENT_ID),
                 ("device_code", device_code),
@@ -948,7 +951,9 @@ impl CopilotAuthManager {
             .http_client
             .get(GITHUB_USER_URL)
             .header("Authorization", format!("token {}", github_token))
-            .header("User-Agent", "CC-Switch")
+            .header("User-Agent", COPILOT_USER_AGENT)
+            .header("Editor-Version", COPILOT_EDITOR_VERSION)
+            .header("Editor-Plugin-Version", COPILOT_PLUGIN_VERSION)
             .send()
             .await?;
 
@@ -978,9 +983,9 @@ impl CopilotAuthManager {
             .http_client
             .get(COPILOT_TOKEN_URL)
             .header("Authorization", format!("token {}", github_token))
-            .header("User-Agent", "CC-Switch")
-            .header("Editor-Version", "vscode/1.85.0")
-            .header("Editor-Plugin-Version", "copilot/1.150.0")
+            .header("User-Agent", COPILOT_USER_AGENT)
+            .header("Editor-Version", COPILOT_EDITOR_VERSION)
+            .header("Editor-Plugin-Version", COPILOT_PLUGIN_VERSION)
             .send()
             .await?;
 
