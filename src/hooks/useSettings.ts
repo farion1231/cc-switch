@@ -269,6 +269,31 @@ export function useSettings(): UseSettingsResult {
           prevPluginEnabled,
         );
 
+        // Claude Code 对话记录保护：开=写入 cleanupPeriodDays=99999；关=删除该字段
+        const nextKeepConversationHistory = updates.keepConversationHistory;
+        if (
+          nextKeepConversationHistory !== undefined &&
+          nextKeepConversationHistory !== (data?.keepConversationHistory ?? false)
+        ) {
+          try {
+            if (nextKeepConversationHistory) {
+              await settingsApi.applyTranscriptProtection();
+            } else {
+              await settingsApi.clearTranscriptProtection();
+            }
+          } catch (error) {
+            console.warn(
+              "[useSettings] Failed to sync transcript protection",
+              error,
+            );
+            toast.error(
+              t("notifications.keepConversationHistoryFailed", {
+                defaultValue: "更新对话历史保护失败",
+              }),
+            );
+          }
+        }
+
         // 持久化语言偏好
         try {
           if (typeof window !== "undefined" && updates.language) {
@@ -400,6 +425,31 @@ export function useSettings(): UseSettingsResult {
           payload.enableClaudePluginIntegration,
           prevPluginEnabled,
         );
+
+        // Claude Code 对话记录保护：开=写入 cleanupPeriodDays=99999；关=删除该字段
+        const prevKeepConversationHistory =
+          data?.keepConversationHistory ?? false;
+        const nextKeepConversationHistory =
+          payload.keepConversationHistory ?? false;
+        if (nextKeepConversationHistory !== prevKeepConversationHistory) {
+          try {
+            if (nextKeepConversationHistory) {
+              await settingsApi.applyTranscriptProtection();
+            } else {
+              await settingsApi.clearTranscriptProtection();
+            }
+          } catch (error) {
+            console.warn(
+              "[useSettings] Failed to sync transcript protection",
+              error,
+            );
+            toast.error(
+              t("notifications.keepConversationHistoryFailed", {
+                defaultValue: "更新对话历史保护失败",
+              }),
+            );
+          }
+        }
 
         try {
           if (typeof window !== "undefined") {
