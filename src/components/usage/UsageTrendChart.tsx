@@ -19,16 +19,16 @@ import {
 } from "./format";
 
 interface UsageTrendChartProps {
-  days: number;
+  hours: number;
   refreshIntervalMs: number;
 }
 
 export function UsageTrendChart({
-  days,
+  hours,
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
-  const { data: trends, isLoading } = useUsageTrends(days, {
+  const { data: trends, isLoading } = useUsageTrends(hours, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
   });
 
@@ -40,7 +40,9 @@ export function UsageTrendChart({
     );
   }
 
-  const isToday = days === 1;
+  const useHourlyLabels = hours <= 24;
+  const isLast5Hours = hours === 5;
+  const isToday = hours === 24;
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const dateLocale = getLocaleFromLanguage(language);
   const chartData =
@@ -49,7 +51,7 @@ export function UsageTrendChart({
       const cost = parseFiniteNumber(stat.totalCost);
       return {
         rawDate: stat.date,
-        label: isToday
+        label: useHourlyLabels
           ? pointDate.toLocaleString(dateLocale, {
               month: "2-digit",
               day: "2-digit",
@@ -107,11 +109,13 @@ export function UsageTrendChart({
           {t("usage.trends", "使用趋势")}
         </h3>
         <p className="text-sm text-muted-foreground">
-          {isToday
-            ? t("usage.rangeToday", "今天 (按小时)")
-            : days === 7
-              ? t("usage.rangeLast7Days", "过去 7 天")
-              : t("usage.rangeLast30Days", "过去 30 天")}
+          {isLast5Hours
+            ? t("usage.rangeLast5Hours", "过去 5 小时")
+            : isToday
+              ? t("usage.rangeToday", "今天 (按小时)")
+              : hours === 168
+                ? t("usage.rangeLast7Days", "过去 7 天")
+                : t("usage.rangeLast30Days", "过去 30 天")}
         </p>
       </div>
 

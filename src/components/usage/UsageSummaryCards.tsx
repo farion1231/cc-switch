@@ -7,17 +7,17 @@ import { motion } from "framer-motion";
 import { fmtUsd, parseFiniteNumber } from "./format";
 
 interface UsageSummaryCardsProps {
-  days: number;
+  hours: number;
   refreshIntervalMs: number;
 }
 
 export function UsageSummaryCards({
-  days,
+  hours,
   refreshIntervalMs,
 }: UsageSummaryCardsProps) {
   const { t } = useTranslation();
 
-  const { data: summary, isLoading } = useUsageSummary(days, {
+  const { data: summary, isLoading } = useUsageSummary(hours, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
   });
 

@@ -34,8 +34,8 @@ type RequestLogsKey = {
 // Query keys
 export const usageKeys = {
   all: ["usage"] as const,
-  summary: (days: number) => [...usageKeys.all, "summary", days] as const,
-  trends: (days: number) => [...usageKeys.all, "trends", days] as const,
+  summary: (hours: number) => [...usageKeys.all, "summary", hours] as const,
+  trends: (hours: number) => [...usageKeys.all, "trends", hours] as const,
   providerStats: () => [...usageKeys.all, "provider-stats"] as const,
   modelStats: () => [...usageKeys.all, "model-stats"] as const,
   logs: (key: RequestLogsKey, page: number, pageSize: number) =>
@@ -60,18 +60,18 @@ export const usageKeys = {
     [...usageKeys.all, "limits", providerId, appType] as const,
 };
 
-const getWindow = (days: number) => {
+const getWindow = (hours: number) => {
   const endDate = Math.floor(Date.now() / 1000);
-  const startDate = endDate - days * 24 * 60 * 60;
+  const startDate = endDate - hours * 60 * 60;
   return { startDate, endDate };
 };
 
 // Hooks
-export function useUsageSummary(days: number, options?: UsageQueryOptions) {
+export function useUsageSummary(hours: number, options?: UsageQueryOptions) {
   return useQuery({
-    queryKey: usageKeys.summary(days),
+    queryKey: usageKeys.summary(hours),
     queryFn: () => {
-      const { startDate, endDate } = getWindow(days);
+      const { startDate, endDate } = getWindow(hours);
       return usageApi.getUsageSummary(startDate, endDate);
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
@@ -79,11 +79,11 @@ export function useUsageSummary(days: number, options?: UsageQueryOptions) {
   });
 }
 
-export function useUsageTrends(days: number, options?: UsageQueryOptions) {
+export function useUsageTrends(hours: number, options?: UsageQueryOptions) {
   return useQuery({
-    queryKey: usageKeys.trends(days),
+    queryKey: usageKeys.trends(hours),
     queryFn: () => {
-      const { startDate, endDate } = getWindow(days);
+      const { startDate, endDate } = getWindow(hours);
       return usageApi.getUsageTrends(startDate, endDate);
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新

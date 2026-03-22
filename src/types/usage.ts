@@ -107,7 +107,7 @@ export interface ProviderLimitStatus {
   monthlyExceeded: boolean;
 }
 
-export type TimeRange = "1d" | "7d" | "30d";
+export type TimeRange = "5h" | "1d" | "7d" | "30d";
 
 export interface StatsFilters {
   timeRange: TimeRange;

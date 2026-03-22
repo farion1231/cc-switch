@@ -44,7 +44,7 @@ export function UsageDashboard() {
     queryClient.invalidateQueries({ queryKey: usageKeys.all });
   };
 
-  const days = timeRange === "1d" ? 1 : timeRange === "7d" ? 7 : 30;
+  const hours = timeRange === "5h" ? 5 : timeRange === "1d" ? 24 : timeRange === "7d" ? 168 : 720;
 
   return (
     <motion.div
@@ -78,6 +78,12 @@ export function UsageDashboard() {
             </Button>
             <TabsList className="flex w-full sm:w-auto bg-card/60 border border-border/50 backdrop-blur-sm shadow-sm h-10 p-1">
               <TabsTrigger
+                value="5h"
+                className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
+              >
+                {t("usage.last5hours")}
+              </TabsTrigger>
+              <TabsTrigger
                 value="1d"
                 className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
               >
@@ -100,9 +106,9 @@ export function UsageDashboard() {
         </Tabs>
       </div>
 
-      <UsageSummaryCards days={days} refreshIntervalMs={refreshIntervalMs} />
+      <UsageSummaryCards hours={hours} refreshIntervalMs={refreshIntervalMs} />
 
-      <UsageTrendChart days={days} refreshIntervalMs={refreshIntervalMs} />
+      <UsageTrendChart hours={hours} refreshIntervalMs={refreshIntervalMs} />
 
       <div className="space-y-4">
         <Tabs defaultValue="logs" className="w-full">

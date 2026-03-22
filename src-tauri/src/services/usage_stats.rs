@@ -252,7 +252,7 @@ impl Database {
         };
 
         // 固定 24 小时窗口为 24 个小时桶，避免浮点误差
-        if bucket_seconds == 60 * 60 {
+        if bucket_seconds == 60 * 60 && bucket_count > 24 {
             bucket_count = 24;
         }
 
