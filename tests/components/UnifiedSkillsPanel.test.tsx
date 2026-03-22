@@ -11,6 +11,9 @@ const toggleSkillAppMock = vi.fn();
 const uninstallSkillMock = vi.fn();
 const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
+const skillBackupsRefetchMock = vi.fn();
+const deleteSkillBackupMock = vi.fn();
+const restoreSkillBackupMock = vi.fn();
 
 vi.mock("sonner", () => ({
   toast: {
@@ -25,11 +28,24 @@ vi.mock("@/hooks/useSkills", () => ({
     data: [],
     isLoading: false,
   }),
+  useSkillBackups: () => ({
+    data: [],
+    refetch: skillBackupsRefetchMock,
+    isFetching: false,
+  }),
+  useDeleteSkillBackup: () => ({
+    mutateAsync: deleteSkillBackupMock,
+    isPending: false,
+  }),
   useToggleSkillApp: () => ({
     mutateAsync: toggleSkillAppMock,
   }),
   useUninstallSkill: () => ({
     mutateAsync: uninstallSkillMock,
+  }),
+  useRestoreSkillBackup: () => ({
+    mutateAsync: restoreSkillBackupMock,
+    isPending: false,
   }),
   useScanUnmanagedSkills: () => ({
     data: [
@@ -68,6 +84,9 @@ describe("UnifiedSkillsPanel", () => {
     uninstallSkillMock.mockReset();
     importSkillsMock.mockReset();
     installFromZipMock.mockReset();
+    skillBackupsRefetchMock.mockReset();
+    deleteSkillBackupMock.mockReset();
+    restoreSkillBackupMock.mockReset();
   });
 
   it("opens the import dialog without crashing when app toggles render", async () => {

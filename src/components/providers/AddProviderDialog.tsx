@@ -42,9 +42,9 @@ export function AddProviderDialog({
   const { t } = useTranslation();
   // OpenCode and OpenClaw don't support universal providers
   const showUniversalTab = appId !== "opencode" && appId !== "openclaw";
-  const [activeTab, setActiveTab] = useState<
-    "app-specific" | "universal"
-  >("app-specific");
+  const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
+    "app-specific",
+  );
   const [universalFormOpen, setUniversalFormOpen] = useState(false);
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
@@ -284,9 +284,7 @@ export function AddProviderDialog({
       {showUniversalTab ? (
         <Tabs
           value={activeTab}
-          onValueChange={(v) =>
-            setActiveTab(v as "app-specific" | "universal")
-          }
+          onValueChange={(v) => setActiveTab(v as "app-specific" | "universal")}
         >
           <TabsList className="grid w-full grid-cols-2 mb-6">
             <TabsTrigger value="app-specific">
