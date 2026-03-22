@@ -874,6 +874,17 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_claude_stream_url_for_openai_chat_without_v1() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://example.com",
+            AuthStrategy::Bearer,
+            "openai_chat",
+        );
+
+        assert_eq!(url, "https://example.com/v1/chat/completions");
+    }
+
+    #[test]
     fn test_resolve_claude_stream_url_for_anthropic() {
         let url = StreamCheckService::resolve_claude_stream_url(
             "https://api.anthropic.com",

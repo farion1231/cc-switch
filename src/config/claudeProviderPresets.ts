@@ -711,7 +711,7 @@ export const providerPresets: ProviderPreset[] = [
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://integrate.api.nvidia.com",
+        ANTHROPIC_BASE_URL: "https://integrate.api.nvidia.com/v1",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "moonshotai/kimi-k2.5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "moonshotai/kimi-k2.5",

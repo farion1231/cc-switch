@@ -76,3 +76,17 @@ describe("AWS Bedrock Provider Presets", () => {
     expect(bedrockApiKey!.category).toBe("cloud_provider");
   });
 });
+
+describe("Nvidia Provider Preset", () => {
+  const nvidia = providerPresets.find((p) => p.name === "Nvidia");
+
+  it("should include Nvidia preset", () => {
+    expect(nvidia).toBeDefined();
+  });
+
+  it("should use the versioned NVIDIA base URL for Claude openai_chat", () => {
+    const env = (nvidia!.settingsConfig as any).env;
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://integrate.api.nvidia.com/v1");
+    expect(nvidia!.apiFormat).toBe("openai_chat");
+  });
+});
