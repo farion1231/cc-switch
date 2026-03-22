@@ -123,6 +123,8 @@
     "terminalOpenFailed": "打开终端失败",
     "terminalLaunchTitle": "启动终端",
     "terminalLaunchMessage": "是否启用危险的「签名绕过 (Bypass Signature)」模式？",
+    "terminalLaunchTelegram": "TG 通信",
+    "terminalLaunchTelegramHint": "勾选后会自动追加 --channels plugin:telegram@claude-plugins-official",
     "terminalLaunchBypass": "启用签名绕过",
     "terminalLaunchNormal": "普通启动",
     "dangerModeHint": "警告：开启后将跳过所有命令执行的权限确认！Claude Code可能会删除你重要信息！并消耗大量的Token",

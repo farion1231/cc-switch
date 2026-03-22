@@ -655,13 +655,14 @@ function App() {
       setTerminalLaunchProvider(provider);
     } else {
       // 其他应用直接启动
-      performOpenTerminal(provider, false);
+      performOpenTerminal(provider, false, false);
     }
   };
 
   const performOpenTerminal = async (
     provider: Provider,
     dangerouslySkipPermissions: boolean,
+    enableTelegramChannel: boolean,
   ) => {
     try {
       const selected = await open({
@@ -671,9 +672,15 @@ function App() {
       });
 
       const cwd = typeof selected === "string" ? selected : undefined;
-      const args = dangerouslySkipPermissions
-        ? ["--dangerously-skip-permissions"]
-        : [];
+      const args: string[] = [];
+
+      if (dangerouslySkipPermissions) {
+        args.push("--dangerously-skip-permissions");
+      }
+
+      if (enableTelegramChannel) {
+        args.push("--channels", "plugin:telegram@claude-plugins-official");
+      }
 
       await providersApi.openTerminal(provider.id, activeApp, cwd, args);
       toast.success(
@@ -1326,9 +1333,13 @@ function App() {
       <TerminalLaunchDialog
         isOpen={Boolean(terminalLaunchProvider)}
         provider={terminalLaunchProvider}
-        onConfirm={(bypass) => {
+        onConfirm={(bypass, enableTelegramChannel) => {
           if (terminalLaunchProvider) {
-            void performOpenTerminal(terminalLaunchProvider, bypass);
+            void performOpenTerminal(
+              terminalLaunchProvider,
+              bypass,
+              enableTelegramChannel,
+            );
           }
           setTerminalLaunchProvider(null);
         }}

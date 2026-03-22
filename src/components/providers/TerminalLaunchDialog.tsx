@@ -7,14 +7,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { Terminal, ShieldAlert } from "lucide-react";
+import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 
 interface TerminalLaunchDialogProps {
   isOpen: boolean;
   provider: Provider | null;
-  onConfirm: (bypass: boolean) => void;
+  onConfirm: (bypass: boolean, enableTelegramChannel: boolean) => void;
   onCancel: () => void;
 }
 
@@ -25,6 +28,14 @@ export function TerminalLaunchDialog({
   onCancel,
 }: TerminalLaunchDialogProps) {
   const { t } = useTranslation();
+  const [enableTelegramChannel, setEnableTelegramChannel] = useState(false);
+  const telegramCheckboxId = useId();
+
+  useEffect(() => {
+    if (isOpen) {
+      setEnableTelegramChannel(false);
+    }
+  }, [isOpen, provider?.id]);
 
   if (!provider) return null;
 
@@ -50,6 +61,29 @@ export function TerminalLaunchDialog({
                 "您准备在终端中启动 Claude Code。是否启用安全跳过权限 (--dangerously-skip-permissions) 模式？",
               )}
             </p>
+            <div className="flex items-start gap-3 rounded-lg border border-border/70 bg-muted/30 p-3">
+              <Checkbox
+                id={telegramCheckboxId}
+                checked={enableTelegramChannel}
+                onCheckedChange={(checked) =>
+                  setEnableTelegramChannel(checked === true)
+                }
+              />
+              <div className="space-y-1">
+                <Label
+                  htmlFor={telegramCheckboxId}
+                  className="cursor-pointer text-sm font-medium leading-5"
+                >
+                  {t("provider.terminalLaunchTelegram", "TG 通信")}
+                </Label>
+                <p className="text-xs leading-normal text-muted-foreground">
+                  {t(
+                    "provider.terminalLaunchTelegramHint",
+                    "勾选后会自动追加 --channels plugin:telegram@claude-plugins-official",
+                  )}
+                </p>
+              </div>
+            </div>
             <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 p-3 text-amber-600 dark:text-amber-400">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
               <p className="text-xs leading-normal whitespace-pre-wrap">
@@ -67,14 +101,14 @@ export function TerminalLaunchDialog({
           </Button>
           <Button
             variant="secondary"
-            onClick={() => onConfirm(false)}
+            onClick={() => onConfirm(false, enableTelegramChannel)}
             className="sm:order-2"
           >
             {t("provider.terminalLaunchNormal", "普通启动")}
           </Button>
           <Button
             variant="default"
-            onClick={() => onConfirm(true)}
+            onClick={() => onConfirm(true, enableTelegramChannel)}
             className="bg-amber-600 hover:bg-amber-700 dark:bg-amber-700 dark:hover:bg-amber-800 sm:order-3"
           >
             {t("provider.terminalLaunchBypass", "跳过权限确认")}
