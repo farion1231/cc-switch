@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UsageSummaryCards } from "./UsageSummaryCards";
@@ -25,12 +24,12 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
+import { useUsageSetting } from "@/hooks/useUsageSetting";
 
 export function UsageDashboard() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [timeRange, setTimeRange] = useState<TimeRange>("1d");
-  const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
+  const { timeRange, setTimeRange, refreshIntervalMs, setRefreshIntervalMs } = useUsageSetting();
 
   const refreshIntervalOptionsMs = [0, 5000, 10000, 30000, 60000] as const;
   const changeRefreshInterval = () => {
