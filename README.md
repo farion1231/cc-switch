@@ -184,9 +184,9 @@ CC Switch provides a "Shared Config Snippet" feature to pass common data (beyond
 </details>
 
 <details>
-<summary><strong>macOS shows "unidentified developer" warning — how do I fix it?</strong></summary>
+<summary><strong>macOS installation</strong></summary>
 
-The author doesn't have an Apple Developer account yet (registration in progress). Close the warning, then go to **System Settings → Privacy & Security → Open Anyway**. After that, the app will open normally.
+CC Switch for macOS is code-signed and notarized by Apple. You can download and install it directly — no extra steps needed. We recommend using the `.dmg` installer.
 
 </details>
 
@@ -268,9 +268,9 @@ brew upgrade --cask cc-switch
 
 **Method 2: Manual Download**
 
-Download `CC-Switch-v{version}-macOS.zip` from the [Releases](../../releases) page and extract to use.
+Download `CC-Switch-v{version}-macOS.dmg` (recommended) or `.zip` from the [Releases](../../releases) page.
 
-> **Note**: Since the author doesn't have an Apple Developer account, you may see an "unidentified developer" warning on first launch. Please close it first, then go to "System Settings" → "Privacy & Security" → click "Open Anyway", and you'll be able to open it normally afterwards.
+> **Note**: CC Switch for macOS is code-signed and notarized by Apple. You can install and open it directly.
 
 ### Arch Linux Users
 

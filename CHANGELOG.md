@@ -5,6 +5,43 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Post-v3.12.3 work introduces GitHub Copilot reverse proxy support as a major new feature, adds intelligent reasoning_effort mapping for OpenAI o-series models, optimizes Skills cache invalidation, and delivers critical fixes for WebDAV password safety, tool message parsing, and dark mode.
+
+**Stats**: 13 commits | 74 files changed | +6,080 insertions | -1,197 deletions
+
+### Added
+
+- **GitHub Copilot Reverse Proxy**: Full GitHub Copilot integration as a Claude Code provider via OAuth Device Code flow; includes multi-account management, automatic token refresh, Anthropic ↔ OpenAI format conversion, real-time model list fetching, and usage statistics (#930)
+- **Copilot Auth Center**: New Auth Center panel in Settings for managing GitHub accounts globally, with per-provider account binding via `meta.authBinding`
+- **Reasoning Effort Mapping**: Two-tier `resolve_reasoning_effort()` for OpenAI o-series and GPT-5+ models — explicit `output_config.effort` takes priority, falling back to thinking `budget_tokens` thresholds (<4 000→low, 4 000–16 000→medium, ≥16 000→high); covers both Chat Completions and Responses API paths with 17 unit tests
+- **OpenCode SQLite Backend**: Added SQLite session storage support for OpenCode alongside existing JSON backend; dual-backend scan with SQLite priority on ID conflicts, atomic session deletion, and path validation
+- **macOS Code Signing & Notarization**: CI now imports an Apple Developer ID certificate, signs the universal binary, submits for Apple notarization, and staples the ticket to both `.app` and `.dmg`; a hard-fail verification step (`codesign --verify` + `spctl -a` + `stapler validate`) gates the release for both artifacts
+
+### Changed
+
+- **Tool Search Mechanism Migration**: Replaced the binary-patching bypass (~590 lines in `toolsearch_patch.rs`) with Claude 2.1.76+ native `ENABLE_TOOL_SEARCH` env var toggle; moved the control from Settings page to the provider Common Config editor as a simple checkbox (#930)
+- **Skills Cache Strategy**: Replaced `invalidateQueries` with direct `setQueryData` updates for skill install/uninstall/import operations; added `staleTime: Infinity` with `keepPreviousData` to eliminate loading flicker (#1573)
+- **Claude 4.6 Context Window**: Updated Claude Opus 4.6 and Sonnet 4.6 context window from 200K to 1M across OpenClaw and OpenCode presets (GA release)
+- **MiniMax Model Upgrade**: Updated MiniMax presets from M2.5 to M2.7 across Claude, OpenClaw, and OpenCode configurations with updated partner descriptions in all three locales
+- **Xiaomi MiMo Model Upgrade**: Updated MiMo presets from mimo-v2-flash to mimo-v2-pro across all supported applications
+- **AddProviderDialog Simplification**: Removed redundant OAuth tab, reducing dialog from 3 tabs to 2 (app-specific + universal)
+
+### Fixed
+
+- **WebDAV Password Silent Clear**: Fixed WebDAV password being silently wiped when ProviderList or UsageScriptModal saved settings by stripping `webdavSync` from frontend payloads and adding backend backfill logic in `merge_settings_for_save()` to preserve existing passwords
+- **Tool Message Parsing**: Fixed tool_use/tool_result message classification across Claude (tool_result content blocks), Codex (function_call/function_call_output payloads), and Gemini (array content + toolCalls extraction) session providers (#1401)
+- **Dark Mode Selector**: Changed Tailwind `darkMode` from `["selector", "class"]` to `["selector", ".dark"]` to ensure correct dark mode activation (#1596)
+- **Copilot Request Fingerprint**: Unified Copilot request fingerprint headers across all API call sites to prevent User-Agent leakage and stream check mismatches
+
+### Docs
+
+- **Pricing Model ID Normalization**: Added documentation section explaining model ID normalization rules (prefix stripping, suffix trimming, `@`→`-` replacement) in EN/ZH/JA user manuals (#1591)
+- **macOS Signed & Notarized**: Removed all `xattr` workaround instructions and "unidentified developer" warnings from README, README_ZH, installation guides (EN/ZH/JA), and FAQ pages (EN/ZH/JA); replaced with "signed and notarized by Apple" messaging
+
+---
+
 ## [3.12.3] - 2026-03-15
 
 Post-v3.12.2 work adds a Tool Search domain restriction bypass, skill backup/restore lifecycle, proxy compatibility for OpenAI o-series models and gzip compression, and robustness fixes for Skills import, provider forms, and terminal session restore.
