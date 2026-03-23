@@ -1084,7 +1084,8 @@ impl RequestForwarder {
             .and_then(|u| u.authority().map(|a| a.to_string()));
 
         // 预计算 anthropic-beta 值（仅 Claude）
-        let anthropic_beta_value = if adapter.name() == "Claude" {
+        let anthropic_beta_value =
+            if adapter.name() == "Claude" && uses_anthropic_protocol(provider) {
             const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
             Some(if let Some(beta) = headers.get("anthropic-beta") {
                 if let Ok(beta_str) = beta.to_str() {
@@ -1246,7 +1247,10 @@ impl RequestForwarder {
         }
 
         // anthropic-version：仅在缺失时补充默认值
-        if adapter.name() == "Claude" && !saw_anthropic_version {
+        if adapter.name() == "Claude"
+            && uses_anthropic_protocol(provider)
+            && !saw_anthropic_version
+        {
             ordered_headers.append(
                 "anthropic-version",
                 http::HeaderValue::from_static("2023-06-01"),

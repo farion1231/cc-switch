@@ -106,6 +106,14 @@ pub fn transform_claude_request_for_api_format(
     }
 }
 
+/// Claude 供应商是否使用原生 Anthropic 协议头。
+///
+/// 当 api_format 为 OpenAI 兼容格式时，请求会转发到 OpenAI 兼容端点，
+/// 此时不应再附带 anthropic-version / anthropic-beta 等 Anthropic 专用头。
+pub fn uses_anthropic_protocol(provider: &Provider) -> bool {
+    get_claude_api_format(provider) == "anthropic"
+}
+
 /// Claude 适配器
 pub struct ClaudeAdapter;
 
@@ -330,6 +338,14 @@ impl ProviderAdapter for ClaudeAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        // OpenAI-compatible endpoints expect standard Bearer auth instead of
+        // Anthropic's x-api-key + anthropic-version header combination.
+        if !uses_anthropic_protocol(provider) {
+            return self
+                .extract_key(provider)
+                .map(|key| AuthInfo::new(key, AuthStrategy::Bearer));
+        }
+
         let provider_type = self.provider_type(provider);
 
         // GitHub Copilot 使用特殊的认证策略
