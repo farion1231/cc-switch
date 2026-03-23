@@ -210,7 +210,7 @@ export function ProviderCard({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border p-4 transition-[box-shadow,border-color] duration-300",
+        "relative overflow-hidden rounded-xl border border-border p-4",
         "bg-card text-card-foreground group",
         isAutoFailoverEnabled || isProxyTakeover
           ? "hover:border-emerald-500/50"
@@ -219,7 +219,9 @@ export function ProviderCard({
           "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
         shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
         !isActiveProvider && "hover:shadow-sm",
-        isDragging && "cursor-grabbing border-primary shadow-lg scale-105 z-10",
+        isDragging
+          ? "cursor-grabbing border-primary shadow-lg z-10"
+          : "transition-[box-shadow,border-color] duration-300",
       )}
     >
       <div
