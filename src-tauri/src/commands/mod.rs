@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 mod auth;
+mod claude_notify;
 mod config;
 mod copilot;
 mod deeplink;
@@ -27,6 +28,7 @@ mod webdav_sync;
 mod workspace;
 
 pub use auth::*;
+pub use claude_notify::*;
 pub use config::*;
 pub use copilot::*;
 pub use deeplink::*;

@@ -20,10 +20,15 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
 
 /// 保存设置
 #[tauri::command]
-pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<bool, String> {
+pub async fn save_settings(
+    app: AppHandle,
+    settings: crate::settings::AppSettings,
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    crate::settings::update_settings(merged.clone()).map_err(|e| e.to_string())?;
+    crate::commands::sync_claude_notify_runtime_if_needed(app, &state, &existing, &merged).await?;
     Ok(true)
 }
 

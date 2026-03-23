@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { AppWindow, MonitorUp, Power, EyeOff } from "lucide-react";
 import { ToggleRow } from "@/components/ui/toggle-row";
+import { ClaudeBackgroundNotificationSettings } from "@/components/settings/ClaudeBackgroundNotificationSettings";
 import { AnimatePresence, motion } from "framer-motion";
 
 interface WindowSettingsProps {
@@ -74,6 +75,11 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
           onCheckedChange={(value) =>
             onChange({ minimizeToTrayOnClose: value })
           }
+        />
+
+        <ClaudeBackgroundNotificationSettings
+          settings={settings}
+          onChange={onChange}
         />
       </div>
     </section>
