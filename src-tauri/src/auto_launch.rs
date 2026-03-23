@@ -1,9 +1,10 @@
 use crate::error::AppError;
 use auto_launch::{AutoLaunch, AutoLaunchBuilder};
 
+const APP_NAME: &str = "CC Switch";
+
 /// 初始化 AutoLaunch 实例
 fn get_auto_launch() -> Result<AutoLaunch, AppError> {
-    let app_name = "CC Switch";
     let exe_path =
         std::env::current_exe().map_err(|e| AppError::Message(format!("无法获取应用路径: {e}")))?;
 
@@ -12,7 +13,7 @@ fn get_auto_launch() -> Result<AutoLaunch, AppError> {
     //        plist 的 ProgramArguments[0] 需要完整的可执行文件路径（非 .app 目录）
     // Windows/Linux: 使用注册表/XDG autostart
     let auto_launch = AutoLaunchBuilder::new()
-        .set_app_name(app_name)
+        .set_app_name(APP_NAME)
         .set_app_path(&exe_path.to_string_lossy())
         .set_use_launch_agent(true)
         .build()
@@ -53,7 +54,6 @@ pub fn is_auto_launch_enabled() -> Result<bool, AppError> {
 /// 应用启动时调用一次，幂等操作
 #[cfg(target_os = "macos")]
 pub fn migrate_from_applescript() {
-    let app_name = "CC Switch";
     let exe_path = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
@@ -65,7 +65,7 @@ pub fn migrate_from_applescript() {
     // Build an AutoLaunch instance using the OLD AppleScript method
     // (without set_use_launch_agent)
     let old_auto_launch = match AutoLaunchBuilder::new()
-        .set_app_name(app_name)
+        .set_app_name(APP_NAME)
         .set_app_path(&exe_path.to_string_lossy())
         .build()
     {
