@@ -62,11 +62,16 @@ pub fn migrate_from_applescript() {
         }
     };
 
+    // Old code used .app bundle path for AppleScript login items,
+    // so we must match that when checking/disabling the old item.
+    let old_app_path = get_macos_app_bundle_path(&exe_path)
+        .unwrap_or_else(|| exe_path.clone());
+
     // Build an AutoLaunch instance using the OLD AppleScript method
     // (without set_use_launch_agent)
     let old_auto_launch = match AutoLaunchBuilder::new()
         .set_app_name(APP_NAME)
-        .set_app_path(&exe_path.to_string_lossy())
+        .set_app_path(&old_app_path.to_string_lossy())
         .build()
     {
         Ok(al) => al,
@@ -92,18 +97,33 @@ pub fn migrate_from_applescript() {
 
     log::info!("检测到旧 AppleScript login item，开始迁移到 LaunchAgent...");
 
-    // Disable old AppleScript login item
-    if let Err(e) = old_auto_launch.disable() {
-        log::error!("迁移失败：无法禁用旧 AppleScript login item: {e}");
+    // Enable new LaunchAgent first, then disable old AppleScript.
+    // This order ensures the user never loses auto-launch capability:
+    // if new fails, old is preserved; brief dual-launch is harmless.
+    if let Err(e) = enable_auto_launch() {
+        log::error!("迁移失败：无法启用新 LaunchAgent: {e}，保留旧 AppleScript login item");
         return;
     }
-    log::info!("已禁用旧 AppleScript login item");
+    log::info!("已启用新 LaunchAgent");
 
-    // Enable new LaunchAgent method
-    if let Err(e) = enable_auto_launch() {
-        log::error!("迁移部分完成：已清理旧 login item，但启用新 LaunchAgent 失败: {e}");
+    // Disable old AppleScript login item
+    if let Err(e) = old_auto_launch.disable() {
+        log::warn!("迁移部分完成：新 LaunchAgent 已启用，但无法禁用旧 AppleScript login item: {e}");
         return;
     }
 
     log::info!("迁移完成：已从 AppleScript 切换到 LaunchAgent");
+}
+
+/// Convert exe path to .app bundle path for legacy AppleScript login item matching.
+/// e.g. `/Applications/CC Switch.app/Contents/MacOS/CC Switch` → `/Applications/CC Switch.app`
+#[cfg(target_os = "macos")]
+fn get_macos_app_bundle_path(exe_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let path_str = exe_path.to_string_lossy();
+    if let Some(app_pos) = path_str.find(".app/Contents/MacOS/") {
+        let app_bundle_end = app_pos + 4; // end of ".app"
+        Some(std::path::PathBuf::from(&path_str[..app_bundle_end]))
+    } else {
+        None
+    }
 }
