@@ -1,16 +1,9 @@
-import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter } from "@dnd-kit/core";
-import {
-  SortableContext,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
 import {
   useEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
+  useCallback,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Search, X } from "lucide-react";
@@ -20,7 +13,6 @@ import { toast } from "sonner";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
-import { useDragSort } from "@/hooks/useDragSort";
 import {
   useOpenClawLiveProviderIds,
   useOpenClawDefaultModel,
@@ -38,7 +30,6 @@ import {
   useCurrentOmoProviderId,
   useCurrentOmoSlimProviderId,
 } from "@/lib/query/omo";
-import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -60,10 +51,10 @@ interface ProviderListProps {
   onOpenTerminal?: (provider: Provider) => void;
   onCreate?: () => void;
   isLoading?: boolean;
-  isProxyRunning?: boolean; // 代理服务运行状态
-  isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
-  activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
-  onSetAsDefault?: (provider: Provider) => void; // OpenClaw: set as default model
+  isProxyRunning?: boolean;
+  isProxyTakeover?: boolean;
+  activeProviderId?: string;
+  onSetAsDefault?: (provider: Provider) => void;
 }
 
 export function ProviderList({
@@ -87,12 +78,31 @@ export function ProviderList({
   activeProviderId,
   onSetAsDefault,
 }: ProviderListProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { checkProvider, isChecking } = useStreamCheck(appId);
-  const { sortedProviders, sensors, handleDragEnd } = useDragSort(
-    providers,
-    appId,
-  );
+  const queryClient = useQueryClient();
+  const listRef = useRef<HTMLDivElement>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  // 计算排序后的供应商列表
+  const sortedProviders = useMemo(() => {
+    const locale = i18n.language === "zh" ? "zh-CN" : "en-US";
+    return Object.values(providers).sort((a, b) => {
+      if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
+        return a.sortIndex - b.sortIndex;
+      }
+      if (a.sortIndex !== undefined) return -1;
+      if (b.sortIndex !== undefined) return 1;
+
+      const timeA = a.createdAt ?? 0;
+      const timeB = b.createdAt ?? 0;
+      if (timeA && timeB && timeA !== timeB) {
+        return timeA - timeB;
+      }
+
+      return a.name.localeCompare(b.name, locale);
+    });
+  }, [providers, i18n.language]);
 
   const { data: opencodeLiveIds } = useQuery({
     queryKey: ["opencodeLiveProviderIds"],
@@ -100,12 +110,10 @@ export function ProviderList({
     enabled: appId === "opencode",
   });
 
-  // OpenClaw: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
   const { data: openclawLiveIds } = useOpenClawLiveProviderIds(
     appId === "openclaw",
   );
 
-  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw）
   const isProviderInConfig = useCallback(
     (providerId: string): boolean => {
       if (appId === "opencode") {
@@ -114,12 +122,11 @@ export function ProviderList({
       if (appId === "openclaw") {
         return openclawLiveIds?.includes(providerId) ?? false;
       }
-      return true; // 其他应用始终返回 true
+      return true;
     },
     [appId, opencodeLiveIds, openclawLiveIds],
   );
 
-  // OpenClaw: query default model to determine which provider is default
   const { data: openclawDefaultModel } = useOpenClawDefaultModel(
     appId === "openclaw",
   );
@@ -182,7 +189,6 @@ export function ProviderList({
   const [pendingTestProvider, setPendingTestProvider] =
     useState<Provider | null>(null);
 
-  // Query settings for streamCheckConfirmed flag
   const { data: settings } = useQuery({
     queryKey: ["settings"],
     queryFn: () => settingsApi.get(),
@@ -216,8 +222,6 @@ export function ProviderList({
     }
   };
 
-  // Import current live config as default provider
-  const queryClient = useQueryClient();
   const importMutation = useMutation({
     mutationFn: async (): Promise<boolean> => {
       if (appId === "opencode") {
@@ -282,6 +286,143 @@ export function ProviderList({
     });
   }, [searchTerm, sortedProviders]);
 
+  // 核心计算函数：根据鼠标的 Y 坐标，计算应该把拖拽的元素放在哪个元素前面
+  const getDragAfterElement = useCallback(
+    (container: HTMLDivElement, y: number): Element | null => {
+      const draggableElements = [
+        ...container.querySelectorAll(
+          '[data-provider-id]:not([data-dragging="true"])',
+        ),
+      ];
+
+      return draggableElements.reduce<
+        { offset: number; element: Element | null }
+      >(
+        (closest, child) => {
+          const box = child.getBoundingClientRect();
+          const offset = y - box.top - box.height / 2;
+
+          if (offset < 0 && offset > closest.offset) {
+            return { offset: offset, element: child };
+          } else {
+            return closest;
+          }
+        },
+        { offset: Number.NEGATIVE_INFINITY, element: null },
+      ).element;
+    },
+    [],
+  );
+
+  // 处理拖拽经过容器 - 实时重排 DOM
+  const handleDragOver = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+
+      const container = listRef.current;
+      if (!container) return;
+
+      const draggingElement = container.querySelector('[data-dragging="true"]');
+      if (!draggingElement) return;
+
+      const afterElement = getDragAfterElement(container, e.clientY);
+
+      if (afterElement == null) {
+        container.appendChild(draggingElement);
+      } else {
+        container.insertBefore(draggingElement, afterElement);
+      }
+    },
+    [getDragAfterElement],
+  );
+
+  // 处理拖拽进入容器
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  }, []);
+
+  // 处理放置 - 从 DOM 读取最终顺序并同步状态
+  const handleDrop = useCallback(
+    async (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+
+      const container = listRef.current;
+      if (!container) {
+        setDraggingId(null);
+        return;
+      }
+
+      // 从 DOM 读取当前顺序
+      const providerElements = container.querySelectorAll("[data-provider-id]");
+      const newOrder: string[] = [];
+
+      providerElements.forEach((el) => {
+        const id = (el as HTMLElement).dataset.providerId;
+        if (id) {
+          newOrder.push(id);
+        }
+      });
+
+      // 准备更新数据
+      const updates = newOrder.map((id, index) => ({
+        id,
+        sortIndex: index,
+      }));
+
+      try {
+        await providersApi.updateSortOrder(updates, appId);
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", appId],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["failoverQueue", appId],
+        });
+
+        // 更新托盘菜单
+        try {
+          await providersApi.updateTrayMenu();
+        } catch (trayError) {
+          console.error("Failed to update tray menu after sort", trayError);
+        }
+
+        toast.success(
+          t("provider.sortUpdated", {
+            defaultValue: "排序已更新",
+          }),
+          { closeButton: true },
+        );
+      } catch (error) {
+        console.error("Failed to update provider sort order", error);
+        toast.error(
+          t("provider.sortUpdateFailed", {
+            defaultValue: "排序更新失败",
+          }),
+        );
+      }
+
+      setDraggingId(null);
+    },
+    [appId, queryClient, t],
+  );
+
+  // 处理拖拽开始
+  const handleDragStart = useCallback((providerId: string) => {
+    setDraggingId(providerId);
+  }, []);
+
+  // 处理拖拽结束
+  const handleDragEnd = useCallback(() => {
+    setTimeout(() => {
+      setDraggingId((current) => {
+        if (current !== null) {
+          return null;
+        }
+        return current;
+      });
+    }, 0);
+  }, []);
+
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -304,76 +445,6 @@ export function ProviderList({
       />
     );
   }
-
-  const renderProviderList = () => (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragEnd={handleDragEnd}
-    >
-      <SortableContext
-        items={filteredProviders.map((provider) => provider.id)}
-        strategy={verticalListSortingStrategy}
-      >
-        <div className="space-y-3">
-          {filteredProviders.map((provider) => {
-            const isOmo = provider.category === "omo";
-            const isOmoSlim = provider.category === "omo-slim";
-            const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
-            const isOmoSlimCurrent =
-              isOmoSlim && provider.id === (currentOmoSlimId || "");
-            return (
-              <SortableProviderCard
-                key={provider.id}
-                provider={provider}
-                isCurrent={
-                  isOmo
-                    ? isOmoCurrent
-                    : isOmoSlim
-                      ? isOmoSlimCurrent
-                      : provider.id === currentProviderId
-                }
-                appId={appId}
-                isInConfig={isProviderInConfig(provider.id)}
-                isOmo={isOmo}
-                isOmoSlim={isOmoSlim}
-                onSwitch={onSwitch}
-                onEdit={onEdit}
-                onDelete={onDelete}
-                onRemoveFromConfig={onRemoveFromConfig}
-                onDisableOmo={onDisableOmo}
-                onDisableOmoSlim={onDisableOmoSlim}
-                onDuplicate={onDuplicate}
-                onConfigureUsage={onConfigureUsage}
-                onOpenWebsite={onOpenWebsite}
-                onOpenTerminal={onOpenTerminal}
-                onTest={
-                  appId !== "opencode" && appId !== "openclaw"
-                    ? handleTest
-                    : undefined
-                }
-                isTesting={isChecking(provider.id)}
-                isProxyRunning={isProxyRunning}
-                isProxyTakeover={isProxyTakeover}
-                isAutoFailoverEnabled={isFailoverModeActive}
-                failoverPriority={getFailoverPriority(provider.id)}
-                isInFailoverQueue={isInFailoverQueue(provider.id)}
-                onToggleFailover={(enabled) =>
-                  handleToggleFailover(provider.id, enabled)
-                }
-                activeProviderId={activeProviderId}
-                // OpenClaw: default model
-                isDefaultModel={isProviderDefaultModel(provider.id)}
-                onSetAsDefault={
-                  onSetAsDefault ? () => onSetAsDefault(provider) : undefined
-                }
-              />
-            );
-          })}
-        </div>
-      </SortableContext>
-    </DndContext>
-  );
 
   return (
     <div className="mt-4 space-y-4">
@@ -448,7 +519,75 @@ export function ProviderList({
           })}
         </div>
       ) : (
-        renderProviderList()
+        <div
+          ref={listRef}
+          className="space-y-3 relative"
+          onDragOver={handleDragOver}
+          onDragEnter={handleDragEnter}
+          onDrop={handleDrop}
+        >
+          {filteredProviders.map((provider) => {
+            const isOmo = provider.category === "omo";
+            const isOmoSlim = provider.category === "omo-slim";
+            const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
+            const isOmoSlimCurrent =
+              isOmoSlim && provider.id === (currentOmoSlimId || "");
+            return (
+              <div
+                key={provider.id}
+                data-provider-id={provider.id}
+                data-dragging={draggingId === provider.id}
+              >
+                <ProviderCard
+                  provider={provider}
+                  isCurrent={
+                    isOmo
+                      ? isOmoCurrent
+                      : isOmoSlim
+                        ? isOmoSlimCurrent
+                        : provider.id === currentProviderId
+                  }
+                  appId={appId}
+                  isInConfig={isProviderInConfig(provider.id)}
+                  isOmo={isOmo}
+                  isOmoSlim={isOmoSlim}
+                  onSwitch={onSwitch}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                  onRemoveFromConfig={onRemoveFromConfig}
+                  onDisableOmo={onDisableOmo}
+                  onDisableOmoSlim={onDisableOmoSlim}
+                  onDuplicate={onDuplicate}
+                  onConfigureUsage={onConfigureUsage}
+                  onOpenWebsite={onOpenWebsite}
+                  onOpenTerminal={onOpenTerminal}
+                  onTest={
+                    appId !== "opencode" && appId !== "openclaw"
+                      ? handleTest
+                      : undefined
+                  }
+                  isTesting={isChecking(provider.id)}
+                  isProxyRunning={isProxyRunning}
+                  isProxyTakeover={isProxyTakeover}
+                  isAutoFailoverEnabled={isFailoverModeActive}
+                  failoverPriority={getFailoverPriority(provider.id)}
+                  isInFailoverQueue={isInFailoverQueue(provider.id)}
+                  onToggleFailover={(enabled) =>
+                    handleToggleFailover(provider.id, enabled)
+                  }
+                  activeProviderId={activeProviderId}
+                  isDefaultModel={isProviderDefaultModel(provider.id)}
+                  onSetAsDefault={
+                    onSetAsDefault ? () => onSetAsDefault(provider) : undefined
+                  }
+                  isDragging={draggingId === provider.id}
+                  onDragStart={() => handleDragStart(provider.id)}
+                  onDragEnd={handleDragEnd}
+                />
+              </div>
+            );
+          })}
+        </div>
       )}
 
       <ConfirmDialog
@@ -462,123 +601,6 @@ export function ProviderList({
           setShowStreamCheckConfirm(false);
           setPendingTestProvider(null);
         }}
-      />
-    </div>
-  );
-}
-
-interface SortableProviderCardProps {
-  provider: Provider;
-  isCurrent: boolean;
-  appId: AppId;
-  isInConfig: boolean;
-  isOmo: boolean;
-  isOmoSlim: boolean;
-  onSwitch: (provider: Provider) => void;
-  onEdit: (provider: Provider) => void;
-  onDelete: (provider: Provider) => void;
-  onRemoveFromConfig?: (provider: Provider) => void;
-  onDisableOmo?: () => void;
-  onDisableOmoSlim?: () => void;
-  onDuplicate: (provider: Provider) => void;
-  onConfigureUsage?: (provider: Provider) => void;
-  onOpenWebsite: (url: string) => void;
-  onOpenTerminal?: (provider: Provider) => void;
-  onTest?: (provider: Provider) => void;
-  isTesting: boolean;
-  isProxyRunning: boolean;
-  isProxyTakeover: boolean;
-  isAutoFailoverEnabled: boolean;
-  failoverPriority?: number;
-  isInFailoverQueue: boolean;
-  onToggleFailover: (enabled: boolean) => void;
-  activeProviderId?: string;
-  // OpenClaw: default model
-  isDefaultModel?: boolean;
-  onSetAsDefault?: () => void;
-}
-
-function SortableProviderCard({
-  provider,
-  isCurrent,
-  appId,
-  isInConfig,
-  isOmo,
-  isOmoSlim,
-  onSwitch,
-  onEdit,
-  onDelete,
-  onRemoveFromConfig,
-  onDisableOmo,
-  onDisableOmoSlim,
-  onDuplicate,
-  onConfigureUsage,
-  onOpenWebsite,
-  onOpenTerminal,
-  onTest,
-  isTesting,
-  isProxyRunning,
-  isProxyTakeover,
-  isAutoFailoverEnabled,
-  failoverPriority,
-  isInFailoverQueue,
-  onToggleFailover,
-  activeProviderId,
-  isDefaultModel,
-  onSetAsDefault,
-}: SortableProviderCardProps) {
-  const {
-    setNodeRef,
-    attributes,
-    listeners,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: provider.id });
-
-  const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-
-  return (
-    <div ref={setNodeRef} style={style}>
-      <ProviderCard
-        provider={provider}
-        isCurrent={isCurrent}
-        appId={appId}
-        isInConfig={isInConfig}
-        isOmo={isOmo}
-        isOmoSlim={isOmoSlim}
-        onSwitch={onSwitch}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        onRemoveFromConfig={onRemoveFromConfig}
-        onDisableOmo={onDisableOmo}
-        onDisableOmoSlim={onDisableOmoSlim}
-        onDuplicate={onDuplicate}
-        onConfigureUsage={
-          onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
-        }
-        onOpenWebsite={onOpenWebsite}
-        onOpenTerminal={onOpenTerminal}
-        onTest={onTest}
-        isTesting={isTesting}
-        isProxyRunning={isProxyRunning}
-        isProxyTakeover={isProxyTakeover}
-        dragHandleProps={{
-          attributes,
-          listeners,
-          isDragging,
-        }}
-        isAutoFailoverEnabled={isAutoFailoverEnabled}
-        failoverPriority={failoverPriority}
-        isInFailoverQueue={isInFailoverQueue}
-        onToggleFailover={onToggleFailover}
-        activeProviderId={activeProviderId}
-        // OpenClaw: default model
-        isDefaultModel={isDefaultModel}
-        onSetAsDefault={onSetAsDefault}
       />
     </div>
   );
