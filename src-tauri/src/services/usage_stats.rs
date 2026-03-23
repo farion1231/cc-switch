@@ -251,7 +251,7 @@ impl Database {
             ((duration as f64) / bucket_seconds as f64).ceil() as i64
         };
 
-        // 固定 24 小时窗口为 24 个小时桶，避免浮点误差
+        // 小时桶最多 24 个，避免浮点误差
         if bucket_seconds == 60 * 60 && bucket_count > 24 {
             bucket_count = 24;
         }
@@ -301,6 +301,8 @@ impl Database {
             }
 
             // ===== 修正右边界数据累加逻辑 =====
+            // bucket_idx的计算区间是[bucket_start, bucket_end), 但我们拆分的最后一个bucket区间实际是[bucket_start, bucket_end]
+            // 如果刚好有一个请求的时间是 end_ts, 这个请求的bucket_idx计算是bucket_count, 需要并入最后一个bucket
             if bucket_idx >= bucket_count {
                 log::info!("⚠️  Boundary data: Bucket {} >= bucket_count={}, assigning to bucket {}",
                     bucket_idx, bucket_count, bucket_count - 1);
@@ -336,7 +338,6 @@ impl Database {
             }
             // ===== 累加逻辑结束 =====
 
-            log::info!("Final bucket_idx: {}, inserting into map", bucket_idx);
             map.insert(bucket_idx, stat);
         }
 
