@@ -187,6 +187,144 @@ html.dark {
   }
 }
 
+/* Session markdown prose styling */
+.session-markdown {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: hsl(var(--foreground));
+}
+
+.session-markdown h1,
+.session-markdown h2,
+.session-markdown h3,
+.session-markdown h4,
+.session-markdown h5,
+.session-markdown h6 {
+  font-weight: 600;
+  line-height: 1.35;
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+  color: hsl(var(--foreground));
+}
+
+.session-markdown h1 {
+  font-size: 1.25rem;
+}
+.session-markdown h2 {
+  font-size: 1.125rem;
+}
+.session-markdown h3 {
+  font-size: 1rem;
+}
+.session-markdown h4 {
+  font-size: 0.9375rem;
+}
+
+.session-markdown p {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.session-markdown ul,
+.session-markdown ol {
+  padding-left: 1.5em;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.session-markdown ul {
+  list-style-type: disc;
+}
+.session-markdown ol {
+  list-style-type: decimal;
+}
+
+.session-markdown li {
+  margin-top: 0.2em;
+  margin-bottom: 0.2em;
+}
+
+.session-markdown li > ul,
+.session-markdown li > ol {
+  margin-top: 0.15em;
+  margin-bottom: 0.15em;
+}
+
+.session-markdown blockquote {
+  border-left: 3px solid hsl(var(--primary) / 0.4);
+  padding-left: 0.875em;
+  margin: 0.75em 0;
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+
+.session-markdown hr {
+  border: none;
+  border-top: 1px solid hsl(var(--border));
+  margin: 1em 0;
+}
+
+.session-markdown strong {
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.session-markdown em {
+  font-style: italic;
+}
+
+.session-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.session-markdown th,
+.session-markdown td {
+  border: 1px solid hsl(var(--border) / 0.6);
+  padding: 0.375rem 0.625rem;
+  text-align: left;
+  font-size: 0.8125rem;
+}
+
+.session-markdown th {
+  background: hsl(var(--muted) / 0.5);
+  font-weight: 600;
+}
+
+.session-markdown img {
+  max-width: 100%;
+  border-radius: 0.5rem;
+}
+
+.session-markdown > *:first-child {
+  margin-top: 0;
+}
+
+.session-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.session-markdown pre {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.session-markdown a {
+  word-break: break-all;
+}
+
+.session-markdown p,
+.session-markdown li,
+.session-markdown blockquote {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Override Radix ScrollArea's internal display:table div that prevents text wrapping */
+.session-messages-scroll [data-radix-scroll-area-viewport] > div {
+  display: block !important;
+}
+
 input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear {
   display: none;

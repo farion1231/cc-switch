@@ -652,7 +652,20 @@
     "copyCommand": "Copy Command",
     "copyMessage": "Copy Message",
     "messageCopied": "Message copied",
-    "conversationHistory": "Conversation History"
+    "conversationHistory": "Conversation History",
+    "searchMessages": "Search messages",
+    "filterByRole": "Filter by role",
+    "showAll": "Show all",
+    "collapseAll": "Collapse all",
+    "expandAll": "Expand all",
+    "showMore": "Show more",
+    "noMatchingMessages": "No matching messages",
+    "clearFilters": "Clear filters",
+    "exportConversation": "Export",
+    "copyAllMessages": "Copy all messages",
+    "exportAsMarkdown": "Export as Markdown",
+    "conversationExported": "Conversation exported to clipboard",
+    "allMessagesCopied": "All messages copied"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",

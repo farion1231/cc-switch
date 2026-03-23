@@ -652,7 +652,20 @@
     "copyCommand": "コマンドをコピー",
     "copyMessage": "メッセージをコピー",
     "messageCopied": "メッセージがコピーされました",
-    "conversationHistory": "会話履歴"
+    "conversationHistory": "会話履歴",
+    "searchMessages": "メッセージを検索",
+    "filterByRole": "ロールでフィルター",
+    "showAll": "すべて表示",
+    "collapseAll": "すべて折りたたむ",
+    "expandAll": "すべて展開",
+    "showMore": "もっと表示",
+    "noMatchingMessages": "一致するメッセージがありません",
+    "clearFilters": "フィルターをクリア",
+    "exportConversation": "エクスポート",
+    "copyAllMessages": "すべてのメッセージをコピー",
+    "exportAsMarkdown": "Markdownとしてエクスポート",
+    "conversationExported": "会話がクリップボードにエクスポートされました",
+    "allMessagesCopied": "すべてのメッセージがコピーされました"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",
