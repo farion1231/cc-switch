@@ -267,7 +267,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     setShowUsageConfirm(false);
     try {
       if (settingsData) {
-        await settingsApi.save({ ...settingsData, usageConfirmed: true });
+        const { webdavSync: _, ...rest } = settingsData;
+        await settingsApi.save({ ...rest, usageConfirmed: true });
         await queryClient.invalidateQueries({ queryKey: ["settings"] });
       }
     } catch (error) {
