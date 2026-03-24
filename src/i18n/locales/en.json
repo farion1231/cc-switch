@@ -1552,6 +1552,7 @@
       "source": {
         "github": "GitHub",
         "gitee": "Gitee",
+        "gitlab": "GitLab",
         "zipUrl": "Custom ZIP URL"
       }
     },

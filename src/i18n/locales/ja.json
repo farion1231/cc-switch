@@ -1549,6 +1549,7 @@
       "source": {
         "github": "GitHub",
         "gitee": "Gitee",
+        "gitlab": "GitLab",
         "zipUrl": "カスタム ZIP URL"
       },
       "customZip": "カスタムZIP URL"

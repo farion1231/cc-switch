@@ -1552,6 +1552,7 @@
       "source": {
         "github": "GitHub",
         "gitee": "Gitee",
+        "gitlab": "GitLab",
         "zipUrl": "自定义 ZIP 链接"
       }
     },

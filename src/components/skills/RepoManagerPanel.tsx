@@ -15,7 +15,7 @@ import { settingsApi } from "@/lib/api";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
 
-type SourceType = "github" | "gitee" | "zipUrl";
+type SourceType = "github" | "gitee" | "gitlab" | "zipUrl";
 
 interface RepoManagerPanelProps {
   repos: SkillRepo[];
@@ -35,7 +35,7 @@ export function RepoManagerPanel({
   const { t } = useTranslation();
   const [sourceType, setSourceType] = useState<SourceType>("github");
 
-  // GitHub/Gitee 模式状态
+  // GitHub/Gitee/GitLab 模式状态
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("main");
 
@@ -58,20 +58,23 @@ export function RepoManagerPanel({
     if (source === "gitee") {
       return `https://gitee.com/${owner}/${name}`;
     }
+    if (source === "gitlab") {
+      return `https://gitlab.com/${owner}/${name}`;
+    }
     // 默认 GitHub
     return `https://github.com/${owner}/${name}`;
   };
 
-  // 解析 GitHub/Gitee URL，提取 owner/name
+  // 解析 GitHub/Gitee/GitLab URL，提取 owner/name
   const parseRepoUrl = (url: string): { owner: string; name: string } | null => {
     let cleaned = url.trim();
-    // 支持 https://github.com/owner/name 或 https://gitee.com/owner/name 格式
+    // 支持 https://github.com/owner/name 或 https://gitee.com/owner/name 或 https://gitlab.com/owner/name 格式
     cleaned = cleaned.replace(/^https?:\/\//, "");
     cleaned = cleaned.replace(/\.git$/, "");
     cleaned = cleaned.replace(/\/$/, "");
 
     // 移除域名部分
-    cleaned = cleaned.replace(/^(github\.com|gitee\.com)\//, "");
+    cleaned = cleaned.replace(/^(github\.com|gitee\.com|gitlab\.com)\//, "");
 
     const parts = cleaned.split("/");
     if (parts.length >= 2 && parts[0] && parts[1]) {
@@ -135,7 +138,7 @@ export function RepoManagerPanel({
   };
 
   const handleAdd = async () => {
-    if (sourceType === "github" || sourceType === "gitee") {
+    if (sourceType === "github" || sourceType === "gitee" || sourceType === "gitlab") {
       if (!validateRepoInput()) return;
 
       const parsed = parseRepoUrl(repoUrl)!;
@@ -214,13 +217,14 @@ export function RepoManagerPanel({
               <SelectContent>
                 <SelectItem value="github">GitHub</SelectItem>
                 <SelectItem value="gitee">Gitee</SelectItem>
+                <SelectItem value="gitlab">GitLab</SelectItem>
                 <SelectItem value="zipUrl">{t("skills.repo.source.zipUrl")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          {/* GitHub / Gitee 模式表单 */}
-          {(sourceType === "github" || sourceType === "gitee") && (
+          {/* GitHub / Gitee / GitLab 模式表单 */}
+          {(sourceType === "github" || sourceType === "gitee" || sourceType === "gitlab") && (
             <>
               <div>
                 <Label htmlFor="repo-url" className="text-foreground">

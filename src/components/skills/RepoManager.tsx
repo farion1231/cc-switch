@@ -21,7 +21,7 @@ import { Trash2, ExternalLink, Plus } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
 
-type SourceType = "github" | "gitee" | "zipUrl";
+type SourceType = "github" | "gitee" | "gitlab" | "zipUrl";
 
 interface RepoManagerProps {
   open: boolean;
@@ -43,7 +43,7 @@ export function RepoManager({
   const { t } = useTranslation();
   const [sourceType, setSourceType] = useState<SourceType>("github");
 
-  // GitHub/Gitee 模式状态
+  // GitHub/Gitee/GitLab 模式状态
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("main");
 
@@ -66,17 +66,20 @@ export function RepoManager({
     if (source === "gitee") {
       return `https://gitee.com/${owner}/${name}`;
     }
+    if (source === "gitlab") {
+      return `https://gitlab.com/${owner}/${name}`;
+    }
     // 默认 GitHub
     return `https://github.com/${owner}/${name}`;
   };
 
-  // 解析 GitHub/Gitee URL，提取 owner/name
+  // 解析 GitHub/Gitee/GitLab URL，提取 owner/name
   const parseRepoUrl = (url: string): { owner: string; name: string } | null => {
     let cleaned = url.trim();
     cleaned = cleaned.replace(/^https?:\/\//, "");
     cleaned = cleaned.replace(/\.git$/, "");
     cleaned = cleaned.replace(/\/$/, "");
-    cleaned = cleaned.replace(/^(github\.com|gitee\.com)\//, "");
+    cleaned = cleaned.replace(/^(github\.com|gitee\.com|gitlab\.com)\//, "");
 
     const parts = cleaned.split("/");
     if (parts.length >= 2 && parts[0] && parts[1]) {
@@ -140,7 +143,7 @@ export function RepoManager({
   };
 
   const handleAdd = async () => {
-    if (sourceType === "github" || sourceType === "gitee") {
+    if (sourceType === "github" || sourceType === "gitee" || sourceType === "gitlab") {
       if (!validateRepoInput()) return;
 
       const parsed = parseRepoUrl(repoUrl)!;
@@ -219,13 +222,14 @@ export function RepoManager({
                   <SelectContent>
                     <SelectItem value="github">GitHub</SelectItem>
                     <SelectItem value="gitee">Gitee</SelectItem>
+                    <SelectItem value="gitlab">GitLab</SelectItem>
                     <SelectItem value="zipUrl">{t("skills.repo.source.zipUrl")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* GitHub / Gitee 模式表单 */}
-              {(sourceType === "github" || sourceType === "gitee") && (
+              {/* GitHub / Gitee / GitLab 模式表单 */}
+              {(sourceType === "github" || sourceType === "gitee" || sourceType === "gitlab") && (
                 <>
                   <div className="space-y-2">
                     <Label htmlFor="repo-url">{t("skills.repo.url")}</Label>

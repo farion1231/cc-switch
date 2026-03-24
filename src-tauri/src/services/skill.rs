@@ -57,7 +57,7 @@ pub struct DiscoverableSkill {
     /// 分支名称
     #[serde(rename = "repoBranch")]
     pub repo_branch: String,
-    /// 仓库来源（"github" | "gitee" | "zipUrl"）
+    /// 仓库来源（"github" | "gitee" | "gitlab" | "zipUrl"）
     #[serde(rename = "repoSource")]
     pub repo_source: String,
     /// 仓库 ZIP 下载地址（用于安装时下载，避免二次查询数据库）
@@ -95,7 +95,7 @@ pub struct Skill {
     pub repo_branch: Option<String>,
 }
 
-/// 仓库来源（字符串类型，支持："github" | "gitee" | "zipUrl"）
+/// 仓库来源（字符串类型，支持："github" | "gitee" | "gitlab" | "zipUrl"）
 /// 注意：不自动检测，由用户明确选择
 pub type RepoSource = String;
 
@@ -367,7 +367,7 @@ impl SkillService {
     }
 
     /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
-    /// 根据 repo_source 分支处理 GitHub、Gitee 或自定义 URL
+    /// 根据 repo_source 分支处理 GitHub、Gitee、GitLab 或自定义 URL
     fn build_skill_doc_url(
         owner: &str,
         repo: &str,
@@ -378,6 +378,8 @@ impl SkillService {
     ) -> String {
         if repo_source_eq(source, "gitee") {
             format!("https://gitee.com/{owner}/{repo}/blob/{branch}/{doc_path}")
+        } else if repo_source_eq(source, "gitlab") {
+            format!("https://gitlab.com/{owner}/{repo}/-/blob/{branch}/{doc_path}")
         } else if repo_source_eq(source, "zipUrl") {
             // 自定义 ZIP 源：使用 website_url（如果提供）
             // website_url 应由用户在添加仓库时明确指定
@@ -1388,6 +1390,12 @@ impl SkillService {
                 format!(
                     "https://gitee.com/{}/{}/archive/refs/heads/{}.zip",
                     repo.owner, repo.name, branch
+                )
+            } else if repo_source_eq(&repo.source, "gitlab") {
+                // GitLab 格式：https://gitlab.com/{owner}/{repo}/-/archive/{branch}/{repo}-{branch}.zip?ref_type=heads
+                format!(
+                    "https://gitlab.com/{}/{}/-/archive/{}/{}-{}.zip?ref_type=heads",
+                    repo.owner, repo.name, branch, repo.name, branch
                 )
             } else {
                 // GitHub 格式（默认）：https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip
