@@ -27,6 +27,7 @@ pub struct ClaudeNotifyService {
     state: ClaudeNotifyServiceState,
     shutdown_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
     server_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
+    lifecycle_lock: Arc<Mutex<()>>,
 }
 
 impl ClaudeNotifyService {
@@ -39,6 +40,7 @@ impl ClaudeNotifyService {
             },
             shutdown_tx: Arc::new(RwLock::new(None)),
             server_handle: Arc::new(RwLock::new(None)),
+            lifecycle_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -47,10 +49,38 @@ impl ClaudeNotifyService {
     }
 
     pub async fn ensure_started(&self) -> Result<ClaudeNotifyRuntimeStatus, String> {
+        let _guard = self.lifecycle_lock.lock().await;
         if self.shutdown_tx.read().await.is_some() {
-            return Ok(self.state.runtime.read().await.clone());
+            return Ok(self.get_status().await);
         }
 
+        self.start_inner().await
+    }
+
+    pub async fn stop(&self) -> Result<(), String> {
+        let _guard = self.lifecycle_lock.lock().await;
+        self.stop_inner().await
+    }
+
+    pub async fn sync_with_settings(&self) -> Result<ClaudeNotifyRuntimeStatus, String> {
+        let _guard = self.lifecycle_lock.lock().await;
+        let settings = get_settings();
+        if settings.enable_claude_background_notifications {
+            if self.shutdown_tx.read().await.is_some() {
+                return Ok(self.get_status().await);
+            }
+            self.start_inner().await
+        } else {
+            self.stop_inner().await?;
+            Ok(self.get_status().await)
+        }
+    }
+
+    pub async fn get_status(&self) -> ClaudeNotifyRuntimeStatus {
+        self.state.runtime.read().await.clone()
+    }
+
+    async fn start_inner(&self) -> Result<ClaudeNotifyRuntimeStatus, String> {
         let (port, listener) = self.bind_listener().await?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let app = self.build_router();
@@ -80,7 +110,7 @@ impl ClaudeNotifyService {
         Ok(self.state.runtime.read().await.clone())
     }
 
-    pub async fn stop(&self) -> Result<(), String> {
+    async fn stop_inner(&self) -> Result<(), String> {
         if let Some(tx) = self.shutdown_tx.write().await.take() {
             let _ = tx.send(());
         } else {
@@ -99,20 +129,6 @@ impl ClaudeNotifyService {
         let mut status = self.state.runtime.write().await;
         status.listening = false;
         Ok(())
-    }
-
-    pub async fn sync_with_settings(&self) -> Result<ClaudeNotifyRuntimeStatus, String> {
-        let settings = get_settings();
-        if settings.enable_claude_background_notifications {
-            self.ensure_started().await
-        } else {
-            self.stop().await?;
-            Ok(self.get_status().await)
-        }
-    }
-
-    pub async fn get_status(&self) -> ClaudeNotifyRuntimeStatus {
-        self.state.runtime.read().await.clone()
     }
 
     async fn bind_listener(&self) -> Result<(u16, tokio::net::TcpListener), String> {

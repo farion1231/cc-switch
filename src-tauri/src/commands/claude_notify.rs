@@ -23,16 +23,64 @@ pub struct ClaudeNotifyStatus {
 async fn current_runtime_status(
     state: &tauri::State<'_, crate::store::AppState>,
 ) -> Result<ClaudeNotifyStatus, String> {
-    let hooks_applied = is_claude_notify_hooks_applied().map_err(|e| e.to_string())?;
     let settings = crate::settings::get_settings();
     let runtime = state.claude_notify_service.get_status().await;
+    let expected_port = runtime.port.or(settings.claude_notify_port);
+    let hooks_applied = is_claude_notify_hooks_applied_for_port(expected_port)
+        .map_err(|e| e.to_string())?;
 
     Ok(ClaudeNotifyStatus {
-        port: runtime.port.or(settings.claude_notify_port),
+        port: expected_port,
         listening: runtime.listening,
         hooks_applied,
     })
 }
+
+fn event_matches_expected_port(hooks: &Map<String, Value>, event: &str, expected_suffix: &str) -> bool {
+    hooks
+        .get(event)
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries.iter().any(|entry| {
+                entry
+                    .get("hooks")
+                    .and_then(Value::as_array)
+                    .map(|hook_entries| {
+                        hook_entries.iter().any(|hook| {
+                            hook.get("command")
+                                .and_then(Value::as_str)
+                                .map(|command| {
+                                    command.contains(HOOKS_MARKER)
+                                        && command.contains(expected_suffix)
+                                })
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+pub fn is_claude_notify_hooks_applied_for_port(
+    expected_port: Option<u16>,
+) -> Result<bool, AppError> {
+    let Some(expected_port) = expected_port else {
+        return Ok(false);
+    };
+
+    let root = read_settings_json()?;
+    let Some(hooks) = root.get("hooks").and_then(Value::as_object) else {
+        return Ok(false);
+    };
+
+    let expected_suffix = format!(" {expected_port} # {HOOKS_MARKER}");
+    Ok(
+        event_matches_expected_port(hooks, "Notification", &expected_suffix)
+            && event_matches_expected_port(hooks, "Stop", &expected_suffix),
+    )
+}
+
 
 
 fn notification_runtime_toggle_changed(
@@ -299,14 +347,6 @@ pub fn clear_claude_notify_hooks() -> Result<bool, AppError> {
     Ok(true)
 }
 
-pub fn is_claude_notify_hooks_applied() -> Result<bool, AppError> {
-    let root = read_settings_json()?;
-    let Some(hooks) = root.get("hooks") else {
-        return Ok(false);
-    };
-    Ok(has_marker(hooks))
-}
-
 #[tauri::command]
 pub async fn apply_claude_notify_hook_config(
     app: tauri::AppHandle,
@@ -446,5 +486,15 @@ mod tests {
         let script = std::fs::read_to_string(&script_path).expect("read hook script");
         assert!(script.contains(NOTIFY_ENDPOINT_PATH));
         assert!(script.contains("ConvertFrom-Json"));
+    }
+
+    #[test]
+    fn hooks_applied_requires_expected_port_match() {
+        let _guard = test_mutex().lock().expect("acquire test mutex");
+        reset_test_fs();
+
+        apply_claude_notify_hooks(43123).expect("apply hooks");
+        assert!(is_claude_notify_hooks_applied_for_port(Some(43123)).expect("match port"));
+        assert!(!is_claude_notify_hooks_applied_for_port(Some(54321)).expect("mismatch port"));
     }
 }
