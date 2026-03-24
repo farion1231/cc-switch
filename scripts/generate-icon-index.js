@@ -17,6 +17,7 @@ const KNOWN_METADATA = {
   kimi: { name: 'kimi', displayName: 'Kimi', category: 'ai-provider', keywords: ['moonshot'], defaultColor: '#6366F1' },
   stepfun: { name: 'stepfun', displayName: 'StepFun', category: 'ai-provider', keywords: ['stepfun', 'step', 'jieyue', '阶跃星辰'], defaultColor: '#005AFF' },
   zhipu: { name: 'zhipu', displayName: 'Zhipu AI', category: 'ai-provider', keywords: ['chatglm', 'glm'], defaultColor: '#0F62FE' },
+  zai: { name: 'zai', displayName: 'Z.ai', category: 'ai-provider', keywords: ['zai', 'z.ai', 'zhipu'], defaultColor: '#2D2D2D' },
   minimax: { name: 'minimax', displayName: 'MiniMax', category: 'ai-provider', keywords: ['minimax'], defaultColor: '#FF6B6B' },
   baidu: { name: 'baidu', displayName: 'Baidu', category: 'ai-provider', keywords: ['ernie', 'wenxin'], defaultColor: '#2932E1' },
   alibaba: { name: 'alibaba', displayName: 'Alibaba', category: 'ai-provider', keywords: ['qwen', 'tongyi'], defaultColor: '#FF6A00' },

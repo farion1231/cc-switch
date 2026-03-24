@@ -159,8 +159,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    icon: "zhipu",
-    iconColor: "#0F62FE",
+    icon: "zai",
+    iconColor: "#2D2D2D",
     templateValues: {
       baseUrl: {
         label: "Base URL",

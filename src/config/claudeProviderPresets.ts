@@ -126,8 +126,8 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    icon: "zhipu",
-    iconColor: "#0F62FE",
+    icon: "zai",
+    iconColor: "#2D2D2D",
   },
   {
     name: "Bailian",

@@ -368,8 +368,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "cn_official",
-    icon: "zhipu",
-    iconColor: "#0F62FE",
+    icon: "zai",
+    iconColor: "#2D2D2D",
     templateValues: {
       baseURL: {
         label: "Base URL",

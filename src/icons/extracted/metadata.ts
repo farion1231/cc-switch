@@ -345,6 +345,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["chatglm", "glm"],
     defaultColor: "#0F62FE",
   },
+  zai: {
+    name: "zai",
+    displayName: "Z.ai",
+    category: "ai-provider",
+    keywords: ["zai", "z.ai", "zhipu"],
+    defaultColor: "#2D2D2D",
+  },
   openrouter: {
     name: "openrouter",
     displayName: "OpenRouter",
