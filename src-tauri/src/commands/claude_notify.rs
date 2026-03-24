@@ -171,6 +171,9 @@ switch ($Mode) {{
         }}
     }}
     'stop' {{
+        if ($json.stop_hook_active -eq $true) {{
+            exit 0
+        }}
         $eventType = 'stop'
     }}
     default {{

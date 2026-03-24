@@ -9,9 +9,7 @@ fn merge_settings_for_save(
     if incoming.webdav_sync.is_none() {
         incoming.webdav_sync = existing.webdav_sync.clone();
     }
-    if incoming.claude_notify_port.is_none() {
-        incoming.claude_notify_port = existing.claude_notify_port;
-    }
+    incoming.claude_notify_port = existing.claude_notify_port;
     incoming
 }
 
