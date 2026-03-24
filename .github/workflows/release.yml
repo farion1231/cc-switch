@@ -221,60 +221,6 @@ jobs:
             sleep "$sleep_seconds"
           done
 
-      - name: Notarize macOS DMG
-        if: runner.os == 'macOS'
-        shell: bash
-        timeout-minutes: 30
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-
-          DMG_PATH=""
-          for path in \
-            "src-tauri/target/universal-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/release/bundle/dmg" \
-            "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
-            "src-tauri/target/release/bundle/macos"; do
-            if [ -d "$path" ] && [ -z "$DMG_PATH" ]; then
-              DMG_PATH=$(find "$path" -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
-            fi
-          done
-
-          if [ -z "$DMG_PATH" ]; then
-            echo "❌ No .dmg found to notarize" >&2
-            exit 1
-          fi
-
-          echo "=== Verifying DMG integrity before notarization: $DMG_PATH ==="
-          hdiutil verify "$DMG_PATH"
-
-          max_attempts=3
-          for attempt in $(seq 1 "$max_attempts"); do
-            echo "=== DMG notarization attempt ${attempt}/${max_attempts} ==="
-            if xcrun notarytool submit "$DMG_PATH" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
-              --wait; then
-              echo "✅ DMG notarization succeeded"
-              exit 0
-            fi
-
-            if [ "$attempt" -eq "$max_attempts" ]; then
-              echo "❌ DMG notarization failed after ${max_attempts} attempts" >&2
-              exit 1
-            fi
-
-            sleep_seconds=$((attempt * 60))
-            echo "⚠️ DMG notarization failed, retrying in ${sleep_seconds}s..."
-            sleep "$sleep_seconds"
-          done
-
       - name: Build Tauri App (Windows)
         if: runner.os == 'Windows'
         run: pnpm tauri build
@@ -291,47 +237,31 @@ jobs:
           mkdir -p release-assets
           VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
 
-          # Locate bundle directory
-          BUNDLE_DIR=""
-          TAR_GZ=""; APP_PATH=""; DMG_PATH=""
+          # Locate bundle artifacts
+          TAR_GZ=""; APP_PATH=""
           for path in \
             "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
             "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" \
             "src-tauri/target/x86_64-apple-darwin/release/bundle/macos" \
             "src-tauri/target/release/bundle/macos"; do
             if [ -d "$path" ]; then
-              BUNDLE_DIR="$path"
               [ -z "$TAR_GZ" ]   && TAR_GZ=$(find "$path" -maxdepth 1 -name "*.tar.gz" -type f | head -1 || true)
               [ -z "$APP_PATH" ] && APP_PATH=$(find "$path" -maxdepth 1 -name "*.app" -type d | head -1 || true)
-              [ -z "$DMG_PATH" ] && DMG_PATH=$(find "$path" -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
-            fi
-          done
-
-          # Also search dmg directory (Tauri may put DMGs there)
-          for path in \
-            "src-tauri/target/universal-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/release/bundle/dmg"; do
-            if [ -d "$path" ] && [ -z "$DMG_PATH" ]; then
-              DMG_PATH=$(find "$path" -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
             fi
           done
 
           if [ -z "$TAR_GZ" ]; then
-            echo "No macOS .tar.gz updater artifact found" >&2
+            echo "❌ No macOS .tar.gz updater artifact found" >&2
+            exit 1
+          fi
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ No .app found" >&2
             exit 1
           fi
 
-          # Staple notarization ticket (hard-fail — must succeed before release)
-          if [ -n "$APP_PATH" ]; then
-            xcrun stapler staple "$APP_PATH"
-            echo "✅ .app stapled"
-          fi
-          if [ -n "$DMG_PATH" ]; then
-            xcrun stapler staple "$DMG_PATH"
-            echo "✅ .dmg stapled"
-          fi
+          # Staple notarization ticket to .app (Tauri already notarized it)
+          xcrun stapler staple "$APP_PATH"
+          echo "✅ .app stapled"
 
           # 1) Collect .tar.gz (updater artifact)
           NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
@@ -339,30 +269,91 @@ jobs:
           [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig" || echo ".sig for macOS not found yet"
           echo "macOS updater artifact copied: $NEW_TAR_GZ"
 
-          # 2) Collect .app as zip (absolute paths, no cd)
-          if [ -n "$APP_PATH" ]; then
-            NEW_ZIP="CC-Switch-${VERSION}-macOS.zip"
-            ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/$NEW_ZIP"
-            echo "macOS zip ready: $NEW_ZIP"
-          else
-            echo "No .app found to zip (optional)" >&2
+          # 2) Collect .app as zip
+          NEW_ZIP="CC-Switch-${VERSION}-macOS.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/$NEW_ZIP"
+          echo "macOS zip ready: $NEW_ZIP"
+
+          # 3) Create styled DMG with create-dmg (Tauri's built-in DMG styling doesn't work on CI)
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "❌ APPLE_SIGNING_IDENTITY is missing before DMG creation" >&2
+            exit 1
           fi
 
-          # 3) Collect .dmg
-          if [ -n "$DMG_PATH" ]; then
-            NEW_DMG="CC-Switch-${VERSION}-macOS.dmg"
-            cp "$DMG_PATH" "release-assets/$NEW_DMG"
-            echo "macOS DMG ready: $NEW_DMG"
-          else
-            echo "No .dmg found (optional)" >&2
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install create-dmg
+          NEW_DMG="CC-Switch-${VERSION}-macOS.dmg"
+          DMG_STAGE_DIR="$RUNNER_TEMP/dmg-stage"
+          rm -rf "$DMG_STAGE_DIR"
+          mkdir -p "$DMG_STAGE_DIR"
+          ditto "$APP_PATH" "$DMG_STAGE_DIR/CC Switch.app"
+
+          create-dmg \
+            --volname "CC Switch" \
+            --background "src-tauri/icons/dmg-background.png" \
+            --window-size 660 400 \
+            --window-pos 200 120 \
+            --icon-size 80 \
+            --icon "CC Switch.app" 180 220 \
+            --hide-extension "CC Switch.app" \
+            --app-drop-link 480 220 \
+            --codesign "$APPLE_SIGNING_IDENTITY" \
+            --no-internet-enable \
+            "release-assets/$NEW_DMG" \
+            "$DMG_STAGE_DIR"
+
+          rm -rf "$DMG_STAGE_DIR"
+          echo "✅ Styled DMG created: $NEW_DMG"
+
+      - name: Notarize macOS DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        timeout-minutes: 30
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          DMG_PATH=$(find release-assets -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
+          if [ -z "$DMG_PATH" ]; then
+            echo "❌ No .dmg found in release-assets/ to notarize" >&2
+            exit 1
           fi
+
+          echo "=== Notarizing DMG: $DMG_PATH ==="
+          max_attempts=3
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "=== DMG notarization attempt ${attempt}/${max_attempts} ==="
+            if xcrun notarytool submit "$DMG_PATH" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait; then
+              echo "✅ DMG notarization succeeded"
+              xcrun stapler staple "$DMG_PATH"
+              echo "✅ DMG stapled"
+              break
+            fi
+
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              echo "❌ DMG notarization failed after ${max_attempts} attempts" >&2
+              exit 1
+            fi
+
+            sleep_seconds=$((attempt * 60))
+            echo "⚠️ DMG notarization failed, retrying in ${sleep_seconds}s..."
+            sleep "$sleep_seconds"
+          done
 
       - name: Verify macOS code signing and notarization
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
-          APP_PATH=""; DMG_PATH=""
+
+          # Verify .app (from Tauri bundle)
+          APP_PATH=""
           for path in \
             "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
             "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" \
@@ -372,19 +363,7 @@ jobs:
               [ -z "$APP_PATH" ] && APP_PATH=$(find "$path" -maxdepth 1 -name "*.app" -type d | head -1 || true)
             fi
           done
-          for path in \
-            "src-tauri/target/universal-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/release/bundle/dmg" \
-            "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
-            "src-tauri/target/release/bundle/macos"; do
-            if [ -d "$path" ] && [ -z "$DMG_PATH" ]; then
-              DMG_PATH=$(find "$path" -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
-            fi
-          done
 
-          # Verify .app
           if [ -z "$APP_PATH" ]; then
             echo "❌ No .app found for verification" >&2
             exit 1
@@ -397,7 +376,8 @@ jobs:
           xcrun stapler validate "$APP_PATH"
           echo "✅ .app stapler validation passed"
 
-          # Verify .dmg
+          # Verify .dmg (from release-assets/, created by create-dmg + notarized)
+          DMG_PATH=$(find release-assets -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
           if [ -n "$DMG_PATH" ]; then
             echo "=== Verifying .dmg: $DMG_PATH ==="
             codesign --verify --verbose=2 "$DMG_PATH"
