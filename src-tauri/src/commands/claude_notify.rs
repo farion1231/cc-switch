@@ -395,10 +395,9 @@ pub async fn apply_claude_notify_hook_config(
 
 #[tauri::command]
 pub async fn clear_claude_notify_hook_config(
-    state: tauri::State<'_, crate::store::AppState>,
+    _state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<bool, String> {
     let result = clear_claude_notify_hooks().map_err(|e| e.to_string())?;
-    state.claude_notify_service.stop().await?;
     Ok(result)
 }
 

@@ -50,7 +50,7 @@ impl ClaudeNotifyService {
 
     pub async fn ensure_started(&self) -> Result<ClaudeNotifyRuntimeStatus, String> {
         let _guard = self.lifecycle_lock.lock().await;
-        if self.shutdown_tx.read().await.is_some() {
+        if self.is_running().await {
             return Ok(self.get_status().await);
         }
 
@@ -66,7 +66,7 @@ impl ClaudeNotifyService {
         let _guard = self.lifecycle_lock.lock().await;
         let settings = get_settings();
         if settings.enable_claude_background_notifications {
-            if self.shutdown_tx.read().await.is_some() {
+            if self.is_running().await {
                 return Ok(self.get_status().await);
             }
             self.start_inner().await
@@ -80,11 +80,17 @@ impl ClaudeNotifyService {
         self.state.runtime.read().await.clone()
     }
 
+    async fn is_running(&self) -> bool {
+        self.shutdown_tx.read().await.is_some() && self.get_status().await.listening
+    }
+
     async fn start_inner(&self) -> Result<ClaudeNotifyRuntimeStatus, String> {
         let (port, listener) = self.bind_listener().await?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let app = self.build_router();
         let runtime = self.state.runtime.clone();
+        let shutdown_tx_ref = self.shutdown_tx.clone();
+        let server_handle_ref = self.server_handle.clone();
 
         {
             let mut status = runtime.write().await;
@@ -101,6 +107,9 @@ impl ClaudeNotifyService {
                 })
                 .await
                 .ok();
+
+            *shutdown_tx_ref.write().await = None;
+            *server_handle_ref.write().await = None;
 
             let mut status = runtime.write().await;
             status.listening = false;
