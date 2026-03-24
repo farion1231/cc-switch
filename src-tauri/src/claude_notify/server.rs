@@ -128,7 +128,8 @@ impl ClaudeNotifyService {
             return Ok(());
         }
 
-        if let Some(handle) = self.server_handle.write().await.take() {
+        let handle = { self.server_handle.write().await.take() };
+        if let Some(handle) = handle {
             tokio::time::timeout(std::time::Duration::from_secs(3), handle)
                 .await
                 .map_err(|_| "关闭 Claude 通知监听超时".to_string())
