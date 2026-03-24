@@ -19,6 +19,17 @@ GEMINI.md
 vitest-report.json
 nul
 
+# Local documentation (keep local, don't commit)
+docs/
+
+# OMC state files (runtime generated)
+.omc/state/
+.omc/project-memory.json
+.omc/notepad.md
+.omc/plans/
+.omc/research/
+.omc/logs/
+
 # Flatpak build artifacts
 flatpak/cc-switch.deb
 flatpak-build/
