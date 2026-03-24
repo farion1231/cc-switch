@@ -654,3 +654,6 @@ export function getIcon(name: string): string {
 export function hasIcon(name: string): boolean {
   return name.toLowerCase() in icons;
 }
+
+// Re-export metadata functions for backward compatibility
+export { getIconMetadata, iconMetadata } from './metadata.js';
