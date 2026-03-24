@@ -55,6 +55,13 @@ export function ClaudeBackgroundNotificationSettings({
     }
 
     void refreshStatus();
+    const timer = window.setTimeout(() => {
+      void refreshStatus();
+    }, 400);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
   }, [windowsOnly, enabled]);
 
   const runtimeStatusLabel = status?.listening

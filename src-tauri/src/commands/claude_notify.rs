@@ -255,13 +255,37 @@ fn has_marker(value: &Value) -> bool {
     }
 }
 
+fn strip_managed_hooks_from_entry(entry: &Value) -> Option<Value> {
+    let Value::Object(map) = entry else {
+        return if has_marker(entry) { None } else { Some(entry.clone()) };
+    };
+
+    let Some(hooks) = map.get("hooks").and_then(Value::as_array) else {
+        return if has_marker(entry) { None } else { Some(entry.clone()) };
+    };
+
+    let kept_hooks: Vec<Value> = hooks
+        .iter()
+        .filter(|hook| !has_marker(hook))
+        .cloned()
+        .collect();
+
+    if kept_hooks.is_empty() {
+        return None;
+    }
+
+    let mut next = map.clone();
+    next.insert("hooks".to_string(), Value::Array(kept_hooks));
+    Some(Value::Object(next))
+}
+
 fn merge_hook_entries(existing: Option<&Value>, incoming: &Value) -> Value {
     let mut merged = Vec::new();
 
     if let Some(Value::Array(items)) = existing {
         for item in items {
-            if !has_marker(item) {
-                merged.push(item.clone());
+            if let Some(cleaned) = strip_managed_hooks_from_entry(item) {
+                merged.push(cleaned);
             }
         }
     }
@@ -278,8 +302,7 @@ fn clear_managed_entries(existing: Option<&Value>) -> Option<Value> {
         Some(Value::Array(items)) => {
             let kept: Vec<Value> = items
                 .iter()
-                .filter(|item| !has_marker(item))
-                .cloned()
+                .filter_map(strip_managed_hooks_from_entry)
                 .collect();
             if kept.is_empty() {
                 None
@@ -287,7 +310,7 @@ fn clear_managed_entries(existing: Option<&Value>) -> Option<Value> {
                 Some(Value::Array(kept))
             }
         }
-        Some(other) if !has_marker(other) => Some(other.clone()),
+        Some(other) => strip_managed_hooks_from_entry(other),
         _ => None,
     }
 }
@@ -503,5 +526,45 @@ mod tests {
         apply_claude_notify_hooks(43123).expect("apply hooks");
         assert!(is_claude_notify_hooks_applied_for_port(Some(43123)).expect("match port"));
         assert!(!is_claude_notify_hooks_applied_for_port(Some(54321)).expect("mismatch port"));
+    }
+
+    #[test]
+    fn clear_hook_config_preserves_non_managed_hooks_in_mixed_entry() {
+        let _guard = test_mutex().lock().expect("acquire test mutex");
+        reset_test_fs();
+        let path = get_claude_settings_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create claude dir");
+        }
+
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&json!({
+                "hooks": {
+                    "Notification": [
+                        {
+                            "matcher": "permission_prompt|idle_prompt",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "powershell.exe -NoProfile -File \"managed.ps1\" notification 43123 # cc-switch-claude-notify"
+                                },
+                                {
+                                    "type": "command",
+                                    "command": "echo keep-me"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }))
+            .expect("serialize settings"),
+        )
+        .expect("write settings");
+
+        clear_claude_notify_hooks().expect("clear hooks");
+        let content = std::fs::read_to_string(&path).expect("read settings");
+        assert!(content.contains("echo keep-me"));
+        assert!(!content.contains(HOOKS_MARKER));
     }
 }
