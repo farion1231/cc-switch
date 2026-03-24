@@ -28,7 +28,15 @@ pub async fn save_settings(
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
     crate::settings::update_settings(merged.clone()).map_err(|e| e.to_string())?;
-    crate::commands::sync_claude_notify_runtime_if_needed(app, &state, &existing, &merged).await?;
+
+    if let Err(error) =
+        crate::commands::sync_claude_notify_runtime_if_needed(app, &state, &existing, &merged)
+            .await
+    {
+        crate::settings::update_settings(existing).map_err(|e| e.to_string())?;
+        return Err(error);
+    }
+
     Ok(true)
 }
 

@@ -137,7 +137,17 @@ impl ClaudeNotifyService {
         if let Some(port) = settings.claude_notify_port {
             let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
             if let Ok(listener) = tokio::net::TcpListener::bind(addr).await {
-                return Ok((port, listener));
+                let actual_port = listener
+                    .local_addr()
+                    .map_err(|e| format!("读取 Claude 通知监听端口失败: {e}"))?
+                    .port();
+
+                if settings.claude_notify_port != Some(actual_port) {
+                    settings.claude_notify_port = Some(actual_port);
+                    update_settings(settings).map_err(|e| e.to_string())?;
+                }
+
+                return Ok((actual_port, listener));
             }
         }
 
