@@ -194,12 +194,86 @@ jobs:
 
       - name: Build Tauri App (macOS)
         if: runner.os == 'macOS'
-        run: pnpm tauri build --target universal-apple-darwin
+        shell: bash
+        timeout-minutes: 60
         env:
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          max_attempts=3
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "=== macOS build/notarization attempt ${attempt}/${max_attempts} ==="
+            if pnpm tauri build --target universal-apple-darwin; then
+              echo "✅ macOS build/notarization succeeded"
+              exit 0
+            fi
+
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              echo "❌ macOS build/notarization failed after ${max_attempts} attempts" >&2
+              exit 1
+            fi
+
+            sleep_seconds=$((attempt * 60))
+            echo "⚠️ macOS build/notarization failed, retrying in ${sleep_seconds}s..."
+            sleep "$sleep_seconds"
+          done
+
+      - name: Notarize macOS DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        timeout-minutes: 30
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          DMG_PATH=""
+          for path in \
+            "src-tauri/target/universal-apple-darwin/release/bundle/dmg" \
+            "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg" \
+            "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg" \
+            "src-tauri/target/release/bundle/dmg" \
+            "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
+            "src-tauri/target/release/bundle/macos"; do
+            if [ -d "$path" ] && [ -z "$DMG_PATH" ]; then
+              DMG_PATH=$(find "$path" -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
+            fi
+          done
+
+          if [ -z "$DMG_PATH" ]; then
+            echo "❌ No .dmg found to notarize" >&2
+            exit 1
+          fi
+
+          echo "=== Verifying DMG integrity before notarization: $DMG_PATH ==="
+          hdiutil verify "$DMG_PATH"
+
+          max_attempts=3
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "=== DMG notarization attempt ${attempt}/${max_attempts} ==="
+            if xcrun notarytool submit "$DMG_PATH" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait; then
+              echo "✅ DMG notarization succeeded"
+              exit 0
+            fi
+
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              echo "❌ DMG notarization failed after ${max_attempts} attempts" >&2
+              exit 1
+            fi
+
+            sleep_seconds=$((attempt * 60))
+            echo "⚠️ DMG notarization failed, retrying in ${sleep_seconds}s..."
+            sleep "$sleep_seconds"
+          done
 
       - name: Build Tauri App (Windows)
         if: runner.os == 'Windows'
