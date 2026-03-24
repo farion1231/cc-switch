@@ -364,6 +364,57 @@ export interface UpdateTomlCommonConfigResult {
   error?: string;
 }
 
+const getTomlRootScalarSnippetKeys = (
+  snippet: Record<string, any>,
+): Set<string> => {
+  return new Set(
+    Object.entries(snippet)
+      .filter(([, value]) => !isPlainObject(value))
+      .map(([key]) => key),
+  );
+};
+
+const liftMisplacedTomlRootScalars = (
+  config: Record<string, any>,
+  snippet: Record<string, any>,
+): Record<string, any> => {
+  const rootScalarKeys = getTomlRootScalarSnippetKeys(snippet);
+  if (rootScalarKeys.size === 0) {
+    return config;
+  }
+
+  const liftedEntries = new Map<string, any>();
+
+  const visit = (node: Record<string, any>, isRoot: boolean) => {
+    Object.entries(node).forEach(([key, value]) => {
+      if (isPlainObject(value)) {
+        visit(value, false);
+        if (Object.keys(value).length === 0) {
+          delete node[key];
+        }
+        return;
+      }
+
+      if (!isRoot && rootScalarKeys.has(key)) {
+        if (!Object.prototype.hasOwnProperty.call(config, key)) {
+          liftedEntries.set(key, value);
+        }
+        delete node[key];
+      }
+    });
+  };
+
+  visit(config, true);
+
+  liftedEntries.forEach((value, key) => {
+    if (!Object.prototype.hasOwnProperty.call(config, key)) {
+      config[key] = value;
+    }
+  });
+
+  return config;
+};
+
 // Write/remove common config snippet to/from TOML config (structural merge)
 export const updateTomlCommonConfigSnippet = (
   tomlString: string,
@@ -377,15 +428,19 @@ export const updateTomlCommonConfigSnippet = (
   try {
     const config = parseToml(normalizeTomlText(tomlString || ""));
     const snippet = parseToml(normalizeTomlText(snippetString));
+    const normalizedConfig = liftMisplacedTomlRootScalars(
+      deepClone(config) as Record<string, any>,
+      snippet as Record<string, any>,
+    );
 
     if (enabled) {
       const merged = deepMerge(
-        deepClone(config) as Record<string, any>,
+        normalizedConfig,
         deepClone(snippet) as Record<string, any>,
       );
       return { updatedConfig: stringifyToml(merged) };
     } else {
-      const result = deepClone(config) as Record<string, any>;
+      const result = normalizedConfig;
       deepRemove(result, snippet as Record<string, any>);
       return { updatedConfig: stringifyToml(result) };
     }
@@ -404,7 +459,11 @@ export const hasTomlCommonConfigSnippet = (
   try {
     const config = parseToml(normalizeTomlText(tomlString || ""));
     const snippet = parseToml(normalizeTomlText(snippetString));
-    return isSubset(config, snippet);
+    const normalizedConfig = liftMisplacedTomlRootScalars(
+      deepClone(config) as Record<string, any>,
+      snippet as Record<string, any>,
+    );
+    return isSubset(normalizedConfig, snippet);
   } catch {
     // Fallback to text-based matching if TOML parsing fails
     const norm = (s: string) => s.replace(/\s+/g, " ").trim();
