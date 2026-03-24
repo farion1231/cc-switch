@@ -135,6 +135,13 @@ impl Database {
         }
         db.ensure_model_pricing_seeded()?;
 
+        // Seed default providers for new database
+        if !db_exists {
+            if let Err(e) = db.seed_default_providers() {
+                log::warn!("Failed to seed default providers: {e}");
+            }
+        }
+
         // Startup cleanup: prune old logs and reclaim space
         if let Err(e) = db.cleanup_old_stream_check_logs(7) {
             log::warn!("Startup stream_check_logs cleanup failed: {e}");
@@ -262,5 +269,113 @@ impl Database {
             .query_row("SELECT COUNT(*) FROM prompts", [], |row| row.get(0))
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(count == 0)
+    }
+
+    /// 种子默认供应商（仅在新数据库创建时调用）
+    ///
+    /// 添加3个示例供应商用于测试拖拽排序功能
+    pub fn seed_default_providers(&self) -> Result<(), AppError> {
+        use crate::provider::{Provider, ProviderMeta};
+        use rusqlite::params;
+
+        let providers = vec![
+            Provider {
+                id: "openai-demo".to_string(),
+                name: "OpenAI".to_string(),
+                settings_config: serde_json::json!({
+                    "env": {
+                        "OPENAI_API_KEY": "sk-your-api-key-here"
+                    }
+                }),
+                website_url: Some("https://platform.openai.com".to_string()),
+                category: Some("third_party".to_string()),
+                created_at: Some(chrono::Utc::now().timestamp_millis()),
+                sort_index: Some(0),
+                notes: Some("演示供应商 - OpenAI".to_string()),
+                meta: Some(ProviderMeta::default()),
+                icon: Some("openai".to_string()),
+                icon_color: Some("#00A67E".to_string()),
+                in_failover_queue: false,
+            },
+            Provider {
+                id: "anthropic-demo".to_string(),
+                name: "Anthropic".to_string(),
+                settings_config: serde_json::json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "sk-ant-your-api-key-here"
+                    }
+                }),
+                website_url: Some("https://console.anthropic.com".to_string()),
+                category: Some("third_party".to_string()),
+                created_at: Some(chrono::Utc::now().timestamp_millis() + 1),
+                sort_index: Some(1),
+                notes: Some("演示供应商 - Anthropic Claude".to_string()),
+                meta: Some(ProviderMeta::default()),
+                icon: Some("anthropic".to_string()),
+                icon_color: Some("#D4915D".to_string()),
+                in_failover_queue: false,
+            },
+            Provider {
+                id: "gemini-demo".to_string(),
+                name: "Google Gemini".to_string(),
+                settings_config: serde_json::json!({
+                    "env": {
+                        "GEMINI_API_KEY": "your-api-key-here"
+                    }
+                }),
+                website_url: Some("https://ai.google.dev".to_string()),
+                category: Some("third_party".to_string()),
+                created_at: Some(chrono::Utc::now().timestamp_millis() + 2),
+                sort_index: Some(2),
+                notes: Some("演示供应商 - Google Gemini".to_string()),
+                meta: Some(ProviderMeta::default()),
+                icon: Some("gemini".to_string()),
+                icon_color: Some("#4285F4".to_string()),
+                in_failover_queue: false,
+            },
+        ];
+
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(format!("Failed to start transaction: {e}")))?;
+
+        for provider in providers {
+            let meta_str = serde_json::to_string(&provider.meta)
+                .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?;
+            let settings_str = serde_json::to_string(&provider.settings_config)
+                .map_err(|e| AppError::Database(format!("Failed to serialize settings: {e}")))?;
+
+            tx.execute(
+                "INSERT INTO providers (
+                    id, app_type, name, settings_config, website_url, category,
+                    created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                ON CONFLICT(id, app_type) DO NOTHING",
+                params![
+                    provider.id,
+                    "claude", // 默认添加到 Claude 应用
+                    provider.name,
+                    settings_str,
+                    provider.website_url,
+                    provider.category,
+                    provider.created_at,
+                    provider.sort_index,
+                    provider.notes,
+                    provider.icon,
+                    provider.icon_color,
+                    meta_str,
+                    false, // is_current
+                    provider.in_failover_queue,
+                ],
+            )
+            .map_err(|e| AppError::Database(format!("Failed to seed provider: {e}")))?;
+        }
+
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("Failed to commit seed transaction: {e}")))?;
+
+        log::info!("Default providers seeded successfully");
+        Ok(())
     }
 }
